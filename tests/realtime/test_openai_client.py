@@ -57,6 +57,30 @@ def server_event(name: str) -> dict:
     return json.loads((_FIXTURES / f"{name}.json").read_text())
 
 
+def rejection(fixture: str, event_id: str) -> dict:
+    """An error fixture re-pointed at the client event id the server is rejecting."""
+    event = server_event(fixture)
+    event["error"]["event_id"] = event_id
+    return event
+
+
+def response_creates(ws: FakeWS) -> list[dict]:
+    """Sent `response.create` payloads with the client-generated event_id stripped.
+
+    Each one must carry a unique event_id: that is what the server echoes back in
+    `error.event_id`, and the only way to attribute a rejection to the exact request.
+    """
+    payloads = ws.sent_of_type("response.create")
+    event_ids = [payload.get("event_id") for payload in payloads]
+    assert all(isinstance(event_id, str) and event_id for event_id in event_ids)
+    assert len(set(event_ids)) == len(event_ids)
+    return [{k: v for k, v in payload.items() if k != "event_id"} for payload in payloads]
+
+
+def last_response_create_id(ws: FakeWS) -> str:
+    return ws.sent_of_type("response.create")[-1]["event_id"]
+
+
 def phone_config(**overrides) -> SessionConfig:
     """The phone-path config: µ-law, barge-in enabled, transcription on."""
     params: dict = {
@@ -266,7 +290,7 @@ async def test_inject_message_creates_a_system_item_and_requests_a_response(conn
             "content": [{"type": "input_text", "text": "[system] the task finished"}],
         },
     }
-    assert harness.ws.sent[2] == {"type": "response.create"}
+    assert response_creates(harness.ws) == [{"type": "response.create"}]
 
 
 async def test_inject_message_passes_response_instructions(connect):
@@ -277,10 +301,9 @@ async def test_inject_message_passes_response_instructions(connect):
         response_instructions="Briefly apologize and continue.",
     )
 
-    assert harness.ws.sent[2] == {
-        "type": "response.create",
-        "response": {"instructions": "Briefly apologize and continue."},
-    }
+    assert response_creates(harness.ws) == [
+        {"type": "response.create", "response": {"instructions": "Briefly apologize and continue."}}
+    ]
 
 
 async def test_inject_message_without_respond_sends_no_response_create(connect):
@@ -304,7 +327,7 @@ async def test_submit_tool_result_json_encodes_a_dict_output_then_requests_a_res
             "output": json.dumps({"task_id": 7, "status": "running"}),
         },
     }
-    assert harness.ws.sent[2] == {"type": "response.create"}
+    assert response_creates(harness.ws) == [{"type": "response.create"}]
 
 
 async def test_submit_tool_result_passes_a_string_output_through(connect):
@@ -472,15 +495,15 @@ async def test_second_request_waits_for_response_done(connect):
     await harness.client.inject_message("second")
 
     # Optimistically active from the first send: only one response.create on the wire.
-    assert harness.ws.sent_of_type("response.create") == [{"type": "response.create"}]
+    assert response_creates(harness.ws) == [{"type": "response.create"}]
 
     harness.ws.feed(server_event("response_created"))
     assert await harness.next_event() == ResponseStarted(response_id="resp_001")
-    assert len(harness.ws.sent_of_type("response.create")) == 1
+    assert len(response_creates(harness.ws)) == 1
 
     harness.ws.feed(server_event("response_done"))
     assert await harness.next_event() == ResponseDone(response_id="resp_001", status="completed")
-    assert len(harness.ws.sent_of_type("response.create")) == 2
+    assert len(response_creates(harness.ws)) == 2
 
 
 async def test_only_one_queued_request_is_drained_per_response_done(connect):
@@ -490,19 +513,19 @@ async def test_only_one_queued_request_is_drained_per_response_done(connect):
     await harness.client.inject_message("second", response_instructions="be brief")
     await harness.client.inject_message("third")
 
-    assert len(harness.ws.sent_of_type("response.create")) == 1
+    assert len(response_creates(harness.ws)) == 1
 
     harness.ws.feed(server_event("response_done"))
     await harness.next_event()
-    assert harness.ws.sent_of_type("response.create")[-1] == {
+    assert response_creates(harness.ws)[-1] == {
         "type": "response.create",
         "response": {"instructions": "be brief"},
     }
-    assert len(harness.ws.sent_of_type("response.create")) == 2
+    assert len(response_creates(harness.ws)) == 2
 
     harness.ws.feed(server_event("response_done"))
     await harness.next_event()
-    assert len(harness.ws.sent_of_type("response.create")) == 3
+    assert len(response_creates(harness.ws)) == 3
 
 
 async def test_tool_result_response_is_queued_while_a_response_is_active(connect):
@@ -520,31 +543,72 @@ async def test_tool_result_response_is_queued_while_a_response_is_active(connect
     assert harness.ws.sent_types[1:] == ["conversation.item.create", "response.create"]
 
 
-async def test_already_active_response_error_keeps_the_request_queued(connect):
+async def test_every_response_create_carries_a_unique_event_id(connect):
     harness = await connect()
-    await harness.client.inject_message("hello")
-    assert len(harness.ws.sent_of_type("response.create")) == 1
 
-    harness.ws.feed(server_event("error_active_response"))
+    await harness.client.inject_message("first")
+    await harness.client.inject_message("second")
+    harness.ws.feed(server_event("response_done"))
+    await harness.next_event()
+
+    event_ids = [payload["event_id"] for payload in harness.ws.sent_of_type("response.create")]
+    assert len(event_ids) == 2
+    assert all(isinstance(event_id, str) and event_id for event_id in event_ids)
+    assert len(set(event_ids)) == 2
+
+
+async def test_rejected_tool_result_response_is_resent_after_the_next_response_done(connect):
+    """The conflicting `response.created` always reaches us before the rejection."""
+    harness = await connect()
+    await harness.client.submit_tool_result("call_abc", {"ok": True})
+    rejected_id = last_response_create_id(harness.ws)
+
+    # The response the server auto-created from VAD, not ours: it must not be taken as
+    # confirmation that our request was accepted.
+    harness.ws.feed(server_event("response_created"))
+    assert await harness.next_event() == ResponseStarted(response_id="resp_001")
+
+    harness.ws.feed(rejection("error_active_response", rejected_id))
     assert isinstance(await harness.next_event(), ProviderError)
-    assert len(harness.ws.sent_of_type("response.create")) == 1
+    assert len(response_creates(harness.ws)) == 1
 
     harness.ws.feed(server_event("response_done"))
     await harness.next_event()
-    assert len(harness.ws.sent_of_type("response.create")) == 2
+    assert response_creates(harness.ws) == [
+        {"type": "response.create"},
+        {"type": "response.create"},
+    ]
 
 
-async def test_other_error_on_a_pending_response_create_unblocks_the_queue(connect):
+async def test_unrelated_error_while_a_response_create_is_in_flight_changes_nothing(connect):
     harness = await connect()
     await harness.client.inject_message("first")
     await harness.client.inject_message("second")
-    assert len(harness.ws.sent_of_type("response.create")) == 1
+    harness.ws.feed(server_event("response_created"))
+    assert isinstance(await harness.next_event(), ResponseStarted)
 
-    harness.ws.feed(server_event("error_server_error"))
+    # A truncate error for some other client event: no spurious extra response.create.
+    harness.ws.feed(server_event("error_truncate_already_shorter"))
+    assert isinstance(await harness.next_event(), ProviderError)
+    assert len(response_creates(harness.ws)) == 1
+
+    harness.ws.feed(server_event("response_done"))
+    await harness.next_event()
+    assert len(response_creates(harness.ws)) == 2
+
+
+async def test_other_error_on_our_own_response_create_unblocks_the_queue(connect):
+    harness = await connect()
+    await harness.client.inject_message("first")
+    await harness.client.inject_message("second")
+    rejected_id = last_response_create_id(harness.ws)
+    assert len(response_creates(harness.ws)) == 1
+
+    harness.ws.feed(rejection("error_server_error", rejected_id))
     assert isinstance(await harness.next_event(), ProviderError)
 
     # The failed response.create is dropped and the queued one goes out immediately.
-    assert len(harness.ws.sent_of_type("response.create")) == 2
+    assert len(response_creates(harness.ws)) == 2
 
 
 # --- disconnect / reconnect / close ------------------------------------------
@@ -616,7 +680,7 @@ async def test_reconnect_clears_the_response_queue_and_active_flag(connect):
     await harness.client.inject_message("after reconnect")
 
     # Nothing carried over: exactly one response.create on the fresh socket.
-    assert harness.ws.sent_of_type("response.create") == [{"type": "response.create"}]
+    assert response_creates(harness.ws) == [{"type": "response.create"}]
 
 
 async def test_failed_reconnect_returns_false_and_ends_the_iterator(connect):

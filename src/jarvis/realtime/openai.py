@@ -16,6 +16,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Protocol, cast
 from urllib.parse import urlencode
+from uuid import uuid4
 
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -44,6 +45,10 @@ FATAL_ERROR_CODES = frozenset({"invalid_api_key", "session_expired", "session_no
 
 # The server rejects a second `response.create` with this code; ours stays queued.
 ACTIVE_RESPONSE_ERROR_CODE = "conversation_already_has_active_response"
+
+# Prefix of the client-generated `event_id` we stamp on every `response.create`, so the
+# `error` the server echoes it back on can be attributed to the exact request.
+RESPONSE_EVENT_ID_PREFIX = "jarvis_resp"
 
 _SENTINEL = object()
 
@@ -205,6 +210,12 @@ class OpenAIRealtimeClient:
     `response.create` when none is active and marks the session active optimistically
     (before `response.created` arrives, so two quick injections cannot both fire);
     otherwise it queues the request and sends it when `response.done` arrives.
+
+    Every `response.create` carries a client-generated `event_id`, which the server echoes
+    in `error.event_id` when it rejects the request. That is the only reliable way to tell
+    an error about *our* request from an unrelated one: `response.created` carries no client
+    id, and the one that arrives after our send is usually the conflicting response the
+    server auto-created from VAD, not ours.
     """
 
     def __init__(
@@ -220,7 +231,7 @@ class OpenAIRealtimeClient:
         self._events_taken = False
         self._closed = False
         self._active_response = False
-        self._inflight_response: dict | None = None
+        self._inflight_responses: dict[str, dict] = {}
         self._pending_responses: deque[dict] = deque()
         self.session_id: str | None = None
         self.last_error: ProviderError | None = None
@@ -288,7 +299,7 @@ class OpenAIRealtimeClient:
 
     def _reset_response_state(self) -> None:
         self._active_response = False
-        self._inflight_response = None
+        self._inflight_responses.clear()
         self._pending_responses.clear()
 
     # --- reading -------------------------------------------------------------
@@ -335,8 +346,9 @@ class OpenAIRealtimeClient:
         if event_type == "session.created":
             self.session_id = event.get("session", {}).get("id")
         elif event_type == "response.created":
+            # May be the response the server auto-created from VAD rather than ours, so it
+            # says nothing about the fate of a `response.create` still awaiting an error.
             self._active_response = True
-            self._inflight_response = None
         elif event_type == "response.done":
             await self._on_response_finished()
         elif event_type == "error":
@@ -373,35 +385,51 @@ class OpenAIRealtimeClient:
 
     async def _send_response_create(self, payload: dict) -> None:
         # Optimistic: mark active before awaiting the send so a second request that
-        # arrives in between is queued rather than sent.
+        # arrives in between is queued rather than sent. The stored payload is the bare
+        # one, so a retry after a rejection goes out with a fresh event_id.
+        event_id = f"{RESPONSE_EVENT_ID_PREFIX}_{uuid4().hex[:12]}"
         self._active_response = True
-        self._inflight_response = payload
-        await self._send(payload)
+        self._inflight_responses[event_id] = payload
+        await self._send({**payload, "event_id": event_id})
 
     async def _on_response_finished(self) -> None:
-        """A response ended: clear the active flag and send the next queued request."""
+        """A response ended: clear the active flag and send the next queued request.
+
+        Any `response.create` still awaiting a verdict was accepted: the server emits the
+        rejection while processing our event, i.e. before the response it conflicted with
+        can finish, so nothing that reaches this point can still be rejected.
+        """
+        self._inflight_responses.clear()
+        await self._drain_pending()
+
+    async def _drain_pending(self) -> None:
         self._active_response = False
-        self._inflight_response = None
         if self._pending_responses:
             await self._send_response_create(self._pending_responses.popleft())
 
     async def _on_error(self, event: dict) -> None:
-        """Keep the response queue honest when a `response.create` is rejected.
+        """Keep the response queue honest when one of our `response.create`s is rejected.
 
-        Only a `response.create` we sent but have not yet seen `response.created` for can
-        be the subject: if the server says a response is already active, ours goes back to
-        the front of the queue and waits for the next `response.done`; any other error
-        means our request is gone, so the active flag is dropped and the queue drains.
+        Attribution is by the `event_id` we stamped on the request and the server echoed
+        back; errors about anything else leave the queue alone. If the server says a
+        response is already active, ours goes back to the front of the queue and is re-sent
+        on the next `response.done`; any other rejection means our request is gone, so the
+        active flag is dropped and the queue drains.
         """
-        pending = self._inflight_response
-        if pending is None:
+        error = event.get("error") or {}
+        event_id = error.get("event_id")
+        if event_id is None:
             return
-        self._inflight_response = None
+        payload = self._inflight_responses.pop(event_id, None)
+        if payload is None:
+            return
 
-        if (event.get("error") or {}).get("code") == ACTIVE_RESPONSE_ERROR_CODE:
-            self._pending_responses.appendleft(pending)
+        if error.get("code") == ACTIVE_RESPONSE_ERROR_CODE:
+            self._pending_responses.appendleft(payload)
+            logger.debug("response.create rejected as conflicting; requeued for the next done")
             return
-        await self._on_response_finished()
+        logger.warning("dropping rejected response.create: %s", error.get("message", ""))
+        await self._drain_pending()
 
     # --- sending -------------------------------------------------------------
 
