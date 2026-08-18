@@ -374,6 +374,12 @@ max_turns=…, max_budget_usd=…, resume=<session_id>, env={…}))`; `await cli
 `async for msg in client.receive_response()` yields `AssistantMessage(content=[TextBlock|ToolUseBlock|…])`,
 `UserMessage` (tool results), `SystemMessage`, `ResultMessage(session_id, result, total_cost_usd, is_error, num_turns)`;
 `await client.interrupt()`, `await client.disconnect()`. `client.query()` may be called again to send a follow-up.
+**Tool restriction (ruling 2026-08-18):** under `permission_mode="bypassPermissions"` the `allowed_tools`
+option is only an auto-approve list and restricts nothing; the enforcing option is `tools=[…]` (the base set of
+built-in tools; `[]` disables all built-ins). Per kind: `coding` → `tools` unset (all); `chat` →
+`tools=["WebSearch","WebFetch","Read","Glob","Grep"]`; `research` → chat + `"Write"`; `cowork` →
+`tools=["WebSearch","WebFetch","Read"]` + the google MCP server, with `allowed_tools=["mcp__google__*"]`
+kept only for the MCP wildcard.
 
 **Google Workspace MCP** — `uvx workspace-mcp --tools gmail calendar --transport stdio --single-user`;
 env `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/oauth2callback`,
