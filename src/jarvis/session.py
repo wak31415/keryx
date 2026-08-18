@@ -31,10 +31,11 @@ handled. Crashing a pump because one `send_audio` lost a race would end the call
 
 import asyncio
 import contextlib
+import hmac
 import logging
 import secrets
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -66,6 +67,28 @@ RECONNECT_MESSAGE = "[system] The connection was reset; briefly apologize and co
 SILENCE_MESSAGE = "[system] The user has been silent; say a brief goodbye."
 WRAP_UP_MESSAGE = "[system] The call will end in 30 seconds; wrap up."
 ANNOUNCE_INSTRUCTIONS = "Briefly tell the user about this in one or two sentences."
+
+# What the model is told about a PIN typed on the keypad. Never the digits themselves.
+PIN_LOCKOUT_MESSAGE = (
+    "[system] Too many failed PIN attempts. Say a brief goodbye; the call will end."
+)
+PIN_ACCEPTED_MESSAGE = (
+    "[system] The caller entered the correct PIN on the keypad and is now authorized for "
+    "all tasks. Acknowledge briefly and continue."
+)
+PIN_REJECTED_MESSAGE = (
+    "[system] The caller entered an incorrect PIN on the keypad. Ask them to try again."
+)
+#: What the model is told after a keypad entry, per `submit_pin` status. A lockout is
+#: absent because `submit_pin` has already said its piece.
+KEYPAD_PIN_MESSAGES = {"authorized": PIN_ACCEPTED_MESSAGE, "invalid": PIN_REJECTED_MESSAGE}
+
+# How many PINs a caller may get wrong before the call ends (spec §3.3).
+PIN_MAX_ATTEMPTS = 3
+# How long a half-typed PIN survives between two keypresses.
+DTMF_RESET_SECONDS = 5.0
+# Keys that are not part of a PIN: `#` submits what has been typed, `*` is ignored.
+DTMF_NON_DIGITS = ("#", "*")
 
 # How long a requested end waits for the speaking response to finish before hanging up.
 END_GRACE_SECONDS = 10.0
@@ -122,6 +145,10 @@ class VoiceSession:
         self._item_first_ts_ms: float | None = None
         self._item_bytes_sent = 0
         self._last_audio_ts_ms: int | None = None
+
+        self._pin_attempts = 0
+        self._dtmf_buffer = ""
+        self._dtmf_last = 0.0
 
         self._tool_tasks: set[asyncio.Task] = set()
         self._silence_task: asyncio.Task | None = None
@@ -220,6 +247,42 @@ class VoiceSession:
         self.authorized = True
         log.info("session %s authorized", self.session_id)
 
+    async def submit_pin(self, pin: str) -> dict:
+        """Check a PIN and authorize the session if it matches (spec §3.3, §5).
+
+        The one place a PIN is ever compared, whether it was spoken or typed. Returns
+        `not_configured` / `authorized` / `invalid` (with the attempts left) / `locked`;
+        the digits are never logged and never handed back. After `PIN_MAX_ATTEMPTS`
+        wrong ones the model is asked for a goodbye and the call ends — a locked session
+        stays locked even if the right PIN turns up afterwards.
+        """
+        expected = self._settings.pin
+        if expected is None:
+            return {"status": "not_configured"}
+        if self.authorized:
+            return {"status": "authorized"}
+        if self._pin_attempts >= PIN_MAX_ATTEMPTS:
+            return {"status": "locked"}
+
+        if hmac.compare_digest((pin or "").strip().encode(), expected.encode()):
+            self.authorize()
+            return {"status": "authorized"}
+
+        self._pin_attempts += 1
+        log.warning(
+            "session %s: PIN attempt %d of %d failed",
+            self.session_id,
+            self._pin_attempts,
+            PIN_MAX_ATTEMPTS,
+        )
+        if self._pin_attempts >= PIN_MAX_ATTEMPTS:
+            await self._safe_call(
+                self._provider.inject_message, PIN_LOCKOUT_MESSAGE, respond=True
+            )
+            self.request_end("pin_lockout")
+            return {"status": "locked"}
+        return {"status": "invalid", "attempts_left": PIN_MAX_ATTEMPTS - self._pin_attempts}
+
     # --- startup -----------------------------------------------------------
 
     def _build_config(self) -> SessionConfig:
@@ -258,12 +321,41 @@ class VoiceSession:
         self._end_reason = self._end_reason or "transport closed"
 
     def _on_dtmf(self, digit: str) -> None:
-        """Hook for keypad digits. Task 10 collects the PIN here.
+        """Collect keypad digits into the PIN buffer (spec §3.3).
 
         The digit is deliberately neither logged nor forwarded to the model: DTMF is how
-        the PIN is entered, and it must never reach the transcript.
+        the PIN is entered, and it must never reach the transcript. A buffer older than
+        `DTMF_RESET_SECONDS` is a different attempt and is thrown away, so a mis-hit does
+        not poison the next entry. `#` submits what has been typed; a buffer as long as
+        the PIN submits itself, which is what makes `#` optional.
         """
         log.debug("session %s received a keypad digit", self.session_id)
+        expected = self._settings.pin
+        if expected is None or self.authorized or self._pin_attempts >= PIN_MAX_ATTEMPTS:
+            return
+
+        now = time.monotonic()
+        if now - self._dtmf_last > DTMF_RESET_SECONDS:
+            self._dtmf_buffer = ""
+        self._dtmf_last = now
+        if digit not in DTMF_NON_DIGITS:
+            self._dtmf_buffer += digit
+        if digit != "#" and len(self._dtmf_buffer) < len(expected):
+            return
+
+        entered, self._dtmf_buffer = self._dtmf_buffer, ""
+        if not entered:
+            return  # a bare `#`, or one trailing a finished entry: nothing to check
+        # `_on_dtmf` is called from the transport pump, which cannot await: the check and
+        # the note to the model are scheduled, and tracked so teardown cleans them up.
+        self._spawn_task(self._check_keypad_pin(entered), name="pin")
+
+    async def _check_keypad_pin(self, pin: str) -> None:
+        """Check a keyed-in PIN and tell the model how it went — never what was typed."""
+        result = await self.submit_pin(pin)
+        message = KEYPAD_PIN_MESSAGES.get(result["status"])
+        if message is not None:
+            await self._safe_call(self._provider.inject_message, message, respond=True)
 
     # --- provider -> transport --------------------------------------------
 
@@ -351,7 +443,11 @@ class VoiceSession:
 
     def _spawn_tool(self, call: FunctionCall) -> None:
         """Run a tool concurrently so audio keeps flowing while it works."""
-        task = asyncio.create_task(self._run_tool(call), name=f"tool-{call.name}")
+        self._spawn_task(self._run_tool(call), name=f"tool-{call.name}")
+
+    def _spawn_task(self, coro: Coroutine, *, name: str) -> None:
+        """Run `coro` beside the pumps, tracked so teardown cancels what is still going."""
+        task = asyncio.create_task(coro, name=f"{name}-{self.session_id}")
         self._tool_tasks.add(task)
         task.add_done_callback(self._tool_tasks.discard)
 
