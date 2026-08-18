@@ -1,0 +1,127 @@
+"""Task state and persistence value objects (spec §3.2 `tasks/models.py`).
+
+`Task.to_row()` / `Task.from_row()` convert between the dataclass and the flat
+string-keyed representation `TaskStore` reads/writes to SQLite: enums <-> their string
+value, datetimes <-> ISO-8601 UTC strings, bools <-> 0/1.
+"""
+
+import sqlite3
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any, Self
+
+
+class TaskKind(StrEnum):
+    CHAT = "chat"
+    RESEARCH = "research"
+    CODING = "coding"
+    COWORK = "cowork"
+
+
+class TaskStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+DESTRUCTIVE_KINDS = {TaskKind.CODING, TaskKind.COWORK}  # require PIN on phone
+
+
+_ENUM_FIELDS: dict[str, type[StrEnum]] = {"kind": TaskKind, "status": TaskStatus}
+_BOOL_FIELDS = frozenset({"callback_requested", "announced", "sms_sent"})
+_DATETIME_FIELDS = frozenset({"created_at", "started_at", "finished_at"})
+
+
+def _dump_datetime(value: datetime) -> str:
+    """`value` as an ISO-8601 string, converted to UTC first (naive values are assumed UTC)."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    else:
+        value = value.astimezone(UTC)
+    return value.isoformat()
+
+
+def _parse_datetime(value: str) -> datetime:
+    """The inverse of `_dump_datetime`: always returns a tz-aware UTC datetime."""
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _serialize_field(name: str, value: Any) -> Any:
+    """One `Task` field's Python value, as its SQLite row representation."""
+    if value is None:
+        return None
+    if name in _ENUM_FIELDS:
+        return value.value if isinstance(value, StrEnum) else value
+    if name in _BOOL_FIELDS:
+        return int(value)
+    if name in _DATETIME_FIELDS:
+        return _dump_datetime(value)
+    return value
+
+
+def _deserialize_field(name: str, value: Any) -> Any:
+    """The inverse of `_serialize_field`."""
+    if value is None:
+        return None
+    if name in _ENUM_FIELDS:
+        return _ENUM_FIELDS[name](value)
+    if name in _BOOL_FIELDS:
+        return bool(value)
+    if name in _DATETIME_FIELDS:
+        return _parse_datetime(value)
+    return value
+
+
+@dataclass
+class Task:
+    """One dispatched unit of subagent work (spec §3.2 `tasks/models.py`).
+
+    Required fields come first (`id`, `kind`, `description`) so `Task(id=None,
+    kind=TaskKind.CHAT, description="...")` works positionally; every remaining field
+    is defaulted, in the order the spec lists them.
+    """
+
+    id: int | None
+    kind: TaskKind
+    description: str
+    status: TaskStatus = TaskStatus.QUEUED
+    project: str | None = None
+    cwd: str | None = None
+    model: str = "claude-opus-5"
+    claude_session_id: str | None = None
+    summary: str | None = None
+    report_path: str | None = None
+    error: str | None = None
+    origin_channel: str = "local"
+    origin_caller: str | None = None
+    callback_requested: bool = False
+    callback_number: str | None = None
+    announced: bool = False
+    sms_sent: bool = False
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+    def to_row(self) -> dict[str, Any]:
+        """This task as a flat dict of SQLite column values."""
+        return {f.name: _serialize_field(f.name, getattr(self, f.name)) for f in fields(self)}
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row | Mapping[str, Any]) -> Self:
+        """Build a `Task` back from a SQLite row (`sqlite3.Row` or any string-keyed mapping)."""
+        data = dict(row)
+        return cls(**{name: _deserialize_field(name, value) for name, value in data.items()})
+
+    def short_status_line(self) -> str:
+        """A speakable one-liner, e.g. 'task 3 (coding, running): add README to ...'."""
+        description = self.description
+        if len(description) > 80:
+            description = description[:80] + "…"
+        return f"task {self.id} ({self.kind}, {self.status}): {description}"
