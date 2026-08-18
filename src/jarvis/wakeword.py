@@ -7,7 +7,6 @@ machine with no models downloaded. A Porcupine (`pvporcupine`) detector would be
 drop-in fallback: implement `WakeWordDetector` and pass it to `WakeWordListener`.
 """
 
-import inspect
 import logging
 import time
 from collections.abc import Callable
@@ -38,12 +37,11 @@ class WakeWordDetector(Protocol):
 
 
 class OpenWakeWordDetector:
-    """openWakeWord adapter (onnx runtime), default model `hey_jarvis`.
+    """openWakeWord 0.6.0 adapter (onnx runtime), default model `hey_jarvis`.
 
     `predict()` returns `{model_name: score}`; we take the max over the values rather
-    than hardcoding the key, because the key is the bare name on openWakeWord >= 0.5 and
-    the versioned file name (`hey_jarvis_v0.1`) on 0.4.x. Frames must be exactly
-    `frame_samples` int16 LE samples at `sample_rate`.
+    than hardcoding the key. Frames must be exactly `frame_samples` int16 LE samples at
+    `sample_rate`.
     """
 
     sample_rate = WAKE_SAMPLE_RATE
@@ -63,22 +61,14 @@ class OpenWakeWordDetector:
 
 
 def _load_openwakeword_model(model_name: str):
-    """Import openWakeWord and build the model, mapping failures to a clear error.
-
-    openWakeWord addresses models by *name* from 0.5 on and by *path* in 0.4.x (which is
-    what resolves on Python 3.12: 0.6's hard `tflite-runtime` dependency has no cp312
-    wheel), so pick the call the installed version understands.
-    """
+    """Import openWakeWord and build the model, mapping failures to a clear error."""
     try:
-        import openwakeword
         from openwakeword.model import Model
     except ImportError as exc:  # pragma: no cover - openwakeword is a hard dependency
         raise RuntimeError("openwakeword is not installed") from exc
 
     try:
-        if "wakeword_models" in inspect.signature(Model.__init__).parameters:
-            return Model(wakeword_models=[model_name], inference_framework="onnx")
-        return Model(wakeword_model_paths=[openwakeword.models[model_name]["model_path"]])
+        return Model(wakeword_models=[model_name], inference_framework="onnx")
     except Exception as exc:
         raise RuntimeError(MODEL_MISSING_ERROR) from exc
 

@@ -12,7 +12,7 @@ dependencies = [
     "numpy",
     "sounddevice",
     "soxr",
-    "openwakeword",
+    "openwakeword>=0.6.0",
     "onnxruntime",
     "claude-agent-sdk",
     "httpx",
@@ -21,6 +21,11 @@ dependencies = [
 
 [project.scripts]
 jarvis = "jarvis.cli:app"
+
+[tool.uv]
+# macOS-only app (sounddevice + launchd): openwakeword 0.6.0 pulls tflite-runtime on
+# Linux, which has no cp312 wheel, so resolve for darwin only.
+environments = ["sys_platform == 'darwin'"]
 
 [dependency-groups]
 dev = [
