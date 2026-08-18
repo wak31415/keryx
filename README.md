@@ -32,3 +32,7 @@ uv run jarvis serve
 uv run pytest -q
 uv run ruff check src tests
 ```
+
+To exercise the phone channel, `scripts/dev.sh` opens an ngrok tunnel on
+`PUBLIC_HOST` and runs the server; point the Twilio number's voice webhook at
+`https://<PUBLIC_HOST>/twilio/voice` and call in.

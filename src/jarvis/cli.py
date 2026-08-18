@@ -8,12 +8,15 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import uvicorn
 
+from jarvis.app import AppState, build_app_state
 from jarvis.config import Settings, load_settings
 from jarvis.events import EventBus
 from jarvis.local_runner import LocalRunner
 from jarvis.realtime.openai import OpenAIRealtimeClient
-from jarvis.session import SessionRegistry, VoiceSession
+from jarvis.server import create_app
+from jarvis.session import VoiceSession
 from jarvis.tools import ToolRegistry
 from jarvis.transports.local_audio import LocalAudioDevice
 from jarvis.transports.wav import WavTransport
@@ -56,45 +59,91 @@ def serve(
         bool, typer.Option("--no-wakeword", help="Skip the local wake-word listener.")
     ] = False,
 ) -> None:
-    """Run Jarvis: the local "hey jarvis" listener (the phone server lands in task 6)."""
+    """Run Jarvis: the Twilio phone server and the local "hey jarvis" listener."""
     settings = _configure()
-    if not no_phone:
-        typer.echo("phone server not implemented yet (Task 6); continuing without it")
-    if no_wakeword:
-        typer.echo("nothing to run: wake word disabled and there is no phone server yet")
+    if no_phone and no_wakeword:
+        typer.echo("nothing to run: both the phone server and the wake word are disabled")
         return
-    asyncio.run(_serve_local(settings))
+    asyncio.run(_serve(settings, phone=not no_phone, wakeword=not no_wakeword))
 
 
-async def _serve_local(settings: Settings) -> None:
-    """Run the wake-word loop until ctrl-c."""
-    device = LocalAudioDevice()
+async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
+    """Run the phone server and/or the wake-word loop until one stops or ctrl-c."""
+    state = build_app_state(settings)
+    server = _build_server(state) if phone else None
+    server_task = None
+    runner_task = None
+
+    if server is not None:
+        server_task = asyncio.create_task(server.serve(), name="phone-server")
+        typer.echo(f"phone server on http://{settings.host}:{settings.port}")
+    if wakeword:
+        runner_task = asyncio.create_task(_build_local_runner(state).run(), name="local-runner")
+        typer.echo('listening — say "hey jarvis" (ctrl-c to quit)')
+
+    def shutdown() -> None:
+        """Stop everything; uvicorn asks for `should_exit`, the runner for a cancel."""
+        if server is not None:
+            server.should_exit = True
+        if runner_task is not None:
+            runner_task.cancel()
+
+    _run_on_signals(shutdown)
+    tasks = [task for task in (server_task, runner_task) if task is not None]
+    try:
+        # Whichever half stops first (a crash, or ctrl-c) takes the other one with it.
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        shutdown()
+        for result in await asyncio.gather(*tasks, return_exceptions=True):
+            if isinstance(result, Exception):
+                log.error("serve task failed", exc_info=result)
+
+
+def _build_server(state: AppState) -> uvicorn.Server:
+    """The Twilio-facing HTTP server, run from inside our own event loop.
+
+    `lifespan="off"`: the app has no startup/shutdown hooks, and everything it needs is
+    already built in `AppState`.
+    """
+    settings = state.settings
+    config = uvicorn.Config(
+        create_app(state),
+        host=settings.host,
+        port=settings.port,
+        log_level=settings.log_level.lower(),
+        lifespan="off",
+    )
+    return uvicorn.Server(config)
+
+
+def _build_local_runner(state: AppState) -> LocalRunner:
+    """The wake-word loop, sharing every registry with the phone server."""
     listener = WakeWordListener(
-        OpenWakeWordDetector(settings.wakeword_model), threshold=settings.wakeword_threshold
+        OpenWakeWordDetector(state.settings.wakeword_model),
+        threshold=state.settings.wakeword_threshold,
     )
-    runner = LocalRunner(
-        settings,
-        device,
+    return LocalRunner(
+        state.settings,
+        LocalAudioDevice(),
         listener,
-        provider_factory=lambda: _new_provider(settings),
-        registry=ToolRegistry(),  # task 10 fills this with the real tools
-        bus=EventBus(),
-        sessions=SessionRegistry(),
+        provider_factory=state.provider_factory,
+        registry=state.registry,
+        bus=state.bus,
+        sessions=state.sessions,
     )
 
-    task = asyncio.create_task(runner.run(), name="local-runner")
-    _cancel_on_signals(task)
-    typer.echo('listening — say "hey jarvis" (ctrl-c to quit)')
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
 
+def _run_on_signals(callback) -> None:
+    """Turn ctrl-c / SIGTERM into a call to `callback`.
 
-def _cancel_on_signals(task: asyncio.Task) -> None:
-    """Turn ctrl-c / SIGTERM into a clean cancellation of `task`."""
+    `uvicorn.Server.serve()` only installs its own handlers when it runs the loop itself
+    (`server.run()`), which it does not here — so this is the only thing that stops it.
+    """
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError, ValueError):
-            loop.add_signal_handler(sig, task.cancel)
+            loop.add_signal_handler(sig, callback)
 
 
 @app.command()

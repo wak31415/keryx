@@ -1,5 +1,6 @@
 """Tests for the `jarvis` command line: wiring only, no hardware and no network."""
 
+import asyncio
 import wave
 from pathlib import Path
 
@@ -70,15 +71,8 @@ def test_serve_with_nothing_to_run_says_so(settings_stub):
     assert "nothing to run" in result.output.lower()
 
 
-def test_serve_reports_that_the_phone_server_is_missing(settings_stub):
-    result = runner.invoke(app, ["serve", "--no-wakeword"])
-
-    assert result.exit_code == 0
-    assert "phone server" in result.output.lower()
-
-
-def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
-    built: dict = {}
+def stub_local_runner(monkeypatch, built: dict, *, run=None) -> None:
+    """Replace the mic, the wake-word model and the runner with recording stubs."""
 
     class StubDevice:
         def __init__(self, **kwargs):
@@ -94,10 +88,32 @@ def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
 
         async def run(self):
             built["ran"] = True
+            if run is not None:
+                await run()
 
     monkeypatch.setattr("jarvis.cli.LocalAudioDevice", StubDevice)
     monkeypatch.setattr("jarvis.cli.OpenWakeWordDetector", StubDetector)
     monkeypatch.setattr("jarvis.cli.LocalRunner", StubRunner)
+
+
+def stub_uvicorn(monkeypatch, built: dict) -> None:
+    """Replace `uvicorn.Server` with a stub that records its config instead of listening."""
+
+    class StubServer:
+        def __init__(self, config):
+            built["config"] = config
+            self.should_exit = False
+            built["server"] = self
+
+        async def serve(self):
+            built["served"] = True
+
+    monkeypatch.setattr("jarvis.cli.uvicorn.Server", StubServer)
+
+
+def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
+    built: dict = {}
+    stub_local_runner(monkeypatch, built)
 
     result = runner.invoke(app, ["serve", "--no-phone"])
 
@@ -109,6 +125,48 @@ def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
     assert device is built["device"]
     assert kwargs["sessions"] is not None
     assert (settings_stub.data_dir / "calls").is_dir()  # ensure_dirs() ran
+
+
+def test_serve_runs_the_phone_server_on_the_configured_address(settings_stub, monkeypatch):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 0, result.output
+    assert built["served"] is True
+    config = built["config"]
+    assert (config.host, config.port) == (settings_stub.host, settings_stub.port)
+    assert config.log_level == settings_stub.log_level.lower()
+    assert "/twilio/media" in {route.path for route in config.app.routes}
+
+
+def test_serve_runs_the_phone_server_and_the_wake_word_on_one_shared_state(
+    settings_stub, monkeypatch
+):
+    built: dict = {}
+
+    async def run_forever():
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            built["cancelled"] = True
+            raise
+
+    stub_local_runner(monkeypatch, built, run=run_forever)
+    stub_uvicorn(monkeypatch, built)
+
+    result = runner.invoke(app, ["serve"])  # the stub server returns straight away
+
+    assert result.exit_code == 0, result.output
+    assert built["served"] is True
+    assert built["cancelled"] is True  # the runner is stopped when the server stops
+    _settings, _device, _listener, kwargs = built["runner"]
+    state = built["config"].app.state.jarvis
+    assert kwargs["sessions"] is state.sessions
+    assert kwargs["registry"] is state.registry
+    assert kwargs["bus"] is state.bus
+    assert kwargs["provider_factory"] is state.provider_factory
 
 
 # --- loopback --------------------------------------------------------------

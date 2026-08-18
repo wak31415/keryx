@@ -15,6 +15,7 @@ build/
 *.pem
 credentials/
 .jarvis/
+.ngrok.log
 
 # SDD scratch
 .superpowers/
