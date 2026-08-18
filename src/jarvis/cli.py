@@ -10,7 +10,7 @@ from typing import Annotated
 import typer
 import uvicorn
 
-from jarvis.app import AppState, build_app_state
+from jarvis.app import AppState, build_app_state, shutdown_app_state
 from jarvis.config import Settings, load_settings
 from jarvis.events import EventBus
 from jarvis.local_runner import LocalRunner
@@ -28,9 +28,11 @@ log = logging.getLogger("jarvis.cli")
 LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 
 
-def _configure() -> Settings:
-    """Load settings, create the data directories, and set up logging."""
+def _configure(**overrides: object) -> Settings:
+    """Load settings (with any command-line overrides), make the data dirs, set up logging."""
     settings = load_settings()
+    if overrides:
+        settings = settings.model_copy(update=overrides)
     settings.ensure_dirs()
     logging.basicConfig(level=settings.log_level.upper(), format=LOG_FORMAT)
     return settings
@@ -58,9 +60,14 @@ def serve(
     no_wakeword: Annotated[
         bool, typer.Option("--no-wakeword", help="Skip the local wake-word listener.")
     ] = False,
+    fake_agents: Annotated[
+        bool,
+        typer.Option("--fake-agents", help="Run scripted subagents instead of the Claude SDK."),
+    ] = False,
 ) -> None:
     """Run Jarvis: the Twilio phone server and the local "hey jarvis" listener."""
-    settings = _configure()
+    # Only pass the override when it was asked for, so the default path stays untouched.
+    settings = _configure(fake_agents=True) if fake_agents else _configure()
     if no_phone and no_wakeword:
         typer.echo("nothing to run: both the phone server and the wake word are disabled")
         return
@@ -98,6 +105,8 @@ async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
         for result in await asyncio.gather(*tasks, return_exceptions=True):
             if isinstance(result, Exception):
                 log.error("serve task failed", exc_info=result)
+        # Subagents outlive a session but not the process: stop them and close the store.
+        await shutdown_app_state(state)
 
 
 def _build_server(state: AppState) -> uvicorn.Server:

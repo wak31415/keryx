@@ -1,40 +1,79 @@
 """Tests for the shared application state the server and the CLI are built on."""
 
-from jarvis.app import AppState, build_app_state
+import pytest
+
+from jarvis.app import AppState, build_app_state, shutdown_app_state
 from jarvis.realtime.openai import OpenAIRealtimeClient
+from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
+from jarvis.tasks.manager import TaskManager
+from jarvis.tasks.store import TaskStore
 
 
-def test_build_app_state_wires_empty_shared_registries(settings):
-    state = build_app_state(settings)
+@pytest.fixture
+async def state(settings):
+    """A built state that is always shut down again (the store holds a sqlite handle)."""
+    built = build_app_state(settings)
+    yield built
+    await shutdown_app_state(built)
 
+
+async def test_build_app_state_wires_the_shared_registries(state, settings):
     assert isinstance(state, AppState)
     assert state.settings is settings
     assert state.sessions.live() == []
-    assert state.registry.schemas() == []
     assert len(state.stream_tokens) == 0
 
 
-def test_build_app_state_leaves_the_later_pieces_unset(settings):
-    state = build_app_state(settings)
+async def test_build_app_state_wires_the_task_stack(state, settings):
+    assert isinstance(state.store, TaskStore)
+    assert isinstance(state.manager, TaskManager)
+    assert (settings.data_dir / "tasks.db").exists()
 
-    assert (state.store, state.manager, state.notifier, state.twilio_out) == (None,) * 4
+
+async def test_build_app_state_registers_the_voice_tools(state):
+    names = {schema["name"] for schema in state.registry.schemas()}
+
+    assert {"dispatch_task", "list_tasks", "submit_pin", "end_session"} <= names
 
 
-def test_the_provider_factory_builds_a_realtime_client_per_call(settings):
-    state = build_app_state(settings)
+async def test_build_app_state_leaves_the_notifier_pieces_unset(state):
+    assert (state.notifier, state.twilio_out) == (None, None)
 
+
+async def test_the_real_agent_runner_is_used_unless_fakes_are_asked_for(settings):
+    real = build_app_state(settings)
+    fake = build_app_state(settings.model_copy(update={"fake_agents": True}))
+
+    assert isinstance(real.manager._runner, ClaudeAgentRunner)
+    assert isinstance(fake.manager._runner, FakeAgentRunner)
+
+    await shutdown_app_state(real)
+    await shutdown_app_state(fake)
+
+
+async def test_shutting_down_closes_the_store(settings):
+    built = build_app_state(settings)
+
+    await shutdown_app_state(built)
+    await shutdown_app_state(built)  # idempotent: the CLI may shut down twice
+
+    assert built.store._conn is None
+
+
+async def test_the_provider_factory_builds_a_realtime_client_per_call(state):
     provider = state.provider_factory()
 
     assert isinstance(provider, OpenAIRealtimeClient)
     assert provider is not state.provider_factory()
 
 
-def test_the_provider_factory_passes_the_configured_key_and_model(settings, monkeypatch):
-    built: list[tuple] = []
-    monkeypatch.setattr("jarvis.app.OpenAIRealtimeClient", lambda *args: built.append(args))
-    state = build_app_state(settings)
+async def test_the_provider_factory_passes_the_configured_key_and_model(settings, monkeypatch):
+    made: list[tuple] = []
+    monkeypatch.setattr("jarvis.app.OpenAIRealtimeClient", lambda *args: made.append(args))
+    built = build_app_state(settings)
 
-    assert built == []  # nothing is connected until a call actually arrives
-    state.provider_factory()
+    assert made == []  # nothing is connected until a call actually arrives
+    built.provider_factory()
 
-    assert built == [(settings.openai_api_key, settings.openai_realtime_model)]
+    assert made == [(settings.openai_api_key, settings.openai_realtime_model)]
+    await shutdown_app_state(built)

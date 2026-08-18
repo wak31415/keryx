@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 from jarvis.cli import app
 from jarvis.config import Settings
 from jarvis.realtime.base import AudioDelta, Transcript
+from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
 
 runner = CliRunner()
 
@@ -51,6 +52,7 @@ def test_serve_help_documents_its_switches():
     assert result.exit_code == 0
     assert "--no-phone" in result.output
     assert "--no-wakeword" in result.output
+    assert "--fake-agents" in result.output
 
 
 def test_loopback_help_documents_its_switches():
@@ -167,6 +169,32 @@ def test_serve_runs_the_phone_server_and_the_wake_word_on_one_shared_state(
     assert kwargs["registry"] is state.registry
     assert kwargs["bus"] is state.bus
     assert kwargs["provider_factory"] is state.provider_factory
+
+
+def test_serve_wires_the_task_stack_into_the_shared_state(settings_stub, monkeypatch):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 0, result.output
+    state = built["config"].app.state.jarvis
+    assert state.manager is not None
+    assert isinstance(state.manager._runner, ClaudeAgentRunner)
+    assert "dispatch_task" in {schema["name"] for schema in state.registry.schemas()}
+    assert state.store._conn is None  # the store is closed again when serve returns
+
+
+def test_fake_agents_swaps_the_subagent_runner(settings_stub, monkeypatch):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+
+    result = runner.invoke(app, ["serve", "--no-wakeword", "--fake-agents"])
+
+    assert result.exit_code == 0, result.output
+    state = built["config"].app.state.jarvis
+    assert isinstance(state.manager._runner, FakeAgentRunner)
+    assert settings_stub.fake_agents is False  # the loaded settings are left alone
 
 
 # --- loopback --------------------------------------------------------------
