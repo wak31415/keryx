@@ -1,0 +1,9 @@
+{
+  "type": "response.output_audio_transcript.done",
+  "event_id": "event_006",
+  "response_id": "resp_001",
+  "item_id": "item_assistant_1",
+  "output_index": 0,
+  "content_index": 0,
+  "transcript": "Sure, I'll take care of that."
+}

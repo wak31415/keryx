@@ -1,0 +1,5 @@
+{
+  "type": "rate_limits.updated",
+  "event_id": "event_012",
+  "rate_limits": [{"name": "requests", "limit": 1000, "remaining": 999, "reset_seconds": 60}]
+}

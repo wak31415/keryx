@@ -1,0 +1,5 @@
+{
+  "type": "response.created",
+  "event_id": "event_004",
+  "response": {"id": "resp_001", "object": "realtime.response", "status": "in_progress", "output": []}
+}

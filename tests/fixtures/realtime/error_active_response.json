@@ -1,0 +1,11 @@
+{
+  "type": "error",
+  "event_id": "event_015",
+  "error": {
+    "type": "invalid_request_error",
+    "code": "conversation_already_has_active_response",
+    "message": "Conversation already has an active response.",
+    "param": null,
+    "event_id": "client_event_6"
+  }
+}

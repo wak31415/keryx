@@ -1,0 +1,7 @@
+{
+  "type": "conversation.item.input_audio_transcription.completed",
+  "event_id": "event_007",
+  "item_id": "item_user_1",
+  "content_index": 0,
+  "transcript": "Hey Jarvis, what's on my calendar?"
+}

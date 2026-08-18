@@ -1,0 +1,11 @@
+{
+  "type": "error",
+  "event_id": "event_013",
+  "error": {
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "message": "Incorrect API key provided.",
+    "param": null,
+    "event_id": null
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "type": "response.output_item.done",
+  "event_id": "event_010",
+  "response_id": "resp_001",
+  "output_index": 0,
+  "item": {
+    "id": "item_call_1",
+    "object": "realtime.item",
+    "type": "function_call",
+    "status": "completed",
+    "call_id": "call_abc",
+    "name": "dispatch_task",
+    "arguments": "{\"kind\": \"research\", \"description\": \"Summarize today's news\"}"
+  }
+}

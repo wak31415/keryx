@@ -1,0 +1,5 @@
+{
+  "type": "session.created",
+  "event_id": "event_001",
+  "session": {"id": "sess_ABC123", "type": "realtime", "model": "gpt-realtime-2.1"}
+}

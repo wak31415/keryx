@@ -1,0 +1,6 @@
+{
+  "type": "input_audio_buffer.speech_started",
+  "event_id": "event_002",
+  "audio_start_ms": 1230,
+  "item_id": "item_user_1"
+}

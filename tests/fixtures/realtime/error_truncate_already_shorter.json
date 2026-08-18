@@ -1,0 +1,11 @@
+{
+  "type": "error",
+  "event_id": "event_014",
+  "error": {
+    "type": "invalid_request_error",
+    "code": "invalid_value",
+    "message": "Audio content of item_assistant_1 is already shorter than 1200ms.",
+    "param": "audio_end_ms",
+    "event_id": "client_event_5"
+  }
+}

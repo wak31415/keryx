@@ -1,0 +1,11 @@
+{
+  "type": "error",
+  "event_id": "event_016",
+  "error": {
+    "type": "server_error",
+    "code": "internal_error",
+    "message": "The server had an error while processing your request.",
+    "param": null,
+    "event_id": "client_event_7"
+  }
+}

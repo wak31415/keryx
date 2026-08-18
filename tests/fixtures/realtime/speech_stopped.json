@@ -1,0 +1,6 @@
+{
+  "type": "input_audio_buffer.speech_stopped",
+  "event_id": "event_003",
+  "audio_end_ms": 2340,
+  "item_id": "item_user_1"
+}

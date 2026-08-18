@@ -1,0 +1,9 @@
+{
+  "type": "response.output_audio.delta",
+  "event_id": "event_005",
+  "response_id": "resp_001",
+  "item_id": "item_assistant_1",
+  "output_index": 0,
+  "content_index": 0,
+  "delta": "AP9/gCFC"
+}
