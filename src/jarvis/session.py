@@ -18,7 +18,11 @@ Shape of a session:
   conversation history matches what happened.
 - **Ending** is deliberately unhurried: `request_end()` only marks the session as ending;
   the run loop tears down once the response that is speaking has finished (or after
-  `END_GRACE_SECONDS`), so a goodbye is never cut off mid-word.
+  `END_GRACE_SECONDS`), so a goodbye is never cut off mid-word. Every wait is bounded,
+  because a local session that never ends leaves the wake-word runner deaf: the silence
+  timer is armed from session start (not just from the first response), the goodbye it
+  asks for is itself backstopped, and an opening that cannot even be sent ends the
+  session on the spot.
 
 Send failures (a socket that dropped between two awaits) are swallowed everywhere:
 the provider reports the drop as a `Disconnected` event, which is where reconnects are
@@ -163,10 +167,18 @@ class VoiceSession:
         await self._bus.publish(SessionStarted(self.session_id, self.channel, self.caller))
         log.info("session %s started (%s, caller %s)", self.session_id, self.channel, self.caller)
 
-        await self._safe_call(
+        opened = await self._safe_call(
             self._provider.inject_message, self._opening_context or OPENING_MESSAGE, respond=True
         )
+        if not opened:
+            # Nothing will ever be spoken here, and no `ResponseDone` will arrive to arm
+            # the silence backstop: end now rather than leave the local runner blocked.
+            self.request_end("open_failed")
         self._arm_max_call_timer()
+        # Armed from the start, not just from the first `ResponseDone`: if the greeting
+        # response never happens (a rejected `response.create` surfaces only as a
+        # non-fatal error), this is the one thing that still ends a local session.
+        self._arm_silence_timer()
 
         pumps = [
             asyncio.create_task(self._pump_transport(), name=f"transport-{self.session_id}"),
@@ -366,11 +378,19 @@ class VoiceSession:
             self._silence_task = None
 
     async def _silence_timer(self, timeout: float) -> None:
+        """Wait out the silence, ask for a goodbye, and end even if none is spoken."""
         await asyncio.sleep(timeout)
         log.info("session %s silent for %.1fs; saying goodbye", self.session_id, timeout)
         self._end_after_response = "silence"
         if not await self._safe_call(self._provider.inject_message, SILENCE_MESSAGE, respond=True):
             self.request_end("silence")  # no goodbye is coming; end now
+            return
+
+        # The goodbye normally ends the session on its `ResponseDone`, which cancels this
+        # task. If that response never comes, this is the backstop that hangs up anyway.
+        await asyncio.sleep(END_GRACE_SECONDS)
+        log.info("session %s: the goodbye was never spoken; ending anyway", self.session_id)
+        self.request_end("silence")
 
     def _arm_max_call_timer(self) -> None:
         """Phone calls have a hard length limit, with a warning shortly before it."""

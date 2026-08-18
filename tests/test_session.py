@@ -474,6 +474,33 @@ async def test_silence_ends_a_local_session_after_a_goodbye(
     assert [event.reason for event in ended(published)] == ["silence"]
 
 
+async def test_a_local_session_ends_even_if_no_response_ever_arrives(
+    make_session, local, provider, published, monkeypatch, tmp_path
+):
+    """The greeting may never be spoken (a rejected response.create): still hang up."""
+    monkeypatch.setattr("jarvis.session.END_GRACE_SECONDS", 0.05)
+    settings = make_settings(tmp_path, local_silence_timeout=0.05)
+    session = make_session(local, provider, settings=settings)
+
+    task = asyncio.create_task(session.run())
+    await asyncio.wait_for(task, TIMEOUT)  # not a single provider event ever arrives
+
+    assert [text for text, _, _ in provider.injected] == [OPENING_MESSAGE, SILENCE_MESSAGE]
+    assert [event.reason for event in ended(published)] == ["silence"]
+
+
+async def test_a_failed_opening_injection_ends_the_session(
+    make_session, local, provider, published
+):
+    provider.send_error = RuntimeError("socket gone")
+    session = make_session(local, provider)
+
+    task = asyncio.create_task(session.run())
+    await asyncio.wait_for(task, TIMEOUT)
+
+    assert [event.reason for event in ended(published)] == ["open_failed"]
+
+
 async def test_user_speech_cancels_the_silence_timer(make_session, local, provider, tmp_path):
     settings = make_settings(tmp_path, local_silence_timeout=0.05)
     session = make_session(local, provider, settings=settings)
