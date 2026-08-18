@@ -1,5 +1,6 @@
 """Tests for jarvis.tasks.store."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -115,6 +116,20 @@ async def test_update_with_no_fields_returns_current_task(store):
     result = await store.update(task.id)
 
     assert result == task
+
+
+async def test_concurrent_updates_do_not_clobber_each_other(store):
+    """Two overlapping patches must both survive: an update rewrites every column."""
+    task = await store.create(_task())
+
+    for _ in range(20):
+        await store.update(task.id, status=TaskStatus.QUEUED, callback_requested=False)
+        await asyncio.gather(
+            store.update(task.id, status=TaskStatus.RUNNING),
+            store.update(task.id, callback_requested=True),
+        )
+        fresh = await store.get(task.id)
+        assert (fresh.status, fresh.callback_requested) == (TaskStatus.RUNNING, True)
 
 
 # --- list --------------------------------------------------------------------

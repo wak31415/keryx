@@ -1,0 +1,492 @@
+"""The tools the voice model calls to get real work done (spec §3.2, §3.3).
+
+Everything here is written for a model that is *speaking*: descriptions say when to
+reach for a tool, ids are small integers, lists are short by default, and long text is
+cut down before it ever reaches a text-to-speech engine. Handlers never raise — a
+problem comes back as `{"error": ...}` (or a `status` the model is told how to relay),
+so a bad task id is a sentence the assistant can say rather than a dropped call.
+
+The PIN gate lives in `dispatch_task`: on the phone, `coding` and `cowork` are refused
+with `{"status": "pin_required"}` until the session is authorized. The check reads
+`ctx.authorized` live, so a PIN entered on the keypad while the model was thinking is
+honoured on the very next call. The digits themselves never pass through here: the
+`submit_pin` tool hands whatever the caller said straight to the session, which is the
+only thing that ever compares it.
+"""
+
+import asyncio
+import logging
+import re
+from pathlib import Path
+
+from jarvis.config import Settings
+from jarvis.tasks.manager import TERMINAL_STATUSES, TaskLimitError, TaskManager, UnknownProjectError
+from jarvis.tasks.models import DESTRUCTIVE_KINDS, Task, TaskKind, TaskStatus
+from jarvis.tools.registry import ToolContext, ToolRegistry
+
+log = logging.getLogger("jarvis.tools.builtin")
+
+#: How much of a task description a spoken list may carry.
+MAX_DESCRIPTION_CHARS = 120
+#: How much of a report `get_task_result` hands back for the model to summarise.
+MAX_REPORT_CHARS = 1500
+#: Default and maximum number of tasks `list_tasks` returns (short: this is spoken).
+DEFAULT_TASK_LIMIT = 5
+MAX_TASK_LIMIT = 20
+
+PIN_REQUIRED_MESSAGE = (
+    "Ask the caller to say the PIN or enter it on the keypad, then call dispatch_task again."
+)
+PIN_MISSING_MESSAGE = "A PIN is required for this kind of task but none is configured."
+STILL_RUNNING_MESSAGE = "still running; you will be told when it finishes"
+ENDING_MESSAGE = "Say a brief goodbye."
+
+#: A phone number we are willing to call back: E.164, `+` and 7–15 digits.
+_E164_RE = re.compile(r"^\+\d{7,15}$")
+
+#: The task statuses `list_tasks` can filter on, in the words the model uses.
+_STATUS_FILTERS: dict[str, tuple[TaskStatus, ...]] = {
+    "all": (),
+    "running": (TaskStatus.QUEUED, TaskStatus.RUNNING),
+    "done": (TaskStatus.DONE,),
+    "failed": (TaskStatus.FAILED,),
+}
+
+KIND_DESCRIPTION = (
+    "What sort of work this is. chat: a question a capable assistant can answer on its "
+    "own. research: reads the web and writes up an answer. coding: edits and tests the "
+    "code of one project. cowork: works with mail and calendar."
+)
+MODEL_DESCRIPTION = (
+    "Optional model for the subagent: opus (strongest, the default), sonnet, fable or "
+    "haiku (fastest). Leave this out unless the user asks for it."
+)
+WAIT_DESCRIPTION = (
+    "How many seconds to hold the line for the answer, 0 to 25. Use about 20 for quick "
+    "questions so you can answer inline; use 0 for long jobs, which are announced later."
+)
+
+
+# --- small helpers ---------------------------------------------------------
+
+
+def _shorten(text: str, limit: int) -> str:
+    """`text` cut to at most `limit` characters, ending in an ellipsis when cut."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+def _task_id(arguments: dict) -> int | None:
+    """The `task_id` argument as an int, or None if the model made one up."""
+    try:
+        return int(arguments.get("task_id"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _text(arguments: dict, name: str) -> str:
+    value = arguments.get(name)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _clamp_wait(raw: object, settings: Settings) -> float:
+    """The requested inline wait, clamped to `[0, dispatch_wait_max_seconds]`."""
+    try:
+        wait = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+    return min(max(wait, 0.0), float(settings.dispatch_wait_max_seconds))
+
+
+def _clamp_limit(raw: object) -> int:
+    try:
+        limit = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_TASK_LIMIT
+    return min(max(limit, 1), MAX_TASK_LIMIT)
+
+
+def _brief(task: Task) -> dict:
+    """One task as a spoken list entry."""
+    entry = {
+        "id": task.id,
+        "kind": task.kind.value,
+        "status": task.status.value,
+        "description": _shorten(task.description, MAX_DESCRIPTION_CHARS),
+    }
+    if task.summary:
+        entry["summary"] = task.summary
+    return entry
+
+
+async def _report_excerpt(task: Task) -> str | None:
+    """The head of the task's report file, or None when there is no readable report."""
+    if not task.report_path:
+        return None
+    try:
+        text = await asyncio.to_thread(Path(task.report_path).read_text, encoding="utf-8")
+    except OSError:
+        log.warning("could not read the report of task %s", task.id)
+        return None
+    return _shorten(text.strip(), MAX_REPORT_CHARS) or None
+
+
+def register_builtin_tools(
+    registry: ToolRegistry, *, manager: TaskManager, settings: Settings
+) -> None:
+    """Register every tool the voice model has, bound to this process's task manager."""
+
+    async def _get(arguments: dict) -> Task | dict:
+        """The task named by `arguments`, or the error dict to hand back instead."""
+        task_id = _task_id(arguments)
+        if task_id is None:
+            return {"error": "task_id must be a task number, for example 3"}
+        task = await manager.get(task_id)
+        if task is None:
+            return {"error": f"no task {task_id}"}
+        return task
+
+    # --- dispatch_task -----------------------------------------------------
+
+    def _pin_gate(ctx: ToolContext, kind: TaskKind) -> dict | None:
+        """The refusal to return before dispatching `kind`, if any (spec §3.3)."""
+        if kind not in DESTRUCTIVE_KINDS or ctx.channel != "phone" or ctx.authorized:
+            return None
+        if settings.pin is None:
+            return {"status": "refused", "message": PIN_MISSING_MESSAGE}
+        log.info("session %s needs a PIN for a %s task", ctx.session.session_id, kind)
+        return {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}
+
+    async def dispatch_task(ctx: ToolContext, arguments: dict) -> dict:
+        try:
+            kind = TaskKind(_text(arguments, "kind").lower())
+        except ValueError:
+            return {
+                "error": f"unknown kind {arguments.get('kind')!r}; "
+                "use chat, research, coding or cowork"
+            }
+        refusal = _pin_gate(ctx, kind)
+        if refusal is not None:
+            return refusal
+
+        description = _text(arguments, "description")
+        if not description:
+            return {"error": "description is required: say what the subagent should do"}
+
+        try:
+            task = await manager.dispatch(
+                kind,
+                description,
+                project=_text(arguments, "project") or None,
+                model=_text(arguments, "model") or None,
+                origin_channel=ctx.channel,
+                origin_caller=ctx.caller,
+            )
+        except UnknownProjectError as exc:
+            return {"error": str(exc), "candidates": exc.candidates}
+        except (TaskLimitError, ValueError) as exc:
+            return {"error": str(exc)}
+
+        wait = _clamp_wait(arguments.get("wait_seconds"), settings)
+        if wait > 0:
+            task = await manager.wait_for(task.id, wait)
+
+        result = {"task_id": task.id, "status": task.status.value}
+        if task.status in TERMINAL_STATUSES:
+            result["summary"] = task.summary
+        else:
+            result["message"] = STILL_RUNNING_MESSAGE
+        return result
+
+    registry.register(
+        "dispatch_task",
+        "Hand a piece of work to a subagent on the Mac and get back a task number. Use it "
+        "for anything you cannot answer yourself in a sentence or two. Repeat the request "
+        "back and get a yes before calling this. On the phone, coding and cowork tasks come "
+        "back as pin_required until the caller has given the PIN.",
+        {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": [kind.value for kind in TaskKind],
+                    "description": KIND_DESCRIPTION,
+                },
+                "description": {
+                    "type": "string",
+                    "description": "What the subagent should do, in full sentences. It cannot "
+                    "hear the conversation, so include every detail that matters.",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "The name of the project to work in. Required for coding "
+                    "tasks. Use list_projects if you are unsure of the name.",
+                },
+                "model": {
+                    "type": "string",
+                    "enum": ["opus", "sonnet", "fable", "haiku"],
+                    "description": MODEL_DESCRIPTION,
+                },
+                "wait_seconds": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": settings.dispatch_wait_max_seconds,
+                    "description": WAIT_DESCRIPTION,
+                },
+            },
+            "required": ["kind", "description"],
+        },
+        dispatch_task,
+    )
+
+    # --- list_tasks --------------------------------------------------------
+
+    async def list_tasks(ctx: ToolContext, arguments: dict) -> dict:
+        status = (_text(arguments, "status") or "all").lower()
+        if status not in _STATUS_FILTERS:
+            return {"error": f"unknown status {status!r}; use running, done, failed or all"}
+        limit = _clamp_limit(arguments.get("limit"))
+
+        wanted = _STATUS_FILTERS[status]
+        if not wanted:
+            tasks = await manager.list(limit=limit)
+        else:
+            found: list[Task] = []
+            for one in wanted:
+                found.extend(await manager.list(status=one, limit=limit))
+            tasks = sorted(found, key=lambda task: task.id, reverse=True)[:limit]
+        return {"tasks": [_brief(task) for task in tasks]}
+
+    registry.register(
+        "list_tasks",
+        "The tasks the subagents are working on or have finished, newest first. Use it when "
+        "the user asks what is running or what has come back.",
+        {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": list(_STATUS_FILTERS),
+                    "description": "Which tasks to list. 'running' also covers tasks still "
+                    "waiting for their turn. Defaults to all.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": MAX_TASK_LIMIT,
+                    "description": f"How many to return, at most {MAX_TASK_LIMIT}. Defaults "
+                    f"to {DEFAULT_TASK_LIMIT}, which is about as many as anyone wants read "
+                    "out loud.",
+                },
+            },
+            "required": [],
+        },
+        list_tasks,
+    )
+
+    # --- get_task_status / get_task_result ---------------------------------
+
+    async def get_task_status(ctx: ToolContext, arguments: dict) -> dict:
+        task = await _get(arguments)
+        if isinstance(task, dict):
+            return task
+        return {
+            "task_id": task.id,
+            "status": task.status.value,
+            "kind": task.kind.value,
+            "description": task.description,
+            "summary": task.summary,
+            "error": task.error,
+            "line": task.short_status_line(),
+        }
+
+    registry.register(
+        "get_task_status",
+        "How one task is doing, by its task number. Use it when the user asks about a "
+        "specific task rather than about everything at once.",
+        {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "The task number."},
+            },
+            "required": ["task_id"],
+        },
+        get_task_status,
+    )
+
+    async def get_task_result(ctx: ToolContext, arguments: dict) -> dict:
+        task = await _get(arguments)
+        if isinstance(task, dict):
+            return task
+        result = {
+            "task_id": task.id,
+            "status": task.status.value,
+            "summary": task.summary,
+        }
+        excerpt = await _report_excerpt(task)
+        if excerpt is not None:
+            result["report_excerpt"] = excerpt
+        return result
+
+    registry.register(
+        "get_task_result",
+        "What a finished task actually found, including the start of its written report. "
+        "Use it when the user wants more than the one-line summary. Summarise it in a "
+        "sentence or two; never read the report out.",
+        {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "The task number."},
+            },
+            "required": ["task_id"],
+        },
+        get_task_result,
+    )
+
+    # --- send_followup / cancel_task ---------------------------------------
+
+    async def send_followup(ctx: ToolContext, arguments: dict) -> dict:
+        task_id = _task_id(arguments)
+        if task_id is None:
+            return {"error": "task_id must be a task number, for example 3"}
+        message = _text(arguments, "message")
+        if not message:
+            return {"error": "message is required: say what to add to the task"}
+        try:
+            task = await manager.followup(task_id, message)
+        except KeyError:
+            return {"error": f"no task {task_id}"}
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return {"task_id": task.id, "status": task.status.value}
+
+    registry.register(
+        "send_followup",
+        "Add something to a task that is already under way, or ask a finished task for more. "
+        "Use it for 'also…' and 'actually, make that…' instead of dispatching a second task.",
+        {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "The task number."},
+                "message": {
+                    "type": "string",
+                    "description": "What to tell the subagent, in full sentences.",
+                },
+            },
+            "required": ["task_id", "message"],
+        },
+        send_followup,
+    )
+
+    async def cancel_task(ctx: ToolContext, arguments: dict) -> dict:
+        task_id = _task_id(arguments)
+        if task_id is None:
+            return {"error": "task_id must be a task number, for example 3"}
+        try:
+            task = await manager.cancel(task_id)
+        except KeyError:
+            return {"error": f"no task {task_id}"}
+        return {"task_id": task.id, "status": task.status.value}
+
+    registry.register(
+        "cancel_task",
+        "Stop a task that is queued or running. A task that has already finished comes back "
+        "unchanged, so say so rather than claiming you stopped it.",
+        {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "The task number."},
+            },
+            "required": ["task_id"],
+        },
+        cancel_task,
+    )
+
+    # --- list_projects -----------------------------------------------------
+
+    async def list_projects(ctx: ToolContext, arguments: dict) -> dict:
+        return {"projects": [name for name, _path in manager.list_projects()]}
+
+    registry.register(
+        "list_projects",
+        "The names of the projects a coding task can run in. Use it when the user names a "
+        "project you do not recognise, and offer the closest match instead of guessing.",
+        {"type": "object", "properties": {}, "required": []},
+        list_projects,
+    )
+
+    # --- request_callback --------------------------------------------------
+
+    async def request_callback(ctx: ToolContext, arguments: dict) -> dict:
+        task = await _get(arguments)
+        if isinstance(task, dict):
+            return task
+        if task.status in TERMINAL_STATUSES:
+            return {
+                "task_id": task.id,
+                "status": "already_finished",
+                "summary": task.summary,
+            }
+
+        number = _text(arguments, "number") or ctx.caller or settings.owner_number or ""
+        if not number:
+            return {"error": "no number to call back on; ask the user for one"}
+        if not _E164_RE.match(number):
+            return {"error": f"{number!r} is not a phone number I can call back"}
+
+        await manager.request_callback(task.id, number)
+        return {"task_id": task.id, "status": "callback_requested"}
+
+    registry.register(
+        "request_callback",
+        "Ask to be phoned back when a task finishes, instead of waiting on the line. Only "
+        "call this when the user asks for it. Without a number it uses the number they are "
+        "calling from.",
+        {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "The task number."},
+                "number": {
+                    "type": "string",
+                    "description": "The number to call, in full international form such as "
+                    "+491701234567. Leave it out to use the number of this call.",
+                },
+            },
+            "required": ["task_id"],
+        },
+        request_callback,
+    )
+
+    # --- submit_pin / end_session ------------------------------------------
+
+    async def submit_pin(ctx: ToolContext, arguments: dict) -> dict:
+        """Hand a spoken PIN to the session; only it ever sees the digits."""
+        return await ctx.session.submit_pin(str(arguments.get("pin") or ""))
+
+    registry.register(
+        "submit_pin",
+        "Check the PIN the caller just said, to unlock coding and cowork tasks on the phone. "
+        "Pass the digits exactly as you heard them, with nothing else. Never say them back "
+        "out loud. The answer is authorized, invalid (with the attempts left) or locked.",
+        {
+            "type": "object",
+            "properties": {
+                "pin": {"type": "string", "description": "The digits the caller said."},
+            },
+            "required": ["pin"],
+        },
+        submit_pin,
+    )
+
+    async def end_session(ctx: ToolContext, arguments: dict) -> dict:
+        ctx.session.request_end("user")
+        return {"status": "ending", "message": ENDING_MESSAGE}
+
+    registry.register(
+        "end_session",
+        "Hang up. Call it right after your goodbye, once the user has said goodbye or has "
+        "nothing more to ask. Never call it while a question is still open.",
+        {"type": "object", "properties": {}, "required": []},
+        end_session,
+    )

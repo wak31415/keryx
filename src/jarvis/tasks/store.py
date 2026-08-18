@@ -117,19 +117,26 @@ class TaskStore:
         if unknown:
             raise ValueError(f"unknown Task field(s): {', '.join(sorted(unknown))}")
 
-        existing = self._get_sync(task_id)
-        if existing is None:
-            raise KeyError(task_id)
-        if not patch:
-            return existing
-
-        updated = dataclasses.replace(existing, **patch)
-        row = updated.to_row()
-        row.pop("id")
-        set_clause = ", ".join(f"{name} = ?" for name in row)
+        # Read and write under one lock acquisition: an update rewrites *every* column, so
+        # two overlapping patches that each read first would each write back their own
+        # stale snapshot and the loser's fields would silently vanish (a call-back request
+        # placed just as the task flips to `running`, say).
         with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            existing = Task.from_row(row)
+            if not patch:
+                return existing
+
+            updated = dataclasses.replace(existing, **patch)
+            values = updated.to_row()
+            values.pop("id")
+            set_clause = ", ".join(f"{name} = ?" for name in values)
             self._conn.execute(
-                f"UPDATE tasks SET {set_clause} WHERE id = ?", [*row.values(), task_id]
+                f"UPDATE tasks SET {set_clause} WHERE id = ?", [*values.values(), task_id]
             )
         return updated
 

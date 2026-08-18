@@ -385,6 +385,18 @@ class TaskManager:
             self._done_events[task_id] = event
         return event
 
+    async def request_callback(self, task_id: int, number: str) -> Task:
+        """Ask for an outbound call to `number` when `task_id` finishes.
+
+        Only records the wish; the notifier is what places the call (spec §3.3).
+        Raises `KeyError` if the task does not exist.
+        """
+        task = await self._store.update(
+            task_id, callback_requested=True, callback_number=number
+        )
+        log.info("task %s will be called back when it finishes", task_id)
+        return task
+
     async def wait_for(self, task_id: int, timeout: float) -> Task:
         """The task as soon as it reaches a terminal state, or as it is after `timeout`."""
         task = await self._store.get(task_id)
