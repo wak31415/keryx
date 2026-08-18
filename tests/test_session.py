@@ -8,10 +8,9 @@ the test rather than hanging if a session refuses to finish.
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
 
 import pytest
-from fakes import DrainingFakeTransport, FakeProvider, FakeTransport
+from fakes import TIMEOUT, DrainingFakeTransport, FakeProvider, FakeTransport, eventually
 
 from jarvis.config import Settings
 from jarvis.events import EventBus, SessionEnded, SessionStarted
@@ -36,8 +35,6 @@ from jarvis.session import (
 from jarvis.tools import ToolContext, ToolRegistry
 from jarvis.transports.base import AudioIn, Dtmf, Hangup
 
-TIMEOUT = 2.0
-
 # audio/pcmu is 8 kHz 8-bit -> 8 bytes per millisecond.
 PCMU_BYTES_PER_MS = 8
 
@@ -49,16 +46,6 @@ def make_settings(tmp_path, **overrides) -> Settings:
         data_dir=tmp_path / "jarvis",
         **overrides,
     )
-
-
-async def eventually(predicate: Callable[[], bool], *, timeout: float = TIMEOUT) -> None:
-    """Poll `predicate` until it is true, or fail the test after `timeout`."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while not predicate():
-        if loop.time() >= deadline:
-            raise AssertionError("condition was still false after the timeout")
-        await asyncio.sleep(0.005)
 
 
 @contextlib.asynccontextmanager

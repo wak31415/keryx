@@ -5,12 +5,24 @@ asserts on what the session did with them. Neither touches a socket, a mic or a 
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 from jarvis.realtime.base import ProviderEvent, SessionConfig
 from jarvis.transports.base import AudioFormat, Hangup, TransportEvent
 
 _END = object()
+
+TIMEOUT = 2.0
+
+
+async def eventually(predicate: Callable[[], bool], *, timeout: float = TIMEOUT) -> None:
+    """Poll `predicate` until it is true, or fail the test after `timeout` seconds."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() >= deadline:
+            raise AssertionError("condition was still false after the timeout")
+        await asyncio.sleep(0.005)
 
 
 class _Script:
