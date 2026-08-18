@@ -432,6 +432,19 @@ DEFAULT_FAKE_RESULT = RunResult(
 
 FakeScript = Callable[[Task, str | None], RunResult]
 
+#: What an interrupted turn comes back as, for `FakeAgentRunner(interrupt_ends_run=True)`.
+INTERRUPTED_RESULT = RunResult(
+    ok=False,
+    final_text="",
+    spoken_summary="The task failed: interrupted",
+    session_id="fake-session-1",
+    error="interrupted",
+)
+
+#: How long `interrupt()` takes to settle in `interrupt_ends_run` mode — long enough for
+#: the caller to have fully processed the ended turn, the way a real control round-trip is.
+INTERRUPT_SETTLE_S = 0.05
+
 
 class FakeAgentSession(AgentSession):
     """A scripted conversation that records everything it was asked to do."""
@@ -444,11 +457,25 @@ class FakeAgentSession(AgentSession):
         self.interrupts = 0
         self.closed = False
         self._runner = runner
+        self._interrupted = asyncio.Event()
 
     async def run(self, prompt: str, *, on_progress: Callable[[str], Any]) -> RunResult:
-        """Sleep, emit the scripted progress lines, return the next scripted result."""
+        """Sleep, emit the scripted progress lines, return the next scripted result.
+
+        Under `interrupt_ends_run`, an `interrupt()` during the sleep ends the turn early
+        with `INTERRUPTED_RESULT` — what the real session does, since interrupting is a
+        control round-trip that makes `run()` return rather than raise.
+        """
         self.prompts.append(prompt)
-        await asyncio.sleep(self._runner.delay_s)
+        if self._runner.interrupt_ends_run:
+            try:
+                await asyncio.wait_for(self._interrupted.wait(), self._runner.delay_s)
+            except TimeoutError:
+                pass
+            else:
+                return INTERRUPTED_RESULT
+        else:
+            await asyncio.sleep(self._runner.delay_s)
         for line in self._runner.progress:
             await _emit(on_progress, line)
         return self._runner.next_result(self.task, self.resume)
@@ -458,6 +485,9 @@ class FakeAgentSession(AgentSession):
 
     async def interrupt(self) -> None:
         self.interrupts += 1
+        self._interrupted.set()
+        if self._runner.interrupt_ends_run:
+            await asyncio.sleep(INTERRUPT_SETTLE_S)
 
     async def close(self) -> None:
         self.closed = True
@@ -467,7 +497,9 @@ class FakeAgentRunner(AgentRunner):
     """Scripted `AgentRunner` for tests and the CLI's `--fake-agents` dev flag.
 
     `results` is a list popped from the front (the last one repeats), a callable taking
-    `(task, resume)`, or `None` for `DEFAULT_FAKE_RESULT` every time.
+    `(task, resume)`, or `None` for `DEFAULT_FAKE_RESULT` every time. `interrupt_ends_run`
+    opts into the real session's interrupt semantics (see `FakeAgentSession.run`); it is
+    off by default, so an `interrupt()` merely gets counted.
     """
 
     def __init__(
@@ -476,9 +508,11 @@ class FakeAgentRunner(AgentRunner):
         *,
         delay_s: float = 0.0,
         progress: Iterable[str] | None = None,
+        interrupt_ends_run: bool = False,
     ) -> None:
         self.delay_s = delay_s
         self.progress = list(progress or ())
+        self.interrupt_ends_run = interrupt_ends_run
         self.opened: list[tuple[Task, str | None]] = []
         self.sessions: list[FakeAgentSession] = []
         self._script: FakeScript | None = results if callable(results) else None

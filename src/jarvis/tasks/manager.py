@@ -6,9 +6,15 @@ session. While it waits the row stays `queued`, so `cancel()` on a queued task s
 cancels the asyncio task before any agent is opened.
 
 State the manager keeps per task id: the asyncio task (`_tasks`), the open
-`AgentSession` (`_live`, so follow-ups and cancels can reach it), and an
-`asyncio.Event` (`_done_events`) that `wait_for` blocks on. The event is created at
-dispatch and stays set after a terminal state, so a late waiter returns immediately.
+`AgentSession` (`_live`, so follow-ups and cancels can reach it), an `asyncio.Event`
+(`_done_events`) that `wait_for` blocks on, a cancel flag (`_cancel_requested`) and the
+prompt a queued re-run will send (`_resume_pending`). The event is created at dispatch
+and stays set after a terminal state, so a late waiter returns immediately.
+
+`cancel()` cannot rely on cancelling the asyncio task alone: interrupting a live session
+is itself what ends the agent's turn, so `run()` typically returns a (useless) result
+first. Hence the flag — `_execute` checks it after `run()` returns and takes the cancel
+path instead of writing a terminal row or publishing an event.
 
 Progress lines are appended to `data_dir/tasks/<id>.log` and republished as
 `TaskProgress`; the agent's final text is written to `data_dir/tasks/<id>.md`, which is
@@ -127,7 +133,8 @@ class TaskManager:
         self._tasks: dict[int, asyncio.Task] = {}
         self._live: dict[int, AgentSession] = {}
         self._done_events: dict[int, asyncio.Event] = {}
-        self._cancelled_before_start: set[int] = set()
+        self._cancel_requested: set[int] = set()
+        self._resume_pending: dict[int, str] = {}
         settings.ensure_dirs()
 
     # --- lifecycle -------------------------------------------------------
@@ -207,19 +214,19 @@ class TaskManager:
         if count >= self._settings.daily_task_cap:
             raise TaskLimitError(self._settings.daily_task_cap, count)
 
-    def _spawn(self, task_id: int, *, prompt: str | None = None, resume: str | None = None) -> None:
+    def _spawn(self, task_id: int, *, resume: str | None = None) -> None:
         """Start the asyncio task that will run (or re-run) `task_id`."""
         self._tasks[task_id] = asyncio.create_task(
-            self._run(task_id, prompt=prompt, resume=resume), name=f"jarvis-task-{task_id}"
+            self._run(task_id, resume=resume), name=f"jarvis-task-{task_id}"
         )
 
     # --- running ---------------------------------------------------------
 
-    async def _run(self, task_id: int, *, prompt: str | None, resume: str | None) -> None:
+    async def _run(self, task_id: int, *, resume: str | None) -> None:
         """One task attempt, from the back of the queue to a terminal row."""
         try:
             async with self._semaphore:
-                await self._execute(task_id, prompt=prompt, resume=resume)
+                await self._execute(task_id, resume=resume)
         except asyncio.CancelledError:
             await self._mark_cancelled(task_id)
             raise
@@ -228,14 +235,15 @@ class TaskManager:
             await self._fail(task_id, f"{type(exc).__name__}: {exc}")
         finally:
             await self._close_session(task_id)
-            self._cancelled_before_start.discard(task_id)
+            self._cancel_requested.discard(task_id)
+            self._resume_pending.pop(task_id, None)
             self._done_event(task_id).set()
             if self._tasks.get(task_id) is asyncio.current_task():
                 del self._tasks[task_id]
 
-    async def _execute(self, task_id: int, *, prompt: str | None, resume: str | None) -> None:
+    async def _execute(self, task_id: int, *, resume: str | None) -> None:
         """Open a subagent for `task_id`, run one turn and record the outcome."""
-        if task_id in self._cancelled_before_start:
+        if task_id in self._cancel_requested:
             log.info("task %s was cancelled before it started", task_id)
             return
         task = await self._store.get(task_id)
@@ -256,10 +264,19 @@ class TaskManager:
         )
         await self._bus.publish(TaskStarted(task_id))
 
-        result = await session.run(
-            prompt if prompt is not None else build_prompt(task),
-            on_progress=partial(self._on_progress, task_id),
-        )
+        # A pending follow-up prompt (a resumed run) wins over the task's own prompt; it is
+        # read here, not at spawn time, so follow-ups arriving while the run was still
+        # queued are all included.
+        prompt = self._resume_pending.pop(task_id, None) or build_prompt(task)
+        result = await session.run(prompt, on_progress=partial(self._on_progress, task_id))
+
+        if task_id in self._cancel_requested:
+            # `interrupt()` ended the turn: the result is the wreckage of a cancel, not an
+            # outcome. Record the cancel and publish nothing, exactly as if the asyncio
+            # task's own cancellation had landed first.
+            log.info("task %s was cancelled while running; discarding the result", task_id)
+            await self._mark_cancelled(task_id)
+            return
         await self._finish(task, result)
 
     async def _finish(self, task: Task, result: RunResult) -> None:
@@ -392,9 +409,7 @@ class TaskManager:
             raise ValueError("task is cancelled")
 
         if task.status is TaskStatus.QUEUED:
-            updated = await self._store.update(
-                task_id, description=f"{task.description}\n\nAdditionally: {text}"
-            )
+            updated = await self._queue_followup(task, text)
         elif task.status is TaskStatus.RUNNING:
             session = self._live.get(task_id)
             if session is None:
@@ -407,8 +422,27 @@ class TaskManager:
         self._append_log(task_id, f"[followup] {text}")
         return updated
 
+    async def _queue_followup(self, task: Task, text: str) -> Task:
+        """Fold `text` into a queued task: into a pending resume prompt, else its description.
+
+        A task queued for a resumed run has already been described to the agent, so more
+        follow-up text belongs in the prompt that run will send, not in the description.
+        """
+        pending = self._resume_pending.get(task.id)
+        if pending is not None:
+            self._resume_pending[task.id] = f"{pending}\n\nAdditionally: {text}"
+            return task
+        return await self._store.update(
+            task.id, description=f"{task.description}\n\nAdditionally: {text}"
+        )
+
     async def _restart(self, task: Task, text: str) -> Task:
-        """Re-run a finished task, resuming its Claude session when there is one."""
+        """Queue a finished task for a re-run, resuming its Claude session if it has one.
+
+        The row goes back to `queued`, not `running`: the re-run still has to wait for the
+        semaphore, and a row may only claim to be running once a subagent is actually on it.
+        `summary` is left in place until the new run overwrites it.
+        """
         resume = task.claude_session_id
         if resume:
             prompt = text
@@ -416,10 +450,11 @@ class TaskManager:
             log.warning("task %s has no Claude session id; starting a fresh run", task.id)
             prompt = f"{build_prompt(task)}\n\nFollow-up: {text}"
         updated = await self._store.update(
-            task.id, status=TaskStatus.RUNNING, started_at=datetime.now(UTC), finished_at=None
+            task.id, status=TaskStatus.QUEUED, started_at=None, finished_at=None
         )
         self._done_event(task.id).clear()
-        self._spawn(task.id, prompt=prompt, resume=resume)
+        self._resume_pending[task.id] = prompt
+        self._spawn(task.id, resume=resume)
         return updated
 
     async def cancel(self, task_id: int) -> Task:
@@ -430,7 +465,10 @@ class TaskManager:
         if task.status in TERMINAL_STATUSES:
             return task
 
-        self._cancelled_before_start.add(task_id)
+        # The flag goes up *before* the interrupt: interrupting is what usually ends the
+        # turn, so `run()` can return (and `_execute` reach its post-run check) long before
+        # the asyncio cancellation below lands.
+        self._cancel_requested.add(task_id)
         session = self._live.get(task_id)
         if session is not None:
             try:
@@ -447,7 +485,8 @@ class TaskManager:
         if current is not None and current.status not in TERMINAL_STATUSES:
             # The asyncio task never got to run its cancellation handler.
             current = await self._mark_cancelled(task_id) or current
-        self._cancelled_before_start.discard(task_id)
+        self._cancel_requested.discard(task_id)
+        self._resume_pending.pop(task_id, None)
         self._done_event(task_id).set()
         return current
 

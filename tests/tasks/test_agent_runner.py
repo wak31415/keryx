@@ -19,6 +19,7 @@ from claude_agent_sdk.types import (
 
 from jarvis.tasks.agent_runner import (
     DEFAULT_FAKE_RESULT,
+    INTERRUPTED_RESULT,
     NO_SUMMARY,
     ClaudeAgentRunner,
     ClaudeAgentSession,
@@ -550,6 +551,18 @@ async def test_fake_session_records_follow_ups_interrupts_and_close():
     assert session.sent == ["and also this"]
     assert session.interrupts == 1
     assert session.closed is True
+
+
+async def test_fake_session_interrupt_can_end_the_turn():
+    runner = FakeAgentRunner(delay_s=30, interrupt_ends_run=True)
+    session = await runner.open(make_task())
+    turn = asyncio.create_task(session.run("go", on_progress=lambda t: None))
+    await asyncio.sleep(0)
+
+    await session.interrupt()
+
+    assert await asyncio.wait_for(turn, timeout=1) == INTERRUPTED_RESULT
+    assert session.interrupts == 1
 
 
 async def test_fake_session_run_is_cancellable_mid_delay():

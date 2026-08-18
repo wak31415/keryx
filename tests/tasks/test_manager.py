@@ -384,7 +384,7 @@ async def test_followup_on_a_finished_task_resumes_the_claude_session(make_harne
     await harness.manager.wait_for(task.id, timeout=WAIT)
 
     restarted = await harness.manager.followup(task.id, "one more thing")
-    assert restarted.status is TaskStatus.RUNNING
+    assert restarted.status is TaskStatus.QUEUED
     assert restarted.finished_at is None
 
     finished = await harness.manager.wait_for(task.id, timeout=WAIT)
@@ -422,6 +422,32 @@ async def test_followup_on_a_queued_task_extends_the_description(make_harness):
     assert updated.description == "two\n\nAdditionally: and also three"
     await harness.manager.wait_for(queued.id, timeout=WAIT)
     assert "and also three" in harness.runner.sessions[1].prompts[0]
+
+
+async def test_followup_on_a_finished_task_waits_for_the_semaphore_as_queued(make_harness):
+    """A re-run still has to queue, so the row must not claim to be running yet."""
+    harness = make_harness(FakeAgentRunner(delay_s=SLOW), max_concurrent_tasks=1)
+
+    first = await dispatch(harness.manager, description="one")
+    await harness.manager.wait_for(first.id, timeout=WAIT)
+    blocker = await dispatch(harness.manager, description="two")
+    await wait_for_status(harness.manager, blocker.id, TaskStatus.RUNNING)
+
+    restarted = await harness.manager.followup(first.id, "more please")
+
+    assert restarted.status is TaskStatus.QUEUED
+    assert (await harness.manager.get(first.id)).status is TaskStatus.QUEUED
+    assert len(harness.runner.opened) == 2  # nothing opened for the re-run yet
+
+    # A second follow-up while the re-run is still queued joins the pending prompt
+    # instead of being appended to the description the agent has already been given.
+    again = await harness.manager.followup(first.id, "and this too")
+    assert again.description == "one"
+
+    finished = await harness.manager.wait_for(first.id, timeout=WAIT)
+    assert finished.status is TaskStatus.DONE
+    assert harness.runner.opened[2][1] == "fake-session-1"
+    assert harness.runner.sessions[2].prompts == ["more please\n\nAdditionally: and this too"]
 
 
 async def test_followup_on_a_cancelled_task_is_an_error(make_harness):
@@ -469,6 +495,23 @@ async def test_cancel_a_running_task_interrupts_and_marks_cancelled(make_harness
     assert harness.runner.sessions[0].interrupts == 1
     assert harness.runner.sessions[0].closed is True
     assert harness.events.of(TaskCompleted, TaskFailed) == []
+
+
+async def test_cancel_when_the_interrupt_ends_the_turn_still_cancels(make_harness):
+    """Interrupting is what ends a real turn, so `run()` returns before the cancel lands."""
+    harness = make_harness(FakeAgentRunner(delay_s=30, interrupt_ends_run=True))
+
+    task = await dispatch(harness.manager)
+    await wait_for_status(harness.manager, task.id, TaskStatus.RUNNING)
+
+    cancelled = await harness.manager.cancel(task.id)
+
+    assert cancelled.status is TaskStatus.CANCELLED
+    assert cancelled.error is None
+    assert harness.runner.sessions[0].interrupts == 1
+    assert harness.runner.sessions[0].closed is True
+    assert harness.events.of(TaskCompleted, TaskFailed) == []
+    assert not (harness.settings.data_dir / "tasks" / f"{task.id}.md").exists()
 
 
 async def test_cancel_a_queued_task_never_opens_an_agent(make_harness):
