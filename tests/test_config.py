@@ -113,7 +113,6 @@ def test_ensure_dirs_creates_data_dir_tree(settings):
 def test_data_dir_expands_tilde(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("DATA_DIR", "~/.jarvis-test-does-not-exist")
-    monkeypatch.delenv("PROJECTS_ROOT", raising=False)
 
     settings = Settings(_env_file=None)
 
