@@ -1,0 +1,392 @@
+# Jarvis — phone + wake-word voice agent with Claude subagents
+
+Design spec, 2026-08-18. This is the binding authority for the implementation plan in
+`docs/superpowers/plans/2026-08-18-jarvis-voice-agent-plan.md`.
+
+## 1. Goal
+
+A personal voice agent William can reach two ways:
+
+1. **By phone** (Garmin watch / mobile → Twilio number). The call opens a realtime voice
+   session; the agent chats, answers questions, and **dispatches powerful subagents** that
+   run on his Mac with full local access (repos, files, web, email, calendar).
+2. **Locally, always-on** — a "hey jarvis" wake-word listener on the Mac mic/speaker that
+   opens the same kind of session without a phone.
+
+Reference: `frederikb96/twilio-voice-bridge` (thin Twilio↔OpenAI-Realtime relay, no tools).
+We borrow its transport/provider split and Twilio handling and add a transport-agnostic
+session core, a tool layer, Claude Agent SDK subagents, a task registry, notifications,
+PIN gating, and the local wake-word transport.
+
+## 2. Decisions
+
+| Decision | Choice |
+|---|---|
+| Realtime voice layer | **OpenAI Realtime API** (`gpt-realtime-2.1`, speech-to-speech, server VAD, function calling) |
+| Subagent runtime | **Claude Agent SDK (Python)**, `permission_mode="bypassPermissions"`, in-process |
+| Cowork access | Gmail + Google Calendar via **`workspace-mcp`** stdio MCP server |
+| Results | Announce in live session → SMS summary → persist tasks (SQLite) → outbound call-back only when requested |
+| Exposure | **ngrok reserved domain**, server as launchd agent |
+| Auth | Twilio signature + caller allowlist + one-time stream token; **PIN only for destructive kinds** (`coding`, `cowork`); local sessions pre-authorized |
+| Local audio | built-in mic/speakers, **half-duplex** (mic gated off while agent speaks); wake word via **openWakeWord `hey_jarvis`** (onnx) |
+| Subagent model | `claude-opus-5` default; `dispatch_task.model` accepts `opus`/`sonnet`/`fable`/`haiku` or a full model id |
+| Inbound SMS | Out of scope (SMS is outbound summaries only) |
+| Language / tooling | Python 3.12, `uv`, FastAPI + uvicorn, typer, pytest (+ pytest-asyncio), ruff |
+| Repo | this folder; GitHub private repo `garmin-voice-agent` |
+
+Prerequisites William supplies (in `.env`): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
+(Agent SDK is pay-per-token; it does not use the Claude Max login), Twilio account
+SID / auth token / number, ngrok reserved domain, Google Cloud OAuth client
+(Gmail + Calendar scopes).
+
+## 3. Architecture
+
+```
+Phone/Watch ─PSTN─▶ Twilio ─WSS media stream─▶ ngrok ─▶ FastAPI (Mac)
+                                                          │
+Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTransport
+                                                          ▼
+                                    VoiceSession  (transport-agnostic core)
+                               audio pump ▲▼   tool calls   ▲ announce()
+                                          │                 │
+                            OpenAIRealtimeClient        Notifier ◀── EventBus
+                                          │                 ▲
+                                    ToolRegistry ──▶ TaskManager ──▶ Claude Agent SDK
+                                                          │  (one AgentSession per task)
+                                                          ▼
+                                             SQLite tasks  +  Twilio SMS / call-back
+```
+
+### 3.1 Package layout (`src/jarvis/`)
+
+| Module | Responsibility |
+|---|---|
+| `config.py` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails |
+| `events.py` | in-process async pub/sub `EventBus` + event dataclasses |
+| `audio/util.py` | soxr resampling, µ-law⇄PCM16 (tests/dev only), chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` |
+| `transports/base.py` | `Transport` protocol + `AudioIn`/`Dtmf`/`Hangup` events |
+| `transports/twilio_ws.py` | Twilio media-stream WS transport (µ-law passthrough) |
+| `transports/local_audio.py` | `LocalAudioDevice` (sounddevice mic/speaker, gate, chime) + `LocalTransport` (one session over the device) |
+| `wakeword.py` | `WakeWordDetector` protocol; `OpenWakeWordDetector`; `WakeWordListener` loop |
+| `local_runner.py` | idle (wake-word) ⇄ session state machine for the local channel |
+| `realtime/base.py` | `RealtimeProvider` protocol, `SessionConfig`, typed provider events |
+| `realtime/openai.py` | OpenAI Realtime WS client (GA schema) |
+| `session.py` | `VoiceSession` (wires transport⇄provider, barge-in, tool dispatch, PIN gate, announcements, lifecycle, transcript log) + `SessionRegistry` |
+| `tools/registry.py` | `ToolRegistry`, `ToolContext`; `tools/builtin.py` registers the tool set |
+| `tasks/models.py` | `Task`, `TaskKind`, `TaskStatus` |
+| `tasks/store.py` | SQLite store (`TaskStore`) |
+| `tasks/agent_runner.py` | `AgentRunner` protocol; `ClaudeAgentRunner` (Agent SDK); `FakeAgentRunner` (tests) |
+| `tasks/manager.py` | `TaskManager`: queue/semaphore, lifecycle, follow-up, cancel, logs, events |
+| `notify/notifier.py` | routes task results: live sessions → SMS → call-back |
+| `notify/twilio_out.py` | SMS + outbound call (TwiML with `<Parameter>`) |
+| `server.py` | FastAPI app: `/twilio/voice`, `/twilio/media`, `/twilio/status`, `/health`, `/reports/{id}` |
+| `app.py` | `AppState` composition root (settings → store, bus, manager, registry, notifier, session registry) |
+| `prompts/voice_system.md` | receptionist persona + tool-use guidance |
+| `prompts/subagent_suffix.md` | appended to Agent SDK system prompt: autonomous, ends with `SPOKEN_SUMMARY:` block |
+| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `setup-google`, `doctor` |
+
+### 3.2 Binding interfaces
+
+These signatures are shared across tasks; implementers must match them exactly (adding
+optional keyword args is fine, renaming is not).
+
+```python
+# events.py
+class EventBus:
+    def subscribe(self, event_type: type, handler) -> Callable[[], None]   # handler sync or async; returns unsubscribe
+    async def publish(self, event) -> None                                  # awaits async handlers; exceptions logged, never propagated
+
+@dataclass class TaskStarted:   task_id: int
+@dataclass class TaskProgress:  task_id: int; text: str
+@dataclass class TaskCompleted: task_id: int; summary: str
+@dataclass class TaskFailed:    task_id: int; error: str
+@dataclass class SessionStarted: session_id: str; channel: str; caller: str | None
+@dataclass class SessionEnded:   session_id: str; channel: str; caller: str | None; reason: str
+```
+
+```python
+# transports/base.py
+AudioFormat = Literal["audio/pcmu", "audio/pcm"]      # pcmu = G.711 µ-law 8 kHz; pcm = 16-bit LE mono 24 kHz
+@dataclass class AudioIn: data: bytes; timestamp_ms: int | None = None   # timestamp = transport clock (Twilio media.timestamp), else None
+@dataclass class Dtmf:    digit: str
+@dataclass class Hangup:  reason: str
+TransportEvent = AudioIn | Dtmf | Hangup
+
+class Transport(Protocol):
+    channel: Literal["phone", "local"]
+    caller: str | None                    # E.164 for phone; None for local
+    audio_format: AudioFormat             # same for in and out
+    def events(self) -> AsyncIterator[TransportEvent]: ...
+    async def send_audio(self, data: bytes) -> None: ...   # enqueue for playback
+    async def clear(self) -> None: ...                     # drop queued playback (barge-in)
+    async def hangup(self) -> None: ...                    # end the call/session; events() finishes
+```
+
+```python
+# realtime/base.py
+@dataclass class SessionConfig:
+    instructions: str
+    tools: list[dict]                       # OpenAI function-tool schemas: {"type":"function","name","description","parameters"}
+    voice: str
+    audio_format: AudioFormat               # used for both input and output
+    vad_threshold: float = 0.5
+    vad_silence_ms: int = 500
+    vad_prefix_ms: int = 300
+    interrupt_response: bool = True         # False for local (half-duplex)
+    transcription_model: str | None = "gpt-4o-mini-transcribe"
+
+@dataclass class AudioDelta:     item_id: str; audio: bytes                    # decoded bytes in session audio_format
+@dataclass class SpeechStarted:  item_id: str | None; audio_start_ms: int
+@dataclass class SpeechStopped:  pass
+@dataclass class ResponseStarted: response_id: str
+@dataclass class ResponseDone:   response_id: str; status: str
+@dataclass class FunctionCall:   call_id: str; name: str; arguments: dict
+@dataclass class Transcript:     role: Literal["user","assistant"]; text: str; item_id: str | None
+@dataclass class ProviderError:  code: str | None; message: str; fatal: bool
+@dataclass class Disconnected:   reason: str
+ProviderEvent = Union[...all of the above...]
+
+class RealtimeProvider(Protocol):
+    async def connect(self, config: SessionConfig) -> None
+    async def close(self) -> None
+    def events(self) -> AsyncIterator[ProviderEvent]          # ends after Disconnected
+    async def send_audio(self, data: bytes) -> None            # bytes in config.audio_format
+    async def submit_tool_result(self, call_id: str, output: dict | str) -> None   # creates function_call_output item + requests a response
+    async def inject_message(self, text: str, *, respond: bool = True, response_instructions: str | None = None) -> None
+    async def truncate(self, item_id: str, audio_end_ms: int) -> None
+    async def cancel_response(self) -> None
+    async def reconnect(self) -> bool                          # one attempt: re-open WS + re-send session config
+```
+
+Provider rule: **only one active response at a time.** `submit_tool_result` and
+`inject_message(respond=True)` go through an internal response queue: if a response is
+active (between `response.created` and `response.done`), the `response.create` is queued
+and sent when the active response finishes. Items (`conversation.item.create`) are sent
+immediately.
+
+```python
+# tools/registry.py
+@dataclass class ToolContext:
+    session: "VoiceSession"           # duck-typed: needs .authorized, .channel, .caller, .session_id, .request_end(), .authorize()
+    channel: str
+    caller: str | None
+    @property authorized -> bool
+
+ToolHandler = Callable[[ToolContext, dict], Awaitable[dict]]
+class ToolRegistry:
+    def register(self, name: str, description: str, parameters: dict, handler: ToolHandler) -> None
+    def schemas(self) -> list[dict]
+    async def call(self, name: str, arguments: dict, ctx: ToolContext) -> dict   # unknown tool / exception → {"error": "..."}; never raises
+```
+
+```python
+# tasks/models.py
+class TaskKind(StrEnum): CHAT="chat"; RESEARCH="research"; CODING="coding"; COWORK="cowork"
+class TaskStatus(StrEnum): QUEUED="queued"; RUNNING="running"; DONE="done"; FAILED="failed"; CANCELLED="cancelled"
+DESTRUCTIVE_KINDS = {TaskKind.CODING, TaskKind.COWORK}     # require PIN on phone
+
+@dataclass class Task:
+    id: int | None; kind: TaskKind; description: str; status: TaskStatus = QUEUED
+    project: str | None = None; cwd: str | None = None; model: str = "claude-opus-5"
+    claude_session_id: str | None = None; summary: str | None = None; report_path: str | None = None
+    error: str | None = None
+    origin_channel: str = "local"; origin_caller: str | None = None
+    callback_requested: bool = False; callback_number: str | None = None
+    announced: bool = False; sms_sent: bool = False
+    created_at: datetime; started_at: datetime | None; finished_at: datetime | None
+```
+
+```python
+# tasks/store.py
+class TaskStore:
+    def __init__(self, path: Path | str)                # ":memory:" allowed for tests
+    async def create(self, task: Task) -> Task            # assigns id
+    async def get(self, task_id: int) -> Task | None
+    async def update(self, task_id: int, **fields) -> Task
+    async def list(self, *, status: TaskStatus | None = None, limit: int = 20) -> list[Task]   # newest first
+    async def count_created_since(self, since: datetime) -> int
+    async def close(self) -> None
+```
+
+```python
+# tasks/agent_runner.py
+@dataclass class RunResult:
+    ok: bool; final_text: str; spoken_summary: str; session_id: str | None; cost_usd: float | None; error: str | None
+
+class AgentSession(Protocol):                                     # one live subagent conversation
+    async def run(self, prompt: str, *, on_progress: Callable[[str], Any]) -> RunResult   # one turn to completion; ok=False on error
+    async def send(self, text: str) -> None                       # follow-up while running (queued into the live conversation)
+    async def interrupt(self) -> None
+    async def close(self) -> None
+
+class AgentRunner(Protocol):
+    async def open(self, task: Task, *, resume: str | None = None) -> AgentSession
+
+class ClaudeAgentRunner(AgentRunner): ...                          # real Agent SDK
+class FakeAgentRunner(AgentRunner): ...                            # scripted, for tests
+
+def extract_spoken_summary(text: str) -> str                      # SPOKEN_SUMMARY: block → else last paragraph (≤ 400 chars)
+```
+
+```python
+# tasks/manager.py
+class TaskManager:
+    def __init__(self, store: TaskStore, runner: AgentRunner, bus: EventBus, settings: Settings)
+    async def start(self) -> None; async def shutdown(self) -> None
+    async def dispatch(self, kind, description, *, project=None, model=None, origin_channel, origin_caller) -> Task   # raises TaskLimitError / UnknownProjectError
+    async def wait_for(self, task_id: int, timeout: float) -> Task     # returns as soon as terminal or timeout
+    async def followup(self, task_id: int, text: str) -> Task
+    async def cancel(self, task_id: int) -> Task
+    async def get(self, task_id: int) -> Task | None
+    async def list(self, *, status=None, limit=20) -> list[Task]
+    def resolve_project(self, name: str) -> tuple[str, Path]           # raises UnknownProjectError
+    def list_projects(self) -> list[tuple[str, Path]]
+```
+
+```python
+# session.py
+class VoiceSession:
+    def __init__(self, transport, provider, settings, tools: ToolRegistry, bus: EventBus, *,
+                 authorized: bool, opening_context: str | None = None, session_id: str | None = None)
+    session_id: str; channel: str; caller: str | None; authorized: bool
+    async def run(self) -> None                       # returns when session ends
+    async def announce(self, text: str) -> bool       # inject + speak; False if session not live
+    def request_end(self, reason: str = "user") -> None
+    def authorize(self) -> None
+
+class SessionRegistry:
+    def add(self, s: VoiceSession); def remove(self, s: VoiceSession); def live(self) -> list[VoiceSession]
+```
+
+### 3.3 Key behaviors
+
+- **Session start (phone)**: Twilio → `POST /twilio/voice` validates signature + allowlist,
+  mints a one-time stream token, returns TwiML
+  `<Connect><Stream url="wss://HOST/twilio/media"><Parameter name="token"…/><Parameter name="caller"…/></Stream></Connect>`.
+  WS `start` carries `customParameters`; token must match a pending token (single-use, 60 s
+  TTL) or the socket is closed. Then `VoiceSession(TwilioTransport)` runs; the agent greets
+  first. Outbound call-backs carry `task_id` so the session opens with the summary.
+- **Session start (local)**: wake word → chime → `VoiceSession(LocalTransport)` (pre-authorized)
+  → short greeting ("Yes?").
+- **Barge-in (phone)**: `SpeechStarted` → `transport.clear()` + `provider.truncate(item_id, played_ms)`
+  where `played_ms` = transport clock delta since the current item's first audio delta
+  (Twilio `media.timestamp`), else wall clock; capped at total ms sent for that item. Local
+  transport is half-duplex: mic gated off while playing (+200 ms hangover) → no barge-in,
+  `interrupt_response=False`.
+- **dispatch_task(kind, description, project?, model?, wait_seconds≤25)**: creates the task and
+  starts it; if it finishes within `wait_seconds` the summary is returned inline; else returns
+  `{task_id, status:"running"}` and the model tells the user it will announce completion.
+- **Task completion**: `TaskCompleted` → Notifier: (1) `announce()` on every live session
+  (marks `announced`), (2) SMS summary (with report link) unless a live *phone* session
+  announced it, (3) if `callback_requested` and no live phone session announced → outbound
+  call with `task_id`.
+- **PIN gate**: `session.authorized` starts False on phone; `submit_pin` (spoken) or DTMF
+  digits (collected in the session, never shown to the model) flip it; `dispatch_task` for
+  `coding`/`cowork` returns `{"status":"pin_required"}` until authorized. Constant-time
+  compare; 3 failures → say goodbye and hang up.
+- **Follow-ups**: `send_followup(task_id, text)` → running task: `AgentSession.send()`;
+  finished task: new run with `resume=claude_session_id`.
+- **Concurrency**: `MAX_CONCURRENT_TASKS` (default 3); overflow tasks stay `queued`.
+- **Local session end**: `end_session` tool, or `LOCAL_SILENCE_TIMEOUT` (30 s without user speech
+  after the last response) → goodbye → back to wake-word listening.
+- **Reconnects**: provider WS drop mid-call → one `reconnect()`; on success inject
+  "[system] connection was reset; briefly apologize and continue"; on failure end session.
+  Twilio WS drop → session teardown; tasks keep running.
+- **Guardrails**: `MAX_CALL_SECONDS` (default 1800), `SUBAGENT_MAX_TURNS`, `SUBAGENT_MAX_BUDGET_USD`,
+  `DAILY_TASK_CAP`.
+
+### 3.4 Configuration (`.env` names → `Settings` fields)
+
+| Env | Field | Default |
+|---|---|---|
+| `OPENAI_API_KEY` | `openai_api_key` | required |
+| `OPENAI_REALTIME_MODEL` | `openai_realtime_model` | `gpt-realtime-2.1` |
+| `OPENAI_VOICE` | `openai_voice` | `marin` |
+| `OPENAI_TRANSCRIPTION_MODEL` | `openai_transcription_model` | `gpt-4o-mini-transcribe` |
+| `ANTHROPIC_API_KEY` | `anthropic_api_key` | `None` |
+| `SUBAGENT_MODEL` | `subagent_model` | `claude-opus-5` |
+| `SUBAGENT_MAX_TURNS` | `subagent_max_turns` | `200` |
+| `SUBAGENT_MAX_BUDGET_USD` | `subagent_max_budget_usd` | `10.0` |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_NUMBER` | `twilio_account_sid` / `twilio_auth_token` / `twilio_number` | `None` |
+| `ALLOWED_CALLERS` | `allowed_callers: list[str]` (comma-separated E.164) | `[]` |
+| `OWNER_NUMBER` | `owner_number` | first of `allowed_callers` |
+| `JARVIS_PIN` | `pin` | `None` (PIN-gated kinds refused on phone if unset) |
+| `PUBLIC_HOST` | `public_host` (e.g. `jarvis.ngrok.app`) | `None` |
+| `HOST` / `PORT` | `host` / `port` | `127.0.0.1` / `8080` |
+| `PROJECTS` | `projects: dict[str,str]` (JSON) | `{}` |
+| `PROJECTS_ROOT` | `projects_root` | `~/Local/coding_projects` |
+| `DATA_DIR` | `data_dir` | `~/.jarvis` |
+| `MAX_CONCURRENT_TASKS` | `max_concurrent_tasks` | `3` |
+| `DISPATCH_WAIT_MAX_SECONDS` | `dispatch_wait_max_seconds` | `25` |
+| `LOCAL_SILENCE_TIMEOUT` | `local_silence_timeout` | `30` |
+| `MAX_CALL_SECONDS` | `max_call_seconds` | `1800` |
+| `DAILY_TASK_CAP` | `daily_task_cap` | `50` |
+| `WAKEWORD_MODEL` / `WAKEWORD_THRESHOLD` | `wakeword_model` / `wakeword_threshold` | `hey_jarvis` / `0.5` |
+| `REPORT_SECRET` | `report_secret` | `None` → random secret persisted at `data_dir/report_secret` |
+| `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` / `USER_GOOGLE_EMAIL` | same names lowercased | `None` |
+| `LOG_LEVEL` | `log_level` | `INFO` |
+
+Data layout under `data_dir`: `tasks.db`, `tasks/<id>.log` (agent transcript),
+`tasks/<id>.md` (final report), `calls/<session_id>.log` (voice transcript),
+`report_secret`, `google/` (MCP credentials).
+
+## 4. Verified API notes (Aug 2026)
+
+**OpenAI Realtime (GA)** — `wss://api.openai.com/v1/realtime?model=gpt-realtime-2.1`,
+header `Authorization: Bearer …`, **no** `OpenAI-Beta` header.
+- `session.update`: `{"type":"session.update","session":{"type":"realtime","instructions":…,
+  "tools":[{"type":"function","name":…,"description":…,"parameters":{…}}],"tool_choice":"auto",
+  "audio":{"input":{"format":{"type":"audio/pcmu"},"turn_detection":{"type":"server_vad",
+  "threshold":0.5,"prefix_padding_ms":300,"silence_duration_ms":500,"create_response":true,
+  "interrupt_response":true},"transcription":{"model":"gpt-4o-mini-transcribe"}},
+  "output":{"format":{"type":"audio/pcmu"},"voice":"marin"}}}}`.
+  Formats: `audio/pcmu`, `audio/pcma` (8 kHz G.711 — Twilio path, no transcoding),
+  `audio/pcm` (24 kHz 16-bit LE mono — local path).
+- Client events: `input_audio_buffer.append{audio:b64}`, `conversation.item.create{item}`,
+  `conversation.item.truncate{item_id,content_index:0,audio_end_ms}`, `response.create{response?}`,
+  `response.cancel`.
+- Server events: `session.created`, `session.updated`, `input_audio_buffer.speech_started{item_id,audio_start_ms}`,
+  `input_audio_buffer.speech_stopped`, `response.created{response.id}`,
+  `response.output_audio.delta{item_id,delta:b64}`, `response.output_audio_transcript.done{item_id,transcript}`,
+  `conversation.item.input_audio_transcription.completed{item_id,transcript}`,
+  `response.function_call_arguments.done{call_id,name,arguments:json-string}`,
+  `response.output_item.done{item:{type:"function_call",…}}`, `response.done{response.id,response.status}`,
+  `error{error:{type,code,message}}`, `rate_limits.updated`.
+- Function calling: `conversation.item.create{item:{type:"function_call_output",call_id,output:"<json string>"}}` → `response.create`.
+- Unprompted speech: `conversation.item.create{item:{type:"message",role:"system",content:[{type:"input_text",text}]}}` + `response.create{response:{instructions}}`.
+
+**Twilio media streams** — TwiML `<Connect><Stream url="wss://HOST/twilio/media"><Parameter name="…" value="…"/></Stream></Connect>`
+(`url` cannot carry a query string). Inbound WS messages: `connected`, `start{streamSid,callSid,customParameters,mediaFormat}`,
+`media{media:{payload:b64 µ-law, timestamp:"ms"}}`, `dtmf{dtmf:{digit}}`, `mark{mark:{name}}`, `stop`.
+Outbound: `{"event":"media","streamSid",…,"media":{"payload":b64}}`, `{"event":"mark","streamSid",…,"mark":{"name"}}`,
+`{"event":"clear","streamSid"}`. Signature: `twilio.request_validator.RequestValidator(auth_token).validate(url, params, signature)`
+with URL rebuilt from `x-forwarded-proto` / `x-forwarded-host` when present. Python:
+`Client(sid, token).messages.create(from_=, to=, body=)`, `client.calls.create(to=, from_=, twiml=, status_callback=)`.
+
+**openWakeWord 0.6.0** — `openwakeword.utils.download_models(model_names=["hey_jarvis"])` once;
+`Model(wakeword_models=["hey_jarvis"], inference_framework="onnx")`; `predict(int16 ndarray of 1280 samples @16 kHz)`
+returns `{model_name: score}` (key is `hey_jarvis` in 0.6.0 — take the max over values, don't hardcode).
+
+**Claude Agent SDK (`claude-agent-sdk` 0.2.x)** — needs `claude` CLI on PATH + `ANTHROPIC_API_KEY`.
+`ClaudeSDKClient(ClaudeAgentOptions(permission_mode="bypassPermissions", cwd=…, setting_sources=["user","project"],
+system_prompt={"type":"preset","preset":"claude_code","append": SUFFIX}, model=…, mcp_servers={…}, allowed_tools=[…],
+max_turns=…, max_budget_usd=…, resume=<session_id>, env={…}))`; `await client.connect()`, `await client.query(prompt)`,
+`async for msg in client.receive_response()` yields `AssistantMessage(content=[TextBlock|ToolUseBlock|…])`,
+`UserMessage` (tool results), `SystemMessage`, `ResultMessage(session_id, result, total_cost_usd, is_error, num_turns)`;
+`await client.interrupt()`, `await client.disconnect()`. `client.query()` may be called again to send a follow-up.
+
+**Google Workspace MCP** — `uvx workspace-mcp --tools gmail calendar --transport stdio --single-user`;
+env `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/oauth2callback`,
+`USER_GOOGLE_EMAIL`, `GOOGLE_MCP_CREDENTIALS_DIR`, `OAUTHLIB_INSECURE_TRANSPORT=1`. Wire as
+`mcp_servers={"google":{"type":"stdio","command":"uvx","args":[…],"env":{…}}}`, `allowed_tools=["mcp__google__*"]`.
+
+**sounddevice 0.5.x** — `InputStream(samplerate=24000, dtype="int16", channels=1, blocksize=1920, callback=…)`
+(80 ms frames → soxr → 1280 samples @16 kHz for the wake word), `RawOutputStream(samplerate=24000, dtype="int16", channels=1, callback=…)`.
+Callbacks run on the PortAudio thread → hand off with `loop.call_soon_threadsafe`.
+
+## 5. Security model
+
+`bypassPermissions` = the subagents have William's full user access. Exposure surface: ngrok
+tunnel to `/twilio/*` (signature-validated + allowlist + one-time stream token) and
+`/reports/{id}?t=` (HMAC token). PIN protects destructive task kinds on the phone channel.
+Caller ID is spoofable → the PIN is the real gate for `coding`/`cowork`.
