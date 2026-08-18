@@ -281,6 +281,15 @@ class LocalTransport:
     async def clear(self) -> None:
         self._device.clear_playback()
 
+    async def drain(self, timeout: float = 5.0) -> bool:
+        """Wait until queued playback has finished; False if `timeout` elapses first.
+
+        The optional hook `VoiceSession` looks for before hanging up: playback here is a
+        queue feeding the speaker, so hanging up straight away would cut the goodbye off
+        mid-word. Transports that play audio synchronously simply don't offer it.
+        """
+        return await self._device.wait_until_idle(timeout)
+
     async def hangup(self, reason: str = "local session ended") -> None:
         """Detach the mic, drop playback and finish `events()`. Idempotent."""
         if self._closed:

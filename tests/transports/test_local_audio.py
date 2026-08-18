@@ -352,6 +352,28 @@ async def test_transport_hangup_is_idempotent(device):
         await asyncio.wait_for(anext(events), 1)
 
 
+async def test_transport_drain_waits_for_queued_playback(device, factory):
+    """The session calls `drain` before `hangup`, so a goodbye is heard in full."""
+    transport = LocalTransport(device)
+    await transport.send_audio(tone())
+
+    drain = asyncio.create_task(transport.drain(1.0))
+    await asyncio.sleep(0)
+    assert not drain.done()
+
+    factory.pull_speaker()  # the speaker consumes the queued audio
+    factory.pull_speaker()  # ... and the next callback finds the buffer empty
+
+    assert await asyncio.wait_for(drain, 1) is True
+
+
+async def test_transport_drain_gives_up_after_the_timeout(device):
+    transport = LocalTransport(device)
+    await transport.send_audio(tone())
+
+    assert await asyncio.wait_for(transport.drain(0.05), 1) is False
+
+
 async def test_transport_matches_the_transport_protocol(device):
     transport = LocalTransport(device)
     method_names = [name for name in vars(Transport) if not name.startswith("_")]

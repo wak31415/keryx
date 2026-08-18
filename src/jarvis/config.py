@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     # Task concurrency / limits
     max_concurrent_tasks: int = 3
     dispatch_wait_max_seconds: int = 25
-    local_silence_timeout: int = 30
-    max_call_seconds: int = 1800
+    local_silence_timeout: float = 30  # seconds; 0 disables the local silence timeout
+    max_call_seconds: float = 1800  # seconds; 0 disables the phone call-duration limit
     daily_task_cap: int = 50
 
     # Wake word

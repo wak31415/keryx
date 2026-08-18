@@ -54,7 +54,14 @@ TransportEvent = AudioIn | Dtmf | Hangup
 
 
 class Transport(Protocol):
-    """The audio pipe of a single session."""
+    """The audio pipe of a single session.
+
+    A transport whose playback is queued (the local speaker) may also offer
+    `async def drain(timeout: float) -> bool`, which waits for that queue to empty. The
+    session calls it, when present, just before `hangup()` so a goodbye is heard in full.
+    It is deliberately not part of this protocol: transports that write straight to the
+    wire have nothing to drain.
+    """
 
     channel: Literal["phone", "local"]
     caller: str | None  # E.164 for phone, None for local
