@@ -7,6 +7,13 @@ and `close()` end it. The SDK client is injected (`client_factory`) so tests nev
 the `claude` CLI. `FakeAgentRunner` is the scripted stand-in used by tests and by the
 CLI's `--fake-agents` dev flag.
 
+Tool restriction per task kind goes through `ClaudeAgentOptions.tools` — the base set of
+built-in tools the subagent has at all. Do **not** use `allowed_tools` for that: it is an
+auto-approve list, and under `permission_mode="bypassPermissions"` everything is approved
+anyway, so a `chat` subagent listed there would still have Bash, Edit and Write. The one
+`allowed_tools` entry we keep is the `mcp__google__*` wildcard for cowork, because MCP
+tools are not built-ins and `tools` cannot express them.
+
 Every subagent is told (via `prompts/subagent_suffix.md`) to end its final message with a
 `SPOKEN_SUMMARY:` line; `extract_spoken_summary` turns that into the sentence the voice
 session reads out, falling back to the last paragraph when the agent forgot.
@@ -45,14 +52,20 @@ MODEL_ALIASES = {
 }
 
 _READ_ONLY_TOOLS = ["WebSearch", "WebFetch", "Read", "Glob", "Grep"]
-_COWORK_TOOLS = ["mcp__google__*", "WebSearch", "WebFetch", "Read"]
 
-# `coding` is deliberately absent: no `allowed_tools` restriction at all.
-ALLOWED_TOOLS: dict[TaskKind, list[str]] = {
+# The base set of *built-in* tools each kind may use at all. `tools` is the only option
+# that restricts — never `allowed_tools`, which merely auto-approves (a no-op under
+# `bypassPermissions`). `coding` is deliberately absent: no `tools` key, so it keeps every
+# built-in tool.
+BUILTIN_TOOLS: dict[TaskKind, list[str]] = {
     TaskKind.CHAT: _READ_ONLY_TOOLS,
     TaskKind.RESEARCH: [*_READ_ONLY_TOOLS, "Write"],
-    TaskKind.COWORK: _COWORK_TOOLS,
+    TaskKind.COWORK: ["WebSearch", "WebFetch", "Read"],
 }
+
+# MCP tools are not built-ins, so `tools` cannot filter them; this wildcard is only there
+# to auto-approve the google server's tools.
+COWORK_MCP_TOOLS = ["mcp__google__*"]
 
 GOOGLE_MCP_ARGS = [
     "workspace-mcp",
@@ -253,11 +266,12 @@ def build_options(
         "max_budget_usd": settings.subagent_max_budget_usd,
         "resume": resume,
     }
-    allowed_tools = ALLOWED_TOOLS.get(task.kind)
-    if allowed_tools is not None:
-        options["allowed_tools"] = list(allowed_tools)
+    builtin_tools = BUILTIN_TOOLS.get(task.kind)
+    if builtin_tools is not None:
+        options["tools"] = list(builtin_tools)
     if task.kind is TaskKind.COWORK:
         options["mcp_servers"] = {"google": _google_mcp_server(settings)}
+        options["allowed_tools"] = list(COWORK_MCP_TOOLS)
     if settings.anthropic_api_key:
         options["env"] = {"ANTHROPIC_API_KEY": settings.anthropic_api_key}
     return ClaudeAgentOptions(**options)

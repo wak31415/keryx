@@ -264,22 +264,26 @@ def test_build_options_resolves_the_task_model(settings):
     assert options.model == "claude-sonnet-5"
 
 
-def test_build_options_for_chat_allows_read_only_tools(settings):
+def test_build_options_for_chat_gives_only_read_only_built_ins(settings):
     options = build_options(make_task(kind=TaskKind.CHAT), settings)
 
-    assert options.allowed_tools == ["WebSearch", "WebFetch", "Read", "Glob", "Grep"]
+    # `tools` is the restricting option; `allowed_tools` only auto-approves.
+    assert options.tools == ["WebSearch", "WebFetch", "Read", "Glob", "Grep"]
+    assert options.allowed_tools == []
     assert options.mcp_servers == {}
 
 
-def test_build_options_for_research_also_allows_write(settings):
+def test_build_options_for_research_also_gives_write(settings):
     options = build_options(make_task(kind=TaskKind.RESEARCH), settings)
 
-    assert options.allowed_tools == ["WebSearch", "WebFetch", "Read", "Glob", "Grep", "Write"]
+    assert options.tools == ["WebSearch", "WebFetch", "Read", "Glob", "Grep", "Write"]
+    assert options.allowed_tools == []
 
 
 def test_build_options_for_coding_does_not_restrict_tools(settings):
     options = build_options(make_task(kind=TaskKind.CODING), settings)
 
+    assert options.tools is None
     assert options.allowed_tools == []
     assert options.mcp_servers == {}
 
@@ -291,7 +295,8 @@ def test_build_options_for_cowork_wires_the_google_mcp_server(settings):
 
     options = build_options(make_task(kind=TaskKind.COWORK), settings)
 
-    assert options.allowed_tools == ["mcp__google__*", "WebSearch", "WebFetch", "Read"]
+    assert options.tools == ["WebSearch", "WebFetch", "Read"]
+    assert options.allowed_tools == ["mcp__google__*"]
     google = options.mcp_servers["google"]
     assert google["type"] == "stdio"
     assert google["command"] == "uvx"
@@ -341,7 +346,7 @@ async def test_runner_open_connects_a_client_built_from_the_task(settings):
     assert isinstance(session, ClaudeAgentSession)
     assert created[0].connects == 1
     assert created[0].options.resume == "sess-3"
-    assert created[0].options.allowed_tools[-1] == "Write"
+    assert created[0].options.tools[-1] == "Write"
 
 
 async def test_runner_open_propagates_a_connect_failure(settings):
