@@ -14,11 +14,11 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.realtime import (
+from jarvis.realtime import openai as realtime_openai
+from jarvis.realtime.base import (
     AudioDelta,
     Disconnected,
     FunctionCall,
-    OpenAIRealtimeClient,
     ProviderError,
     ProviderEvent,
     RealtimeProvider,
@@ -28,9 +28,8 @@ from jarvis.realtime import (
     SpeechStarted,
     SpeechStopped,
     Transcript,
-    build_session_update,
 )
-from jarvis.realtime import openai as realtime_openai
+from jarvis.realtime.openai import OpenAIRealtimeClient, build_session_update
 
 from .fake_ws import FakeConnector, FakeWS
 

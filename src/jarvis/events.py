@@ -56,12 +56,12 @@ class EventBus:
     """Minimal in-process pub/sub.
 
     Dispatch is by exact `type(event)` match, plus every handler subscribed to the
-    wildcard type `object`, which receives every published event (used by things like
-    the transcript logger). `publish` is safe to call from within a handler: it takes a
-    snapshot of the subscriber list before iterating, so handlers that subscribe,
-    unsubscribe, or publish further events during dispatch never mutate the list a
-    publish is currently iterating, and there is no lock that could deadlock on
-    re-entrant calls.
+    wildcard type `object`, which receives every published event (a test seam for
+    asserting on everything a component published). `publish` is safe to call from
+    within a handler: it takes a snapshot of the subscriber list before iterating, so
+    handlers that subscribe, unsubscribe, or publish further events during dispatch
+    never mutate the list a publish is currently iterating, and there is no lock that
+    could deadlock on re-entrant calls.
     """
 
     def __init__(self) -> None:
