@@ -28,7 +28,6 @@ class TokenInfo:
 
     caller: str | None
     extra: dict = field(default_factory=dict)
-    issued_at: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -58,10 +57,9 @@ class StreamTokenStore:
         """Mint a token for `caller`, valid once, for `ttl_s` seconds."""
         self._purge()
         token = secrets.token_urlsafe(TOKEN_BYTES)
-        issued_at = self._now()
         self._entries[token] = _Entry(
-            TokenInfo(caller=caller, extra=dict(extra or {}), issued_at=issued_at),
-            expires_at=issued_at + ttl_s,
+            TokenInfo(caller=caller, extra=dict(extra or {})),
+            expires_at=self._now() + ttl_s,
         )
         return token
 

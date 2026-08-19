@@ -403,7 +403,8 @@ class VoiceSession:
         elif isinstance(event, ResponseDone):
             self._on_response_done()
         elif isinstance(event, FunctionCall):
-            self._spawn_tool(event)
+            # Beside the pumps, so audio keeps flowing while the tool works.
+            self._spawn_task(self._run_tool(event), name=f"tool-{event.name}")
         elif isinstance(event, Transcript):
             self._append_transcript(f"{event.role}: {event.text}")
         elif isinstance(event, ProviderError):
@@ -474,10 +475,6 @@ class VoiceSession:
         await self._safe_call(self._provider.inject_message, RECONNECT_MESSAGE, respond=True)
 
     # --- tool calls --------------------------------------------------------
-
-    def _spawn_tool(self, call: FunctionCall) -> None:
-        """Run a tool concurrently so audio keeps flowing while it works."""
-        self._spawn_task(self._run_tool(call), name=f"tool-{call.name}")
 
     def _spawn_task(self, coro: Coroutine, *, name: str) -> None:
         """Run `coro` beside the pumps, tracked so teardown cancels what is still going."""

@@ -36,7 +36,6 @@ def test_redeem_returns_the_caller_and_extras():
     assert info is not None
     assert info.caller == "+15551234567"
     assert info.extra == {"call_sid": "CA1", "opening_context": "task 7 is done"}
-    assert info.issued_at == 1000.0
 
 
 def test_a_token_can_only_be_redeemed_once():
