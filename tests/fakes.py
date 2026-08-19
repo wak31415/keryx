@@ -258,11 +258,13 @@ class FakeVoiceSession:
         self,
         *,
         channel: str = "local",
+        session_id: str = "sess-1",
         is_live: bool = True,
         accepts: bool = True,
         error: Exception | None = None,
     ) -> None:
         self.channel = channel
+        self.session_id = session_id
         self.is_live = is_live
         self.accepts = accepts
         self.error = error

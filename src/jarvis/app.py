@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from jarvis.config import Settings
 from jarvis.events import EventBus
+from jarvis.inline_waits import InlineWaits
 from jarvis.notify.notifier import Notifier
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.base import RealtimeProvider
@@ -49,6 +50,7 @@ class AppState:
     registry: ToolRegistry
     provider_factory: ProviderFactory
     stream_tokens: StreamTokenStore = field(default_factory=StreamTokenStore)
+    inline_waits: InlineWaits = field(default_factory=InlineWaits)
     store: TaskStore | None = None
     manager: TaskManager | None = None
     notifier: Notifier | None = None
@@ -63,7 +65,10 @@ def build_app_state(settings: Settings) -> AppState:
     manager = TaskManager(store, _build_runner(settings), bus, settings)
 
     registry = ToolRegistry()
-    register_builtin_tools(registry, manager=manager, settings=settings)
+    inline_waits = InlineWaits()
+    register_builtin_tools(
+        registry, manager=manager, settings=settings, inline_waits=inline_waits
+    )
 
     state = AppState(
         settings=settings,
@@ -74,12 +79,19 @@ def build_app_state(settings: Settings) -> AppState:
             settings.openai_api_key, settings.openai_realtime_model
         ),
         stream_tokens=StreamTokenStore(),
+        inline_waits=inline_waits,
         store=store,
         manager=manager,
     )
     state.twilio_out = TwilioOut(settings)
     state.notifier = Notifier(
-        bus, store, state.sessions, state.twilio_out, settings, state.stream_tokens
+        bus,
+        store,
+        state.sessions,
+        state.twilio_out,
+        settings,
+        state.stream_tokens,
+        state.inline_waits,
     )
     state.notifier.start()
     return state

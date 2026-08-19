@@ -16,6 +16,7 @@ from fakes import FakeVoiceSession
 
 from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed
+from jarvis.inline_waits import InlineWaits
 from jarvis.notify.notifier import SMS_BODY_LIMIT, Notifier, report_token
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
@@ -79,6 +80,7 @@ class Harness:
     twilio: FakeTwilioOut
     tokens: StreamTokenStore
     settings: Settings
+    inline_waits: InlineWaits
 
     async def task(self, **fields) -> Task:
         """A row in the store, defaulting to a finished local-origin chat task."""
@@ -121,9 +123,12 @@ async def harnesses(tmp_path) -> Callable[..., Harness]:
         sessions = SessionRegistry()
         twilio = FakeTwilioOut()
         tokens = StreamTokenStore()
-        notifier = Notifier(bus, store, sessions, twilio, settings, tokens)
+        inline_waits = InlineWaits()
+        notifier = Notifier(bus, store, sessions, twilio, settings, tokens, inline_waits)
         notifier.start()
-        harness = Harness(notifier, bus, store, sessions, twilio, tokens, settings)
+        harness = Harness(
+            notifier, bus, store, sessions, twilio, tokens, settings, inline_waits
+        )
         made.append(harness)
         return harness
 
@@ -205,6 +210,64 @@ async def test_a_session_that_blows_up_does_not_stop_the_sms(harness):
     await harness.finished(task)
 
     assert harness.twilio.sms[0][0] == OWNER
+
+
+async def test_a_session_holding_the_line_for_the_task_is_not_told_twice(harness):
+    """`dispatch_task` hands the result back as the tool result; announcing repeats it."""
+    waiting = harness.session(channel="phone", session_id="sess-a")
+    other = harness.session(channel="phone", session_id="sess-b")
+    task = await harness.task(origin_channel="phone", origin_caller=CALLER)
+
+    with harness.inline_waits.holding("sess-a", task.id):
+        await harness.finished(task, "done")
+
+    assert waiting.announced == []
+    assert other.announced == [f"Task {task.id} (chat) finished: done"]
+    assert harness.twilio.sms == []
+    assert (await harness.row(task)).announced is True
+
+
+async def test_a_local_session_holding_the_line_gets_no_text_either(harness):
+    """They asked and waited for the answer at the Mac; a text about it is noise."""
+    waiting = harness.session(channel="local", session_id="sess-a")
+    task = await harness.task(origin_channel="local")
+
+    with harness.inline_waits.holding("sess-a", task.id):
+        await harness.finished(task, "done")
+
+    assert waiting.announced == []
+    assert harness.twilio.sms == []
+
+
+async def test_waiting_on_another_task_does_not_silence_this_one(harness):
+    session = harness.session(channel="phone", session_id="sess-a")
+    task = await harness.task()
+
+    with harness.inline_waits.holding("sess-a", task.id + 1):
+        await harness.finished(task, "done")
+
+    assert session.announced == [f"Task {task.id} (chat) finished: done"]
+
+
+async def test_the_wait_is_over_once_the_hold_is_released(harness):
+    session = harness.session(channel="phone", session_id="sess-a")
+    task = await harness.task()
+
+    with harness.inline_waits.holding("sess-a", task.id):
+        pass
+    await harness.finished(task, "done")
+
+    assert session.announced == [f"Task {task.id} (chat) finished: done"]
+
+
+async def test_nobody_is_called_back_while_they_are_holding_the_line(harness):
+    harness.session(channel="phone", session_id="sess-a")
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    with harness.inline_waits.holding("sess-a", task.id):
+        await harness.finished(task)
+
+    assert harness.twilio.calls == []
 
 
 # --- (2) the SMS -----------------------------------------------------------

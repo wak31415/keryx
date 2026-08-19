@@ -21,6 +21,7 @@ import re
 from pathlib import Path
 
 from jarvis.config import Settings
+from jarvis.inline_waits import InlineWaits
 from jarvis.tasks.manager import TERMINAL_STATUSES, TaskLimitError, TaskManager, UnknownProjectError
 from jarvis.tasks.models import DESTRUCTIVE_KINDS, Task, TaskKind, TaskStatus
 from jarvis.tools.registry import ToolContext, ToolRegistry
@@ -138,7 +139,11 @@ async def _report_excerpt(task: Task) -> str | None:
 
 
 def register_builtin_tools(
-    registry: ToolRegistry, *, manager: TaskManager, settings: Settings
+    registry: ToolRegistry,
+    *,
+    manager: TaskManager,
+    settings: Settings,
+    inline_waits: InlineWaits,
 ) -> None:
     """Register every tool the voice model has, bound to this process's task manager."""
 
@@ -200,11 +205,16 @@ def register_builtin_tools(
 
         wait = _clamp_wait(arguments.get("wait_seconds"), settings)
         if wait > 0:
-            task = await manager.wait_for(task.id, wait)
+            # Marked for as long as we hold the line, so the notifier does not announce
+            # into this session what the tool result below is about to say (spec §3.3).
+            with inline_waits.holding(ctx.session.session_id, task.id):
+                task = await manager.wait_for(task.id, wait)
 
         result = {"task_id": task.id, "status": task.status.value}
         if task.status in TERMINAL_STATUSES:
             result["summary"] = task.summary
+            if task.status is TaskStatus.FAILED:
+                result["error"] = task.error
         else:
             result["message"] = STILL_RUNNING_MESSAGE
         return result

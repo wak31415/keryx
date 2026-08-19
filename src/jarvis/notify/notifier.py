@@ -3,11 +3,12 @@
 Three stages, in order, on every `TaskCompleted` / `TaskFailed`:
 
 1. **Announce** it into every live session, so somebody already talking to Jarvis simply
-   hears the result.
-2. **Text** it, unless a live *phone* session already announced it — the person on the
-   call has heard it, and a text about what they were just told is noise. A local
-   (wake-word) session does not count: they may well have walked away from the Mac.
-3. **Call back**, if they asked to be called and are not on the phone already. The call
+   hears the result — except the session holding the line for this very task inside
+   `dispatch_task`, which gets it as the tool result instead (see `InlineWaits`).
+2. **Text** it, unless it was already delivered: a live *phone* session announced it, or
+   somebody was holding the line for it. Otherwise a local (wake-word) session hearing it
+   does not count: they may well have walked away from the Mac.
+3. **Call back**, if they asked to be called and have not had it already. The call
    carries a fresh single-use stream token whose `extra` tells the new session why it
    opened, so Jarvis leads with the result instead of "hello?".
 
@@ -22,6 +23,7 @@ from collections.abc import Callable
 
 from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed
+from jarvis.inline_waits import InlineWaits
 from jarvis.notify.twilio_out import TwilioOut, stream_twiml
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
@@ -75,6 +77,7 @@ class Notifier:
         twilio_out: TwilioOut,
         settings: Settings,
         stream_tokens: StreamTokenStore,
+        inline_waits: InlineWaits,
     ) -> None:
         self._bus = bus
         self._store = store
@@ -82,6 +85,7 @@ class Notifier:
         self._twilio = twilio_out
         self._settings = settings
         self._stream_tokens = stream_tokens
+        self._inline_waits = inline_waits
         self._removals: list[Callable[[], None]] = []
 
     def start(self) -> None:
@@ -125,32 +129,45 @@ class Notifier:
         text = (FAILED_TEXT if failed else DONE_TEXT).format(
             task_id=task.id, kind=task.kind, detail=detail
         )
-        announced_by_phone = await self._announce(task, text)
-        await self._send_sms(task, text, announced_by_phone=announced_by_phone)
-        await self._call_back(task, detail, failed=failed, announced_by_phone=announced_by_phone)
+        delivered = await self._announce(task, text)
+        await self._send_sms(task, text, delivered=delivered)
+        await self._call_back(task, detail, failed=failed, delivered=delivered)
 
     # --- (1) live sessions -------------------------------------------------
 
     async def _announce(self, task: Task, text: str) -> bool:
-        """Speak `text` into every live session; True if a *phone* session took it."""
+        """Speak `text` into every live session; True if the user has it either way.
+
+        A session holding the line for this task is skipped and counts as delivered: the
+        `dispatch_task` tool result is about to say the same thing, and hearing it twice
+        is worse than not hearing it here at all.
+        """
         heard = False
-        by_phone = False
+        delivered = False
         try:
             for session in self._sessions.live():
+                if (session.session_id, task.id) in self._inline_waits:
+                    log.info(
+                        "session %s is holding the line for task %s",
+                        session.session_id,
+                        task.id,
+                    )
+                    heard = delivered = True
+                    continue
                 spoken = await session.announce(text)
                 heard = heard or spoken
-                by_phone = by_phone or (spoken and session.channel == "phone")
+                delivered = delivered or (spoken and session.channel == "phone")
             if heard:
                 await self._store.update(task.id, announced=True)
         except Exception:
             log.exception("could not announce task %s into the live sessions", task.id)
-        return by_phone
+        return delivered
 
     # --- (2) the text ------------------------------------------------------
 
-    async def _send_sms(self, task: Task, text: str, *, announced_by_phone: bool) -> None:
-        """Text the summary and the report link, unless they just heard it on the phone."""
-        if announced_by_phone or not self._twilio.configured:
+    async def _send_sms(self, task: Task, text: str, *, delivered: bool) -> None:
+        """Text the summary and the report link, unless they have just heard it."""
+        if delivered or not self._twilio.configured:
             return
         try:
             to = self._sms_recipient(task)
@@ -181,11 +198,11 @@ class Notifier:
     # --- (3) the call-back -------------------------------------------------
 
     async def _call_back(
-        self, task: Task, detail: str, *, failed: bool, announced_by_phone: bool
+        self, task: Task, detail: str, *, failed: bool, delivered: bool
     ) -> None:
         """Ring the user back with a session that already knows what happened."""
         host = self._settings.public_host
-        if announced_by_phone or not task.callback_requested or not self._twilio.configured:
+        if delivered or not task.callback_requested or not self._twilio.configured:
             return
         if not task.callback_number or not host:
             log.info("cannot call back about task %s: no number or no public host", task.id)

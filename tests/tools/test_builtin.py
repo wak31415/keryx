@@ -13,6 +13,7 @@ import pytest
 
 from jarvis.config import Settings
 from jarvis.events import EventBus
+from jarvis.inline_waits import InlineWaits
 from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import TaskStatus
@@ -68,6 +69,7 @@ class Harness:
     store: TaskStore
     runner: FakeAgentRunner
     session: StubSession
+    inline_waits: InlineWaits
 
     async def call(self, name: str, arguments: dict | None = None, **overrides) -> dict:
         """Invoke a tool through the registry, exactly as the session would."""
@@ -103,8 +105,13 @@ async def make_tools(tmp_path):
         agent_runner = runner or FakeAgentRunner()
         manager = TaskManager(store, agent_runner, EventBus(), settings)
         registry = ToolRegistry()
-        register_builtin_tools(registry, manager=manager, settings=settings)
-        harness = Harness(registry, manager, settings, store, agent_runner, StubSession())
+        inline_waits = InlineWaits()
+        register_builtin_tools(
+            registry, manager=manager, settings=settings, inline_waits=inline_waits
+        )
+        harness = Harness(
+            registry, manager, settings, store, agent_runner, StubSession(), inline_waits
+        )
         built.append(harness)
         return harness
 
@@ -279,6 +286,43 @@ async def test_a_long_task_comes_back_running_with_a_promise(make_tools):
     assert result["status"] in {"queued", "running"}
     assert "summary" not in result
     assert result["message"] == "still running; you will be told when it finishes"
+
+
+async def test_the_waiting_session_is_marked_so_it_is_not_told_the_result_twice(tools):
+    """The notifier must skip a session that is getting the result as a tool result."""
+    waiting: list[bool] = []
+    original = tools.manager.wait_for
+
+    async def spy(task_id: int, timeout: float):
+        waiting.append((tools.session.session_id, task_id) in tools.inline_waits)
+        return await original(task_id, timeout)
+
+    tools.manager.wait_for = spy
+
+    await tools.call(
+        "dispatch_task",
+        {"kind": "chat", "description": "how tall is Everest", "wait_seconds": 20},
+    )
+
+    assert waiting == [True]
+    assert ("sess1234", 1) not in tools.inline_waits  # and the mark is gone afterwards
+
+
+async def test_a_task_that_failed_within_the_wait_says_what_went_wrong(make_tools):
+    tools = make_tools(
+        FakeAgentRunner([RunResult(ok=False, spoken_summary="it broke", error="exit code 2")])
+    )
+
+    result = await tools.call(
+        "dispatch_task", {"kind": "chat", "description": "build it", "wait_seconds": 20}
+    )
+
+    assert result == {
+        "task_id": 1,
+        "status": "failed",
+        "summary": "it broke",
+        "error": "exit code 2",
+    }
 
 
 async def test_the_wait_is_clamped_to_the_configured_maximum(tools):
