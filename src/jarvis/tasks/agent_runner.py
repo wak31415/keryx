@@ -114,7 +114,12 @@ class AgentSession(Protocol):
         ...
 
     async def send(self, text: str) -> None:
-        """Queue a follow-up into the running conversation."""
+        """Queue a follow-up into the running conversation.
+
+        Part of the protocol, but the task manager never calls it: `run()` returns at the
+        first result and the SDK's mid-turn `query()` semantics are unverified, so live
+        follow-ups become a resumed run instead (spec §3.3 ruling).
+        """
         ...
 
     async def interrupt(self) -> None:

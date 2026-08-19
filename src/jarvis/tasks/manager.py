@@ -6,10 +6,17 @@ session. While it waits the row stays `queued`, so `cancel()` on a queued task s
 cancels the asyncio task before any agent is opened.
 
 State the manager keeps per task id: the asyncio task (`_tasks`), the open
-`AgentSession` (`_live`, so follow-ups and cancels can reach it), an `asyncio.Event`
-(`_done_events`) that `wait_for` blocks on, a cancel flag (`_cancel_requested`) and the
-prompt a queued re-run will send (`_resume_pending`). The event is created at dispatch
-and stays set after a terminal state, so a late waiter returns immediately.
+`AgentSession` (`_live`, so cancels can reach it), an `asyncio.Event` (`_done_events`)
+that `wait_for` blocks on, a cancel flag (`_cancel_requested`), the prompt a queued
+re-run will send (`_resume_pending`) and the follow-ups that arrived mid-turn
+(`_live_followups`). The event is created at dispatch and stays set after a terminal
+state, so a late waiter returns immediately.
+
+A follow-up to a *running* task is never pushed into the open turn: `run()` has already
+stopped at the first result and the SDK's mid-turn `query()` semantics are unverified
+(spec §3.3 ruling), so the text is queued and becomes the prompt of an immediate resumed
+run inside the same semaphore slot. Only the last run of that chain is published, so one
+request stays one announcement.
 
 `cancel()` cannot rely on cancelling the asyncio task alone: interrupting a live session
 is itself what ends the agent's turn, so `run()` typically returns a (useless) result
@@ -49,6 +56,8 @@ MAX_LISTED_CANDIDATES = 10
 
 UNKNOWN_ERROR = "unknown error"
 FAILURE_SUMMARY = "The task failed: {error}"
+#: Heads the prompt of a re-run carrying the follow-ups that arrived mid-turn.
+LIVE_FOLLOWUP_PREAMBLE = "Follow-up from the user:"
 
 _PROMPTS: dict[TaskKind, str] = {
     TaskKind.CHAT: (
@@ -135,6 +144,7 @@ class TaskManager:
         self._done_events: dict[int, asyncio.Event] = {}
         self._cancel_requested: set[int] = set()
         self._resume_pending: dict[int, str] = {}
+        self._live_followups: dict[int, list[str]] = {}
         settings.ensure_dirs()
 
     # --- lifecycle -------------------------------------------------------
@@ -237,6 +247,7 @@ class TaskManager:
             await self._close_session(task_id)
             self._cancel_requested.discard(task_id)
             self._resume_pending.pop(task_id, None)
+            self._live_followups.pop(task_id, None)
             self._done_event(task_id).set()
             if self._tasks.get(task_id) is asyncio.current_task():
                 del self._tasks[task_id]
@@ -269,6 +280,7 @@ class TaskManager:
         # queued are all included.
         prompt = self._resume_pending.pop(task_id, None) or build_prompt(task)
         result = await session.run(prompt, on_progress=partial(self._on_progress, task_id))
+        result = await self._run_live_followups(task, result)
 
         if task_id in self._cancel_requested:
             # `interrupt()` ended the turn: the result is the wreckage of a cancel, not an
@@ -278,6 +290,31 @@ class TaskManager:
             await self._mark_cancelled(task_id)
             return
         await self._finish(task, result)
+
+    async def _run_live_followups(self, task: Task, result: RunResult) -> RunResult:
+        """Re-run `task` for the follow-ups that arrived while it was running (spec §3.3).
+
+        Each round resumes the Claude session the last run left behind, so the agent keeps
+        its context, and stays inside the semaphore slot the task already holds. Only the
+        result of the final round is returned — the ones in between are steps in the same
+        piece of work, not outcomes to announce. A run that came back without a session id
+        cannot be resumed, so its follow-ups go to a fresh run of the whole task instead.
+        """
+        while task.id not in self._cancel_requested:
+            followups = self._live_followups.pop(task.id, None)
+            if not followups:
+                break
+            prompt = LIVE_FOLLOWUP_PREAMBLE + "".join(f"\n- {text}" for text in followups)
+            resume = result.session_id
+            if not resume:
+                log.warning("task %s has no Claude session id; re-running from the top", task.id)
+                prompt = f"{build_prompt(task)}\n\n{prompt}"
+            log.info("task %s re-runs with %d follow-up(s)", task.id, len(followups))
+            await self._close_session(task.id)
+            session = await self._runner.open(task, resume=resume)
+            self._live[task.id] = session
+            result = await session.run(prompt, on_progress=partial(self._on_progress, task.id))
+        return result
 
     async def _finish(self, task: Task, result: RunResult) -> None:
         """Write the report, close the row out as `done`/`failed` and publish the event."""
@@ -413,7 +450,7 @@ class TaskManager:
     # --- follow-ups and cancel -------------------------------------------
 
     async def followup(self, task_id: int, text: str) -> Task:
-        """Add `text` to a task: into the live turn, as a resumed run, or to its description."""
+        """Add `text` to a task: queued for its next run, or folded into its description."""
         task = await self._store.get(task_id)
         if task is None:
             raise KeyError(task_id)
@@ -423,10 +460,10 @@ class TaskManager:
         if task.status is TaskStatus.QUEUED:
             updated = await self._queue_followup(task, text)
         elif task.status is TaskStatus.RUNNING:
-            session = self._live.get(task_id)
-            if session is None:
+            if task_id not in self._live:
                 raise ValueError("task is starting up; try the follow-up again in a moment")
-            await session.send(text)
+            self._live_followups.setdefault(task_id, []).append(text)
+            log.info("[followup queued] task %s re-runs when this turn ends", task_id)
             updated = task
         else:
             updated = await self._restart(task, text)
@@ -499,6 +536,7 @@ class TaskManager:
             current = await self._mark_cancelled(task_id) or current
         self._cancel_requested.discard(task_id)
         self._resume_pending.pop(task_id, None)
+        self._live_followups.pop(task_id, None)
         self._done_event(task_id).set()
         return current
 

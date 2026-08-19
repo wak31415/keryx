@@ -478,7 +478,8 @@ async def test_send_followup_reaches_a_running_task(make_tools):
     result = await tools.call("send_followup", {"task_id": 1, "message": "and the tides"})
 
     assert result == {"task_id": 1, "status": "running"}
-    assert tools.runner.sessions[0].sent == ["and the tides"]
+    await tools.manager.wait_for(1, WAIT)
+    assert tools.runner.sessions[1].prompts == ["Follow-up from the user:\n- and the tides"]
 
 
 async def test_send_followup_needs_something_to_say(tools):

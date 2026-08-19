@@ -77,6 +77,10 @@ async def make_harness(store, settings):
         await manager.shutdown()
 
 
+async def _opened(harness: Harness, count: int) -> bool:
+    return len(harness.runner.opened) >= count
+
+
 async def dispatch(manager: TaskManager, kind="chat", description="how tall is Everest", **kw):
     kw.setdefault("origin_channel", "local")
     kw.setdefault("origin_caller", None)
@@ -362,7 +366,8 @@ async def test_wait_for_unknown_task_raises(make_harness):
 # --- follow-ups ----------------------------------------------------------
 
 
-async def test_followup_on_a_running_task_is_sent_to_the_live_session(make_harness):
+async def test_followup_on_a_running_task_is_queued_and_resumed_after_the_turn(make_harness):
+    """`send()` mid-turn would be dropped, so the follow-up becomes an immediate re-run."""
     harness = make_harness(FakeAgentRunner(delay_s=SLOW))
 
     task = await dispatch(harness.manager)
@@ -371,10 +376,66 @@ async def test_followup_on_a_running_task_is_sent_to_the_live_session(make_harne
     returned = await harness.manager.followup(task.id, "also check the weather")
 
     assert returned.status is TaskStatus.RUNNING
-    assert harness.runner.sessions[0].sent == ["also check the weather"]
+    assert harness.runner.sessions[0].sent == []
     assert "[followup] also check the weather" in harness.log_text(task.id)
-    assert (await harness.manager.wait_for(task.id, timeout=WAIT)).status is TaskStatus.DONE
-    assert len(harness.runner.opened) == 1
+
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert finished.status is TaskStatus.DONE
+    assert harness.runner.opened[1][1] == "fake-session-1"
+    assert harness.runner.sessions[1].prompts == [
+        "Follow-up from the user:\n- also check the weather"
+    ]
+    assert harness.runner.sessions[0].closed is True
+    # One task, one announcement: the intermediate result is never published.
+    assert harness.events.of(TaskStarted) == [TaskStarted(task.id)]
+    assert harness.events.of(TaskCompleted) == [TaskCompleted(task.id, "I finished the task.")]
+
+
+async def test_several_live_followups_are_joined_into_one_resumed_run(make_harness):
+    harness = make_harness(FakeAgentRunner(delay_s=SLOW))
+
+    task = await dispatch(harness.manager)
+    await wait_for_status(harness.manager, task.id, TaskStatus.RUNNING)
+    await harness.manager.followup(task.id, "one")
+    await harness.manager.followup(task.id, "two")
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert len(harness.runner.opened) == 2
+    assert harness.runner.sessions[1].prompts == ["Follow-up from the user:\n- one\n- two"]
+
+
+async def test_a_followup_during_the_resumed_run_is_run_in_turn(make_harness):
+    harness = make_harness(FakeAgentRunner(delay_s=SLOW))
+
+    task = await dispatch(harness.manager)
+    await wait_for_status(harness.manager, task.id, TaskStatus.RUNNING)
+    await harness.manager.followup(task.id, "one")
+    await wait_until(
+        lambda: _opened(harness, 2), message="the resumed run to open", timeout=WAIT
+    )
+    await harness.manager.followup(task.id, "two")
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert [session.prompts for session in harness.runner.sessions[1:]] == [
+        ["Follow-up from the user:\n- one"],
+        ["Follow-up from the user:\n- two"],
+    ]
+    assert harness.events.of(TaskCompleted) == [TaskCompleted(task.id, "I finished the task.")]
+
+
+async def test_a_live_followup_without_a_session_id_re_runs_from_the_top(make_harness):
+    harness = make_harness(FakeAgentRunner([RunResult(ok=True, final_text="done")], delay_s=SLOW))
+
+    task = await dispatch(harness.manager, description="original question")
+    await wait_for_status(harness.manager, task.id, TaskStatus.RUNNING)
+    await harness.manager.followup(task.id, "and the tides")
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert harness.runner.opened[1][1] is None
+    assert harness.runner.sessions[1].prompts == [
+        f"{build_prompt(task)}\n\nFollow-up from the user:\n- and the tides"
+    ]
 
 
 async def test_followup_on_a_finished_task_resumes_the_claude_session(make_harness):
