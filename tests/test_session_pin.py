@@ -13,7 +13,12 @@ from fakes import TIMEOUT, FakeProvider, FakeTransport, eventually
 from test_session import make_settings, running
 
 from jarvis.events import EventBus, SessionEnded
-from jarvis.realtime.base import FunctionCall, ResponseDone, ResponseStarted
+from jarvis.realtime.base import (
+    FunctionCall,
+    ResponseDone,
+    ResponseStarted,
+    SpeechStarted,
+)
 from jarvis.session import (
     OPENING_MESSAGE,
     PIN_ACCEPTED_MESSAGE,
@@ -190,6 +195,26 @@ async def test_a_lockout_that_cannot_even_ask_for_a_goodbye_ends_at_once(
         await session.submit_pin(WRONG)
     provider.send_error = RuntimeError("socket gone")
     assert await session.submit_pin(WRONG) == {"status": "locked"}
+    await asyncio.wait_for(task, TIMEOUT)
+
+    assert [event.reason for event in ended] == ["pin_lockout"]
+
+
+async def test_speaking_after_the_lockout_does_not_save_the_call(
+    make_session, phone, provider, ended
+):
+    """Unlike the silence goodbye, a lockout is not called off by talking over it."""
+    session = make_session(phone, provider)
+
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+    for _ in range(PIN_MAX_ATTEMPTS):
+        await session.submit_pin(WRONG)
+    await eventually(lambda: PIN_LOCKOUT_MESSAGE in texts(provider))
+
+    provider.feed(SpeechStarted(item_id="item_1", audio_start_ms=0))
+    await asyncio.sleep(0.01)
+    await speak_a_goodbye(provider, session)
     await asyncio.wait_for(task, TIMEOUT)
 
     assert [event.reason for event in ended] == ["pin_lockout"]

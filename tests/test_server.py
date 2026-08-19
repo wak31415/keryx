@@ -79,14 +79,14 @@ def stream_parameters(response) -> dict[str, str]:
     return {p.get("name"): p.get("value") for p in stream_element(response).findall("Parameter")}
 
 
-def start_frame(token: str) -> str:
+def start_frame(token: str, call_sid: str = CALL_SID) -> str:
     return json.dumps(
         {
             "event": "start",
             "streamSid": STREAM_SID,
             "start": {
                 "streamSid": STREAM_SID,
-                "callSid": CALL_SID,
+                "callSid": call_sid,
                 "customParameters": {"token": token, "caller": CALLER},
                 "mediaFormat": {"encoding": "audio/x-mulaw", "sampleRate": 8000, "channels": 1},
             },
@@ -222,6 +222,21 @@ def test_health_counts_the_live_sessions(client, state):
 def test_the_media_socket_refuses_an_unknown_token(client):
     with client.websocket_connect("/twilio/media") as ws:
         ws.send_text(start_frame("not-a-real-token"))
+
+        with pytest.raises(WebSocketDisconnect) as excinfo:
+            ws.receive_text()
+
+    assert excinfo.value.code == 1008
+
+
+def test_the_media_socket_refuses_a_token_minted_for_another_call(client, state):
+    """The token is single-use, but it must also belong to the call presenting it."""
+    state.provider_factory = FakeProvider  # nothing may reach a real provider here
+    voice = post_signed(client, "/twilio/voice", {"From": CALLER, "CallSid": CALL_SID})
+    token = stream_parameters(voice)["token"]
+
+    with client.websocket_connect("/twilio/media") as ws:
+        ws.send_text(start_frame(token, call_sid="CA00000000000000000000000000000009"))
 
         with pytest.raises(WebSocketDisconnect) as excinfo:
             ws.receive_text()

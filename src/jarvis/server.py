@@ -6,7 +6,8 @@ One inbound call touches three of these routes:
    `X-Twilio-Signature` and come `From` an allowed caller; then it mints a one-time
    stream token and answers with TwiML that opens a media stream back to us.
 2. `WS /twilio/media` — the audio socket. It has no signature of its own, so the token
-   from step 1 (single-use, 60 s) is what authorizes it; a `VoiceSession` runs on top.
+   from step 1 (single-use, 60 s, and only valid for the call it was minted for) is what
+   authorizes it; a `VoiceSession` runs on top.
 3. `POST /twilio/status` — call-progress callbacks, logged and acknowledged.
 
 `GET /reports/{id}?t=…` is the fourth public route: the link the Notifier texts, guarded
@@ -120,6 +121,13 @@ async def _run_media_session(state: AppState, transport: TwilioTransport) -> Non
     token_info = state.stream_tokens.redeem(info.custom_parameters.get("token", ""))
     if token_info is None:
         log.warning("closing media stream %s: unknown or expired token", info.stream_sid)
+        await transport.hangup(POLICY_VIOLATION)
+        return
+
+    expected_call = token_info.extra.get("call_sid")
+    if expected_call and expected_call != info.call_sid:
+        # The token was minted for a different call: someone replayed a `<Parameter>`.
+        log.warning("closing media stream %s: the token belongs to another call", info.stream_sid)
         await transport.hangup(POLICY_VIOLATION)
         return
 

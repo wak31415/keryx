@@ -171,7 +171,17 @@ class LocalAudioDevice:
         self._wake_sink = sink
 
     def _on_input(self, indata, frames: int, time_info, status) -> None:
-        """PortAudio input callback. Runs on the PortAudio thread."""
+        """PortAudio input callback. Runs on the PortAudio thread.
+
+        Nothing may escape: an exception out of a callback stops the stream, and a mic
+        that has quietly gone deaf is the one failure nobody notices.
+        """
+        try:
+            self._read_input(indata, status)
+        except Exception:
+            log.exception("the input callback failed")
+
+    def _read_input(self, indata, status) -> None:
         if status:
             log.warning("input stream status: %s", status)
         pcm = np.ascontiguousarray(indata, dtype="<i2").tobytes()
@@ -225,7 +235,13 @@ class LocalAudioDevice:
         return True
 
     def _on_output(self, outdata, frames: int, time_info, status) -> None:
-        """PortAudio output callback. Runs on the PortAudio thread."""
+        """PortAudio output callback. Runs on the PortAudio thread (see `_on_input`)."""
+        try:
+            self._write_output(outdata, frames, status)
+        except Exception:
+            log.exception("the output callback failed")
+
+    def _write_output(self, outdata, frames: int, status) -> None:
         if status:
             log.warning("output stream status: %s", status)
         wanted = frames * 2

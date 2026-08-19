@@ -390,3 +390,46 @@ async def test_transport_matches_the_transport_protocol(device):
 
 def test_sounddevice_is_never_imported_at_module_scope():
     assert "sounddevice" not in sys.modules
+
+
+# --- callbacks never raise into PortAudio ---------------------------------
+
+
+class BrokenGate:
+    """Raises at what the audio callbacks ask it, the way a bug in that path would.
+
+    `on_playback_drain` stays harmless: teardown calls it, and this is about the two
+    PortAudio callbacks, not about `stop()`.
+    """
+
+    def should_pass_mic(self) -> bool:
+        raise RuntimeError("boom")
+
+    def on_playback_start(self) -> None:
+        raise RuntimeError("boom")
+
+    def on_playback_drain(self) -> None:
+        pass
+
+    @property
+    def is_speaking(self) -> bool:
+        raise RuntimeError("boom")
+
+
+async def test_a_failing_input_callback_is_logged_not_raised(device, factory, monkeypatch, caplog):
+    """An exception out of a PortAudio callback kills the stream, silently."""
+    monkeypatch.setattr(device, "gate", BrokenGate())
+    device.set_mic_sink(lambda pcm: None)
+
+    factory.push_mic(tone())  # must not raise
+
+    assert "input callback" in caplog.text
+
+
+async def test_a_failing_output_callback_is_logged_not_raised(device, factory, monkeypatch, caplog):
+    device.play(tone())
+    monkeypatch.setattr(device, "gate", BrokenGate())
+
+    factory.pull_speaker()  # must not raise
+
+    assert "output callback" in caplog.text

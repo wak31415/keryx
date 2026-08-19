@@ -419,6 +419,11 @@ class VoiceSession:
     async def _on_speech_started(self) -> None:
         """The caller started talking: on the phone that is a barge-in."""
         self._cancel_silence_timer()
+        if self._end_after_response == "silence":
+            # They came back before the goodbye finished: there is nothing to end. A
+            # `pin_lockout` goodbye is not called off by talking over it.
+            log.info("session %s: the user spoke after the goodbye; staying", self.session_id)
+            self._end_after_response = None
         if self.channel != "phone":
             return
         if self._current_item_id is None or self._item_bytes_sent == 0:

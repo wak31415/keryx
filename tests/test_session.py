@@ -525,6 +525,25 @@ async def test_user_speech_cancels_the_silence_timer(make_session, local, provid
         assert [text for text, _, _ in provider.injected] == [OPENING_MESSAGE]
 
 
+async def test_speaking_after_the_silence_goodbye_keeps_the_session(
+    make_session, local, provider, tmp_path
+):
+    """The goodbye was asked for, but the user came back: the session carries on."""
+    settings = make_settings(tmp_path, local_silence_timeout=0.05)
+    session = make_session(local, provider, settings=settings)
+
+    async with running(session) as task:
+        provider.feed(ResponseDone(response_id="resp_1", status="completed"))
+        await eventually(lambda: any(text == SILENCE_MESSAGE for text, _, _ in provider.injected))
+        provider.feed(SpeechStarted(item_id="item_1", audio_start_ms=0))
+        await asyncio.sleep(0.01)
+        provider.feed(ResponseDone(response_id="resp_2", status="completed"))
+        await asyncio.sleep(0.05)
+
+        assert task.done() is False
+        assert session.is_live is True
+
+
 async def test_phone_sessions_have_no_silence_timeout(make_session, phone, provider, tmp_path):
     settings = make_settings(tmp_path, local_silence_timeout=0.05)
     session = make_session(phone, provider, settings=settings)
