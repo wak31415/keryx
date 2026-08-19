@@ -83,6 +83,13 @@ def test_verifying_accepts_only_the_matching_token():
     assert verify_report_token(7, "", SECRET) is False
 
 
+def test_verifying_a_token_that_is_not_ascii_is_false_not_an_error():
+    # `hmac.compare_digest` raises TypeError on non-ASCII `str` operands; whatever
+    # arrives in the query string has to come back as a plain "no".
+    assert verify_report_token(7, "é" * 32, SECRET) is False
+    assert verify_report_token(7, "🔓" + report_token(7, SECRET)[1:], SECRET) is False
+
+
 # --- GET /reports/{id} -----------------------------------------------------
 
 
@@ -109,6 +116,13 @@ def test_a_missing_token_is_refused(client, state):
 
     assert get_report(client, task_id, None).status_code == 403
     assert get_report(client, task_id, "").status_code == 403
+
+
+def test_a_token_that_is_not_ascii_is_refused_rather_than_crashing(client, state):
+    task_id = make_task(state)
+
+    assert get_report(client, task_id, "é" * 32).status_code == 403
+    assert get_report(client, task_id, "%C3%A9" * 32).status_code == 403
 
 
 def test_a_wrong_token_says_nothing_about_whether_the_task_exists(client, state):

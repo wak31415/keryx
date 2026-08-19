@@ -55,8 +55,13 @@ def report_token(task_id: int, secret: str) -> str:
 
 
 def verify_report_token(task_id: int, token: str, secret: str) -> bool:
-    """True if `token` is the report token for `task_id` (constant-time compare)."""
-    return hmac.compare_digest(report_token(task_id, secret), token)
+    """True if `token` is the report token for `task_id` (constant-time compare).
+
+    Compared as bytes: `hmac.compare_digest` refuses `str` operands with non-ASCII
+    characters, and this one comes straight off a public query string.
+    """
+    expected = report_token(task_id, secret).encode()
+    return hmac.compare_digest(expected, token.encode("utf-8", "surrogatepass"))
 
 
 class Notifier:
