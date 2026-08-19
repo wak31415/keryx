@@ -9,20 +9,28 @@ One inbound call touches three of these routes:
    from step 1 (single-use, 60 s) is what authorizes it; a `VoiceSession` runs on top.
 3. `POST /twilio/status` — call-progress callbacks, logged and acknowledged.
 
+`GET /reports/{id}?t=…` is the fourth public route: the link the Notifier texts, guarded
+by the HMAC token in `t` rather than by a signature (spec §5).
+
 The ngrok tunnel makes these the only publicly reachable surface of the machine
 (spec §5), so every handler here validates before it does anything else, and the
 route bodies stay thin enough to read in one go — the checks live in helpers below.
 """
 
+import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from starlette.datastructures import FormData
+from starlette.responses import PlainTextResponse
 from twilio.request_validator import RequestValidator
 from twilio.twiml.voice_response import VoiceResponse
 
 from jarvis.app import AppState
 from jarvis.config import Settings
+from jarvis.notify.notifier import verify_report_token
+from jarvis.notify.twilio_out import stream_twiml
 from jarvis.session import VoiceSession
 from jarvis.transports.twilio_ws import TransportError, TwilioTransport
 
@@ -31,6 +39,7 @@ log = logging.getLogger("jarvis.server")
 PRIVATE_NUMBER_MESSAGE = "Sorry, this number is private."
 # Websocket close code for a policy violation (an unknown or expired stream token).
 POLICY_VIOLATION = 1008
+REPORT_MEDIA_TYPE = "text/markdown; charset=utf-8"
 
 
 def create_app(state: AppState) -> FastAPI:
@@ -56,7 +65,7 @@ def create_app(state: AppState) -> FastAPI:
         )
         host = settings.public_host or external_host(request)
         log.info("answering a call from %s; streaming to %s", caller, host)
-        return _twiml(_stream_twiml(host, token=token, caller=caller))
+        return _twiml(stream_twiml(host, {"token": token, "caller": caller}))
 
     @app.post("/twilio/status")
     async def twilio_status(request: Request) -> Response:
@@ -81,6 +90,22 @@ def create_app(state: AppState) -> FastAPI:
             log.exception("the media stream failed")
         finally:
             await transport.hangup()
+
+    @app.get("/reports/{task_id}")
+    async def report(task_id: int, t: str = "") -> Response:
+        """Serve one task report to whoever holds its token (spec §5).
+
+        The token is checked *before* the task is looked up, so a wrong token tells the
+        holder nothing about which task ids exist.
+        """
+        if not t or not verify_report_token(task_id, t, settings.report_secret_value()):
+            log.warning("refused a report request for task %s: bad token", task_id)
+            raise HTTPException(status_code=403, detail="invalid report token")
+
+        content = await _read_report(state, task_id)
+        if content is None:
+            raise HTTPException(status_code=404, detail="no such report")
+        return PlainTextResponse(content, media_type=REPORT_MEDIA_TYPE)
 
     @app.get("/health")
     async def health() -> dict:
@@ -112,6 +137,18 @@ async def _run_media_session(state: AppState, transport: TwilioTransport) -> Non
         registry=state.sessions,
     )
     await session.run()
+
+
+async def _read_report(state: AppState, task_id: int) -> str | None:
+    """The markdown of `task_id`'s report, or None if there is no readable file."""
+    task = await state.manager.get(task_id) if state.manager is not None else None
+    if task is None or not task.report_path:
+        return None
+    try:
+        return await asyncio.to_thread(Path(task.report_path).read_text, encoding="utf-8")
+    except OSError:
+        log.warning("the report of task %s is not readable at %s", task_id, task.report_path)
+        return None
 
 
 # --- request authentication -------------------------------------------------
@@ -162,15 +199,6 @@ def external_host(request: Request) -> str:
 # --- TwiML ------------------------------------------------------------------
 
 
-def _stream_twiml(host: str, *, token: str, caller: str) -> VoiceResponse:
-    """`<Connect><Stream>` with the stream token (the `url` cannot carry a query)."""
-    response = VoiceResponse()
-    stream = response.connect().stream(url=f"wss://{host}/twilio/media")
-    stream.parameter(name="token", value=token)
-    stream.parameter(name="caller", value=caller)
-    return response
-
-
 def _private_number_twiml() -> VoiceResponse:
     response = VoiceResponse()
     response.say(PRIVATE_NUMBER_MESSAGE)
@@ -178,6 +206,6 @@ def _private_number_twiml() -> VoiceResponse:
     return response
 
 
-def _twiml(response: VoiceResponse) -> Response:
+def _twiml(response: VoiceResponse | str) -> Response:
     """TwiML always goes back with a 200 — Twilio ignores the body of anything else."""
     return Response(content=str(response), media_type="text/xml")

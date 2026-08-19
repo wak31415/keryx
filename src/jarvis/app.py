@@ -7,16 +7,18 @@ and manager behind the tools. Bundling them here keeps `create_app` and the CLI 
 construction logic and gives tests one seam to swap a fake provider (or a fake subagent
 runner) in.
 
-`build_app_state` also installs the *interim* task announcer: until the Notifier arrives
-in task 11, a finished task is spoken into every live session from here.
+`build_app_state` also starts the Notifier, which is what turns a finished task into
+something the user actually hears: an announcement into the live sessions, a text, or a
+call back (spec §3.3).
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
 
 from jarvis.config import Settings
-from jarvis.events import EventBus, TaskCompleted, TaskFailed
+from jarvis.events import EventBus
+from jarvis.notify.notifier import Notifier
+from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.base import RealtimeProvider
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.session import SessionRegistry
@@ -37,9 +39,8 @@ class AppState:
     """Everything a running Jarvis process shares.
 
     `provider_factory` makes one fresh (unconnected) realtime provider per session.
-    `notifier` and `twilio_out` are filled in by task 11 and stay None until then;
-    `interim_unsubscribe` takes the stop-gap announcer back out of the bus, which is
-    how the Notifier will replace it.
+    `twilio_out` exists even without Twilio credentials — its `configured` flag is what
+    says whether anything can actually be sent.
     """
 
     settings: Settings
@@ -50,9 +51,8 @@ class AppState:
     stream_tokens: StreamTokenStore = field(default_factory=StreamTokenStore)
     store: TaskStore | None = None
     manager: TaskManager | None = None
-    interim_unsubscribe: Callable[[], None] | None = None
-    notifier: Any | None = None
-    twilio_out: Any | None = None
+    notifier: Notifier | None = None
+    twilio_out: TwilioOut | None = None
 
 
 def build_app_state(settings: Settings) -> AppState:
@@ -77,7 +77,11 @@ def build_app_state(settings: Settings) -> AppState:
         store=store,
         manager=manager,
     )
-    state.interim_unsubscribe = install_interim_announcer(state)
+    state.twilio_out = TwilioOut(settings)
+    state.notifier = Notifier(
+        bus, store, state.sessions, state.twilio_out, settings, state.stream_tokens
+    )
+    state.notifier.start()
     return state
 
 
@@ -86,38 +90,10 @@ def _build_runner(settings: Settings) -> AgentRunner:
     return FakeAgentRunner() if settings.fake_agents else ClaudeAgentRunner(settings)
 
 
-def install_interim_announcer(state: AppState) -> Callable[[], None]:
-    """Speak finished tasks into every live session; returns a callable that removes it.
-
-    A stop-gap for task 11: the Notifier does this *and* the SMS and the call-back, and
-    marks the task announced. Replacing it is `state.interim_unsubscribe()` plus wiring
-    the Notifier to the same two events.
-    """
-
-    async def announce(text: str) -> None:
-        for session in state.sessions.live():
-            await session.announce(text)
-
-    async def on_completed(event: TaskCompleted) -> None:
-        await announce(f"Task {event.task_id} finished: {event.summary}")
-
-    async def on_failed(event: TaskFailed) -> None:
-        await announce(f"Task {event.task_id} failed: {event.error}")
-
-    removals = [
-        state.bus.subscribe(TaskCompleted, on_completed),
-        state.bus.subscribe(TaskFailed, on_failed),
-    ]
-
-    def remove() -> None:
-        for unsubscribe in removals:
-            unsubscribe()
-
-    return remove
-
-
 async def shutdown_app_state(state: AppState) -> None:
-    """Stop the task manager and close the task store. Safe to call more than once."""
+    """Take the notifier off the bus, stop the manager, close the store. Idempotent."""
+    if state.notifier is not None:
+        state.notifier.stop()
     if state.manager is not None:
         await state.manager.shutdown()
     if state.store is not None:

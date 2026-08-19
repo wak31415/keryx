@@ -1,11 +1,16 @@
 """Tests for the shared application state the server and the CLI are built on."""
 
 import pytest
+from fakes import FakeVoiceSession
 
 from jarvis.app import AppState, build_app_state, shutdown_app_state
+from jarvis.events import TaskCompleted
+from jarvis.notify.notifier import Notifier
+from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
 from jarvis.tasks.manager import TaskManager
+from jarvis.tasks.models import Task, TaskKind
 from jarvis.tasks.store import TaskStore
 
 
@@ -36,8 +41,32 @@ async def test_build_app_state_registers_the_voice_tools(state):
     assert {"dispatch_task", "list_tasks", "submit_pin", "end_session"} <= names
 
 
-async def test_build_app_state_leaves_the_notifier_pieces_unset(state):
-    assert (state.notifier, state.twilio_out) == (None, None)
+async def test_build_app_state_wires_the_notifier(state):
+    assert isinstance(state.twilio_out, TwilioOut)
+    assert isinstance(state.notifier, Notifier)
+    assert state.twilio_out.configured is False  # no Twilio credentials in these settings
+
+
+async def test_a_finished_task_is_spoken_into_every_live_session(state):
+    session = FakeVoiceSession(channel="local")
+    state.sessions.add(session)
+    task = await state.store.create(Task(id=None, kind=TaskKind.CHAT, description="dig"))
+
+    await state.bus.publish(TaskCompleted(task.id, "all done"))
+
+    assert session.announced == [f"Task {task.id} (chat) finished: all done"]
+    assert (await state.store.get(task.id)).announced is True
+
+
+async def test_shutting_down_takes_the_notifier_off_the_bus(state):
+    session = FakeVoiceSession(channel="local")
+    state.sessions.add(session)
+    task = await state.store.create(Task(id=None, kind=TaskKind.CHAT, description="dig"))
+
+    await shutdown_app_state(state)
+    await state.bus.publish(TaskCompleted(task.id, "nobody hears this"))
+
+    assert session.announced == []
 
 
 async def test_the_real_agent_runner_is_used_unless_fakes_are_asked_for(settings):

@@ -245,3 +245,31 @@ class FakeWakeListener:
 
     def reset(self) -> None:
         self.resets += 1
+
+
+class FakeVoiceSession:
+    """The slice of `VoiceSession` the notifier and the session registry touch.
+
+    `accepts` is what `announce()` returns — False is a session that was already on its
+    way out — and `error` makes it raise, the way a dead provider socket would.
+    """
+
+    def __init__(
+        self,
+        *,
+        channel: str = "local",
+        is_live: bool = True,
+        accepts: bool = True,
+        error: Exception | None = None,
+    ) -> None:
+        self.channel = channel
+        self.is_live = is_live
+        self.accepts = accepts
+        self.error = error
+        self.announced: list[str] = []
+
+    async def announce(self, text: str) -> bool:
+        if self.error is not None:
+            raise self.error
+        self.announced.append(text)
+        return self.accepts
