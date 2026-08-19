@@ -58,6 +58,15 @@ _STATUS_FILTERS: dict[str, tuple[TaskStatus, ...]] = {
     "failed": (TaskStatus.FAILED,),
 }
 
+#: The task number every task-scoped tool takes, and the whole parameter schema of a
+#: tool that takes nothing else. Read-only once registered, so one copy is shared.
+_TASK_ID_PROPERTY = {"type": "integer", "description": "The task number."}
+_TASK_ID_SCHEMA = {
+    "type": "object",
+    "properties": {"task_id": _TASK_ID_PROPERTY},
+    "required": ["task_id"],
+}
+
 KIND_DESCRIPTION = (
     "What sort of work this is. chat: a question a capable assistant can answer on its "
     "own. research: reads the web and writes up an answer. coding: edits and tests the "
@@ -325,13 +334,7 @@ def register_builtin_tools(
         "get_task_status",
         "How one task is doing, by its task number. Use it when the user asks about a "
         "specific task rather than about everything at once.",
-        {
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "integer", "description": "The task number."},
-            },
-            "required": ["task_id"],
-        },
+        _TASK_ID_SCHEMA,
         get_task_status,
     )
 
@@ -354,13 +357,7 @@ def register_builtin_tools(
         "What a finished task actually found, including the start of its written report. "
         "Use it when the user wants more than the one-line summary. Summarise it in a "
         "sentence or two; never read the report out.",
-        {
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "integer", "description": "The task number."},
-            },
-            "required": ["task_id"],
-        },
+        _TASK_ID_SCHEMA,
         get_task_result,
     )
 
@@ -392,7 +389,7 @@ def register_builtin_tools(
         {
             "type": "object",
             "properties": {
-                "task_id": {"type": "integer", "description": "The task number."},
+                "task_id": _TASK_ID_PROPERTY,
                 "message": {
                     "type": "string",
                     "description": "What to tell the subagent, in full sentences.",
@@ -421,13 +418,7 @@ def register_builtin_tools(
         "Stop a task that is queued or running. A task that has already finished comes back "
         "unchanged, so say so rather than claiming you stopped it. On the phone, coding and "
         "cowork tasks need the PIN here too.",
-        {
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "integer", "description": "The task number."},
-            },
-            "required": ["task_id"],
-        },
+        _TASK_ID_SCHEMA,
         cancel_task,
     )
 
@@ -481,7 +472,7 @@ def register_builtin_tools(
         {
             "type": "object",
             "properties": {
-                "task_id": {"type": "integer", "description": "The task number."},
+                "task_id": _TASK_ID_PROPERTY,
                 "number": {
                     "type": "string",
                     "description": "The number to call, in full international form such as "
