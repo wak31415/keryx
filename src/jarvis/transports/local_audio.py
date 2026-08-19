@@ -19,12 +19,7 @@ from typing import Literal, Protocol
 import numpy as np
 
 from jarvis.audio.util import AudioFormat, AudioGate, PlaybackBuffer, resample_pcm16
-from jarvis.transports.base import (
-    DRAIN_TIMEOUT_SECONDS,
-    AudioIn,
-    Hangup,
-    TransportEvent,
-)
+from jarvis.transports.base import DRAIN_TIMEOUT_SECONDS, AudioIn, Hangup, TransportEvent
 from jarvis.wakeword import WAKE_SAMPLE_RATE
 
 log = logging.getLogger("jarvis.transports.local_audio")

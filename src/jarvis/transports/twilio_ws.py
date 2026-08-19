@@ -24,13 +24,7 @@ from typing import Literal, Protocol
 from starlette.websockets import WebSocketDisconnect
 
 from jarvis.audio.util import AudioFormat
-from jarvis.transports.base import (
-    DRAIN_TIMEOUT_SECONDS,
-    AudioIn,
-    Dtmf,
-    Hangup,
-    TransportEvent,
-)
+from jarvis.transports.base import DRAIN_TIMEOUT_SECONDS, AudioIn, Dtmf, Hangup, TransportEvent
 
 log = logging.getLogger("jarvis.transports.twilio_ws")
 

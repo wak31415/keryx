@@ -58,13 +58,7 @@ from jarvis.realtime.base import (
     Transcript,
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
-from jarvis.transports.base import (
-    DRAIN_TIMEOUT_SECONDS,
-    AudioIn,
-    Dtmf,
-    Hangup,
-    Transport,
-)
+from jarvis.transports.base import DRAIN_TIMEOUT_SECONDS, AudioIn, Dtmf, Hangup, Transport
 
 log = logging.getLogger("jarvis.session")
 
