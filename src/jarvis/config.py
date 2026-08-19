@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
-    # Test/dev escape hatches (not in spec §3.4 table, needed by later tasks)
+    # Test/dev escape hatches (not in the spec §3.4 table)
     debug_skip_twilio_validation: bool = False
     fake_agents: bool = False
 

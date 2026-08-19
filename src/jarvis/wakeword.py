@@ -87,13 +87,11 @@ class WakeWordListener:
         threshold: float = 0.5,
         refractory_s: float = 2.0,
         *,
-        on_wake: Callable[[], None] | None = None,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
         self._detector = detector
         self._threshold = threshold
         self._refractory_s = refractory_s
-        self._on_wake = on_wake
         self._now = now
         self._last_wake: float | None = None
         self.last_score = 0.0
@@ -110,8 +108,6 @@ class WakeWordListener:
 
         self._last_wake = now
         log.info("wake word detected (score %.2f)", self.last_score)
-        if self._on_wake is not None:
-            self._on_wake()
         return True
 
     def reset(self) -> None:

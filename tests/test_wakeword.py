@@ -78,16 +78,6 @@ def test_detections_inside_the_refractory_window_are_suppressed():
     assert listener.feed(FRAME) is True
 
 
-def test_on_wake_is_called_once_per_detection():
-    wakes: list[int] = []
-    listener = WakeWordListener(FakeDetector(0.9, 0.9), on_wake=lambda: wakes.append(1))
-
-    listener.feed(FRAME)
-    listener.feed(FRAME)  # suppressed by the refractory window
-
-    assert wakes == [1]
-
-
 def test_reset_forwards_to_the_detector_and_clears_the_refractory_window():
     clock = FakeClock()
     detector = FakeDetector(0.9, 0.9)

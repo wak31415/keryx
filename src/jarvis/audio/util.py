@@ -1,8 +1,8 @@
 """Audio format helpers: resampling, G.711 µ-law codec, chunking, and the half-duplex
 gate + playback FIFO used by the local (PortAudio) transport.
 
-`AudioFormat` is defined here (rather than `transports/base.py`, which doesn't exist yet)
-because `ms_for_bytes` needs it; a later task re-exports it from `transports/base.py`.
+`AudioFormat` is defined here because `ms_for_bytes` needs it; `transports/base.py`
+re-exports it as the transport-facing name.
 """
 
 import threading

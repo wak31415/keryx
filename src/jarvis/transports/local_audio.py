@@ -74,17 +74,10 @@ def sounddevice_stream_factory(
     )
 
 
-def build_chime(
-    sample_rate: int = 24000,
-    *,
-    tones: tuple[float, ...] = CHIME_TONES,
-    tone_ms: int = CHIME_TONE_MS,
-    amplitude: float = CHIME_AMPLITUDE,
-    fade_ms: float = CHIME_FADE_MS,
-) -> bytes:
+def build_chime(sample_rate: int = 24000) -> bytes:
     """Generate the "I'm listening" chime: two short sine tones, fade in/out, 16-bit LE."""
-    samples_per_tone = int(sample_rate * tone_ms / 1000)
-    fade = min(int(sample_rate * fade_ms / 1000), samples_per_tone // 2)
+    samples_per_tone = int(sample_rate * CHIME_TONE_MS / 1000)
+    fade = min(int(sample_rate * CHIME_FADE_MS / 1000), samples_per_tone // 2)
     envelope = np.ones(samples_per_tone)
     if fade > 0:
         ramp = np.linspace(0.0, 1.0, fade)
@@ -92,7 +85,7 @@ def build_chime(
         envelope[-fade:] = ramp[::-1]
 
     t = np.arange(samples_per_tone) / sample_rate
-    parts = [np.sin(2 * np.pi * freq * t) * amplitude * envelope for freq in tones]
+    parts = [np.sin(2 * np.pi * freq * t) * CHIME_AMPLITUDE * envelope for freq in CHIME_TONES]
     return (np.concatenate(parts) * 32767).astype("<i2").tobytes()
 
 
