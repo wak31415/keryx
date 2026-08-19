@@ -1,5 +1,5 @@
-"""Audio format helpers: resampling, G.711 µ-law codec, chunking, and the half-duplex
-gate + playback FIFO used by the local (PortAudio) transport.
+"""Audio format helpers: resampling, chunking, and the half-duplex gate + playback FIFO
+used by the local (PortAudio) transport.
 
 `AudioFormat` is defined here because `ms_for_bytes` needs it; `transports/base.py`
 re-exports it as the transport-facing name.
@@ -30,44 +30,6 @@ def resample_pcm16(data: bytes, src_rate: int, dst_rate: int) -> bytes:
     samples = np.frombuffer(data, dtype="<i2")
     resampled = soxr.resample(samples, src_rate, dst_rate)
     return resampled.astype("<i2").tobytes()
-
-
-# --- G.711 µ-law codec (standard reference algorithm: bias 0x84, clip 32635) ------------
-
-_MULAW_BIAS = 0x84
-_MULAW_CLIP = 32635
-# Segment (exponent) upper bounds; exponent = first index whose bound >= the biased magnitude.
-_MULAW_SEG_END = np.array(
-    [0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF], dtype=np.int32
-)
-
-
-def pcm16_to_mulaw(data: bytes) -> bytes:
-    """Encode 16-bit LE mono PCM to G.711 µ-law (one byte per sample). Vectorised, no loop."""
-    samples = np.frombuffer(data, dtype="<i2").astype(np.int32)
-
-    sign = np.where(samples < 0, 0x80, 0x00).astype(np.int32)
-    magnitude = np.minimum(np.abs(samples), _MULAW_CLIP) + _MULAW_BIAS
-    exponent = np.searchsorted(_MULAW_SEG_END, magnitude, side="left").astype(np.int32)
-    mantissa = (magnitude >> (exponent + 3)) & 0x0F
-
-    ulaw = (~(sign | (exponent << 4) | mantissa)) & 0xFF
-    return ulaw.astype(np.uint8).tobytes()
-
-
-def mulaw_to_pcm16(data: bytes) -> bytes:
-    """Decode G.711 µ-law bytes back to 16-bit LE mono PCM."""
-    coded = np.frombuffer(data, dtype=np.uint8).astype(np.int32)
-    u = (~coded) & 0xFF
-
-    sign = u & 0x80
-    exponent = (u >> 4) & 0x07
-    mantissa = u & 0x0F
-
-    magnitude = ((mantissa << 3) + _MULAW_BIAS) << exponent
-    sample = np.where(sign != 0, _MULAW_BIAS - magnitude, magnitude - _MULAW_BIAS)
-    sample = np.clip(sample, -32768, 32767).astype(np.int16)
-    return sample.astype("<i2").tobytes()
 
 
 def chunk_bytes(data: bytes, size: int) -> Iterator[bytes]:

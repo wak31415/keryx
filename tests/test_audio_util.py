@@ -9,8 +9,6 @@ from jarvis.audio.util import (
     PlaybackBuffer,
     chunk_bytes,
     ms_for_bytes,
-    mulaw_to_pcm16,
-    pcm16_to_mulaw,
     resample_pcm16,
 )
 
@@ -51,37 +49,6 @@ def test_resample_pcm16_returns_int16_bytes():
     data = _sine_pcm16(440, 480, 24000)
     out = resample_pcm16(data, 24000, 16000)
     assert len(out) % 2 == 0
-
-
-# --- mu-law ----------------------------------------------------------------
-
-
-def test_mulaw_round_trip_error_bounded():
-    data = _sine_pcm16(440, 8000, 8000, amplitude=20000)
-    encoded = pcm16_to_mulaw(data)
-    decoded = mulaw_to_pcm16(encoded)
-
-    assert len(encoded) == len(data) // 2
-    assert len(decoded) == len(data)
-
-    original = np.frombuffer(data, dtype="<i2").astype(np.int64)
-    round_tripped = np.frombuffer(decoded, dtype="<i2").astype(np.int64)
-    max_abs_error = np.abs(original - round_tripped).max()
-
-    assert max_abs_error < 0.03 * 32768
-
-
-def test_mulaw_silence_round_trips_to_zero():
-    data = np.zeros(10, dtype="<i2").tobytes()
-    encoded = pcm16_to_mulaw(data)
-    decoded = mulaw_to_pcm16(encoded)
-    assert np.frombuffer(decoded, dtype="<i2").tolist() == [0] * 10
-
-
-def test_pcm16_to_mulaw_output_length_is_half_input():
-    data = _sine_pcm16(440, 160, 8000)  # 160 samples = 320 bytes of PCM16
-    encoded = pcm16_to_mulaw(data)
-    assert len(encoded) == len(data) // 2 == 160
 
 
 # --- chunk_bytes -------------------------------------------------------
