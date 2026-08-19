@@ -94,11 +94,6 @@ def _add_file_logging(settings: Settings) -> None:
     root.addHandler(handler)
 
 
-def _new_provider(settings: Settings) -> OpenAIRealtimeClient:
-    """A fresh (not yet connected) realtime provider."""
-    return OpenAIRealtimeClient(settings.openai_api_key, settings.openai_realtime_model)
-
-
 @app.command("download-models")
 def download_models() -> None:
     """Download the configured wake-word model via openwakeword."""
@@ -249,7 +244,7 @@ async def _run_loopback(settings: Settings, wav: Path, out: Path, tail_seconds: 
     transport = WavTransport(wav, out_path=out, tail_seconds=tail_seconds)
     session = VoiceSession(
         transport,
-        _new_provider(settings),
+        OpenAIRealtimeClient(settings.openai_api_key, settings.openai_realtime_model),
         settings,
         ToolRegistry(),
         EventBus(),

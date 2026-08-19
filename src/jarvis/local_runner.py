@@ -12,12 +12,11 @@ an `asyncio.Event` the run loop is waiting on.
 
 import asyncio
 import logging
-from collections.abc import Callable
 from typing import Protocol
 
 from jarvis.config import Settings
 from jarvis.events import EventBus
-from jarvis.realtime.base import RealtimeProvider
+from jarvis.realtime.base import ProviderFactory, RealtimeProvider
 from jarvis.session import SessionRegistry, VoiceSession
 from jarvis.tools import ToolRegistry
 from jarvis.transports.base import Transport
@@ -28,8 +27,6 @@ log = logging.getLogger("jarvis.local_runner")
 
 # How long to wait for the "I'm listening" chime to finish before opening the mic.
 CHIME_TIMEOUT_SECONDS = 2.0
-
-ProviderFactory = Callable[[], RealtimeProvider]
 
 
 class SessionFactory(Protocol):

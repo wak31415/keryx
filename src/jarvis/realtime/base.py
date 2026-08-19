@@ -4,7 +4,7 @@ These are the names the voice session is written against; a provider implementat
 (currently `jarvis.realtime.openai`) translates its wire protocol into these events.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -151,3 +151,7 @@ class RealtimeProvider(Protocol):
     async def reconnect(self) -> bool:
         """One attempt to re-open the socket and re-send the session config."""
         ...
+
+
+#: Makes one fresh (unconnected) provider per session.
+ProviderFactory = Callable[[], RealtimeProvider]

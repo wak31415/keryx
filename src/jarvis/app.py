@@ -12,7 +12,6 @@ something the user actually hears: an announcement into the live sessions, a tex
 call back (spec §3.3).
 """
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from jarvis.config import Settings
@@ -20,7 +19,7 @@ from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
 from jarvis.notify.notifier import Notifier
 from jarvis.notify.twilio_out import TwilioOut
-from jarvis.realtime.base import RealtimeProvider
+from jarvis.realtime.base import ProviderFactory
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
@@ -29,8 +28,6 @@ from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolRegistry
 from jarvis.tools.builtin import register_builtin_tools
-
-ProviderFactory = Callable[[], RealtimeProvider]
 
 TASK_DB_NAME = "tasks.db"
 
