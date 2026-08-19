@@ -409,6 +409,17 @@ async def test_the_transport_is_drained_before_hangup(make_session, provider):
     assert transport.drains == [5.0]
 
 
+async def test_a_phone_transport_is_drained_too(make_session, provider):
+    """Twilio buffers outbound audio, so the goodbye needs draining before the hangup."""
+    transport = DrainingFakeTransport(channel="phone", audio_format="audio/pcmu")
+    session = make_session(transport, provider)
+
+    async with running(session):
+        pass
+
+    assert transport.calls == ["drain", "hangup"]
+
+
 async def test_request_end_waits_for_the_active_response(make_session, phone, provider, published):
     session = make_session(phone, provider)
 

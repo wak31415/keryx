@@ -44,7 +44,7 @@ CALLBACK_NUMBER_MESSAGE = (
     "already know. Offer that instead."
 )
 STILL_RUNNING_MESSAGE = "still running; you will be told when it finishes"
-ENDING_MESSAGE = "Say a brief goodbye."
+ENDING_MESSAGE = "The session is ending now; do not say anything else."
 
 #: A phone number we are willing to call back: E.164, `+` and 7–15 digits.
 _E164_RE = re.compile(r"^\+\d{7,15}$")
@@ -510,8 +510,9 @@ def register_builtin_tools(
 
     registry.register(
         "end_session",
-        "Hang up. Call it right after your goodbye, once the user has said goodbye or has "
-        "nothing more to ask. Never call it while a question is still open.",
+        "Hang up. Say your goodbye first and call this straight afterwards, once the user "
+        "has said goodbye or has nothing more to ask: nothing you say after this call is "
+        "heard. Never call it while a question is still open.",
         {"type": "object", "properties": {}, "required": []},
         end_session,
     )

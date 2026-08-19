@@ -5,6 +5,7 @@ import base64
 import json
 
 import pytest
+from fakes import eventually
 from starlette.websockets import WebSocketDisconnect
 
 from jarvis.transports.base import AudioIn, Dtmf, Hangup
@@ -267,4 +268,66 @@ async def test_sending_after_the_socket_closed_is_swallowed():
 
     await transport.send_audio(b"\x01")  # must not raise
 
+    assert ws.sent == []
+
+
+# --- drain -----------------------------------------------------------------
+
+
+def mark_ack(name: str) -> dict:
+    return {"event": "mark", "streamSid": STREAM_SID, "mark": {"name": name}}
+
+
+async def draining(transport: TwilioTransport, ws: FakeWebSocket, timeout: float = TIMEOUT):
+    """Start `drain()` and wait until its `mark` frame is on the wire; returns (task, name)."""
+    task = asyncio.create_task(transport.drain(timeout))
+    await eventually(lambda: any(frame["event"] == "mark" for frame in ws.sent))
+    return task, ws.sent[-1]["mark"]["name"]
+
+
+async def test_drain_waits_for_twilio_to_ack_the_mark_it_sent():
+    ws = FakeWebSocket(start_message())
+    transport = await started(ws)
+
+    task, name = await draining(transport, ws)
+    ws.feed(media_message(b"\x01"))  # frames that are not the ack are ignored
+    ws.feed(mark_ack("some-other-mark"))
+    ws.feed(mark_ack(name))
+
+    assert await asyncio.wait_for(task, TIMEOUT) is True
+
+
+async def test_drain_gives_up_after_the_timeout():
+    ws = FakeWebSocket(start_message())
+    transport = await started(ws)
+
+    assert await asyncio.wait_for(transport.drain(0.05), TIMEOUT) is False
+
+
+async def test_drain_returns_when_the_stream_stops_instead():
+    ws = FakeWebSocket(start_message())
+    transport = await started(ws)
+
+    task, _name = await draining(transport, ws)
+    ws.feed({"event": "stop", "streamSid": STREAM_SID})
+
+    assert await asyncio.wait_for(task, TIMEOUT) is False
+
+
+async def test_drain_on_a_closed_socket_sends_nothing():
+    ws = FakeWebSocket(start_message())
+    transport = await started(ws)
+    await transport.hangup()
+
+    assert await asyncio.wait_for(transport.drain(TIMEOUT), TIMEOUT) is False
+    assert ws.sent == []
+
+
+async def test_drain_after_the_call_ended_sends_nothing():
+    """A stopped or dropped stream has no playback left to wait for."""
+    ws = FakeWebSocket(start_message(), {"event": "stop", "streamSid": STREAM_SID})
+    transport = await started(ws)
+    await collect(transport)
+
+    assert await asyncio.wait_for(transport.drain(TIMEOUT), TIMEOUT) is False
     assert ws.sent == []

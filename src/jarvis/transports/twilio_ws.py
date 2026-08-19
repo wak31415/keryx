@@ -16,6 +16,7 @@ import asyncio
 import base64
 import json
 import logging
+import secrets
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
@@ -29,6 +30,8 @@ log = logging.getLogger("jarvis.transports.twilio_ws")
 
 # How long `start()` waits for Twilio's `start` frame before giving up.
 START_TIMEOUT_SECONDS = 10.0
+# How long `drain()` waits for Twilio to ack that it has played everything we queued.
+DRAIN_TIMEOUT_SECONDS = 5.0
 
 
 class WebSocketLike(Protocol):
@@ -67,6 +70,7 @@ class TwilioTransport:
         self.stream_sid: str | None = None
         self.call_sid: str | None = None
         self._closed = False
+        self._stopped = False  # Twilio said `stop`, or the socket dropped: no playback left
 
     def __repr__(self) -> str:
         return f"<TwilioTransport {self.stream_sid or 'unstarted'}>"
@@ -130,10 +134,12 @@ class TwilioTransport:
                 raw = await self._ws.receive_text()
             except WebSocketDisconnect as exc:
                 log.info("media stream %s disconnected (%s)", self.stream_sid, exc.code)
+                self._stopped = True
                 yield Hangup("disconnect")
                 return
             except Exception:
                 log.warning("media stream %s read failed", self.stream_sid, exc_info=True)
+                self._stopped = True
                 yield Hangup("disconnect")
                 return
 
@@ -151,6 +157,7 @@ class TwilioTransport:
                     yield Dtmf(str(digit))
             elif event == "stop":
                 log.info("media stream %s stopped", self.stream_sid)
+                self._stopped = True
                 yield Hangup("stop")
                 return
             elif event == "mark":
@@ -174,9 +181,45 @@ class TwilioTransport:
         """Drop whatever Twilio still has buffered for playback (barge-in)."""
         await self._send({"event": "clear", "streamSid": self.stream_sid})
 
-    async def send_mark(self, name: str) -> None:
+    async def send_mark(self, name: str) -> bool:
         """Ask Twilio to ack when the audio queued so far has actually played."""
-        await self._send({"event": "mark", "streamSid": self.stream_sid, "mark": {"name": name}})
+        return await self._send(
+            {"event": "mark", "streamSid": self.stream_sid, "mark": {"name": name}}
+        )
+
+    async def drain(self, timeout: float = DRAIN_TIMEOUT_SECONDS) -> bool:
+        """Wait until Twilio has played what we queued; False if it never says so.
+
+        Twilio buffers outbound media and plays it back in real time, while the model
+        produces that audio far faster, so closing the socket at teardown would cut the
+        goodbye off mid-word. A `mark` is the only thing that says otherwise: Twilio acks
+        it once everything queued before it has actually been played. Reading the socket
+        here is safe because the session's pumps are stopped by the time teardown drains.
+        A call that has already ended has nothing left to play, so it returns at once
+        rather than waiting for an ack that can no longer come.
+        """
+        name = f"drain-{secrets.token_hex(4)}"
+        if self._closed or self._stopped or not await self.send_mark(name):
+            return False
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                log.info("media stream %s did not ack the drain mark", self.stream_sid)
+                return False
+            try:
+                raw = await asyncio.wait_for(self._ws.receive_text(), remaining)
+            except Exception:
+                return False  # a stopped or dropped socket has nothing left to play
+            message = _decode(raw)
+            if message is None:
+                continue
+            if message.get("event") == "stop":
+                return False
+            if (message.get("mark") or {}).get("name") == name:
+                return True
 
     async def hangup(self, code: int = 1000) -> None:
         """Close the websocket, which ends the call. Idempotent."""
@@ -188,19 +231,22 @@ class TwilioTransport:
         except Exception:
             log.debug("media stream %s was already closed", self.stream_sid, exc_info=True)
 
-    async def _send(self, message: dict) -> None:
+    async def _send(self, message: dict) -> bool:
         """Write one frame; a socket that has gone away is a debug line, not an error.
 
         Losing a race with a hangup is normal on a phone call, and the session must not
-        die because the last chunk of audio had nowhere to go.
+        die because the last chunk of audio had nowhere to go. False means nothing was
+        written, which is what `drain()` needs in order not to wait for an ack.
         """
         if self._closed:
             log.debug("dropped a %r frame: the socket is closed", message.get("event"))
-            return
+            return False
         try:
             await self._ws.send_text(json.dumps(message))
         except Exception:
             log.debug("could not send a %r frame", message.get("event"), exc_info=True)
+            return False
+        return True
 
 
 def _decode(raw: str) -> dict | None:

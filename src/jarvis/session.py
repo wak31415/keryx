@@ -567,7 +567,9 @@ class VoiceSession:
 
         drain = getattr(self._transport, "drain", None)
         if drain is not None:
-            # Local playback is queued: hanging up would cut off the goodbye.
+            # Both transports queue playback — the speaker locally, Twilio's own buffer on
+            # the phone — and the model produces audio faster than either plays it, so
+            # hanging up here would cut off the goodbye.
             try:
                 await asyncio.wait_for(
                     drain(DRAIN_TIMEOUT_SECONDS), DRAIN_TIMEOUT_SECONDS + 1.0

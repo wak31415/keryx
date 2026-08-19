@@ -725,7 +725,9 @@ async def test_submit_pin_hands_the_digits_to_the_session(tools):
 
 
 async def test_end_session_asks_the_session_to_end(tools):
+    """The goodbye comes *before* this call, so the result must not ask for another."""
     result = await tools.call("end_session", {})
 
     assert result["status"] == "ending"
+    assert "goodbye" not in result["message"].lower()
     assert tools.session.ends == ["user"]
