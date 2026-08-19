@@ -277,15 +277,21 @@ class SessionRegistry:
   starts it; if it finishes within `wait_seconds` the summary is returned inline; else returns
   `{task_id, status:"running"}` and the model tells the user it will announce completion.
 - **Task completion**: `TaskCompleted` → Notifier: (1) `announce()` on every live session
-  (marks `announced`), (2) SMS summary (with report link) unless a live *phone* session
+  except the one currently inline-waiting on that task inside `dispatch_task` (it gets the
+  result as the tool output instead) (marks `announced`), (2) SMS summary (with report link) unless a live *phone* session
   announced it, (3) if `callback_requested` and no live phone session announced → outbound
   call with `task_id`.
-- **PIN gate**: `session.authorized` starts False on phone; `submit_pin` (spoken) or DTMF
+- **PIN gate**: an empty/blank `JARVIS_PIN` counts as *not configured* (destructive kinds refused on phone). `session.authorized` starts False on phone; `submit_pin` (spoken) or DTMF
   digits (collected in the session, never shown to the model) flip it; `dispatch_task` for
   `coding`/`cowork` returns `{"status":"pin_required"}` until authorized. Constant-time
   compare; 3 failures → say goodbye and hang up.
-- **Follow-ups**: `send_followup(task_id, text)` → running task: `AgentSession.send()`;
-  finished task: new run with `resume=claude_session_id`.
+- **Follow-ups**: `send_followup(task_id, text)` → finished task: new run with
+  `resume=claude_session_id`; running task: the text is queued and, when the current run
+  finishes, the task is immediately re-run with `resume` and the queued follow-ups as the
+  prompt (no completion announcement for the intermediate result). (Ruling 2026-08-19: the
+  SDK's mid-turn `query()` semantics are unverified, so `AgentSession.send()` is not used
+  for live follow-ups.) PIN gate applies to `send_followup`/`cancel_task` on destructive
+  kinds exactly as to `dispatch_task`.
 - **Concurrency**: `MAX_CONCURRENT_TASKS` (default 3); overflow tasks stay `queued`.
 - **Local session end**: `end_session` tool, or `LOCAL_SILENCE_TIMEOUT` (30 s without user speech
   after the last response) → goodbye → back to wake-word listening.
