@@ -164,8 +164,13 @@ class Notifier:
         return self._settings.owner_number
 
     def _sms_body(self, task: Task, text: str) -> str:
+        """The summary, trimmed to something sendable, plus the report link if there is one.
+
+        A task that died before its report was written (the exception path in the task
+        manager) gets no link rather than one that would 404.
+        """
         body = text[:SMS_BODY_LIMIT]
-        url = self.report_url(task.id)
+        url = self.report_url(task.id) if task.report_path else None
         return f"{body}\n{url}" if url else body
 
     # --- (3) the call-back -------------------------------------------------

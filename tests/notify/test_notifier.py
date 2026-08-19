@@ -81,8 +81,12 @@ class Harness:
     settings: Settings
 
     async def task(self, **fields) -> Task:
-        """A row in the store, defaulting to a local-origin chat task."""
-        values: dict = {"kind": TaskKind.CHAT, "description": "look something up"}
+        """A row in the store, defaulting to a finished local-origin chat task."""
+        values: dict = {
+            "kind": TaskKind.CHAT,
+            "description": "look something up",
+            "report_path": str(self.settings.data_dir / "tasks" / "1.md"),
+        }
         values.update(fields)
         return await self.store.create(Task(id=None, **values))
 
@@ -259,6 +263,14 @@ async def test_a_very_long_summary_is_cut_down_to_a_sendable_body(harness):
 async def test_without_a_public_host_the_sms_is_just_the_summary(harnesses):
     harness = harnesses(public_host=None)
     task = await harness.task()
+
+    await harness.finished(task, "done")
+
+    assert harness.sms_body == f"Task {task.id} (chat) finished: done"
+
+
+async def test_a_task_with_no_report_is_texted_without_a_link(harness):
+    task = await harness.task(report_path=None)
 
     await harness.finished(task, "done")
 
