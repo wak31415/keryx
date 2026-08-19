@@ -33,7 +33,7 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
 from jarvis.config import Settings
-from jarvis.prompts import load_prompt
+from jarvis.prompts import render_prompt
 from jarvis.tasks.models import Task, TaskKind
 
 log = logging.getLogger("jarvis.tasks.agent_runner")
@@ -211,22 +211,14 @@ def resolve_model(name: str | None, settings: Settings) -> str:
     return MODEL_ALIASES.get(alias.lower(), alias)
 
 
-class _Defaulting(dict):
-    """Format mapping that blanks unknown placeholders instead of raising."""
-
-    def __missing__(self, key: str) -> str:
-        log.warning("subagent prompt has an unknown placeholder: %s", key)
-        return ""
-
-
 def render_subagent_suffix(task: Task) -> str:
     """The subagent system-prompt suffix, with this task's kind/project/description."""
-    values = _Defaulting(
+    return render_prompt(
+        SUBAGENT_SUFFIX_PROMPT,
         kind=str(task.kind),
         project=task.project or "none",
         description=task.description,
     )
-    return load_prompt(SUBAGENT_SUFFIX_PROMPT).format_map(values)
 
 
 def google_mcp_server_config(settings: Settings) -> dict[str, Any]:

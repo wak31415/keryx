@@ -15,6 +15,7 @@ from typing import Literal, Protocol
 from jarvis.audio.util import AudioFormat
 
 __all__ = [
+    "DRAIN_TIMEOUT_SECONDS",
     "AudioFormat",
     "AudioIn",
     "Dtmf",
@@ -22,6 +23,9 @@ __all__ = [
     "Transport",
     "TransportEvent",
 ]
+
+#: How long a `drain()` waits for queued playback to finish (see `Transport`).
+DRAIN_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass
@@ -57,10 +61,10 @@ class Transport(Protocol):
     """The audio pipe of a single session.
 
     A transport whose playback is queued (the local speaker) may also offer
-    `async def drain(timeout: float) -> bool`, which waits for that queue to empty. The
-    session calls it, when present, just before `hangup()` so a goodbye is heard in full.
-    It is deliberately not part of this protocol: transports that write straight to the
-    wire have nothing to drain.
+    `async def drain(timeout: float = DRAIN_TIMEOUT_SECONDS) -> bool`, which waits for
+    that queue to empty. The session calls it, when present, just before `hangup()` so a
+    goodbye is heard in full. It is deliberately not part of this protocol: transports
+    that write straight to the wire have nothing to drain.
     """
 
     channel: Literal["phone", "local"]

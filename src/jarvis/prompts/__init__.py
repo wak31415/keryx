@@ -30,11 +30,16 @@ def load_prompt(name: str) -> str:
 
 
 class _Defaulting(dict):
-    """Format mapping that leaves unknown placeholders in place instead of raising."""
+    """Format mapping that blanks unknown placeholders instead of raising."""
 
     def __missing__(self, key: str) -> str:
         log.warning("prompt template has an unknown placeholder: %s", key)
         return ""
+
+
+def render_prompt(name: str, **values: str) -> str:
+    """A packaged template rendered with `values`; an unknown placeholder blanks out."""
+    return load_prompt(name).format_map(_Defaulting(values))
 
 
 def render_voice_prompt(
@@ -53,7 +58,8 @@ def render_voice_prompt(
     say) and is dropped from the prompt when there is none.
     """
     names = sorted(settings.projects) if projects is None else projects
-    values = _Defaulting(
+    return render_prompt(
+        VOICE_SYSTEM_PROMPT,
         now=datetime.now().strftime(_TIME_FORMAT),
         channel=channel,
         caller=caller or "unknown",
@@ -61,4 +67,3 @@ def render_voice_prompt(
         projects=", ".join(names) if names else "none configured",
         opening_context=f"{_OPENING_HEADING}\n\n{opening_context}" if opening_context else "",
     )
-    return load_prompt(VOICE_SYSTEM_PROMPT).format_map(values)

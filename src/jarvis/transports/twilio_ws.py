@@ -24,14 +24,18 @@ from typing import Literal, Protocol
 from starlette.websockets import WebSocketDisconnect
 
 from jarvis.audio.util import AudioFormat
-from jarvis.transports.base import AudioIn, Dtmf, Hangup, TransportEvent
+from jarvis.transports.base import (
+    DRAIN_TIMEOUT_SECONDS,
+    AudioIn,
+    Dtmf,
+    Hangup,
+    TransportEvent,
+)
 
 log = logging.getLogger("jarvis.transports.twilio_ws")
 
 # How long `start()` waits for Twilio's `start` frame before giving up.
 START_TIMEOUT_SECONDS = 10.0
-# How long `drain()` waits for Twilio to ack that it has played everything we queued.
-DRAIN_TIMEOUT_SECONDS = 5.0
 
 
 class WebSocketLike(Protocol):

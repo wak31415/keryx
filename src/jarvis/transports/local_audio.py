@@ -19,7 +19,12 @@ from typing import Literal, Protocol
 import numpy as np
 
 from jarvis.audio.util import AudioFormat, AudioGate, PlaybackBuffer, resample_pcm16
-from jarvis.transports.base import AudioIn, Hangup, TransportEvent
+from jarvis.transports.base import (
+    DRAIN_TIMEOUT_SECONDS,
+    AudioIn,
+    Hangup,
+    TransportEvent,
+)
 from jarvis.wakeword import WAKE_SAMPLE_RATE
 
 log = logging.getLogger("jarvis.transports.local_audio")
@@ -224,7 +229,9 @@ class LocalAudioDevice:
         """True while audio is queued or the gate still considers the speaker busy."""
         return not self._playback.is_empty or self.gate.is_speaking
 
-    async def wait_until_idle(self, timeout: float = 5.0, *, poll_s: float = 0.01) -> bool:
+    async def wait_until_idle(
+        self, timeout: float = DRAIN_TIMEOUT_SECONDS, *, poll_s: float = 0.01
+    ) -> bool:
         """Poll until playback finishes; False if `timeout` elapses first."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
@@ -297,7 +304,7 @@ class LocalTransport:
     async def clear(self) -> None:
         self._device.clear_playback()
 
-    async def drain(self, timeout: float = 5.0) -> bool:
+    async def drain(self, timeout: float = DRAIN_TIMEOUT_SECONDS) -> bool:
         """Wait until queued playback has finished; False if `timeout` elapses first.
 
         The optional hook `VoiceSession` looks for before hanging up: playback here is a

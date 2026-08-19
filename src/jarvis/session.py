@@ -58,7 +58,13 @@ from jarvis.realtime.base import (
     Transcript,
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
-from jarvis.transports.base import AudioIn, Dtmf, Hangup, Transport
+from jarvis.transports.base import (
+    DRAIN_TIMEOUT_SECONDS,
+    AudioIn,
+    Dtmf,
+    Hangup,
+    Transport,
+)
 
 log = logging.getLogger("jarvis.session")
 
@@ -92,8 +98,6 @@ DTMF_NON_DIGITS = ("#", "*")
 
 # How long a requested end waits for the speaking response to finish before hanging up.
 END_GRACE_SECONDS = 10.0
-# How long teardown waits for a transport to finish playing its queued audio.
-DRAIN_TIMEOUT_SECONDS = 5.0
 # How far before `max_call_seconds` the model is told to wrap up (see WRAP_UP_MESSAGE).
 MAX_CALL_WARNING_SECONDS = 30.0
 

@@ -12,10 +12,10 @@ import dataclasses
 import logging
 import sqlite3
 import threading
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
-from jarvis.tasks.models import Task, TaskStatus
+from jarvis.tasks.models import Task, TaskStatus, to_utc_iso
 
 log = logging.getLogger("jarvis.tasks.store")
 
@@ -166,13 +166,9 @@ class TaskStore:
         return await asyncio.to_thread(self._count_created_since_sync, since)
 
     def _count_created_since_sync(self, since: datetime) -> int:
-        if since.tzinfo is None:
-            since = since.replace(tzinfo=UTC)
-        else:
-            since = since.astimezone(UTC)
         with self._lock:
             row = self._conn.execute(
-                "SELECT COUNT(*) AS n FROM tasks WHERE created_at >= ?", (since.isoformat(),)
+                "SELECT COUNT(*) AS n FROM tasks WHERE created_at >= ?", (to_utc_iso(since),)
             ).fetchone()
         return row["n"]
 

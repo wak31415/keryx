@@ -36,8 +36,12 @@ _BOOL_FIELDS = frozenset({"callback_requested", "announced", "sms_sent"})
 _DATETIME_FIELDS = frozenset({"created_at", "started_at", "finished_at"})
 
 
-def _dump_datetime(value: datetime) -> str:
-    """`value` as an ISO-8601 string, converted to UTC first (naive values are assumed UTC)."""
+def to_utc_iso(value: datetime) -> str:
+    """`value` as an ISO-8601 string, converted to UTC first (naive values are assumed UTC).
+
+    Also how `TaskStore` builds the bounds it compares `created_at` against, so the
+    stored strings and the query strings are produced by the same code.
+    """
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     else:
@@ -46,7 +50,7 @@ def _dump_datetime(value: datetime) -> str:
 
 
 def _parse_datetime(value: str) -> datetime:
-    """The inverse of `_dump_datetime`: always returns a tz-aware UTC datetime."""
+    """The inverse of `to_utc_iso`: always returns a tz-aware UTC datetime."""
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
@@ -62,7 +66,7 @@ def _serialize_field(name: str, value: Any) -> Any:
     if name in _BOOL_FIELDS:
         return int(value)
     if name in _DATETIME_FIELDS:
-        return _dump_datetime(value)
+        return to_utc_iso(value)
     return value
 
 
