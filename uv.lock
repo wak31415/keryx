@@ -319,7 +319,6 @@ source = { editable = "." }
 dependencies = [
     { name = "claude-agent-sdk", marker = "sys_platform == 'darwin'" },
     { name = "fastapi", marker = "sys_platform == 'darwin'" },
-    { name = "httpx", marker = "sys_platform == 'darwin'" },
     { name = "numpy", marker = "sys_platform == 'darwin'" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'" },
     { name = "openwakeword", marker = "sys_platform == 'darwin'" },
@@ -344,7 +343,6 @@ dev = [
 requires-dist = [
     { name = "claude-agent-sdk" },
     { name = "fastapi" },
-    { name = "httpx" },
     { name = "numpy" },
     { name = "onnxruntime" },
     { name = "openwakeword", specifier = ">=0.6.0" },
