@@ -245,12 +245,16 @@ class TaskManager:
             await self._fail(task_id, f"{type(exc).__name__}: {exc}")
         finally:
             await self._close_session(task_id)
-            self._cancel_requested.discard(task_id)
-            self._resume_pending.pop(task_id, None)
-            self._live_followups.pop(task_id, None)
-            self._done_event(task_id).set()
+            self._release(task_id)
             if self._tasks.get(task_id) is asyncio.current_task():
                 del self._tasks[task_id]
+
+    def _release(self, task_id: int) -> None:
+        """Drop the per-task bookkeeping and wake anything blocked in `wait_for`."""
+        self._cancel_requested.discard(task_id)
+        self._resume_pending.pop(task_id, None)
+        self._live_followups.pop(task_id, None)
+        self._done_event(task_id).set()
 
     async def _execute(self, task_id: int, *, resume: str | None) -> None:
         """Open a subagent for `task_id`, run one turn and record the outcome."""
@@ -534,10 +538,7 @@ class TaskManager:
         if current is not None and current.status not in TERMINAL_STATUSES:
             # The asyncio task never got to run its cancellation handler.
             current = await self._mark_cancelled(task_id) or current
-        self._cancel_requested.discard(task_id)
-        self._resume_pending.pop(task_id, None)
-        self._live_followups.pop(task_id, None)
-        self._done_event(task_id).set()
+        self._release(task_id)
         return current
 
     # --- projects --------------------------------------------------------
