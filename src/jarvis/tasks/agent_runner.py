@@ -224,8 +224,12 @@ def render_subagent_suffix(task: Task) -> str:
     return load_prompt(SUBAGENT_SUFFIX_PROMPT).format_map(values)
 
 
-def _google_mcp_server(settings: Settings) -> dict[str, Any]:
-    """The `workspace-mcp` stdio server config for Gmail + Calendar (spec §4)."""
+def google_mcp_server_config(settings: Settings) -> dict[str, Any]:
+    """The `workspace-mcp` stdio server config for Gmail + Calendar (spec §4).
+
+    Public because `jarvis setup-google` runs the very same server once, by hand, to walk
+    through the browser OAuth flow that leaves credentials behind for cowork tasks.
+    """
     env = {
         name: value
         for name, value in (
@@ -270,7 +274,7 @@ def build_options(
     if builtin_tools is not None:
         options["tools"] = list(builtin_tools)
     if task.kind is TaskKind.COWORK:
-        options["mcp_servers"] = {"google": _google_mcp_server(settings)}
+        options["mcp_servers"] = {"google": google_mcp_server_config(settings)}
         options["allowed_tools"] = list(COWORK_MCP_TOOLS)
     if settings.anthropic_api_key:
         options["env"] = {"ANTHROPIC_API_KEY": settings.anthropic_api_key}

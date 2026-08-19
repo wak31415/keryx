@@ -8,6 +8,11 @@ from typing import Annotated
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+#: Stand-in for a missing `OPENAI_API_KEY`, so read-only commands (`jarvis tasks`,
+#: `jarvis doctor`, `jarvis download-models`) can still load settings on a half-configured
+#: machine. `doctor` recognises it and reports the key as unset.
+PLACEHOLDER_KEY = "unset"
+
 
 class Settings(BaseSettings):
     """Jarvis runtime configuration. See spec §3.4 for the env-var table."""
