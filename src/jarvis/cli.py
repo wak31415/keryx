@@ -6,6 +6,7 @@ import dataclasses
 import logging
 import logging.handlers
 import signal
+from collections.abc import AsyncIterator
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -285,21 +286,25 @@ def _shorten(text: str, limit: int) -> str:
     return single_line[: limit - 1] + "…"
 
 
-async def _read_tasks(settings: Settings, status: TaskStatus | None, limit: int) -> list[Task]:
-    """Read straight from the store: `tasks` never starts a manager or a subagent."""
+@contextlib.asynccontextmanager
+async def _open_store(settings: Settings) -> AsyncIterator[TaskStore]:
+    """The task store for a read-only CLI command: `tasks` never starts a manager or a
+    subagent, it just reads straight from the store and always closes it after."""
     store = TaskStore(settings.data_dir / TASK_DB_NAME)
     try:
-        return await store.list(status=status, limit=limit)
+        yield store
     finally:
         await store.close()
+
+
+async def _read_tasks(settings: Settings, status: TaskStatus | None, limit: int) -> list[Task]:
+    async with _open_store(settings) as store:
+        return await store.list(status=status, limit=limit)
 
 
 async def _read_task(settings: Settings, task_id: int) -> Task | None:
-    store = TaskStore(settings.data_dir / TASK_DB_NAME)
-    try:
+    async with _open_store(settings) as store:
         return await store.get(task_id)
-    finally:
-        await store.close()
 
 
 @tasks_app.command("list")

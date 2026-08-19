@@ -59,7 +59,9 @@ def build_app_state(settings: Settings) -> AppState:
     settings.ensure_dirs()
     bus = EventBus()
     store = TaskStore(settings.data_dir / TASK_DB_NAME)
-    manager = TaskManager(store, _build_runner(settings), bus, settings)
+    # The real Agent SDK runner, or the scripted one behind `--fake-agents`.
+    runner: AgentRunner = FakeAgentRunner() if settings.fake_agents else ClaudeAgentRunner(settings)
+    manager = TaskManager(store, runner, bus, settings)
 
     registry = ToolRegistry()
     inline_waits = InlineWaits()
@@ -92,11 +94,6 @@ def build_app_state(settings: Settings) -> AppState:
     )
     state.notifier.start()
     return state
-
-
-def _build_runner(settings: Settings) -> AgentRunner:
-    """The real Agent SDK runner, or the scripted one behind `--fake-agents`."""
-    return FakeAgentRunner() if settings.fake_agents else ClaudeAgentRunner(settings)
 
 
 async def shutdown_app_state(state: AppState) -> None:

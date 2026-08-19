@@ -37,7 +37,7 @@ class _Defaulting(dict):
         return ""
 
 
-def render_prompt(name: str, **values: str) -> str:
+def render_prompt(name: str, /, **values: str) -> str:
     """A packaged template rendered with `values`; an unknown placeholder blanks out."""
     return load_prompt(name).format_map(_Defaulting(values))
 

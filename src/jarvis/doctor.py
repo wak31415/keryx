@@ -67,7 +67,7 @@ def run_doctor_checks(settings: Settings, *, probe_mic: bool = True) -> list[Che
             "Twilio cannot reach this machine",
             reveal=True,
         ),
-        _on_path_check("ngrok", "ngrok", "no tunnel for the phone channel — brew install ngrok"),
+        _ngrok_check(),
         _allowed_callers_check(settings),
         _pin_check(settings),
         _wakeword_check(settings),
@@ -173,12 +173,14 @@ def _claude_cli_check() -> Check:
     return Check("claude CLI", True, found)
 
 
-def _on_path_check(name: str, executable: str, consequence: str) -> Check:
-    """Is `executable` on `PATH`?"""
-    found = shutil.which(executable)
+def _ngrok_check() -> Check:
+    """Is `ngrok` on `PATH`?"""
+    found = shutil.which("ngrok")
     if not found:
-        return Check(name, False, f"not on PATH — {consequence}")
-    return Check(name, True, found)
+        return Check(
+            "ngrok", False, "not on PATH — no tunnel for the phone channel — brew install ngrok"
+        )
+    return Check("ngrok", True, found)
 
 
 def _wakeword_models_dir() -> Path:
