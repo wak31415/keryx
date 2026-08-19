@@ -378,9 +378,9 @@ def doctor(
     for check in checks:
         typer.echo(format_check(check))
 
-    failures = [check for check in checks if not check.ok and check.severity == "hard"]
     if has_hard_failure(checks):
-        typer.echo(f"\n{len(failures)} check(s) failed.")
+        failed = sum(1 for check in checks if not check.ok and check.severity == "hard")
+        typer.echo(f"\n{failed} check(s) failed.")
         raise typer.Exit(1)
     typer.echo("\nall good.")
 

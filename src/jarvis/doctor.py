@@ -59,7 +59,12 @@ def run_doctor_checks(settings: Settings, *, probe_mic: bool = True) -> list[Che
         _secret_check("ANTHROPIC_API_KEY", settings.anthropic_api_key, "subagents cannot run"),
         _on_path_check("claude CLI", "claude", CLAUDE_CLI_HINT),
         _twilio_check(settings),
-        _secret_check("PUBLIC_HOST", settings.public_host, "Twilio cannot reach this machine"),
+        _secret_check(
+            "PUBLIC_HOST",
+            settings.public_host,
+            "Twilio cannot reach this machine",
+            reveal=True,
+        ),
         _on_path_check("ngrok", "ngrok", "no tunnel for the phone channel — brew install ngrok"),
         _allowed_callers_check(settings),
         _pin_check(settings),
@@ -91,11 +96,14 @@ def _openai_key_check(settings: Settings) -> Check:
     return Check("OPENAI_API_KEY", True, "set")
 
 
-def _secret_check(name: str, value: str | None, consequence: str) -> Check:
-    """A plain "is this configured" check whose failure detail says what breaks."""
+def _secret_check(name: str, value: str | None, consequence: str, *, reveal: bool = False) -> Check:
+    """A plain "is this configured" check whose failure detail says what breaks.
+
+    `reveal` prints the value back (hostnames are worth seeing; keys are not).
+    """
     if not value:
         return Check(name, False, f"not set — {consequence}")
-    return Check(name, True, value if name == "PUBLIC_HOST" else "set")
+    return Check(name, True, value if reveal else "set")
 
 
 def _twilio_check(settings: Settings) -> Check:
