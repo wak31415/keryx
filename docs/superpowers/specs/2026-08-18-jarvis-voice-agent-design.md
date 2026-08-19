@@ -63,7 +63,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 |---|---|
 | `config.py` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails |
 | `events.py` | in-process async pub/sub `EventBus` + event dataclasses |
-| `audio/util.py` | soxr resampling, µ-law⇄PCM16 (tests/dev only), chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` |
+| `audio/util.py` | soxr resampling, chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` (µ-law codec removed 2026-08-19: phone audio is passed through as `audio/pcmu`, nothing transcodes) |
 | `transports/base.py` | `Transport` protocol + `AudioIn`/`Dtmf`/`Hangup` events |
 | `transports/twilio_ws.py` | Twilio media-stream WS transport (µ-law passthrough) |
 | `transports/local_audio.py` | `LocalAudioDevice` (sounddevice mic/speaker, gate, chime) + `LocalTransport` (one session over the device) |
