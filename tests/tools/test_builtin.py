@@ -446,6 +446,29 @@ async def test_list_tasks_rejects_a_status_it_does_not_know(tools):
     assert "unknown status" in result["error"]
 
 
+# --- the task_id every task tool takes -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "tool, extra",
+    [
+        ("get_task_status", {}),
+        ("get_task_result", {}),
+        ("send_followup", {"message": "hi"}),
+        ("cancel_task", {}),
+        ("request_callback", {}),
+    ],
+)
+async def test_a_task_id_that_names_nothing_is_an_error(tools, tool, extra):
+    assert await tools.call(tool, {"task_id": 99, **extra}) == {"error": "no task 99"}
+
+
+async def test_a_task_id_that_is_not_a_number_is_an_error(tools):
+    result = await tools.call("get_task_status", {"task_id": "the blue one"})
+
+    assert "task_id" in result["error"]
+
+
 # --- get_task_status / get_task_result ------------------------------------
 
 
@@ -462,16 +485,6 @@ async def test_get_task_status_describes_one_task(tools):
     assert result["summary"] == "I finished the task."
     assert result["error"] is None
     assert result["line"].startswith("task 1 (chat, done)")
-
-
-async def test_get_task_status_for_a_task_that_does_not_exist(tools):
-    assert await tools.call("get_task_status", {"task_id": 99}) == {"error": "no task 99"}
-
-
-async def test_a_task_id_that_is_not_a_number_is_an_error(tools):
-    result = await tools.call("get_task_status", {"task_id": "the blue one"})
-
-    assert "task_id" in result["error"]
 
 
 async def test_get_task_result_carries_an_excerpt_of_the_report(tools):
@@ -507,10 +520,6 @@ async def test_get_task_result_without_a_report_says_nothing_about_one(make_tool
     assert result["status"] in {"queued", "running"}
 
 
-async def test_get_task_result_for_a_task_that_does_not_exist(tools):
-    assert await tools.call("get_task_result", {"task_id": 7}) == {"error": "no task 7"}
-
-
 # --- send_followup / cancel_task ------------------------------------------
 
 
@@ -543,12 +552,6 @@ async def test_send_followup_to_a_cancelled_task_explains_itself(tools):
     assert result == {"error": "task is cancelled"}
 
 
-async def test_send_followup_to_a_task_that_does_not_exist(tools):
-    assert await tools.call("send_followup", {"task_id": 4, "message": "hi"}) == {
-        "error": "no task 4"
-    }
-
-
 async def test_cancel_task_stops_a_running_task(make_tools):
     tools = make_tools(FakeAgentRunner(delay_s=SLOW))
     await tools.dispatch(description="never mind")
@@ -557,10 +560,6 @@ async def test_cancel_task_stops_a_running_task(make_tools):
     result = await tools.call("cancel_task", {"task_id": 1})
 
     assert result == {"task_id": 1, "status": "cancelled"}
-
-
-async def test_cancel_task_for_a_task_that_does_not_exist(tools):
-    assert await tools.call("cancel_task", {"task_id": 12}) == {"error": "no task 12"}
 
 
 # --- send_followup / cancel_task: the PIN gate (spec §3.3) -----------------
@@ -704,10 +703,6 @@ async def test_request_callback_on_a_finished_task_just_reports_it(tools):
     assert result["status"] == "already_finished"
     assert result["summary"] == "I finished the task."
     assert (await tools.manager.get(1)).callback_requested is False
-
-
-async def test_request_callback_for_a_task_that_does_not_exist(tools):
-    assert await tools.call("request_callback", {"task_id": 3}) == {"error": "no task 3"}
 
 
 async def test_an_unauthorized_phone_caller_cannot_be_called_back_anywhere(make_tools):
