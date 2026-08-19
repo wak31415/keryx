@@ -5,7 +5,7 @@ import secrets
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 #: Stand-in for a missing `OPENAI_API_KEY`, so read-only commands (`jarvis tasks`,
@@ -38,27 +38,31 @@ class Settings(BaseSettings):
         env_file=".env", extra="ignore", populate_by_name=True, env_ignore_empty=True
     )
 
+    #: Cached `report_secret_value()`: it is asked for per notification and per report
+    #: request, and the fallback lives in a file.
+    _report_secret_cache: str | None = PrivateAttr(default=None)
+
     # OpenAI Realtime
-    openai_api_key: str
+    openai_api_key: str = Field(repr=False)
     openai_realtime_model: str = "gpt-realtime-2.1"
     openai_voice: str = "marin"
     openai_transcription_model: str = "gpt-4o-mini-transcribe"
 
     # Claude Agent SDK
-    anthropic_api_key: str | None = None
+    anthropic_api_key: str | None = Field(default=None, repr=False)
     subagent_model: str = "claude-opus-5"
     subagent_max_turns: int = 200
     subagent_max_budget_usd: float = 10.0
 
     # Twilio
     twilio_account_sid: str | None = None
-    twilio_auth_token: str | None = None
+    twilio_auth_token: str | None = Field(default=None, repr=False)
     twilio_number: str | None = None
 
     # Access control
     allowed_callers: Annotated[list[str], NoDecode] = Field(default_factory=list)
     owner_number_explicit: str | None = Field(default=None, validation_alias="OWNER_NUMBER")
-    pin: str | None = Field(default=None, validation_alias="JARVIS_PIN")
+    pin: str | None = Field(default=None, validation_alias="JARVIS_PIN", repr=False)
 
     # Networking
     public_host: str | None = None
@@ -84,11 +88,11 @@ class Settings(BaseSettings):
     wakeword_threshold: float = 0.5
 
     # Report links
-    report_secret: str | None = None
+    report_secret: str | None = Field(default=None, repr=False)
 
     # Google integration
     google_oauth_client_id: str | None = None
-    google_oauth_client_secret: str | None = None
+    google_oauth_client_secret: str | None = Field(default=None, repr=False)
     user_google_email: str | None = None
 
     # Logging
@@ -134,7 +138,15 @@ class Settings(BaseSettings):
         (self.data_dir / "calls").mkdir(parents=True, exist_ok=True)
 
     def report_secret_value(self) -> str:
-        """The configured report secret, or a persisted random one at `data_dir/report_secret`."""
+        """The configured report secret, or a persisted random one at `data_dir/report_secret`.
+
+        Read once and kept: every notification and every report request asks for it.
+        """
+        if self._report_secret_cache is None:
+            self._report_secret_cache = self._load_report_secret()
+        return self._report_secret_cache
+
+    def _load_report_secret(self) -> str:
         if self.report_secret:
             return self.report_secret
 

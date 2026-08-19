@@ -99,12 +99,33 @@ def test_a_missing_anthropic_key_is_a_hard_failure(healthy):
     assert (check.ok, check.severity) == (False, "hard")
 
 
-def test_a_missing_claude_cli_is_a_hard_failure(healthy, monkeypatch):
+def test_the_bundled_claude_cli_counts_even_without_one_on_path(healthy, monkeypatch, tmp_path):
+    """claude-agent-sdk 0.2 ships its own `claude`, and prefers it over PATH."""
+    bundled = tmp_path / "_bundled" / "claude"
+    bundled.parent.mkdir()
+    bundled.write_text("#!/bin/sh\n")
+    monkeypatch.setattr("jarvis.doctor._bundled_claude_cli", lambda: bundled)
     monkeypatch.setattr("shutil.which", lambda name: None if name == "claude" else "/bin/" + name)
 
     checks = by_name(run_doctor_checks(healthy, probe_mic=False))
-    assert checks["claude CLI"].ok is False
+    assert checks["claude CLI"].ok is True
+    assert str(bundled) in checks["claude CLI"].detail
     assert checks["ngrok"].ok is True
+
+
+def test_no_claude_cli_anywhere_is_a_soft_failure(healthy, monkeypatch):
+    monkeypatch.setattr("jarvis.doctor._bundled_claude_cli", lambda: None)
+    monkeypatch.setattr("shutil.which", lambda name: None if name == "claude" else "/bin/" + name)
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["claude CLI"]
+    assert (check.ok, check.severity) == (False, "soft")
+
+
+def test_a_claude_cli_on_path_is_enough(healthy, monkeypatch):
+    monkeypatch.setattr("jarvis.doctor._bundled_claude_cli", lambda: None)
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["claude CLI"]
+    assert (check.ok, check.detail) == (True, "/usr/local/bin/claude")
 
 
 def test_a_missing_ngrok_is_a_hard_failure(healthy, monkeypatch):

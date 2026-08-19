@@ -206,3 +206,34 @@ def test_a_blank_pin_is_not_a_pin(tmp_path):
             _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", pin=blank
         )
         assert settings.pin is None
+
+
+def test_repr_never_leaks_a_secret(tmp_path):
+    """`repr(settings)` turns up in logs and tracebacks; the secrets must not."""
+    values = {
+        "openai_api_key": "openai-secret-value",
+        "anthropic_api_key": "anthropic-secret-value",
+        "twilio_auth_token": "twilio-secret-value",
+        "pin": "424242",
+        "report_secret": "report-secret-value",
+        "google_oauth_client_secret": "google-secret-value",
+    }
+    settings = Settings(_env_file=None, data_dir=tmp_path / "jarvis", **values)
+
+    text = repr(settings)
+
+    for name, value in values.items():
+        assert value not in text, name
+    assert "openai_realtime_model" in text  # the harmless ones are still there
+
+
+def test_report_secret_value_reads_the_file_only_once(settings, monkeypatch):
+    """It is called per notification and per report request: not once per file read."""
+    first = settings.report_secret_value()
+
+    def explode(*args, **kwargs):
+        raise AssertionError("the report secret was read from disk again")
+
+    monkeypatch.setattr(Path, "read_text", explode)
+
+    assert settings.report_secret_value() == first

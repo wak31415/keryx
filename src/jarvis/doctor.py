@@ -28,6 +28,8 @@ WRITE_PROBE_NAME = ".doctor-write-probe"
 MARKERS = {"ok": "✅", "hard": "❌", "soft": "⚠️"}
 
 CLAUDE_CLI_HINT = "the Agent SDK needs it — npm i -g @anthropic-ai/claude-code"
+#: Where `claude-agent-sdk` 0.2.x keeps the CLI it ships with, relative to the package.
+BUNDLED_CLI_PATH = ("_bundled", "claude")
 
 
 @dataclass(frozen=True)
@@ -57,7 +59,7 @@ def run_doctor_checks(settings: Settings, *, probe_mic: bool = True) -> list[Che
         _env_file_check(),
         _openai_key_check(settings),
         _secret_check("ANTHROPIC_API_KEY", settings.anthropic_api_key, "subagents cannot run"),
-        _on_path_check("claude CLI", "claude", CLAUDE_CLI_HINT),
+        _claude_cli_check(),
         _twilio_check(settings),
         _secret_check(
             "PUBLIC_HOST",
@@ -139,6 +141,36 @@ def _pin_check(settings: Settings) -> Check:
 
 
 # --- the machine -----------------------------------------------------------
+
+
+def _bundled_claude_cli() -> Path | None:
+    """The `claude` binary shipped inside `claude_agent_sdk`, if this install has one."""
+    try:
+        import claude_agent_sdk
+    except Exception:  # pragma: no cover - the SDK is a hard dependency
+        return None
+    path = Path(claude_agent_sdk.__file__).parent.joinpath(*BUNDLED_CLI_PATH)
+    return path if path.is_file() else None
+
+
+def _claude_cli_check() -> Check:
+    """The CLI the Agent SDK drives: the one it bundles, else one on `PATH`.
+
+    Soft: the SDK looks for its bundled binary first, so a machine without either is a
+    warning about subagents, not a reason to call the whole install broken.
+    """
+    bundled = _bundled_claude_cli()
+    if bundled is not None:
+        return Check("claude CLI", True, f"bundled with claude-agent-sdk: {bundled}")
+    found = shutil.which("claude")
+    if not found:
+        return Check(
+            "claude CLI",
+            False,
+            f"not bundled, not on PATH — {CLAUDE_CLI_HINT}",
+            severity="soft",
+        )
+    return Check("claude CLI", True, found)
 
 
 def _on_path_check(name: str, executable: str, consequence: str) -> Check:
