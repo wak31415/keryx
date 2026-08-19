@@ -37,12 +37,22 @@ if [[ ! -f "$REPO/.env" ]]; then
   exit 1
 fi
 
-set -a
-# shellcheck disable=SC1091
-source "$REPO/.env"
-set +a
+env_value() {
+  # env_value NAME [FILE] — the value of NAME in a .env file, without surrounding quotes.
+  # Deliberately not `source`: .env holds JSON (PROJECTS={"a": "/b"}), and sourcing that
+  # under `set -e` is a syntax error at best and arbitrary code at worst.
+  local name="$1" file="${2:-.env}" value
+  value="$(grep -E "^[[:space:]]*${name}=" "$file" | tail -n 1 | cut -d= -f2-)" || true
+  value="${value%\"}"; value="${value#\"}"
+  value="${value%\'}"; value="${value#\'}"
+  printf '%s' "$value"
+}
 
-if [[ -z "${PUBLIC_HOST:-}" ]]; then
+PUBLIC_HOST="$(env_value PUBLIC_HOST "$REPO/.env")"
+PORT="$(env_value PORT "$REPO/.env")"
+PORT="${PORT:-8080}"
+
+if [[ -z "$PUBLIC_HOST" ]]; then
   echo "PUBLIC_HOST is not set in .env (use a reserved ngrok domain)" >&2
   exit 1
 fi
@@ -67,7 +77,7 @@ render() {
       -e "s|__UV__|$UV|g" \
       -e "s|__NGROK__|$NGROK|g" \
       -e "s|__PUBLIC_HOST__|$PUBLIC_HOST|g" \
-      -e "s|__PORT__|${PORT:-8080}|g" \
+      -e "s|__PORT__|$PORT|g" \
       "$1" > "$2"
 }
 

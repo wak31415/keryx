@@ -50,8 +50,9 @@ Tools the model can call: `dispatch_task`, `list_tasks`, `get_task_status`,
 - **OpenAI API key** with Realtime access
 - **Anthropic API key** — the Agent SDK is pay-per-token and does *not* use a Claude Max
   login
-- The **`claude` CLI** on `PATH` (`npm i -g @anthropic-ai/claude-code`) — the Agent SDK
-  drives it
+- The **`claude` CLI** — the Agent SDK drives it, and ships a bundled copy it prefers
+  over `PATH`. Install one yourself (`npm i -g @anthropic-ai/claude-code`) only if
+  `jarvis doctor` says there is neither
 - A **Twilio** account, a phone number, and an **ngrok** reserved domain (for the phone
   channel)
 - A **Google Cloud OAuth client** (Gmail + Calendar scopes) if you want `cowork` tasks
@@ -91,9 +92,10 @@ below. The full table is spec §3.4.
 2. **Call status changes**: `https://<PUBLIC_HOST>/twilio/status`, method **HTTP POST**.
 3. Keep the ngrok domain reserved so the webhook URL never changes.
 
-Every webhook is validated against the Twilio signature and the caller allowlist, and the
-media-stream socket additionally needs a one-time token minted by `/twilio/voice`, so a
-stray connection to the tunnel gets nothing.
+Both webhooks are validated against the Twilio signature; `/twilio/voice` additionally
+refuses callers outside `ALLOWED_CALLERS`, and the media-stream socket needs a one-time
+token minted by `/twilio/voice` for that very call, so a stray connection to the tunnel
+gets nothing.
 
 ### Google (optional, for `cowork` tasks)
 
@@ -194,10 +196,12 @@ uv run jarvis loopback --wav sample.wav       # one session from a WAV, no mic n
 - **The subagents run as you.** They use `permission_mode="bypassPermissions"`, so a
   `coding` task has your full user access to files, repos, and the network. Treat "who can
   reach Jarvis" as "who can run commands on this Mac".
-- **What the tunnel exposes** is only: `/twilio/voice` and `/twilio/status` (Twilio
-  signature-validated *and* caller-allowlisted), `/twilio/media` (needs a one-time,
-  60-second stream token minted by `/twilio/voice`), `/reports/{id}?t=…` (HMAC-signed link,
-  the one you get by SMS), and `/health`. Nothing else is served.
+- **What the tunnel exposes** is only: `/twilio/voice` (Twilio signature-validated *and*
+  caller-allowlisted), `/twilio/status` (signature-validated only — it carries no caller
+  to check), `/twilio/media` (needs a one-time, 60-second stream token minted by
+  `/twilio/voice` for the same call), `/reports/{id}?t=…` (HMAC-signed link, the one you
+  get by SMS), and `/health`, which is unauthenticated and answers with `ok` plus the
+  number of live sessions. Nothing else is served.
 - **Caller ID is spoofable**, so the allowlist alone is not a gate. The PIN is what
   actually protects destructive kinds on the phone. Set a long one, keep
   `ALLOWED_CALLERS` tight, and leave `JARVIS_PIN` set — with no PIN configured, `coding`
@@ -231,11 +235,11 @@ Start with:
 uv run jarvis doctor        # add --no-mic on a machine with no microphone
 ```
 
-It checks `.env`, both API keys, the `claude` CLI, Twilio settings, `PUBLIC_HOST`, ngrok,
-the caller allowlist, the PIN, the wake-word model, the microphone, that `~/.jarvis` is
-writable, and whether Google credentials exist. `✅` is fine, `⚠️` narrows what Jarvis can
-do (no mic, no PIN, no Google), `❌` means it will not work — and only `❌` makes the
-command exit non-zero.
+It checks `.env`, both API keys, the `claude` CLI (bundled or on `PATH`), Twilio
+settings, `PUBLIC_HOST`, ngrok, the caller allowlist, the PIN, the wake-word model, the
+microphone, that `~/.jarvis` is writable, and whether Google credentials exist. `✅` is
+fine, `⚠️` narrows what Jarvis can do (no mic, no PIN, no Google, no `claude` CLI), `❌`
+means it will not work — and only `❌` makes the command exit non-zero.
 
 Where to look when something misbehaves:
 

@@ -13,12 +13,22 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-set -a
-# shellcheck disable=SC1091
-source .env
-set +a
+env_value() {
+  # env_value NAME [FILE] — the value of NAME in a .env file, without surrounding quotes.
+  # Deliberately not `source`: .env holds JSON (PROJECTS={"a": "/b"}), and sourcing that
+  # under `set -e` is a syntax error at best and arbitrary code at worst.
+  local name="$1" file="${2:-.env}" value
+  value="$(grep -E "^[[:space:]]*${name}=" "$file" | tail -n 1 | cut -d= -f2-)" || true
+  value="${value%\"}"; value="${value#\"}"
+  value="${value%\'}"; value="${value#\'}"
+  printf '%s' "$value"
+}
 
-if [[ -z "${PUBLIC_HOST:-}" ]]; then
+PUBLIC_HOST="$(env_value PUBLIC_HOST)"
+PORT="$(env_value PORT)"
+PORT="${PORT:-8080}"
+
+if [[ -z "$PUBLIC_HOST" ]]; then
   echo "PUBLIC_HOST is not set in .env (use a reserved ngrok domain)" >&2
   exit 1
 fi
@@ -27,12 +37,12 @@ if ! command -v ngrok >/dev/null 2>&1; then
   exit 1
 fi
 
-ngrok http --domain="$PUBLIC_HOST" "${PORT:-8080}" --log=stdout > .ngrok.log &
+ngrok http --domain="$PUBLIC_HOST" "$PORT" --log=stdout > .ngrok.log &
 NGROK_PID=$!
 # No `exec` below: this trap is what stops the tunnel when jarvis exits.
 trap 'kill "$NGROK_PID" 2>/dev/null || true' EXIT
 
-echo "tunnel:  https://$PUBLIC_HOST -> http://localhost:${PORT:-8080}  (log: .ngrok.log)"
+echo "tunnel:  https://$PUBLIC_HOST -> http://localhost:$PORT  (log: .ngrok.log)"
 echo "webhook: https://$PUBLIC_HOST/twilio/voice"
 
 uv run jarvis serve --no-wakeword "$@"
