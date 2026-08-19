@@ -55,9 +55,8 @@ def test_serve_help_documents_its_switches():
     result = runner.invoke(app, ["serve", "--help"])
 
     assert result.exit_code == 0
-    assert "--no-phone" in result.output
-    assert "--no-wakeword" in result.output
-    assert "--fake-agents" in result.output
+    for option in ("--no-phone", "--no-wakeword", "--fake-agents", "--host", "--port"):
+        assert option in result.output
 
 
 def test_loopback_help_documents_its_switches():
@@ -146,6 +145,18 @@ def test_serve_runs_the_phone_server_on_the_configured_address(settings_stub, mo
     assert (config.host, config.port) == (settings_stub.host, settings_stub.port)
     assert config.log_level == settings_stub.log_level.lower()
     assert "/twilio/media" in {route.path for route in config.app.routes}
+
+
+def test_serve_takes_the_address_from_the_command_line(settings_stub, monkeypatch):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+
+    result = runner.invoke(app, ["serve", "--no-wakeword", "--host", "0.0.0.0", "--port", "9999"])
+
+    assert result.exit_code == 0, result.output
+    config = built["config"]
+    assert (config.host, config.port) == ("0.0.0.0", 9999)
+    assert (settings_stub.host, settings_stub.port) == ("127.0.0.1", 8080)  # loaded settings intact
 
 
 def test_serve_runs_the_phone_server_and_the_wake_word_on_one_shared_state(

@@ -120,10 +120,23 @@ def serve(
         bool,
         typer.Option("--fake-agents", help="Run scripted subagents instead of the Claude SDK."),
     ] = False,
+    host: Annotated[
+        str | None, typer.Option("--host", help="Override HOST for the phone server.")
+    ] = None,
+    port: Annotated[
+        int | None, typer.Option("--port", help="Override PORT for the phone server.")
+    ] = None,
 ) -> None:
     """Run Jarvis: the Twilio phone server and the local "hey jarvis" listener."""
-    # Only pass the override when it was asked for, so the default path stays untouched.
-    settings = _configure(fake_agents=True) if fake_agents else _configure()
+    # Only pass overrides that were actually asked for, so the .env path stays untouched.
+    overrides: dict[str, object] = {}
+    if fake_agents:
+        overrides["fake_agents"] = True
+    if host is not None:
+        overrides["host"] = host
+    if port is not None:
+        overrides["port"] = port
+    settings = _configure(**overrides)
     _add_file_logging(settings)
     if no_phone and no_wakeword:
         typer.echo("nothing to run: both the phone server and the wake word are disabled")

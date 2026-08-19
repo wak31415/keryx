@@ -8,11 +8,21 @@ Realtime API and Claude Agent SDK subagents.
 - Run tests: `uv run pytest -q`
 - Lint: `uv run ruff check src tests`
 - Run the CLI: `uv run jarvis --help`
+- Check the machine's setup: `uv run jarvis doctor` (`--no-mic` where there is none)
+- Run the agent: `uv run jarvis serve` (`--no-phone` / `--no-wakeword` /
+  `--fake-agents` / `--host` / `--port`); `scripts/dev.sh` adds the ngrok tunnel
+- Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N]`,
+  `uv run jarvis tasks show <id>`
+- One-off setup: `uv run jarvis download-models`, `uv run jarvis setup-google`
+- Background service: `scripts/install-launchd.sh [--uninstall]`
 
 ## Layout
 
 Source lives under `src/jarvis/` (installable package, `src/` layout). Tests
-live under `tests/`, mirroring the package structure.
+live under `tests/`, mirroring the package structure. `cli.py` stays argument
+parsing plus wiring: the `doctor` checks live in `jarvis/doctor.py` and the
+Google OAuth bootstrap in `jarvis/google_setup.py`. launchd templates are in
+`ops/launchd/`, rendered by `scripts/install-launchd.sh`.
 
 ## Testing rule
 
