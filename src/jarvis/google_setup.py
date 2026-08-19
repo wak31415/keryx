@@ -13,6 +13,13 @@ The MCP stdio framing is newline-delimited JSON-RPC: `initialize` (request),
 that is not a JSON-RPC reply — including the consent URL — is echoed straight through, so
 the user can copy the link if the browser does not open by itself.
 
+The probe answering "you have to authorize first" is the *expected* first reply, not a
+failure: that reply is what opens the consent screen, and the server has to stay running
+to receive the OAuth callback on localhost. So the flow prints the URL, then waits for the
+sign-in by polling `GOOGLE_MCP_CREDENTIALS_DIR` for a credential file that was not already
+there (mtime and size included, so a refreshed one counts), and only calls the probe again
+— and stops the server — once something has been written or the deadline passes.
+
 This is a dev-time convenience that cannot be exercised against a real Google account in
 tests, so it is deliberately defensive: every wait has a deadline, the subprocess is
 always stopped, and failures come back as `GoogleSetupError` with what was seen last.
@@ -26,6 +33,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from jarvis.config import Settings
@@ -42,9 +50,18 @@ PROBE_TOOL = "list_calendars"
 DEFAULT_TIMEOUT_S = 180.0
 #: How long the server gets to shut down politely before it is killed.
 STOP_TIMEOUT_S = 5.0
+#: How often the credentials directory is checked while the user is in the browser.
+CREDENTIALS_POLL_S = 2.0
+#: Extra time the confirming probe gets after the sign-in, on top of the main deadline.
+CONFIRM_TIMEOUT_S = 30.0
 
 _INITIALIZE_ID = 1
 _PROBE_ID = 2
+_CONFIRM_ID = 3
+
+#: What workspace-mcp says instead of an answer when the account is not authorized yet.
+#: Matched loosely, because the wording is the server's, not ours.
+AUTH_HINTS = ("authoriz", "authentic", "sign in", "sign-in", "log in", "http://", "https://")
 
 INSTRUCTIONS = (
     "Starting the Google Workspace MCP server once to authorize this machine.\n"
@@ -53,8 +70,14 @@ INSTRUCTIONS = (
     "If no window opens, copy the URL printed below into a browser."
 )
 
+SIGN_IN_INSTRUCTIONS = (
+    "Complete the Google sign-in in the browser now — this window is waiting for it "
+    "(the server must stay running to receive the callback)."
+)
+
 Popen = Callable[..., Any]
 Echo = Callable[[str], None]
+Sleep = Callable[[float], None]
 
 
 class GoogleSetupError(RuntimeError):
@@ -64,22 +87,29 @@ class GoogleSetupError(RuntimeError):
 def run_google_setup(
     settings: Settings,
     *,
-    popen: Popen = subprocess.Popen,
+    popen: Popen | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     echo: Echo = print,
+    sleep: Sleep = time.sleep,
 ) -> bool:
-    """Run the one-off OAuth flow. Returns True on success, raises `GoogleSetupError` otherwise."""
+    """Run the one-off OAuth flow. Returns True on success, raises `GoogleSetupError` otherwise.
+
+    `popen` defaults to `subprocess.Popen` *at call time*, so patching the module attribute
+    is enough to guarantee no subprocess starts (which is how the tests prove the refusal
+    path never reaches one).
+    """
     _require_oauth_client(settings)
 
     config = google_mcp_server_config(settings)
-    credentials_dir = config["env"]["GOOGLE_MCP_CREDENTIALS_DIR"]
+    credentials_dir = Path(config["env"]["GOOGLE_MCP_CREDENTIALS_DIR"])
     argv = [config["command"], *config["args"]]
 
     echo(INSTRUCTIONS)
     echo(f"credentials will be stored under {credentials_dir}")
     log.info("starting %s for the google oauth flow", " ".join(argv))
 
-    process = popen(
+    spawn = popen or subprocess.Popen
+    process = spawn(
         argv,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -90,26 +120,96 @@ def run_google_setup(
     try:
         replies = _start_reader(process)
         deadline = time.monotonic() + timeout_s
+        before = _credentials_snapshot(credentials_dir)
 
         _send(process, {"jsonrpc": "2.0", "id": _INITIALIZE_ID, "method": "initialize",
                         "params": {"protocolVersion": MCP_PROTOCOL_VERSION,
                                    "capabilities": {}, "clientInfo": CLIENT_INFO}})
-        _await_reply(replies, _INITIALIZE_ID, deadline, echo)
+        handshake = _await_reply(replies, _INITIALIZE_ID, deadline, echo)
+        if "error" in handshake:
+            raise GoogleSetupError(f"the server refused: {_error_text(handshake['error'])}")
 
         _send(process, {"jsonrpc": "2.0", "method": "notifications/initialized"})
-        _send(process, {"jsonrpc": "2.0", "id": _PROBE_ID, "method": "tools/call",
-                        "params": {"name": PROBE_TOOL, "arguments": {}}})
-        result = _await_reply(replies, _PROBE_ID, deadline, echo)
+        reply = _probe(process, replies, _PROBE_ID, deadline, echo)
 
-        for text in _result_texts(result):
-            echo(text)
-        if result.get("isError"):
-            raise GoogleSetupError(f"{PROBE_TOOL} failed: {' '.join(_result_texts(result))}")
+        # The first probe is what *triggers* the browser consent screen, so "you have to
+        # authorize" is the expected answer, not a failure: the server has to stay alive to
+        # receive the OAuth callback on localhost while the user signs in.
+        if _looks_like_authorization(reply):
+            echo(SIGN_IN_INSTRUCTIONS)
+            if not _wait_for_credentials(credentials_dir, before, deadline, sleep, echo):
+                raise GoogleSetupError(
+                    f"no new credentials appeared in {credentials_dir} within "
+                    f"{timeout_s:.0f}s — the browser sign-in was not completed"
+                )
+            echo("credentials written; checking the access they grant…")
+            confirm_deadline = time.monotonic() + CONFIRM_TIMEOUT_S
+            reply = _probe(process, replies, _CONFIRM_ID, confirm_deadline, echo)
+
+        if _is_failure(reply):
+            raise GoogleSetupError(f"{PROBE_TOOL} failed: {' '.join(_reply_texts(reply))}")
 
         echo(f"Google access is authorized; credentials are in {credentials_dir}")
         return True
     finally:
         _stop(process)
+
+
+def _probe(process: Any, replies: Any, call_id: int, deadline: float, echo: Echo) -> dict[str, Any]:
+    """Call the probe tool once and echo whatever the server answers (URLs included)."""
+    _send(process, {"jsonrpc": "2.0", "id": call_id, "method": "tools/call",
+                    "params": {"name": PROBE_TOOL, "arguments": {}}})
+    reply = _await_reply(replies, call_id, deadline, echo)
+    for text in _reply_texts(reply):
+        echo(text)
+    return reply
+
+
+def _wait_for_credentials(
+    credentials_dir: Path,
+    before: set[tuple[str, int, int]],
+    deadline: float,
+    sleep: Sleep,
+    echo: Echo,
+) -> bool:
+    """Poll until the sign-in writes a credential file that was not there before."""
+    echo(f"waiting for the sign-in to write credentials to {credentials_dir}…")
+    while True:
+        if _credentials_snapshot(credentials_dir) - before:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        sleep(CREDENTIALS_POLL_S)
+
+
+def _credentials_snapshot(credentials_dir: Path) -> set[tuple[str, int, int]]:
+    """Name/mtime/size of every credential file, so a *rewritten* one counts as new too."""
+    if not credentials_dir.is_dir():
+        return set()
+    snapshot = set()
+    for path in credentials_dir.iterdir():
+        try:
+            stat = path.stat()
+        except OSError:  # pragma: no cover - a file that vanished mid-scan
+            continue
+        snapshot.add((path.name, stat.st_mtime_ns, stat.st_size))
+    return snapshot
+
+
+def _looks_like_authorization(reply: dict[str, Any]) -> bool:
+    """Is this the server asking for a browser sign-in rather than answering?"""
+    if not _is_failure(reply):
+        return False
+    haystack = " ".join(_reply_texts(reply)).lower()
+    return any(hint in haystack for hint in AUTH_HINTS)
+
+
+def _is_failure(reply: dict[str, Any]) -> bool:
+    """A JSON-RPC error, or a tool result flagged `isError`."""
+    if "error" in reply:
+        return True
+    result = reply.get("result")
+    return bool(isinstance(result, dict) and result.get("isError"))
 
 
 def _require_oauth_client(settings: Settings) -> None:
@@ -157,7 +257,12 @@ def _send(process: Any, message: dict[str, Any]) -> None:
 def _await_reply(
     replies: "queue.Queue[str | None]", wanted_id: int, deadline: float, echo: Echo
 ) -> dict[str, Any]:
-    """The reply to `wanted_id`, echoing everything else the server says on the way."""
+    """The whole JSON-RPC message answering `wanted_id`, echoing anything else on the way.
+
+    A JSON-RPC `error` comes back as part of the message rather than as an exception: for
+    the probe call, "you have to authorize first" arrives that way and is not a failure.
+    Only a server that dies or goes silent raises.
+    """
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -178,10 +283,7 @@ def _await_reply(
             continue
         if not isinstance(message, dict) or message.get("id") != wanted_id:
             continue  # a notification, or a reply to something we are not waiting for
-        if "error" in message:
-            raise GoogleSetupError(f"the server refused: {_error_text(message['error'])}")
-        result = message.get("result")
-        return result if isinstance(result, dict) else {}
+        return message
 
 
 def _error_text(error: Any) -> str:
@@ -191,9 +293,12 @@ def _error_text(error: Any) -> str:
     return str(error)
 
 
-def _result_texts(result: dict[str, Any]) -> list[str]:
-    """The text blocks of an MCP `tools/call` result."""
-    content = result.get("content")
+def _reply_texts(reply: dict[str, Any]) -> list[str]:
+    """Everything human-readable in a reply: the error message, or the result's text blocks."""
+    if "error" in reply:
+        return [_error_text(reply["error"])]
+    result = reply.get("result")
+    content = result.get("content") if isinstance(result, dict) else None
     if not isinstance(content, list):
         return []
     return [

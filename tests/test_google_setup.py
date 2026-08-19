@@ -2,12 +2,15 @@
 
 import json
 import threading
+import time
 
 import pytest
 
 from jarvis.config import Settings
 from jarvis.google_setup import (
+    MCP_PROTOCOL_VERSION,
     PROBE_TOOL,
+    SIGN_IN_INSTRUCTIONS,
     GoogleSetupError,
     run_google_setup,
 )
@@ -216,3 +219,102 @@ def test_the_instructions_and_the_server_output_are_echoed(settings):
     output = "\n".join(printed)
     assert "browser" in output.lower()
     assert "Calendar: primary" in output
+
+
+# --- waiting out the browser sign-in ---------------------------------------
+
+
+AUTH_REQUIRED = "Authorization required. Visit https://accounts.google.com/o/oauth2/auth?x=1"
+
+
+def auth_required_process(*, confirmed: bool = True) -> FakeProcess:
+    """A server that answers the first probe with "authorize first", then (maybe) succeeds."""
+    lines = [rpc(1, {"protocolVersion": MCP_PROTOCOL_VERSION}),
+             rpc(2, {"content": [{"type": "text", "text": AUTH_REQUIRED}], "isError": True})]
+    if confirmed:
+        lines.append(rpc(3, {"content": [{"type": "text", "text": "Calendar: primary"}]}))
+    return FakeProcess(lines, block=True)
+
+
+def test_an_authorization_prompt_waits_for_the_browser_instead_of_giving_up(settings, tmp_path):
+    """The consent URL is not a failure: the server has to stay alive for the sign-in."""
+    credentials_dir = settings.data_dir / "google"
+    credentials_dir.mkdir(parents=True)
+    process = auth_required_process()
+    printed: list[str] = []
+
+    def sign_in(_seconds: float) -> None:  # the browser flow, finishing on the first poll
+        (credentials_dir / "credentials.json").write_text("{}")
+
+    assert run_google_setup(
+        settings, popen=make_popen(process, []), echo=printed.append, sleep=sign_in
+    ) is True
+
+    output = "\n".join(printed)
+    assert "https://accounts.google.com/o/oauth2/auth?x=1" in output  # the URL is shown
+    assert SIGN_IN_INSTRUCTIONS in output  # ... with the "finish it in the browser" nudge
+    methods = [message.get("method") for message in process.stdin.messages()]
+    assert methods.count("tools/call") == 2  # probed again once credentials appeared
+    assert process.terminated == 1  # ... and only stopped at the end
+
+
+def test_a_sign_in_that_never_happens_fails_at_the_deadline(settings, tmp_path):
+    (settings.data_dir / "google").mkdir(parents=True)
+    process = auth_required_process(confirmed=False)
+
+    with pytest.raises(GoogleSetupError) as excinfo:
+        run_google_setup(
+            settings,
+            popen=make_popen(process, []),
+            echo=lambda _text: None,
+            timeout_s=0.2,
+            sleep=lambda _seconds: time.sleep(0.01),
+        )
+
+    assert "credentials" in str(excinfo.value)
+    assert process.terminated == 1
+
+
+def test_stale_credentials_do_not_count_as_a_completed_sign_in(settings):
+    """A file left by an earlier run is not proof that *this* sign-in finished."""
+    credentials_dir = settings.data_dir / "google"
+    credentials_dir.mkdir(parents=True)
+    (credentials_dir / "credentials.json").write_text("{}")  # from last time
+    process = auth_required_process(confirmed=False)
+
+    with pytest.raises(GoogleSetupError):
+        run_google_setup(
+            settings,
+            popen=make_popen(process, []),
+            echo=lambda _text: None,
+            timeout_s=0.2,
+            sleep=lambda _seconds: time.sleep(0.01),
+        )
+
+
+def test_a_working_server_never_waits_for_a_sign_in(settings):
+    """Nothing to authorize: no polling, no second probe."""
+    process = scripted_process()
+    slept: list[float] = []
+
+    run_google_setup(
+        settings, popen=make_popen(process, []), echo=lambda _text: None, sleep=slept.append
+    )
+
+    assert slept == []
+    assert [m.get("method") for m in process.stdin.messages()].count("tools/call") == 1
+
+
+def test_the_default_popen_is_resolved_when_it_is_called(settings, monkeypatch):
+    """So that monkeypatching `subprocess.Popen` really does stop a subprocess starting."""
+    spawned: list[list[str]] = []
+
+    def fake_popen(argv, **kwargs):
+        spawned.append(argv)
+        return scripted_process()
+
+    monkeypatch.setattr("jarvis.google_setup.subprocess.Popen", fake_popen)
+
+    run_google_setup(settings, echo=lambda _text: None)
+
+    assert spawned and spawned[0][0] == "uvx"

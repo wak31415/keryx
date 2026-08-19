@@ -515,15 +515,19 @@ def test_doctor_help_documents_no_mic():
 
 
 def test_setup_google_refuses_without_an_oauth_client(settings_stub, monkeypatch):
-    def no_subprocesses(*args, **kwargs):  # pragma: no cover - the point is it never runs
-        raise AssertionError("setup-google must not start a server without credentials")
-
-    monkeypatch.setattr("jarvis.google_setup.subprocess.Popen", no_subprocesses)
+    spawned: list[object] = []
+    # Recorded, not raised: an exception here would *also* exit 1 and hide the difference
+    # between "refused" and "started a server and then blew up".
+    monkeypatch.setattr(
+        "jarvis.google_setup.subprocess.Popen",
+        lambda argv, **kwargs: spawned.append(argv),
+    )
 
     result = runner.invoke(app, ["setup-google"])
 
     assert result.exit_code == 1
     assert "GOOGLE_OAUTH_CLIENT_ID" in result.output
+    assert spawned == []  # no workspace-mcp server was ever started
 
 
 def test_setup_google_runs_the_flow_and_prints_what_it_says(settings_stub, monkeypatch):
