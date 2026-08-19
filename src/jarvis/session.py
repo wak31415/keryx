@@ -276,12 +276,33 @@ class VoiceSession:
             PIN_MAX_ATTEMPTS,
         )
         if self._pin_attempts >= PIN_MAX_ATTEMPTS:
-            await self._safe_call(
-                self._provider.inject_message, PIN_LOCKOUT_MESSAGE, respond=True
-            )
-            self.request_end("pin_lockout")
+            await self._lock_out()
             return {"status": "locked"}
         return {"status": "invalid", "attempts_left": PIN_MAX_ATTEMPTS - self._pin_attempts}
+
+    async def _lock_out(self) -> None:
+        """Ask for a goodbye, then end the call once it has been spoken (spec §3.3).
+
+        `request_end()` on the spot would hang up mid-word: the injected `response.create`
+        has not round-tripped yet, so nothing is "speaking" and teardown would run
+        immediately. Same handshake as the silence timer instead — end on the next
+        `ResponseDone` — with a backstop for a goodbye that never comes. If a response is
+        already speaking (a keypad entry typed over a sentence) the flag fires on *that*
+        response's done, which cuts the goodbye short but never cuts it off mid-word.
+        """
+        self._end_after_response = "pin_lockout"
+        if not await self._safe_call(
+            self._provider.inject_message, PIN_LOCKOUT_MESSAGE, respond=True
+        ):
+            self.request_end("pin_lockout")  # no goodbye is coming; end now
+            return
+        self._spawn_task(self._lockout_backstop(), name="lockout")
+
+    async def _lockout_backstop(self) -> None:
+        """End the call anyway if the lockout goodbye is never spoken."""
+        await asyncio.sleep(END_GRACE_SECONDS)
+        log.info("session %s: the lockout goodbye was never spoken; ending", self.session_id)
+        self.request_end("pin_lockout")
 
     # --- startup -----------------------------------------------------------
 

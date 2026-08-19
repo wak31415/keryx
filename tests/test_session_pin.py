@@ -13,6 +13,7 @@ from fakes import TIMEOUT, FakeProvider, FakeTransport, eventually
 from test_session import make_settings, running
 
 from jarvis.events import EventBus, SessionEnded
+from jarvis.realtime.base import FunctionCall, ResponseDone, ResponseStarted
 from jarvis.session import (
     OPENING_MESSAGE,
     PIN_ACCEPTED_MESSAGE,
@@ -51,14 +52,45 @@ def phone():
 
 
 @pytest.fixture
-def make_session(tmp_path, bus):
+def tools():
+    """A registry with the one tool that matters here.
+
+    It delegates exactly as `jarvis.tools.builtin`'s `submit_pin` does (which
+    `tests/tools/test_builtin.py` pins down), so the spoken PIN path can be driven the way
+    the model really drives it: a function call, answered with a tool result.
+    """
+    registry = ToolRegistry()
+
+    async def submit_pin(ctx, arguments: dict) -> dict:
+        return await ctx.session.submit_pin(arguments["pin"])
+
+    registry.register(
+        "submit_pin", "Check a PIN.", {"type": "object", "properties": {}}, submit_pin
+    )
+    return registry
+
+
+@pytest.fixture
+def make_session(tmp_path, bus, tools):
     def build(transport, prov, *, pin: str | None = PIN, authorized=False, **overrides):
         settings = make_settings(tmp_path, pin=pin, **overrides)
-        return VoiceSession(
-            transport, prov, settings, ToolRegistry(), bus, authorized=authorized
-        )
+        return VoiceSession(transport, prov, settings, tools, bus, authorized=authorized)
 
     return build
+
+
+async def say_pin(provider: FakeProvider, pin: str, call_id: str) -> None:
+    """Fail (or pass) one PIN the way the model does: a call into the submit_pin tool."""
+    before = len(provider.tool_results)
+    provider.feed(FunctionCall(call_id=call_id, name="submit_pin", arguments={"pin": pin}))
+    await eventually(lambda: len(provider.tool_results) > before)
+
+
+async def speak_a_goodbye(provider: FakeProvider, session: VoiceSession) -> None:
+    """Play out the response the lockout asked for, start to finish."""
+    provider.feed(ResponseStarted(response_id="resp_goodbye"))
+    await eventually(lambda: session.response_active)
+    provider.feed(ResponseDone(response_id="resp_goodbye", status="completed"))
 
 
 def texts(provider: FakeProvider) -> list[str]:
@@ -106,19 +138,61 @@ async def test_a_wrong_pin_counts_the_attempts_down(make_session, phone, provide
         assert session.authorized is False
 
 
-async def test_the_third_failure_ends_the_call(make_session, phone, provider, ended):
+async def test_the_third_spoken_failure_hangs_up_only_after_the_goodbye(
+    make_session, phone, provider, ended
+):
+    session = make_session(phone, provider)
+
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+    for attempt in range(PIN_MAX_ATTEMPTS):
+        await say_pin(provider, WRONG, f"call_{attempt}")
+
+    assert provider.tool_results[-1] == (f"call_{PIN_MAX_ATTEMPTS - 1}", {"status": "locked"})
+    assert PIN_LOCKOUT_MESSAGE in texts(provider)
+    # The goodbye has been asked for but not spoken: the call must still be up.
+    assert session.is_live is True
+    assert phone.hung_up is False
+
+    await speak_a_goodbye(provider, session)
+    await asyncio.wait_for(task, TIMEOUT)
+
+    assert [event.reason for event in ended] == ["pin_lockout"]
+    assert phone.hung_up is True
+    assert session.authorized is False
+
+
+async def test_the_lockout_ends_the_call_even_if_the_goodbye_never_comes(
+    make_session, phone, provider, ended, monkeypatch
+):
+    monkeypatch.setattr("jarvis.session.END_GRACE_SECONDS", 0.05)
+    session = make_session(phone, provider)
+
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+    for attempt in range(PIN_MAX_ATTEMPTS):
+        await say_pin(provider, WRONG, f"call_{attempt}")
+    await asyncio.wait_for(task, TIMEOUT)  # not one response event ever arrives
+
+    assert PIN_LOCKOUT_MESSAGE in texts(provider)
+    assert [event.reason for event in ended] == ["pin_lockout"]
+    assert phone.hung_up is True
+
+
+async def test_a_lockout_that_cannot_even_ask_for_a_goodbye_ends_at_once(
+    make_session, phone, provider, ended
+):
     session = make_session(phone, provider)
 
     task = asyncio.create_task(session.run())
     await eventually(lambda: session.is_live)
     for _ in range(PIN_MAX_ATTEMPTS - 1):
         await session.submit_pin(WRONG)
+    provider.send_error = RuntimeError("socket gone")
     assert await session.submit_pin(WRONG) == {"status": "locked"}
     await asyncio.wait_for(task, TIMEOUT)
 
-    assert PIN_LOCKOUT_MESSAGE in texts(provider)
     assert [event.reason for event in ended] == ["pin_lockout"]
-    assert session.authorized is False
 
 
 async def test_a_locked_session_will_not_accept_the_right_pin(make_session, phone, provider):
@@ -128,6 +202,7 @@ async def test_a_locked_session_will_not_accept_the_right_pin(make_session, phon
     await eventually(lambda: session.is_live)
     for _ in range(PIN_MAX_ATTEMPTS):
         await session.submit_pin(WRONG)
+    await speak_a_goodbye(provider, session)
     await asyncio.wait_for(task, TIMEOUT)
 
     assert await session.submit_pin(PIN) == {"status": "locked"}
@@ -200,7 +275,32 @@ async def test_a_stale_digit_is_dropped_after_the_inter_digit_gap(
         await eventually(lambda: session.authorized)
 
 
-async def test_three_wrong_keypad_entries_end_the_call(make_session, phone, provider, ended):
+async def test_three_wrong_keypad_entries_hang_up_only_after_the_goodbye(
+    make_session, phone, provider, ended
+):
+    session = make_session(phone, provider)
+
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+    for _ in range(PIN_MAX_ATTEMPTS):
+        await press(phone, WRONG)
+    await eventually(lambda: PIN_LOCKOUT_MESSAGE in texts(provider))
+
+    assert session.is_live is True
+    assert phone.hung_up is False
+
+    await speak_a_goodbye(provider, session)
+    await asyncio.wait_for(task, TIMEOUT)
+
+    assert [event.reason for event in ended] == ["pin_lockout"]
+    assert phone.hung_up is True
+    assert_nothing_spoken_had_digits(provider)
+
+
+async def test_a_keypad_lockout_ends_the_call_without_a_goodbye_too(
+    make_session, phone, provider, ended, monkeypatch
+):
+    monkeypatch.setattr("jarvis.session.END_GRACE_SECONDS", 0.05)
     session = make_session(phone, provider)
 
     task = asyncio.create_task(session.run())
@@ -209,7 +309,6 @@ async def test_three_wrong_keypad_entries_end_the_call(make_session, phone, prov
         await press(phone, WRONG)
     await asyncio.wait_for(task, TIMEOUT)
 
-    assert PIN_LOCKOUT_MESSAGE in texts(provider)
     assert [event.reason for event in ended] == ["pin_lockout"]
     assert_nothing_spoken_had_digits(provider)
 
