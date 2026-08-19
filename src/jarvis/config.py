@@ -13,11 +13,30 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 #: machine. `doctor` recognises it and reports the key as unset.
 PLACEHOLDER_KEY = "unset"
 
+#: Every optional string setting. `.env.example` ships them blank (`JARVIS_PIN=`), and a
+#: blank one means *not configured*, never the empty string — an empty PIN would otherwise
+#: be a PIN that `submit_pin("")` matches (spec §3.3).
+OPTIONAL_STR_FIELDS = (
+    "anthropic_api_key",
+    "twilio_account_sid",
+    "twilio_auth_token",
+    "twilio_number",
+    "owner_number_explicit",
+    "pin",
+    "public_host",
+    "report_secret",
+    "google_oauth_client_id",
+    "google_oauth_client_secret",
+    "user_google_email",
+)
+
 
 class Settings(BaseSettings):
     """Jarvis runtime configuration. See spec §3.4 for the env-var table."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", populate_by_name=True, env_ignore_empty=True
+    )
 
     # OpenAI Realtime
     openai_api_key: str
@@ -84,6 +103,14 @@ class Settings(BaseSettings):
     def _parse_allowed_callers(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator(*OPTIONAL_STR_FIELDS, mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        """A blank value is "not set" — `env_ignore_empty` for anything passed by hand."""
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
 
     @field_validator("data_dir", "projects_root", mode="after")

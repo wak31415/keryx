@@ -255,16 +255,20 @@ class VoiceSession:
         the digits are never logged and never handed back. After `PIN_MAX_ATTEMPTS`
         wrong ones the model is asked for a goodbye and the call ends — a locked session
         stays locked even if the right PIN turns up afterwards.
+
+        A blank configured PIN is *no* PIN, and a blank candidate answers nothing: both
+        are refused rather than compared, so `submit_pin("")` can never authorize.
         """
         expected = self._settings.pin
-        if expected is None:
+        if not expected:
             return {"status": "not_configured"}
         if self.authorized:
             return {"status": "authorized"}
         if self._pin_attempts >= PIN_MAX_ATTEMPTS:
             return {"status": "locked"}
 
-        if hmac.compare_digest((pin or "").strip().encode(), expected.encode()):
+        candidate = (pin or "").strip()
+        if candidate and hmac.compare_digest(candidate.encode(), expected.encode()):
             self.authorize()
             return {"status": "authorized"}
 
@@ -352,7 +356,7 @@ class VoiceSession:
         """
         log.debug("session %s received a keypad digit", self.session_id)
         expected = self._settings.pin
-        if expected is None or self.authorized or self._pin_attempts >= PIN_MAX_ATTEMPTS:
+        if not expected or self.authorized or self._pin_attempts >= PIN_MAX_ATTEMPTS:
             return
 
         now = time.monotonic()

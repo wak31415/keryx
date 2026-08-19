@@ -3,7 +3,7 @@
 import stat
 from pathlib import Path
 
-from jarvis.config import Settings, load_settings
+from jarvis.config import OPTIONAL_STR_FIELDS, Settings, load_settings
 
 
 def test_allowed_callers_parses_comma_separated_env(monkeypatch, tmp_path):
@@ -168,3 +168,41 @@ def test_fake_agents_env(monkeypatch, tmp_path):
     settings = Settings(_env_file=None)
 
     assert settings.fake_agents is True
+
+
+# --- blank optional settings count as unset (spec §3.3 PIN gate) -------------
+
+
+def test_the_shipped_env_example_leaves_every_optional_setting_unset(tmp_path):
+    """`.env.example` ships blank values; not one of them may become an empty string."""
+    env_file = tmp_path / ".env"
+    env_file.write_text(Path(".env.example").read_text())
+
+    settings = Settings(
+        _env_file=env_file, openai_api_key="test", data_dir=tmp_path / "jarvis"
+    )
+
+    for name in OPTIONAL_STR_FIELDS:
+        assert getattr(settings, name) is None, name
+    assert settings.allowed_callers == []
+    assert settings.pin is None
+    assert settings.owner_number is None
+
+
+def test_optional_str_fields_covers_every_optional_string_field():
+    """The list the blank-is-unset validator is built from must not drift."""
+    optional = {
+        name
+        for name, field in Settings.model_fields.items()
+        if field.annotation == (str | None)
+    }
+
+    assert set(OPTIONAL_STR_FIELDS) == optional
+
+
+def test_a_blank_pin_is_not_a_pin(tmp_path):
+    for blank in ("", "   "):
+        settings = Settings(
+            _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", pin=blank
+        )
+        assert settings.pin is None

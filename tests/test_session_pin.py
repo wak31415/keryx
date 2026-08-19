@@ -225,6 +225,38 @@ async def test_an_authorized_session_stays_authorized(make_session, phone, provi
         assert session.authorized is True
 
 
+async def test_a_blank_pin_is_never_accepted(make_session, phone, provider):
+    """A blank `JARVIS_PIN` is not a PIN, and a blank candidate is not an answer."""
+    session = make_session(phone, provider, pin=None)
+
+    async with running(session):
+        assert await session.submit_pin("") == {"status": "not_configured"}
+        assert session.authorized is False
+
+
+async def test_a_blank_candidate_burns_an_attempt(make_session, phone, provider):
+    session = make_session(phone, provider)
+
+    async with running(session):
+        assert await session.submit_pin("") == {"status": "invalid", "attempts_left": 2}
+        assert await session.submit_pin("   ") == {"status": "invalid", "attempts_left": 1}
+        assert session.authorized is False
+
+
+async def test_an_empty_configured_pin_authorizes_nobody(tmp_path, bus, tools, phone, provider):
+    """Defence in depth: even an empty PIN that slipped past `Settings` is no PIN."""
+    settings = make_settings(tmp_path, pin=PIN).model_copy(update={"pin": ""})
+    session = VoiceSession(phone, provider, settings, tools, bus, authorized=False)
+
+    async with running(session):
+        assert await session.submit_pin("") == {"status": "not_configured"}
+        await press(phone, "1")  # and the keypad must not check anything either
+        await asyncio.sleep(0.05)
+        assert session.authorized is False
+
+    assert texts(provider) == [OPENING_MESSAGE]
+
+
 # --- the keypad ------------------------------------------------------------
 
 

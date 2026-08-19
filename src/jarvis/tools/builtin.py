@@ -6,7 +6,8 @@ cut down before it ever reaches a text-to-speech engine. Handlers never raise �
 problem comes back as `{"error": ...}` (or a `status` the model is told how to relay),
 so a bad task id is a sentence the assistant can say rather than a dropped call.
 
-The PIN gate lives in `dispatch_task`: on the phone, `coding` and `cowork` are refused
+The PIN gate guards every tool that can put a subagent to work — `dispatch_task`,
+`send_followup` and `cancel_task`: on the phone, `coding` and `cowork` are refused
 with `{"status": "pin_required"}` until the session is authorized. The check reads
 `ctx.authorized` live, so a PIN entered on the keypad while the model was thinking is
 honoured on the very next call. The digits themselves never pass through here: the
@@ -35,9 +36,13 @@ DEFAULT_TASK_LIMIT = 5
 MAX_TASK_LIMIT = 20
 
 PIN_REQUIRED_MESSAGE = (
-    "Ask the caller to say the PIN or enter it on the keypad, then call dispatch_task again."
+    "Ask the caller to say the PIN or enter it on the keypad, then call the tool again."
 )
 PIN_MISSING_MESSAGE = "A PIN is required for this kind of task but none is configured."
+CALLBACK_NUMBER_MESSAGE = (
+    "Without the PIN I can only call back on the number of this call or a number I "
+    "already know. Offer that instead."
+)
 STILL_RUNNING_MESSAGE = "still running; you will be told when it finishes"
 ENDING_MESSAGE = "Say a brief goodbye."
 
@@ -150,10 +155,15 @@ def register_builtin_tools(
     # --- dispatch_task -----------------------------------------------------
 
     def _pin_gate(ctx: ToolContext, kind: TaskKind) -> dict | None:
-        """The refusal to return before dispatching `kind`, if any (spec §3.3)."""
+        """The refusal to return before touching a `kind` task, if any (spec §3.3).
+
+        Applies to `dispatch_task`, `send_followup` and `cancel_task` alike: reaching into
+        a `coding` task that is already running opens the very same bypassPermissions
+        subagent that dispatching one would.
+        """
         if kind not in DESTRUCTIVE_KINDS or ctx.channel != "phone" or ctx.authorized:
             return None
-        if settings.pin is None:
+        if not settings.pin:
             return {"status": "refused", "message": PIN_MISSING_MESSAGE}
         log.info("session %s needs a PIN for a %s task", ctx.session.session_id, kind)
         return {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}
@@ -347,24 +357,28 @@ def register_builtin_tools(
     # --- send_followup / cancel_task ---------------------------------------
 
     async def send_followup(ctx: ToolContext, arguments: dict) -> dict:
-        task_id = _task_id(arguments)
-        if task_id is None:
-            return {"error": "task_id must be a task number, for example 3"}
+        task = await _get(arguments)
+        if isinstance(task, dict):
+            return task
+        refusal = _pin_gate(ctx, task.kind)
+        if refusal is not None:
+            return refusal
         message = _text(arguments, "message")
         if not message:
             return {"error": "message is required: say what to add to the task"}
         try:
-            task = await manager.followup(task_id, message)
+            updated = await manager.followup(task.id, message)
         except KeyError:
-            return {"error": f"no task {task_id}"}
+            return {"error": f"no task {task.id}"}
         except ValueError as exc:
             return {"error": str(exc)}
-        return {"task_id": task.id, "status": task.status.value}
+        return {"task_id": updated.id, "status": updated.status.value}
 
     registry.register(
         "send_followup",
         "Add something to a task that is already under way, or ask a finished task for more. "
-        "Use it for 'also…' and 'actually, make that…' instead of dispatching a second task.",
+        "Use it for 'also…' and 'actually, make that…' instead of dispatching a second task. "
+        "On the phone, coding and cowork tasks need the PIN here too.",
         {
             "type": "object",
             "properties": {
@@ -380,19 +394,23 @@ def register_builtin_tools(
     )
 
     async def cancel_task(ctx: ToolContext, arguments: dict) -> dict:
-        task_id = _task_id(arguments)
-        if task_id is None:
-            return {"error": "task_id must be a task number, for example 3"}
+        task = await _get(arguments)
+        if isinstance(task, dict):
+            return task
+        refusal = _pin_gate(ctx, task.kind)
+        if refusal is not None:
+            return refusal
         try:
-            task = await manager.cancel(task_id)
+            cancelled = await manager.cancel(task.id)
         except KeyError:
-            return {"error": f"no task {task_id}"}
-        return {"task_id": task.id, "status": task.status.value}
+            return {"error": f"no task {task.id}"}
+        return {"task_id": cancelled.id, "status": cancelled.status.value}
 
     registry.register(
         "cancel_task",
         "Stop a task that is queued or running. A task that has already finished comes back "
-        "unchanged, so say so rather than claiming you stopped it.",
+        "unchanged, so say so rather than claiming you stopped it. On the phone, coding and "
+        "cowork tasks need the PIN here too.",
         {
             "type": "object",
             "properties": {
@@ -434,6 +452,13 @@ def register_builtin_tools(
             return {"error": "no number to call back on; ask the user for one"}
         if not _E164_RE.match(number):
             return {"error": f"{number!r} is not a phone number I can call back"}
+        # An outbound call is the one thing an unauthorized caller could aim at a stranger,
+        # so without the PIN it may only go back to a number we already trust (spec §5).
+        if ctx.channel == "phone" and not ctx.authorized:
+            known = {ctx.caller, settings.owner_number, *settings.allowed_callers}
+            if number not in known:
+                log.warning("session %s asked to call an unknown number", ctx.session.session_id)
+                return {"status": "refused", "message": CALLBACK_NUMBER_MESSAGE}
 
         await manager.request_callback(task.id, number)
         return {"task_id": task.id, "status": "callback_requested"}
@@ -442,7 +467,7 @@ def register_builtin_tools(
         "request_callback",
         "Ask to be phoned back when a task finishes, instead of waiting on the line. Only "
         "call this when the user asks for it. Without a number it uses the number they are "
-        "calling from.",
+        "calling from, which is the only number an unauthorized caller may name.",
         {
             "type": "object",
             "properties": {

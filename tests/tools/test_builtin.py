@@ -233,6 +233,22 @@ async def test_destructive_work_is_refused_when_no_pin_is_configured(make_tools)
     assert "none is configured" in result["message"]
 
 
+async def test_a_blank_pin_is_no_pin_at_all(make_tools):
+    """Defence in depth: an empty PIN that slipped past `Settings` unlocks nothing."""
+    tools = make_tools(pin="4242")
+    tools.settings.pin = ""
+
+    result = await tools.call(
+        "dispatch_task",
+        {"kind": "coding", "description": "add a README", "project": "jarvis"},
+        channel="phone",
+        caller="+491555555555",
+        authorized=False,
+    )
+
+    assert result["status"] == "refused"
+
+
 # --- dispatch_task: dispatching -------------------------------------------
 
 
@@ -502,6 +518,75 @@ async def test_cancel_task_for_a_task_that_does_not_exist(tools):
     assert await tools.call("cancel_task", {"task_id": 12}) == {"error": "no task 12"}
 
 
+# --- send_followup / cancel_task: the PIN gate (spec §3.3) -----------------
+
+
+@pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
+async def test_an_unauthorized_phone_caller_cannot_touch_a_destructive_task(make_tools, tool):
+    """`list_tasks` shows every task; reaching into a coding one still needs the PIN."""
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
+    await tools.dispatch("coding", "add a README", project="jarvis")
+
+    result = await tools.call(
+        tool,
+        {"task_id": 1, "message": "and push it"},
+        channel="phone",
+        caller="+491555555555",
+        authorized=False,
+    )
+
+    assert result["status"] == "pin_required"
+    assert (await tools.manager.get(1)).status is not TaskStatus.CANCELLED
+
+
+@pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
+async def test_an_authorized_phone_caller_may_touch_a_destructive_task(make_tools, tool):
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
+    await tools.dispatch("coding", "add a README", project="jarvis")
+    await wait_for_status(tools, 1, TaskStatus.RUNNING)
+
+    result = await tools.call(
+        tool,
+        {"task_id": 1, "message": "and push it"},
+        channel="phone",
+        caller="+491555555555",
+        authorized=True,
+    )
+
+    assert result["task_id"] == 1
+    assert "status" in result
+
+
+@pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
+async def test_a_harmless_task_needs_no_pin_to_follow_up_or_cancel(make_tools, tool):
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
+    await tools.dispatch("chat", "how tall is Everest")
+    await wait_for_status(tools, 1, TaskStatus.RUNNING)
+
+    result = await tools.call(
+        tool,
+        {"task_id": 1, "message": "and the tides"},
+        channel="phone",
+        caller="+491555555555",
+        authorized=False,
+    )
+
+    assert result["task_id"] == 1
+
+
+@pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
+async def test_a_local_session_needs_no_pin_to_follow_up_or_cancel(make_tools, tool):
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
+    await tools.dispatch("coding", "add a README", project="jarvis")
+    await wait_for_status(tools, 1, TaskStatus.RUNNING)
+
+    result = await tools.call(
+        tool, {"task_id": 1, "message": "and push it"}, channel="local", authorized=False
+    )
+
+    assert result["task_id"] == 1
+
+
 # --- list_projects ---------------------------------------------------------
 
 
@@ -578,6 +663,53 @@ async def test_request_callback_on_a_finished_task_just_reports_it(tools):
 
 async def test_request_callback_for_a_task_that_does_not_exist(tools):
     assert await tools.call("request_callback", {"task_id": 3}) == {"error": "no task 3"}
+
+
+async def test_an_unauthorized_phone_caller_cannot_be_called_back_anywhere(make_tools):
+    """Dialling out is the one tool an unauthorized caller could aim at a stranger."""
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW))
+    await tools.dispatch(description="a long one")
+
+    result = await tools.call(
+        "request_callback",
+        {"task_id": 1, "number": "+491999999999"},
+        channel="phone",
+        caller="+491555555555",
+        authorized=False,
+    )
+
+    assert result["status"] == "refused"
+    assert (await tools.manager.get(1)).callback_requested is False
+
+
+async def test_an_unauthorized_phone_caller_may_ask_for_their_own_number(make_tools):
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), allowed_callers=["+491666666666"])
+    await tools.dispatch(description="a long one")
+
+    for number in (None, "+491555555555", "+491666666666"):
+        result = await tools.call(
+            "request_callback",
+            {"task_id": 1} if number is None else {"task_id": 1, "number": number},
+            channel="phone",
+            caller="+491555555555",
+            authorized=False,
+        )
+        assert result["status"] == "callback_requested", number
+
+
+async def test_an_authorized_phone_caller_may_name_any_number(make_tools):
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW))
+    await tools.dispatch(description="a long one")
+
+    result = await tools.call(
+        "request_callback",
+        {"task_id": 1, "number": "+491999999999"},
+        channel="phone",
+        caller="+491555555555",
+        authorized=True,
+    )
+
+    assert result["status"] == "callback_requested"
 
 
 # --- submit_pin / end_session ---------------------------------------------
