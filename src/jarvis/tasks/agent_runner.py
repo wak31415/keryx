@@ -103,7 +103,6 @@ class RunResult:
     session_id: str | None = None
     cost_usd: float | None = None
     error: str | None = None
-    num_turns: int | None = None
 
 
 class AgentSession(Protocol):
@@ -281,10 +280,8 @@ def build_options(
 # ---------------------------------------------------------------------------- progress
 
 
-async def _emit(on_progress: Callable[[str], Any] | None, text: str) -> None:
+async def _emit(on_progress: Callable[[str], Any], text: str) -> None:
     """Report one progress line; a sync or async callback, whose failures are ignored."""
-    if on_progress is None:
-        return
     try:
         outcome = on_progress(text)
         if inspect.isawaitable(outcome):
@@ -317,7 +314,6 @@ class ClaudeAgentSession(AgentSession):
         result_text = ""
         session_id: str | None = None
         cost_usd: float | None = None
-        num_turns: int | None = None
         error: str | None = None
         ok = True
         try:
@@ -336,7 +332,6 @@ class ClaudeAgentSession(AgentSession):
                 elif isinstance(message, ResultMessage):
                     session_id = message.session_id
                     cost_usd = message.total_cost_usd
-                    num_turns = message.num_turns
                     result_text = (message.result or "").strip()
                     if message.is_error:
                         ok = False
@@ -351,7 +346,6 @@ class ClaudeAgentSession(AgentSession):
                 session_id=session_id,
                 cost_usd=cost_usd,
                 error=f"{type(exc).__name__}: {exc}",
-                num_turns=num_turns,
             )
 
         final_text = result_text or (texts[-1] if texts else "")
@@ -366,7 +360,6 @@ class ClaudeAgentSession(AgentSession):
             session_id=session_id,
             cost_usd=cost_usd,
             error=error,
-            num_turns=num_turns,
         )
 
     async def send(self, text: str) -> None:

@@ -90,11 +90,10 @@ async def _default_ws_connect(url: str, headers: dict[str, str]) -> RealtimeWebS
     return _WebSocketsAdapter(connection)
 
 
-def build_session_update(config: SessionConfig, *, model: str | None = None) -> dict:
+def build_session_update(config: SessionConfig) -> dict:
     """Build the `session.update` client event for `config` (spec §4).
 
-    `model` is normally selected by the connection URL and left out here; pass it only to
-    switch model on an open session.
+    The model is selected by the connection URL, so it is deliberately absent here.
     """
     audio_input: dict = {
         "format": {"type": config.audio_format},
@@ -110,19 +109,19 @@ def build_session_update(config: SessionConfig, *, model: str | None = None) -> 
     if config.transcription_model is not None:
         audio_input["transcription"] = {"model": config.transcription_model}
 
-    session: dict = {
-        "type": "realtime",
-        "instructions": config.instructions,
-        "tools": config.tools,
-        "tool_choice": "auto",
-        "audio": {
-            "input": audio_input,
-            "output": {"format": {"type": config.audio_format}, "voice": config.voice},
+    return {
+        "type": "session.update",
+        "session": {
+            "type": "realtime",
+            "instructions": config.instructions,
+            "tools": config.tools,
+            "tool_choice": "auto",
+            "audio": {
+                "input": audio_input,
+                "output": {"format": {"type": config.audio_format}, "voice": config.voice},
+            },
         },
     }
-    if model is not None:
-        session["model"] = model
-    return {"type": "session.update", "session": session}
 
 
 # --- server event -> provider event ------------------------------------------
@@ -233,8 +232,6 @@ class OpenAIRealtimeClient:
         self._active_response = False
         self._inflight_responses: dict[str, dict] = {}
         self._pending_responses: deque[dict] = deque()
-        self.session_id: str | None = None
-        self.last_error: ProviderError | None = None
 
     # --- connection ----------------------------------------------------------
 
@@ -343,9 +340,7 @@ class OpenAIRealtimeClient:
     async def _handle_server_event(self, event: dict) -> None:
         event_type = event.get("type", "")
 
-        if event_type == "session.created":
-            self.session_id = event.get("session", {}).get("id")
-        elif event_type == "response.created":
+        if event_type == "response.created":
             # May be the response the server auto-created from VAD rather than ours, so it
             # says nothing about the fate of a `response.create` still awaiting an error.
             self._active_response = True
@@ -363,8 +358,6 @@ class OpenAIRealtimeClient:
         except Exception:  # one malformed event must not end the session
             logger.warning("could not translate %s event", event_type, exc_info=True)
             return
-        if isinstance(provider_event, ProviderError):
-            self.last_error = provider_event
         await self._queue.put(provider_event)
 
     # --- response queue ------------------------------------------------------

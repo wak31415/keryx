@@ -210,9 +210,8 @@ def test_build_session_update_has_no_beta_era_fields():
     assert "output_audio_format" not in session
 
 
-def test_build_session_update_includes_model_only_when_given():
+def test_build_session_update_leaves_the_model_to_the_connection_url():
     assert "model" not in build_session_update(phone_config())["session"]
-    assert build_session_update(phone_config(), model=MODEL)["session"]["model"] == MODEL
 
 
 # --- connect ----------------------------------------------------------------
@@ -422,7 +421,6 @@ async def test_unknown_and_bookkeeping_events_are_ignored(connect):
     harness.ws.feed(server_event("speech_stopped"))
 
     assert await harness.next_event() == SpeechStopped()
-    assert harness.client.session_id == "sess_ABC123"
 
 
 async def test_malformed_frames_do_not_kill_the_reader(connect):
@@ -447,7 +445,6 @@ async def test_truncate_error_is_reported_but_not_fatal(connect):
         message="Audio content of item_assistant_1 is already shorter than 1200ms.",
         fatal=False,
     )
-    assert harness.client.last_error == event
 
 
 async def test_auth_error_is_fatal(connect):

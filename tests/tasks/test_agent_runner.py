@@ -387,7 +387,6 @@ async def test_session_run_returns_the_result_and_reports_progress():
         session_id="sess-1",
         cost_usd=0.42,
         error=None,
-        num_turns=3,
     )
     assert progress[0] == "Looking it up."
     assert progress[1].startswith("[tool] WebSearch ")
