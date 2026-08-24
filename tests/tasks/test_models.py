@@ -2,16 +2,14 @@
 
 from datetime import UTC, datetime
 
-from jarvis.tasks.models import DESTRUCTIVE_KINDS, Task, TaskKind, TaskStatus
+from jarvis.tasks.models import Task, TaskKind, TaskStatus
 
 # --- enums -------------------------------------------------------------
 
 
 def test_task_kind_values():
-    assert TaskKind.CHAT == "chat"
-    assert TaskKind.RESEARCH == "research"
-    assert TaskKind.CODING == "coding"
-    assert TaskKind.COWORK == "cowork"
+    assert TaskKind.AGENT == "agent"
+    assert list(TaskKind) == [TaskKind.AGENT]
 
 
 def test_task_status_values():
@@ -22,18 +20,20 @@ def test_task_status_values():
     assert TaskStatus.CANCELLED == "cancelled"
 
 
-def test_destructive_kinds():
-    assert DESTRUCTIVE_KINDS == {TaskKind.CODING, TaskKind.COWORK}
+def test_rows_written_before_the_kinds_collapsed_still_load():
+    """Old rows carry chat/research/coding/cowork; they are all just agent work now."""
+    for legacy in ("chat", "research", "coding", "cowork"):
+        assert TaskKind(legacy) is TaskKind.AGENT
 
 
 # --- Task construction and defaults -------------------------------------
 
 
 def test_task_positional_construction_with_defaults():
-    task = Task(id=None, kind=TaskKind.CHAT, description="hello")
+    task = Task(id=None, kind=TaskKind.AGENT, description="hello")
 
     assert task.id is None
-    assert task.kind == TaskKind.CHAT
+    assert task.kind == TaskKind.AGENT
     assert task.description == "hello"
     assert task.status == TaskStatus.QUEUED
     assert task.project is None
@@ -55,7 +55,7 @@ def test_task_positional_construction_with_defaults():
 
 def test_task_created_at_defaults_to_now_utc():
     before = datetime.now(UTC)
-    task = Task(id=None, kind=TaskKind.CHAT, description="hello")
+    task = Task(id=None, kind=TaskKind.AGENT, description="hello")
     after = datetime.now(UTC)
 
     assert task.created_at.tzinfo is not None
@@ -63,8 +63,8 @@ def test_task_created_at_defaults_to_now_utc():
 
 
 def test_task_created_at_default_factory_is_fresh_per_instance():
-    task1 = Task(id=None, kind=TaskKind.CHAT, description="a")
-    task2 = Task(id=None, kind=TaskKind.CHAT, description="b")
+    task1 = Task(id=None, kind=TaskKind.AGENT, description="a")
+    task2 = Task(id=None, kind=TaskKind.AGENT, description="b")
 
     assert task1.created_at is not task2.created_at  # not a shared mutable default
 
@@ -75,7 +75,7 @@ def test_task_created_at_default_factory_is_fresh_per_instance():
 def _sample_task(**overrides):
     defaults = dict(
         id=7,
-        kind=TaskKind.CODING,
+        kind=TaskKind.AGENT,
         description="add README",
         status=TaskStatus.RUNNING,
         project="garmin-voice-agent",
@@ -104,7 +104,7 @@ def test_to_row_converts_enums_bools_and_datetimes():
 
     row = task.to_row()
 
-    assert row["kind"] == "coding"
+    assert row["kind"] == "agent"
     assert row["status"] == "running"
     assert row["callback_requested"] == 1
     assert row["sms_sent"] == 0
@@ -119,7 +119,7 @@ def test_to_row_converts_enums_bools_and_datetimes():
 
 
 def test_to_row_handles_none_optional_fields():
-    task = Task(id=None, kind=TaskKind.CHAT, description="hi")
+    task = Task(id=None, kind=TaskKind.AGENT, description="hi")
 
     row = task.to_row()
 
@@ -171,30 +171,30 @@ def test_from_row_converts_non_utc_offset_to_utc():
 def test_short_status_line_format():
     task = Task(
         id=3,
-        kind=TaskKind.CODING,
+        kind=TaskKind.AGENT,
         description="add README to garmin-voice-agent",
         status=TaskStatus.RUNNING,
     )
 
     assert (
-        task.short_status_line() == "task 3 (coding, running): add README to garmin-voice-agent"
+        task.short_status_line() == "task 3 (running): add README to garmin-voice-agent"
     )
 
 
 def test_short_status_line_truncates_long_description_with_ellipsis():
     long_description = "x" * 100
-    task = Task(id=1, kind=TaskKind.CHAT, description=long_description)
+    task = Task(id=1, kind=TaskKind.AGENT, description=long_description)
 
     line = task.short_status_line()
 
-    assert line == f"task 1 (chat, queued): {'x' * 80}…"
+    assert line == f"task 1 (queued): {'x' * 80}…"
 
 
 def test_short_status_line_does_not_truncate_at_exactly_80_chars():
     description = "x" * 80
-    task = Task(id=1, kind=TaskKind.CHAT, description=description)
+    task = Task(id=1, kind=TaskKind.AGENT, description=description)
 
     line = task.short_status_line()
 
-    assert line == f"task 1 (chat, queued): {'x' * 80}"
+    assert line == f"task 1 (queued): {'x' * 80}"
     assert "…" not in line

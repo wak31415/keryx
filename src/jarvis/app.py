@@ -28,6 +28,7 @@ from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolRegistry
 from jarvis.tools.builtin import register_builtin_tools
+from jarvis.web_search import OpenAIWebSearch
 
 TASK_DB_NAME = "tasks.db"
 
@@ -66,7 +67,11 @@ def build_app_state(settings: Settings) -> AppState:
     registry = ToolRegistry()
     inline_waits = InlineWaits()
     register_builtin_tools(
-        registry, manager=manager, settings=settings, inline_waits=inline_waits
+        registry,
+        manager=manager,
+        settings=settings,
+        inline_waits=inline_waits,
+        searcher=OpenAIWebSearch(settings.openai_api_key, settings.openai_web_search_model),
     )
 
     state = AppState(

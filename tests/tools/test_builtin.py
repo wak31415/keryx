@@ -79,9 +79,9 @@ class Harness:
         ctx = ToolContext(session=session, channel=session.channel, caller=session.caller)
         return await self.registry.call(name, arguments or {}, ctx)
 
-    async def dispatch(self, kind: str = "chat", description: str = "how tall is Everest", **kw):
+    async def dispatch(self, description: str = "how tall is Everest", **kw):
         return await self.manager.dispatch(
-            kind, description, origin_channel="local", origin_caller=None, **kw
+            description, origin_channel="local", origin_caller=None, **kw
         )
 
 
@@ -92,7 +92,7 @@ async def make_tools(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
 
-    def _build(runner: FakeAgentRunner | None = None, **overrides) -> Harness:
+    def _build(runner: FakeAgentRunner | None = None, *, searcher=None, **overrides) -> Harness:
         settings = Settings(
             _env_file=None,
             openai_api_key="test",
@@ -107,7 +107,11 @@ async def make_tools(tmp_path):
         registry = ToolRegistry()
         inline_waits = InlineWaits()
         register_builtin_tools(
-            registry, manager=manager, settings=settings, inline_waits=inline_waits
+            registry,
+            manager=manager,
+            settings=settings,
+            inline_waits=inline_waits,
+            searcher=searcher,
         )
         harness = Harness(
             registry, manager, settings, store, agent_runner, StubSession(), inline_waits
@@ -153,15 +157,14 @@ def test_every_tool_is_registered_with_a_usable_schema(tools):
         assert isinstance(schema["parameters"]["required"], list)
 
 
-def test_the_dispatch_schema_spells_out_the_kinds_and_the_wait(tools):
+def test_the_dispatch_schema_asks_only_for_the_work_and_the_wait(tools):
+    """No kind to classify: the model decides to hand over, not what sort of task it is."""
     schema = next(s for s in tools.registry.schemas() if s["name"] == "dispatch_task")
 
     properties = schema["parameters"]["properties"]
-    assert properties["kind"]["enum"] == ["chat", "research", "coding", "cowork"]
-    assert schema["parameters"]["required"] == ["kind", "description"]
+    assert "kind" not in properties
+    assert schema["parameters"]["required"] == ["description"]
     assert properties["wait_seconds"]["maximum"] == 25
-    for kind in ("chat", "research", "coding", "cowork"):
-        assert kind in properties["kind"]["description"]
 
 
 # --- dispatch_task: the PIN gate (spec §3.3) -------------------------------
@@ -172,7 +175,7 @@ async def test_local_sessions_dispatch_destructive_work_without_a_pin(make_tools
 
     result = await tools.call(
         "dispatch_task",
-        {"kind": "coding", "description": "add a README", "project": "jarvis"},
+        {"description": "add a README", "project": "jarvis"},
         channel="local",
         authorized=False,
     )
@@ -186,7 +189,7 @@ async def test_an_unauthorized_phone_caller_is_asked_for_the_pin(make_tools):
 
     result = await tools.call(
         "dispatch_task",
-        {"kind": "coding", "description": "add a README", "project": "jarvis"},
+        {"description": "add a README", "project": "jarvis"},
         channel="phone",
         caller="+491555555555",
         authorized=False,
@@ -202,7 +205,7 @@ async def test_an_authorized_phone_caller_dispatches_destructive_work(make_tools
 
     result = await tools.call(
         "dispatch_task",
-        {"kind": "cowork", "description": "draft a reply to Anna"},
+        {"description": "draft a reply to Anna"},
         channel="phone",
         caller="+491555555555",
         authorized=True,
@@ -211,18 +214,19 @@ async def test_an_authorized_phone_caller_dispatches_destructive_work(make_tools
     assert result["task_id"] == 1
 
 
-async def test_a_phone_caller_needs_no_pin_for_harmless_kinds(make_tools):
+async def test_every_phone_dispatch_needs_the_pin_now(make_tools):
+    """There is one kind of task and it has the machine and the mailbox: all of it is gated."""
     tools = make_tools(pin="4242")
 
     result = await tools.call(
         "dispatch_task",
-        {"kind": "research", "description": "what happened at CES"},
+        {"description": "what happened at CES"},
         channel="phone",
         caller="+491555555555",
         authorized=False,
     )
 
-    assert result["task_id"] == 1
+    assert result["status"] == "pin_required"
 
 
 async def test_destructive_work_is_refused_when_no_pin_is_configured(make_tools):
@@ -230,7 +234,7 @@ async def test_destructive_work_is_refused_when_no_pin_is_configured(make_tools)
 
     result = await tools.call(
         "dispatch_task",
-        {"kind": "coding", "description": "add a README", "project": "jarvis"},
+        {"description": "add a README", "project": "jarvis"},
         channel="phone",
         caller="+491555555555",
         authorized=False,
@@ -247,7 +251,7 @@ async def test_a_blank_pin_is_no_pin_at_all(make_tools):
 
     result = await tools.call(
         "dispatch_task",
-        {"kind": "coding", "description": "add a README", "project": "jarvis"},
+        {"description": "add a README", "project": "jarvis"},
         channel="phone",
         caller="+491555555555",
         authorized=False,
@@ -259,17 +263,13 @@ async def test_a_blank_pin_is_no_pin_at_all(make_tools):
 # --- dispatch_task: dispatching -------------------------------------------
 
 
-async def test_an_unknown_kind_is_reported_before_anything_is_dispatched(tools):
-    result = await tools.call("dispatch_task", {"kind": "hacking", "description": "the mainframe"})
-
-    assert "unknown kind" in result["error"]
     assert await tools.manager.list() == []
 
 
 async def test_waiting_returns_the_summary_inline(tools):
     result = await tools.call(
         "dispatch_task",
-        {"kind": "chat", "description": "how tall is Everest", "wait_seconds": 20},
+        {"description": "how tall is Everest", "wait_seconds": 20},
     )
 
     assert result == {"task_id": 1, "status": "done", "summary": "I finished the task."}
@@ -279,7 +279,7 @@ async def test_a_long_task_comes_back_running_with_a_promise(make_tools):
     tools = make_tools(FakeAgentRunner(delay_s=SLOW))
 
     result = await tools.call(
-        "dispatch_task", {"kind": "chat", "description": "read all of Wikipedia"}
+        "dispatch_task", {"description": "read all of Wikipedia"}
     )
 
     assert result["task_id"] == 1
@@ -301,7 +301,7 @@ async def test_the_waiting_session_is_marked_so_it_is_not_told_the_result_twice(
 
     await tools.call(
         "dispatch_task",
-        {"kind": "chat", "description": "how tall is Everest", "wait_seconds": 20},
+        {"description": "how tall is Everest", "wait_seconds": 20},
     )
 
     assert waiting == [True]
@@ -314,7 +314,7 @@ async def test_a_task_that_failed_within_the_wait_says_what_went_wrong(make_tool
     )
 
     result = await tools.call(
-        "dispatch_task", {"kind": "chat", "description": "build it", "wait_seconds": 20}
+        "dispatch_task", {"description": "build it", "wait_seconds": 20}
     )
 
     assert result == {
@@ -337,7 +337,7 @@ async def test_the_wait_is_clamped_to_the_configured_maximum(tools):
 
     await tools.call(
         "dispatch_task",
-        {"kind": "chat", "description": "how tall is Everest", "wait_seconds": 999},
+        {"description": "how tall is Everest", "wait_seconds": 999},
     )
 
     assert seen == [float(tools.settings.dispatch_wait_max_seconds)]
@@ -354,7 +354,7 @@ async def test_a_negative_wait_never_reaches_the_manager(tools):
 
     result = await tools.call(
         "dispatch_task",
-        {"kind": "chat", "description": "how tall is Everest", "wait_seconds": -5},
+        {"description": "how tall is Everest", "wait_seconds": -5},
     )
 
     assert called is False
@@ -364,7 +364,7 @@ async def test_a_negative_wait_never_reaches_the_manager(tools):
 async def test_an_unknown_project_comes_back_with_the_candidates(tools):
     result = await tools.call(
         "dispatch_task",
-        {"kind": "coding", "description": "add a README", "project": "wat"},
+        {"description": "add a README", "project": "wat"},
     )
 
     assert "unknown project" in result["error"]
@@ -373,7 +373,7 @@ async def test_an_unknown_project_comes_back_with_the_candidates(tools):
 
 async def test_a_coding_task_without_a_project_is_dispatched_anyway(tools):
     """No interrogation over the voice channel: dispatch, and let the subagent work it out."""
-    result = await tools.call("dispatch_task", {"kind": "coding", "description": "add a README"})
+    result = await tools.call("dispatch_task", {"description": "add a README"})
 
     assert "error" not in result
     assert result["task_id"] == 1
@@ -382,13 +382,13 @@ async def test_a_coding_task_without_a_project_is_dispatched_anyway(tools):
 async def test_the_daily_cap_comes_back_as_an_error(make_tools):
     tools = make_tools(daily_task_cap=0)
 
-    result = await tools.call("dispatch_task", {"kind": "chat", "description": "anything"})
+    result = await tools.call("dispatch_task", {"description": "anything"})
 
     assert "daily task cap" in result["error"]
 
 
 async def test_a_missing_description_is_refused(tools):
-    result = await tools.call("dispatch_task", {"kind": "chat", "description": "  "})
+    result = await tools.call("dispatch_task", {"description": "  "})
 
     assert "description" in result["error"]
 
@@ -439,7 +439,6 @@ async def test_list_tasks_can_filter_to_finished_work(tools):
 
     assert [entry["id"] for entry in result["tasks"]] == [1]
     assert result["tasks"][0]["summary"] == "I finished the task."
-    assert result["tasks"][0]["kind"] == "chat"
 
 
 async def test_list_tasks_rejects_a_status_it_does_not_know(tools):
@@ -482,11 +481,10 @@ async def test_get_task_status_describes_one_task(tools):
 
     assert result["task_id"] == 1
     assert result["status"] == "done"
-    assert result["kind"] == "chat"
     assert result["description"] == "how tall is Everest"
     assert result["summary"] == "I finished the task."
     assert result["error"] is None
-    assert result["line"].startswith("task 1 (chat, done)")
+    assert result["line"].startswith("task 1 (done)")
 
 
 async def test_get_task_result_carries_an_excerpt_of_the_report(tools):
@@ -571,7 +569,7 @@ async def test_cancel_task_stops_a_running_task(make_tools):
 async def test_an_unauthorized_phone_caller_cannot_touch_a_destructive_task(make_tools, tool):
     """`list_tasks` shows every task; reaching into a coding one still needs the PIN."""
     tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
-    await tools.dispatch("coding", "add a README", project="jarvis")
+    await tools.dispatch("add a README", project="jarvis")
 
     result = await tools.call(
         tool,
@@ -588,7 +586,7 @@ async def test_an_unauthorized_phone_caller_cannot_touch_a_destructive_task(make
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
 async def test_an_authorized_phone_caller_may_touch_a_destructive_task(make_tools, tool):
     tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
-    await tools.dispatch("coding", "add a README", project="jarvis")
+    await tools.dispatch("add a README", project="jarvis")
     await wait_for_status(tools, 1, TaskStatus.RUNNING)
 
     result = await tools.call(
@@ -604,9 +602,10 @@ async def test_an_authorized_phone_caller_may_touch_a_destructive_task(make_tool
 
 
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
-async def test_a_harmless_task_needs_no_pin_to_follow_up_or_cancel(make_tools, tool):
+async def test_reaching_into_a_running_task_needs_the_pin_too(make_tools, tool):
+    """Following up opens the same bypassPermissions subagent that dispatching does."""
     tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
-    await tools.dispatch("chat", "how tall is Everest")
+    await tools.dispatch("how tall is Everest")
     await wait_for_status(tools, 1, TaskStatus.RUNNING)
 
     result = await tools.call(
@@ -617,13 +616,13 @@ async def test_a_harmless_task_needs_no_pin_to_follow_up_or_cancel(make_tools, t
         authorized=False,
     )
 
-    assert result["task_id"] == 1
+    assert result["status"] == "pin_required"
 
 
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
 async def test_a_local_session_needs_no_pin_to_follow_up_or_cancel(make_tools, tool):
     tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
-    await tools.dispatch("coding", "add a README", project="jarvis")
+    await tools.dispatch("add a README", project="jarvis")
     await wait_for_status(tools, 1, TaskStatus.RUNNING)
 
     result = await tools.call(
@@ -773,3 +772,49 @@ async def test_end_session_asks_the_session_to_end(tools):
     assert result["status"] == "ending"
     assert "goodbye" not in result["message"].lower()
     assert tools.session.ends == ["user"]
+
+
+# --- web_search ------------------------------------------------------------
+
+
+class FakeSearcher:
+    """A `WebSearcher` that answers from a script."""
+
+    def __init__(self, answer: str = "It is seventeen degrees and clear.") -> None:
+        self.answer = answer
+        self.queries: list[str] = []
+
+    async def search(self, query: str) -> str:
+        self.queries.append(query)
+        return self.answer
+
+
+async def test_web_search_hands_back_a_spoken_answer(make_tools):
+    searcher = FakeSearcher()
+    tools = make_tools(searcher=searcher)
+
+    result = await tools.call("web_search", {"query": "weather in Princeton"})
+
+    assert result == {"answer": "It is seventeen degrees and clear."}
+    assert searcher.queries == ["weather in Princeton"]
+
+
+async def test_web_search_needs_a_query(make_tools):
+    tools = make_tools(searcher=FakeSearcher())
+
+    result = await tools.call("web_search", {})
+
+    assert "query is required" in result["error"]
+
+
+async def test_an_empty_search_result_is_an_error_the_model_can_speak_to(make_tools):
+    tools = make_tools(searcher=FakeSearcher(answer=""))
+
+    result = await tools.call("web_search", {"query": "something obscure"})
+
+    assert "empty" in result["error"]
+
+
+async def test_there_is_no_web_search_tool_without_a_searcher(tools):
+    """A process wired without one simply does not offer it."""
+    assert "web_search" not in {schema["name"] for schema in tools.registry.schemas()}

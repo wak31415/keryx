@@ -18,7 +18,7 @@ async def store(request, tmp_path):
 
 
 def _task(**overrides) -> Task:
-    defaults = dict(id=None, kind=TaskKind.CODING, description="add README")
+    defaults = dict(id=None, kind=TaskKind.AGENT, description="add README")
     defaults.update(overrides)
     return Task(**defaults)
 
@@ -38,7 +38,7 @@ async def test_create_assigns_id_and_does_not_mutate_argument(store):
 async def test_create_then_get_round_trips_every_field(store):
     task = Task(
         id=None,
-        kind=TaskKind.COWORK,
+        kind=TaskKind.AGENT,
         description="ship the release",
         status=TaskStatus.RUNNING,
         project="garmin-voice-agent",

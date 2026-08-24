@@ -322,10 +322,10 @@ def tasks_list(
         typer.echo("no tasks" if wanted is None else f"no tasks with status {wanted}")
         return
 
-    typer.echo(f"{'ID':>4}  {'STATUS':<9}  {'KIND':<8}  {'CREATED':<16}  DESCRIPTION")
+    typer.echo(f"{'ID':>4}  {'STATUS':<9}  {'CREATED':<16}  DESCRIPTION")
     for task in tasks:
         typer.echo(
-            f"{task.id:>4}  {task.status:<9}  {task.kind:<8}  "
+            f"{task.id:>4}  {task.status:<9}  "
             f"{_local_time(task.created_at):<16}  "
             f"{_shorten(task.description, MAX_DESCRIPTION_CHARS)}"
         )

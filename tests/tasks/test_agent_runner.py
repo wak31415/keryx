@@ -35,7 +35,7 @@ from jarvis.tasks.models import Task, TaskKind
 def make_task(**overrides) -> Task:
     values = {
         "id": 7,
-        "kind": TaskKind.CHAT,
+        "kind": TaskKind.AGENT,
         "description": "find out when the next full moon is",
     }
     values.update(overrides)
@@ -196,7 +196,7 @@ def test_resolve_model_defaults_to_the_configured_model(settings, name):
 def test_build_options_sets_the_shared_agent_configuration(settings):
     settings.subagent_max_turns = 42
     settings.subagent_max_budget_usd = 2.5
-    task = make_task(kind=TaskKind.RESEARCH, project="jarvis", description="read the spec")
+    task = make_task(kind=TaskKind.AGENT, project="jarvis", description="read the spec")
 
     options = build_options(task, settings)
 
@@ -210,7 +210,7 @@ def test_build_options_sets_the_shared_agent_configuration(settings):
 
 
 def test_build_options_appends_the_rendered_subagent_suffix(settings):
-    task = make_task(kind=TaskKind.CODING, project="jarvis", description="add a README")
+    task = make_task(project="jarvis", description="add a README")
 
     options = build_options(task, settings)
 
@@ -219,7 +219,6 @@ def test_build_options_appends_the_rendered_subagent_suffix(settings):
     append = options.system_prompt["append"]
     assert "SPOKEN_SUMMARY:" in append
     assert "add a README" in append
-    assert "coding" in append
     assert "jarvis" in append
     assert "{" not in append and "}" not in append
 
@@ -279,38 +278,24 @@ def test_build_options_resolves_the_task_model(settings):
     assert options.model == "claude-sonnet-5"
 
 
-def test_build_options_for_chat_gives_only_read_only_built_ins(settings):
-    options = build_options(make_task(kind=TaskKind.CHAT), settings)
+def test_build_options_never_restricts_the_built_in_tools(settings):
+    """One kind of task, and it keeps every tool: skills and subagents included.
 
-    # `tools` is the restricting option; `allowed_tools` only auto-approves.
-    assert options.tools == ["WebSearch", "WebFetch", "Read", "Glob", "Grep"]
-    assert options.allowed_tools == []
-    assert options.mcp_servers == {}
-
-
-def test_build_options_for_research_also_gives_write(settings):
-    options = build_options(make_task(kind=TaskKind.RESEARCH), settings)
-
-    assert options.tools == ["WebSearch", "WebFetch", "Read", "Glob", "Grep", "Write"]
-    assert options.allowed_tools == []
-
-
-def test_build_options_for_coding_does_not_restrict_tools(settings):
-    options = build_options(make_task(kind=TaskKind.CODING), settings)
+    `tools` is the restricting option (`allowed_tools` only auto-approves), so leaving it
+    unset is what gives the subagent the full set.
+    """
+    options = build_options(make_task(), settings)
 
     assert options.tools is None
-    assert options.allowed_tools == []
-    assert options.mcp_servers == {}
 
 
-def test_build_options_for_cowork_wires_the_google_mcp_server(settings):
+def test_build_options_always_wires_the_google_mcp_server(settings):
     settings.google_oauth_client_id = "client-id"
     settings.google_oauth_client_secret = "client-secret"
     settings.user_google_email = "mail@example.com"
 
-    options = build_options(make_task(kind=TaskKind.COWORK), settings)
+    options = build_options(make_task(), settings)
 
-    assert options.tools == ["WebSearch", "WebFetch", "Read"]
     assert options.allowed_tools == ["mcp__google__*"]
     google = options.mcp_servers["google"]
     assert google["type"] == "stdio"
@@ -334,8 +319,8 @@ def test_build_options_for_cowork_wires_the_google_mcp_server(settings):
     }
 
 
-def test_build_options_for_cowork_omits_unconfigured_google_env(settings):
-    options = build_options(make_task(kind=TaskKind.COWORK), settings)
+def test_build_options_omits_unconfigured_google_env(settings):
+    options = build_options(make_task(), settings)
 
     env = options.mcp_servers["google"]["env"]
     assert "GOOGLE_OAUTH_CLIENT_ID" not in env
@@ -356,12 +341,12 @@ async def test_runner_open_connects_a_client_built_from_the_task(settings):
         return client
 
     runner = ClaudeAgentRunner(settings, client_factory=factory)
-    session = await runner.open(make_task(kind=TaskKind.RESEARCH), resume="sess-3")
+    session = await runner.open(make_task(), resume="sess-3")
 
     assert isinstance(session, ClaudeAgentSession)
     assert created[0].connects == 1
     assert created[0].options.resume == "sess-3"
-    assert created[0].options.tools[-1] == "Write"
+    assert created[0].options.tools is None  # nothing is held back
 
 
 async def test_runner_open_propagates_a_connect_failure(settings):

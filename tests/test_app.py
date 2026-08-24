@@ -50,18 +50,18 @@ async def test_build_app_state_wires_the_notifier(state):
 async def test_a_finished_task_is_spoken_into_every_live_session(state):
     session = FakeVoiceSession(channel="local")
     state.sessions.add(session)
-    task = await state.store.create(Task(id=None, kind=TaskKind.CHAT, description="dig"))
+    task = await state.store.create(Task(id=None, kind=TaskKind.AGENT, description="dig"))
 
     await state.bus.publish(TaskCompleted(task.id, "all done"))
 
-    assert session.announced == [f"Task {task.id} (chat) finished: all done"]
+    assert session.announced == [f"Task {task.id} finished: all done"]
     assert (await state.store.get(task.id)).announced is True
 
 
 async def test_shutting_down_takes_the_notifier_off_the_bus(state):
     session = FakeVoiceSession(channel="local")
     state.sessions.add(session)
-    task = await state.store.create(Task(id=None, kind=TaskKind.CHAT, description="dig"))
+    task = await state.store.create(Task(id=None, kind=TaskKind.AGENT, description="dig"))
 
     await shutdown_app_state(state)
     await state.bus.publish(TaskCompleted(task.id, "nobody hears this"))

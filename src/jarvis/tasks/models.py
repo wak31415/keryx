@@ -14,10 +14,21 @@ from typing import Any, Self
 
 
 class TaskKind(StrEnum):
-    CHAT = "chat"
-    RESEARCH = "research"
-    CODING = "coding"
-    COWORK = "cowork"
+    """What a task is. There is one kind, on purpose.
+
+    Splitting work into chat/research/coding/cowork (2026-08-18 to 2026-08-24) meant the
+    voice model had to classify a request before it could hand it over — a decision it is
+    badly placed to make, and one that put mail and code in separate boxes a single
+    request often has to reach across. Claude works out what a request needs on its own,
+    so the only routing left is "answer it myself" versus "hand it to Claude".
+    """
+
+    AGENT = "agent"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "TaskKind | None":
+        """Rows written before the collapse carry chat/research/coding/cowork."""
+        return cls.AGENT if isinstance(value, str) else None
 
 
 class TaskStatus(StrEnum):
@@ -26,9 +37,6 @@ class TaskStatus(StrEnum):
     DONE = "done"
     FAILED = "failed"
     CANCELLED = "cancelled"
-
-
-DESTRUCTIVE_KINDS = {TaskKind.CODING, TaskKind.COWORK}  # require PIN on phone
 
 
 _ENUM_FIELDS: dict[str, type[StrEnum]] = {"kind": TaskKind, "status": TaskStatus}
@@ -88,8 +96,9 @@ class Task:
     """One dispatched unit of subagent work (spec §3.2 `tasks/models.py`).
 
     Required fields come first (`id`, `kind`, `description`) so `Task(id=None,
-    kind=TaskKind.CHAT, description="...")` works positionally; every remaining field
-    is defaulted, in the order the spec lists them.
+    kind=TaskKind.AGENT, description="...")` works positionally; every remaining field
+    is defaulted, in the order the spec lists them. `kind` survives the collapse to a
+    single kind because the column does: old rows still carry the old words.
     """
 
     id: int | None
@@ -124,8 +133,8 @@ class Task:
         return cls(**{name: _deserialize_field(name, value) for name, value in data.items()})
 
     def short_status_line(self) -> str:
-        """A speakable one-liner, e.g. 'task 3 (coding, running): add README to ...'."""
+        """A speakable one-liner, e.g. 'task 3 (running): add README to ...'."""
         description = self.description
         if len(description) > 80:
             description = description[:80] + "…"
-        return f"task {self.id} ({self.kind}, {self.status}): {description}"
+        return f"task {self.id} ({self.status}): {description}"

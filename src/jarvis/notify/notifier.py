@@ -36,15 +36,15 @@ SMS_BODY_LIMIT = 1200  # characters of summary; the report link is appended afte
 CALLBACK_TOKEN_TTL_S = 120.0  # Twilio has to ring and be answered inside this
 TOKEN_HEX_CHARS = 32  # half a sha256, plenty against guessing and short enough for a URL
 
-DONE_TEXT = "Task {task_id} ({kind}) finished: {detail}"
-FAILED_TEXT = "Task {task_id} ({kind}) failed: {detail}"
+DONE_TEXT = "Task {task_id} finished: {detail}"
+FAILED_TEXT = "Task {task_id} failed: {detail}"
 DONE_CONTEXT = (
-    "You are calling the user back because task {task_id} ({kind}) finished. "
+    "You are calling the user back because task {task_id} finished. "
     "Result: {detail}. Greet them, tell them the result briefly, then ask if they need "
     "anything else."
 )
 FAILED_CONTEXT = (
-    "You are calling the user back because task {task_id} ({kind}) failed. "
+    "You are calling the user back because task {task_id} failed. "
     "Error: {detail}. Greet them, tell them what went wrong briefly, then ask if they "
     "need anything else."
 )
@@ -127,7 +127,7 @@ class Notifier:
             return
 
         text = (FAILED_TEXT if failed else DONE_TEXT).format(
-            task_id=task.id, kind=task.kind, detail=detail
+            task_id=task.id, detail=detail
         )
         delivered = await self._announce(task, text)
         await self._send_sms(task, text, delivered=delivered)
@@ -209,7 +209,7 @@ class Notifier:
             return
         try:
             context = (FAILED_CONTEXT if failed else DONE_CONTEXT).format(
-                task_id=task.id, kind=task.kind, detail=detail
+                task_id=task.id, detail=detail
             )
             token = self._stream_tokens.issue(
                 caller=task.callback_number,

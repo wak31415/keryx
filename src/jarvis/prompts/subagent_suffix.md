@@ -9,7 +9,6 @@ He asked Jarvis for the work rather than being interviewed about it, so the requ
 well be one sentence with the details missing. Working out what those details are is your
 job, not his.
 
-- Task kind: {kind}
 - Project: {project}
 - What he asked for: {description}
 

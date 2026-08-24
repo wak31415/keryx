@@ -81,10 +81,10 @@ async def _opened(harness: Harness, count: int) -> bool:
     return len(harness.runner.opened) >= count
 
 
-async def dispatch(manager: TaskManager, kind="chat", description="how tall is Everest", **kw):
+async def dispatch(manager: TaskManager, description="how tall is Everest", **kw):
     kw.setdefault("origin_channel", "local")
     kw.setdefault("origin_caller", None)
-    return await manager.dispatch(kind, description, **kw)
+    return await manager.dispatch(description, **kw)
 
 
 async def wait_until(check, *, message: str, timeout: float = WAIT) -> None:
@@ -118,58 +118,43 @@ def make_projects(tmp_path, *names) -> Path:
 # --- prompts -------------------------------------------------------------
 
 
-def test_build_prompt_chat():
-    task = Task(id=1, kind=TaskKind.CHAT, description="when is the next full moon")
+def test_build_prompt_carries_the_request_and_the_working_directory():
+    task = Task(id=1, kind=TaskKind.AGENT, description="when is the next full moon")
 
-    assert build_prompt(task) == (
-        "You are answering a question for the user via a voice assistant. "
-        "Answer thoroughly but concisely.\n\n"
-        "Question/request:\nwhen is the next full moon"
-    )
+    prompt = build_prompt(task)
 
-
-def test_build_prompt_research():
-    task = Task(id=1, kind=TaskKind.RESEARCH, description="state of solid-state batteries")
-
-    assert build_prompt(task) == (
-        "Research the following on the web and produce a well-organized report with "
-        "sources. Save the report as REPORT.md in the current directory as well.\n\n"
-        "Topic:\nstate of solid-state batteries"
-    )
+    assert "when is the next full moon" in prompt
+    assert "Working directory: the current directory" in prompt
+    assert "(project" not in prompt
 
 
-def test_build_prompt_coding_names_the_repository():
+def test_build_prompt_names_the_repository_when_there_is_one():
     task = Task(
         id=1,
-        kind=TaskKind.CODING,
+        kind=TaskKind.AGENT,
         description="add a README",
         project="jarvis",
         cwd="/repos/jarvis",
     )
 
-    assert build_prompt(task) == (
-        "You are working in the repository at /repos/jarvis (project 'jarvis'). "
-        "Complete the following task end to end: make the changes, run the relevant "
-        "tests/linters if any, and commit with a clear message if the repository is a "
-        "git repo. Do not push.\n\n"
-        "Task:\nadd a README"
-    )
+    prompt = build_prompt(task)
+
+    assert "Working directory: /repos/jarvis (project 'jarvis')" in prompt
+    assert "add a README" in prompt
 
 
-def test_build_prompt_cowork():
-    task = Task(id=1, kind=TaskKind.COWORK, description="what is on my calendar tomorrow")
+def test_build_prompt_offers_the_whole_machine_not_a_kind():
+    """One prompt: the subagent decides whether the work wants a repo, mail or a skill."""
+    prompt = build_prompt(Task(id=1, kind=TaskKind.AGENT, description="anything"))
 
-    assert build_prompt(task) == (
-        "You have access to the user's Gmail and Google Calendar through the google MCP "
-        "tools. Complete the following request. Never send an email or modify calendar "
-        "events unless the request explicitly asks for it; otherwise draft/summarize and "
-        "report.\n\n"
-        "Request:\nwhat is on my calendar tomorrow"
-    )
+    assert "Gmail" in prompt
+    assert "skills" in prompt
+    assert "subagents" in prompt
+    assert "never push" in prompt
 
 
 def test_build_prompt_leaves_braces_in_the_description_alone():
-    task = Task(id=1, kind=TaskKind.CHAT, description="explain {cwd} and {project}")
+    task = Task(id=1, kind=TaskKind.AGENT, description="explain {cwd} and {project}")
 
     assert build_prompt(task).endswith("explain {cwd} and {project}")
 
@@ -211,7 +196,7 @@ async def test_dispatch_runs_to_done_with_events_and_files(make_harness):
     ]
 
     report = harness.report_text(task.id)
-    assert report.startswith(f"# Task {task.id} — chat\n\nhow tall is Everest\n\n---\n\n")
+    assert report.startswith(f"# Task {task.id}\n\nhow tall is Everest\n\n---\n\n")
     assert "SPOKEN_SUMMARY: I finished the task." in report
     assert finished.report_path == str(harness.settings.data_dir / "tasks" / f"{task.id}.md")
 
@@ -220,10 +205,10 @@ async def test_dispatch_runs_to_done_with_events_and_files(make_harness):
     assert "thinking hard" in log
 
 
-async def test_dispatch_prompts_the_agent_with_the_kind_preamble(make_harness):
+async def test_dispatch_prompts_the_agent_with_the_standing_preamble(make_harness):
     harness = make_harness()
 
-    task = await dispatch(harness.manager, "research", "battery chemistry")
+    task = await dispatch(harness.manager, "battery chemistry")
     await harness.manager.wait_for(task.id, timeout=WAIT)
 
     assert harness.runner.sessions[0].prompts == [
@@ -244,21 +229,12 @@ async def test_dispatch_resolves_the_model_alias(make_harness):
     assert default.model == harness.settings.subagent_model
 
 
-async def test_dispatch_rejects_an_unknown_kind(make_harness):
-    harness = make_harness()
-
-    with pytest.raises(ValueError):
-        await dispatch(harness.manager, "gardening")
-
-
-async def test_dispatch_coding_without_a_project_starts_in_the_projects_root(
-    make_harness, tmp_path
-):
-    """Code work is handed over as soon as it is recognised; the subagent finds the repo."""
+async def test_dispatch_without_a_project_starts_in_the_projects_root(make_harness, tmp_path):
+    """Work is handed over as soon as it is recognised; the subagent finds the repo."""
     root = make_projects(tmp_path, "garmin-voice-agent")
     harness = make_harness(projects_root=root)
 
-    task = await dispatch(harness.manager, "coding", "add a README")
+    task = await dispatch(harness.manager, "add a README")
 
     assert task.project is None
     assert task.cwd == str(root)
@@ -268,7 +244,7 @@ async def test_dispatch_sets_cwd_from_the_project(make_harness, tmp_path):
     root = make_projects(tmp_path, "garmin-voice-agent")
     harness = make_harness(projects_root=root)
 
-    task = await dispatch(harness.manager, "coding", "add a README", project="garmin")
+    task = await dispatch(harness.manager, "add a README", project="garmin")
 
     assert task.project == "garmin-voice-agent"
     assert task.cwd == str(root / "garmin-voice-agent")
@@ -532,7 +508,7 @@ async def test_followup_on_a_cancelled_task_is_an_error(make_harness):
 async def test_followup_on_a_running_task_with_no_live_session_is_an_error(make_harness, store):
     """A row left `running` by an earlier process has no session to send anything to."""
     harness = make_harness()
-    orphan = await store.create(Task(id=None, kind=TaskKind.CHAT, description="from last boot"))
+    orphan = await store.create(Task(id=None, kind=TaskKind.AGENT, description="from last boot"))
     await store.update(orphan.id, status=TaskStatus.RUNNING)
 
     with pytest.raises(ValueError, match="starting up"):
@@ -674,7 +650,7 @@ async def test_dispatch_with_an_unknown_project_raises(make_harness, tmp_path):
     harness = make_harness(projects_root=tmp_path / "missing")
 
     with pytest.raises(UnknownProjectError):
-        await dispatch(harness.manager, "coding", "add a README", project="nonesuch")
+        await dispatch(harness.manager, "add a README", project="nonesuch")
 
 
 async def test_list_projects_configured_first_then_sorted_subdirs(make_harness, tmp_path):

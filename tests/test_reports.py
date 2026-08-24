@@ -45,7 +45,7 @@ def client(state):
 def make_task(state, *, report: str | None = REPORT, write: bool = True) -> int:
     """A row in the store, with its report on disk unless the test says otherwise."""
     task = asyncio.run(
-        state.store.create(Task(id=None, kind=TaskKind.RESEARCH, description="find the thing"))
+        state.store.create(Task(id=None, kind=TaskKind.AGENT, description="find the thing"))
     )
     if report is not None:
         path = state.settings.data_dir / "tasks" / f"{task.id}.md"

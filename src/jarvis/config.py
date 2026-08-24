@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     openai_realtime_model: str = "gpt-realtime-2.1"
     openai_voice: str = "cedar"
     openai_transcription_model: str = "gpt-4o-mini-transcribe"
+    #: Answers the voice model's own `web_search` tool, through the Responses API (the
+    #: Realtime API has no hosted search tool of its own).
+    openai_web_search_model: str = "gpt-5.4-mini"
 
     # Claude Agent SDK. Subagent auth, in order of precedence: ANTHROPIC_API_KEY
     # (pay-per-token) > CLAUDE_CODE_OAUTH_TOKEN (subscription, headless; from
