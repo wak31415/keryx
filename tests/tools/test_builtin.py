@@ -92,7 +92,9 @@ async def make_tools(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
 
-    def _build(runner: FakeAgentRunner | None = None, *, searcher=None, **overrides) -> Harness:
+    def _build(
+        runner: FakeAgentRunner | None = None, *, searcher=None, slack=None, **overrides
+    ) -> Harness:
         settings = Settings(
             _env_file=None,
             openai_api_key="test",
@@ -112,6 +114,7 @@ async def make_tools(tmp_path):
             settings=settings,
             inline_waits=inline_waits,
             searcher=searcher,
+            slack=slack,
         )
         harness = Harness(
             registry, manager, settings, store, agent_runner, StubSession(), inline_waits
@@ -818,3 +821,46 @@ async def test_an_empty_search_result_is_an_error_the_model_can_speak_to(make_to
 async def test_there_is_no_web_search_tool_without_a_searcher(tools):
     """A process wired without one simply does not offer it."""
     assert "web_search" not in {schema["name"] for schema in tools.registry.schemas()}
+
+
+# --- send_to_slack ---------------------------------------------------------
+
+
+class FakeSlack:
+    """A `SlackSender` that records what it was asked to send."""
+
+    def __init__(self, ok: bool = True) -> None:
+        self.ok = ok
+        self.sent: list[str] = []
+
+    async def send(self, text: str) -> bool:
+        self.sent.append(text)
+        return self.ok
+
+
+async def test_send_to_slack_sends_the_message(make_tools):
+    slack = FakeSlack()
+    tools = make_tools(slack=slack)
+
+    result = await tools.call("send_to_slack", {"message": "task 3 is done"})
+
+    assert result == {"status": "sent"}
+    assert slack.sent == ["task 3 is done"]
+
+
+async def test_send_to_slack_needs_a_message(make_tools):
+    tools = make_tools(slack=FakeSlack())
+
+    assert "message is required" in (await tools.call("send_to_slack", {}))["error"]
+
+
+async def test_a_refused_slack_message_comes_back_as_an_error(make_tools):
+    tools = make_tools(slack=FakeSlack(ok=False))
+
+    result = await tools.call("send_to_slack", {"message": "anything"})
+
+    assert "did not go through" in result["error"]
+
+
+async def test_there_is_no_slack_tool_without_credentials(tools):
+    assert "send_to_slack" not in {schema["name"] for schema in tools.registry.schemas()}

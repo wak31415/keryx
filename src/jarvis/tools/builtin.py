@@ -23,6 +23,7 @@ from pathlib import Path
 
 from jarvis.config import Settings
 from jarvis.inline_waits import InlineWaits
+from jarvis.slack import SlackSender
 from jarvis.tasks.manager import TERMINAL_STATUSES, TaskLimitError, TaskManager, UnknownProjectError
 from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tools.registry import ToolContext, ToolRegistry
@@ -48,6 +49,7 @@ CALLBACK_NUMBER_MESSAGE = (
 )
 STILL_RUNNING_MESSAGE = "still running; you will be told when it finishes"
 SEARCH_FAILED_MESSAGE = "the search came back empty; say so, or offer to put Claude on it"
+SLACK_FAILED_MESSAGE = "Slack would not take the message; tell him it did not go through"
 ENDING_MESSAGE = "The session is ending now; do not say anything else."
 
 #: A phone number we are willing to call back: E.164, `+` and 7–15 digits.
@@ -151,11 +153,12 @@ def register_builtin_tools(
     settings: Settings,
     inline_waits: InlineWaits,
     searcher: WebSearcher | None = None,
+    slack: SlackSender | None = None,
 ) -> None:
     """Register every tool the voice model has, bound to this process's task manager.
 
-    `web_search` is registered only when a `searcher` is supplied, so a process without
-    one simply does not offer the tool.
+    `web_search` and `send_to_slack` are registered only when a `searcher` / `slack` is
+    supplied, so a process without one simply does not offer that tool.
     """
 
     async def _get(arguments: dict) -> Task | dict:
@@ -167,6 +170,39 @@ def register_builtin_tools(
         if task is None:
             return {"error": f"no task {task_id}"}
         return task
+
+    # --- send_to_slack -----------------------------------------------------
+
+    async def send_to_slack(ctx: ToolContext, arguments: dict) -> dict:
+        message = _text(arguments, "message")
+        if not message:
+            return {"error": "message is required: say what to send"}
+        assert slack is not None  # only registered when there is one
+        if not await slack.send(message):
+            return {"error": SLACK_FAILED_MESSAGE}
+        return {"status": "sent"}
+
+    if slack is not None:
+        registry.register(
+            "send_to_slack",
+            "Send William a message on Slack, in the direct-message channel he already "
+            "uses for this. Use it when he asks for something in writing — a number, a "
+            "list, a name, a link he will want to click — because a phone call cannot "
+            "carry those. For anything a subagent produced (a file, a plot, a report), "
+            "dispatch the sending to Claude instead: it can attach the file itself.",
+            {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The message to send, written to be read rather "
+                        "than heard.",
+                    }
+                },
+                "required": ["message"],
+            },
+            send_to_slack,
+        )
 
     # --- web_search --------------------------------------------------------
 

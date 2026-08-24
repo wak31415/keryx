@@ -33,6 +33,8 @@ OPTIONAL_STR_FIELDS = (
     "google_oauth_client_id",
     "google_oauth_client_secret",
     "user_google_email",
+    "slack_bot_token",
+    "slack_channel_id",
 )
 
 
@@ -111,6 +113,11 @@ class Settings(BaseSettings):
     #: A Google "OAuth client" JSON (the file the cloud console hands you). Read when the
     #: id/secret pair above is unset, so the secret can stay in a file instead of the env.
     google_client_secrets_file: Path = Path(".secrets/client_secret.json")
+
+    # Slack (the same app the auto-research skill's MCP server uses; left unset, the
+    # token and DM channel are read from that server's config in ~/.claude.json)
+    slack_bot_token: str | None = Field(default=None, repr=False)
+    slack_channel_id: str | None = None
 
     # Logging
     log_level: str = "INFO"

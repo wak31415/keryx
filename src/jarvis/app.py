@@ -22,6 +22,7 @@ from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.base import ProviderFactory
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.session import SessionRegistry
+from jarvis.slack import SlackWebApi, slack_credentials
 from jarvis.stream_tokens import StreamTokenStore
 from jarvis.tasks.agent_runner import AgentRunner, ClaudeAgentRunner, FakeAgentRunner
 from jarvis.tasks.manager import TaskManager
@@ -66,12 +67,16 @@ def build_app_state(settings: Settings) -> AppState:
 
     registry = ToolRegistry()
     inline_waits = InlineWaits()
+    # No Slack app configured anywhere is not an error: the tool is simply not offered.
+    credentials = slack_credentials(settings.slack_bot_token, settings.slack_channel_id)
+    slack = SlackWebApi(*credentials) if credentials else None
     register_builtin_tools(
         registry,
         manager=manager,
         settings=settings,
         inline_waits=inline_waits,
         searcher=OpenAIWebSearch(settings.openai_api_key, settings.openai_web_search_model),
+        slack=slack,
     )
 
     state = AppState(

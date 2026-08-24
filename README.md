@@ -45,9 +45,13 @@ through untouched), the local mic/speaker (16-bit PCM 24 kHz, half-duplex — th
 gated off while Jarvis speaks), or a WAV file for the `loopback` dev harness. The session
 never knows which one it has.
 
-Tools the model can call: `web_search`, `dispatch_task`, `list_tasks`, `get_task_status`,
+Tools the model can call: `web_search`, `send_to_slack`, `dispatch_task`, `list_tasks`, `get_task_status`,
 `get_task_result`, `send_followup`, `cancel_task`, `list_projects`, `request_callback`,
 `submit_pin`, `end_session`.
+
+Anything you need in writing goes to Slack — the voice sends text with `send_to_slack`,
+and subagents send files, plots and reports through the same Slack app, which they already
+have from the `auto-research` skill. Nothing on a phone call has to carry a file path.
 
 There is exactly one routing decision. Small talk, task status and small factual questions
 the voice answers itself — `web_search` goes through the Responses API, because a Realtime
@@ -222,6 +226,8 @@ Call the number, or say **"hey jarvis"** at the Mac. Then talk normally:
 - *"What's running?"* / *"How did task 3 go?"* — task status and results.
 - *"Add to task 3: also update the README."* — a follow-up into the same subagent.
 - *"Call me back when it's done."* — an outbound call when the task lands.
+- *"Send me that on Slack."* — the message arrives in your DM; a file or plot is sent by
+  the subagent that made it.
 - *"Goodbye."* — ends the session (locally it also ends after 30 s of silence).
 
 **Anything that is work goes straight to Claude.** Jarvis does not repeat the request back
