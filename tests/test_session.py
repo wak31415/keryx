@@ -737,3 +737,39 @@ def test_session_registry_lists_only_live_sessions(make_session, phone, provider
 
     sessions.remove(session)
     sessions.remove(session)  # removing twice is fine
+
+
+async def test_the_session_takes_its_turn_detection_from_settings(
+    make_session, phone, provider, settings
+):
+    """How long Jarvis waits before answering is a setting, not a constant."""
+    tuned = settings.model_copy(
+        update={
+            "vad_mode": "server",
+            "vad_silence_ms": 3000,
+            "vad_threshold": 0.6,
+            "vad_prefix_ms": 250,
+        }
+    )
+    session = make_session(phone, provider, settings=tuned)
+
+    async with running(session):
+        await eventually(lambda: provider.config is not None)
+
+    config = provider.config
+    assert config.vad_mode == "server"
+    assert config.vad_silence_ms == 3000
+    assert config.vad_threshold == 0.6
+    assert config.vad_prefix_ms == 250
+
+
+async def test_the_default_session_waits_for_a_finished_sentence(
+    make_session, phone, provider
+):
+    session = make_session(phone, provider)
+
+    async with running(session):
+        await eventually(lambda: provider.config is not None)
+
+    assert provider.config.vad_mode == "semantic"
+    assert provider.config.vad_eagerness == "low"

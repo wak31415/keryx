@@ -19,12 +19,18 @@ class SessionConfig:
     `audio/pcmu` end to end (no transcoding), the local path `audio/pcm`.
     `interrupt_response` is False on the half-duplex local path, where the mic is gated
     while the assistant speaks and barge-in is therefore impossible.
+    `vad_mode` decides what counts as "he has stopped talking" — see the field below.
     """
 
     instructions: str
     tools: list[dict]  # OpenAI function-tool schemas
     voice: str
     audio_format: AudioFormat
+    #: "semantic" lets the model judge whether the sentence is finished — it waits through
+    #: a pause for thought, where a timer cuts in. "server" is the fixed silence timer,
+    #: `vad_silence_ms` long, which the semantic mode ignores (and the API rejects there).
+    vad_mode: Literal["server", "semantic"] = "semantic"
+    vad_eagerness: Literal["low", "medium", "high", "auto"] = "low"
     vad_threshold: float = 0.5
     vad_silence_ms: int = 500
     vad_prefix_ms: int = 300

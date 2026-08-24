@@ -141,6 +141,9 @@ def test_defaults_match_spec_table(settings):
     assert settings.projects_root == (Path.home() / "Local" / "coding_projects")
     assert settings.max_concurrent_tasks == 3
     assert settings.dispatch_wait_max_seconds == 25
+    assert settings.vad_mode == "semantic"
+    assert settings.vad_eagerness == "low"
+    assert settings.vad_silence_ms == 1200
     assert settings.local_silence_timeout == 30
     assert settings.max_call_seconds == 1800
     assert settings.daily_task_cap == 50

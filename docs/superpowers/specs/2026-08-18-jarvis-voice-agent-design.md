@@ -142,8 +142,10 @@ class Transport(Protocol):
     tools: list[dict]                       # OpenAI function-tool schemas: {"type":"function","name","description","parameters"}
     voice: str
     audio_format: AudioFormat               # used for both input and output
+    vad_mode: Literal["server","semantic"] = "semantic"   # amended 2026-08-24 (was: server only)
+    vad_eagerness: Literal["low","medium","high","auto"] = "low"
     vad_threshold: float = 0.5
-    vad_silence_ms: int = 500
+    vad_silence_ms: int = 500                # server mode only; semantic_vad rejects it
     vad_prefix_ms: int = 300
     interrupt_response: bool = True         # False for local (half-duplex)
     transcription_model: str | None = "gpt-4o-mini-transcribe"
@@ -363,6 +365,9 @@ class SessionRegistry:
 | `MAX_CONCURRENT_TASKS` | `max_concurrent_tasks` | `3` |
 | `DISPATCH_WAIT_MAX_SECONDS` | `dispatch_wait_max_seconds` | `25` |
 | `LOCAL_SILENCE_TIMEOUT` | `local_silence_timeout` | `30` |
+| `VAD_MODE` | `vad_mode` (`semantic` waits on a finished sentence, `server` on a silence timer) | `semantic` |
+| `VAD_EAGERNESS` | `vad_eagerness` (semantic mode: how soon it jumps in) | `low` |
+| `VAD_SILENCE_MS` / `VAD_THRESHOLD` / `VAD_PREFIX_MS` | `vad_silence_ms` / `vad_threshold` / `vad_prefix_ms` (server mode) | `1200` / `0.5` / `300` |
 | `MAX_CALL_SECONDS` | `max_call_seconds` | `1800` |
 | `DAILY_TASK_CAP` | `daily_task_cap` | `50` |
 | `WAKEWORD_MODEL` / `WAKEWORD_THRESHOLD` | `wakeword_model` / `wakeword_threshold` | `hey_jarvis` / `0.5` |
@@ -384,7 +389,8 @@ header `Authorization: Bearer …`, **no** `OpenAI-Beta` header.
   "tools":[{"type":"function","name":…,"description":…,"parameters":{…}}],"tool_choice":"auto",
   "audio":{"input":{"format":{"type":"audio/pcmu"},"turn_detection":{"type":"server_vad",
   "threshold":0.5,"prefix_padding_ms":300,"silence_duration_ms":500,"create_response":true,
-  "interrupt_response":true},"transcription":{"model":"gpt-4o-mini-transcribe"}},
+  "interrupt_response":true}  — or `{"type":"semantic_vad","eagerness":"low",…}`, which takes no
+  `silence_duration_ms` (the API rejects it) and ends the turn on the *sense* of the sentence,"transcription":{"model":"gpt-4o-mini-transcribe"}},
   "output":{"format":{"type":"audio/pcmu"},"voice":"marin"}}}}`.
   Formats: `audio/pcmu`, `audio/pcma` (8 kHz G.711 — Twilio path, no transcoding),
   `audio/pcm` (24 kHz 16-bit LE mono — local path). **Corrected 2026-08-24:** `audio/pcm`

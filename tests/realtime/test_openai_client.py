@@ -134,7 +134,7 @@ async def connect():
 
 
 def test_build_session_update_matches_ga_schema_for_the_phone_path():
-    config = phone_config()
+    config = phone_config(vad_mode="server", vad_silence_ms=500)
 
     assert build_session_update(config) == {
         "type": "session.update",
@@ -186,10 +186,8 @@ def test_build_session_update_for_the_local_path_omits_transcription_and_barge_i
                 "input": {
                     "format": {"type": "audio/pcm", "rate": 24000},
                     "turn_detection": {
-                        "type": "server_vad",
-                        "threshold": 0.7,
-                        "prefix_padding_ms": 200,
-                        "silence_duration_ms": 700,
+                        "type": "semantic_vad",
+                        "eagerness": "low",
                         "create_response": True,
                         "interrupt_response": False,
                     },
@@ -782,3 +780,33 @@ def test_a_pcmu_session_carries_no_rate():
     audio = update["session"]["audio"]
     assert audio["input"]["format"] == {"type": "audio/pcmu"}
     assert audio["output"]["format"] == {"type": "audio/pcmu"}
+
+
+# --- turn detection ----------------------------------------------------------
+
+
+def test_the_default_turn_detection_waits_for_a_finished_sentence():
+    """Semantic detection is the default: a pause for thought must not end the turn."""
+    update = build_session_update(phone_config())
+
+    assert update["session"]["audio"]["input"]["turn_detection"] == {
+        "type": "semantic_vad",
+        "eagerness": "low",
+        "create_response": True,
+        "interrupt_response": True,
+    }
+
+
+def test_semantic_turn_detection_carries_no_silence_timer():
+    """The API refuses `silence_duration_ms` alongside semantic_vad."""
+    update = build_session_update(phone_config(vad_silence_ms=4000))
+
+    assert "silence_duration_ms" not in update["session"]["audio"]["input"]["turn_detection"]
+
+
+def test_the_silence_timer_is_used_in_server_mode():
+    update = build_session_update(phone_config(vad_mode="server", vad_silence_ms=4000))
+
+    detection = update["session"]["audio"]["input"]["turn_detection"]
+    assert detection["type"] == "server_vad"
+    assert detection["silence_duration_ms"] == 4000

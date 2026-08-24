@@ -321,6 +321,11 @@ class VoiceSession:
             tools=self._tools.schemas(),
             voice=self._settings.openai_voice,
             audio_format=self._transport.audio_format,
+            vad_mode=self._settings.vad_mode,
+            vad_eagerness=self._settings.vad_eagerness,
+            vad_threshold=self._settings.vad_threshold,
+            vad_silence_ms=self._settings.vad_silence_ms,
+            vad_prefix_ms=self._settings.vad_prefix_ms,
             # The local device is half-duplex, so the model must not try to interrupt
             # itself: the mic is gated while it speaks and there is nothing to hear.
             interrupt_response=self.channel == "phone",
