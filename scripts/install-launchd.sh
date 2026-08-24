@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Install (or remove) the launchd agents that keep Jarvis and its ngrok tunnel running.
+# Install (or remove) the launchd agents that keep Jarvis and its tunnel running on
+# macOS. (Linux uses scripts/install-systemd.sh instead.)
 #
 #   scripts/install-launchd.sh              # render the templates and load both agents
 #   scripts/install-launchd.sh --uninstall  # unload both agents and delete the plists
@@ -10,6 +11,9 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/lib.sh
+source "$REPO/scripts/lib.sh"
+
 TEMPLATES="$REPO/ops/launchd"
 AGENTS="$HOME/Library/LaunchAgents"
 LOGS="$HOME/.jarvis/logs"
@@ -36,17 +40,6 @@ if [[ ! -f "$REPO/.env" ]]; then
   echo "no .env in $REPO: copy .env.example to .env and fill it in" >&2
   exit 1
 fi
-
-env_value() {
-  # env_value NAME [FILE] — the value of NAME in a .env file, without surrounding quotes.
-  # Deliberately not `source`: .env holds JSON (PROJECTS={"a": "/b"}), and sourcing that
-  # under `set -e` is a syntax error at best and arbitrary code at worst.
-  local name="$1" file="${2:-.env}" value
-  value="$(grep -E "^[[:space:]]*${name}=" "$file" | tail -n 1 | cut -d= -f2-)" || true
-  value="${value%\"}"; value="${value#\"}"
-  value="${value%\'}"; value="${value#\'}"
-  printf '%s' "$value"
-}
 
 PUBLIC_HOST="$(env_value PUBLIC_HOST "$REPO/.env")"
 PORT="$(env_value PORT "$REPO/.env")"

@@ -1,0 +1,24 @@
+# Template: scripts/install-systemd.sh fills in __UV__, __REPO__ and __HOME__ and writes
+# the result to ~/.config/systemd/user/jarvis.service. Do not enable this file directly.
+#
+# The Linux host runs the phone channel only: openwakeword cannot be installed here (see
+# pyproject.toml), so the wake word lives on the macOS machine.
+
+[Unit]
+Description=Jarvis voice agent (phone channel)
+
+[Service]
+Type=simple
+# `jarvis serve` reads .env from the working directory.
+WorkingDirectory=__REPO__
+ExecStart=__UV__ run --project __REPO__ jarvis serve --no-wakeword
+# The user manager's PATH has no ~/.local/bin, where uv, cloudflared and claude live.
+Environment=PATH=__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Restart covers a crash and the "started before the network was up" case at boot.
+Restart=always
+RestartSec=5
+StandardOutput=append:__HOME__/.jarvis/logs/jarvis.out.log
+StandardError=append:__HOME__/.jarvis/logs/jarvis.err.log
+
+[Install]
+WantedBy=default.target

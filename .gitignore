@@ -16,6 +16,7 @@ build/
 credentials/
 .jarvis/
 .ngrok.log
+.cloudflared.log
 
 # SDD scratch
 .superpowers/
