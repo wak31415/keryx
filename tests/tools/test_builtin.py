@@ -864,3 +864,35 @@ async def test_a_refused_slack_message_comes_back_as_an_error(make_tools):
 
 async def test_there_is_no_slack_tool_without_credentials(tools):
     assert "send_to_slack" not in {schema["name"] for schema in tools.registry.schemas()}
+
+
+def _slack_description(tools) -> str:
+    """The `send_to_slack` description, as the model is shown it, on one line."""
+    schema = next(s for s in tools.registry.schemas() if s["name"] == "send_to_slack")
+    return " ".join(schema["description"].split())
+
+
+async def test_the_slack_tool_tells_the_model_to_wait_to_be_asked(make_tools):
+    """The description is half the guardrail: the model reads it on every turn."""
+    description = _slack_description(make_tools(slack=FakeSlack()))
+
+    assert "Only call it when he has explicitly asked" in description
+    assert "Never call it unasked" in description
+
+
+async def test_the_slack_tool_does_not_invite_a_written_copy_of_the_answer(make_tools):
+    """Repeating in writing what was just said out loud is the commonest unasked send."""
+    description = _slack_description(make_tools(slack=FakeSlack()))
+
+    assert "never to repeat in writing something you have already said" in description
+
+
+async def test_the_slack_tool_still_sends_when_it_is_called(make_tools):
+    """The rule is about when the model calls it, not about crippling the tool itself."""
+    slack = FakeSlack()
+    tools = make_tools(slack=slack)
+
+    assert await tools.call("send_to_slack", {"message": "the link he asked for"}) == {
+        "status": "sent"
+    }
+    assert slack.sent == ["the link he asked for"]

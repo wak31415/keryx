@@ -583,3 +583,21 @@ async def test_fake_session_run_is_cancellable_mid_delay():
 
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+def test_the_subagent_suffix_makes_slack_opt_in(settings, unwrapped):
+    """Subagents have Slack from the `auto-research` MCP server; the suffix is the leash."""
+    options = build_options(make_task(description="review the diff"), settings)
+    append = unwrapped(options.system_prompt["append"])
+
+    assert "Do not send him anything on Slack unless he asked for Slack" in append
+    assert "If he did not ask, do not send" in append
+
+
+def test_the_subagent_suffix_routes_unasked_output_to_the_report(settings, unwrapped):
+    """What he may not be sent still has to land somewhere he can find it."""
+    options = build_options(make_task(description="plot the losses"), settings)
+    append = unwrapped(options.system_prompt["append"])
+
+    assert "goes in the written report" in append
+    assert "offers to send it" in append

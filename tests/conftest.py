@@ -40,3 +40,18 @@ def settings(tmp_path):
         data_dir=tmp_path / "jarvis",
         google_client_secrets_file=tmp_path / "no-client-secrets.json",
     )
+
+
+@pytest.fixture
+def unwrapped():
+    """Collapse whitespace, so an assertion can span a sentence the markdown wrapped.
+
+    The prompt guardrails assert on sentences from `prompts/*.md`, which are hard-wrapped
+    at 100 columns. Without this, re-flowing a paragraph fails a test that the rule it
+    guards is still perfectly intact.
+    """
+
+    def _flat(text: str) -> str:
+        return " ".join(text.split())
+
+    return _flat
