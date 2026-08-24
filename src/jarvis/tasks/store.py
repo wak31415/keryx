@@ -19,7 +19,7 @@ from jarvis.tasks.models import Task, TaskStatus, to_utc_iso
 
 log = logging.getLogger("jarvis.tasks.store")
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 # "id" is assigned by SQLite (AUTOINCREMENT) and is never a patchable field.
 _UPDATABLE_FIELD_NAMES = {f.name for f in dataclasses.fields(Task)} - {"id"}
@@ -43,8 +43,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     error TEXT,
     origin_channel TEXT NOT NULL,
     origin_caller TEXT,
+    origin_session_id TEXT,
     callback_requested INTEGER NOT NULL DEFAULT 0,
     callback_number TEXT,
+    callback_note TEXT,
     announced INTEGER NOT NULL DEFAULT 0,
     sms_sent INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -54,6 +56,10 @@ CREATE TABLE IF NOT EXISTS tasks (
 """
 
 _CREATE_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks (created_at)"
+
+#: v1 -> v2 (2026-08-24): a task remembers the call it came from, and what the call-back
+#: should remind him of. Both are nullable, so old rows need nothing but the columns.
+_V2_COLUMNS = ("origin_session_id TEXT", "callback_note TEXT")
 
 
 class TaskStore:
@@ -82,6 +88,12 @@ class TaskStore:
                     "INSERT INTO schema_version (version) VALUES (?)", (_SCHEMA_VERSION,)
                 )
                 log.info("created tasks schema v%d at %s", _SCHEMA_VERSION, self._path)
+                return
+            if row["version"] < 2:
+                for column in _V2_COLUMNS:
+                    conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
+                conn.execute("UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,))
+                log.info("migrated tasks schema to v%d at %s", _SCHEMA_VERSION, self._path)
 
     async def create(self, task: Task) -> Task:
         """Insert `task` and return a copy with `id` assigned; `task` itself is untouched."""

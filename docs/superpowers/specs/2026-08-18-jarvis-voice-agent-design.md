@@ -72,6 +72,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 |---|---|
 | `config.py` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails |
 | `projects.py` | `discover_projects` (configured projects plus `projects_root` subdirectories, shared by `TaskManager` and the voice prompt) and `discover_briefs` (each project's own `.jarvis-brief.md`) |
+| `transcripts.py` | `read_tail`: the end of an earlier call, read back out of `data_dir/calls/<session_id>.log` for a call-back's opening context |
 | `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
 | `web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool |
 | `slack.py` | `SlackSender` protocol + `SlackWebApi` (`chat.postMessage`), behind the voice model's `send_to_slack`; credentials resolve from the `auto-research` skill's MCP server config |
@@ -313,10 +314,11 @@ class SessionRegistry:
   a decision is genuinely the user's it does the independent part first and ends its
   `SPOKEN_SUMMARY:` with one spoken question. The voice model asks it and returns the answer via
   `send_followup`, which resumes the same Claude session.
-- **A call-back is a new call.** It cannot resume the session that asked for it, so its
-  opening context carries the original request as well as the result, and the session starts
-  unauthorized — the PIN is asked for again before more work. It does not carry the earlier
-  conversation; only what the task was and what came of it.
+- **A call-back is a new call, handed the old one.** The provider keeps nothing across
+  sockets, so the opening context is assembled from what survives: the original request, the
+  result, the `callback_note` the earlier session left, and the tail of that session's
+  transcript, found through `Task.origin_session_id` (added 2026-08-24, with `callback_note`,
+  as schema v2). The session still starts unauthorized — the PIN is asked for again.
 - **Offering the call-back (added 2026-08-24)**: when a task is still running and the caller
   has nothing more to add, the voice model offers `request_callback` itself rather than waiting
   to be asked — holding the line for a long job is the worst use of a call from a watch.

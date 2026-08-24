@@ -114,8 +114,14 @@ class Task:
     error: str | None = None
     origin_channel: str = "local"
     origin_caller: str | None = None
+    #: The voice session that dispatched this task. A call-back opens a *new* session, so
+    #: this is how a task can be traced back to the conversation that started it.
+    origin_session_id: str | None = None
     callback_requested: bool = False
     callback_number: str | None = None
+    #: One line of "where we left off", written by the voice model when the call-back is
+    #: arranged, and read out to it when the call-back opens.
+    callback_note: str | None = None
     announced: bool = False
     sms_sent: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

@@ -29,6 +29,7 @@ from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
 from jarvis.tasks.models import Task
 from jarvis.tasks.store import TaskStore
+from jarvis.transcripts import read_tail
 
 log = logging.getLogger("jarvis.notify.notifier")
 
@@ -44,17 +45,24 @@ FAILED_TEXT = "Task {task_id} failed: {detail}"
 DONE_CONTEXT = (
     "You are calling the user back about task {task_id}, which he asked you for earlier "
     "on the phone and which has now finished. What he asked for: {request}. "
-    "Result: {detail}. Greet him, remind him in a few words what this is about, tell him "
-    "the result briefly, then ask if he needs anything else. This is a new call: he may "
-    "have to give the PIN again before you can start more work."
+    "Result: {detail}.{history} Greet him, remind him in a few words what this is about, "
+    "tell him the result briefly, then ask if he needs anything else. This is a new call: "
+    "he may have to give the PIN again before you can start more work."
 )
 FAILED_CONTEXT = (
     "You are calling the user back about task {task_id}, which he asked you for earlier "
     "on the phone and which has failed. What he asked for: {request}. "
-    "Error: {detail}. Greet him, remind him in a few words what this is about, tell him "
-    "what went wrong briefly, then ask if he needs anything else. This is a new call: he "
-    "may have to give the PIN again before you can start more work."
+    "Error: {detail}.{history} Greet him, remind him in a few words what this is about, "
+    "tell him what went wrong briefly, then ask if he needs anything else. This is a new "
+    "call: he may have to give the PIN again before you can start more work."
 )
+#: What the model is told the transcript is, so it treats it as memory rather than script.
+HISTORY_PREAMBLE = (
+    " You have no memory of that call, so here is how it ended — do not read it back to "
+    "him, just know it:\n{history}\n"
+)
+#: The note the earlier session left for this call, if it left one.
+NOTE_PREAMBLE = " Where you left off: {note}."
 #: How much of the original request the call-back context carries.
 MAX_REQUEST_CHARS = 200
 
@@ -206,6 +214,17 @@ class Notifier:
 
     # --- (3) the call-back -------------------------------------------------
 
+    def _previous_call(self, task: Task) -> str:
+        """What the session that asked for this call-back had said, if anything survives."""
+        parts = []
+        if task.callback_note:
+            parts.append(NOTE_PREAMBLE.format(note=task.callback_note))
+        history = read_tail(self._settings.data_dir, task.origin_session_id or "")
+        if history:
+            parts.append(HISTORY_PREAMBLE.format(history=history))
+        return "".join(parts)
+
+
     async def _call_back(
         self, task: Task, detail: str, *, failed: bool, delivered: bool
     ) -> None:
@@ -221,7 +240,10 @@ class Notifier:
             if len(request) > MAX_REQUEST_CHARS:
                 request = request[: MAX_REQUEST_CHARS - 1].rstrip() + "…"
             context = (FAILED_CONTEXT if failed else DONE_CONTEXT).format(
-                task_id=task.id, request=request, detail=detail
+                task_id=task.id,
+                request=request,
+                detail=detail,
+                history=self._previous_call(task),
             )
             token = self._stream_tokens.issue(
                 caller=task.callback_number,

@@ -495,3 +495,39 @@ async def test_a_long_request_is_trimmed_in_the_call_back_context(harness):
     info = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
     assert "…" in info.extra["opening_context"]
     assert "x" * 300 not in info.extra["opening_context"]
+
+
+async def test_the_call_back_carries_the_previous_call(harness):
+    """A call-back is a new session, so the last one has to be handed to it."""
+    task = await harness.task(
+        callback_requested=True,
+        callback_number=CALLER,
+        origin_session_id="sess-42",
+        callback_note="he wants the tests run on the branch",
+    )
+    calls = harness.settings.data_dir / "calls"
+    calls.mkdir(parents=True, exist_ok=True)
+    (calls / "sess-42.log").write_text(
+        "[10:00:00] --- session sess-42 channel=phone caller=+15550000000\n"
+        "[10:00:02] user: look at the retry logic\n"
+        "[10:00:05] assistant: On it — I'll call you back.\n",
+        encoding="utf-8",
+    )
+
+    await harness.finished(task, "the retry is in")
+
+    info = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
+    context = info.extra["opening_context"]
+    assert "he wants the tests run on the branch" in context
+    assert "user: look at the retry logic" in context
+    assert "do not read it back to him" in context
+
+
+async def test_a_call_back_without_a_previous_session_still_goes_out(harness):
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task, "done")
+
+    info = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
+    assert "Result: done." in info.extra["opening_context"]
+    assert len(harness.twilio.calls) == 1

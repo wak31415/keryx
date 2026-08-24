@@ -52,6 +52,8 @@ TERMINAL_STATUSES = frozenset({TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CA
 SESSION_TIMEOUT_S = 5.0
 #: Bound on waiting for a cancelled asyncio task to unwind.
 CANCEL_TIMEOUT_S = 5.0
+#: How much "where we left off" a call-back carries; it is spoken from, not read out.
+MAX_CALLBACK_NOTE_CHARS = 300
 #: How many project names an `UnknownProjectError` message spells out.
 MAX_LISTED_CANDIDATES = 10
 
@@ -164,6 +166,7 @@ class TaskManager:
         model: str | None = None,
         origin_channel: str,
         origin_caller: str | None,
+        origin_session_id: str | None = None,
     ) -> Task:
         """Create a `queued` task and schedule it.
 
@@ -195,6 +198,7 @@ class TaskManager:
                 model=resolve_model(model, self._settings),
                 origin_channel=origin_channel,
                 origin_caller=origin_caller,
+                origin_session_id=origin_session_id,
             )
         )
         self._done_events[created.id] = asyncio.Event()
@@ -416,15 +420,17 @@ class TaskManager:
             self._done_events[task_id] = event
         return event
 
-    async def request_callback(self, task_id: int, number: str) -> Task:
+    async def request_callback(self, task_id: int, number: str, note: str | None = None) -> Task:
         """Ask for an outbound call to `number` when `task_id` finishes.
 
-        Only records the wish; the notifier is what places the call (spec §3.3).
+        `note` is what the call-back should remind him of — the call it was arranged on is
+        long over by then. Only records the wish; the notifier places the call (spec §3.3).
         Raises `KeyError` if the task does not exist.
         """
-        task = await self._store.update(
-            task_id, callback_requested=True, callback_number=number
-        )
+        fields: dict[str, object] = {"callback_requested": True, "callback_number": number}
+        if note:
+            fields["callback_note"] = note[:MAX_CALLBACK_NOTE_CHARS]
+        task = await self._store.update(task_id, **fields)
         log.info("task %s will be called back when it finishes", task_id)
         return task
 
