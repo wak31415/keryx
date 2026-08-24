@@ -371,10 +371,12 @@ async def test_an_unknown_project_comes_back_with_the_candidates(tools):
     assert result["candidates"] == ["jarvis"]
 
 
-async def test_a_coding_task_without_a_project_is_an_error(tools):
+async def test_a_coding_task_without_a_project_is_dispatched_anyway(tools):
+    """No interrogation over the voice channel: dispatch, and let the subagent work it out."""
     result = await tools.call("dispatch_task", {"kind": "coding", "description": "add a README"})
 
-    assert result == {"error": "coding tasks need a project"}
+    assert "error" not in result
+    assert result["task_id"] == 1
 
 
 async def test_the_daily_cap_comes_back_as_an_error(make_tools):

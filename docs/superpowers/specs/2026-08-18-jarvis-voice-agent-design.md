@@ -69,6 +69,8 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | Module | Responsibility |
 |---|---|
 | `config.py` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails |
+| `projects.py` | `discover_projects`: configured projects plus `projects_root` subdirectories, shared by `TaskManager` and the voice prompt so both know the same names |
+| `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
 | `events.py` | in-process async pub/sub `EventBus` + event dataclasses |
 | `audio/util.py` | soxr resampling, chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` (µ-law codec removed 2026-08-19: phone audio is passed through as `audio/pcmu`, nothing transcodes) |
 | `transports/base.py` | `Transport` protocol + `AudioIn`/`Dtmf`/`Hangup` events |
@@ -283,6 +285,16 @@ class SessionRegistry:
 - **dispatch_task(kind, description, project?, model?, wait_seconds≤25)**: creates the task and
   starts it; if it finishes within `wait_seconds` the summary is returned inline; else returns
   `{task_id, status:"running"}` and the model tells the user it will announce completion.
+- **Handing over beats interviewing (amended 2026-08-24).** The voice model dispatches code work
+  the moment it recognises it — no repeat-back-and-confirm, no scoping questions — because the
+  subagent is better placed to work out what the work needs. `coding` with no project no longer
+  raises: the task starts in `projects_root` and the subagent finds the repo itself. The voice
+  prompt lists every project `discover_projects` can resolve (not just the configured ones) and
+  every installed skill, so neither has to be named out loud.
+- **Questions come back from the subagent.** The subagent stays autonomous by default, but where
+  a decision is genuinely the user's it does the independent part first and ends its
+  `SPOKEN_SUMMARY:` with one spoken question. The voice model asks it and returns the answer via
+  `send_followup`, which resumes the same Claude session.
 - **Task completion**: `TaskCompleted` → Notifier: (1) `announce()` on every live session
   except the one currently inline-waiting on that task inside `dispatch_task` (it gets the
   result as the tool output instead) (marks `announced`), (2) SMS summary (with report link) unless a live *phone* session
@@ -328,6 +340,7 @@ class SessionRegistry:
 | `HOST` / `PORT` | `host` / `port` | `127.0.0.1` / `8080` |
 | `PROJECTS` | `projects: dict[str,str]` (JSON) | `{}` |
 | `PROJECTS_ROOT` | `projects_root` | `~/Local/coding_projects` |
+| `SKILLS_DIR` | `skills_dir` (Claude skills listed in the voice prompt) | `~/.claude/skills` |
 | `DATA_DIR` | `data_dir` | `~/.jarvis` |
 | `MAX_CONCURRENT_TASKS` | `max_concurrent_tasks` | `3` |
 | `DISPATCH_WAIT_MAX_SECONDS` | `dispatch_wait_max_seconds` | `25` |

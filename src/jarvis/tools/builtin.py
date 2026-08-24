@@ -69,8 +69,9 @@ _TASK_ID_SCHEMA = {
 
 KIND_DESCRIPTION = (
     "What sort of work this is. chat: a question a capable assistant can answer on its "
-    "own. research: reads the web and writes up an answer. coding: edits and tests the "
-    "code of one project. cowork: works with mail and calendar."
+    "own. research: reads the web and writes up an answer. coding: edits, runs and tests "
+    "code, and is the only kind with the machine's skills available — use it for anything "
+    "code-shaped and for work a skill would handle. cowork: works with mail and calendar."
 )
 MODEL_DESCRIPTION = (
     "Optional model for the subagent: opus (strongest, the default), sonnet, fable or "
@@ -230,10 +231,12 @@ def register_builtin_tools(
 
     registry.register(
         "dispatch_task",
-        "Hand a piece of work to a subagent on the Mac and get back a task number. Use it "
-        "for anything you cannot answer yourself in a sentence or two. Repeat the request "
-        "back and get a yes before calling this. On the phone, coding and cowork tasks come "
-        "back as pin_required until the caller has given the PIN.",
+        "Hand a piece of work to Claude and get back a task number. Use it for anything you "
+        "cannot answer yourself in a sentence or two, and for anything to do with code the "
+        "moment you recognise it — do not ask the caller to confirm the request first, and "
+        "do not interview him about details Claude can work out for itself. On the phone, "
+        "coding and cowork tasks come back as pin_required until the caller has given the "
+        "PIN.",
         {
             "type": "object",
             "properties": {
@@ -249,8 +252,10 @@ def register_builtin_tools(
                 },
                 "project": {
                     "type": "string",
-                    "description": "The name of the project to work in. Required for coding "
-                    "tasks. Use list_projects if you are unsure of the name.",
+                    "description": "The name of the project to work in. Optional: leave it "
+                    "out when he did not name one and a coding task starts in his projects "
+                    "folder, where the subagent finds the repo itself. Use list_projects "
+                    "only when he asks what exists.",
                 },
                 "model": {
                     "type": "string",

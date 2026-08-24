@@ -3,6 +3,7 @@
 import pytest
 
 from jarvis.prompts import load_prompt, render_voice_prompt
+from jarvis.skills import Skill
 
 
 def test_voice_prompt_is_packaged_and_loadable():
@@ -24,10 +25,12 @@ def test_render_fills_every_placeholder(settings):
         caller="+491555555555",
         authorized=False,
         projects=["jarvis", "garmin"],
+        skills=[Skill(name="mermaid", description="Author Mermaid diagrams.")],
         opening_context=None,
     )
 
     assert "{" not in rendered and "}" not in rendered
+    assert "mermaid: Author Mermaid diagrams." in rendered
     assert "phone" in rendered
     assert "+491555555555" in rendered
     assert "jarvis, garmin" in rendered
@@ -55,11 +58,41 @@ def test_render_includes_the_opening_context(settings):
     assert "Task 7 finished: the report is ready." in rendered
 
 
-def test_render_defaults_projects_to_the_configured_ones(settings):
+def test_render_defaults_projects_to_everything_the_manager_can_resolve(settings, tmp_path):
+    """Anything under projects_root dispatches, so the model has to know its name."""
     settings.projects = {"jarvis": "/tmp/jarvis"}
+    root = tmp_path / "projects"
+    (root / "dinov3rse").mkdir(parents=True)
+    settings.projects_root = root
 
     rendered = render_voice_prompt(
         settings, channel="local", caller=None, authorized=True, opening_context=None
     )
 
     assert "jarvis" in rendered
+    assert "dinov3rse" in rendered
+
+
+def test_render_lists_the_installed_skills(settings, tmp_path):
+    skills = tmp_path / "skills"
+    (skills / "wandb-query").mkdir(parents=True)
+    (skills / "wandb-query" / "SKILL.md").write_text(
+        "---\nname: wandb-query\ndescription: Query W&B runs.\n---\n", encoding="utf-8"
+    )
+    settings.skills_dir = skills
+
+    rendered = render_voice_prompt(
+        settings, channel="local", caller=None, authorized=True, opening_context=None
+    )
+
+    assert "wandb-query: Query W&B runs." in rendered
+
+
+def test_render_says_so_when_no_skills_are_installed(settings, tmp_path):
+    settings.skills_dir = tmp_path / "nothing-here"
+
+    rendered = render_voice_prompt(
+        settings, channel="phone", caller=None, authorized=False, opening_context=None
+    )
+
+    assert "none installed" in rendered
