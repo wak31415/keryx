@@ -1,5 +1,7 @@
 """Application settings, loaded from environment variables / `.env`."""
 
+import json
+import logging
 import os
 import secrets
 from pathlib import Path
@@ -7,6 +9,8 @@ from typing import Annotated
 
 from pydantic import Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+log = logging.getLogger("jarvis.config")
 
 #: Stand-in for a missing `OPENAI_API_KEY`, so read-only commands (`jarvis tasks`,
 #: `jarvis doctor`, `jarvis download-models`) can still load settings on a half-configured
@@ -101,6 +105,9 @@ class Settings(BaseSettings):
     google_oauth_client_id: str | None = None
     google_oauth_client_secret: str | None = Field(default=None, repr=False)
     user_google_email: str | None = None
+    #: A Google "OAuth client" JSON (the file the cloud console hands you). Read when the
+    #: id/secret pair above is unset, so the secret can stay in a file instead of the env.
+    google_client_secrets_file: Path = Path(".secrets/client_secret.json")
 
     # Logging
     log_level: str = "INFO"
@@ -124,10 +131,37 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("data_dir", "projects_root", "skills_dir", mode="after")
+    @field_validator(
+        "data_dir", "projects_root", "skills_dir", "google_client_secrets_file", mode="after"
+    )
     @classmethod
     def _expand_path(cls, value: Path) -> Path:
         return value.expanduser()
+
+    def google_oauth_client(self) -> tuple[str, str] | None:
+        """The OAuth client as `(id, secret)`: the env pair if set, else the JSON file.
+
+        The console hands out that file with the pair nested under `installed` (desktop
+        clients) or `web`; either shape is accepted. A missing or malformed file simply
+        means "no Google", which the doctor reports and cowork tasks refuse.
+        """
+        if self.google_oauth_client_id and self.google_oauth_client_secret:
+            return self.google_oauth_client_id, self.google_oauth_client_secret
+
+        path = self.google_client_secrets_file
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning("could not read the Google client secrets at %s: %s", path, exc)
+            return None
+        block = data.get("installed") or data.get("web") or data
+        client_id, client_secret = block.get("client_id"), block.get("client_secret")
+        if not (client_id and client_secret):
+            log.warning("%s has no client_id/client_secret pair", path)
+            return None
+        return client_id, client_secret
 
     @property
     def owner_number(self) -> str | None:

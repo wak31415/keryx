@@ -288,7 +288,7 @@ def _data_dir_check(settings: Settings) -> Check:
 
 def _google_check(settings: Settings) -> Check:
     """Warn-only: cowork tasks need credentials from `jarvis setup-google`."""
-    if not (settings.google_oauth_client_id and settings.google_oauth_client_secret):
+    if not settings.google_oauth_client():
         return Check(
             "Google credentials",
             True,

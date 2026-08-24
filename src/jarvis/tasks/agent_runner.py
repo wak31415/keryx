@@ -226,11 +226,12 @@ def google_mcp_server_config(settings: Settings) -> dict[str, Any]:
     Public because `jarvis setup-google` runs the very same server once, by hand, to walk
     through the browser OAuth flow that leaves credentials behind for cowork tasks.
     """
+    client = settings.google_oauth_client()
     env = {
         name: value
         for name, value in (
-            ("GOOGLE_OAUTH_CLIENT_ID", settings.google_oauth_client_id),
-            ("GOOGLE_OAUTH_CLIENT_SECRET", settings.google_oauth_client_secret),
+            ("GOOGLE_OAUTH_CLIENT_ID", client[0] if client else None),
+            ("GOOGLE_OAUTH_CLIENT_SECRET", client[1] if client else None),
             ("USER_GOOGLE_EMAIL", settings.user_google_email),
         )
         if value

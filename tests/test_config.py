@@ -1,5 +1,6 @@
 """Tests for jarvis.config.Settings."""
 
+import json
 import stat
 from pathlib import Path
 
@@ -237,3 +238,51 @@ def test_report_secret_value_reads_the_file_only_once(settings, monkeypatch):
     monkeypatch.setattr(Path, "read_text", explode)
 
     assert settings.report_secret_value() == first
+
+
+# --- Google OAuth client -----------------------------------------------------
+
+
+def test_the_google_client_comes_from_the_env_pair_when_it_is_set(settings):
+    settings.google_oauth_client_id = "id-from-env"
+    settings.google_oauth_client_secret = "secret-from-env"
+
+    assert settings.google_oauth_client() == ("id-from-env", "secret-from-env")
+
+
+def test_the_google_client_falls_back_to_the_secrets_file(settings, tmp_path):
+    """The console hands out a JSON file; there is no need to copy it into the env."""
+    path = tmp_path / "client_secret.json"
+    path.write_text(
+        json.dumps({"installed": {"client_id": "id-from-file", "client_secret": "shh"}}),
+        encoding="utf-8",
+    )
+    settings.google_client_secrets_file = path
+
+    assert settings.google_oauth_client() == ("id-from-file", "shh")
+
+
+def test_a_web_client_file_works_too(settings, tmp_path):
+    path = tmp_path / "client_secret.json"
+    path.write_text(
+        json.dumps({"web": {"client_id": "web-id", "client_secret": "web-secret"}}),
+        encoding="utf-8",
+    )
+    settings.google_client_secrets_file = path
+
+    assert settings.google_oauth_client() == ("web-id", "web-secret")
+
+
+def test_a_missing_or_broken_secrets_file_just_means_no_google(settings, tmp_path):
+    settings.google_client_secrets_file = tmp_path / "nothing-here.json"
+    assert settings.google_oauth_client() is None
+
+    broken = tmp_path / "client_secret.json"
+    broken.write_text("{not json", encoding="utf-8")
+    settings.google_client_secrets_file = broken
+    assert settings.google_oauth_client() is None
+
+    empty = tmp_path / "empty.json"
+    empty.write_text("{}", encoding="utf-8")
+    settings.google_client_secrets_file = empty
+    assert settings.google_oauth_client() is None
