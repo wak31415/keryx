@@ -33,7 +33,7 @@ def healthy(tmp_path, monkeypatch):
         twilio_number="+15550000000",
         allowed_callers=["+15551234567"],
         pin="1234",
-        public_host="jarvis.ngrok.app",
+        public_host="jarvis.example.com",
         data_dir=tmp_path / "jarvis",
         google_oauth_client_id="client-id",
         google_oauth_client_secret="client-secret",
@@ -133,7 +133,7 @@ def test_the_bundled_claude_cli_counts_even_without_one_on_path(healthy, monkeyp
     checks = by_name(run_doctor_checks(healthy, probe_mic=False))
     assert checks["claude CLI"].ok is True
     assert str(bundled) in checks["claude CLI"].detail
-    assert checks["ngrok"].ok is True
+    assert checks["tunnel"].ok is True
 
 
 def test_no_claude_cli_anywhere_is_a_soft_failure(healthy, monkeypatch):
@@ -151,10 +151,31 @@ def test_a_claude_cli_on_path_is_enough(healthy, monkeypatch):
     assert (check.ok, check.detail) == (True, "/usr/local/bin/claude")
 
 
-def test_a_missing_ngrok_is_a_hard_failure(healthy, monkeypatch):
+def test_cloudflared_satisfies_the_tunnel_check(healthy, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: None if name == "ngrok" else "/bin/" + name)
 
-    assert by_name(run_doctor_checks(healthy, probe_mic=False))["ngrok"].ok is False
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["tunnel"]
+    assert (check.ok, check.detail) == (True, "/bin/cloudflared")
+
+
+def test_ngrok_still_counts_as_a_tunnel(healthy, monkeypatch):
+    """The deployment moved to Cloudflare, but a machine with only ngrok is not broken."""
+    monkeypatch.setattr(
+        "shutil.which", lambda name: None if name == "cloudflared" else "/bin/" + name
+    )
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["tunnel"]
+    assert (check.ok, check.detail) == (True, "/bin/ngrok")
+
+
+def test_no_tunnel_binary_at_all_is_a_hard_failure(healthy, monkeypatch):
+    monkeypatch.setattr(
+        "shutil.which", lambda name: None if name in {"cloudflared", "ngrok"} else "/bin/" + name
+    )
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["tunnel"]
+    assert (check.ok, check.severity) == (False, "hard")
+    assert "cloudflared" in check.detail
 
 
 def test_incomplete_twilio_credentials_name_what_is_missing(healthy):
@@ -199,9 +220,24 @@ def test_an_undownloaded_wake_word_model_points_at_download_models(healthy, monk
     assert "download-models" in check.detail
 
 
-def test_an_unimportable_openwakeword_is_reported_not_raised(healthy, monkeypatch):
+def test_an_uninstalled_openwakeword_only_warns(healthy, monkeypatch):
+    """openwakeword is macOS-only, so a Linux phone-only host is not a broken install."""
+
     def explode():
         raise ImportError("no openwakeword here")
+
+    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", explode)
+
+    checks = run_doctor_checks(healthy, probe_mic=False)
+    check = by_name(checks)["wake-word model"]
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "--no-wakeword" in check.detail
+    assert has_hard_failure(checks) is False
+
+
+def test_a_broken_openwakeword_install_is_reported_not_raised(healthy, monkeypatch):
+    def explode():
+        raise OSError("resources are gone")
 
     monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", explode)
 
@@ -248,7 +284,7 @@ def test_each_severity_gets_its_own_marker():
 
 
 def test_a_formatted_check_carries_its_name_and_detail():
-    line = format_check(Check("ngrok", True, "/usr/local/bin/ngrok"))
+    line = format_check(Check("tunnel", True, "/usr/local/bin/cloudflared"))
 
-    assert "ngrok" in line
-    assert "/usr/local/bin/ngrok" in line
+    assert "tunnel" in line
+    assert "/usr/local/bin/cloudflared" in line

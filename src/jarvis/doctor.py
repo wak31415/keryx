@@ -29,6 +29,9 @@ WRITE_PROBE_NAME = ".doctor-write-probe"
 MARKERS = {"ok": "✅", "hard": "❌", "soft": "⚠️"}
 
 CLAUDE_CLI_HINT = "the Agent SDK needs it — npm i -g @anthropic-ai/claude-code"
+#: Tunnels that can put `/twilio/*` in front of Twilio, best first. The deployment uses
+#: Cloudflare Tunnel; ngrok still counts, so a dev machine set up before the move passes.
+TUNNEL_BINARIES = ("cloudflared", "ngrok")
 #: Where `claude-agent-sdk` 0.2.x keeps the CLI it ships with, relative to the package.
 BUNDLED_CLI_PATH = ("_bundled", "claude")
 
@@ -68,7 +71,7 @@ def run_doctor_checks(settings: Settings, *, probe_mic: bool = True) -> list[Che
             "Twilio cannot reach this machine",
             reveal=True,
         ),
-        _ngrok_check(),
+        _tunnel_check(),
         _allowed_callers_check(settings),
         _pin_check(settings),
         _wakeword_check(settings),
@@ -207,14 +210,17 @@ def _claude_cli_check() -> Check:
     return Check("claude CLI", True, found)
 
 
-def _ngrok_check() -> Check:
-    """Is `ngrok` on `PATH`?"""
-    found = shutil.which("ngrok")
-    if not found:
-        return Check(
-            "ngrok", False, "not on PATH — no tunnel for the phone channel — brew install ngrok"
-        )
-    return Check("ngrok", True, found)
+def _tunnel_check() -> Check:
+    """Is a tunnel binary on `PATH`? Without one Twilio cannot reach this machine."""
+    for name in TUNNEL_BINARIES:
+        found = shutil.which(name)
+        if found:
+            return Check("tunnel", True, found)
+    return Check(
+        "tunnel",
+        False,
+        f"none of {', '.join(TUNNEL_BINARIES)} on PATH — no tunnel for the phone channel",
+    )
 
 
 def _wakeword_models_dir() -> Path:
@@ -230,6 +236,15 @@ def _wakeword_check(settings: Settings) -> Check:
     try:
         models_dir = _wakeword_models_dir()
         found = sorted(models_dir.glob(f"{model}*.onnx"))
+    except ImportError:
+        # openwakeword is a macOS-only dependency (see pyproject): on a Linux host the
+        # wake-word channel is simply absent, which narrows Jarvis rather than breaking it.
+        return Check(
+            "wake-word model",
+            False,
+            "openwakeword is not installed — the wake word needs macOS; serve --no-wakeword",
+            severity="soft",
+        )
     except Exception as exc:
         return Check("wake-word model", False, f"openwakeword is unusable: {exc}")
     if not found:

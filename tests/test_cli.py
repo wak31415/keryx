@@ -493,7 +493,7 @@ def test_doctor_passes_on_a_complete_install(monkeypatch, tmp_path, wakeword_mod
         twilio_number="+15550000000",
         allowed_callers=["+15551234567"],
         pin="1234",
-        public_host="jarvis.ngrok.app",
+        public_host="jarvis.example.com",
         data_dir=tmp_path / "jarvis",
     )
     monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
