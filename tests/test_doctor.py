@@ -92,11 +92,34 @@ def test_a_missing_openai_key_is_reported_not_raised(healthy, monkeypatch):
     assert (check.ok, check.severity) == (False, "hard")
 
 
-def test_a_missing_anthropic_key_is_a_hard_failure(healthy):
+def test_an_api_key_satisfies_subagent_auth(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["subagent auth"]
+    assert (check.ok, "pay-per-token" in check.detail) == (True, True)
+
+
+def test_an_oauth_token_satisfies_subagent_auth(healthy):
+    settings = healthy.model_copy(
+        update={"anthropic_api_key": None, "claude_code_oauth_token": "tok"}
+    )
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["subagent auth"]
+    assert (check.ok, "subscription" in check.detail) == (True, True)
+
+
+def test_a_cli_login_satisfies_subagent_auth(healthy, monkeypatch):
+    monkeypatch.setattr("jarvis.doctor._has_claude_subscription_login", lambda: True)
     settings = healthy.model_copy(update={"anthropic_api_key": None})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["ANTHROPIC_API_KEY"]
-    assert (check.ok, check.severity) == (False, "hard")
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["subagent auth"]
+    assert (check.ok, "login" in check.detail) == (True, True)
+
+
+def test_no_subagent_auth_at_all_is_a_soft_failure(healthy, monkeypatch):
+    monkeypatch.setattr("jarvis.doctor._has_claude_subscription_login", lambda: False)
+    settings = healthy.model_copy(update={"anthropic_api_key": None})
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["subagent auth"]
+    assert (check.ok, check.severity) == (False, "soft")
 
 
 def test_the_bundled_claude_cli_counts_even_without_one_on_path(healthy, monkeypatch, tmp_path):

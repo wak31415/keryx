@@ -48,8 +48,9 @@ Tools the model can call: `dispatch_task`, `list_tasks`, `get_task_status`,
 
 - macOS with Python 3.12 and [`uv`](https://docs.astral.sh/uv/)
 - **OpenAI API key** with Realtime access
-- **Anthropic API key** — the Agent SDK is pay-per-token and does *not* use a Claude Max
-  login
+- **Claude subscription login** (`claude /login`, once) — subagents run on it by default.
+  Alternatives: `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN` (headless/launchd), or an
+  `ANTHROPIC_API_KEY` (pay-per-token; takes precedence when set)
 - The **`claude` CLI** — the Agent SDK drives it, and ships a bundled copy it prefers
   over `PATH`. Install one yourself (`npm i -g @anthropic-ai/claude-code`) only if
   `jarvis doctor` says there is neither
@@ -74,7 +75,8 @@ Every setting is an environment variable, read from `.env` in the working direct
 | Env | What it is |
 |---|---|
 | `OPENAI_API_KEY` | Realtime API key (required) |
-| `ANTHROPIC_API_KEY` | Agent SDK key for the subagents |
+| `ANTHROPIC_API_KEY` | optional — pay-per-token override for subagent auth |
+| `CLAUDE_CODE_OAUTH_TOKEN` | optional — subscription token from `claude setup-token` |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_NUMBER` | phone channel + outbound SMS/calls |
 | `ALLOWED_CALLERS` | comma-separated E.164 numbers allowed to call in — everything else is refused |
 | `JARVIS_PIN` | PIN for destructive work over the phone (`coding`, `cowork`) |
@@ -215,8 +217,10 @@ uv run jarvis loopback --wav sample.wav       # one session from a WAV, no mic n
 - **Realtime voice** is the running cost of a call: roughly **$0.06–0.11 per minute** of
   conversation, audio in and out. A five-minute call is well under a dollar; leaving the
   wake-word listener on costs nothing until a session actually opens.
-- **Subagents** are pay-per-token on your Anthropic key. `claude-opus-5` is the default;
-  ask for `sonnet` or `haiku` out loud for cheaper work.
+- **Subagents** run on your Claude subscription by default (they count against the plan's
+  usage limits, not per-token billing); with `ANTHROPIC_API_KEY` set they are pay-per-token
+  instead. `claude-opus-5` is the default; ask for `sonnet` or `haiku` out loud for
+  cheaper work.
 - Guardrails that keep a bad day from becoming an expensive one:
 
   | Setting | Default | What it caps |
@@ -260,8 +264,8 @@ Common cases:
   webhook URL disagree.
 - **"hey jarvis" does nothing** — run `jarvis download-models`, check microphone
   permission, and try lowering `WAKEWORD_THRESHOLD`.
-- **Tasks fail instantly** — `ANTHROPIC_API_KEY` or the `claude` CLI is missing (`jarvis
-  doctor` says so).
+- **Tasks fail instantly** — no subagent auth (subscription login, token, or API key) or
+  the `claude` CLI is missing (`jarvis doctor` says so).
 - **`coding` is refused on the phone** — no PIN configured, or you have not entered it yet.
 - **Google tools fail in a `cowork` task** — run `jarvis setup-google` again; the stored
   credentials may have expired.

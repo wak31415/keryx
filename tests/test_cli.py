@@ -465,7 +465,7 @@ def test_doctor_fails_when_the_install_is_incomplete(settings_stub, wakeword_mod
 
     assert result.exit_code == 1
     assert "❌" in result.output
-    assert "ANTHROPIC_API_KEY" in result.output
+    assert "Twilio credentials" in result.output
 
 
 def test_doctor_reports_a_missing_openai_key_instead_of_crashing(

@@ -274,6 +274,10 @@ def build_options(
         options["allowed_tools"] = list(COWORK_MCP_TOOLS)
     if settings.anthropic_api_key:
         options["env"] = {"ANTHROPIC_API_KEY": settings.anthropic_api_key}
+    elif settings.claude_code_oauth_token:
+        options["env"] = {"CLAUDE_CODE_OAUTH_TOKEN": settings.claude_code_oauth_token}
+    # With neither set, the spawned CLI falls back to the user's stored Claude
+    # subscription login — the default, so subagents don't bill per token.
     return ClaudeAgentOptions(**options)
 
 

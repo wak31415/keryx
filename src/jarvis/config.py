@@ -18,6 +18,7 @@ PLACEHOLDER_KEY = "unset"
 #: be a PIN that `submit_pin("")` matches (spec §3.3).
 OPTIONAL_STR_FIELDS = (
     "anthropic_api_key",
+    "claude_code_oauth_token",
     "twilio_account_sid",
     "twilio_auth_token",
     "twilio_number",
@@ -48,8 +49,11 @@ class Settings(BaseSettings):
     openai_voice: str = "marin"
     openai_transcription_model: str = "gpt-4o-mini-transcribe"
 
-    # Claude Agent SDK
+    # Claude Agent SDK. Subagent auth, in order of precedence: ANTHROPIC_API_KEY
+    # (pay-per-token) > CLAUDE_CODE_OAUTH_TOKEN (subscription, headless; from
+    # `claude setup-token`) > the Claude CLI's stored subscription login (default).
     anthropic_api_key: str | None = Field(default=None, repr=False)
+    claude_code_oauth_token: str | None = Field(default=None, repr=False)
     subagent_model: str = "claude-opus-5"
     subagent_max_turns: int = 200
     subagent_max_budget_usd: float = 10.0

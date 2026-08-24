@@ -12,6 +12,7 @@ merely narrows what Jarvis can do.
 """
 
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -58,7 +59,7 @@ def run_doctor_checks(settings: Settings, *, probe_mic: bool = True) -> list[Che
     checks = [
         _env_file_check(),
         _openai_key_check(settings),
-        _secret_check("ANTHROPIC_API_KEY", settings.anthropic_api_key, "subagents cannot run"),
+        _subagent_auth_check(settings),
         _claude_cli_check(),
         _twilio_check(settings),
         _secret_check(
@@ -106,6 +107,39 @@ def _secret_check(name: str, value: str | None, consequence: str, *, reveal: boo
     if not value:
         return Check(name, False, f"not set — {consequence}")
     return Check(name, True, value if reveal else "set")
+
+
+def _has_claude_subscription_login() -> bool:
+    """Best-effort: does the Claude CLI have a stored subscription login on this machine?"""
+    if (Path.home() / ".claude" / ".credentials.json").exists():
+        return True
+    try:  # macOS stores the login in the Keychain instead of a file
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code-credentials"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _subagent_auth_check(settings: Settings) -> Check:
+    """One of three ways subagents can authenticate; soft-fails because the login
+    detection is a heuristic (an odd Keychain setup could hide a working login)."""
+    if settings.anthropic_api_key:
+        return Check("subagent auth", True, "ANTHROPIC_API_KEY set (pay-per-token)")
+    if settings.claude_code_oauth_token:
+        return Check("subagent auth", True, "CLAUDE_CODE_OAUTH_TOKEN set (subscription)")
+    if _has_claude_subscription_login():
+        return Check("subagent auth", True, "Claude CLI subscription login (default)")
+    return Check(
+        "subagent auth",
+        False,
+        "no login found — run `claude /login` once, or `claude setup-token` for headless,"
+        " or set ANTHROPIC_API_KEY",
+        severity="soft",
+    )
 
 
 def _twilio_check(settings: Settings) -> Check:
