@@ -10,10 +10,13 @@ dependencies = [
     "twilio",
     "pydantic-settings",
     "numpy",
-    "sounddevice",
     "soxr",
-    "openwakeword>=0.6.0",
-    "onnxruntime",
+    # The wake-word channel is macOS-only: openwakeword 0.6.0 requires tflite-runtime on
+    # Linux, whose newest release (2.14.0) has no cp312 wheel. A Linux host therefore runs
+    # the phone channel only (`jarvis serve --no-wakeword`); every import of these is lazy.
+    "sounddevice; sys_platform == 'darwin'",
+    "openwakeword>=0.6.0; sys_platform == 'darwin'",
+    "onnxruntime; sys_platform == 'darwin'",
     "claude-agent-sdk",
     "typer",
 ]
@@ -22,9 +25,8 @@ dependencies = [
 jarvis = "jarvis.cli:app"
 
 [tool.uv]
-# macOS-only app (sounddevice + launchd): openwakeword 0.6.0 pulls tflite-runtime on
-# Linux, which has no cp312 wheel, so resolve for darwin only.
-environments = ["sys_platform == 'darwin'"]
+# macOS (phone + wake word) and Linux (phone only, see the wake-word note above).
+environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 
 [dependency-groups]
 dev = [
