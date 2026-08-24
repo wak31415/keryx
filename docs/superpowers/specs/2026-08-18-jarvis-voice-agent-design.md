@@ -313,6 +313,10 @@ class SessionRegistry:
   a decision is genuinely the user's it does the independent part first and ends its
   `SPOKEN_SUMMARY:` with one spoken question. The voice model asks it and returns the answer via
   `send_followup`, which resumes the same Claude session.
+- **A call-back is a new call.** It cannot resume the session that asked for it, so its
+  opening context carries the original request as well as the result, and the session starts
+  unauthorized — the PIN is asked for again before more work. It does not carry the earlier
+  conversation; only what the task was and what came of it.
 - **Offering the call-back (added 2026-08-24)**: when a task is still running and the caller
   has nothing more to add, the voice model offers `request_callback` itself rather than waiting
   to be asked — holding the line for a long job is the worst use of a call from a watch.
