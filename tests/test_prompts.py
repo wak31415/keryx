@@ -96,3 +96,29 @@ def test_render_says_so_when_no_skills_are_installed(settings, tmp_path):
     )
 
     assert "none installed" in rendered
+
+
+def test_render_includes_a_project_brief(settings, tmp_path):
+    root = tmp_path / "projects"
+    (root / "vidmem").mkdir(parents=True)
+    (root / "vidmem" / ".jarvis-brief.md").write_text(
+        "A video model with a memory.", encoding="utf-8"
+    )
+    settings.projects_root = root
+
+    rendered = render_voice_prompt(
+        settings, channel="local", caller=None, authorized=True, opening_context=None
+    )
+
+    assert "### vidmem" in rendered
+    assert "A video model with a memory." in rendered
+
+
+def test_render_says_so_when_no_project_wrote_a_brief(settings, tmp_path):
+    settings.projects_root = tmp_path / "empty"
+
+    rendered = render_voice_prompt(
+        settings, channel="local", caller=None, authorized=True, opening_context=None
+    )
+
+    assert "nothing written down yet" in rendered

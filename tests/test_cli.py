@@ -281,7 +281,7 @@ def seed_tasks(settings: Settings, *tasks: Task) -> list[Task]:
 
 
 def make_task(description: str = "look something up", **overrides) -> Task:
-    fields = {"id": None, "kind": TaskKind.RESEARCH, "description": description, **overrides}
+    fields = {"id": None, "kind": TaskKind.AGENT, "description": description, **overrides}
     return Task(**fields)
 
 
@@ -289,7 +289,7 @@ def test_tasks_list_prints_a_row_per_task(settings_stub):
     seed_tasks(
         settings_stub,
         make_task("summarise the inbox", status=TaskStatus.DONE),
-        make_task("add a README", kind=TaskKind.CODING, status=TaskStatus.RUNNING),
+        make_task("add a README", status=TaskStatus.RUNNING),
     )
 
     result = runner.invoke(app, ["tasks", "list"])
@@ -299,7 +299,7 @@ def test_tasks_list_prints_a_row_per_task(settings_stub):
     assert "summarise the inbox" in result.output
     assert "add a README" in result.output
     running_row = next(line for line in lines if "add a README" in line)
-    assert running_row.split()[:3] == ["2", "running", "coding"]
+    assert running_row.split()[:2] == ["2", "running"]
 
 
 def test_tasks_list_filters_by_status(settings_stub):

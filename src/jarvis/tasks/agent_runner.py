@@ -34,7 +34,7 @@ from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock, T
 
 from jarvis.config import Settings
 from jarvis.prompts import render_prompt
-from jarvis.tasks.models import Task, TaskKind
+from jarvis.tasks.models import Task
 
 log = logging.getLogger("jarvis.tasks.agent_runner")
 
@@ -51,21 +51,14 @@ MODEL_ALIASES = {
     "haiku": "claude-haiku-4-5-20251001",
 }
 
-_READ_ONLY_TOOLS = ["WebSearch", "WebFetch", "Read", "Glob", "Grep"]
-
-# The base set of *built-in* tools each kind may use at all. `tools` is the only option
-# that restricts — never `allowed_tools`, which merely auto-approves (a no-op under
-# `bypassPermissions`). `coding` is deliberately absent: no `tools` key, so it keeps every
-# built-in tool.
-BUILTIN_TOOLS: dict[TaskKind, list[str]] = {
-    TaskKind.CHAT: _READ_ONLY_TOOLS,
-    TaskKind.RESEARCH: [*_READ_ONLY_TOOLS, "Write"],
-    TaskKind.COWORK: ["WebSearch", "WebFetch", "Read"],
-}
-
-# MCP tools are not built-ins, so `tools` cannot filter them; this wildcard is only there
-# to auto-approve the google server's tools.
-COWORK_MCP_TOOLS = ["mcp__google__*"]
+# No `tools` key is ever set: a subagent keeps every built-in tool, including the skills
+# and the subagents of its own that a real request tends to need. (`tools` is the only
+# option that would restrict — `allowed_tools` merely auto-approves, a no-op under
+# `bypassPermissions` — and per-kind restriction went away with the kinds on 2026-08-24.)
+#
+# MCP tools are not built-ins, so `tools` could not filter them anyway; this wildcard
+# auto-approves the google server's.
+GOOGLE_MCP_TOOLS = ["mcp__google__*"]
 
 GOOGLE_MCP_ARGS = [
     "workspace-mcp",
@@ -211,10 +204,9 @@ def resolve_model(name: str | None, settings: Settings) -> str:
 
 
 def render_subagent_suffix(task: Task) -> str:
-    """The subagent system-prompt suffix, with this task's kind/project/description."""
+    """The subagent system-prompt suffix, with this task's project and description."""
     return render_prompt(
         SUBAGENT_SUFFIX_PROMPT,
-        kind=str(task.kind),
         project=task.project or "none",
         description=task.description,
     )
@@ -267,12 +259,8 @@ def build_options(
         "max_budget_usd": settings.subagent_max_budget_usd,
         "resume": resume,
     }
-    builtin_tools = BUILTIN_TOOLS.get(task.kind)
-    if builtin_tools is not None:
-        options["tools"] = list(builtin_tools)
-    if task.kind is TaskKind.COWORK:
-        options["mcp_servers"] = {"google": google_mcp_server_config(settings)}
-        options["allowed_tools"] = list(COWORK_MCP_TOOLS)
+    options["mcp_servers"] = {"google": google_mcp_server_config(settings)}
+    options["allowed_tools"] = list(GOOGLE_MCP_TOOLS)
     if settings.anthropic_api_key:
         options["env"] = {"ANTHROPIC_API_KEY": settings.anthropic_api_key}
     elif settings.claude_code_oauth_token:

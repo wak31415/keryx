@@ -31,6 +31,8 @@ PIN gating, and the local wake-word transport.
 | Realtime voice layer | **OpenAI Realtime API** (`gpt-realtime-2.1`, speech-to-speech, server VAD, function calling) |
 | Subagent runtime | **Claude Agent SDK (Python)**, `permission_mode="bypassPermissions"`, in-process |
 | Cowork access | Gmail + Google Calendar via **`workspace-mcp`** stdio MCP server |
+| Task kinds | **One** (`agent`): full tools, the machine, Gmail/Calendar, skills and subagents of its own. *Amended 2026-08-24, was: chat/research/coding/cowork with per-kind tool restrictions — classifying a request is a decision the voice model is badly placed to make, and it walled mail off from code.* |
+| Voice-side answers | The voice model answers small factual questions itself via a `web_search` function tool backed by the **Responses API** (a Realtime session accepts only `function` and `mcp` tools — there is no hosted search there). Everything else is dispatched. |
 | Results | Announce in live session → SMS summary → persist tasks (SQLite) → outbound call-back only when requested |
 | Exposure | **Cloudflare Tunnel** (`cloudflared`, `--protocol http2`) to a routed hostname; server as a launchd agent (macOS) or a systemd user unit (Linux). *Amended 2026-08-24, was: ngrok reserved domain + launchd.* |
 | Auth | Twilio signature + caller allowlist + one-time stream token; **PIN only for destructive kinds** (`coding`, `cowork`); local sessions pre-authorized |
@@ -69,8 +71,9 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | Module | Responsibility |
 |---|---|
 | `config.py` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails |
-| `projects.py` | `discover_projects`: configured projects plus `projects_root` subdirectories, shared by `TaskManager` and the voice prompt so both know the same names |
+| `projects.py` | `discover_projects` (configured projects plus `projects_root` subdirectories, shared by `TaskManager` and the voice prompt) and `discover_briefs` (each project's own `.jarvis-brief.md`) |
 | `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
+| `web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool |
 | `events.py` | in-process async pub/sub `EventBus` + event dataclasses |
 | `audio/util.py` | soxr resampling, chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` (µ-law codec removed 2026-08-19: phone audio is passed through as `audio/pcmu`, nothing transcodes) |
 | `transports/base.py` | `Transport` protocol + `AudioIn`/`Dtmf`/`Hangup` events |
@@ -190,9 +193,9 @@ class ToolRegistry:
 
 ```python
 # tasks/models.py
-class TaskKind(StrEnum): CHAT="chat"; RESEARCH="research"; CODING="coding"; COWORK="cowork"
+class TaskKind(StrEnum): AGENT="agent"     # one kind; `_missing_` maps pre-2026-08-24 rows onto it
 class TaskStatus(StrEnum): QUEUED="queued"; RUNNING="running"; DONE="done"; FAILED="failed"; CANCELLED="cancelled"
-DESTRUCTIVE_KINDS = {TaskKind.CODING, TaskKind.COWORK}     # require PIN on phone
+# No DESTRUCTIVE_KINDS: every task has the machine and the mailbox, so the phone PIN gates all of them.
 
 @dataclass class Task:
     id: int | None; kind: TaskKind; description: str; status: TaskStatus = QUEUED
@@ -242,7 +245,7 @@ def extract_spoken_summary(text: str) -> str                      # SPOKEN_SUMMA
 class TaskManager:
     def __init__(self, store: TaskStore, runner: AgentRunner, bus: EventBus, settings: Settings)
     async def start(self) -> None; async def shutdown(self) -> None
-    async def dispatch(self, kind, description, *, project=None, model=None, origin_channel, origin_caller) -> Task   # raises TaskLimitError / UnknownProjectError
+    async def dispatch(self, description, *, project=None, model=None, origin_channel, origin_caller) -> Task   # raises TaskLimitError / UnknownProjectError
     async def wait_for(self, task_id: int, timeout: float) -> Task     # returns as soon as terminal or timeout
     async def followup(self, task_id: int, text: str) -> Task
     async def cancel(self, task_id: int) -> Task
@@ -282,9 +285,14 @@ class SessionRegistry:
   (Twilio `media.timestamp`), else wall clock; capped at total ms sent for that item. Local
   transport is half-duplex: mic gated off while playing (+200 ms hangover) → no barge-in,
   `interrupt_response=False`.
-- **dispatch_task(kind, description, project?, model?, wait_seconds≤25)**: creates the task and
+- **dispatch_task(description, project?, model?, wait_seconds≤25)**: creates the task and
   starts it; if it finishes within `wait_seconds` the summary is returned inline; else returns
   `{task_id, status:"running"}` and the model tells the user it will announce completion.
+- **One routing decision (amended 2026-08-24).** The voice model either answers the turn
+  itself — small talk, task status, and small factual questions through `web_search` — or
+  dispatches it. There is no kind to choose and no second axis. Each project may describe
+  itself to the voice model in a `.jarvis-brief.md` at its root, which the prompt carries
+  verbatim; a repository's `CLAUDE.md` is deliberately *not* used for this.
 - **Handing over beats interviewing (amended 2026-08-24).** The voice model dispatches code work
   the moment it recognises it — no repeat-back-and-confirm, no scoping questions — because the
   subagent is better placed to work out what the work needs. `coding` with no project no longer
@@ -300,9 +308,10 @@ class SessionRegistry:
   result as the tool output instead) (marks `announced`), (2) SMS summary (with report link) unless a live *phone* session
   announced it, (3) if `callback_requested` and no live phone session announced → outbound
   call with `task_id`.
-- **PIN gate**: an empty/blank `JARVIS_PIN` counts as *not configured* (destructive kinds refused on phone). `session.authorized` starts False on phone; `submit_pin` (spoken) or DTMF
-  digits (collected in the session, never shown to the model) flip it; `dispatch_task` for
-  `coding`/`cowork` returns `{"status":"pin_required"}` until authorized. Constant-time
+- **PIN gate**: an empty/blank `JARVIS_PIN` counts as *not configured* (dispatching refused on phone). `session.authorized` starts False on phone; `submit_pin` (spoken) or DTMF
+  digits (collected in the session, never shown to the model) flip it; `dispatch_task`
+  returns `{"status":"pin_required"}` until authorized — every task, since 2026-08-24, because
+  every task can reach the files and the mailbox. Constant-time
   compare; 3 failures → say goodbye and hang up.
 - **Follow-ups**: `send_followup(task_id, text)` → finished task: new run with
   `resume=claude_session_id`; running task: the text is queued and, when the current run
@@ -328,6 +337,7 @@ class SessionRegistry:
 | `OPENAI_REALTIME_MODEL` | `openai_realtime_model` | `gpt-realtime-2.1` |
 | `OPENAI_VOICE` | `openai_voice` | `cedar` (male; the API takes `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`) |
 | `OPENAI_TRANSCRIPTION_MODEL` | `openai_transcription_model` | `gpt-4o-mini-transcribe` |
+| `OPENAI_WEB_SEARCH_MODEL` | `openai_web_search_model` (answers the voice model's `web_search`) | `gpt-5.4-mini` |
 | `ANTHROPIC_API_KEY` | `anthropic_api_key` | `None` |
 | `SUBAGENT_MODEL` | `subagent_model` | `claude-opus-5` |
 | `SUBAGENT_MAX_TURNS` | `subagent_max_turns` | `200` |
@@ -350,6 +360,7 @@ class SessionRegistry:
 | `WAKEWORD_MODEL` / `WAKEWORD_THRESHOLD` | `wakeword_model` / `wakeword_threshold` | `hey_jarvis` / `0.5` |
 | `REPORT_SECRET` | `report_secret` | `None` → random secret persisted at `data_dir/report_secret` |
 | `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` / `USER_GOOGLE_EMAIL` | same names lowercased | `None` |
+| `GOOGLE_CLIENT_SECRETS_FILE` | `google_client_secrets_file` (used when the id/secret pair is unset) | `.secrets/client_secret.json` |
 | `LOG_LEVEL` | `log_level` | `INFO` |
 
 Data layout under `data_dir`: `tasks.db`, `tasks/<id>.log` (agent transcript),
@@ -371,6 +382,9 @@ header `Authorization: Bearer …`, **no** `OpenAI-Beta` header.
   must carry its rate — `{"type":"audio/pcm","rate":24000}` — or the session is refused with
   `missing_required_parameter: session.audio.input.format.rate`; the G.711 formats must
   *not* carry one (`Unknown parameter`). Verified against the live GA API.
+- Session tools accept **only** `{"type":"function"}` and `{"type":"mcp"}` — there is no hosted
+  `web_search` in a Realtime session (verified 2026-08-24; the hosted tool lives in the Responses API,
+  which is what `web_search.py` calls).
 - Client events: `input_audio_buffer.append{audio:b64}`, `conversation.item.create{item}`,
   `conversation.item.truncate{item_id,content_index:0,audio_end_ms}`, `response.create{response?}`,
   `response.cancel`.
@@ -403,12 +417,11 @@ max_turns=…, max_budget_usd=…, resume=<session_id>, env={…}))`; `await cli
 `async for msg in client.receive_response()` yields `AssistantMessage(content=[TextBlock|ToolUseBlock|…])`,
 `UserMessage` (tool results), `SystemMessage`, `ResultMessage(session_id, result, total_cost_usd, is_error, num_turns)`;
 `await client.interrupt()`, `await client.disconnect()`. `client.query()` may be called again to send a follow-up.
-**Tool restriction (ruling 2026-08-18):** under `permission_mode="bypassPermissions"` the `allowed_tools`
-option is only an auto-approve list and restricts nothing; the enforcing option is `tools=[…]` (the base set of
-built-in tools; `[]` disables all built-ins). Per kind: `coding` → `tools` unset (all); `chat` →
-`tools=["WebSearch","WebFetch","Read","Glob","Grep"]`; `research` → chat + `"Write"`; `cowork` →
-`tools=["WebSearch","WebFetch","Read"]` + the google MCP server, with `allowed_tools=["mcp__google__*"]`
-kept only for the MCP wildcard.
+**Tool restriction (ruling 2026-08-18, superseded 2026-08-24):** under `permission_mode="bypassPermissions"`
+the `allowed_tools` option is only an auto-approve list and restricts nothing; the enforcing option is
+`tools=[…]`. That still holds — but nothing is restricted any more: `tools` is never set, so every subagent
+keeps the full built-in set (skills and its own subagents included), and the google MCP server is attached to
+every task with `allowed_tools=["mcp__google__*"]` for the MCP wildcard.
 
 **Google Workspace MCP** — `uvx workspace-mcp --tools gmail calendar --transport stdio --single-user`;
 env `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/oauth2callback`,
@@ -421,7 +434,9 @@ Callbacks run on the PortAudio thread → hand off with `loop.call_soon_threadsa
 
 ## 5. Security model
 
-`bypassPermissions` = the subagents have William's full user access. Exposure surface: the
+`bypassPermissions` = the subagents have William's full user access, and since the kinds
+collapsed (2026-08-24) that includes Gmail and Calendar on every task — which is why the phone
+PIN now gates every dispatch rather than two of four kinds. Exposure surface: the
 Cloudflare tunnel to `/twilio/*` (signature-validated + allowlist + one-time stream token) and
 `/reports/{id}?t=` (HMAC token). PIN protects destructive task kinds on the phone channel.
 Caller ID is spoofable → the PIN is the real gate for `coding`/`cowork`.

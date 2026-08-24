@@ -60,32 +60,21 @@ FAILURE_SUMMARY = "The task failed: {error}"
 #: Heads the prompt of a re-run carrying the follow-ups that arrived mid-turn.
 LIVE_FOLLOWUP_PREAMBLE = "Follow-up from the user:"
 
-_PROMPTS: dict[TaskKind, str] = {
-    TaskKind.CHAT: (
-        "You are answering a question for the user via a voice assistant. "
-        "Answer thoroughly but concisely.\n\n"
-        "Question/request:\n{description}"
-    ),
-    TaskKind.RESEARCH: (
-        "Research the following on the web and produce a well-organized report with "
-        "sources. Save the report as REPORT.md in the current directory as well.\n\n"
-        "Topic:\n{description}"
-    ),
-    TaskKind.CODING: (
-        "You are working in the repository at {cwd} (project '{project}'). "
-        "Complete the following task end to end: make the changes, run the relevant "
-        "tests/linters if any, and commit with a clear message if the repository is a "
-        "git repo. Do not push.\n\n"
-        "Task:\n{description}"
-    ),
-    TaskKind.COWORK: (
-        "You have access to the user's Gmail and Google Calendar through the google MCP "
-        "tools. Complete the following request. Never send an email or modify calendar "
-        "events unless the request explicitly asks for it; otherwise draft/summarize and "
-        "report.\n\n"
-        "Request:\n{description}"
-    ),
-}
+#: One prompt for one kind of task. What the work needs — a repo, the web, the mailbox, a
+#: skill, a fleet of subagents — is the subagent's call, not something the voice model
+#: classified in advance.
+_PROMPT = (
+    "Complete this request end to end. You are working on the user's own machine, with "
+    "his repositories, his Gmail and Calendar (through the google MCP tools), the skills "
+    "installed for the Claude CLI, and subagents of your own. Use whatever the work "
+    "actually needs.\n\n"
+    "Working directory: {cwd}{project_clause}\n\n"
+    "Where the request touches a repository, finish the job properly: make the change, "
+    "run the tests and linters that exist, and commit with a clear message if it is a git "
+    "repo — but never push. Never send mail or change a calendar entry unless the request "
+    "asks for it; otherwise draft it and say so in the report.\n\n"
+    "Request:\n{description}"
+)
 
 _NORMALIZE_RE = re.compile(r"[\s_\-]+")
 
@@ -113,14 +102,14 @@ class UnknownProjectError(ValueError):
 
 
 def build_prompt(task: Task) -> str:
-    """The subagent prompt for `task`: a kind-specific preamble plus its description.
+    """The subagent prompt for `task`: the standing preamble plus its description.
 
     Only the template is formatted, so braces inside the description are left alone.
     """
-    return _PROMPTS[task.kind].format(
+    return _PROMPT.format(
         description=task.description,
         cwd=task.cwd or "the current directory",
-        project=task.project or "none",
+        project_clause=f" (project '{task.project}')" if task.project else "",
     )
 
 
@@ -169,7 +158,6 @@ class TaskManager:
 
     async def dispatch(
         self,
-        kind: TaskKind | str,
         description: str,
         *,
         project: str | None = None,
@@ -179,11 +167,10 @@ class TaskManager:
     ) -> Task:
         """Create a `queued` task and schedule it.
 
-        Raises `ValueError` for an unknown kind, `TaskLimitError` past the daily cap and
-        `UnknownProjectError` for a project name that matches nothing (or more than one
-        thing). A `coding` task with no project starts in `projects_root`.
+        Raises `TaskLimitError` past the daily cap and `UnknownProjectError` for a project
+        name that matches nothing (or more than one thing). With no project the task
+        starts in `projects_root`, and the subagent finds its way from there.
         """
-        task_kind = TaskKind(kind)
         await self._check_daily_cap()
 
         project_name: str | None = None
@@ -191,17 +178,16 @@ class TaskManager:
         if project:
             project_name, path = self.resolve_project(project)
             cwd = str(path)
-        elif task_kind is TaskKind.CODING:
-            # Code work is handed over the moment it is recognised, so the project is
-            # often still unsaid. Start in the projects root and let the subagent find
-            # the repo — refusing here only pushes the question back onto the voice.
+        else:
+            # Work is handed over the moment it is recognised, so the project is often
+            # still unsaid. Start in the projects root and let the subagent find its way —
+            # asking first only pushes the question back onto the voice.
             cwd = str(self._settings.projects_root)
-            log.info("a coding task arrived with no project; starting in %s", cwd)
 
         created = await self._store.create(
             Task(
                 id=None,
-                kind=task_kind,
+                kind=TaskKind.AGENT,
                 description=description,
                 status=TaskStatus.QUEUED,
                 project=project_name,
@@ -214,9 +200,8 @@ class TaskManager:
         self._done_events[created.id] = asyncio.Event()
         self._spawn(created.id)
         log.info(
-            "task %s dispatched (%s, project=%s, model=%s, from=%s)",
+            "task %s dispatched (project=%s, model=%s, from=%s)",
             created.id,
-            created.kind,
             created.project,
             created.model,
             created.origin_channel,
@@ -411,7 +396,7 @@ class TaskManager:
     def _write_report(self, task: Task, result: RunResult) -> Path:
         """Write `data_dir/tasks/<id>.md`; always created, even for an empty result."""
         path = self._report_path(task.id)
-        header = f"# Task {task.id} — {task.kind}\n\n{task.description}\n\n---\n\n"
+        header = f"# Task {task.id}\n\n{task.description}\n\n---\n\n"
         try:
             path.write_text(header + (result.final_text or ""), encoding="utf-8")
         except OSError:

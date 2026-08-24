@@ -10,7 +10,7 @@ from datetime import datetime
 from importlib import resources
 from typing import TYPE_CHECKING
 
-from jarvis.projects import discover_projects
+from jarvis.projects import ProjectBrief, discover_briefs, discover_projects
 from jarvis.skills import Skill, discover_skills
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -23,6 +23,7 @@ VOICE_SYSTEM_PROMPT = "voice_system.md"
 _TIME_FORMAT = "%A %d %B %Y, %H:%M"
 _OPENING_HEADING = "## Why this session opened"
 _NO_SKILLS = "none installed"
+_NO_BRIEFS = "nothing written down yet"
 
 
 def load_prompt(name: str) -> str:
@@ -53,6 +54,13 @@ def _format_skills(skills: list[Skill]) -> str:
     return "\n".join(f"- {skill.name}: {skill.description}" for skill in skills)
 
 
+def _format_briefs(briefs: list[ProjectBrief]) -> str:
+    """Each project's own words about itself, under its name."""
+    if not briefs:
+        return _NO_BRIEFS
+    return "\n\n".join(f"### {brief.name}\n\n{brief.text}" for brief in briefs)
+
+
 def render_voice_prompt(
     settings: "Settings",
     *,
@@ -61,6 +69,7 @@ def render_voice_prompt(
     authorized: bool,
     projects: list[str] | None = None,
     skills: list[Skill] | None = None,
+    briefs: list[ProjectBrief] | None = None,
     opening_context: str | None = None,
 ) -> str:
     """Render the voice system prompt for one session.
@@ -69,11 +78,14 @@ def render_voice_prompt(
     ones plus the subdirectories of `projects_root` — so the model offers names that
     actually dispatch. `skills` defaults to the skills installed for the Claude CLI, so
     it can recognise work the back office is good at without being told they exist.
+    `briefs` defaults to the `.jarvis-brief.md` of every project that wrote one.
     `opening_context` is the reason the session was opened (a task summary on a call-back,
     say) and is dropped from the prompt when there is none.
     """
-    names = list(discover_projects(settings)) if projects is None else projects
+    known = discover_projects(settings)
+    names = list(known) if projects is None else projects
     catalog = discover_skills(settings.skills_dir) if skills is None else skills
+    written = discover_briefs(known) if briefs is None else briefs
     return render_prompt(
         VOICE_SYSTEM_PROMPT,
         now=datetime.now().strftime(_TIME_FORMAT),
@@ -82,5 +94,6 @@ def render_voice_prompt(
         authorized="yes" if authorized else "no",
         projects=", ".join(names) if names else "none configured",
         skills=_format_skills(catalog),
+        project_briefs=_format_briefs(written),
         opening_context=f"{_OPENING_HEADING}\n\n{opening_context}" if opening_context else "",
     )

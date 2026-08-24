@@ -85,7 +85,7 @@ class Harness:
     async def task(self, **fields) -> Task:
         """A row in the store, defaulting to a finished local-origin chat task."""
         values: dict = {
-            "kind": TaskKind.CHAT,
+            "kind": TaskKind.AGENT,
             "description": "look something up",
             "report_path": str(self.settings.data_dir / "tasks" / "1.md"),
         }
@@ -153,7 +153,7 @@ async def test_a_live_phone_session_hears_the_result_and_nothing_else_goes_out(h
 
     await harness.finished(task, "the tests pass now")
 
-    assert session.announced == [f"Task {task.id} (chat) finished: the tests pass now"]
+    assert session.announced == [f"Task {task.id} finished: the tests pass now"]
     assert harness.twilio.sms == []
     assert harness.twilio.calls == []
     row = await harness.row(task)
@@ -167,7 +167,7 @@ async def test_every_live_session_hears_it(harness):
 
     await harness.finished(task, "done")
 
-    assert phone.announced == local.announced == [f"Task {task.id} (chat) finished: done"]
+    assert phone.announced == local.announced == [f"Task {task.id} finished: done"]
 
 
 async def test_a_session_that_is_no_longer_live_is_skipped(harness):
@@ -197,7 +197,7 @@ async def test_only_the_local_channel_hearing_it_does_not_replace_the_sms(harnes
 
     await harness.finished(task, "I looked it up")
 
-    assert session.announced == [f"Task {task.id} (chat) finished: I looked it up"]
+    assert session.announced == [f"Task {task.id} finished: I looked it up"]
     row = await harness.row(task)
     assert (row.announced, row.sms_sent) == (True, True)
     assert harness.twilio.sms[0][0] == OWNER
@@ -222,7 +222,7 @@ async def test_a_session_holding_the_line_for_the_task_is_not_told_twice(harness
         await harness.finished(task, "done")
 
     assert waiting.announced == []
-    assert other.announced == [f"Task {task.id} (chat) finished: done"]
+    assert other.announced == [f"Task {task.id} finished: done"]
     assert harness.twilio.sms == []
     assert (await harness.row(task)).announced is True
 
@@ -246,7 +246,7 @@ async def test_waiting_on_another_task_does_not_silence_this_one(harness):
     with harness.inline_waits.holding("sess-a", task.id + 1):
         await harness.finished(task, "done")
 
-    assert session.announced == [f"Task {task.id} (chat) finished: done"]
+    assert session.announced == [f"Task {task.id} finished: done"]
 
 
 async def test_the_wait_is_over_once_the_hold_is_released(harness):
@@ -257,7 +257,7 @@ async def test_the_wait_is_over_once_the_hold_is_released(harness):
         pass
     await harness.finished(task, "done")
 
-    assert session.announced == [f"Task {task.id} (chat) finished: done"]
+    assert session.announced == [f"Task {task.id} finished: done"]
 
 
 async def test_nobody_is_called_back_while_they_are_holding_the_line(harness):
@@ -281,7 +281,7 @@ async def test_a_phone_task_texts_the_caller_a_summary_and_a_report_link(harness
     to, body = harness.twilio.sms[0]
     assert to == CALLER
     summary_line, url = body.split("\n")
-    assert summary_line == f"Task {task.id} (chat) finished: I read the docs"
+    assert summary_line == f"Task {task.id} finished: I read the docs"
     assert url.startswith(f"https://{HOST}/reports/{task.id}?t=")
     assert parse_qs(urlparse(url).query)["t"] == [report_token(task.id, SECRET)]
     assert (await harness.row(task)).sms_sent is True
@@ -304,12 +304,12 @@ async def test_a_phone_task_with_no_caller_on_the_row_falls_back_to_the_owner(ha
 
 
 async def test_a_failed_task_says_so(harness):
-    task = await harness.task(kind=TaskKind.CODING)
+    task = await harness.task(kind=TaskKind.AGENT)
 
     await harness.failed(task, "the build never went green")
 
     assert harness.sms_body.startswith(
-        f"Task {task.id} (coding) failed: the build never went green"
+        f"Task {task.id} failed: the build never went green"
     )
 
 
@@ -329,7 +329,7 @@ async def test_without_a_public_host_the_sms_is_just_the_summary(harnesses):
 
     await harness.finished(task, "done")
 
-    assert harness.sms_body == f"Task {task.id} (chat) finished: done"
+    assert harness.sms_body == f"Task {task.id} finished: done"
 
 
 async def test_a_task_with_no_report_is_texted_without_a_link(harness):
@@ -337,7 +337,7 @@ async def test_a_task_with_no_report_is_texted_without_a_link(harness):
 
     await harness.finished(task, "done")
 
-    assert harness.sms_body == f"Task {task.id} (chat) finished: done"
+    assert harness.sms_body == f"Task {task.id} finished: done"
 
 
 async def test_nothing_is_sent_when_twilio_is_not_configured(harness):
@@ -366,7 +366,7 @@ async def test_with_no_number_to_text_nothing_is_sent(harnesses):
 
 async def test_a_requested_call_back_dials_out_with_a_redeemable_stream_token(harness):
     task = await harness.task(
-        kind=TaskKind.RESEARCH,
+        kind=TaskKind.AGENT,
         origin_channel="phone",
         origin_caller=CALLER,
         callback_requested=True,
@@ -386,7 +386,7 @@ async def test_a_requested_call_back_dials_out_with_a_redeemable_stream_token(ha
     assert info.caller == CALLER
     assert info.extra["task_id"] == task.id
     assert info.extra["opening_context"] == (
-        f"You are calling the user back because task {task.id} (research) finished. "
+        f"You are calling the user back because task {task.id} finished. "
         "Result: I found the answer. Greet them, tell them the result briefly, then ask "
         "if they need anything else."
     )
@@ -409,7 +409,7 @@ async def test_a_failed_task_is_called_back_too(harness):
 
     context = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
     assert context.extra["opening_context"] == (
-        f"You are calling the user back because task {task.id} (chat) failed. "
+        f"You are calling the user back because task {task.id} failed. "
         "Error: the build never went green. Greet them, tell them what went wrong "
         "briefly, then ask if they need anything else."
     )

@@ -45,9 +45,15 @@ through untouched), the local mic/speaker (16-bit PCM 24 kHz, half-duplex — th
 gated off while Jarvis speaks), or a WAV file for the `loopback` dev harness. The session
 never knows which one it has.
 
-Tools the model can call: `dispatch_task`, `list_tasks`, `get_task_status`,
+Tools the model can call: `web_search`, `dispatch_task`, `list_tasks`, `get_task_status`,
 `get_task_result`, `send_followup`, `cancel_task`, `list_projects`, `request_callback`,
 `submit_pin`, `end_session`.
+
+There is exactly one routing decision. Small talk, task status and small factual questions
+the voice answers itself — `web_search` goes through the Responses API, because a Realtime
+session has no hosted search tool of its own. Everything else becomes a task, and a task is
+just "Claude, on this machine": one kind, every tool, the repositories, Gmail and Calendar,
+the installed skills, and subagents of its own. Nothing classifies the work in advance.
 
 ## Setup
 
@@ -90,6 +96,12 @@ Every setting is an environment variable, read from `.env` in the working direct
 | `JARVIS_PIN` | PIN for destructive work over the phone (`coding`, `cowork`) |
 | `PUBLIC_HOST` | the tunnel hostname Twilio reaches, e.g. `jarvis.example.com` |
 | `PROJECTS` | JSON map of spoken project names to repo paths, e.g. `{"jarvis": "/Users/me/code/jarvis"}` |
+
+A project can also introduce itself: put a **`.jarvis-brief.md`** at its root and the voice
+prompt carries it verbatim — what the project is, what the jargon means out loud, what
+state it is in. Keep it short (it is capped at 1500 characters). Do not point this at a
+repository's `CLAUDE.md`: that is thousands of tokens of build detail written for a screen,
+the subagent reads it for itself anyway, and in a voice prompt it mostly drowns the persona.
 
 Useful optional ones: `HOST`/`PORT` (default `127.0.0.1:8080`), `DATA_DIR` (default
 `~/.jarvis`), `PROJECTS_ROOT` (every subdirectory is dispatchable by name), `SKILLS_DIR`
@@ -199,23 +211,20 @@ System Settings → Privacy & Security, or the wake word never hears anything.
 
 Call the number, or say **"hey jarvis"** at the Mac. Then talk normally:
 
-- *"What's on my plate today?"* — chat, answered directly.
-- *"Look into how Twilio handles media stream reconnects and summarise it."* — a
-  `research` task.
-- *"In the jarvis project, add a retry to the report fetch and run the tests."* — a
-  `coding` task (PIN required on the phone).
-- *"Check my mail for anything from the accountant and put a slot in my calendar."* — a
-  `cowork` task (PIN required on the phone).
+- *"What's on my plate today?"* — answered directly.
+- *"What's the dollar-euro rate?"* — answered on the spot with `web_search`, no task.
+- *"Look into how Twilio handles media stream reconnects and summarise it."* — a task.
+- *"In the jarvis project, add a retry to the report fetch and run the tests."* — a task
+  (PIN required on the phone, as every task is).
+- *"Check my mail for the papers the group sent, summarise each one, and tell me."* — one
+  task: the same subagent reads the mailbox, uses the `ingest-paper` skill and fans out
+  subagents of its own.
 - *"What's running?"* / *"How did task 3 go?"* — task status and results.
 - *"Add to task 3: also update the README."* — a follow-up into the same subagent.
 - *"Call me back when it's done."* — an outbound call when the task lands.
 - *"Goodbye."* — ends the session (locally it also ends after 30 s of silence).
 
-Task kinds and what each subagent may touch: `chat` (read-only tools), `research` (adds
-`Write`), `coding` (everything, in the project's checkout), `cowork` (read-only plus Gmail
-and Calendar).
-
-**Anything code-shaped goes straight to Claude.** Jarvis does not repeat the request back
+**Anything that is work goes straight to Claude.** Jarvis does not repeat the request back
 for a yes, ask which file you mean, or argue about the approach — it dispatches and tells
 you it has. If you did not name a project the task starts in `PROJECTS_ROOT` and the
 subagent finds the repo itself; the voice prompt already knows every project name there,
@@ -231,7 +240,7 @@ same session as a follow-up.
 Short tasks answer inline; longer ones come back as an announcement in whatever session is
 live, an SMS with a link to the written report, and a call back if you asked for one.
 
-**The PIN.** On the phone, `coding` and `cowork` are refused until you authorize: say the
+**The PIN.** On the phone, dispatching anything is refused until you authorize: say the
 PIN or key it in on the keypad. Keyed digits are collected in the session and never enter
 the model transcript. Three failures ends the call. Local sessions are pre-authorized —
 you are already at the machine.
@@ -325,8 +334,8 @@ Common cases:
   all: openwakeword is not installable there, and `doctor` says so.
 - **Tasks fail instantly** — no subagent auth (subscription login, token, or API key) or
   the `claude` CLI is missing (`jarvis doctor` says so).
-- **`coding` is refused on the phone** — no PIN configured, or you have not entered it yet.
-- **Google tools fail in a `cowork` task** — run `jarvis setup-google` again; the stored
+- **Work is refused on the phone** — no PIN configured, or you have not entered it yet.
+- **Google tools fail in a task** — run `jarvis setup-google` again; the stored
   credentials may have expired.
 
 ## Development

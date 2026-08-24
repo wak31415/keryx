@@ -26,6 +26,15 @@ Google OAuth bootstrap in `jarvis/google_setup.py`. Service templates are in
 `ops/systemd/` (Linux) and `ops/launchd/` (macOS), rendered by the matching
 `scripts/install-*.sh`; `scripts/lib.sh` holds what those scripts share.
 
+## One task kind
+
+There is one `TaskKind` (`agent`) and no per-kind tool restriction: every subagent gets
+the full built-in tool set, the Google MCP server, the installed skills and subagents of
+its own, and decides for itself what a request needs. The voice model's only routing
+decision is answer-it-myself (small facts go through its `web_search` tool, backed by the
+Responses API) versus dispatch. Do not reintroduce kinds to express "this one is
+read-only" — the phone PIN gates every dispatch instead.
+
 ## Platforms
 
 macOS runs both channels; Linux runs the phone channel only, because openwakeword

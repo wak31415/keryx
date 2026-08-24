@@ -7,8 +7,9 @@ problem comes back as `{"error": ...}` (or a `status` the model is told how to r
 so a bad task id is a sentence the assistant can say rather than a dropped call.
 
 The PIN gate guards every tool that can put a subagent to work — `dispatch_task`,
-`send_followup` and `cancel_task`: on the phone, `coding` and `cowork` are refused
-with `{"status": "pin_required"}` until the session is authorized. The check reads
+`send_followup` and `cancel_task`: on the phone they are refused with
+`{"status": "pin_required"}` until the session is authorized. Every task is gated now
+that there is one kind of task, and it has the machine and the mailbox. The check reads
 `ctx.authorized` live, so a PIN entered on the keypad while the model was thinking is
 honoured on the very next call. The digits themselves never pass through here: the
 `submit_pin` tool hands whatever the caller said straight to the session, which is the
@@ -23,8 +24,9 @@ from pathlib import Path
 from jarvis.config import Settings
 from jarvis.inline_waits import InlineWaits
 from jarvis.tasks.manager import TERMINAL_STATUSES, TaskLimitError, TaskManager, UnknownProjectError
-from jarvis.tasks.models import DESTRUCTIVE_KINDS, Task, TaskKind, TaskStatus
+from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tools.registry import ToolContext, ToolRegistry
+from jarvis.web_search import WebSearcher
 
 log = logging.getLogger("jarvis.tools.builtin")
 
@@ -39,12 +41,13 @@ MAX_TASK_LIMIT = 20
 PIN_REQUIRED_MESSAGE = (
     "Ask the caller to say the PIN or enter it on the keypad, then call the tool again."
 )
-PIN_MISSING_MESSAGE = "A PIN is required for this kind of task but none is configured."
+PIN_MISSING_MESSAGE = "A PIN is required to dispatch work but none is configured."
 CALLBACK_NUMBER_MESSAGE = (
     "Without the PIN I can only call back on the number of this call or a number I "
     "already know. Offer that instead."
 )
 STILL_RUNNING_MESSAGE = "still running; you will be told when it finishes"
+SEARCH_FAILED_MESSAGE = "the search came back empty; say so, or offer to put Claude on it"
 ENDING_MESSAGE = "The session is ending now; do not say anything else."
 
 #: A phone number we are willing to call back: E.164, `+` and 7–15 digits.
@@ -67,12 +70,6 @@ _TASK_ID_SCHEMA = {
     "required": ["task_id"],
 }
 
-KIND_DESCRIPTION = (
-    "What sort of work this is. chat: a question a capable assistant can answer on its "
-    "own. research: reads the web and writes up an answer. coding: edits, runs and tests "
-    "code, and is the only kind with the machine's skills available — use it for anything "
-    "code-shaped and for work a skill would handle. cowork: works with mail and calendar."
-)
 MODEL_DESCRIPTION = (
     "Optional model for the subagent: opus (strongest, the default), sonnet, fable or "
     "haiku (fastest). Leave this out unless the user asks for it."
@@ -127,7 +124,6 @@ def _brief(task: Task) -> dict:
     """One task as a spoken list entry."""
     entry = {
         "id": task.id,
-        "kind": task.kind.value,
         "status": task.status.value,
         "description": _shorten(task.description, MAX_DESCRIPTION_CHARS),
     }
@@ -154,8 +150,13 @@ def register_builtin_tools(
     manager: TaskManager,
     settings: Settings,
     inline_waits: InlineWaits,
+    searcher: WebSearcher | None = None,
 ) -> None:
-    """Register every tool the voice model has, bound to this process's task manager."""
+    """Register every tool the voice model has, bound to this process's task manager.
+
+    `web_search` is registered only when a `searcher` is supplied, so a process without
+    one simply does not offer the tool.
+    """
 
     async def _get(arguments: dict) -> Task | dict:
         """The task named by `arguments`, or the error dict to hand back instead."""
@@ -167,31 +168,57 @@ def register_builtin_tools(
             return {"error": f"no task {task_id}"}
         return task
 
+    # --- web_search --------------------------------------------------------
+
+    async def web_search(ctx: ToolContext, arguments: dict) -> dict:
+        query = _text(arguments, "query")
+        if not query:
+            return {"error": "query is required: say what to look up"}
+        assert searcher is not None  # only registered when there is one
+        answer = await searcher.search(query)
+        if not answer:
+            return {"error": SEARCH_FAILED_MESSAGE}
+        return {"answer": answer}
+
+    if searcher is not None:
+        registry.register(
+            "web_search",
+            "Look something up on the web and get a short spoken answer. Use it yourself "
+            "for small, factual questions — a price, a date, a score, what a company "
+            "announced — instead of dispatching a task. Anything that needs his files, "
+            "his repositories, his mail, or more than a couple of sentences of work goes "
+            "to dispatch_task instead.",
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What to look up, as a full question.",
+                    }
+                },
+                "required": ["query"],
+            },
+            web_search,
+        )
+
     # --- dispatch_task -----------------------------------------------------
 
-    def _pin_gate(ctx: ToolContext, kind: TaskKind) -> dict | None:
-        """The refusal to return before touching a `kind` task, if any (spec §3.3).
+    def _pin_gate(ctx: ToolContext) -> dict | None:
+        """The refusal to return before putting a subagent to work, if any (spec §3.3).
 
         Applies to `dispatch_task`, `send_followup` and `cancel_task` alike: reaching into
-        a `coding` task that is already running opens the very same bypassPermissions
-        subagent that dispatching one would.
+        a task that is already running opens the very same bypassPermissions subagent that
+        dispatching one would.
         """
-        if kind not in DESTRUCTIVE_KINDS or ctx.channel != "phone" or ctx.authorized:
+        if ctx.channel != "phone" or ctx.authorized:
             return None
         if not settings.pin:
             return {"status": "refused", "message": PIN_MISSING_MESSAGE}
-        log.info("session %s needs a PIN for a %s task", ctx.session.session_id, kind)
+        log.info("session %s needs a PIN before dispatching", ctx.session.session_id)
         return {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}
 
     async def dispatch_task(ctx: ToolContext, arguments: dict) -> dict:
-        try:
-            kind = TaskKind(_text(arguments, "kind").lower())
-        except ValueError:
-            return {
-                "error": f"unknown kind {arguments.get('kind')!r}; "
-                "use chat, research, coding or cowork"
-            }
-        refusal = _pin_gate(ctx, kind)
+        refusal = _pin_gate(ctx)
         if refusal is not None:
             return refusal
 
@@ -201,7 +228,6 @@ def register_builtin_tools(
 
         try:
             task = await manager.dispatch(
-                kind,
                 description,
                 project=_text(arguments, "project") or None,
                 model=_text(arguments, "model") or None,
@@ -240,11 +266,6 @@ def register_builtin_tools(
         {
             "type": "object",
             "properties": {
-                "kind": {
-                    "type": "string",
-                    "enum": [kind.value for kind in TaskKind],
-                    "description": KIND_DESCRIPTION,
-                },
                 "description": {
                     "type": "string",
                     "description": "What the subagent should do, in full sentences. It cannot "
@@ -269,7 +290,7 @@ def register_builtin_tools(
                     "description": WAIT_DESCRIPTION,
                 },
             },
-            "required": ["kind", "description"],
+            "required": ["description"],
         },
         dispatch_task,
     )
@@ -328,7 +349,7 @@ def register_builtin_tools(
         return {
             "task_id": task.id,
             "status": task.status.value,
-            "kind": task.kind.value,
+
             "description": task.description,
             "summary": task.summary,
             "error": task.error,
@@ -372,7 +393,7 @@ def register_builtin_tools(
         task = await _get(arguments)
         if isinstance(task, dict):
             return task
-        refusal = _pin_gate(ctx, task.kind)
+        refusal = _pin_gate(ctx)
         if refusal is not None:
             return refusal
         message = _text(arguments, "message")
@@ -409,7 +430,7 @@ def register_builtin_tools(
         task = await _get(arguments)
         if isinstance(task, dict):
             return task
-        refusal = _pin_gate(ctx, task.kind)
+        refusal = _pin_gate(ctx)
         if refusal is not None:
             return refusal
         try:
