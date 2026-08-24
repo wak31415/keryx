@@ -269,6 +269,7 @@ def register_builtin_tools(
                 model=_text(arguments, "model") or None,
                 origin_channel=ctx.channel,
                 origin_caller=ctx.caller,
+                origin_session_id=ctx.session.session_id,
             )
         except UnknownProjectError as exc:
             return {"error": str(exc), "candidates": exc.candidates}
@@ -523,7 +524,7 @@ def register_builtin_tools(
                 log.warning("session %s asked to call an unknown number", ctx.session.session_id)
                 return {"status": "refused", "message": CALLBACK_NUMBER_MESSAGE}
 
-        await manager.request_callback(task.id, number)
+        await manager.request_callback(task.id, number, _text(arguments, "note") or None)
         return {"task_id": task.id, "status": "callback_requested"}
 
     registry.register(
@@ -541,6 +542,13 @@ def register_builtin_tools(
                     "type": "string",
                     "description": "The number to call, in full international form such as "
                     "+491701234567. Leave it out to use the number of this call.",
+                },
+                "note": {
+                    "type": "string",
+                    "description": "One line of where you left off, for the you that makes "
+                    "that call: what he asked for in his own words, anything he decided or "
+                    "ruled out, and what he said he wanted next. The call-back is a new "
+                    "call and remembers nothing else of this one.",
                 },
             },
             "required": ["task_id"],
