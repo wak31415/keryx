@@ -28,9 +28,15 @@ def _isolated_env(monkeypatch):
 
 @pytest.fixture
 def settings(tmp_path):
-    """A Settings instance with no env/.env leakage, safe for tests."""
+    """A Settings instance with no env/.env leakage, safe for tests.
+
+    `google_client_secrets_file` defaults to a path relative to the working directory, so
+    it is pinned into `tmp_path` here: a developer's real client file must never take part
+    in a test.
+    """
     return Settings(
         _env_file=None,
         openai_api_key="test",
         data_dir=tmp_path / "jarvis",
+        google_client_secrets_file=tmp_path / "no-client-secrets.json",
     )
