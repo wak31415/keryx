@@ -106,6 +106,30 @@ def audio_format_block(audio_format: str) -> dict:
     return {"type": audio_format}
 
 
+def turn_detection_block(config: SessionConfig) -> dict:
+    """How the server decides he has stopped talking.
+
+    Semantic detection waits on the *shape of the sentence*, so a pause for thought does
+    not end the turn; it takes an `eagerness` instead of a silence timer, and the API
+    rejects `silence_duration_ms` alongside it (verified 2026-08-24).
+    """
+    if config.vad_mode == "semantic":
+        return {
+            "type": "semantic_vad",
+            "eagerness": config.vad_eagerness,
+            "create_response": True,
+            "interrupt_response": config.interrupt_response,
+        }
+    return {
+        "type": "server_vad",
+        "threshold": config.vad_threshold,
+        "prefix_padding_ms": config.vad_prefix_ms,
+        "silence_duration_ms": config.vad_silence_ms,
+        "create_response": True,
+        "interrupt_response": config.interrupt_response,
+    }
+
+
 def build_session_update(config: SessionConfig) -> dict:
     """Build the `session.update` client event for `config` (spec §4).
 
@@ -113,14 +137,7 @@ def build_session_update(config: SessionConfig) -> dict:
     """
     audio_input: dict = {
         "format": audio_format_block(config.audio_format),
-        "turn_detection": {
-            "type": "server_vad",
-            "threshold": config.vad_threshold,
-            "prefix_padding_ms": config.vad_prefix_ms,
-            "silence_duration_ms": config.vad_silence_ms,
-            "create_response": True,
-            "interrupt_response": config.interrupt_response,
-        },
+        "turn_detection": turn_detection_block(config),
     }
     if config.transcription_model is not None:
         audio_input["transcription"] = {"model": config.transcription_model}

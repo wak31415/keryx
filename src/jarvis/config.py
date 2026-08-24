@@ -5,7 +5,7 @@ import logging
 import os
 import secrets
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -98,6 +98,15 @@ class Settings(BaseSettings):
     local_silence_timeout: float = 30  # seconds; 0 disables the local silence timeout
     max_call_seconds: float = 1800  # seconds; 0 disables the phone call-duration limit
     daily_task_cap: int = 50
+
+    # Turn detection: how long Jarvis waits before deciding you have finished speaking.
+    # "semantic" waits on whether the sentence sounds finished (so a pause to think does
+    # not cut you off); "server" is a plain silence timer of `vad_silence_ms`.
+    vad_mode: Literal["server", "semantic"] = "semantic"
+    vad_eagerness: Literal["low", "medium", "high", "auto"] = "low"
+    vad_silence_ms: int = 1200
+    vad_threshold: float = 0.5
+    vad_prefix_ms: int = 300
 
     # Wake word
     wakeword_model: str = "hey_jarvis"
