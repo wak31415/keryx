@@ -129,7 +129,7 @@ def test_load_settings_returns_settings_instance(tmp_path):
 
 def test_defaults_match_spec_table(settings):
     assert settings.openai_realtime_model == "gpt-realtime-2.1"
-    assert settings.openai_voice == "marin"
+    assert settings.openai_voice == "cedar"
     assert settings.openai_transcription_model == "gpt-4o-mini-transcribe"
     assert settings.anthropic_api_key is None
     assert settings.subagent_model == "claude-opus-5"

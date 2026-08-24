@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # OpenAI Realtime
     openai_api_key: str = Field(repr=False)
     openai_realtime_model: str = "gpt-realtime-2.1"
-    openai_voice: str = "marin"
+    openai_voice: str = "cedar"
     openai_transcription_model: str = "gpt-4o-mini-transcribe"
 
     # Claude Agent SDK. Subagent auth, in order of precedence: ANTHROPIC_API_KEY

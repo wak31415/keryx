@@ -39,6 +39,10 @@ logger = logging.getLogger("jarvis.realtime.openai")
 
 REALTIME_URL = "wss://api.openai.com/v1/realtime"
 
+#: Sample rate declared for `audio/pcm` sessions — the local mic/speaker path
+#: (16-bit LE mono 24 kHz, spec §3.2).
+PCM_SAMPLE_RATE = 24000
+
 # Errors that mean this socket/session is unusable; everything else is transient
 # (e.g. truncating past the end of an item, which happens routinely on barge-in).
 FATAL_ERROR_CODES = frozenset({"invalid_api_key", "session_expired", "session_not_found"})
@@ -90,13 +94,25 @@ async def _default_ws_connect(url: str, headers: dict[str, str]) -> RealtimeWebS
     return _WebSocketsAdapter(connection)
 
 
+def audio_format_block(audio_format: str) -> dict:
+    """The `format` block for one side of the session.
+
+    `audio/pcm` has no rate of its own, so the API demands one and refuses the session
+    without it; `audio/pcmu` is 8 kHz by definition and refuses a `rate` field instead
+    (both verified against the GA API, 2026-08-24).
+    """
+    if audio_format == "audio/pcm":
+        return {"type": audio_format, "rate": PCM_SAMPLE_RATE}
+    return {"type": audio_format}
+
+
 def build_session_update(config: SessionConfig) -> dict:
     """Build the `session.update` client event for `config` (spec §4).
 
     The model is selected by the connection URL, so it is deliberately absent here.
     """
     audio_input: dict = {
-        "format": {"type": config.audio_format},
+        "format": audio_format_block(config.audio_format),
         "turn_detection": {
             "type": "server_vad",
             "threshold": config.vad_threshold,
@@ -118,7 +134,10 @@ def build_session_update(config: SessionConfig) -> dict:
             "tool_choice": "auto",
             "audio": {
                 "input": audio_input,
-                "output": {"format": {"type": config.audio_format}, "voice": config.voice},
+                "output": {
+                    "format": audio_format_block(config.audio_format),
+                    "voice": config.voice,
+                },
             },
         },
     }
