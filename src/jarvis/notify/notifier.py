@@ -38,16 +38,25 @@ TOKEN_HEX_CHARS = 32  # half a sha256, plenty against guessing and short enough 
 
 DONE_TEXT = "Task {task_id} finished: {detail}"
 FAILED_TEXT = "Task {task_id} failed: {detail}"
+#: The call-back opens a fresh session — a phone call cannot resume the one that asked for
+#: it — so the context has to carry what he asked for as well as what came of it, or he
+#: answers the phone to an answer with no question attached.
 DONE_CONTEXT = (
-    "You are calling the user back because task {task_id} finished. "
-    "Result: {detail}. Greet them, tell them the result briefly, then ask if they need "
-    "anything else."
+    "You are calling the user back about task {task_id}, which he asked you for earlier "
+    "on the phone and which has now finished. What he asked for: {request}. "
+    "Result: {detail}. Greet him, remind him in a few words what this is about, tell him "
+    "the result briefly, then ask if he needs anything else. This is a new call: he may "
+    "have to give the PIN again before you can start more work."
 )
 FAILED_CONTEXT = (
-    "You are calling the user back because task {task_id} failed. "
-    "Error: {detail}. Greet them, tell them what went wrong briefly, then ask if they "
-    "need anything else."
+    "You are calling the user back about task {task_id}, which he asked you for earlier "
+    "on the phone and which has failed. What he asked for: {request}. "
+    "Error: {detail}. Greet him, remind him in a few words what this is about, tell him "
+    "what went wrong briefly, then ask if he needs anything else. This is a new call: he "
+    "may have to give the PIN again before you can start more work."
 )
+#: How much of the original request the call-back context carries.
+MAX_REQUEST_CHARS = 200
 
 
 def report_token(task_id: int, secret: str) -> str:
@@ -208,8 +217,11 @@ class Notifier:
             log.info("cannot call back about task %s: no number or no public host", task.id)
             return
         try:
+            request = task.description
+            if len(request) > MAX_REQUEST_CHARS:
+                request = request[: MAX_REQUEST_CHARS - 1].rstrip() + "…"
             context = (FAILED_CONTEXT if failed else DONE_CONTEXT).format(
-                task_id=task.id, detail=detail
+                task_id=task.id, request=request, detail=detail
             )
             token = self._stream_tokens.issue(
                 caller=task.callback_number,

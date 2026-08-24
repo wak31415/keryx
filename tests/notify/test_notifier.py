@@ -385,11 +385,12 @@ async def test_a_requested_call_back_dials_out_with_a_redeemable_stream_token(ha
     assert info is not None
     assert info.caller == CALLER
     assert info.extra["task_id"] == task.id
-    assert info.extra["opening_context"] == (
-        f"You are calling the user back because task {task.id} finished. "
-        "Result: I found the answer. Greet them, tell them the result briefly, then ask "
-        "if they need anything else."
-    )
+    context = info.extra["opening_context"]
+    assert f"task {task.id}" in context
+    # A call-back is a new call, so it has to say what this was about, not just the answer.
+    assert "look something up" in context
+    assert "Result: I found the answer." in context
+    assert "PIN" in context
 
 
 async def test_a_call_back_is_only_dialled_once(harness):
@@ -407,12 +408,11 @@ async def test_a_failed_task_is_called_back_too(harness):
 
     await harness.failed(task, "the build never went green")
 
-    context = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
-    assert context.extra["opening_context"] == (
-        f"You are calling the user back because task {task.id} failed. "
-        "Error: the build never went green. Greet them, tell them what went wrong "
-        "briefly, then ask if they need anything else."
-    )
+    info = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
+    context = info.extra["opening_context"]
+    assert "has failed" in context
+    assert "look something up" in context
+    assert "Error: the build never went green." in context
 
 
 async def test_nobody_is_called_back_while_they_are_already_on_the_phone(harness):
@@ -482,3 +482,16 @@ async def test_stopping_takes_the_notifier_off_the_bus(harness):
 
     assert session.announced == []
     assert harness.twilio.sms == []
+
+
+async def test_a_long_request_is_trimmed_in_the_call_back_context(harness):
+    """The context is spoken from, not read; it carries the gist of the ask, not an essay."""
+    task = await harness.task(
+        callback_requested=True, callback_number=CALLER, description="x" * 500
+    )
+
+    await harness.finished(task, "done")
+
+    info = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
+    assert "…" in info.extra["opening_context"]
+    assert "x" * 300 not in info.extra["opening_context"]
