@@ -184,7 +184,7 @@ def test_build_session_update_for_the_local_path_omits_transcription_and_barge_i
             "tool_choice": "auto",
             "audio": {
                 "input": {
-                    "format": {"type": "audio/pcm"},
+                    "format": {"type": "audio/pcm", "rate": 24000},
                     "turn_detection": {
                         "type": "server_vad",
                         "threshold": 0.7,
@@ -194,7 +194,7 @@ def test_build_session_update_for_the_local_path_omits_transcription_and_barge_i
                         "interrupt_response": False,
                     },
                 },
-                "output": {"format": {"type": "audio/pcm"}, "voice": "cedar"},
+                "output": {"format": {"type": "audio/pcm", "rate": 24000}, "voice": "cedar"},
             },
         },
     }
@@ -757,3 +757,28 @@ def test_client_matches_the_realtime_provider_protocol():
         expected = list(inspect.signature(getattr(RealtimeProvider, name)).parameters)[1:]
         actual = list(inspect.signature(getattr(client, name)).parameters)
         assert actual == expected, f"{name} does not match the protocol signature"
+
+
+# --- audio format ------------------------------------------------------------
+
+
+def test_a_pcm_session_declares_its_sample_rate():
+    """The GA API refuses an `audio/pcm` session that does not name a rate."""
+    update = build_session_update(
+        SessionConfig(instructions="hi", tools=[], voice="cedar", audio_format="audio/pcm")
+    )
+
+    audio = update["session"]["audio"]
+    assert audio["input"]["format"] == {"type": "audio/pcm", "rate": 24000}
+    assert audio["output"]["format"] == {"type": "audio/pcm", "rate": 24000}
+
+
+def test_a_pcmu_session_carries_no_rate():
+    """G.711 is 8 kHz by definition, and the API rejects a `rate` alongside it."""
+    update = build_session_update(
+        SessionConfig(instructions="hi", tools=[], voice="cedar", audio_format="audio/pcmu")
+    )
+
+    audio = update["session"]["audio"]
+    assert audio["input"]["format"] == {"type": "audio/pcmu"}
+    assert audio["output"]["format"] == {"type": "audio/pcmu"}

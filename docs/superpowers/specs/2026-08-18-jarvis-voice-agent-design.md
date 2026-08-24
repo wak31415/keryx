@@ -326,7 +326,7 @@ class SessionRegistry:
 |---|---|---|
 | `OPENAI_API_KEY` | `openai_api_key` | required |
 | `OPENAI_REALTIME_MODEL` | `openai_realtime_model` | `gpt-realtime-2.1` |
-| `OPENAI_VOICE` | `openai_voice` | `marin` |
+| `OPENAI_VOICE` | `openai_voice` | `cedar` (male; the API takes `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`) |
 | `OPENAI_TRANSCRIPTION_MODEL` | `openai_transcription_model` | `gpt-4o-mini-transcribe` |
 | `ANTHROPIC_API_KEY` | `anthropic_api_key` | `None` |
 | `SUBAGENT_MODEL` | `subagent_model` | `claude-opus-5` |
@@ -367,7 +367,10 @@ header `Authorization: Bearer …`, **no** `OpenAI-Beta` header.
   "interrupt_response":true},"transcription":{"model":"gpt-4o-mini-transcribe"}},
   "output":{"format":{"type":"audio/pcmu"},"voice":"marin"}}}}`.
   Formats: `audio/pcmu`, `audio/pcma` (8 kHz G.711 — Twilio path, no transcoding),
-  `audio/pcm` (24 kHz 16-bit LE mono — local path).
+  `audio/pcm` (24 kHz 16-bit LE mono — local path). **Corrected 2026-08-24:** `audio/pcm`
+  must carry its rate — `{"type":"audio/pcm","rate":24000}` — or the session is refused with
+  `missing_required_parameter: session.audio.input.format.rate`; the G.711 formats must
+  *not* carry one (`Unknown parameter`). Verified against the live GA API.
 - Client events: `input_audio_buffer.append{audio:b64}`, `conversation.item.create{item}`,
   `conversation.item.truncate{item_id,content_index:0,audio_end_ms}`, `response.create{response?}`,
   `response.cancel`.
