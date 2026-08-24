@@ -92,8 +92,9 @@ Every setting is an environment variable, read from `.env` in the working direct
 | `PROJECTS` | JSON map of spoken project names to repo paths, e.g. `{"jarvis": "/Users/me/code/jarvis"}` |
 
 Useful optional ones: `HOST`/`PORT` (default `127.0.0.1:8080`), `DATA_DIR` (default
-`~/.jarvis`), `SUBAGENT_MODEL` (default `claude-opus-5`), `LOG_LEVEL`, and the guardrails
-below. The full table is spec §3.4.
+`~/.jarvis`), `PROJECTS_ROOT` (every subdirectory is dispatchable by name), `SKILLS_DIR`
+(default `~/.claude/skills`, listed in the voice prompt), `SUBAGENT_MODEL` (default
+`claude-opus-5`), `LOG_LEVEL`, and the guardrails below. The full table is spec §3.4.
 
 ### Cloudflare tunnel (for the phone channel)
 
@@ -213,6 +214,19 @@ Call the number, or say **"hey jarvis"** at the Mac. Then talk normally:
 Task kinds and what each subagent may touch: `chat` (read-only tools), `research` (adds
 `Write`), `coding` (everything, in the project's checkout), `cowork` (read-only plus Gmail
 and Calendar).
+
+**Anything code-shaped goes straight to Claude.** Jarvis does not repeat the request back
+for a yes, ask which file you mean, or argue about the approach — it dispatches and tells
+you it has. If you did not name a project the task starts in `PROJECTS_ROOT` and the
+subagent finds the repo itself; the voice prompt already knows every project name there,
+so "in the splatting repo" is enough. It also knows every skill installed under
+`SKILLS_DIR`, so work a skill covers — a sweep, a profile, a cluster job — is recognised
+without you naming the skill.
+
+The questions you get asked are the ones Claude worked out, not the ones the voice model
+imagined. A subagent that hits a decision only you can make does everything else first,
+then ends with one spoken question; Jarvis asks it and sends your answer back into the
+same session as a follow-up.
 
 Short tasks answer inline; longer ones come back as an announcement in whatever session is
 live, an SMS with a link to the written report, and a call back if you asked for one.

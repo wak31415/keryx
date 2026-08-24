@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # Projects
     projects: dict[str, str] = Field(default_factory=dict)
     projects_root: Path = Path("~/Local/coding_projects")
+    #: Where the Claude CLI keeps its skills; listed in the voice prompt so the model
+    #: knows what the subagents are good at without being told.
+    skills_dir: Path = Path("~/.claude/skills")
 
     # Data storage
     data_dir: Path = Path("~/.jarvis")
@@ -121,7 +124,7 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("data_dir", "projects_root", mode="after")
+    @field_validator("data_dir", "projects_root", "skills_dir", mode="after")
     @classmethod
     def _expand_path(cls, value: Path) -> Path:
         return value.expanduser()

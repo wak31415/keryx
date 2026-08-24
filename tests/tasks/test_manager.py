@@ -251,11 +251,17 @@ async def test_dispatch_rejects_an_unknown_kind(make_harness):
         await dispatch(harness.manager, "gardening")
 
 
-async def test_dispatch_coding_without_a_project_is_an_error(make_harness):
-    harness = make_harness()
+async def test_dispatch_coding_without_a_project_starts_in_the_projects_root(
+    make_harness, tmp_path
+):
+    """Code work is handed over as soon as it is recognised; the subagent finds the repo."""
+    root = make_projects(tmp_path, "garmin-voice-agent")
+    harness = make_harness(projects_root=root)
 
-    with pytest.raises(ValueError, match="project"):
-        await dispatch(harness.manager, "coding", "add a README")
+    task = await dispatch(harness.manager, "coding", "add a README")
+
+    assert task.project is None
+    assert task.cwd == str(root)
 
 
 async def test_dispatch_sets_cwd_from_the_project(make_harness, tmp_path):

@@ -38,6 +38,7 @@ from pathlib import Path
 
 from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
+from jarvis.projects import discover_projects
 from jarvis.tasks.agent_runner import AgentRunner, AgentSession, RunResult, resolve_model
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
@@ -178,9 +179,9 @@ class TaskManager:
     ) -> Task:
         """Create a `queued` task and schedule it.
 
-        Raises `ValueError` for an unknown kind or a `coding` task with no project,
-        `TaskLimitError` past the daily cap and `UnknownProjectError` for a project
-        name that matches nothing (or more than one thing).
+        Raises `ValueError` for an unknown kind, `TaskLimitError` past the daily cap and
+        `UnknownProjectError` for a project name that matches nothing (or more than one
+        thing). A `coding` task with no project starts in `projects_root`.
         """
         task_kind = TaskKind(kind)
         await self._check_daily_cap()
@@ -191,7 +192,11 @@ class TaskManager:
             project_name, path = self.resolve_project(project)
             cwd = str(path)
         elif task_kind is TaskKind.CODING:
-            raise ValueError("coding tasks need a project")
+            # Code work is handed over the moment it is recognised, so the project is
+            # often still unsaid. Start in the projects root and let the subagent find
+            # the repo — refusing here only pushes the question back onto the voice.
+            cwd = str(self._settings.projects_root)
+            log.info("a coding task arrived with no project; starting in %s", cwd)
 
         created = await self._store.create(
             Task(
@@ -544,41 +549,8 @@ class TaskManager:
     # --- projects --------------------------------------------------------
 
     def _candidates(self) -> dict[str, Path]:
-        """Every known project: configured ones first, then `projects_root` subdirectories.
-
-        Names are unique, and so are paths — a configured project that points at a
-        `projects_root` subdirectory is listed once, under its configured name.
-        """
-        candidates: dict[str, Path] = {}
-        seen: set[Path] = set()
-
-        def add(name: str, path: Path) -> None:
-            key = self._resolved(path)
-            if name in candidates or key in seen:
-                return
-            candidates[name] = path
-            seen.add(key)
-
-        for name, raw in self._settings.projects.items():
-            add(name, Path(raw).expanduser())
-
-        root = self._settings.projects_root
-        try:
-            entries = sorted(root.iterdir()) if root.is_dir() else []
-        except OSError:
-            log.exception("could not list the projects root %s", root)
-            entries = []
-        for entry in entries:
-            if not entry.name.startswith(".") and entry.is_dir():
-                add(entry.name, entry)
-        return candidates
-
-    @staticmethod
-    def _resolved(path: Path) -> Path:
-        try:
-            return path.resolve()
-        except OSError:  # pragma: no cover - resolve() rarely fails on a plain path
-            return path
+        """Every known project; shared with the voice prompt, which lists the same names."""
+        return discover_projects(self._settings)
 
     def resolve_project(self, name: str) -> tuple[str, Path]:
         """A spoken project name as `(canonical name, path)`.
