@@ -74,6 +74,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `projects.py` | `discover_projects` (configured projects plus `projects_root` subdirectories, shared by `TaskManager` and the voice prompt) and `discover_briefs` (each project's own `.jarvis-brief.md`) |
 | `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
 | `web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool |
+| `slack.py` | `SlackSender` protocol + `SlackWebApi` (`chat.postMessage`), behind the voice model's `send_to_slack`; credentials resolve from the `auto-research` skill's MCP server config |
 | `events.py` | in-process async pub/sub `EventBus` + event dataclasses |
 | `audio/util.py` | soxr resampling, chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` (µ-law codec removed 2026-08-19: phone audio is passed through as `audio/pcmu`, nothing transcodes) |
 | `transports/base.py` | `Transport` protocol + `AudioIn`/`Dtmf`/`Hangup` events |
@@ -299,6 +300,13 @@ class SessionRegistry:
   raises: the task starts in `projects_root` and the subagent finds the repo itself. The voice
   prompt lists every project `discover_projects` can resolve (not just the configured ones) and
   every installed skill, so neither has to be named out loud.
+- **Written delivery goes over Slack (added 2026-08-24).** A phone call cannot carry a file,
+  a link or a long list. The voice model has `send_to_slack` for text; subagents use the
+  `slack-research` MCP server (the `auto-research` skill's, inherited user-scope by every CLI
+  the runner spawns — verified, along with `google` and the claude.ai connectors) and its
+  `slack_upload_file` for anything with a file in it. Both ends use one Slack app: the token
+  and DM channel come from `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` if set, else from that MCP
+  server's own config in `~/.claude.json`.
 - **Questions come back from the subagent.** The subagent stays autonomous by default, but where
   a decision is genuinely the user's it does the independent part first and ends its
   `SPOKEN_SUMMARY:` with one spoken question. The voice model asks it and returns the answer via
@@ -361,6 +369,7 @@ class SessionRegistry:
 | `REPORT_SECRET` | `report_secret` | `None` → random secret persisted at `data_dir/report_secret` |
 | `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` / `USER_GOOGLE_EMAIL` | same names lowercased | `None` |
 | `GOOGLE_CLIENT_SECRETS_FILE` | `google_client_secrets_file` (used when the id/secret pair is unset) | `.secrets/client_secret.json` |
+| `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` | `slack_bot_token` / `slack_channel_id` | `None` → the `slack-research` MCP server's config |
 | `LOG_LEVEL` | `log_level` | `INFO` |
 
 Data layout under `data_dir`: `tasks.db`, `tasks/<id>.log` (agent transcript),
