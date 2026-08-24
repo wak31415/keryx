@@ -158,7 +158,10 @@ def register_builtin_tools(
     """Register every tool the voice model has, bound to this process's task manager.
 
     `web_search` and `send_to_slack` are registered only when a `searcher` / `slack` is
-    supplied, so a process without one simply does not offer that tool.
+    supplied, so a process without one simply does not offer that tool. Registering
+    `send_to_slack` only makes it *available*: whether it may be called is the voice
+    model's decision, and both its description and the system prompt confine that to the
+    turns where William explicitly asked for something on Slack.
     """
 
     async def _get(arguments: dict) -> Task | dict:
@@ -186,10 +189,13 @@ def register_builtin_tools(
         registry.register(
             "send_to_slack",
             "Send William a message on Slack, in the direct-message channel he already "
-            "uses for this. Use it when he asks for something in writing — a number, a "
-            "list, a name, a link he will want to click — because a phone call cannot "
-            "carry those. For anything a subagent produced (a file, a plot, a report), "
-            "dispatch the sending to Claude instead: it can attach the file itself.",
+            "uses for this. Only call it when he has explicitly asked for something in "
+            'writing — "send me that", "put it on Slack", "text me the link". Never '
+            "call it unasked, however awkward the content is to say out loud, and never "
+            "to repeat in writing something you have already said; if it truly will not "
+            "survive being spoken, offer to send it and call this only once he accepts. "
+            "For anything a subagent produced (a file, a plot, a report), dispatch the "
+            "sending to Claude instead: it can attach the file itself.",
             {
                 "type": "object",
                 "properties": {

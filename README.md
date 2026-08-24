@@ -49,9 +49,11 @@ Tools the model can call: `web_search`, `send_to_slack`, `dispatch_task`, `list_
 `get_task_result`, `send_followup`, `cancel_task`, `list_projects`, `request_callback`,
 `submit_pin`, `end_session`.
 
-Anything you need in writing goes to Slack — the voice sends text with `send_to_slack`,
-and subagents send files, plots and reports through the same Slack app, which they already
-have from the `auto-research` skill. Nothing on a phone call has to carry a file path.
+Slack is opt-in: nothing goes to it unless you asked for it. When you do ask, the voice
+sends text with `send_to_slack` and subagents send files, plots and reports through the
+same Slack app, which they already have from the `auto-research` skill. Unasked, a file
+stays in the written report — Jarvis tells you it is there and offers to send it, rather
+than reading a path down the phone.
 
 There is exactly one routing decision. Small talk, task status and small factual questions
 the voice answers itself — `web_search` goes through the Responses API, because a Realtime
@@ -248,7 +250,7 @@ Call the number, or say **"hey jarvis"** at the Mac. Then talk normally:
 - *"Add to task 3: also update the README."* — a follow-up into the same subagent.
 - *"Call me back when it's done."* — an outbound call when the task lands.
 - *"Send me that on Slack."* — the message arrives in your DM; a file or plot is sent by
-  the subagent that made it.
+  the subagent that made it. Only asking gets you one: Jarvis never sends unprompted.
 - *"Goodbye."* — ends the session (locally it also ends after 30 s of silence).
 
 **Anything that is work goes straight to Claude.** Jarvis does not repeat the request back

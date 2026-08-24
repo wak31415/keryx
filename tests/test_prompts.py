@@ -122,3 +122,50 @@ def test_render_says_so_when_no_project_wrote_a_brief(settings, tmp_path):
     )
 
     assert "nothing written down yet" in rendered
+
+
+# --- Slack is opt-in -------------------------------------------------------
+#
+# Whether a Slack message goes out is the voice model's decision, taken turn by turn, so
+# the rule can only live in the prompt. That makes it easy to drop by accident while
+# editing the prose around it, and the failure is silent — no test breaks, Jarvis just
+# quietly starts messaging him again. These pin the rule to the prompt text instead.
+
+
+def test_voice_prompt_makes_slack_something_he_has_to_ask_for(unwrapped):
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "he has to ask for it first" in text
+    assert "Never send unasked" in text
+
+
+def test_voice_prompt_does_not_send_search_results_unasked(unwrapped):
+    """The web_search branch used to end with 'send_to_slack it as well'."""
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "send_to_slack it as well" not in text
+    assert "do not put it on Slack unless he asked for it in writing" in text
+
+
+def test_voice_prompt_offers_slack_rather_than_sending_it(unwrapped):
+    """The escape hatch for something unspeakable is an offer, not a send."""
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "send it only once he says yes" in text
+    assert "never send a written copy of something you have already said" in text
+
+
+def test_voice_prompt_does_not_promise_slack_as_a_delivery_route(settings, unwrapped):
+    """Ending a call used to promise the answer would turn up 'a text, and Slack'."""
+    rendered = unwrapped(
+        render_voice_prompt(
+            settings,
+            channel="phone",
+            caller=None,
+            authorized=True,
+            projects=[],
+            opening_context=None,
+        )
+    )
+
+    assert "a text, and Slack" not in rendered
