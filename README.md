@@ -4,13 +4,20 @@ A personal voice agent you can reach two ways:
 
 - **By phone** — call a Twilio number (from a watch, a car, anywhere). The call opens a
   realtime voice session.
-- **Locally** — say "hey jarvis" to the Mac's microphone and the same session opens
+- **Locally** — say "hey jarvis" to a Mac's microphone and the same session opens
   without a phone.
 
 Speech goes through the **OpenAI Realtime API** (speech-to-speech, server VAD, function
 calling), so the conversation stays snappy. Anything that is real work — research, a code
 change, mail and calendar chores — is handed to a **Claude Agent SDK subagent** that runs
-on the Mac with full local access and reports back by voice, SMS, or a call back.
+on the host machine with full local access and reports back by voice, SMS, or a call
+back.
+
+The two channels can live on one machine or two. The phone channel runs anywhere —
+in practice a Linux box that is up 24/7, reached through a Cloudflare tunnel — while the
+wake word needs macOS, because openwakeword cannot be installed on Linux under Python
+3.12 (its `tflite-runtime` dependency has no cp312 wheel). A Linux host therefore serves
+with `--no-wakeword`.
 
 The full design lives in
 `docs/superpowers/specs/2026-08-18-jarvis-voice-agent-design.md`.
@@ -18,9 +25,9 @@ The full design lives in
 ## Architecture
 
 ```
-Phone/Watch ─PSTN─▶ Twilio ─WSS media stream─▶ ngrok ─▶ FastAPI (Mac)
+Phone/Watch ─PSTN─▶ Twilio ─WSS media stream─▶ Cloudflare Tunnel ─▶ FastAPI (Linux)
                                                           │
-Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTransport
+Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTransport   (macOS)
                                                           ▼
                                     VoiceSession  (transport-agnostic core)
                                audio pump ▲▼   tool calls   ▲ announce()
@@ -46,7 +53,8 @@ Tools the model can call: `dispatch_task`, `list_tasks`, `get_task_status`,
 
 ### Prerequisites
 
-- macOS with Python 3.12 and [`uv`](https://docs.astral.sh/uv/)
+- macOS or Linux with Python 3.12 and [`uv`](https://docs.astral.sh/uv/) — the wake
+  word is macOS-only, the phone channel runs on either
 - **OpenAI API key** with Realtime access
 - **Claude subscription login** (`claude /login`, once) — subagents run on it by default.
   Alternatives: `claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN` (headless/launchd), or an
@@ -54,8 +62,8 @@ Tools the model can call: `dispatch_task`, `list_tasks`, `get_task_status`,
 - The **`claude` CLI** — the Agent SDK drives it, and ships a bundled copy it prefers
   over `PATH`. Install one yourself (`npm i -g @anthropic-ai/claude-code`) only if
   `jarvis doctor` says there is neither
-- A **Twilio** account, a phone number, and an **ngrok** reserved domain (for the phone
-  channel)
+- A **Twilio** account, a phone number, and a **Cloudflare Tunnel** with a hostname
+  routed to it — `cloudflared` plus a zone on Cloudflare (for the phone channel)
 - A **Google Cloud OAuth client** (Gmail + Calendar scopes) if you want `cowork` tasks
 
 ### Install
@@ -63,7 +71,7 @@ Tools the model can call: `dispatch_task`, `list_tasks`, `get_task_status`,
 ```bash
 uv sync
 cp .env.example .env      # then fill it in (see the table below)
-uv run jarvis download-models   # fetches the openWakeWord "hey jarvis" model
+uv run jarvis download-models   # macOS only: fetches the openWakeWord "hey jarvis" model
 uv run jarvis doctor            # tells you what is still missing
 ```
 
@@ -80,19 +88,35 @@ Every setting is an environment variable, read from `.env` in the working direct
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_NUMBER` | phone channel + outbound SMS/calls |
 | `ALLOWED_CALLERS` | comma-separated E.164 numbers allowed to call in — everything else is refused |
 | `JARVIS_PIN` | PIN for destructive work over the phone (`coding`, `cowork`) |
-| `PUBLIC_HOST` | the ngrok reserved domain Twilio reaches, e.g. `jarvis.ngrok.app` |
+| `PUBLIC_HOST` | the tunnel hostname Twilio reaches, e.g. `jarvis.example.com` |
 | `PROJECTS` | JSON map of spoken project names to repo paths, e.g. `{"jarvis": "/Users/me/code/jarvis"}` |
 
 Useful optional ones: `HOST`/`PORT` (default `127.0.0.1:8080`), `DATA_DIR` (default
 `~/.jarvis`), `SUBAGENT_MODEL` (default `claude-opus-5`), `LOG_LEVEL`, and the guardrails
 below. The full table is spec §3.4.
 
+### Cloudflare tunnel (for the phone channel)
+
+Twilio has to reach this machine, and the tunnel is the only thing exposed. With the
+hostname's zone on Cloudflare, create the tunnel once — it opens a browser to authorize:
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create jarvis
+cloudflared tunnel route dns jarvis jarvis.example.com   # your PUBLIC_HOST
+```
+
+That writes credentials under `~/.cloudflared/` and a CNAME in the zone. Put the same
+hostname in `.env` as `PUBLIC_HOST`; name the tunnel something else and set
+`CLOUDFLARE_TUNNEL` to match. `scripts/dev.sh` and `scripts/install-systemd.sh` run it
+for you from there.
+
 ### Twilio console
 
 1. Buy (or open) a number → **Voice & Fax → A call comes in**:
    `https://<PUBLIC_HOST>/twilio/voice`, method **HTTP POST**.
 2. **Call status changes**: `https://<PUBLIC_HOST>/twilio/status`, method **HTTP POST**.
-3. Keep the ngrok domain reserved so the webhook URL never changes.
+3. The tunnel hostname is a DNS record you own, so the webhook URL never changes.
 
 Both webhooks are validated against the Twilio signature; `/twilio/voice` additionally
 refuses callers outside `ALLOWED_CALLERS`, and the media-stream socket needs a one-time
@@ -126,15 +150,33 @@ uv run jarvis serve --fake-agents    # scripted subagents: no Claude tokens spen
 uv run jarvis serve --host 0.0.0.0 --port 9000   # override HOST/PORT from .env
 ```
 
-For the phone channel you also need the tunnel. `scripts/dev.sh` runs both — it opens
-ngrok on `PUBLIC_HOST` and starts `jarvis serve --no-wakeword`, passing any extra flags
-through:
+For the phone channel you also need the tunnel. `scripts/dev.sh` runs both — it starts
+the Cloudflare tunnel (logging to `.cloudflared.log`) and `jarvis serve --no-wakeword`,
+passing any extra flags through:
 
 ```bash
 scripts/dev.sh
 ```
 
-### As a background service (launchd)
+### As a background service (Linux, systemd)
+
+```bash
+scripts/install-systemd.sh              # render + start both units
+scripts/install-systemd.sh --uninstall  # stop + remove them
+```
+
+This renders `ops/systemd/jarvis.service` (runs `uv run --project <repo> jarvis serve
+--no-wakeword`) and `ops/systemd/cloudflared.service` (the tunnel to `localhost:$PORT`)
+into `~/.config/systemd/user/`, enables both, and turns on lingering with `loginctl
+enable-linger` so they keep running with nobody logged in and come back after a reboot.
+Both restart on failure. Unit stdout/stderr go to
+`~/.jarvis/logs/{jarvis,cloudflared}.{out,err}.log` (and `journalctl --user -u jarvis`);
+Jarvis's own log is `~/.jarvis/logs/jarvis.log` (10 MB × 5 rotated files).
+
+The installer stops early if the named tunnel does not exist yet and prints the three
+commands above that create it.
+
+### As a background service (macOS, launchd)
 
 ```bash
 scripts/install-launchd.sh              # render + load both agents
@@ -142,11 +184,12 @@ scripts/install-launchd.sh --uninstall  # unload + remove them
 ```
 
 This renders `ops/launchd/com.william.jarvis.plist` (runs `uv run --project <repo> jarvis
-serve`) and `ops/launchd/com.william.ngrok.plist` (the tunnel on `PUBLIC_HOST`) into
+serve`) and `ops/launchd/com.william.ngrok.plist` (a tunnel on `PUBLIC_HOST`) into
 `~/Library/LaunchAgents/` and hands them to `launchctl bootstrap`. Both have `RunAtLoad`
 and `KeepAlive`, so they start at login and restart if they die. launchd's own stdout/
 stderr go to `~/.jarvis/logs/{jarvis,ngrok}.{out,err}.log`; Jarvis's own log is
-`~/.jarvis/logs/jarvis.log` (10 MB × 5 rotated files).
+`~/.jarvis/logs/jarvis.log` (10 MB × 5 rotated files). A Mac that only listens for the
+wake word wants `serve --no-phone` and no tunnel agent at all.
 
 Grant the terminal (and, once installed, the launchd agent) **microphone** permission in
 System Settings → Privacy & Security, or the wake word never hears anything.
@@ -197,7 +240,7 @@ uv run jarvis loopback --wav sample.wav       # one session from a WAV, no mic n
 
 - **The subagents run as you.** They use `permission_mode="bypassPermissions"`, so a
   `coding` task has your full user access to files, repos, and the network. Treat "who can
-  reach Jarvis" as "who can run commands on this Mac".
+  reach Jarvis" as "who can run commands on this machine".
 - **What the tunnel exposes** is only: `/twilio/voice` (Twilio signature-validated *and*
   caller-allowlisted), `/twilio/status` (signature-validated only — it carries no caller
   to check), `/twilio/media` (needs a one-time, 60-second stream token minted by
@@ -240,7 +283,8 @@ uv run jarvis doctor        # add --no-mic on a machine with no microphone
 ```
 
 It checks `.env`, both API keys, the `claude` CLI (bundled or on `PATH`), Twilio
-settings, `PUBLIC_HOST`, ngrok, the caller allowlist, the PIN, the wake-word model, the
+settings, `PUBLIC_HOST`, a tunnel binary (`cloudflared` or `ngrok`), the caller allowlist,
+the PIN, the wake-word model, the
 microphone, that `~/.jarvis` is writable, and whether Google credentials exist. `✅` is
 fine, `⚠️` narrows what Jarvis can do (no mic, no PIN, no Google, no `claude` CLI), `❌`
 means it will not work — and only `❌` makes the command exit non-zero.
@@ -250,7 +294,7 @@ Where to look when something misbehaves:
 | Thing | Where |
 |---|---|
 | Server log | `~/.jarvis/logs/jarvis.log` (rotated, 10 MB × 5) |
-| launchd stdout/stderr | `~/.jarvis/logs/{jarvis,ngrok}.{out,err}.log` |
+| Service stdout/stderr | `~/.jarvis/logs/{jarvis,cloudflared,ngrok}.{out,err}.log` |
 | Voice transcripts | `~/.jarvis/calls/<session_id>.log` |
 | Subagent progress | `~/.jarvis/tasks/<id>.log` |
 | Written reports | `~/.jarvis/tasks/<id>.md` |
@@ -263,7 +307,8 @@ Common cases:
 - **Twilio shows 403** — signature validation failed; the tunnel host and the configured
   webhook URL disagree.
 - **"hey jarvis" does nothing** — run `jarvis download-models`, check microphone
-  permission, and try lowering `WAKEWORD_THRESHOLD`.
+  permission, and try lowering `WAKEWORD_THRESHOLD`. On Linux there is no wake word at
+  all: openwakeword is not installable there, and `doctor` says so.
 - **Tasks fail instantly** — no subagent auth (subscription login, token, or API key) or
   the `claude` CLI is missing (`jarvis doctor` says so).
 - **`coding` is refused on the phone** — no PIN configured, or you have not entered it yet.

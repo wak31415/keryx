@@ -9,9 +9,15 @@ A personal voice agent William can reach two ways:
 
 1. **By phone** (Garmin watch / mobile → Twilio number). The call opens a realtime voice
    session; the agent chats, answers questions, and **dispatches powerful subagents** that
-   run on his Mac with full local access (repos, files, web, email, calendar).
-2. **Locally, always-on** — a "hey jarvis" wake-word listener on the Mac mic/speaker that
-   opens the same kind of session without a phone.
+   run on the host machine with full local access (repos, files, web, email, calendar).
+2. **Locally, always-on** — a "hey jarvis" wake-word listener on the machine's mic/speaker
+   that opens the same kind of session without a phone.
+
+**Hosts (amended 2026-08-24).** The two channels no longer have to live on one machine:
+the phone channel runs on a Linux box that is up 24/7, and the wake-word channel stays on
+macOS. openwakeword 0.6.0 requires `tflite-runtime` on Linux, whose newest release has no
+cp312 wheel, so its dependencies are marked `sys_platform == 'darwin'` and a Linux host
+serves with `--no-wakeword`.
 
 Reference: `frederikb96/twilio-voice-bridge` (thin Twilio↔OpenAI-Realtime relay, no tools).
 We borrow its transport/provider split and Twilio handling and add a transport-agnostic
@@ -26,7 +32,7 @@ PIN gating, and the local wake-word transport.
 | Subagent runtime | **Claude Agent SDK (Python)**, `permission_mode="bypassPermissions"`, in-process |
 | Cowork access | Gmail + Google Calendar via **`workspace-mcp`** stdio MCP server |
 | Results | Announce in live session → SMS summary → persist tasks (SQLite) → outbound call-back only when requested |
-| Exposure | **ngrok reserved domain**, server as launchd agent |
+| Exposure | **Cloudflare Tunnel** (`cloudflared`, `--protocol http2`) to a routed hostname; server as a launchd agent (macOS) or a systemd user unit (Linux). *Amended 2026-08-24, was: ngrok reserved domain + launchd.* |
 | Auth | Twilio signature + caller allowlist + one-time stream token; **PIN only for destructive kinds** (`coding`, `cowork`); local sessions pre-authorized |
 | Local audio | built-in mic/speakers, **half-duplex** (mic gated off while agent speaks); wake word via **openWakeWord `hey_jarvis`** (onnx) |
 | Subagent model | `claude-opus-5` default; `dispatch_task.model` accepts `opus`/`sonnet`/`fable`/`haiku` or a full model id |
@@ -34,17 +40,18 @@ PIN gating, and the local wake-word transport.
 | Language / tooling | Python 3.12, `uv`, FastAPI + uvicorn, typer, pytest (+ pytest-asyncio), ruff |
 | Repo | this folder; GitHub private repo `garmin-voice-agent` |
 
-Prerequisites William supplies (in `.env`): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
-(Agent SDK is pay-per-token; it does not use the Claude Max login), Twilio account
-SID / auth token / number, ngrok reserved domain, Google Cloud OAuth client
-(Gmail + Calendar scopes).
+Prerequisites William supplies (in `.env`): `OPENAI_API_KEY`, subagent auth (the Claude
+CLI subscription login by default; `ANTHROPIC_API_KEY` is the pay-per-token override —
+amended 2026-08-24, was: the Agent SDK cannot use the subscription login), Twilio account
+SID / auth token / number, a Cloudflare-routed hostname for the tunnel, Google Cloud
+OAuth client (Gmail + Calendar scopes).
 
 ## 3. Architecture
 
 ```
-Phone/Watch ─PSTN─▶ Twilio ─WSS media stream─▶ ngrok ─▶ FastAPI (Mac)
+Phone/Watch ─PSTN─▶ Twilio ─WSS media stream─▶ Cloudflare Tunnel ─▶ FastAPI (Linux)
                                                           │
-Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTransport
+Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTransport   (macOS)
                                                           ▼
                                     VoiceSession  (transport-agnostic core)
                                audio pump ▲▼   tool calls   ▲ announce()
@@ -317,7 +324,7 @@ class SessionRegistry:
 | `ALLOWED_CALLERS` | `allowed_callers: list[str]` (comma-separated E.164) | `[]` |
 | `OWNER_NUMBER` | `owner_number` | first of `allowed_callers` |
 | `JARVIS_PIN` | `pin` | `None` (PIN-gated kinds refused on phone if unset) |
-| `PUBLIC_HOST` | `public_host` (e.g. `jarvis.ngrok.app`) | `None` |
+| `PUBLIC_HOST` | `public_host` (the tunnel's hostname, e.g. `jarvis.example.com`) | `None` |
 | `HOST` / `PORT` | `host` / `port` | `127.0.0.1` / `8080` |
 | `PROJECTS` | `projects: dict[str,str]` (JSON) | `{}` |
 | `PROJECTS_ROOT` | `projects_root` | `~/Local/coding_projects` |
@@ -398,7 +405,7 @@ Callbacks run on the PortAudio thread → hand off with `loop.call_soon_threadsa
 
 ## 5. Security model
 
-`bypassPermissions` = the subagents have William's full user access. Exposure surface: ngrok
-tunnel to `/twilio/*` (signature-validated + allowlist + one-time stream token) and
+`bypassPermissions` = the subagents have William's full user access. Exposure surface: the
+Cloudflare tunnel to `/twilio/*` (signature-validated + allowlist + one-time stream token) and
 `/reports/{id}?t=` (HMAC token). PIN protects destructive task kinds on the phone channel.
 Caller ID is spoofable → the PIN is the real gate for `coding`/`cowork`.
