@@ -42,6 +42,17 @@ never the real network or hardware. Heavy/hardware imports (`sounddevice`,
 `openwakeword`) must be guarded inside functions, not imported at module
 scope, so the test suite can run on a machine with no mic.
 
+## Working agreements
+
+- Only scripts read the env file; never print or paste its contents.
+- Spec §3.2 interface names and signatures stay stable (extra optional keyword
+  arguments are fine). §3.3/§4 hold rulings: follow them, and amend the spec in a
+  docs commit when one changes.
+- Conventional commits (`feat:`/`fix:`/`chore:`/`docs:`) with the Co-Authored-By
+  Claude trailer.
+- Clean and minimal over clever; TDD, with `uv run pytest -q` and
+  `uv run ruff check src tests` pristine before a commit.
+
 ## Reference docs
 
 - Design spec: `docs/superpowers/specs/2026-08-18-jarvis-voice-agent-design.md`
