@@ -30,7 +30,7 @@ PIN gating, and the local wake-word transport.
 |---|---|
 | Realtime voice layer | **OpenAI Realtime API** (`gpt-realtime-2.1`, speech-to-speech, server VAD, function calling) |
 | Subagent runtime | **Claude Agent SDK (Python)**, `permission_mode="bypassPermissions"`, in-process |
-| Cowork access | Gmail + Google Calendar via **`workspace-mcp`** stdio MCP server |
+| Mail + calendar access | The Claude CLI's own **claude.ai connectors** (Gmail, Calendar, Drive), which every spawned CLI already carries authorized. *Amended 2026-08-24, was: a `workspace-mcp` stdio server — kept behind `GOOGLE_WORKSPACE_MCP` (default off) for a machine whose subagents authenticate with an API key and so have no connectors. Measured: the connectors answered (20 threads, 13 calendars) while workspace-mcp returned "Google Authentication Needed".* |
 | Task kinds | **One** (`agent`): full tools, the machine, Gmail/Calendar, skills and subagents of its own. *Amended 2026-08-24, was: chat/research/coding/cowork with per-kind tool restrictions — classifying a request is a decision the voice model is badly placed to make, and it walled mail off from code.* |
 | Voice-side answers | The voice model answers small factual questions itself via a `web_search` function tool backed by the **Responses API** (a Realtime session accepts only `function` and `mcp` tools — there is no hosted search there). Everything else is dispatched. |
 | Results | Announce in live session → SMS summary → persist tasks (SQLite) → outbound call-back only when requested |
@@ -313,6 +313,9 @@ class SessionRegistry:
   a decision is genuinely the user's it does the independent part first and ends its
   `SPOKEN_SUMMARY:` with one spoken question. The voice model asks it and returns the answer via
   `send_followup`, which resumes the same Claude session.
+- **Offering the call-back (added 2026-08-24)**: when a task is still running and the caller
+  has nothing more to add, the voice model offers `request_callback` itself rather than waiting
+  to be asked — holding the line for a long job is the worst use of a call from a watch.
 - **Task completion**: `TaskCompleted` → Notifier: (1) `announce()` on every live session
   except the one currently inline-waiting on that task inside `dispatch_task` (it gets the
   result as the tool output instead) (marks `announced`), (2) SMS summary (with report link) unless a live *phone* session
@@ -374,6 +377,7 @@ class SessionRegistry:
 | `REPORT_SECRET` | `report_secret` | `None` → random secret persisted at `data_dir/report_secret` |
 | `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` / `USER_GOOGLE_EMAIL` | same names lowercased | `None` |
 | `GOOGLE_CLIENT_SECRETS_FILE` | `google_client_secrets_file` (used when the id/secret pair is unset) | `.secrets/client_secret.json` |
+| `GOOGLE_WORKSPACE_MCP` | `google_workspace_mcp` (attach the `workspace-mcp` server to subagents) | `false` |
 | `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` | `slack_bot_token` / `slack_channel_id` | `None` → the `slack-research` MCP server's config |
 | `LOG_LEVEL` | `log_level` | `INFO` |
 

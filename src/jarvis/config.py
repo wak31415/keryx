@@ -122,6 +122,12 @@ class Settings(BaseSettings):
     #: A Google "OAuth client" JSON (the file the cloud console hands you). Read when the
     #: id/secret pair above is unset, so the secret can stay in a file instead of the env.
     google_client_secrets_file: Path = Path(".secrets/client_secret.json")
+    #: Attach the `workspace-mcp` stdio server to every subagent. Off since 2026-08-24:
+    #: the Claude CLI already carries authorized claude.ai Gmail/Calendar/Drive connectors,
+    #: so this only added an unauthorized second path for a subagent to trip over. The
+    #: wiring is kept for a machine whose subagents authenticate with an API key instead,
+    #: where those connectors do not exist.
+    google_workspace_mcp: bool = False
 
     # Slack (the same app the auto-research skill's MCP server uses; left unset, the
     # token and DM channel are read from that server's config in ~/.claude.json)

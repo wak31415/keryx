@@ -287,7 +287,18 @@ def _data_dir_check(settings: Settings) -> Check:
 
 
 def _google_check(settings: Settings) -> Check:
-    """Warn-only: cowork tasks need credentials from `jarvis setup-google`."""
+    """Warn-only, and only about `workspace-mcp` — which is off unless asked for.
+
+    With it off, Gmail and Calendar reach the subagents through the Claude CLI's own
+    claude.ai connectors, which need nothing from us.
+    """
+    if not settings.google_workspace_mcp:
+        return Check(
+            "Google credentials",
+            True,
+            "workspace-mcp is off — Gmail and Calendar come from the Claude connectors",
+            severity="soft",
+        )
     if not settings.google_oauth_client():
         return Check(
             "Google credentials",

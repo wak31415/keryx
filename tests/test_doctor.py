@@ -253,7 +253,15 @@ def test_an_unwritable_data_dir_is_a_hard_failure(healthy, tmp_path):
     assert (check.ok, check.severity) == (False, "hard")
 
 
+def test_google_is_reported_as_unused_while_workspace_mcp_is_off(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["Google credentials"]
+
+    assert (check.ok, check.severity) == (True, "soft")
+    assert "connectors" in check.detail
+
+
 def test_google_credentials_only_warn_when_the_oauth_client_is_configured(healthy, tmp_path):
+    healthy.google_workspace_mcp = True
     for path in (tmp_path / "jarvis" / "google").iterdir():
         path.unlink()
 
@@ -266,7 +274,11 @@ def test_google_credentials_only_warn_when_the_oauth_client_is_configured(health
 
 def test_google_is_reported_as_not_configured_without_an_oauth_client(healthy):
     settings = healthy.model_copy(
-        update={"google_oauth_client_id": None, "google_oauth_client_secret": None}
+        update={
+            "google_workspace_mcp": True,
+            "google_oauth_client_id": None,
+            "google_oauth_client_secret": None,
+        }
     )
 
     check = by_name(run_doctor_checks(settings, probe_mic=False))["Google credentials"]

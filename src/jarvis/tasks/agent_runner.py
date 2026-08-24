@@ -51,6 +51,11 @@ MODEL_ALIASES = {
     "haiku": "claude-haiku-4-5-20251001",
 }
 
+# Gmail and Calendar reach the subagents through the Claude CLI's own claude.ai
+# connectors, which are already authorized; `workspace-mcp` is kept but off by default
+# (`GOOGLE_WORKSPACE_MCP`), because attaching an unauthorized second Google path only gave
+# subagents a tool that fails.
+#
 # No `tools` key is ever set: a subagent keeps every built-in tool, including the skills
 # and the subagents of its own that a real request tends to need. (`tools` is the only
 # option that would restrict — `allowed_tools` merely auto-approves, a no-op under
@@ -259,8 +264,9 @@ def build_options(
         "max_budget_usd": settings.subagent_max_budget_usd,
         "resume": resume,
     }
-    options["mcp_servers"] = {"google": google_mcp_server_config(settings)}
-    options["allowed_tools"] = list(GOOGLE_MCP_TOOLS)
+    if settings.google_workspace_mcp:
+        options["mcp_servers"] = {"google": google_mcp_server_config(settings)}
+        options["allowed_tools"] = list(GOOGLE_MCP_TOOLS)
     if settings.anthropic_api_key:
         options["env"] = {"ANTHROPIC_API_KEY": settings.anthropic_api_key}
     elif settings.claude_code_oauth_token:

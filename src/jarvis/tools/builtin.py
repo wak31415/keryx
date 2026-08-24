@@ -528,9 +528,11 @@ def register_builtin_tools(
 
     registry.register(
         "request_callback",
-        "Ask to be phoned back when a task finishes, instead of waiting on the line. Only "
-        "call this when the user asks for it. Without a number it uses the number they are "
-        "calling from, which is the only number an unauthorized caller may name.",
+        "Arrange for Jarvis to phone the user back when a task finishes, instead of them "
+        "waiting on the line. Offer this yourself whenever a task is still running and the "
+        "conversation is winding down — do not wait to be asked. Without a number it uses "
+        "the number they are calling from, which is the only number an unauthorized caller "
+        "may name.",
         {
             "type": "object",
             "properties": {
