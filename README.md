@@ -74,7 +74,7 @@ the installed skills, and subagents of its own. Nothing classifies the work in a
   `jarvis doctor` says there is neither
 - A **Twilio** account, a phone number, and a **Cloudflare Tunnel** with a hostname
   routed to it — `cloudflared` plus a zone on Cloudflare (for the phone channel)
-- A **Google Cloud OAuth client** (Gmail + Calendar scopes) if you want `cowork` tasks
+- Gmail and Calendar need nothing: they come from the Claude CLI's claude.ai connectors
 
 ### Install
 
@@ -146,7 +146,20 @@ refuses callers outside `ALLOWED_CALLERS`, and the media-stream socket needs a o
 token minted by `/twilio/voice` for that very call, so a stray connection to the tunnel
 gets nothing.
 
-### Google (optional, for `cowork` tasks)
+### Google (Gmail and Calendar)
+
+Nothing to set up: the Claude CLI carries your authorized **claude.ai connectors** (Gmail,
+Calendar, Drive, and whatever else you have connected), and every subagent inherits them.
+Ask for mail or calendar work and it just happens.
+
+The older path — a `workspace-mcp` stdio server of our own — is still in the tree but off
+(`GOOGLE_WORKSPACE_MCP=false`). Turn it on only if your subagents authenticate with an
+`ANTHROPIC_API_KEY` rather than the subscription login, since the connectors come with that
+login. The setup below is for that case.
+
+<details>
+<summary>Setting up workspace-mcp (only with GOOGLE_WORKSPACE_MCP=true)</summary>
+
 
 1. Google Cloud console → **APIs & Services → Credentials → Create credentials → OAuth
    client ID**, type **Desktop app**. Enable the Gmail and Calendar APIs.
@@ -160,8 +173,10 @@ gets nothing.
 
    It starts `uvx workspace-mcp --tools gmail calendar --transport stdio --single-user`
    once and calls a harmless tool, which opens the browser sign-in. Credentials are stored
-   under `~/.jarvis/google/` and reused by every `cowork` subagent afterwards. `jarvis
-   doctor` warns when that directory is still empty.
+   under `~/.jarvis/google/` and reused by every subagent afterwards. `jarvis doctor`
+   warns when that directory is still empty.
+
+</details>
 
 ## Running
 

@@ -289,7 +289,16 @@ def test_build_options_never_restricts_the_built_in_tools(settings):
     assert options.tools is None
 
 
-def test_build_options_always_wires_the_google_mcp_server(settings):
+def test_build_options_leaves_the_google_mcp_server_out_by_default(settings):
+    """Gmail and Calendar come from the CLI's own claude.ai connectors now."""
+    options = build_options(make_task(), settings)
+
+    assert options.mcp_servers == {}
+    assert options.allowed_tools == []
+
+
+def test_build_options_wires_the_google_mcp_server_when_it_is_asked_for(settings):
+    settings.google_workspace_mcp = True
     settings.google_oauth_client_id = "client-id"
     settings.google_oauth_client_secret = "client-secret"
     settings.user_google_email = "mail@example.com"
@@ -320,6 +329,8 @@ def test_build_options_always_wires_the_google_mcp_server(settings):
 
 
 def test_build_options_omits_unconfigured_google_env(settings):
+    settings.google_workspace_mcp = True
+
     options = build_options(make_task(), settings)
 
     env = options.mcp_servers["google"]["env"]
