@@ -47,7 +47,7 @@ never knows which one it has.
 
 Tools the model can call: `web_search`, `send_to_slack`, `dispatch_task`, `list_tasks`, `get_task_status`,
 `get_task_result`, `send_followup`, `cancel_task`, `list_projects`, `request_callback`,
-`submit_pin`, `end_session`.
+`restart_service`, `submit_pin`, `end_session`.
 
 Slack is opt-in: nothing goes to it unless you asked for it. When you do ask, the voice
 sends text with `send_to_slack` and subagents send files, plots and reports through the
@@ -118,7 +118,9 @@ you can tune directly.
 Useful optional ones: `HOST`/`PORT` (default `127.0.0.1:8080`), `DATA_DIR` (default
 `~/.jarvis`), `PROJECTS_ROOT` (every subdirectory is dispatchable by name), `SKILLS_DIR`
 (default `~/.claude/skills`, listed in the voice prompt), `SUBAGENT_MODEL` (default
-`claude-opus-5`), `LOG_LEVEL`, and the guardrails below. The full table is spec §3.4.
+`claude-opus-5`), `LOG_LEVEL`, `SERVICE_MANAGER`/`SERVICE_UNIT` (which unit
+[`jarvis restart`](#restarting-it) asks to restart; `auto` finds it), and the guardrails
+below. The full table is spec §3.4.
 
 ### Cloudflare tunnel (for the phone channel)
 
@@ -234,6 +236,34 @@ wake word wants `serve --no-phone` and no tunnel agent at all.
 Grant the terminal (and, once installed, the launchd agent) **microphone** permission in
 System Settings → Privacy & Security, or the wake word never hears anything.
 
+### Restarting it
+
+```bash
+uv run jarvis restart --reason "picked up new code"
+uv run jarvis restart --status     # how the last one went
+```
+
+This asks the service manager (systemd on Linux, launchd on macOS — `SERVICE_MANAGER`
+overrides the guess) to restart the unit, and **Jarvis phones you back by itself once it is
+up again**, with a one-line status: how long it was down, the version before and after,
+which channels are listening, and how many tasks the restart interrupted. You can also just
+ask it on the phone — "restart yourself" — and the voice model's `restart_service` does the
+same thing; that restart waits until you have hung up, because a restart drops every call in
+progress.
+
+Nothing rings while you are already talking to Jarvis: a confirmation that lands during a
+call is spoken into that call, and one that cannot be spoken is texted instead. If the call
+cannot be placed at all — Twilio down, no `PUBLIC_HOST`, the phone channel not running — the
+summary goes out as a text, and if even that fails the attempt is left on the record for
+`jarvis restart --status` to read back. Nothing supervising the process (a `jarvis serve` you
+started in a terminal) means `restart` refuses: stopping would leave nothing to start it
+again.
+
+The one thing it cannot tell you is that the service never came back — nothing of Jarvis's
+is left running to notice. That is what `Restart=always` / `KeepAlive` is for; if the call
+never comes, `systemctl --user status jarvis` and `~/.jarvis/logs/jarvis.log` are the place
+to look.
+
 ## Using it
 
 Call the number, or say **"hey jarvis"** at the Mac. Then talk normally:
@@ -283,6 +313,8 @@ uv run jarvis tasks list --limit 50
 uv run jarvis tasks show 12                   # every field, plus the written report
 uv run jarvis doctor                          # is this machine set up?
 uv run jarvis loopback --wav sample.wav       # one session from a WAV, no mic needed
+uv run jarvis restart --reason "new code"     # restart the service; it calls you back
+uv run jarvis restart --status                # how the last restart went
 ```
 
 `jarvis tasks` reads the SQLite store directly, so it works while the server is running

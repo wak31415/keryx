@@ -7,7 +7,8 @@ problem comes back as `{"error": ...}` (or a `status` the model is told how to r
 so a bad task id is a sentence the assistant can say rather than a dropped call.
 
 The PIN gate guards every tool that can put a subagent to work — `dispatch_task`,
-`send_followup` and `cancel_task`: on the phone they are refused with
+`send_followup` and `cancel_task` — and `restart_service`, which can take the phone
+channel off the air: on the phone they are refused with
 `{"status": "pin_required"}` until the session is authorized. Every task is gated now
 that there is one kind of task, and it has the machine and the mailbox. The check reads
 `ctx.authorized` live, so a PIN entered on the keypad while the model was thinking is
@@ -23,6 +24,7 @@ from pathlib import Path
 
 from jarvis.config import Settings
 from jarvis.inline_waits import InlineWaits
+from jarvis.restart import RestartCoordinator
 from jarvis.slack import SlackSender
 from jarvis.tasks.manager import TERMINAL_STATUSES, TaskLimitError, TaskManager, UnknownProjectError
 from jarvis.tasks.models import Task, TaskStatus
@@ -154,11 +156,13 @@ def register_builtin_tools(
     inline_waits: InlineWaits,
     searcher: WebSearcher | None = None,
     slack: SlackSender | None = None,
+    restarter: RestartCoordinator | None = None,
 ) -> None:
     """Register every tool the voice model has, bound to this process's task manager.
 
-    `web_search` and `send_to_slack` are registered only when a `searcher` / `slack` is
-    supplied, so a process without one simply does not offer that tool. Registering
+    `web_search`, `send_to_slack` and `restart_service` are registered only when a
+    `searcher` / `slack` / `restarter` is supplied, so a process without one simply does
+    not offer that tool. Registering
     `send_to_slack` only makes it *available*: whether it may be called is the voice
     model's decision, and both its description and the system prompt confine that to the
     turns where William explicitly asked for something on Slack.
@@ -561,6 +565,45 @@ def register_builtin_tools(
         },
         request_callback,
     )
+
+    # --- restart_service ---------------------------------------------------
+
+    if restarter is not None:
+
+        async def restart_service(ctx: ToolContext, arguments: dict) -> dict:
+            """Restart the service, and let it phone back when it is up (spec §3.3)."""
+            refusal = _pin_gate(ctx)
+            if refusal is not None:
+                return refusal
+            # Only ever a number we already trust: the one calling, or the owner's. A
+            # restart is not a way to make Jarvis dial a stranger.
+            return await restarter.request(
+                reason=_text(arguments, "reason"),
+                number=ctx.caller if ctx.channel == "phone" else None,
+                origin_channel=ctx.channel,
+                origin_session_id=ctx.session.session_id,
+            )
+
+        registry.register(
+            "restart_service",
+            "Restart Jarvis itself — the service behind this call — when he asks for one, "
+            "or when work he asked for has changed Jarvis's own code and only a restart "
+            "loads it. The restart drops this call, so it waits until the call has ended "
+            "and then rings him back by itself to confirm it worked; the answer tells you "
+            "what to say. Never reach for it to fix something you were not asked to fix.",
+            {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why it is being restarted, in a few words — he "
+                        "hears this back on the confirmation call.",
+                    },
+                },
+                "required": [],
+            },
+            restart_service,
+        )
 
     # --- submit_pin / end_session ------------------------------------------
 

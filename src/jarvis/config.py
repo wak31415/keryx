@@ -35,6 +35,7 @@ OPTIONAL_STR_FIELDS = (
     "user_google_email",
     "slack_bot_token",
     "slack_channel_id",
+    "service_unit",
 )
 
 
@@ -81,6 +82,14 @@ class Settings(BaseSettings):
     public_host: str | None = None
     host: str = "127.0.0.1"
     port: int = 8080
+
+    # The service manager `jarvis restart` (and the voice's `restart_service`) asks to
+    # restart this process. "auto" is systemd on Linux, launchd on macOS, and nothing at
+    # all when neither is on PATH — a Jarvis started by hand has nothing to bring it back,
+    # so it refuses to stop rather than take itself off the air.
+    service_manager: Literal["auto", "systemd", "launchd", "none"] = "auto"
+    #: The unit (systemd) or label (launchd) to restart; blank means the installed default.
+    service_unit: str | None = None
 
     # Projects
     projects: dict[str, str] = Field(default_factory=dict)

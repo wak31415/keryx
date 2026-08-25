@@ -76,6 +76,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
 | `web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool |
 | `slack.py` | `SlackSender` protocol + `SlackWebApi` (`chat.postMessage`), behind the voice model's `send_to_slack`; credentials resolve from the `auto-research` skill's MCP server config |
+| `restart.py` | `RestartCoordinator`: restart this service through systemd/launchd, and call back once it is up; `RestartStore` (the record that survives the restart), `resolve_target`, `health_probe` |
 | `events.py` | in-process async pub/sub `EventBus` + event dataclasses |
 | `audio/util.py` | soxr resampling, chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` (µ-law codec removed 2026-08-19: phone audio is passed through as `audio/pcmu`, nothing transcodes) |
 | `transports/base.py` | `Transport` protocol + `AudioIn`/`Dtmf`/`Hangup` events |
@@ -97,7 +98,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `app.py` | `AppState` composition root (settings → store, bus, manager, registry, notifier, session registry) |
 | `prompts/voice_system.md` | receptionist persona + tool-use guidance |
 | `prompts/subagent_suffix.md` | appended to Agent SDK system prompt: autonomous, ends with `SPOKEN_SUMMARY:` block |
-| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `setup-google`, `doctor` |
+| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `setup-google`, `doctor`, `restart` |
 
 ### 3.2 Binding interfaces
 
@@ -327,6 +328,20 @@ class SessionRegistry:
   result as the tool output instead) (marks `announced`), (2) SMS summary (with report link) unless a live *phone* session
   announced it, (3) if `callback_requested` and no live phone session announced → outbound
   call with `task_id`.
+- **Restarting is two halves and a file (added 2026-08-24).** The process that runs
+  `systemctl restart` is the process that gets killed, so `restart_service` / `jarvis restart`
+  writes `data_dir/restart.json` (what was asked for, by whom, on which number, which version
+  was running) *before* handing over, and `RestartCoordinator.resume()` — one task per
+  `jarvis serve` — is what finds it on the other side and confirms it. The confirmation is a
+  call, carrying a one-line status summary (how long it was down, the version then and now,
+  which channels are listening, how many tasks the restart interrupted) as the new session's
+  opening context. Neither half ever interrupts a call: a restart asked for *during* one waits
+  for the line to clear (and abandons itself rather than cut a call off), and the confirmation
+  is announced into a live session, or texted, rather than dialled into one. Attempts are
+  counted on the record before the dial, so a crash loop rings once, not once per crash; a call
+  that cannot be placed falls back to SMS; and a confirmation that fails outright leaves the
+  record behind as `failed`, for `jarvis restart --status`. A process nothing supervises refuses
+  to restart at all — stopping would take it off the air for good.
 - **PIN gate**: an empty/blank `JARVIS_PIN` counts as *not configured* (dispatching refused on phone). `session.authorized` starts False on phone; `submit_pin` (spoken) or DTMF
   digits (collected in the session, never shown to the model) flip it; `dispatch_task`
   returns `{"status":"pin_required"}` until authorized — every task, since 2026-08-24, because
@@ -367,6 +382,8 @@ class SessionRegistry:
 | `JARVIS_PIN` | `pin` | `None` (PIN-gated kinds refused on phone if unset) |
 | `PUBLIC_HOST` | `public_host` (the tunnel's hostname, e.g. `jarvis.example.com`) | `None` |
 | `HOST` / `PORT` | `host` / `port` | `127.0.0.1` / `8080` |
+| `SERVICE_MANAGER` | `service_manager` (`auto`/`systemd`/`launchd`/`none`; what `jarvis restart` asks) | `auto` → systemd on Linux, launchd on macOS, none if neither is on PATH |
+| `SERVICE_UNIT` | `service_unit` (the unit/label to restart) | `None` → `jarvis.service` / `com.william.jarvis` |
 | `PROJECTS` | `projects: dict[str,str]` (JSON) | `{}` |
 | `PROJECTS_ROOT` | `projects_root` | `~/Local/coding_projects` |
 | `SKILLS_DIR` | `skills_dir` (Claude skills listed in the voice prompt) | `~/.claude/skills` |
@@ -389,7 +406,8 @@ class SessionRegistry:
 
 Data layout under `data_dir`: `tasks.db`, `tasks/<id>.log` (agent transcript),
 `tasks/<id>.md` (final report), `calls/<session_id>.log` (voice transcript),
-`report_secret`, `google/` (MCP credentials).
+`report_secret`, `restart.json` (0600; the pending restart's call-back), `google/` (MCP
+credentials).
 
 ## 4. Verified API notes (Aug 2026)
 
