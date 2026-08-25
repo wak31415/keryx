@@ -13,6 +13,8 @@ Realtime API and Claude Agent SDK subagents.
   `--fake-agents` / `--host` / `--port`); `scripts/dev.sh` adds the Cloudflare tunnel
 - Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N]`,
   `uv run jarvis tasks show <id>`
+- Restart the service: `uv run jarvis restart [--reason …] [--force] [--no-callback]`
+  (it phones back when it is up again); `uv run jarvis restart --status` for the last one
 - One-off setup: `uv run jarvis download-models`, `uv run jarvis setup-google`
 - Background service: `scripts/install-systemd.sh [--uninstall]` on Linux,
   `scripts/install-launchd.sh [--uninstall]` on macOS
@@ -34,6 +36,16 @@ its own, and decides for itself what a request needs. The voice model's only rou
 decision is answer-it-myself (small facts go through its `web_search` tool, backed by the
 Responses API) versus dispatch. Do not reintroduce kinds to express "this one is
 read-only" — the phone PIN gates every dispatch instead.
+
+## Restarts are two halves
+
+The process that runs `systemctl restart` is the one that gets killed, so `jarvis/restart.py`
+splits the flow across that death and joins it with `data_dir/restart.json`: `request()` writes
+the record and hands over, `resume()` (one task per `jarvis serve`) finds it on the far side and
+rings back with a status summary. Neither half may interrupt a call — a restart asked for during
+one waits for the line to clear, and the confirmation is announced or texted rather than dialled
+into a live session. Keep it that way, and keep every failure path landing somewhere a human can
+find it (`jarvis restart --status`).
 
 ## Platforms
 

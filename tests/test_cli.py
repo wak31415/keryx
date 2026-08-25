@@ -15,6 +15,7 @@ from jarvis.app import TASK_DB_NAME
 from jarvis.cli import LOG_BACKUP_COUNT, LOG_MAX_BYTES, MAX_REPORT_CHARS, app
 from jarvis.config import PLACEHOLDER_KEY, Settings
 from jarvis.realtime.base import AudioDelta, Transcript
+from jarvis.restart import RECORD_NAME, RestartRecord, RestartStore, ServiceTarget
 from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
@@ -47,7 +48,15 @@ def test_help_lists_the_commands():
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
-    for command in ("serve", "loopback", "download-models", "tasks", "doctor", "setup-google"):
+    for command in (
+        "serve",
+        "loopback",
+        "download-models",
+        "tasks",
+        "doctor",
+        "setup-google",
+        "restart",
+    ):
         assert command in result.output
 
 
@@ -446,6 +455,139 @@ def test_read_only_commands_run_without_an_openai_key(monkeypatch, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert calls == [{}, {"openai_api_key": PLACEHOLDER_KEY}]
+
+
+# --- restart ---------------------------------------------------------------
+
+
+@pytest.fixture
+def restart_settings(monkeypatch, tmp_path):
+    """Settings with somebody to call back, and no real service manager anywhere near."""
+    settings = Settings(
+        _env_file=None,
+        openai_api_key="test",
+        data_dir=tmp_path / "jarvis",
+        owner_number_explicit="+15550000001",
+    )
+    monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
+    monkeypatch.setattr("jarvis.cli.current_version", lambda repo=None: "v-test")
+    monkeypatch.setattr(
+        "jarvis.cli.resolve_target", lambda _settings: ServiceTarget("systemd", "jarvis.service")
+    )
+    monkeypatch.setattr("jarvis.cli.health_probe", lambda _settings: 0)
+    return settings
+
+
+@pytest.fixture
+def ran(monkeypatch):
+    """Records the restart command instead of running it; `returncode` is settable."""
+    calls: list[list[str]] = []
+
+    class Done:
+        returncode = 0
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        return Done
+
+    monkeypatch.setattr("jarvis.cli.subprocess.run", fake_run)
+    return calls, Done
+
+
+def test_restart_asks_the_service_manager_and_records_the_call_back(restart_settings, ran):
+    calls, _ = ran
+
+    result = runner.invoke(app, ["restart", "--reason", "new code"])
+
+    assert result.exit_code == 0
+    assert calls == [["systemctl", "--user", "restart", "jarvis.service"]]
+    record = RestartStore(restart_settings.data_dir / RECORD_NAME).load()
+    assert record.reason == "new code"
+    assert record.number == "+15550000001"
+    assert record.origin_channel == "cli"
+    assert "…0001" in result.output  # the number is masked where it is printed
+
+
+def test_restart_refuses_to_cut_off_a_live_call(restart_settings, ran, monkeypatch):
+    calls, _ = ran
+    monkeypatch.setattr("jarvis.cli.health_probe", lambda _settings: 1)
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1
+    assert "cuts them off" in result.output
+    assert calls == []
+    assert not (restart_settings.data_dir / RECORD_NAME).exists()
+
+
+def test_restart_force_goes_ahead_anyway(restart_settings, ran, monkeypatch):
+    calls, _ = ran
+    monkeypatch.setattr("jarvis.cli.health_probe", lambda _settings: 1)
+
+    result = runner.invoke(app, ["restart", "--force"])
+
+    assert result.exit_code == 0
+    assert calls
+
+
+def test_restart_without_a_service_manager_says_how_to_install_one(
+    restart_settings, ran, monkeypatch
+):
+    calls, _ = ran
+    monkeypatch.setattr("jarvis.cli.resolve_target", lambda _settings: None)
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1
+    assert "install-systemd.sh" in result.output
+    assert calls == []
+
+
+def test_restart_no_callback_leaves_no_number(restart_settings, ran):
+    result = runner.invoke(app, ["restart", "--no-callback"])
+
+    assert result.exit_code == 0
+    assert RestartStore(restart_settings.data_dir / RECORD_NAME).load().number is None
+    assert "no call back was asked for" in result.output
+
+
+def test_a_restart_command_that_fails_says_so_and_keeps_the_record(restart_settings, ran):
+    _, done = ran
+    done.returncode = 3
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1
+    record = RestartStore(restart_settings.data_dir / RECORD_NAME).load()
+    assert record.state == "failed"
+    assert "exited 3" in record.error
+
+
+def test_restart_status_with_nothing_on_record(restart_settings):
+    result = runner.invoke(app, ["restart", "--status"])
+
+    assert result.exit_code == 0
+    assert "no restart on record" in result.output
+
+
+def test_restart_status_reads_back_a_failure(restart_settings):
+    store = RestartStore(restart_settings.data_dir / RECORD_NAME)
+    store.save(
+        RestartRecord(
+            requested_at="2026-08-24T10:00:00+00:00",
+            reason="new code",
+            number="+15550000001",
+            state="failed",
+            error="twilio would not take the call",
+        )
+    )
+
+    result = runner.invoke(app, ["restart", "--status"])
+
+    assert result.exit_code == 0
+    assert "failed" in result.output
+    assert "twilio would not take the call" in result.output
+    assert "+15550000001" not in result.output  # masked, even here
 
 
 # --- doctor ----------------------------------------------------------------

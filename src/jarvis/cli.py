@@ -6,8 +6,9 @@ import dataclasses
 import logging
 import logging.handlers
 import signal
+import subprocess
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -23,6 +24,17 @@ from jarvis.events import EventBus
 from jarvis.google_setup import GoogleSetupError, run_google_setup
 from jarvis.local_runner import LocalRunner
 from jarvis.realtime.openai import OpenAIRealtimeClient
+from jarvis.restart import (
+    RECORD_NAME,
+    UNSUPPORTED_HINT,
+    RestartRecord,
+    RestartStore,
+    current_version,
+    health_probe,
+    mask_number,
+    resolve_target,
+    wait_until_serving,
+)
 from jarvis.server import create_app
 from jarvis.session import VoiceSession
 from jarvis.tasks.models import Task, TaskStatus
@@ -154,6 +166,18 @@ async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
         runner_task = asyncio.create_task(_build_local_runner(state).run(), name="local-runner")
         typer.echo('listening — say "hey jarvis" (ctrl-c to quit)')
 
+    # If this process is the far side of a restart, confirm it — by itself, once the phone
+    # server is really listening. It is deliberately not one of the `tasks` below: finishing
+    # is what it does, and that must not bring the server down with it.
+    ready = (lambda: wait_until_serving(server)) if server is not None else None
+    callback_task = (
+        asyncio.create_task(
+            state.restart.resume(wait_ready=ready, wakeword=wakeword), name="restart-callback"
+        )
+        if state.restart is not None
+        else None
+    )
+
     def shutdown() -> None:
         """Stop everything; uvicorn asks for `should_exit`, the runner for a cancel."""
         if server is not None:
@@ -168,6 +192,10 @@ async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     finally:
         shutdown()
+        if callback_task is not None:
+            callback_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await callback_task
         for result in await asyncio.gather(*tasks, return_exceptions=True):
             if isinstance(result, Exception):
                 log.error("serve task failed", exc_info=result)
@@ -219,6 +247,102 @@ def _run_on_signals(callback) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError, ValueError):
             loop.add_signal_handler(sig, callback)
+
+
+# --- restart ---------------------------------------------------------------
+
+
+def _restart_store(settings: Settings) -> RestartStore:
+    return RestartStore(settings.data_dir / RECORD_NAME)
+
+
+@app.command()
+def restart(
+    reason: Annotated[
+        str, typer.Option("--reason", help="Why, in a few words; you hear it back on the call.")
+    ] = "",
+    force: Annotated[
+        bool, typer.Option("--force", help="Restart even while a call is in progress.")
+    ] = False,
+    no_callback: Annotated[
+        bool, typer.Option("--no-callback", help="Restart quietly, with no call afterwards.")
+    ] = False,
+    status: Annotated[
+        bool, typer.Option("--status", help="Print how the last restart went, and exit.")
+    ] = False,
+) -> None:
+    """Restart the Jarvis service; it phones back by itself once it is up again."""
+    settings = _configure_readonly()
+    store = _restart_store(settings)
+    if status:
+        _echo_restart_status(store)
+        return
+
+    target = resolve_target(settings)
+    if target is None:
+        typer.echo(UNSUPPORTED_HINT)
+        raise typer.Exit(1)
+
+    live = health_probe(settings)
+    if live is None:
+        where = f"http://{settings.host}:{settings.port}"
+        typer.echo(f"nothing answering on {where} — restarting anyway")
+    elif live and not force:
+        typer.echo(f"{live} live session(s): a restart cuts them off. Wait, or pass --force.")
+        raise typer.Exit(1)
+
+    number = None if no_callback else settings.owner_number
+    if not no_callback and not number:
+        typer.echo("no OWNER_NUMBER to call back on: this restart will not be confirmed by phone")
+    record = RestartRecord(
+        requested_at=datetime.now(UTC).isoformat(),
+        reason=reason.strip(),
+        number=number,
+        origin_channel="cli",
+        target=target.describe(),
+        version=current_version(),
+    )
+    if not store.save(record):
+        typer.echo(f"could not write {store.path}: the restart would go unconfirmed")
+        raise typer.Exit(1)
+
+    command = target.command()
+    typer.echo(" ".join(command))
+    code = subprocess.run(command, check=False).returncode
+    if code != 0:
+        record.state = "failed"
+        record.error = f"{command[0]} exited {code}"
+        store.save(record)
+        typer.echo(f"the restart failed: {record.error}")
+        raise typer.Exit(1)
+
+    if number:
+        typer.echo(f"restarting; jarvis will call {mask_number(number)} when it is back up")
+    else:
+        typer.echo("restarting; no call back was asked for")
+    typer.echo("if the call never comes: jarvis restart --status")
+
+
+def _echo_restart_status(store: RestartStore) -> None:
+    """Print the record the last restart left behind — the only trace of one that failed."""
+    record = store.load()
+    if record is None:
+        typer.echo("no restart on record: the last one was confirmed, or there has not been one")
+        return
+    rows = [
+        ("asked for", record.requested_at),
+        ("reason", record.reason),
+        ("through", record.target),
+        ("version", record.version),
+        ("call back", mask_number(record.number)),
+        ("state", record.state),
+        ("attempts", record.attempts),
+        ("error", record.error),
+    ]
+    width = max(len(name) for name, _ in rows)
+    for name, value in rows:
+        if value not in (None, ""):
+            typer.echo(f"{name:<{width}}  {value}")
 
 
 @app.command()

@@ -9,7 +9,8 @@ runner) in.
 
 `build_app_state` also starts the Notifier, which is what turns a finished task into
 something the user actually hears: an announcement into the live sessions, a text, or a
-call back (spec §3.3).
+call back (spec §3.3), and builds the `RestartCoordinator` that does the same for a
+restart of the service itself.
 """
 
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from jarvis.notify.notifier import Notifier
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.base import ProviderFactory
 from jarvis.realtime.openai import OpenAIRealtimeClient
+from jarvis.restart import RestartCoordinator
 from jarvis.session import SessionRegistry
 from jarvis.slack import SlackWebApi, slack_credentials
 from jarvis.stream_tokens import StreamTokenStore
@@ -54,6 +56,7 @@ class AppState:
     manager: TaskManager | None = None
     notifier: Notifier | None = None
     twilio_out: TwilioOut | None = None
+    restart: RestartCoordinator | None = None
 
 
 def build_app_state(settings: Settings) -> AppState:
@@ -67,6 +70,13 @@ def build_app_state(settings: Settings) -> AppState:
 
     registry = ToolRegistry()
     inline_waits = InlineWaits()
+    # Built before the tools, because `restart_service` is bound to the coordinator the
+    # way the task tools are bound to the manager; the outbound half is the Notifier's.
+    sessions = SessionRegistry()
+    stream_tokens = StreamTokenStore()
+    twilio_out = TwilioOut(settings)
+    restart = RestartCoordinator(settings, sessions, twilio_out, stream_tokens, store)
+
     # No Slack app configured anywhere is not an error: the tool is simply not offered.
     credentials = slack_credentials(settings.slack_bot_token, settings.slack_channel_id)
     slack = SlackWebApi(*credentials) if credentials else None
@@ -77,30 +87,32 @@ def build_app_state(settings: Settings) -> AppState:
         inline_waits=inline_waits,
         searcher=OpenAIWebSearch(settings.openai_api_key, settings.openai_web_search_model),
         slack=slack,
+        restarter=restart,
     )
 
     state = AppState(
         settings=settings,
         bus=bus,
-        sessions=SessionRegistry(),
+        sessions=sessions,
         registry=registry,
         provider_factory=lambda: OpenAIRealtimeClient(
             settings.openai_api_key, settings.openai_realtime_model
         ),
-        stream_tokens=StreamTokenStore(),
+        stream_tokens=stream_tokens,
         inline_waits=inline_waits,
         store=store,
         manager=manager,
     )
-    state.twilio_out = TwilioOut(settings)
+    state.twilio_out = twilio_out
+    state.restart = restart
     state.notifier = Notifier(
         bus,
         store,
-        state.sessions,
-        state.twilio_out,
+        sessions,
+        twilio_out,
         settings,
-        state.stream_tokens,
-        state.inline_waits,
+        stream_tokens,
+        inline_waits,
     )
     state.notifier.start()
     return state
@@ -110,6 +122,8 @@ async def shutdown_app_state(state: AppState) -> None:
     """Take the notifier off the bus, stop the manager, close the store. Idempotent."""
     if state.notifier is not None:
         state.notifier.stop()
+    if state.restart is not None:
+        await state.restart.shutdown()
     if state.manager is not None:
         await state.manager.shutdown()
     if state.store is not None:

@@ -8,6 +8,7 @@ from jarvis.events import TaskCompleted
 from jarvis.notify.notifier import Notifier
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.openai import OpenAIRealtimeClient
+from jarvis.restart import RestartCoordinator
 from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import Task, TaskKind
@@ -45,6 +46,13 @@ async def test_build_app_state_wires_the_notifier(state):
     assert isinstance(state.twilio_out, TwilioOut)
     assert isinstance(state.notifier, Notifier)
     assert state.twilio_out.configured is False  # no Twilio credentials in these settings
+
+
+async def test_build_app_state_wires_the_restart_coordinator(state):
+    """It shares the session registry, so it can see a call it must not interrupt."""
+    assert isinstance(state.restart, RestartCoordinator)
+    assert "restart_service" in {schema["name"] for schema in state.registry.schemas()}
+    assert state.restart._sessions is state.sessions
 
 
 async def test_a_finished_task_is_spoken_into_every_live_session(state):

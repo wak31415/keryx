@@ -1,0 +1,713 @@
+"""Tests for the restart flow: schedule one, then confirm it afterwards (spec §3.3).
+
+Nothing here starts a process, opens a socket or waits on a clock. The service manager is
+a fake `spawn`, Twilio is a fake, and `sleep` is a double that returns at once — and that
+plays dead where the real process would be killed by the restart it just asked for.
+"""
+
+import asyncio
+import json
+import os
+import stat
+from datetime import UTC, datetime, timedelta
+from xml.etree import ElementTree
+
+import pytest
+from fakes import FakeVoiceSession
+
+from jarvis.config import Settings
+from jarvis.restart import (
+    EXEC_CONFIRM_S,
+    LAUNCHD_LABEL,
+    MAX_CALLBACK_ATTEMPTS,
+    SYSTEMD_UNIT,
+    RestartCoordinator,
+    RestartRecord,
+    RestartStore,
+    current_version,
+    format_duration,
+    health_probe,
+    mask_number,
+    resolve_target,
+    wait_until_serving,
+)
+from jarvis.session import SessionRegistry
+from jarvis.stream_tokens import StreamTokenStore
+from jarvis.tasks.models import Task, TaskKind, TaskStatus
+from jarvis.tasks.store import TaskStore
+
+OWNER = "+15550000001"
+CALLER = "+15551234567"
+HOST = "jarvis.example"
+VERSION = "v1-abc1234"
+
+
+# --- doubles ---------------------------------------------------------------
+
+
+class FakeTwilioOut:
+    """Records what would have gone to Twilio; `configured` and the errors are settable."""
+
+    def __init__(self, *, configured: bool = True) -> None:
+        self.configured = configured
+        self.sms: list[tuple[str, str]] = []
+        self.calls: list[dict] = []
+        self.sms_error: Exception | None = None
+        self.call_error: Exception | None = None
+
+    async def send_sms(self, to: str, body: str) -> str:
+        if self.sms_error is not None:
+            raise self.sms_error
+        self.sms.append((to, body))
+        return "SM1"
+
+    async def place_call(self, to: str, *, twiml: str, status_callback: str | None = None) -> str:
+        if self.call_error is not None:
+            raise self.call_error
+        self.calls.append({"to": to, "twiml": twiml, "status_callback": status_callback})
+        return "CA1"
+
+
+class FakeSleep:
+    """A sleep that returns at once, and plays dead where the real process would be killed.
+
+    `_execute` waits `EXEC_CONFIRM_S` to be taken down by the service manager it just asked
+    for a restart. Letting that wait *return* is the machine failing to restart, so the
+    default double raises `CancelledError` there instead — which is what being killed looks
+    like from the inside. `dies=False` is the test that wants the other outcome.
+    """
+
+    def __init__(self, *, dies: bool = True, hook=None) -> None:
+        self.calls: list[float] = []
+        self.dies = dies
+        self.hook = hook
+
+    async def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+        if self.hook is not None:
+            self.hook(len(self.calls))
+        if self.dies and seconds >= EXEC_CONFIRM_S:
+            raise asyncio.CancelledError("the service manager killed us")
+        await asyncio.sleep(0)
+
+
+class FakeSpawn:
+    """The service manager: records the command and returns the exit code it is given."""
+
+    def __init__(self, code: int | None = 0, error: Exception | None = None) -> None:
+        self.commands: list[list[str]] = []
+        self.code = code
+        self.error = error
+
+    async def __call__(self, command) -> int | None:
+        self.commands.append(list(command))
+        if self.error is not None:
+            raise self.error
+        return self.code
+
+
+def make_settings(tmp_path, **overrides) -> Settings:
+    values = {
+        "openai_api_key": "test",
+        "data_dir": tmp_path / "jarvis",
+        "owner_number_explicit": OWNER,
+        "public_host": HOST,
+        "service_manager": "systemd",
+    }
+    values.update(overrides)
+    settings = Settings(_env_file=None, **values)
+    settings.ensure_dirs()
+    return settings
+
+
+class Harness:
+    """A coordinator with every outside edge faked, plus the pieces to assert on."""
+
+    def __init__(self, settings, *, spawn=None, sleep=None, tasks=None, twilio=None) -> None:
+        self.settings = settings
+        self.sessions = SessionRegistry()
+        self.twilio = twilio or FakeTwilioOut()
+        self.tokens = StreamTokenStore()
+        self.spawn = spawn or FakeSpawn()
+        self.sleep = sleep or FakeSleep()
+        self.store = RestartStore(settings.data_dir / "restart.json")
+        self.coordinator = RestartCoordinator(
+            settings,
+            self.sessions,
+            self.twilio,
+            self.tokens,
+            tasks,
+            store=self.store,
+            spawn=self.spawn,
+            sleep=self.sleep,
+        )
+
+    async def settle(self) -> None:
+        """Let the background restart task run to wherever it gets to."""
+        deferred = self.coordinator._deferred
+        if deferred is not None:
+            with contextlib_suppress():
+                await deferred
+
+    def record(self) -> RestartRecord | None:
+        return self.store.load()
+
+
+class contextlib_suppress:
+    """`contextlib.suppress(CancelledError)` for an await — spelled out to stay readable."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return exc_type is not None and issubclass(exc_type, asyncio.CancelledError)
+
+
+@pytest.fixture(autouse=True)
+def _fixed_version(monkeypatch):
+    """`git describe` is real work on a real checkout; pin it so summaries are assertable."""
+    monkeypatch.setattr("jarvis.restart.current_version", lambda repo=None: VERSION)
+
+
+@pytest.fixture
+def harness(tmp_path):
+    return Harness(make_settings(tmp_path))
+
+
+def stream_parameters(twiml: str) -> dict[str, str]:
+    """The `<Parameter>` name/value pairs inside a `<Connect><Stream>` document."""
+    stream = ElementTree.fromstring(twiml).find("./Connect/Stream")
+    assert stream is not None, twiml
+    return {p.get("name"): p.get("value") for p in stream.findall("Parameter")}
+
+
+def pending(**fields) -> RestartRecord:
+    """A record as the process that asked for the restart would have left it."""
+    values = {
+        "requested_at": datetime.now(UTC).isoformat(),
+        "reason": "picked up new code",
+        "number": OWNER,
+        "origin_channel": "phone",
+        "target": "systemd jarvis.service",
+        "version": "v0-old0000",
+    }
+    values.update(fields)
+    return RestartRecord(**values)
+
+
+# --- the service manager ---------------------------------------------------
+
+
+def test_auto_picks_systemd_on_linux(tmp_path):
+    settings = make_settings(tmp_path, service_manager="auto")
+
+    target = resolve_target(settings, platform="linux", which=lambda name: f"/usr/bin/{name}")
+
+    assert target is not None
+    assert (target.manager, target.unit) == ("systemd", SYSTEMD_UNIT)
+    assert target.command() == ["systemctl", "--user", "restart", SYSTEMD_UNIT]
+
+
+def test_auto_picks_launchd_on_macos(tmp_path):
+    settings = make_settings(tmp_path, service_manager="auto")
+
+    target = resolve_target(settings, platform="darwin", which=lambda name: f"/bin/{name}")
+
+    assert target is not None
+    assert (target.manager, target.unit) == ("launchd", LAUNCHD_LABEL)
+    assert target.command() == [
+        "launchctl",
+        "kickstart",
+        "-k",
+        f"gui/{os.getuid()}/{LAUNCHD_LABEL}",
+    ]
+
+
+def test_nothing_supervising_us_is_no_target(tmp_path):
+    """A Jarvis started by hand has nothing that would start it again: it must not stop."""
+    settings = make_settings(tmp_path, service_manager="auto")
+
+    assert resolve_target(settings, platform="linux", which=lambda name: None) is None
+
+
+def test_service_manager_none_refuses(tmp_path):
+    settings = make_settings(tmp_path, service_manager="none")
+
+    assert resolve_target(settings, platform="linux", which=lambda name: "/usr/bin/x") is None
+
+
+def test_a_configured_manager_without_its_command_is_no_target(tmp_path):
+    settings = make_settings(tmp_path, service_manager="systemd")
+
+    assert resolve_target(settings, platform="linux", which=lambda name: None) is None
+
+
+def test_the_unit_can_be_overridden(tmp_path):
+    settings = make_settings(tmp_path, service_manager="systemd", service_unit="jarvis-dev.service")
+
+    target = resolve_target(settings, platform="linux", which=lambda name: "/usr/bin/systemctl")
+
+    assert target.unit == "jarvis-dev.service"
+
+
+def test_current_version_never_raises(tmp_path):
+    """Whatever it finds (or does not), it is decoration and must not throw."""
+    assert current_version(tmp_path) is None or isinstance(current_version(tmp_path), str)
+
+
+# --- the record ------------------------------------------------------------
+
+
+def test_the_record_round_trips(tmp_path):
+    store = RestartStore(tmp_path / "restart.json")
+    record = pending()
+
+    assert store.save(record)
+
+    assert store.load() == record
+
+
+def test_the_record_is_private(tmp_path):
+    """It holds a phone number, so it is written 0600."""
+    store = RestartStore(tmp_path / "restart.json")
+
+    store.save(pending())
+
+    assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
+
+
+def test_a_missing_record_is_no_record(tmp_path):
+    assert RestartStore(tmp_path / "nothing.json").load() is None
+
+
+def test_a_corrupt_record_is_no_record(tmp_path):
+    path = tmp_path / "restart.json"
+    path.write_text("{not json")
+
+    assert RestartStore(path).load() is None
+
+
+def test_unknown_fields_in_the_record_are_ignored(tmp_path):
+    """A record written by another version must not stop this one from reading it."""
+    path = tmp_path / "restart.json"
+    path.write_text(json.dumps({"requested_at": "2026-08-24T10:00:00+00:00", "future": 1}))
+
+    record = RestartStore(path).load()
+
+    assert record is not None and record.requested_at.startswith("2026-08-24")
+
+
+def test_clearing_a_record_that_is_gone_is_fine(tmp_path):
+    RestartStore(tmp_path / "nothing.json").clear()
+
+
+def test_age_of_an_unreadable_stamp_is_unknown():
+    assert RestartRecord(requested_at="whenever").age_seconds() is None
+
+
+def test_age_counts_from_the_request():
+    asked = datetime.now(UTC) - timedelta(seconds=30)
+    record = RestartRecord(requested_at=asked.isoformat())
+
+    assert 29 <= record.age_seconds() <= 31
+
+
+# --- asking for a restart --------------------------------------------------
+
+
+async def test_a_quiet_line_restarts_at_once(harness):
+    result = await harness.coordinator.request(reason="new code", origin_channel="phone")
+
+    assert result["status"] == "restarting"
+    await harness.settle()
+    assert harness.spawn.commands == [["systemctl", "--user", "restart", SYSTEMD_UNIT]]
+
+
+async def test_the_record_says_who_to_call_and_what_was_running(harness):
+    await harness.coordinator.request(reason="new code", number=CALLER, origin_channel="phone")
+
+    record = harness.record()
+    assert record.number == CALLER
+    assert record.reason == "new code"
+    assert record.version == VERSION
+    assert record.target == "systemd jarvis.service"
+    assert record.state == "pending"
+
+
+async def test_without_a_number_the_owner_is_called(harness):
+    await harness.coordinator.request()
+
+    assert harness.record().number == OWNER
+
+
+async def test_a_live_call_holds_the_restart_until_it_ends(tmp_path):
+    """A restart drops every call, so it waits for the one that asked for it to end."""
+    harness = Harness(make_settings(tmp_path))
+    session = FakeVoiceSession(channel="phone")
+    harness.sessions.add(session)
+    # The line clears while the coordinator is waiting for it.
+    harness.sleep.hook = lambda calls: session.__setattr__("is_live", False)
+
+    result = await harness.coordinator.request(origin_channel="phone")
+
+    assert result["status"] == "deferred"
+    assert harness.spawn.commands == []
+    await harness.settle()
+    assert harness.spawn.commands == [["systemctl", "--user", "restart", SYSTEMD_UNIT]]
+
+
+async def test_a_call_that_never_ends_cancels_the_restart(tmp_path):
+    """Rather than cut somebody off, the restart gives up and leaves no record behind."""
+    harness = Harness(make_settings(tmp_path))
+    harness.sessions.add(FakeVoiceSession(channel="phone"))
+
+    await harness.coordinator.request()
+    await harness.settle()
+
+    assert harness.spawn.commands == []
+    assert harness.record() is None
+
+
+async def test_force_restarts_through_a_live_call(tmp_path):
+    harness = Harness(make_settings(tmp_path))
+    harness.sessions.add(FakeVoiceSession(channel="phone"))
+
+    result = await harness.coordinator.request(force=True)
+
+    assert result["status"] == "restarting"
+    await harness.settle()
+    assert harness.spawn.commands
+
+
+async def test_a_second_request_does_not_stack(tmp_path):
+    harness = Harness(make_settings(tmp_path))
+    harness.sessions.add(FakeVoiceSession(channel="phone"))
+
+    await harness.coordinator.request()
+    result = await harness.coordinator.request()
+
+    assert result["status"] == "already_pending"
+
+
+async def test_no_service_manager_refuses_and_writes_nothing(tmp_path):
+    harness = Harness(make_settings(tmp_path, service_manager="none"))
+
+    result = await harness.coordinator.request()
+
+    assert result["status"] == "unsupported"
+    assert "cannot restart yourself" in result["message"]
+    assert harness.record() is None
+    assert harness.spawn.commands == []
+
+
+async def test_the_model_is_warned_when_it_cannot_ring_back(tmp_path):
+    harness = Harness(make_settings(tmp_path), twilio=FakeTwilioOut(configured=False))
+
+    result = await harness.coordinator.request()
+
+    assert result["status"] == "restarting"
+    assert "cannot ring him back" in result["message"]
+
+
+async def test_a_restart_command_that_fails_is_recorded_and_texted(tmp_path):
+    harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(code=1))
+
+    await harness.coordinator.request()
+    await harness.settle()
+
+    record = harness.record()
+    assert record.state == "failed"
+    assert "exited 1" in record.error
+    assert harness.twilio.sms and "did not go through" in harness.twilio.sms[0][1]
+
+
+async def test_a_restart_command_that_is_missing_is_recorded(tmp_path):
+    spawn = FakeSpawn(error=FileNotFoundError("systemctl"))
+    harness = Harness(make_settings(tmp_path), spawn=spawn)
+
+    await harness.coordinator.request()
+    await harness.settle()
+
+    assert harness.record().state == "failed"
+    assert "FileNotFoundError" in harness.record().error
+
+
+async def test_a_restart_that_does_nothing_is_not_left_silent(tmp_path):
+    """The command returned 0 and we are still here: nothing restarted, so say so."""
+    harness = Harness(make_settings(tmp_path), sleep=FakeSleep(dies=False))
+
+    await harness.coordinator.request()
+    await harness.settle()
+
+    assert harness.record().state == "failed"
+    assert "nothing happened" in harness.record().error
+
+
+async def test_a_failed_restart_is_told_to_whoever_is_on_the_line(tmp_path):
+    harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(code=1), sleep=FakeSleep())
+    session = FakeVoiceSession(channel="phone")
+
+    await harness.coordinator.request(force=True)
+    harness.sessions.add(session)
+    await harness.settle()
+
+    assert any("did not go through" in text for text in session.announced)
+    assert harness.twilio.sms == []  # said out loud, so not texted as well
+
+
+# --- confirming it afterwards ----------------------------------------------
+
+
+async def ready() -> bool:
+    return True
+
+
+async def not_ready() -> bool:
+    return False
+
+
+async def test_no_record_means_no_call(harness):
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert harness.twilio.calls == []
+    assert harness.twilio.sms == []
+
+
+async def test_a_finished_restart_calls_back(harness):
+    harness.store.save(pending())
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert len(harness.twilio.calls) == 1
+    assert harness.twilio.calls[0]["to"] == OWNER
+    assert harness.twilio.calls[0]["status_callback"] == f"https://{HOST}/twilio/status"
+
+
+async def test_the_call_carries_a_redeemable_token_and_the_status(harness):
+    harness.store.save(pending())
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
+    info = harness.tokens.redeem(parameters["token"])
+    assert info is not None and info.caller == OWNER
+    context = info.extra["opening_context"]
+    assert "restarted" in context
+    assert "picked up new code" in context  # the reason he gave, read back to him
+    assert "back up after" in context
+    assert "phone listening" in context
+
+
+async def test_the_summary_says_what_changed(tmp_path):
+    harness = Harness(make_settings(tmp_path))
+    record = pending(version="v0-old0000")
+
+    summary = await harness.coordinator.status_summary(record, phone_up=True, wakeword=True)
+
+    assert f"now on {VERSION}, was v0-old0000" in summary
+    assert "phone and wake word listening" in summary
+    assert "no tasks were lost" in summary
+
+
+async def test_the_summary_counts_what_the_restart_interrupted(tmp_path):
+    """Nothing resumes a running task across a restart, so the call says so plainly."""
+    store = TaskStore(":memory:")
+    for text, status in (("a", TaskStatus.RUNNING), ("b", TaskStatus.QUEUED)):
+        await store.create(Task(id=None, kind=TaskKind.AGENT, description=text, status=status))
+    harness = Harness(make_settings(tmp_path), tasks=store)
+
+    summary = await harness.coordinator.status_summary(pending(), phone_up=True)
+
+    assert "1 task(s) were interrupted and will not resume" in summary
+    assert "1 task(s) left queued" in summary
+    await store.close()
+
+
+async def test_the_record_is_cleared_once_the_call_is_placed(harness):
+    harness.store.save(pending())
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert harness.record() is None
+
+
+async def test_somebody_already_talking_is_told_not_rung(harness):
+    """The confirmation must never interrupt a call — it is said into the one in progress."""
+    session = FakeVoiceSession(channel="phone")
+    harness.sessions.add(session)
+    harness.store.save(pending())
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert harness.twilio.calls == []
+    assert any("restart is done" in text for text in session.announced)
+    assert harness.record() is None
+
+
+async def test_a_busy_line_that_cannot_hear_it_gets_a_text(tmp_path):
+    """A session too far gone to speak into is still a session: text, never ring."""
+    harness = Harness(make_settings(tmp_path))
+    harness.sessions.add(FakeVoiceSession(channel="phone", accepts=False))
+    harness.store.save(pending())
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert harness.twilio.calls == []
+    assert harness.twilio.sms and "back up" in harness.twilio.sms[0][1]
+    assert harness.record() is None
+
+
+async def test_without_the_phone_server_it_texts_instead(harness):
+    """An outbound call is answered by our own media stream; with none, it would ring out."""
+    harness.store.save(pending())
+
+    await harness.coordinator.resume(wait_ready=lambda: not_ready())
+
+    assert harness.twilio.calls == []
+    to, body = harness.twilio.sms[0]
+    assert to == OWNER
+    assert "phone server is not listening" in body
+
+
+async def test_a_call_that_will_not_place_falls_back_to_a_text(harness):
+    harness.twilio.call_error = RuntimeError("twilio is down")
+    harness.store.save(pending())
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert harness.twilio.sms and "twilio is down" in harness.twilio.sms[0][1]
+    assert harness.record() is None
+
+
+async def test_a_confirmation_that_cannot_be_delivered_at_all_is_kept(harness):
+    """Nothing got through: the record stays, marked, for `jarvis restart --status`."""
+    harness.twilio.call_error = RuntimeError("twilio is down")
+    harness.twilio.sms_error = RuntimeError("twilio is still down")
+    harness.store.save(pending())
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    record = harness.record()
+    assert record.state == "failed"
+    assert "could not confirm the restart" in record.error
+
+
+async def test_a_failed_record_is_not_retried(harness):
+    harness.store.save(pending(state="failed", error="whatever"))
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert harness.twilio.calls == []
+    assert harness.twilio.sms == []
+
+
+async def test_a_crash_loop_rings_once_not_once_per_crash(harness, monkeypatch):
+    """A service that dies before it can dial leaves the count behind; the cap stops it."""
+    harness.store.save(pending())
+    monkeypatch.setattr(RestartCoordinator, "_deliver", _nothing)
+    for _ in range(MAX_CALLBACK_ATTEMPTS):
+        await harness.coordinator.resume(wait_ready=lambda: ready())
+    assert harness.record().attempts == MAX_CALLBACK_ATTEMPTS
+
+    monkeypatch.undo()
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert harness.twilio.calls == []
+    assert harness.twilio.sms  # the text is what is left when the phone cannot be trusted
+    assert harness.record().state == "failed"
+    assert "restarted repeatedly" in harness.record().error
+
+
+async def _nothing(*args, **kwargs) -> None:
+    """A delivery that never happens: the process died between the count and the dial."""
+
+
+async def test_the_attempt_is_counted_before_the_call(harness):
+    """A process that dies mid-dial must come back to a record that shows the attempt."""
+    harness.store.save(pending())
+
+    class Exploding(FakeTwilioOut):
+        async def place_call(self, to, *, twiml, status_callback=None):
+            assert RestartStore(harness.store.path).load().attempts == 1
+            raise RuntimeError("died mid-dial")
+
+    harness.coordinator._twilio = Exploding()
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+
+async def test_resume_never_raises(harness, monkeypatch):
+    """Whatever is broken about the machine, `serve` must still come up."""
+    monkeypatch.setattr(
+        RestartCoordinator, "status_summary", _boom
+    )
+    harness.store.save(pending())
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+
+async def _boom(*args, **kwargs):
+    raise RuntimeError("everything is on fire")
+
+
+# --- odds and ends ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [(0.2, "1 second"), (8.0, "8 seconds"), (95.0, "2 minutes"), (None, "an unknown time")],
+)
+def test_durations_are_spoken_not_printed(seconds, expected):
+    assert format_duration(seconds) == expected
+
+
+def test_numbers_are_masked_where_they_are_printed():
+    assert mask_number("+15551234567") == "…4567"
+    assert mask_number(None) == "nobody"
+
+
+def test_health_probe_reads_the_live_session_count(monkeypatch):
+    payload = b'{"ok": true, "live_sessions": 2}'
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen(payload))
+
+    assert health_probe(Settings(_env_file=None, openai_api_key="t")) == 2
+
+
+def test_health_probe_of_a_service_that_is_not_running(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("urllib.request.urlopen", refuse)
+
+    assert health_probe(Settings(_env_file=None, openai_api_key="t")) is None
+
+
+def _fake_urlopen(payload: bytes):
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return payload
+
+    return lambda *args, **kwargs: Response()
+
+
+async def test_wait_until_serving_gives_up(monkeypatch):
+    class NeverStarts:
+        started = False
+
+    ticks = iter([0.0, 1.0, 2.0])
+
+    assert not await wait_until_serving(
+        NeverStarts(), timeout=1.0, poll_s=0, clock=lambda: next(ticks)
+    )
+
+
+async def test_wait_until_serving_returns_once_it_is_up():
+    class Started:
+        started = True
+
+    assert await wait_until_serving(Started(), timeout=1.0, poll_s=0)

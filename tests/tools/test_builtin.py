@@ -93,7 +93,12 @@ async def make_tools(tmp_path):
     repo.mkdir()
 
     def _build(
-        runner: FakeAgentRunner | None = None, *, searcher=None, slack=None, **overrides
+        runner: FakeAgentRunner | None = None,
+        *,
+        searcher=None,
+        slack=None,
+        restarter=None,
+        **overrides,
     ) -> Harness:
         settings = Settings(
             _env_file=None,
@@ -115,6 +120,7 @@ async def make_tools(tmp_path):
             inline_waits=inline_waits,
             searcher=searcher,
             slack=slack,
+            restarter=restarter,
         )
         harness = Harness(
             registry, manager, settings, store, agent_runner, StubSession(), inline_waits
@@ -896,3 +902,70 @@ async def test_the_slack_tool_still_sends_when_it_is_called(make_tools):
         "status": "sent"
     }
     assert slack.sent == ["the link he asked for"]
+
+
+# --- restart_service -------------------------------------------------------
+
+
+class FakeRestarter:
+    """The slice of `RestartCoordinator` the tool touches."""
+
+    def __init__(self, result: dict | None = None) -> None:
+        self.requests: list[dict] = []
+        self.result = result or {"status": "deferred", "message": "say so"}
+
+    async def request(self, **kwargs) -> dict:
+        self.requests.append(kwargs)
+        return self.result
+
+
+def test_restart_service_is_not_offered_without_a_coordinator(tools):
+    assert "restart_service" not in {schema["name"] for schema in tools.registry.schemas()}
+
+
+def test_restart_service_is_offered_with_one(make_tools):
+    harness = make_tools(restarter=FakeRestarter())
+
+    assert "restart_service" in {schema["name"] for schema in harness.registry.schemas()}
+
+
+async def test_restart_service_hands_the_reason_and_the_caller_over(make_tools):
+    restarter = FakeRestarter()
+    harness = make_tools(restarter=restarter)
+
+    result = await harness.call(
+        "restart_service", {"reason": "new code"}, channel="phone", caller="+15551234567"
+    )
+
+    assert result["status"] == "deferred"
+    assert restarter.requests == [
+        {
+            "reason": "new code",
+            "number": "+15551234567",
+            "origin_channel": "phone",
+            "origin_session_id": harness.session.session_id,
+        }
+    ]
+
+
+async def test_a_local_restart_names_no_number(make_tools):
+    """The wake word has no caller: the coordinator falls back to the owner's number."""
+    restarter = FakeRestarter()
+    harness = make_tools(restarter=restarter)
+
+    await harness.call("restart_service", {}, channel="local", caller=None)
+
+    assert restarter.requests[0]["number"] is None
+
+
+async def test_restart_service_needs_the_pin_on_the_phone(make_tools):
+    """Taking the phone channel off the air is at least as serious as dispatching work."""
+    restarter = FakeRestarter()
+    harness = make_tools(restarter=restarter, pin="4321")
+
+    result = await harness.call(
+        "restart_service", {}, channel="phone", caller="+15551234567", authorized=False
+    )
+
+    assert result["status"] == "pin_required"
+    assert restarter.requests == []
