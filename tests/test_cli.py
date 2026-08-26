@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import wave
+from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from fakes import FakeProvider
 from typer.testing import CliRunner
 
 from jarvis.app import TASK_DB_NAME
+from jarvis.briefing import memory_path
 from jarvis.cli import LOG_BACKUP_COUNT, LOG_MAX_BYTES, MAX_REPORT_CHARS, app
 from jarvis.config import PLACEHOLDER_KEY, Settings
 from jarvis.realtime.base import AudioDelta, Transcript
@@ -699,3 +701,75 @@ def test_download_models_help():
     result = runner.invoke(app, ["download-models", "--help"])
 
     assert result.exit_code == 0
+
+
+# --- housekeeping and the memory -------------------------------------------
+
+
+def test_tasks_list_hides_jarvis_own_housekeeping(settings_stub):
+    seed_tasks(
+        settings_stub,
+        make_task("his work", status=TaskStatus.DONE),
+        make_task("update the memory after call abc123", status=TaskStatus.DONE, internal=True),
+    )
+
+    result = runner.invoke(app, ["tasks", "list"])
+
+    assert result.exit_code == 0, result.output
+    assert "his work" in result.output
+    assert "update the memory" not in result.output
+
+
+def test_tasks_list_shows_housekeeping_when_asked(settings_stub):
+    seed_tasks(
+        settings_stub,
+        make_task("update the memory after call abc123", status=TaskStatus.DONE, internal=True),
+    )
+
+    result = runner.invoke(app, ["tasks", "list", "--internal"])
+
+    assert result.exit_code == 0, result.output
+    assert "update the memory" in result.output
+
+
+def test_tasks_list_says_whether_he_has_been_told(settings_stub):
+    seed_tasks(
+        settings_stub,
+        make_task("not yet said", status=TaskStatus.DONE),
+        make_task(
+            "already said",
+            status=TaskStatus.DONE,
+            reported_at=datetime(2026, 8, 25, 14, 0, tzinfo=UTC),
+        ),
+        make_task("still going", status=TaskStatus.RUNNING),
+    )
+
+    result = runner.invoke(app, ["tasks", "list"])
+
+    assert "TOLD" in result.output
+    assert "NO" in next(line for line in result.output.splitlines() if "not yet said" in line)
+    assert "yes" in next(line for line in result.output.splitlines() if "already said" in line)
+
+
+def test_memory_says_so_when_there_is_nothing_remembered_yet(settings_stub):
+    result = runner.invoke(app, ["memory"])
+
+    assert result.exit_code == 0, result.output
+    assert "nothing remembered yet" in result.output
+
+
+def test_memory_prints_what_is_remembered(settings_stub):
+    settings_stub.ensure_dirs()
+    memory_path(settings_stub.data_dir).write_text("# What Jarvis knows\n\nHe hates jargon.\n")
+
+    result = runner.invoke(app, ["memory"])
+
+    assert result.exit_code == 0, result.output
+    assert "He hates jargon." in result.output
+
+
+def test_memory_path_prints_only_the_path(settings_stub):
+    result = runner.invoke(app, ["memory", "--path"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == str(memory_path(settings_stub.data_dir))

@@ -18,6 +18,7 @@ import uvicorn
 from pydantic import ValidationError
 
 from jarvis.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
+from jarvis.briefing import memory_path, read_memory
 from jarvis.config import PLACEHOLDER_KEY, Settings, load_settings
 from jarvis.doctor import format_check, has_hard_failure, run_doctor_checks
 from jarvis.events import EventBus
@@ -58,6 +59,9 @@ TIME_FORMAT = "%Y-%m-%d %H:%M"
 MAX_DESCRIPTION_CHARS = 60
 #: How much of a report `tasks show` prints before it starts truncating.
 MAX_REPORT_CHARS = 4000
+#: `jarvis memory` prints the whole document, not the slice a prompt gets, so this is only
+#: a backstop against a memory that has run away.
+MAX_MEMORY_PRINT_CHARS = 100_000
 
 
 def _configure(**overrides: object) -> Settings:
@@ -234,6 +238,7 @@ def _build_local_runner(state: AppState) -> LocalRunner:
         registry=state.registry,
         bus=state.bus,
         sessions=state.sessions,
+        briefer=state.briefer,
     )
 
 
@@ -421,9 +426,13 @@ async def _open_store(settings: Settings) -> AsyncIterator[TaskStore]:
         await store.close()
 
 
-async def _read_tasks(settings: Settings, status: TaskStatus | None, limit: int) -> list[Task]:
+async def _read_tasks(
+    settings: Settings, status: TaskStatus | None, limit: int, include_internal: bool
+) -> list[Task]:
     async with _open_store(settings) as store:
-        return await store.list(status=status, limit=limit)
+        return await store.list(
+            status=status, limit=limit, include_internal=include_internal
+        )
 
 
 async def _read_task(settings: Settings, task_id: int) -> Task | None:
@@ -437,22 +446,39 @@ def tasks_list(
         StatusFilter, typer.Option("--status", help="Only show tasks in this status.")
     ] = StatusFilter.ALL,
     limit: Annotated[int, typer.Option("--limit", help="How many tasks to show.")] = 20,
+    include_internal: Annotated[
+        bool,
+        typer.Option(
+            "--internal",
+            help="Also show Jarvis's own housekeeping (the per-call memory updates).",
+        ),
+    ] = False,
 ) -> None:
     """List recent tasks, newest first."""
     settings = _configure_readonly()
     wanted = None if status is StatusFilter.ALL else TaskStatus(status.value)
-    tasks = asyncio.run(_read_tasks(settings, wanted, limit))
+    tasks = asyncio.run(_read_tasks(settings, wanted, limit, include_internal))
     if not tasks:
         typer.echo("no tasks" if wanted is None else f"no tasks with status {wanted}")
         return
 
-    typer.echo(f"{'ID':>4}  {'STATUS':<9}  {'CREATED':<16}  DESCRIPTION")
+    typer.echo(f"{'ID':>4}  {'STATUS':<9}  {'CREATED':<16}  {'TOLD':<5}  DESCRIPTION")
     for task in tasks:
         typer.echo(
             f"{task.id:>4}  {task.status:<9}  "
             f"{_local_time(task.created_at):<16}  "
+            f"{_reported_flag(task):<5}  "
             f"{_shorten(task.description, MAX_DESCRIPTION_CHARS)}"
         )
+
+
+def _reported_flag(task: Task) -> str:
+    """Whether Jarvis has told him about this one: only meaningful once it has finished."""
+    if task.internal:
+        return "-"
+    if task.status not in {TaskStatus.DONE, TaskStatus.FAILED}:
+        return ""
+    return "yes" if task.reported_at else "NO"
 
 
 @tasks_app.command("show")
@@ -485,6 +511,35 @@ def _echo_report(path: Path) -> None:
     typer.echo(body[:MAX_REPORT_CHARS].rstrip())
     if len(body) > MAX_REPORT_CHARS:
         typer.echo(f"… (truncated at {MAX_REPORT_CHARS} characters; full report: {path})")
+
+
+# --- memory ----------------------------------------------------------------
+
+
+@app.command()
+def memory(
+    path_only: Annotated[
+        bool, typer.Option("--path", help="Print where the memory lives and nothing else.")
+    ] = False,
+) -> None:
+    """Print what Jarvis remembers between calls.
+
+    The file a subagent rewrites after every call and every session reads back at the top
+    of its prompt. It is plain markdown and safe to edit by hand — the next update merges
+    around whatever is there.
+    """
+    settings = _configure_readonly()
+    path = memory_path(settings.data_dir)
+    if path_only:
+        typer.echo(str(path))
+        return
+
+    text = read_memory(settings.data_dir, max_chars=MAX_MEMORY_PRINT_CHARS)
+    if not text:
+        typer.echo(f"nothing remembered yet ({path} does not exist)")
+        return
+    typer.echo(f"# {path}\n")
+    typer.echo(text)
 
 
 # --- diagnostics -----------------------------------------------------------
