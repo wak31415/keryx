@@ -169,3 +169,58 @@ def test_voice_prompt_does_not_promise_slack_as_a_delivery_route(settings, unwra
     )
 
     assert "a text, and Slack" not in rendered
+
+
+# --- the briefing sections -------------------------------------------------
+
+
+def _rendered(settings, **kwargs) -> str:
+    values = dict(channel="phone", caller=None, authorized=True, projects=[], opening_context=None)
+    values.update(kwargs)
+    return render_voice_prompt(settings, **values)
+
+
+def test_a_first_call_has_no_briefing_sections_at_all(settings):
+    """An empty heading is something for the model to wonder about; leave it out."""
+    rendered = _rendered(settings)
+
+    assert "What he has not heard yet" not in rendered
+    assert "What you remember" not in rendered
+    assert "{" not in rendered and "}" not in rendered
+
+
+def test_the_unreported_digest_reaches_the_prompt_under_its_own_heading(settings):
+    rendered = _rendered(settings, pending="- task 41 (finished) — he asked for: the ingest script")
+
+    assert "## What he has not heard yet" in rendered
+    assert "task 41" in rendered
+
+
+def test_the_memory_reaches_the_prompt_as_background_not_as_news(settings, unwrapped):
+    rendered = _rendered(settings, memory="He is mid-way through the garmin sync.")
+
+    assert "## What you remember" in rendered
+    assert "He is mid-way through the garmin sync." in rendered
+    assert "Do not read it out" in unwrapped(rendered)
+
+
+def test_the_prompt_tells_the_model_to_close_the_loop_on_what_it_reported(unwrapped):
+    flat = unwrapped(load_prompt("voice_system.md"))
+
+    assert "mark_reported records that you have told him a task finished" in flat
+    assert "Call it every time you say a result out loud" in flat
+
+
+def test_the_prompt_sends_questions_about_the_past_to_recall(unwrapped):
+    flat = unwrapped(load_prompt("voice_system.md"))
+
+    assert "recall searches what was said in earlier calls" in flat
+    assert "if it comes back empty, say you have nothing on it rather than guessing" in flat
+
+
+def test_the_memorys_own_headings_are_nested_under_the_section(settings):
+    """Otherwise "Standing facts" reads as an instruction to Jarvis, not as what it knows."""
+    rendered = _rendered(settings, memory="## Standing facts\n\nHe hates jargon.")
+
+    assert "### Standing facts" in rendered
+    assert "\n## Standing facts" not in rendered

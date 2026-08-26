@@ -22,6 +22,17 @@ VOICE_SYSTEM_PROMPT = "voice_system.md"
 
 _TIME_FORMAT = "%A %d %B %Y, %H:%M"
 _OPENING_HEADING = "## Why this session opened"
+#: Both of these sections carry their own heading so that an empty one disappears from the
+#: prompt entirely, rather than leaving a heading with nothing under it for the model to
+#: wonder about.
+_PENDING_HEADING = "## What he has not heard yet"
+_MEMORY_HEADING = (
+    "## What you remember\n\n"
+    "Written down after earlier calls, because you keep no memory of them yourself. It is "
+    "background: use it to understand what he means and what he is in the middle of. Do "
+    "not read it out, and do not treat it as today's news — check before you assert "
+    "anything from it as still true."
+)
 _NO_SKILLS = "none installed"
 _NO_BRIEFS = "nothing written down yet"
 
@@ -54,6 +65,19 @@ def _format_skills(skills: list[Skill]) -> str:
     return "\n".join(f"- {skill.name}: {skill.description}" for skill in skills)
 
 
+def _nest_headings(text: str) -> str:
+    """Every markdown heading in `text` pushed one level deeper.
+
+    The memory document is written to be read on its own (`jarvis memory`), so its sections
+    are `##`. Dropped into the prompt unchanged they would sit at the same level as the
+    prompt's own sections, and "Standing facts" would read as an instruction to Jarvis
+    rather than as part of what it remembers.
+    """
+    return "\n".join(
+        f"#{line}" if line.startswith("#") else line for line in text.splitlines()
+    )
+
+
 def _format_briefs(briefs: list[ProjectBrief]) -> str:
     """Each project's own words about itself, under its name."""
     if not briefs:
@@ -71,6 +95,8 @@ def render_voice_prompt(
     skills: list[Skill] | None = None,
     briefs: list[ProjectBrief] | None = None,
     opening_context: str | None = None,
+    pending: str | None = None,
+    memory: str | None = None,
 ) -> str:
     """Render the voice system prompt for one session.
 
@@ -80,7 +106,9 @@ def render_voice_prompt(
     it can recognise work the back office is good at without being told they exist.
     `briefs` defaults to the `.jarvis-brief.md` of every project that wrote one.
     `opening_context` is the reason the session was opened (a task summary on a call-back,
-    say) and is dropped from the prompt when there is none.
+    say) and is dropped from the prompt when there is none. `pending` and `memory` come
+    from a `Briefing` (see `jarvis.briefing`) and are dropped the same way: a first call on
+    a fresh machine renders neither section, rather than an empty heading.
     """
     known = discover_projects(settings)
     names = list(known) if projects is None else projects
@@ -96,4 +124,6 @@ def render_voice_prompt(
         skills=_format_skills(catalog),
         project_briefs=_format_briefs(written),
         opening_context=f"{_OPENING_HEADING}\n\n{opening_context}" if opening_context else "",
+        pending_tasks=f"{_PENDING_HEADING}\n\n{pending}" if pending else "",
+        memory=f"{_MEMORY_HEADING}\n\n{_nest_headings(memory)}" if memory else "",
     )
