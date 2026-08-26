@@ -109,8 +109,9 @@ FAILED_SMS = "Jarvis tried to restart and it did not go through: {error}"
 
 #: What the model is told to say when a restart has to wait for the call to end.
 DEFERRED_MESSAGE = (
-    "Tell him you will restart as soon as this call ends — a restart drops the call — and "
-    "that you will ring him straight back when you are up again."
+    "Tell him you will restart as soon as this call ends and anything already running has "
+    "finished — a restart drops the call and kills every task with it — and that you will "
+    "ring him straight back when you are up again."
 )
 RESTARTING_MESSAGE = (
     "Tell him you are restarting now, that this call is about to drop, and that you will "
@@ -497,7 +498,7 @@ class RestartCoordinator:
             return {"status": "failed", "message": "Tell him the restart could not be set up."}
 
         message = RESTARTING_MESSAGE if self._can_call_back(record) else NO_CALLBACK_MESSAGE
-        if self._sessions.live() and not force:
+        if await self._blocker() is not None and not force:
             log.info("holding the restart until the line is clear")
             self._deferred = asyncio.create_task(self._restart_when_quiet(target), name="restart")
             return {"status": "deferred", "message": DEFERRED_MESSAGE, "target": target.describe()}
@@ -515,15 +516,56 @@ class RestartCoordinator:
         )
 
     async def _restart_when_quiet(self, target: ServiceTarget) -> None:
-        """Wait for every session to end, then restart. Give up rather than cut a call off."""
-        if not await self._wait_for_quiet(DEFER_TIMEOUT_S):
-            log.warning("abandoning the restart: a session has been live for %ss", DEFER_TIMEOUT_S)
+        """Wait for the machine to be idle, then restart. Give up rather than cut work off."""
+        if not await self._wait_until_idle(DEFER_TIMEOUT_S):
             self._store.clear()
             return
         await self._execute(target)
 
+    async def _wait_until_idle(self, timeout: float) -> bool:
+        """Poll until no call is live *and* no task is running; False if `timeout` passes.
+
+        Both, because a restart kills every subagent it finds and nothing resumes them: the
+        task that is running is work he asked for minutes ago, and the restart would end it
+        somewhere in the middle with no report. Waiting for only the line to clear made the
+        moment a call ends — which is exactly when the memory update is dispatched — the
+        most dangerous moment to restart in.
+        """
+        waited = 0.0
+        while (blocker := await self._blocker()) is not None:
+            if waited >= timeout:
+                log.warning("abandoning the restart: %s for %ss", blocker, timeout)
+                return False
+            await self._sleep(QUIET_POLL_S)
+            waited += QUIET_POLL_S
+        return True
+
+    async def _blocker(self) -> str | None:
+        """What a restart would interrupt right now, or None when it would interrupt nothing."""
+        if self._sessions.live():
+            return "a session has been live"
+        running = await self._running_tasks()
+        if running:
+            return f"{running} task(s) have been running"
+        return None
+
+    async def _running_tasks(self) -> int:
+        """How many subagents a restart would kill. Nought when the store cannot be read —
+        a query that is failing must not hold a restart off forever."""
+        if self._tasks is None:
+            return 0
+        try:
+            return len(await self._tasks.list(status=TaskStatus.RUNNING, limit=TASK_SCAN_LIMIT))
+        except Exception:
+            log.exception("could not count the tasks a restart would interrupt")
+            return 0
+
     async def _wait_for_quiet(self, timeout: float) -> bool:
-        """Poll until no session is live; False if `timeout` passes first."""
+        """Poll until no session is live; False if `timeout` passes first.
+
+        The *call-back*'s idea of quiet, which is only about the line: a confirmation that
+        waited for the task queue to drain would be a confirmation he never got.
+        """
         waited = 0.0
         while self._sessions.live():
             if waited >= timeout:

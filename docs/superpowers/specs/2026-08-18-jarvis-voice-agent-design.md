@@ -348,7 +348,14 @@ class SessionRegistry:
   which channels are listening, how many tasks the restart interrupted) as the new session's
   opening context. Neither half ever interrupts a call: a restart asked for *during* one waits
   for the line to clear (and abandons itself rather than cut a call off), and the confirmation
-  is announced into a live session, or texted, rather than dialled into one. Attempts are
+  is announced into a live session, or texted, rather than dialled into one. **Corrected
+  2026-08-26:** "clear" for the restart means no live session *and* no task in `running` — a
+  restart kills every subagent it finds and nothing resumes them, and waiting only for the
+  line made the moment a call ends, which is when the memory update is dispatched, the most
+  dangerous moment to restart in. `--force` still overrides, a `queued` task does not count
+  (it has not started), and a task store that will not answer is read as "nothing running"
+  rather than allowed to wedge the restart. The *confirmation*'s wait is unchanged and still
+  only about the line. Attempts are
   counted on the record before the dial, so a crash loop rings once, not once per crash; a call
   that cannot be placed falls back to SMS; and a confirmation that fails outright leaves the
   record behind as `failed`, for `jarvis restart --status`. A process nothing supervises refuses
