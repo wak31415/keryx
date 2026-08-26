@@ -40,8 +40,8 @@ class TaskStatus(StrEnum):
 
 
 _ENUM_FIELDS: dict[str, type[StrEnum]] = {"kind": TaskKind, "status": TaskStatus}
-_BOOL_FIELDS = frozenset({"callback_requested", "announced", "sms_sent"})
-_DATETIME_FIELDS = frozenset({"created_at", "started_at", "finished_at"})
+_BOOL_FIELDS = frozenset({"callback_requested", "announced", "sms_sent", "internal"})
+_DATETIME_FIELDS = frozenset({"created_at", "started_at", "finished_at", "reported_at"})
 
 
 def to_utc_iso(value: datetime) -> str:
@@ -124,6 +124,17 @@ class Task:
     callback_note: str | None = None
     announced: bool = False
     sms_sent: bool = False
+    #: When the voice model actually *told him* about this task, which is not the same as
+    #: any of the delivery flags above: `announced` means a session spoke the completion
+    #: into the room, `sms_sent` means a text went out. Neither survives a call he missed
+    #: or a text he never read, so an unreported task keeps coming back at the top of the
+    #: next call until Jarvis has said it and called `mark_reported` (spec §3.3).
+    reported_at: datetime | None = None
+    #: Housekeeping Jarvis dispatched to itself — the per-call memory update. Real work is
+    #: what he asked for; this is not, so it stays out of the spoken task lists, out of the
+    #: daily cap, and out of the notifier. It is *not* a task kind: it restricts nothing
+    #: about what the subagent may do, it only says who asked for it.
+    internal: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     finished_at: datetime | None = None

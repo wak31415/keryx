@@ -32,6 +32,7 @@ asked for it, so there is nothing to announce.
 import asyncio
 import logging
 import re
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -41,7 +42,7 @@ from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, Tas
 from jarvis.projects import discover_projects
 from jarvis.tasks.agent_runner import AgentRunner, AgentSession, RunResult, resolve_model
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import TaskStore
+from jarvis.tasks.store import MAX_UNREPORTED, TaskStore
 
 log = logging.getLogger("jarvis.tasks.manager")
 
@@ -167,21 +168,28 @@ class TaskManager:
         origin_channel: str,
         origin_caller: str | None,
         origin_session_id: str | None = None,
+        cwd: str | None = None,
+        internal: bool = False,
     ) -> Task:
         """Create a `queued` task and schedule it.
 
         Raises `TaskLimitError` past the daily cap and `UnknownProjectError` for a project
         name that matches nothing (or more than one thing). With no project the task
-        starts in `projects_root`, and the subagent finds its way from there.
+        starts in `projects_root`, and the subagent finds its way from there; an explicit
+        `cwd` overrides both, for work that is not in a project at all.
+
+        `internal` marks work Jarvis asked for itself (the per-call memory update): it is
+        exempt from the daily cap, hidden from the spoken task lists, and never announced.
+        It restricts nothing about the subagent — see `Task.internal`.
         """
-        await self._check_daily_cap()
+        if not internal:
+            await self._check_daily_cap()
 
         project_name: str | None = None
-        cwd: str | None = None
         if project:
             project_name, path = self.resolve_project(project)
-            cwd = str(path)
-        else:
+            cwd = cwd or str(path)
+        elif cwd is None:
             # Work is handed over the moment it is recognised, so the project is often
             # still unsaid. Start in the projects root and let the subagent find its way —
             # asking first only pushes the question back onto the voice.
@@ -199,16 +207,18 @@ class TaskManager:
                 origin_channel=origin_channel,
                 origin_caller=origin_caller,
                 origin_session_id=origin_session_id,
+                internal=internal,
             )
         )
         self._done_events[created.id] = asyncio.Event()
         self._spawn(created.id)
         log.info(
-            "task %s dispatched (project=%s, model=%s, from=%s)",
+            "task %s dispatched (project=%s, model=%s, from=%s%s)",
             created.id,
             created.project,
             created.model,
             created.origin_channel,
+            ", internal" if internal else "",
         )
         return created
 
@@ -412,6 +422,34 @@ class TaskManager:
     async def get(self, task_id: int) -> Task | None:
         return await self._store.get(task_id)
 
+    async def unreported(self, *, limit: int = MAX_UNREPORTED) -> list[Task]:
+        """Finished tasks Jarvis still owes him a word about, oldest first (spec §3.3)."""
+        return await self._store.list_unreported(limit=limit)
+
+    async def count_unreported(self) -> int:
+        """How many finished tasks are still waiting to be told, in total."""
+        return await self._store.count_unreported()
+
+    async def mark_reported(self, task_ids: Iterable[int]) -> list[int]:
+        """Record that Jarvis has now told him about these tasks. Returns the ids stamped.
+
+        Ids that do not exist, or that were already stamped, are simply not returned — the
+        voice model is guessing at ids from a spoken conversation, and a wrong one must be
+        a shrug rather than an error it has to explain out loud.
+        """
+        stamped = await self._store.mark_reported(task_ids, when=datetime.now(UTC))
+        if stamped:
+            log.info("reported tasks %s to the user", ", ".join(str(one) for one in stamped))
+        return stamped
+
+    async def search(self, terms: Sequence[str], *, limit: int = 5) -> list[Task]:
+        """Tasks whose description or summary contains every term, newest first."""
+        return await self._store.search(terms, limit=limit)
+
+    async def tasks_for_session(self, session_id: str) -> list[Task]:
+        """The tasks one voice session dispatched, oldest first."""
+        return await self._store.list_for_session(session_id)
+
     def _done_event(self, task_id: int) -> asyncio.Event:
         """The completion event for `task_id`, created on first use."""
         event = self._done_events.get(task_id)
@@ -572,6 +610,14 @@ class TaskManager:
     # NOTE: this method is named `list` per spec §3.2, so — exactly as in `TaskStore` —
     # it must be defined after every annotation in this class body that uses the builtin
     # `list[...]`, which would otherwise resolve to this method.
-    async def list(self, *, status: TaskStatus | None = None, limit: int = 20) -> list[Task]:
-        """Tasks newest-first, optionally filtered to one status."""
-        return await self._store.list(status=status, limit=limit)
+    async def list(
+        self,
+        *,
+        status: TaskStatus | None = None,
+        limit: int = 20,
+        include_internal: bool = False,
+    ) -> list[Task]:
+        """Tasks newest-first, optionally filtered to one status. Housekeeping is hidden."""
+        return await self._store.list(
+            status=status, limit=limit, include_internal=include_internal
+        )

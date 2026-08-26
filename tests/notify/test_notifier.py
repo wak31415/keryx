@@ -531,3 +531,34 @@ async def test_a_call_back_without_a_previous_session_still_goes_out(harness):
     info = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
     assert "Result: done." in info.extra["opening_context"]
     assert len(harness.twilio.calls) == 1
+
+
+# --- housekeeping is not news ----------------------------------------------
+
+
+async def test_an_internal_task_is_never_announced_texted_or_called_about(harness):
+    """The per-call memory update is Jarvis talking to itself; he never asked for it."""
+    session = harness.session(channel="phone")
+    task = await harness.task(
+        description="update the memory after call abc123",
+        internal=True,
+        callback_requested=True,
+        callback_number=CALLER,
+    )
+
+    await harness.finished(task)
+
+    assert session.announced == []
+    assert harness.twilio.sms == []
+    assert harness.twilio.calls == []
+
+
+async def test_an_internal_task_that_fails_is_just_as_quiet(harness):
+    harness.session(channel="phone")
+    task = await harness.task(internal=True)
+
+    await harness.failed(task)
+
+    assert harness.twilio.sms == []
+    row = await harness.row(task)
+    assert row.announced is False and row.sms_sent is False
