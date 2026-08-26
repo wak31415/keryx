@@ -32,8 +32,11 @@ from jarvis.restart import (
     current_version,
     format_duration,
     health_probe,
+    loaded_version,
+    mark_running,
     mask_number,
     resolve_target,
+    running_version,
     wait_until_serving,
     watch_command,
 )
@@ -636,6 +639,56 @@ async def test_an_unchanged_checkout_is_only_worth_saying_when_a_task_was_loadin
 
     assert "did not change" not in summary
     assert f"still on {VERSION}" in summary
+
+
+# --- what was running, versus what is on the disk now -----------------------
+
+
+def test_the_stamp_records_what_this_process_imported(tmp_path):
+    settings = make_settings(tmp_path)
+
+    assert mark_running(settings.data_dir) == VERSION
+    assert running_version(settings.data_dir) == VERSION
+
+
+def test_without_a_stamp_the_checkout_is_the_best_guess(tmp_path):
+    """A service too old to stamp anything: one wrong comparison beats no answer at all."""
+    settings = make_settings(tmp_path)
+
+    assert running_version(settings.data_dir) is None
+    assert loaded_version(settings.data_dir) == VERSION
+
+
+def test_the_stamp_beats_a_checkout_that_has_moved_on(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    mark_running(settings.data_dir)
+    monkeypatch.setattr("jarvis.restart.current_version", lambda repo=None: "v2-newer00")
+
+    assert loaded_version(settings.data_dir) == VERSION
+
+
+async def test_a_commit_made_before_the_restart_still_counts_as_loaded(tmp_path, monkeypatch):
+    """The regression: edit, commit, ask for the restart — the normal order.
+
+    Reading the checkout at request time read the commit that had *already landed*, so the
+    "before" and the "after" were the same string and every such restart reported that it
+    had loaded nothing. The stamp is taken at process start, where the two still differ.
+    """
+    settings = make_settings(tmp_path)
+    harness = Harness(settings)
+    mark_running(settings.data_dir)  # the process that is about to be restarted
+    monkeypatch.setattr("jarvis.restart.current_version", lambda repo=None: "v2-newer00")
+
+    await harness.coordinator.request(reason="new code", task_id=7)
+    await harness.settle()
+    record = harness.record()
+    assert record.version == VERSION  # what was running, not the commit that just landed
+
+    mark_running(settings.data_dir)  # the process that comes back
+    summary = await harness.coordinator.status_summary(record, phone_up=True)
+
+    assert f"now on v2-newer00, was {VERSION}" in summary
+    assert "did not change" not in summary
 
 
 async def test_the_call_back_names_the_task_the_restart_loaded(harness):

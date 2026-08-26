@@ -472,7 +472,7 @@ def restart_settings(monkeypatch, tmp_path):
         owner_number_explicit="+15550000001",
     )
     monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
-    monkeypatch.setattr("jarvis.cli.current_version", lambda repo=None: "v-test")
+    monkeypatch.setattr("jarvis.cli.loaded_version", lambda data_dir, repo=None: "v-test")
     monkeypatch.setattr(
         "jarvis.cli.resolve_target", lambda _settings: ServiceTarget("systemd", "jarvis.service")
     )
