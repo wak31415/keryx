@@ -992,3 +992,95 @@ async def test_a_deferred_restart_arms_its_watch_when_it_actually_restarts(tmp_p
     await harness.settle()
 
     assert "4321" in harness.record().watchdog
+
+
+# --- a restart waits for the work, not only for the line --------------------
+
+
+async def running_task(store: TaskStore, status=TaskStatus.RUNNING) -> Task:
+    task = Task(id=None, kind=TaskKind.AGENT, description="edit jarvis", status=status)
+    return await store.create(task)
+
+
+async def test_a_restart_waits_for_a_running_task_even_with_the_line_clear(tmp_path):
+    """A restart kills every subagent it finds, and nothing resumes them.
+
+    The old wait watched only for a live session, which made the moment a call ends — when
+    the memory update is dispatched — the most dangerous moment to restart in. A
+    hand-rolled version of this came within two minutes of killing task 9 on 2026-08-24.
+    """
+    store = TaskStore(":memory:")
+    await running_task(store)
+    harness = Harness(make_settings(tmp_path), tasks=store)
+
+    result = await harness.coordinator.request(reason="new code")
+
+    assert result["status"] == "deferred"
+    assert harness.spawn.commands == []
+    await harness.coordinator.shutdown()
+    await store.close()
+
+
+async def test_the_restart_goes_ahead_once_the_task_finishes(tmp_path):
+    store = TaskStore(":memory:")
+    task = await running_task(store)
+    harness = Harness(make_settings(tmp_path), tasks=store)
+
+    result = await harness.coordinator.request(reason="new code")
+    assert result["status"] == "deferred"
+
+    await store.update(task.id, status=TaskStatus.DONE)
+    await harness.settle()
+
+    assert harness.spawn.commands == [["systemctl", "--user", "restart", "jarvis.service"]]
+    await store.close()
+
+
+async def test_a_queued_task_does_not_hold_a_restart_off(tmp_path):
+    """Queued work has not started, so the restart costs it nothing but its place in line."""
+    store = TaskStore(":memory:")
+    await running_task(store, status=TaskStatus.QUEUED)
+    harness = Harness(make_settings(tmp_path), tasks=store)
+
+    result = await harness.coordinator.request(reason="new code")
+
+    assert result["status"] == "restarting"
+    await store.close()
+
+
+async def test_force_still_restarts_over_a_running_task(tmp_path):
+    store = TaskStore(":memory:")
+    await running_task(store)
+    harness = Harness(make_settings(tmp_path), tasks=store)
+
+    result = await harness.coordinator.request(reason="new code", force=True)
+
+    assert result["status"] == "restarting"
+    await store.close()
+
+
+async def test_a_task_store_that_will_not_answer_does_not_wedge_the_restart(tmp_path):
+    """A failing query must not be the thing that keeps him off the air."""
+
+    class BrokenStore:
+        async def list(self, **kwargs):
+            raise RuntimeError("the database is gone")
+
+    harness = Harness(make_settings(tmp_path), tasks=BrokenStore())
+
+    result = await harness.coordinator.request(reason="new code")
+
+    assert result["status"] == "restarting"
+
+
+async def test_the_confirmation_is_not_held_up_by_the_task_queue(tmp_path):
+    """The call-back's idea of quiet is only the line; work running is not its business."""
+    store = TaskStore(":memory:")
+    await running_task(store)
+    harness = Harness(make_settings(tmp_path), tasks=store)
+    harness.store.save(pending())
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert harness.twilio.calls, "the confirmation waited for a task it had no reason to"
+    await store.close()
