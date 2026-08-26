@@ -79,7 +79,9 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
 | `web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool |
 | `slack.py` | `SlackSender` protocol + `SlackWebApi` (`chat.postMessage`), behind the voice model's `send_to_slack`; credentials resolve from the `auto-research` skill's MCP server config |
-| `restart.py` | `RestartCoordinator`: restart this service through systemd/launchd, and call back once it is up; `RestartStore` (the record that survives the restart), `resolve_target`, `health_probe` |
+| `restart.py` | `RestartCoordinator`: restart this service through systemd/launchd, and call back once it is up; `RestartStore` (the record that survives the restart), `resolve_target`, `health_probe`, `watch_command`/`spawn_watchdog` (arming the watchdog below) |
+| `restart_watch.py` | `watch`: the out-of-process watchdog armed by a restart, which alerts by text and a plain `<Say>` call when the service never comes back |
+| `logscan.py` | `marks`/`errors_since`: the service's own log files, scoped by byte offset to what happened since a restart was asked for |
 | `events.py` | in-process async pub/sub `EventBus` + event dataclasses |
 | `audio/util.py` | soxr resampling, chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` (µ-law codec removed 2026-08-19: phone audio is passed through as `audio/pcmu`, nothing transcodes) |
 | `transports/base.py` | `Transport` protocol + `AudioIn`/`Dtmf`/`Hangup` events |
@@ -102,7 +104,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `prompts/voice_system.md` | receptionist persona + tool-use guidance |
 | `prompts/subagent_suffix.md` | appended to Agent SDK system prompt: autonomous, ends with `SPOKEN_SUMMARY:` block |
 | `prompts/memory_update.md` | the internal memory subagent's prompt: merge this call's transcript into `memory.md`, keep the structure, stay under budget |
-| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory`, `setup-google`, `doctor`, `restart` |
+| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory`, `setup-google`, `doctor`, `restart`, `restart-watch` (hidden; armed by a restart, not run by hand) |
 
 ### 3.2 Binding interfaces
 
@@ -351,6 +353,35 @@ class SessionRegistry:
   that cannot be placed falls back to SMS; and a confirmation that fails outright leaves the
   record behind as `failed`, for `jarvis restart --status`. A process nothing supervises refuses
   to restart at all — stopping would take it off the air for good.
+- **A restart says whether the *update* worked, not whether the process came back (added
+  2026-08-26).** Restarting is mostly asked for to load a change Jarvis has just made to its
+  own code, and "back up" answers the wrong question: an import that throws, a tool that fails
+  to register or a credential that broke all come back up and answer `/health`. Three things
+  close that, and each covers a failure the others cannot see.
+  1. **The logs, scoped.** The process asking for a restart records how long each service log
+     file is (`logscan.marks`, onto `restart.json`); the process that comes back reads from
+     there. Tracebacks collapse to the line that ends them, and the errors go into the status
+     summary *before* the housekeeping clauses, because they are the answer to the only
+     question a restart is asked. No marks on the record (an older one) means "nothing found",
+     never the whole file.
+  2. **The task.** `restart_service` takes the `task_id` whose change it is loading. That names
+     the change on the confirmation, and licenses the other check worth making: a restart asked
+     for to load a change, running the same checkout as before, has loaded nothing.
+  3. **A watchdog outside the cgroup.** A change that will not import means no new process, so
+     no `resume()`, so no call and no text — silence that reads exactly like success.
+     `_execute()` therefore arms `jarvis restart-watch` through `systemd-run --user`
+     (`launchd` needs only a new session) *immediately before* handing over — not at request
+     time, or a deferred restart would outlive its own watch. It acts only on the case nothing
+     else can see, a record still `pending` at the deadline: it marks the record `failed` so a
+     service that limps up an hour later does not ring about it, texts the detail with whatever
+     the logs said, and rings with plain `<Say>` TwiML — every other call Jarvis places is
+     answered by the media stream of the server that is not running. Nothing to arm it with
+     (no `systemd-run`) is written on the record rather than papered over.
+  A negative exit code from the restart command is **not** a failure: `systemctl` sits in the
+  cgroup the restart tears down, so it is killed handing over and returns `-15`. Read as a
+  failure (as it was until 2026-08-26) it wrote `systemctl exited -15` onto a service that had
+  come back fine, and then said nothing at all, the process that would have spoken being the
+  one dying.
 - **A finished task is not delivered until Jarvis has said it (added 2026-08-25).**
   `announced` and `sms_sent` record that a *delivery was attempted*; neither survives a call
   he missed or a text he never read. `Task.reported_at` records that the voice model actually
@@ -452,8 +483,10 @@ class SessionRegistry:
 
 Data layout under `data_dir`: `tasks.db`, `tasks/<id>.log` (agent transcript),
 `tasks/<id>.md` (final report), `calls/<session_id>.log` (voice transcript),
-`report_secret`, `restart.json` (0600; the pending restart's call-back), `google/` (MCP
-credentials).
+`report_secret`, `restart.json` (0600; the pending restart's call-back, its log marks and
+its watchdog), `memory.md` (what Jarvis remembers between calls), `logs/jarvis.log` (our own
+rotated handler) alongside the `jarvis.out.log`/`jarvis.err.log` the service unit appends to
+and `logs/restart-watch.log` (the watchdog's own output), `google/` (MCP credentials).
 
 ## 4. Verified API notes (Aug 2026)
 

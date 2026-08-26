@@ -15,7 +15,8 @@ Realtime API and Claude Agent SDK subagents.
   `uv run jarvis tasks show <id>` (the `TOLD` column is `NO` until Jarvis has said it)
 - Read what Jarvis remembers between calls: `uv run jarvis memory` (`--path` for the file)
 - Restart the service: `uv run jarvis restart [--reason …] [--force] [--no-callback]`
-  (it phones back when it is up again); `uv run jarvis restart --status` for the last one
+  (it phones back when it is up again, and texts if it never comes back);
+  `uv run jarvis restart --status` for the last one, including what the logs said
 - One-off setup: `uv run jarvis download-models`, `uv run jarvis setup-google`
 - Background service: `scripts/install-systemd.sh [--uninstall]` on Linux,
   `scripts/install-launchd.sh [--uninstall]` on macOS
@@ -61,7 +62,7 @@ Jarvis knows at the top of a call is assembled every time by `jarvis/briefing.py
 task from the spoken lists, the digest, `recall`, the daily cap and the notifier — and
 restricts *nothing* about the subagent. It is not a task kind; do not grow it into one.
 
-## Restarts are two halves
+## Restarts are three halves
 
 The process that runs `systemctl restart` is the one that gets killed, so `jarvis/restart.py`
 splits the flow across that death and joins it with `data_dir/restart.json`: `request()` writes
@@ -70,6 +71,22 @@ rings back with a status summary. Neither half may interrupt a call — a restar
 one waits for the line to clear, and the confirmation is announced or texted rather than dialled
 into a live session. Keep it that way, and keep every failure path landing somewhere a human can
 find it (`jarvis restart --status`).
+
+The third half is `jarvis/restart_watch.py`, and it exists because the first two both live
+*inside* Jarvis. A restart is usually loading a change Jarvis just made to its own code; a
+change that will not import means there is no new process, so nothing runs `resume()` and
+nobody is told anything — silence that reads exactly like success. So `_execute()` arms
+`jarvis restart-watch` in a transient `systemd-run --user` unit *just before* handing over
+(a restart signals the whole cgroup; anything we merely fork dies with us), and it acts only
+on the case neither other half can see: a record still `pending` at the deadline. It alerts
+by text plus a plain `<Say>` call — never `<Connect><Stream>`, whose media stream is served
+by the process that is not running.
+
+Two rulings that look like bugs if you do not know them. A **negative** exit code from the
+restart command is the restart working: `systemctl` is inside the cgroup it tears down, so it
+is killed handing over and returns `-15`. And "back up" is not "working" — `jarvis/logscan.py`
+scopes the service's log files by byte offset (`marks()` before, `errors_since()` after) so the
+confirmation can say what broke, and those errors are spoken *before* the housekeeping.
 
 ## Platforms
 
