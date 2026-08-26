@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import stat
+import sys
 from datetime import UTC, datetime, timedelta
 from xml.etree import ElementTree
 
@@ -23,15 +24,18 @@ from jarvis.restart import (
     LAUNCHD_LABEL,
     MAX_CALLBACK_ATTEMPTS,
     SYSTEMD_UNIT,
+    WATCH_UNIT_PREFIX,
     RestartCoordinator,
     RestartRecord,
     RestartStore,
+    ServiceTarget,
     current_version,
     format_duration,
     health_probe,
     mask_number,
     resolve_target,
     wait_until_serving,
+    watch_command,
 )
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
@@ -121,6 +125,25 @@ class FakeSpawn:
         return self.code
 
 
+class FakeWatchSpawn:
+    """The watchdog: records the plan it was handed instead of starting anything.
+
+    The real one starts a process that deliberately outlives us, which is exactly what a
+    test suite must never do — see the testing rule in CLAUDE.md.
+    """
+
+    def __init__(self, *, error: Exception | None = None, pid: int = 4321) -> None:
+        self.plans: list = []
+        self.error = error
+        self.pid = pid
+
+    def __call__(self, plan, settings) -> int:
+        self.plans.append(plan)
+        if self.error is not None:
+            raise self.error
+        return self.pid
+
+
 def make_settings(tmp_path, **overrides) -> Settings:
     values = {
         "openai_api_key": "test",
@@ -138,12 +161,15 @@ def make_settings(tmp_path, **overrides) -> Settings:
 class Harness:
     """A coordinator with every outside edge faked, plus the pieces to assert on."""
 
-    def __init__(self, settings, *, spawn=None, sleep=None, tasks=None, twilio=None) -> None:
+    def __init__(
+        self, settings, *, spawn=None, sleep=None, tasks=None, twilio=None, watch=None
+    ) -> None:
         self.settings = settings
         self.sessions = SessionRegistry()
         self.twilio = twilio or FakeTwilioOut()
         self.tokens = StreamTokenStore()
         self.spawn = spawn or FakeSpawn()
+        self.watch = watch or FakeWatchSpawn()
         self.sleep = sleep or FakeSleep()
         self.store = RestartStore(settings.data_dir / "restart.json")
         self.coordinator = RestartCoordinator(
@@ -154,6 +180,7 @@ class Harness:
             tasks,
             store=self.store,
             spawn=self.spawn,
+            spawn_watch=self.watch,
             sleep=self.sleep,
         )
 
@@ -445,6 +472,35 @@ async def test_a_restart_command_that_is_missing_is_recorded(tmp_path):
 
     assert harness.record().state == "failed"
     assert "FileNotFoundError" in harness.record().error
+
+
+async def test_being_killed_mid_handover_is_the_restart_working_not_failing(tmp_path):
+    """`systemctl` sits in the cgroup the restart tears down, so it dies with us.
+
+    Read as a failure it wrote `systemctl exited -15` onto a service that had in fact come
+    back perfectly well — and then went quiet, because the process that would have said so
+    was the one being killed. Seen on the live box on 2026-08-26.
+    """
+    harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(code=-15))
+
+    await harness.coordinator.request(reason="new code")
+    await harness.settle()
+
+    record = harness.record()
+    assert record is not None
+    assert record.state == "pending"  # still for the far side to confirm
+    assert not harness.twilio.sms
+
+
+async def test_a_restart_command_that_really_fails_is_still_a_failure(tmp_path):
+    harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(code=1))
+
+    await harness.coordinator.request(reason="new code")
+    await harness.settle()
+
+    record = harness.record()
+    assert record is not None and record.state == "failed"
+    assert "exited 1" in record.error
 
 
 async def test_a_restart_that_does_nothing_is_not_left_silent(tmp_path):
@@ -812,3 +868,127 @@ async def test_wait_until_serving_returns_once_it_is_up():
         started = True
 
     assert await wait_until_serving(Started(), timeout=1.0, poll_s=0)
+
+
+# --- the watchdog that outlives the restart --------------------------------
+
+
+def test_the_watchdog_is_handed_to_systemd_so_the_cgroup_kill_cannot_take_it(tmp_path):
+    """A process we merely fork is inside the unit being restarted, and dies with it."""
+    settings = make_settings(tmp_path)
+    target = ServiceTarget("systemd", "jarvis.service")
+
+    plan = watch_command(settings, target, which=lambda name: f"/usr/bin/{name}", pid=99)
+
+    assert plan is not None
+    assert plan.argv[0] == "/usr/bin/systemd-run"
+    assert "--user" in plan.argv
+    assert f"--unit={WATCH_UNIT_PREFIX}-99" in plan.argv
+    assert plan.label == f"{WATCH_UNIT_PREFIX}-99"
+    assert not plan.redirect  # systemd points its output at the log for us
+
+
+def test_the_watchdog_runs_this_interpreter_not_whatever_is_on_path(tmp_path):
+    """`systemd-run` starts with the user manager's environment, which has no venv in it."""
+    plan = watch_command(
+        make_settings(tmp_path),
+        ServiceTarget("systemd", "jarvis.service"),
+        which=lambda name: f"/usr/bin/{name}",
+    )
+
+    assert plan is not None
+    assert plan.argv[-4:] == [sys.executable, "-m", "jarvis", "restart-watch"]
+
+
+def test_the_watchdogs_own_output_goes_somewhere_a_person_can_find(tmp_path):
+    settings = make_settings(tmp_path)
+    plan = watch_command(
+        settings, ServiceTarget("systemd", "jarvis.service"), which=lambda name: name
+    )
+
+    assert plan is not None
+    assert any("StandardError=append:" in argument for argument in plan.argv)
+    assert all("jarvis.log" not in argument for argument in plan.argv)  # not our own log
+
+
+def test_launchd_needs_no_help_escaping(tmp_path):
+    """There is no cgroup to get out of; a new session outlives `launchctl kickstart -k`."""
+    plan = watch_command(make_settings(tmp_path), ServiceTarget("launchd", "com.william.jarvis"))
+
+    assert plan is not None
+    assert plan.argv == [sys.executable, "-m", "jarvis", "restart-watch"]
+    assert plan.redirect  # nobody else will point its output anywhere
+
+
+def test_without_systemd_run_no_watchdog_is_claimed(tmp_path):
+    """Starting one that will be killed with us is worse than saying it cannot be done."""
+    plan = watch_command(
+        make_settings(tmp_path), ServiceTarget("systemd", "jarvis.service"), which=lambda _: None
+    )
+
+    assert plan is None
+
+
+async def test_the_watchdog_is_armed_before_the_restart_is_handed_over(tmp_path):
+    """Armed after would mean the window it exists to watch had already opened."""
+    order: list[str] = []
+
+    def note_watch(plan, settings):
+        order.append("watch")
+        return 4321
+
+    async def note_spawn(command):
+        order.append("restart")
+        return 0
+
+    harness = Harness(make_settings(tmp_path), watch=note_watch)
+    harness.coordinator._spawn = note_spawn
+
+    await harness.coordinator.request(reason="new code")
+    await harness.settle()
+
+    assert order == ["watch", "restart"]
+
+
+async def test_the_record_says_how_the_watch_was_armed(tmp_path):
+    harness = Harness(make_settings(tmp_path))
+
+    await harness.coordinator.request(reason="new code")
+    await harness.settle()
+
+    record = harness.record()
+    assert record is not None
+    assert "4321" in record.watchdog  # the pid, so a person can go and look at it
+
+
+async def test_a_watchdog_that_will_not_start_is_recorded_and_the_restart_goes_on(tmp_path):
+    """A restart he asked for must not be held hostage by the thing that watches it."""
+    harness = Harness(
+        make_settings(tmp_path), watch=FakeWatchSpawn(error=OSError("no fork for you"))
+    )
+
+    await harness.coordinator.request(reason="new code")
+    await harness.settle()
+
+    record = harness.record()
+    assert record is not None
+    assert "not started" in record.watchdog
+    assert "OSError" in record.watchdog
+    assert harness.spawn.commands == [["systemctl", "--user", "restart", "jarvis.service"]]
+
+
+async def test_a_deferred_restart_arms_its_watch_when_it_actually_restarts(tmp_path):
+    """A watch counting down from half an hour ago would give up before the restart."""
+    harness = Harness(make_settings(tmp_path))
+    session = FakeVoiceSession(channel="phone")
+    harness.sessions.add(session)
+
+    result = await harness.coordinator.request(reason="new code")
+
+    assert result["status"] == "deferred"
+    assert harness.record().watchdog == ""  # nothing armed while the call is still up
+
+    harness.sessions.remove(session)
+    await harness.settle()
+
+    assert "4321" in harness.record().watchdog
