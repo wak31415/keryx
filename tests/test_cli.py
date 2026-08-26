@@ -493,6 +493,9 @@ def ran(monkeypatch):
         return Done
 
     monkeypatch.setattr("jarvis.cli.subprocess.run", fake_run)
+    # The watchdog deliberately starts a process that outlives its parent, which is the
+    # one thing a test suite must never do (see the testing rule in CLAUDE.md).
+    monkeypatch.setattr("jarvis.cli.spawn_watchdog", lambda plan, settings: 4321)
     return calls, Done
 
 
@@ -508,6 +511,21 @@ def test_restart_asks_the_service_manager_and_records_the_call_back(restart_sett
     assert record.number == "+15550000001"
     assert record.origin_channel == "cli"
     assert "…0001" in result.output  # the number is masked where it is printed
+    # Armed before the hand-over, and on the record, because this command has just
+    # promised him a call and nothing else would notice if it never came.
+    assert "4321" in record.watchdog
+    assert "watchdog:" in result.output
+
+
+def test_a_quiet_restart_arms_no_watchdog(restart_settings, ran):
+    """`--no-callback` promises nothing, so there is nothing to notice the absence of."""
+    calls, _ = ran
+
+    runner.invoke(app, ["restart", "--no-callback"])
+
+    record = RestartStore(restart_settings.data_dir / RECORD_NAME).load()
+    assert record.watchdog == ""
+    assert calls == [["systemctl", "--user", "restart", "jarvis.service"]]
 
 
 def test_restart_refuses_to_cut_off_a_live_call(restart_settings, ran, monkeypatch):
