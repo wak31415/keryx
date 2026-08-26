@@ -7,6 +7,7 @@ no test may wait longer than `WAIT` seconds for anything.
 
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -745,3 +746,64 @@ async def test_an_internal_task_may_not_take_jarvis_off_the_air(make_harness):
     finished = await harness.manager.wait_for(task.id, timeout=WAIT)
 
     assert finished.needs_restart is False
+
+
+# --- picking up what a killed process never started -------------------------
+
+
+async def test_a_queued_row_from_a_dead_process_is_started(make_harness):
+    """`queued` means it never ran an instruction, so this is its first run, not a re-run."""
+    harness = make_harness(FakeAgentRunner([RunResult(ok=True, spoken_summary="done")]))
+    orphan = await harness.manager._store.create(
+        Task(id=None, kind=TaskKind.AGENT, description="left behind", status=TaskStatus.QUEUED)
+    )
+
+    assert await harness.manager.resume_queued() == [orphan.id]
+
+    finished = await harness.manager.wait_for(orphan.id, timeout=WAIT)
+    assert finished.status is TaskStatus.DONE
+
+
+async def test_a_running_row_is_left_alone(make_harness):
+    """That subagent had opened; what it got through before the machine died is unknowable."""
+    harness = make_harness()
+    await harness.manager._store.create(
+        Task(id=None, kind=TaskKind.AGENT, description="was mid-flight", status=TaskStatus.RUNNING)
+    )
+
+    assert await harness.manager.resume_queued() == []
+
+
+async def test_the_oldest_thing_he_asked_for_runs_first(make_harness):
+    harness = make_harness()
+    ids = []
+    for minute in (30, 10, 20):
+        row = await harness.manager._store.create(
+            Task(
+                id=None,
+                kind=TaskKind.AGENT,
+                description=f"queued {minute}",
+                status=TaskStatus.QUEUED,
+                created_at=datetime(2026, 8, 26, 12, minute, tzinfo=UTC),
+            )
+        )
+        ids.append((minute, row.id))
+
+    resumed = await harness.manager.resume_queued()
+
+    assert resumed == [next(i for m, i in ids if m == minute) for minute in (10, 20, 30)]
+
+
+async def test_nothing_queued_is_nothing_to_do(make_harness):
+    assert await make_harness().manager.resume_queued() == []
+
+
+async def test_a_store_that_will_not_answer_does_not_stop_the_service_starting(make_harness):
+    harness = make_harness()
+
+    async def explode(**kwargs):
+        raise RuntimeError("the database is gone")
+
+    harness.manager._store.list = explode
+
+    assert await harness.manager.resume_queued() == []

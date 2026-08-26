@@ -384,6 +384,16 @@ class SessionRegistry:
      the logs said, and rings with plain `<Say>` TwiML — every other call Jarvis places is
      answered by the media stream of the server that is not running. Nothing to arm it with
      (no `systemd-run`) is written on the record rather than papered over.
+
+  The two halves read the logs from **different marks**, because they ask different
+  questions (corrected 2026-08-26). The watchdog reads from the *request*, because there may
+  be no new process to have marked anything. `resume()` reads from `mark_startup_logs()`,
+  stamped at the top of `jarvis serve`, because its question is "did I come up clean" and
+  the request's mark also catches the dying process's last gasps — a Python shutting down
+  with a subagent subprocess still open reliably prints `RuntimeError: Event loop is closed`
+  out of `base_subprocess.__del__`, which put "but 1 error in the log since" on the
+  confirmation for a restart that had gone perfectly, and would have done so on every
+  self-edit restart.
   A negative exit code from the restart command is **not** a failure: `systemctl` sits in the
   cgroup the restart tears down, so it is killed handing over and returns `-15`. Read as a
   failure (as it was until 2026-08-26) it wrote `systemctl exited -15` onto a service that had
@@ -395,7 +405,16 @@ class SessionRegistry:
   any edit anyone has open and the voice model can only guess from a spoken summary. It is a
   request and not a fact about the checkout, honoured only on a task that *succeeded* and
   never on an `internal` one: nothing Jarvis dispatches to itself may take Jarvis off the
-  air. `TaskManager` records it as `Task.needs_restart` and acts on nothing; the Notifier is
+  air.
+- **`queued` is not a waiting room, so a queued row is resumed (added 2026-08-26).** A task
+  is *born* `queued` and flips to `running` about a second later, when the coroutine
+  `dispatch` created takes the semaphore; under the concurrency cap nothing normally waits
+  there at all. A row still `queued` in a fresh process is therefore one that never executed
+  a single instruction, and `TaskManager.resume_queued()` — one call per `jarvis serve`,
+  oldest first — is running it for the first time rather than twice. `running` rows are the
+  opposite and stay lost: that subagent had opened, and what it got through is unknowable.
+  The drain runs *after* the restart confirmation, so the confirmation's count is of what
+  the old process left rather than of what this one has already started. `TaskManager` records it as `Task.needs_restart` and acts on nothing; the Notifier is
   what decides, because it is the thing that knows whether he is mid-call. It announces and
   texts the result as usual (both cost nothing and both survive a restart that does not come
   back), then arms the restart with the `task_id` and returns *instead of* placing its own
