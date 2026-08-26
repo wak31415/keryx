@@ -36,7 +36,9 @@ from jarvis.restart import (
     health_probe,
     mask_number,
     resolve_target,
+    spawn_watchdog,
     wait_until_serving,
+    watch_command,
 )
 from jarvis.restart_watch import watch
 from jarvis.server import create_app
@@ -315,6 +317,14 @@ def restart(
         typer.echo(f"could not write {store.path}: the restart would go unconfirmed")
         raise typer.Exit(1)
 
+    if number:
+        # The same watch the voice path arms, for the same reason: this command prints a
+        # promise that jarvis will call back, and nothing else would notice if it never
+        # came back to make the call.
+        record.watchdog = _arm_watchdog(settings, target)
+        store.save(record)
+        typer.echo(f"watchdog: {record.watchdog}")
+
     command = target.command()
     typer.echo(" ".join(command))
     code = subprocess.run(command, check=False).returncode
@@ -344,6 +354,17 @@ def restart_watch() -> None:
     """
     settings = _configure_readonly()
     typer.echo(asyncio.run(watch(settings)))
+
+
+def _arm_watchdog(settings: Settings, target) -> str:
+    """Start the out-of-process watch, and say how it went for the record."""
+    plan = watch_command(settings, target)
+    if plan is None:
+        return "not started: systemd-run is not on PATH, so nothing outlives the restart"
+    try:
+        return f"{plan.label} (pid {spawn_watchdog(plan, settings)})"
+    except Exception as exc:  # a missing binary, a refused fork
+        return f"not started: {type(exc).__name__}: {exc}"
 
 
 def _echo_restart_status(store: RestartStore) -> None:
