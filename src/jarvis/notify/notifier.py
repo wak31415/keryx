@@ -142,6 +142,12 @@ class Notifier:
         if task is None:
             log.warning("no task %s to notify about", event.task_id)
             return
+        if task.internal:
+            # Housekeeping Jarvis asked for itself (the per-call memory update). He never
+            # requested it, so announcing it into a live call, texting it, or ringing him
+            # about it would all be Jarvis interrupting him to talk about Jarvis.
+            log.debug("task %s is internal; nothing to notify about", task.id)
+            return
 
         text = (FAILED_TEXT if failed else DONE_TEXT).format(
             task_id=task.id, detail=detail
