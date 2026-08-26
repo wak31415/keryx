@@ -49,6 +49,7 @@ from jarvis.notify.notifier import (
     CALLBACK_TOKEN_TTL_S,
     HISTORY_PREAMBLE,
     MAX_REQUEST_CHARS,
+    no_trailing_stop,
 )
 from jarvis.notify.twilio_out import stream_twiml
 from jarvis.session import SessionRegistry
@@ -845,7 +846,7 @@ class RestartCoordinator:
         return RESTART_WITH_TASK_CONTEXT.format(
             task_id=task.id,
             request=request,
-            detail=task.summary or "it finished without a summary",
+            detail=no_trailing_stop(task.summary or "it finished without a summary"),
             status=status,
             history=HISTORY_PREAMBLE.format(history=history) if history else "",
         )
