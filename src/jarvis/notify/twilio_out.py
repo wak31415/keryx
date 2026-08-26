@@ -33,6 +33,19 @@ def stream_twiml(public_host: str, params: dict[str, str]) -> str:
     return str(response)
 
 
+def say_twiml(text: str, *, loop: int = 2) -> str:
+    """TwiML that simply speaks `text`, with no media stream behind it.
+
+    The `<Connect><Stream>` above needs our own phone server to answer it, which makes it
+    exactly the wrong shape for the one call that matters most: the alert that says the
+    service never came back. This one is hosted by Twilio and needs nothing of ours to be
+    running. Said twice by default — a call answered mid-sentence loses the start of it.
+    """
+    response = VoiceResponse()
+    response.say(text, loop=loop)
+    return str(response)
+
+
 class TwilioOut:
     """Outbound Twilio, with the REST client injectable (and never built in tests)."""
 

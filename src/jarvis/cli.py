@@ -38,6 +38,7 @@ from jarvis.restart import (
     resolve_target,
     wait_until_serving,
 )
+from jarvis.restart_watch import watch
 from jarvis.server import create_app
 from jarvis.session import VoiceSession
 from jarvis.tasks.models import Task, TaskStatus
@@ -329,6 +330,20 @@ def restart(
     else:
         typer.echo("restarting; no call back was asked for")
     typer.echo("if the call never comes: jarvis restart --status")
+
+
+@app.command("restart-watch", hidden=True)
+def restart_watch() -> None:
+    """Watch a pending restart from outside the service; started by the restart itself.
+
+    Not for hand use — `jarvis restart` arms this, in a unit of its own so the restart
+    cannot kill it (see `jarvis.restart.watch_command`). Deliberately without
+    `_add_file_logging`: its output belongs in `logs/restart-watch.log`, and writing its
+    own "the restart never came back" into `jarvis.log` would leave the next restart
+    scanning that line back as a fault of Jarvis's.
+    """
+    settings = _configure_readonly()
+    typer.echo(asyncio.run(watch(settings)))
 
 
 def _echo_restart_status(store: RestartStore) -> None:

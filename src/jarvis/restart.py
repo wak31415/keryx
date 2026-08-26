@@ -81,6 +81,11 @@ EXEC_CONFIRM_S = 20.0
 GIT_TIMEOUT_S = 2.0
 #: How many rows the task counts in the summary look at.
 TASK_SCAN_LIMIT = 50
+#: The transient unit the watchdog runs as, suffixed with the pid that armed it so a
+#: second restart during a crash loop does not collide with the watch still running.
+WATCH_UNIT_PREFIX = "jarvis-restart-watch"
+#: Where the watchdog's own output goes, under `data_dir/logs`.
+WATCH_LOG_NAME = "restart-watch.log"
 
 #: What a live session hears instead of a call — nobody is rung mid-conversation.
 RESTART_ANNOUNCEMENT = "The restart is done and Jarvis is back up: {status}."
@@ -200,6 +205,94 @@ def current_version(repo: Path | None = None) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout.strip() or None if done.returncode == 0 else None
+
+
+# --- the watchdog that outlives the restart ---------------------------------
+
+
+@dataclass(frozen=True)
+class WatchPlan:
+    """How to start the watchdog: the command, what to call it, and who redirects it."""
+
+    argv: list[str]
+    label: str
+    #: True when we have to point its output at a file ourselves; systemd does it for us.
+    redirect: bool
+
+
+def watch_command(
+    settings: Settings,
+    target: ServiceTarget,
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    pid: int | None = None,
+) -> WatchPlan | None:
+    """How to start the watchdog *outside* this service, or None when nothing can be.
+
+    Outside is the whole point. A restart signals the service's entire cgroup, and a
+    process we merely fork is in it — it would be killed by the very restart it exists to
+    watch. `systemd-run --user` hands the job to the service manager instead, which starts
+    it in a transient unit of its own; launchd has no cgroup of its own to escape, so a
+    new session is enough there.
+
+    None means the watch cannot be armed at all (systemd with no `systemd-run`). Saying so
+    on the record is better than starting something that will quietly die with us.
+    """
+    inner = [sys.executable, "-m", "jarvis", "restart-watch"]
+    if target.manager != "systemd":
+        return WatchPlan(inner, "detached", redirect=True)
+    runner = which("systemd-run")
+    if runner is None:
+        return None
+    unit = f"{WATCH_UNIT_PREFIX}-{pid or os.getpid()}"
+    log_path = watch_log_path(settings)
+    return WatchPlan(
+        [
+            runner,
+            "--user",
+            "--quiet",
+            "--collect",  # take the unit away once it exits, so the next one is free to run
+            f"--unit={unit}",
+            f"--property=WorkingDirectory={Path.cwd()}",
+            f"--property=StandardOutput=append:{log_path}",
+            f"--property=StandardError=append:{log_path}",
+            "--",
+            *inner,
+        ],
+        unit,
+        redirect=False,
+    )
+
+
+def watch_log_path(settings: Settings) -> Path:
+    """Where the watchdog writes; it has no other way to be heard if it fails itself."""
+    return settings.data_dir / "logs" / WATCH_LOG_NAME
+
+
+def spawn_watchdog(plan: WatchPlan, settings: Settings) -> int:
+    """Start the watchdog and return its pid, without ever waiting for it.
+
+    Blocking, and deliberately `Popen`: we are about to be killed, so there must be no
+    child watcher attached to an event loop that is going away, and nothing to reap.
+    """
+    output = subprocess.DEVNULL
+    if plan.redirect:
+        path = watch_log_path(settings)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        output = path.open("a", encoding="utf-8")  # noqa: SIM115 - the child owns it now
+    try:
+        process = subprocess.Popen(  # noqa: S603 - a fixed argv, never a shell string
+            plan.argv,
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT if plan.redirect else subprocess.DEVNULL,
+            start_new_session=True,
+            cwd=Path.cwd(),
+        )
+    finally:
+        if plan.redirect:
+            output.close()  # the child holds its own duplicate
+    return process.pid
 
 
 # --- the record that survives the restart -----------------------------------
@@ -338,6 +431,7 @@ class RestartCoordinator:
         *,
         store: RestartStore | None = None,
         spawn: Callable[[Sequence[str]], Awaitable[Any]] | None = None,
+        spawn_watch: Callable[["WatchPlan", Settings], int] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._settings = settings
@@ -347,6 +441,7 @@ class RestartCoordinator:
         self._tasks = task_store
         self._store = store or RestartStore(settings.data_dir / RECORD_NAME)
         self._spawn = spawn or _spawn_detached
+        self._spawn_watch = spawn_watch or spawn_watchdog
         self._sleep = sleep
         self._deferred: asyncio.Task | None = None
 
@@ -439,6 +534,7 @@ class RestartCoordinator:
 
     async def _execute(self, target: ServiceTarget) -> None:
         """Hand the restart to the service manager; we expect to be killed doing it."""
+        await self._arm_watchdog(target)
         command = target.command()
         log.info("restarting through %s: %s", target.manager, " ".join(command))
         try:
@@ -446,13 +542,52 @@ class RestartCoordinator:
         except Exception as exc:  # a missing binary, a refused fork
             await self._failed(f"{type(exc).__name__}: {exc}")
             return
-        if code:
+        if code and code > 0:
             await self._failed(f"{command[0]} exited {code}")
             return
+        # A negative code is the client killed by a signal, and the signal is ours: the
+        # restart it queued tore down the cgroup the client was still sitting in. That is
+        # the restart working, not failing — reported as a failure it left `restart.json`
+        # saying `systemctl exited -15` on a service that had in fact come back fine, and
+        # nobody was told anything, because the process that would have said so was dead.
+        if code:
+            log.info("%s was killed handing the restart over, which is the restart", command[0])
         # systemd kills us as part of the restart, so anything past here is the command
         # having quietly done nothing — the one failure that would otherwise go unnoticed.
         await self._sleep(EXEC_CONFIRM_S)
         await self._failed(f"{target.describe()} accepted the restart but nothing happened")
+
+    async def _arm_watchdog(self, target: ServiceTarget) -> None:
+        """Start the process that notices a restart which never comes back. Never raises.
+
+        Every other part of this file runs on one side of the death or the other. This is
+        the only thing that runs *through* it, and so the only thing that can tell him the
+        service is gone rather than merely late — `resume()` cannot report a process that
+        never got far enough to run it.
+
+        Armed here rather than in `request()` because a deferred restart waits for the line
+        to clear, and a watchdog counting down from half an hour ago would give up before
+        the restart it is watching had even happened.
+        """
+        record = self._store.load()
+        if record is None:
+            return
+        record.watchdog = await asyncio.to_thread(self._arm, target)
+        self._store.save(record)
+
+    def _arm(self, target: ServiceTarget) -> str:
+        """Start the watchdog; the string is what `jarvis restart --status` reads back."""
+        plan = watch_command(self._settings, target)
+        if plan is None:
+            log.warning("no systemd-run: a restart that does not come back will go unnoticed")
+            return "not started: systemd-run is not on PATH, so nothing outlives the restart"
+        try:
+            pid = self._spawn_watch(plan, self._settings)
+        except Exception as exc:
+            log.exception("could not arm the restart watchdog")
+            return f"not started: {type(exc).__name__}: {exc}"
+        log.info("armed the restart watchdog as %s (pid %s)", plan.label, pid)
+        return f"{plan.label} (pid {pid})"
 
     async def _failed(self, error: str) -> None:
         """Record, announce and text a restart that did not go through."""
