@@ -182,11 +182,13 @@ async def _alert(
 def _body(record: RestartRecord, errors: LogErrors, *, up: bool) -> str:
     """The text message: everything worth knowing, in one message."""
     template = STUCK_SMS if up else DOWN_SMS
+    # A log line ends however it ends; the sentence around it has to end in a full stop.
+    last = errors.lines[-1].rstrip(".") if errors else ""
     return template.format(
         reason=f" ({record.reason})" if record.reason else "",
         age=format_duration(record.age_seconds()),
         task=f" It was loading the work from task {record.task_id}." if record.task_id else "",
-        errors=f" Last error: {errors.lines[-1]}" if errors else "",
+        errors=f" Last error: {last}." if last else "",
         version=record.version or "an unknown version",
     )[:MAX_SMS_CHARS]
 
