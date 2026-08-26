@@ -358,6 +358,7 @@ class VoiceSession:
             vad_threshold=self._settings.vad_threshold,
             vad_silence_ms=self._settings.vad_silence_ms,
             vad_prefix_ms=self._settings.vad_prefix_ms,
+            noise_reduction=self._settings.noise_reduction_for(self.channel),
             # The local device is half-duplex, so the model must not try to interrupt
             # itself: the mic is gated while it speaks and there is nothing to hear.
             interrupt_response=self.channel == "phone",
