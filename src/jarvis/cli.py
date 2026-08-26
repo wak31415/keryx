@@ -24,6 +24,8 @@ from jarvis.doctor import format_check, has_hard_failure, run_doctor_checks
 from jarvis.events import EventBus
 from jarvis.google_setup import GoogleSetupError, run_google_setup
 from jarvis.local_runner import LocalRunner
+from jarvis.logscan import errors_since
+from jarvis.logscan import marks as log_marks
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.restart import (
     RECORD_NAME,
@@ -306,6 +308,7 @@ def restart(
         origin_channel="cli",
         target=target.describe(),
         version=current_version(),
+        log_marks=log_marks(settings.data_dir),
     )
     if not store.save(record):
         typer.echo(f"could not write {store.path}: the restart would go unconfirmed")
@@ -334,20 +337,27 @@ def _echo_restart_status(store: RestartStore) -> None:
     if record is None:
         typer.echo("no restart on record: the last one was confirmed, or there has not been one")
         return
+    settings = _load_settings_optional()
+    found = errors_since(settings.data_dir, record.log_marks)
     rows = [
         ("asked for", record.requested_at),
         ("reason", record.reason),
+        ("loading", f"task {record.task_id}" if record.task_id else ""),
         ("through", record.target),
         ("version", record.version),
         ("call back", mask_number(record.number)),
+        ("watchdog", record.watchdog),
         ("state", record.state),
         ("attempts", record.attempts),
         ("error", record.error),
+        ("log errors", found.count or ""),
     ]
     width = max(len(name) for name, _ in rows)
     for name, value in rows:
         if value not in (None, ""):
             typer.echo(f"{name:<{width}}  {value}")
+    for line in found.lines:
+        typer.echo(f"{'':<{width}}  {line}")
 
 
 @app.command()

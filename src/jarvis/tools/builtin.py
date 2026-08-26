@@ -689,6 +689,7 @@ def register_builtin_tools(
                 number=ctx.caller if ctx.channel == "phone" else None,
                 origin_channel=ctx.channel,
                 origin_session_id=ctx.session.session_id,
+                task_id=_task_id(arguments),
             )
 
         registry.register(
@@ -696,8 +697,8 @@ def register_builtin_tools(
             "Restart Jarvis itself — the service behind this call — when he asks for one, "
             "or when work he asked for has changed Jarvis's own code and only a restart "
             "loads it. The restart drops this call, so it waits until the call has ended "
-            "and then rings him back by itself to confirm it worked; the answer tells you "
-            "what to say. Never reach for it to fix something you were not asked to fix.",
+            "and then rings him back by itself to say whether it worked; the answer tells "
+            "you what to say. Never reach for it to fix something you were not asked to fix.",
             {
                 "type": "object",
                 "properties": {
@@ -705,6 +706,12 @@ def register_builtin_tools(
                         "type": "string",
                         "description": "Why it is being restarted, in a few words — he "
                         "hears this back on the confirmation call.",
+                    },
+                    "task_id": {
+                        "type": "integer",
+                        "description": "The task whose change this restart is loading, if "
+                        "it is loading one. Pass it: the confirmation then checks that the "
+                        "change is actually running rather than only that Jarvis came back.",
                     },
                 },
                 "required": [],
