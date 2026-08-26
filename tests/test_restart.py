@@ -1084,3 +1084,47 @@ async def test_the_confirmation_is_not_held_up_by_the_task_queue(tmp_path):
 
     assert harness.twilio.calls, "the confirmation waited for a task it had no reason to"
     await store.close()
+
+
+# --- the confirmation for a restart the work asked for ----------------------
+
+
+async def test_the_call_back_leads_with_the_work_that_asked_for_the_restart(tmp_path):
+    """One call, both halves: what the work came to, and whether it is running."""
+    store = TaskStore(":memory:")
+    task = await store.create(
+        Task(
+            id=None,
+            kind=TaskKind.AGENT,
+            description="add a recall tool so I can ask what we decided",
+            status=TaskStatus.DONE,
+            summary="I added the recall tool and the tests pass.",
+        )
+    )
+    harness = Harness(make_settings(tmp_path), tasks=store)
+    harness.store.save(pending(task_id=task.id))
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
+    context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
+    assert "add a recall tool" in context  # what he asked for
+    assert "I added the recall tool" in context  # what came back
+    assert "back up after" in context  # and whether it is running
+    assert f"mark_reported for task {task.id}" in context
+    await store.close()
+
+
+async def test_a_restart_naming_a_task_that_is_gone_still_confirms_itself(tmp_path):
+    """A missing row must not cost him the confirmation the restart owes him."""
+    store = TaskStore(":memory:")
+    harness = Harness(make_settings(tmp_path), tasks=store)
+    harness.store.save(pending(task_id=999))
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
+    context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
+    assert "restarted" in context
+    assert "task 999" in context
+    await store.close()

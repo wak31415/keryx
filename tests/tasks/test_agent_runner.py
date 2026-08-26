@@ -26,6 +26,7 @@ from jarvis.tasks.agent_runner import (
     FakeAgentRunner,
     RunResult,
     build_options,
+    extract_restart_request,
     extract_spoken_summary,
     resolve_model,
 )
@@ -601,3 +602,42 @@ def test_the_subagent_suffix_routes_unasked_output_to_the_report(settings, unwra
 
     assert "goes in the written report" in append
     assert "offers to send it" in append
+
+
+# --- RESTART_REQUIRED ------------------------------------------------------
+
+
+def test_no_marker_means_no_restart():
+    assert extract_restart_request("I edited a file and ran the tests.") is None
+
+
+def test_the_marker_is_read_with_its_reason():
+    text = (
+        "Report.\n\nRESTART_REQUIRED: registers the new tool at startup"
+        "\n\nSPOKEN_SUMMARY: done"
+    )
+
+    assert extract_restart_request(text) == "registers the new tool at startup"
+
+
+def test_the_marker_survives_the_markdown_a_model_wraps_it_in():
+    """Same tolerance as SPOKEN_SUMMARY:, and for the same reason."""
+    wrapped = ("**RESTART_REQUIRED:** why", "- RESTART_REQUIRED: why", "## RESTART_REQUIRED: why")
+    for line in wrapped:
+        assert extract_restart_request(f"Report.\n{line}\n") == "why"
+
+
+def test_a_marker_with_no_reason_is_still_asking():
+    """Empty is not None: the ask is the line being there, not what it says."""
+    assert extract_restart_request("Report.\nRESTART_REQUIRED:\n") == ""
+
+
+def test_merely_talking_about_a_restart_is_not_asking_for_one():
+    """It takes Jarvis off the air, so only the explicit line counts."""
+    text = "You will need to restart the service. A restart is required to load this."
+
+    assert extract_restart_request(text) is None
+
+
+def test_the_reason_is_trimmed_to_something_sayable():
+    assert len(extract_restart_request("RESTART_REQUIRED: " + "x " * 400)) <= 120

@@ -705,3 +705,43 @@ async def test_shutdown_cancels_running_tasks_and_closes_sessions(make_harness):
     assert (await harness.manager.get(task.id)).status is TaskStatus.CANCELLED
     assert harness.runner.sessions[0].closed is True
     assert harness.events.of(TaskCompleted, TaskFailed) == []
+
+
+# --- a task that changed Jarvis's own code ---------------------------------
+
+
+async def test_a_subagents_restart_request_lands_on_the_task(make_harness):
+    result = RunResult(
+        ok=True,
+        final_text="Report.",
+        spoken_summary="I added the recall tool.",
+        restart_reason="registers the new tool at startup",
+    )
+    harness = make_harness(FakeAgentRunner([result]))
+
+    task = await dispatch(harness.manager)
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert finished.needs_restart is True
+
+
+async def test_a_task_that_asked_for_nothing_needs_no_restart(make_harness):
+    harness = make_harness(FakeAgentRunner([RunResult(ok=True, spoken_summary="done")]))
+
+    task = await dispatch(harness.manager)
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert finished.needs_restart is False
+
+
+async def test_an_internal_task_may_not_take_jarvis_off_the_air(make_harness):
+    """The memory update runs after every call; a restart is not its to ask for."""
+    result = RunResult(ok=True, spoken_summary="folded it in", restart_reason="why not")
+    harness = make_harness(FakeAgentRunner([result]))
+
+    task = await harness.manager.dispatch(
+        "update the memory", origin_channel="local", origin_caller=None, internal=True
+    )
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert finished.needs_restart is False

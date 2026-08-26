@@ -128,6 +128,7 @@ def build_app_state(settings: Settings) -> AppState:
         settings,
         stream_tokens,
         inline_waits,
+        restart,
     )
     state.notifier.start()
     return state

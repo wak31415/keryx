@@ -41,7 +41,15 @@ log = logging.getLogger("jarvis.tasks.agent_runner")
 SUBAGENT_SUFFIX_PROMPT = "subagent_suffix.md"
 
 SPOKEN_SUMMARY_MARKER = "SPOKEN_SUMMARY:"
+#: How a subagent says "I changed Jarvis's own code, and only a restart loads it". The
+#: subagent is the only thing that actually knows — `git describe --dirty` flips on any
+#: edit anyone has open, and the voice model can only guess from a spoken summary — so it
+#: declares it rather than being detected. Read before `SPOKEN_SUMMARY:`, so it never ends
+#: up in what gets read out loud.
+RESTART_MARKER = "RESTART_REQUIRED:"
 MAX_SUMMARY_CHARS = 400
+#: How much of the subagent's own "why" is kept as the restart's reason.
+MAX_RESTART_REASON_CHARS = 120
 NO_SUMMARY = "The task finished, but no summary was produced."
 
 MODEL_ALIASES = {
@@ -85,6 +93,10 @@ _MARKER_RE = re.compile(
     rf"^[ \t]*(?:[#>*_\-+][ \t]*)*{re.escape(SPOKEN_SUMMARY_MARKER)}",
     re.MULTILINE,
 )
+_RESTART_RE = re.compile(
+    rf"^[ \t]*(?:[#>*_\-+][ \t]*)*{re.escape(RESTART_MARKER)}(?P<why>.*)$",
+    re.MULTILINE,
+)
 _BULLET_RE = re.compile(r"^[ \t]*(?:[-*+•]|\d+[.)])[ \t]+", re.MULTILINE)
 _HEADING_RE = re.compile(r"^[ \t]*#+[ \t]*", re.MULTILINE)
 _EMPHASIS_RE = re.compile(r"[`*_]+")
@@ -101,6 +113,9 @@ class RunResult:
     session_id: str | None = None
     cost_usd: float | None = None
     error: str | None = None
+    #: The subagent's own `RESTART_REQUIRED:` line, or None when it did not ask for one.
+    #: Empty string means it asked without saying why, which is still asking.
+    restart_reason: str | None = None
 
 
 class AgentSession(Protocol):
@@ -187,6 +202,19 @@ def extract_spoken_summary(text: str) -> str:
         # An empty (or missing) marked block: fall back to the report above it.
         summary = _last_paragraph(text[: markers[-1].start()] if markers else text)
     return _truncate(summary) if summary else NO_SUMMARY
+
+
+def extract_restart_request(text: str) -> str | None:
+    """The subagent's `RESTART_REQUIRED:` reason, or None when it did not ask for one.
+
+    A restart takes Jarvis off the air and kills the phone call, so this only ever reads
+    an explicit line. Anything that merely looks like one — the words in a report, a
+    changed checkout — is not it.
+    """
+    match = _RESTART_RE.search(text or "")
+    if match is None:
+        return None
+    return _truncate(_clean(match.group("why")), MAX_RESTART_REASON_CHARS)
 
 
 def _failure_summary(error: str | None) -> str:
@@ -348,6 +376,7 @@ class ClaudeAgentSession(AgentSession):
             )
 
         final_text = result_text or (texts[-1] if texts else "")
+        restart_reason = extract_restart_request(final_text) if ok else None
         if ok or final_text:
             spoken_summary = extract_spoken_summary(final_text)
         else:  # errored with nothing to summarise
@@ -359,6 +388,7 @@ class ClaudeAgentSession(AgentSession):
             session_id=session_id,
             cost_usd=cost_usd,
             error=error,
+            restart_reason=restart_reason,
         )
 
     async def send(self, text: str) -> None:

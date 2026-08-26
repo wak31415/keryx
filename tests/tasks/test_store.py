@@ -414,3 +414,20 @@ async def test_migrating_is_idempotent_across_reopens(tmp_path):
         assert len(await store.list()) == 2
     finally:
         await store.close()
+
+
+async def test_a_v2_database_walks_all_the_way_up_in_one_go(tmp_path):
+    """Two versions behind means both steps run, not just the last one."""
+    path = tmp_path / "tasks.db"
+    _v2_database(path)
+
+    store = TaskStore(path)
+    try:
+        tasks = await store.list()
+        # v3 added these two...
+        assert all(task.internal is False for task in tasks)
+        assert any(task.reported_at is not None for task in tasks)
+        # ...and v4 this one, defaulted off: nothing written before it asked for a restart.
+        assert all(task.needs_restart is False for task in tasks)
+    finally:
+        await store.close()

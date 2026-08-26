@@ -45,12 +45,17 @@ from typing import Any
 
 from jarvis.config import Settings
 from jarvis.logscan import errors_since, marks
-from jarvis.notify.notifier import CALLBACK_TOKEN_TTL_S
+from jarvis.notify.notifier import (
+    CALLBACK_TOKEN_TTL_S,
+    HISTORY_PREAMBLE,
+    MAX_REQUEST_CHARS,
+)
 from jarvis.notify.twilio_out import stream_twiml
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
-from jarvis.tasks.models import TaskStatus
+from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tasks.store import TaskStore
+from jarvis.transcripts import read_tail
 
 log = logging.getLogger("jarvis.restart")
 
@@ -103,6 +108,21 @@ RESTART_CONTEXT = (
 )
 #: The clause that names the work a restart was loading, for the context above.
 LOADING_TASK = ", to load the work from task {task_id}"
+#: The other opening context: a restart the *work itself* asked for, where the call is
+#: both "here is what came of it" and "and here is whether it is running". Two calls a
+#: minute apart about the same piece of work is what this exists to avoid.
+RESTART_WITH_TASK_CONTEXT = (
+    "You are calling the user back about task {task_id}, which he asked you for earlier and "
+    "which has now finished — and about the restart it needed, because the work changed "
+    "Jarvis's own code and Jarvis has just restarted to load it. What he asked for: "
+    "{request}. Result: {detail}. Restart: {status}.{history} Greet him, remind him in a few "
+    "words what this is about, tell him what came of the work, and then say whether the "
+    "change is actually running. If the restart line mentions errors in the log, or says the "
+    "checkout did not change, that is the headline: say plainly that the update may not have "
+    "taken, say what the error was, and offer to put Claude on it. Call mark_reported for "
+    "task {task_id} once you have told him. Keep it short. This is a new call: he may have "
+    "to give the PIN again before you can start more work."
+)
 #: The same confirmation as a text, when no call can be placed.
 RESTART_SMS = "Jarvis restarted and is back up: {status}"
 FAILED_SMS = "Jarvis tried to restart and it did not go through: {error}"
@@ -795,13 +815,7 @@ class RestartCoordinator:
         host = self._settings.public_host
         # `is not None` on the token store: an empty one is falsy (it counts its tokens).
         assert host and record.number and self._stream_tokens is not None  # _call_blocker
-        reason = f", because {record.reason}" if record.reason else ""
-        context = RESTART_CONTEXT.format(
-            when=f"{format_duration(record.age_seconds())} ago",
-            reason=reason,
-            change=LOADING_TASK.format(task_id=record.task_id) if record.task_id else "",
-            status=status,
-        )
+        context = await self._opening_context(record, status)
         token = self._stream_tokens.issue(
             caller=record.number,
             extra={"opening_context": context, "restart": True},
@@ -812,6 +826,39 @@ class RestartCoordinator:
             record.number, twiml=twiml, status_callback=f"https://{host}/twilio/status"
         )
         log.info("called %s back to confirm the restart", mask_number(record.number))
+
+    async def _opening_context(self, record: RestartRecord, status: str) -> str:
+        """What the call-back opens knowing: the restart, and the work that asked for it."""
+        task = await self._task(record.task_id)
+        if task is None:
+            reason = f", because {record.reason}" if record.reason else ""
+            return RESTART_CONTEXT.format(
+                when=f"{format_duration(record.age_seconds())} ago",
+                reason=reason,
+                change=LOADING_TASK.format(task_id=record.task_id) if record.task_id else "",
+                status=status,
+            )
+        request = task.description
+        if len(request) > MAX_REQUEST_CHARS:
+            request = request[: MAX_REQUEST_CHARS - 1].rstrip() + "…"
+        history = read_tail(self._settings.data_dir, record.origin_session_id or "")
+        return RESTART_WITH_TASK_CONTEXT.format(
+            task_id=task.id,
+            request=request,
+            detail=task.summary or "it finished without a summary",
+            status=status,
+            history=HISTORY_PREAMBLE.format(history=history) if history else "",
+        )
+
+    async def _task(self, task_id: int | None) -> Task | None:
+        """The task this restart is loading, if it is loading one and it can be read."""
+        if task_id is None or self._tasks is None:
+            return None
+        try:
+            return await self._tasks.get(task_id)
+        except Exception:
+            log.exception("could not read task %s to lead the call-back with it", task_id)
+            return None
 
     async def _finish(self, record: RestartRecord, body: str, why: str) -> None:
         """The fallback: text the confirmation, and keep the record if even that failed."""

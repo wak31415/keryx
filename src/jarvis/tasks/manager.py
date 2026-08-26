@@ -333,6 +333,13 @@ class TaskManager:
         }
         if result.session_id:
             fields["claude_session_id"] = result.session_id
+        if result.ok and result.restart_reason is not None and not task.internal:
+            # The subagent says it changed Jarvis's own code. Recorded, not acted on: the
+            # Notifier decides when a restart is safe, because it is the thing that knows
+            # whether he is mid-call. An internal task never asks — nothing Jarvis
+            # dispatches to itself has any business taking Jarvis off the air.
+            log.info("task %s asks for a restart: %s", task.id, result.restart_reason or "no why")
+            fields["needs_restart"] = True
         if result.ok:
             await self._store.update(task.id, status=TaskStatus.DONE, error=None, **fields)
             log.info("task %s done", task.id)

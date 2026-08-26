@@ -93,11 +93,11 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `realtime/openai.py` | OpenAI Realtime WS client (GA schema) |
 | `session.py` | `VoiceSession` (wires transport⇄provider, barge-in, tool dispatch, PIN gate, announcements, lifecycle, transcript log) + `SessionRegistry` |
 | `tools/registry.py` | `ToolRegistry`, `ToolContext`; `tools/builtin.py` registers the tool set |
-| `tasks/models.py` | `Task`, `TaskKind`, `TaskStatus` |
+| `tasks/models.py` | `Task` (schema v4: `reported_at`, `internal`, `needs_restart`), `TaskKind`, `TaskStatus` |
 | `tasks/store.py` | SQLite store (`TaskStore`) |
 | `tasks/agent_runner.py` | `AgentRunner` protocol; `ClaudeAgentRunner` (Agent SDK); `FakeAgentRunner` (tests) |
 | `tasks/manager.py` | `TaskManager`: queue/semaphore, lifecycle, follow-up, cancel, logs, events |
-| `notify/notifier.py` | routes task results: live sessions → SMS → call-back |
+| `notify/notifier.py` | routes task results: live sessions → SMS → call-back, or hands the call-back to a restart when the work changed Jarvis's own code |
 | `notify/twilio_out.py` | SMS + outbound call (TwiML with `<Parameter>`) |
 | `server.py` | FastAPI app: `/twilio/voice`, `/twilio/media`, `/twilio/status`, `/health`, `/reports/{id}` |
 | `app.py` | `AppState` composition root (settings → store, bus, manager, registry, notifier, session registry) |
@@ -389,6 +389,21 @@ class SessionRegistry:
   failure (as it was until 2026-08-26) it wrote `systemctl exited -15` onto a service that had
   come back fine, and then said nothing at all, the process that would have spoken being the
   one dying.
+- **A task that changed Jarvis's own code hands its call-back to the restart (added
+  2026-08-26).** The subagent declares it, with a `RESTART_REQUIRED: <why>` line above its
+  `SPOKEN_SUMMARY:` — it is the only thing that knows, since `git describe --dirty` flips on
+  any edit anyone has open and the voice model can only guess from a spoken summary. It is a
+  request and not a fact about the checkout, honoured only on a task that *succeeded* and
+  never on an `internal` one: nothing Jarvis dispatches to itself may take Jarvis off the
+  air. `TaskManager` records it as `Task.needs_restart` and acts on nothing; the Notifier is
+  what decides, because it is the thing that knows whether he is mid-call. It announces and
+  texts the result as usual (both cost nothing and both survive a restart that does not come
+  back), then arms the restart with the `task_id` and returns *instead of* placing its own
+  call-back — the restart's confirmation is a better one, because it can also say whether the
+  change is running, and two calls a minute apart about one piece of work is the alternative.
+  `needs_restart` and `callback_requested` are both cleared so a follow-up cannot restart
+  twice or dial twice. A restart that is refused (`unsupported`, `failed`) is not a call-back,
+  so the ordinary one still goes out: refusing to restart must not also swallow the result.
 - **A finished task is not delivered until Jarvis has said it (added 2026-08-25).**
   `announced` and `sms_sent` record that a *delivery was attempted*; neither survives a call
   he missed or a text he never read. `Task.reported_at` records that the voice model actually
