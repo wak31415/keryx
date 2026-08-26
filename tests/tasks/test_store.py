@@ -431,3 +431,65 @@ async def test_a_v2_database_walks_all_the_way_up_in_one_go(tmp_path):
         assert all(task.needs_restart is False for task in tasks)
     finally:
         await store.close()
+
+
+# --- a database that has run ahead of us -----------------------------------
+
+
+def _add_a_later_column(path) -> None:
+    """What a newer build's `_migrate` does to the shared file, from another process."""
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.execute("ALTER TABLE tasks ADD COLUMN escalated_at TEXT")
+    conn.execute("UPDATE tasks SET escalated_at = '2026-08-25T22:15:46+00:00'")
+    conn.close()
+
+
+async def test_a_column_added_under_a_running_store_does_not_break_reads(tmp_path):
+    """Regression for the 2026-08-25 outage (`unexpected keyword argument 'reported_at'`).
+
+    The migration runs in whichever process opens `tasks.db` first, and `jarvis serve`
+    holds the `Task` it imported at startup — so a self-edit that adds a column reaches
+    the database while the running service is still a build behind. That gap used to make
+    every read raise, which took out `dispatch_task`, the manager's own failure path and
+    the notifier at once: three queued tasks never ran.
+    """
+    path = tmp_path / "tasks.db"
+    store = TaskStore(path)
+    try:
+        created = await store.create(_task(description="dispatched before the upgrade"))
+
+        _add_a_later_column(path)
+
+        assert (await store.get(created.id)).description == "dispatched before the upgrade"
+        assert [task.id for task in await store.list()] == [created.id]
+        assert await store.count_unreported() == 0
+    finally:
+        await store.close()
+
+
+async def test_a_column_we_cannot_model_survives_an_update(tmp_path):
+    """Dropping it on read must not mean dropping it on the write back.
+
+    `update` rewrites every column it knows from a `Task` it just read, so a column read
+    as nothing would be written back as nothing — the newer build's data, quietly deleted
+    by the older one. It names its columns instead, and leaves the rest of the row alone.
+    """
+    path = tmp_path / "tasks.db"
+    store = TaskStore(path)
+    try:
+        created = await store.create(_task())
+        _add_a_later_column(path)
+
+        updated = await store.update(created.id, status=TaskStatus.RUNNING)
+        assert updated.status is TaskStatus.RUNNING
+
+        conn = sqlite3.connect(path)
+        try:
+            kept = conn.execute(
+                "SELECT escalated_at FROM tasks WHERE id = ?", (created.id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        assert kept == "2026-08-25T22:15:46+00:00"
+    finally:
+        await store.close()

@@ -973,7 +973,7 @@ class RestartCoordinator:
     async def _send_sms(self, number: str | None, body: str) -> bool:
         """Text `body`, if there is anything to text it with. Never raises."""
         to = number or self._settings.owner_number
-        if not to or self._twilio is None or not self._twilio.configured:
+        if not to or self._twilio is None or not self._twilio.can_text:
             log.error("could not text about the restart (%s); it is only in the log", body)
             return False
         try:

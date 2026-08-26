@@ -62,6 +62,16 @@ class TwilioOut:
         )
 
     @property
+    def can_text(self) -> bool:
+        """True when a text could actually go out — credentials *and* `SMS_ENABLED`.
+
+        Separate from `configured` because calls and texts are not the same capability:
+        with texting off, every outbound call still works, and the alert that matters most
+        (the restart watchdog's) is a call.
+        """
+        return self.configured and self._settings.sms_enabled
+
+    @property
     def client(self) -> Any:
         """The REST client, built on first use so an unconfigured process never makes one."""
         if self._client is None:

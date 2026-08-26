@@ -8,6 +8,7 @@ redeemed by the media socket afterwards.
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlparse
 from xml.etree import ElementTree
 
@@ -20,7 +21,7 @@ from jarvis.inline_waits import InlineWaits
 from jarvis.notify.notifier import SMS_BODY_LIMIT, Notifier, report_token
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
-from jarvis.tasks.models import Task, TaskKind
+from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
 
 OWNER = "+15550000001"
@@ -34,10 +35,18 @@ class FakeTwilioOut:
 
     def __init__(self) -> None:
         self.configured = True
+        #: What `SMS_ENABLED` decides on the real one: texting off, calling unaffected.
+        self.sms_enabled = True
         self.sms: list[tuple[str, str]] = []
         self.calls: list[dict] = []
         self.sms_error: Exception | None = None
         self.call_error: Exception | None = None
+
+    @property
+    def can_text(self) -> bool:
+        """Mirrors the real one: credentials *and* `SMS_ENABLED`, derived not snapshotted,
+        so a test that drops `configured` afterwards stops texting the way Jarvis would."""
+        return self.configured and self.sms_enabled
 
     async def send_sms(self, to: str, body: str) -> str:
         if self.sms_error is not None:
@@ -680,3 +689,45 @@ def test_a_summary_that_ends_in_a_stop_does_not_get_a_second_one():
     )
     assert no_trailing_stop("no stop here") == "no stop here"
     assert no_trailing_stop("trailing space. ") == "trailing space"
+
+
+# --- texting turned off ----------------------------------------------------
+
+
+async def test_with_texting_off_no_text_goes_out(harness):
+    """The result still reaches him: the call-back, or the digest at the top of his next
+    call, which is exactly what `reported_at` exists to keep honest."""
+    harness.twilio.sms_enabled = False
+    task = await harness.task(origin_channel="phone", origin_caller=CALLER)
+
+    await harness.finished(task, "all done")
+
+    assert harness.twilio.sms == []
+    assert (await harness.row(task)).sms_sent is False
+
+
+async def test_texting_off_does_not_cost_him_the_call_back(harness):
+    """Calling and texting are separate capabilities, and only one of them is off."""
+    harness.twilio.sms_enabled = False
+    task = await harness.task(
+        callback_requested=True, callback_number=CALLER, origin_channel="phone",
+        origin_caller=CALLER,
+    )
+
+    await harness.finished(task)
+
+    assert harness.twilio.sms == []
+    assert harness.twilio.calls, "the call-back is not an SMS and must still happen"
+
+
+async def test_an_unreported_task_still_rides_the_next_call(harness):
+    """With no text and nobody listening, the digest is the only route left — so the task
+    must stay unreported rather than be quietly marked delivered."""
+    harness.twilio.sms_enabled = False
+    task = await harness.task(status=TaskStatus.DONE, finished_at=datetime.now(UTC))
+
+    await harness.finished(task)
+
+    row = await harness.row(task)
+    assert row.reported_at is None
+    assert await harness.store.list_unreported() == [row]

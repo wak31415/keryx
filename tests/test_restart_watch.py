@@ -37,12 +37,20 @@ TRACEBACK = (
 class FakeTwilioOut:
     """Records what would have been sent; `configured` and the errors are settable."""
 
-    def __init__(self, *, configured: bool = True) -> None:
+    def __init__(self, *, configured: bool = True, sms_enabled: bool = True) -> None:
         self.configured = configured
+        #: What `SMS_ENABLED` decides on the real one: texting off, calling unaffected.
+        self.sms_enabled = sms_enabled
         self.sms: list[tuple[str, str]] = []
         self.calls: list[dict] = []
         self.sms_error: Exception | None = None
         self.call_error: Exception | None = None
+
+    @property
+    def can_text(self) -> bool:
+        """Mirrors the real one: credentials *and* `SMS_ENABLED`, derived not snapshotted,
+        so a test that drops `configured` afterwards stops texting the way Jarvis would."""
+        return self.configured and self.sms_enabled
 
     async def send_sms(self, to: str, body: str) -> str:
         if self.sms_error is not None:
@@ -316,3 +324,16 @@ async def test_the_deadline_is_reached_by_polling_not_by_waiting(harness):
 
     assert harness.clock.slept == [3.0, 3.0, 3.0, 3.0]
     assert asyncio.get_running_loop() is not None  # nothing detached itself from the loop
+
+
+async def test_with_texting_off_the_alert_is_the_call(tmp_path):
+    """Jarvis is down, so the `<Say>` call is the only channel left that works at all."""
+    harness = Harness(make_settings(tmp_path), twilio=FakeTwilioOut(sms_enabled=False))
+    harness.store.save(pending())
+
+    assert await harness.run() == ALERTED
+
+    assert harness.twilio.sms == []
+    words = spoken(harness.twilio.calls[0]["twiml"])
+    assert "by text" not in words  # it must not point him at a message he will never get
+    assert "Check the machine" in words

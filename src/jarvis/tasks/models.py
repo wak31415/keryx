@@ -5,12 +5,15 @@ string-keyed representation `TaskStore` reads/writes to SQLite: enums <-> their 
 value, datetimes <-> ISO-8601 UTC strings, bools <-> 0/1.
 """
 
+import logging
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Self
+
+log = logging.getLogger("jarvis.tasks.models")
 
 
 class TaskKind(StrEnum):
@@ -93,6 +96,24 @@ def _deserialize_field(name: str, value: Any) -> Any:
     return value
 
 
+#: Columns already reported by `_warn_unknown_columns`. A process behind the schema reads
+#: rows constantly, and the news is about the *column*, so it is worth saying exactly once.
+_warned_columns: set[str] = set()
+
+
+def _warn_unknown_columns(names: Iterable[str]) -> None:
+    """Say once, per column, that the database is carrying something we cannot model."""
+    fresh = sorted(set(names) - _warned_columns)
+    if not fresh:
+        return
+    _warned_columns.update(fresh)
+    log.warning(
+        "ignoring task column(s) this build has no field for: %s. The database is on a "
+        "newer schema than the running code; a restart picks the new code up.",
+        ", ".join(fresh),
+    )
+
+
 @dataclass
 class Task:
     """One dispatched unit of subagent work (spec §3.2 `tasks/models.py`).
@@ -153,9 +174,31 @@ class Task:
 
     @classmethod
     def from_row(cls, row: sqlite3.Row | Mapping[str, Any]) -> Self:
-        """Build a `Task` back from a SQLite row (`sqlite3.Row` or any string-keyed mapping)."""
+        """Build a `Task` back from a SQLite row (`sqlite3.Row` or any string-keyed mapping).
+
+        Columns this build has no field for are dropped rather than passed on, because the
+        database routinely runs ahead of the code reading it. `TaskStore._migrate` upgrades
+        the file in whichever process opens it first, and `jarvis serve` loads its Python
+        once, at startup — so a self-edit that adds a column lands in `tasks.db` while the
+        running service still holds the old `Task` in memory, and stays that way until the
+        restart. Splatting the row wholesale made that ordinary gap fatal: on 2026-08-25 the
+        v3 upgrade added `reported_at` under a live service and every single read raised
+        `TypeError: unexpected keyword argument`, which took out `dispatch_task`, the
+        manager's bookkeeping *and* the notifier's failure path together — three queued
+        tasks sat unrun until someone noticed. Forgetting a field we cannot hold loses
+        nothing (writes name their columns, so the value stays in the row); refusing to
+        read loses the task runner.
+        """
         data = dict(row)
-        return cls(**{name: _deserialize_field(name, value) for name, value in data.items()})
+        known = {f.name for f in fields(cls)}
+        _warn_unknown_columns(data.keys() - known)
+        return cls(
+            **{
+                name: _deserialize_field(name, value)
+                for name, value in data.items()
+                if name in known
+            }
+        )
 
     def short_status_line(self) -> str:
         """A speakable one-liner, e.g. 'task 3 (running): add README to ...'."""
