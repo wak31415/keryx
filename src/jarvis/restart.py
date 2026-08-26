@@ -63,6 +63,9 @@ log = logging.getLogger("jarvis.restart")
 #: Where the two halves of a restart meet, under `data_dir`.
 RECORD_NAME = "restart.json"
 
+#: Where `jarvis serve` stamps the version it imported, under `data_dir`. See `mark_running`.
+RUNNING_NAME = "running-version"
+
 #: Default unit/label names, matching `ops/systemd/jarvis.service` and
 #: `ops/launchd/com.william.jarvis.plist`.
 SYSTEMD_UNIT = "jarvis.service"
@@ -229,6 +232,46 @@ def current_version(repo: Path | None = None) -> str | None:
     return done.stdout.strip() or None if done.returncode == 0 else None
 
 
+def mark_running(data_dir: Path, repo: Path | None = None) -> str | None:
+    """Stamp the version this process imported. Called once, at the top of `jarvis serve`.
+
+    The checkout keeps moving underneath a long-lived process. Reading it when a restart is
+    *asked for* therefore answers "what will we load", not "what are we running" — and the
+    normal flow (edit, commit, ask for the restart) puts the new commit on disk before the
+    question is ever put, so the two reads match and the restart looks like it loaded
+    nothing. Process start is the one moment the checkout and the running code are the same
+    thing, so it is the only honest place to take the "before".
+    """
+    version = current_version(repo)
+    path = data_dir / RUNNING_NAME
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{version}\n" if version else "")
+    except OSError:
+        # Decoration, like `current_version` itself: a missing stamp costs one comparison,
+        # and falling back to the checkout is no worse than what there was before.
+        log.warning("could not stamp the running version at %s", path)
+    return version
+
+
+def running_version(data_dir: Path) -> str | None:
+    """The version the live process stamped at startup, or None if it never got the chance."""
+    try:
+        return (data_dir / RUNNING_NAME).read_text().strip() or None
+    except OSError:
+        return None
+
+
+def loaded_version(data_dir: Path, repo: Path | None = None) -> str | None:
+    """What the service process is running: its own stamp, else the checkout as a guess.
+
+    The guess is what a service too old to stamp anything falls back to, and it is wrong in
+    exactly the way described in `mark_running` — but a wrong guess and no answer read the
+    same over the phone, and the guess is at least right when nothing has been committed.
+    """
+    return running_version(data_dir) or current_version(repo)
+
+
 # --- the watchdog that outlives the restart ---------------------------------
 
 
@@ -330,6 +373,8 @@ class RestartRecord:
     origin_channel: str = "local"
     origin_session_id: str | None = None
     target: str = ""
+    #: What the process being restarted was *running* — its startup stamp, not the checkout
+    #: as it stands now. The distinction is the whole point: see `mark_running`.
     version: str | None = None
     state: str = "pending"  # "pending" until delivered, then the file is gone or "failed"
     attempts: int = 0
@@ -509,7 +554,7 @@ class RestartCoordinator:
             origin_channel=origin_channel,
             origin_session_id=origin_session_id,
             target=target.describe(),
-            version=await asyncio.to_thread(current_version),
+            version=await asyncio.to_thread(loaded_version, self._settings.data_dir),
             task_id=task_id,
             log_marks=await asyncio.to_thread(marks, self._settings.data_dir),
         )
@@ -736,7 +781,7 @@ class RestartCoordinator:
         if errors:
             parts.append(f"but {errors.spoken()}")
 
-        version = await asyncio.to_thread(current_version)
+        version = await asyncio.to_thread(loaded_version, self._settings.data_dir)
         if version and record.version and version != record.version:
             parts.append(f"now on {version}, was {record.version}")
         elif version:

@@ -32,8 +32,9 @@ from jarvis.restart import (
     UNSUPPORTED_HINT,
     RestartRecord,
     RestartStore,
-    current_version,
     health_probe,
+    loaded_version,
+    mark_running,
     mask_number,
     resolve_target,
     spawn_watchdog,
@@ -163,6 +164,9 @@ def serve(
 
 async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
     """Run the phone server and/or the wake-word loop until one stops or ctrl-c."""
+    # First, before anything can commit on top of us: the next restart compares against
+    # this to say whether it loaded anything, and the checkout will have moved by then.
+    mark_running(settings.data_dir)
     state = build_app_state(settings)
     server = _build_server(state) if phone else None
     server_task = None
@@ -310,7 +314,7 @@ def restart(
         number=number,
         origin_channel="cli",
         target=target.describe(),
-        version=current_version(),
+        version=loaded_version(settings.data_dir),
         log_marks=log_marks(settings.data_dir),
     )
     if not store.save(record):

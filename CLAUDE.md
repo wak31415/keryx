@@ -79,6 +79,13 @@ one waits for the line to clear, and the confirmation is announced or texted rat
 into a live session. Keep it that way, and keep every failure path landing somewhere a human can
 find it (`jarvis restart --status`).
 
+"Did it load the change" is answered from `data_dir/running-version`, stamped by `mark_running()`
+at the top of `jarvis serve` — *not* from `current_version()` at request time. The checkout moves
+under a running process, and the normal order (edit, commit, ask for the restart) puts the new
+commit on disk before the question is put, so a request-time read compares the new commit with
+itself and reports that nothing loaded. Process start is the only moment the checkout and the
+running code are the same thing.
+
 The third half is `jarvis/restart_watch.py`, and it exists because the first two both live
 *inside* Jarvis. A restart is usually loading a change Jarvis just made to its own code; a
 change that will not import means there is no new process, so nothing runs `resume()` and
