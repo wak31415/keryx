@@ -121,6 +121,10 @@ scope, so the test suite can run on a machine with no mic.
 ## Working agreements
 
 - Only scripts read the env file; never print or paste its contents.
+- Jarvis does not text. `SMS_ENABLED` is false (the account has no SMS geo-permission for
+  his region, and Slack is the written channel he actually asks for), so gate any send on
+  `TwilioOut.can_text` and never on `configured` — outbound *calls* are unaffected, and the
+  restart watchdog's `<Say>` alert is the last thing working when Jarvis is down.
 - Spec §3.2 interface names and signatures stay stable (extra optional keyword
   arguments are fine). §3.3/§4 hold rulings: follow them, and amend the spec in a
   docs commit when one changes.

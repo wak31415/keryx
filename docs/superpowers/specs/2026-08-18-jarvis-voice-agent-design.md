@@ -406,6 +406,15 @@ class SessionRegistry:
   request and not a fact about the checkout, honoured only on a task that *succeeded* and
   never on an `internal` one: nothing Jarvis dispatches to itself may take Jarvis off the
   air.
+- **Texting is off (added 2026-08-26).** `SMS_ENABLED` defaults false: the Twilio account
+  has no SMS geo-permission for the owner's region (`HTTP 400: Permission to send an SMS has
+  not been enabled for the region indicated by the 'To' number`), and he does not want the
+  channel regardless — written messages go to Slack, which he has to ask for. Every send
+  site is gated on `TwilioOut.can_text` (credentials *and* the flag), never on `configured`,
+  because calling and texting are separate capabilities and only one is off: the restart
+  watchdog's alert is a `<Say>` call and stays the one thing that works when Jarvis is down.
+  With no text, a finished task reaches him by announcement, by call-back, or by the digest
+  at the top of his next call — which is what `reported_at` exists to keep honest.
 - **`queued` is not a waiting room, so a queued row is resumed (added 2026-08-26).** A task
   is *born* `queued` and flips to `running` about a second later, when the coroutine
   `dispatch` created takes the semaphore; under the concurrency cap nothing normally waits
@@ -521,6 +530,7 @@ class SessionRegistry:
 | `GOOGLE_CLIENT_SECRETS_FILE` | `google_client_secrets_file` (used when the id/secret pair is unset) | `.secrets/client_secret.json` |
 | `GOOGLE_WORKSPACE_MCP` | `google_workspace_mcp` (attach the `workspace-mcp` server to subagents) | `false` |
 | `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` | `slack_bot_token` / `slack_channel_id` | `None` → the `slack-research` MCP server's config |
+| `SMS_ENABLED` | `sms_enabled` (may Jarvis text at all; outbound *calls* are separate) | `false` (added 2026-08-26) |
 | `LOG_LEVEL` | `log_level` | `INFO` |
 
 Data layout under `data_dir`: `tasks.db`, `tasks/<id>.log` (agent transcript),

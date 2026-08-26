@@ -200,8 +200,8 @@ def _recipient(record: RestartRecord, settings: Settings) -> str | None:
 async def _text(twilio: Any, settings: Settings, record: RestartRecord, body: str) -> bool:
     """Text him the detail. False when there was nothing to text it with."""
     to = _recipient(record, settings)
-    if not to or twilio is None or not twilio.configured:
-        log.error("no way to text about the restart; it is only in this log and the record")
+    if not to or twilio is None or not twilio.can_text:
+        log.info("not texting about the restart; the call below is the whole alert")
         return False
     try:
         await twilio.send_sms(to, body)

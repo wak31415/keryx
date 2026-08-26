@@ -148,3 +148,36 @@ def test_stream_twiml_is_a_string_ready_for_the_calls_api():
 
     assert isinstance(xml, str)
     assert '<Stream url="wss://h/twilio/media"' in xml
+
+
+# --- SMS_ENABLED -----------------------------------------------------------
+
+
+def test_texting_is_off_by_default(tmp_path):
+    """This account has no SMS geo-permission for the owner's region, and he does not
+    want the channel: written messages go to Slack, which he has to ask for."""
+    out = TwilioOut(make_settings(tmp_path))
+
+    assert out.configured is True
+    assert out.can_text is False
+
+
+def test_texting_on_needs_credentials_as_well(tmp_path):
+    out = TwilioOut(make_settings(tmp_path, sms_enabled=True, twilio_number=None))
+
+    assert out.can_text is False
+
+
+def test_texting_can_be_turned_back_on(tmp_path):
+    out = TwilioOut(make_settings(tmp_path, sms_enabled=True))
+
+    assert out.can_text is True
+
+
+def test_calling_is_unaffected_by_texting_being_off(tmp_path):
+    """The restart watchdog's alert is a call, and it is the last thing still working
+    when Jarvis itself is down."""
+    out = TwilioOut(make_settings(tmp_path))
+
+    assert out.can_text is False
+    assert out.configured is True  # which is what `place_call` is gated on

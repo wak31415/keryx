@@ -71,12 +71,20 @@ def write_log(settings, name: str, text: str) -> None:
 class FakeTwilioOut:
     """Records what would have gone to Twilio; `configured` and the errors are settable."""
 
-    def __init__(self, *, configured: bool = True) -> None:
+    def __init__(self, *, configured: bool = True, sms_enabled: bool = True) -> None:
         self.configured = configured
+        #: What `SMS_ENABLED` decides on the real one: texting off, calling unaffected.
+        self.sms_enabled = sms_enabled
         self.sms: list[tuple[str, str]] = []
         self.calls: list[dict] = []
         self.sms_error: Exception | None = None
         self.call_error: Exception | None = None
+
+    @property
+    def can_text(self) -> bool:
+        """Mirrors the real one: credentials *and* `SMS_ENABLED`, derived not snapshotted,
+        so a test that drops `configured` afterwards stops texting the way Jarvis would."""
+        return self.configured and self.sms_enabled
 
     async def send_sms(self, to: str, body: str) -> str:
         if self.sms_error is not None:

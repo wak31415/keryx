@@ -224,8 +224,14 @@ class Notifier:
     # --- (2) the text ------------------------------------------------------
 
     async def _send_sms(self, task: Task, text: str, *, delivered: bool) -> None:
-        """Text the summary and the report link, unless they have just heard it."""
-        if delivered or not self._twilio.configured:
+        """Text the summary and the report link, unless they have just heard it.
+
+        With texting off this stage simply does not happen, and the result reaches him by
+        one of the routes that do: spoken into a live session, the call-back, or — if he
+        was not there for either — the digest at the top of his next call, which is what
+        `reported_at` exists to keep honest.
+        """
+        if delivered or not self._twilio.can_text:
             return
         try:
             to = self._sms_recipient(task)
