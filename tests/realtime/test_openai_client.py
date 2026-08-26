@@ -187,7 +187,7 @@ def test_build_session_update_for_the_local_path_omits_transcription_and_barge_i
                     "format": {"type": "audio/pcm", "rate": 24000},
                     "turn_detection": {
                         "type": "semantic_vad",
-                        "eagerness": "low",
+                        "eagerness": "medium",
                         "create_response": True,
                         "interrupt_response": False,
                     },
@@ -791,7 +791,7 @@ def test_the_default_turn_detection_waits_for_a_finished_sentence():
 
     assert update["session"]["audio"]["input"]["turn_detection"] == {
         "type": "semantic_vad",
-        "eagerness": "low",
+        "eagerness": "medium",
         "create_response": True,
         "interrupt_response": True,
     }
@@ -810,3 +810,26 @@ def test_the_silence_timer_is_used_in_server_mode():
     detection = update["session"]["audio"]["input"]["turn_detection"]
     assert detection["type"] == "server_vad"
     assert detection["silence_duration_ms"] == 4000
+
+
+def test_noise_reduction_reaches_the_input_block_when_it_is_set():
+    config = SessionConfig(
+        instructions="Jarvis.",
+        tools=[],
+        voice="cedar",
+        audio_format="audio/pcmu",
+        noise_reduction="near_field",
+    )
+
+    audio_input = build_session_update(config)["session"]["audio"]["input"]
+
+    assert audio_input["noise_reduction"] == {"type": "near_field"}
+
+
+def test_noise_reduction_left_off_is_absent_rather_than_null():
+    """The API validates the value, so "off" has to be the missing field, not a null one."""
+    config = SessionConfig(
+        instructions="Jarvis.", tools=[], voice="cedar", audio_format="audio/pcmu"
+    )
+
+    assert "noise_reduction" not in build_session_update(config)["session"]["audio"]["input"]

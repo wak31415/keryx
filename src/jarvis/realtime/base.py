@@ -30,10 +30,15 @@ class SessionConfig:
     #: a pause for thought, where a timer cuts in. "server" is the fixed silence timer,
     #: `vad_silence_ms` long, which the semantic mode ignores (and the API rejects there).
     vad_mode: Literal["server", "semantic"] = "semantic"
-    vad_eagerness: Literal["low", "medium", "high", "auto"] = "low"
+    vad_eagerness: Literal["low", "medium", "high", "auto"] = "medium"
     vad_threshold: float = 0.5
     vad_silence_ms: int = 500
     vad_prefix_ms: int = 300
+    #: Server-side background-noise suppression on the *input* stream. `near_field` is a
+    #: phone held to the head, `far_field` a microphone across the room; None leaves it
+    #: off, which is the API's own default. It is worth setting mostly because noise the
+    #: model hears as speech is noise that barges in on it mid-sentence.
+    noise_reduction: Literal["near_field", "far_field"] | None = None
     interrupt_response: bool = True
     transcription_model: str | None = "gpt-4o-mini-transcribe"
 

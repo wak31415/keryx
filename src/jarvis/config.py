@@ -112,10 +112,19 @@ class Settings(BaseSettings):
     # "semantic" waits on whether the sentence sounds finished (so a pause to think does
     # not cut you off); "server" is a plain silence timer of `vad_silence_ms`.
     vad_mode: Literal["server", "semantic"] = "semantic"
-    vad_eagerness: Literal["low", "medium", "high", "auto"] = "low"
+    #: Only read in semantic mode, where there is no timer to set: "low" waits longest,
+    #: "high" jumps in soonest, "auto" is "medium". Was "low" until 2026-08-26, which left
+    #: about two seconds of silence at the end of every sentence — long enough to sound
+    #: like it had not heard. "medium" lands near a second and still waits out a pause.
+    vad_eagerness: Literal["low", "medium", "high", "auto"] = "medium"
     vad_silence_ms: int = 1200
     vad_threshold: float = 0.5
     vad_prefix_ms: int = 300
+    #: Background-noise suppression on what the model hears. "auto" picks by channel —
+    #: `near_field` for a phone held to the head, `far_field` for the Mac's microphone
+    #: across the room — which is what `noise_reduction_for` resolves. Mostly this is
+    #: about barge-in: noise the model mistakes for speech is noise that cuts it off.
+    noise_reduction: Literal["auto", "near_field", "far_field", "off"] = "auto"
 
     # Wake word
     wakeword_model: str = "hey_jarvis"
@@ -205,6 +214,14 @@ class Settings(BaseSettings):
         if self.allowed_callers:
             return self.allowed_callers[0]
         return None
+
+    def noise_reduction_for(self, channel: str) -> Literal["near_field", "far_field"] | None:
+        """The noise-reduction profile for `channel`, or None to leave it off."""
+        if self.noise_reduction == "off":
+            return None
+        if self.noise_reduction != "auto":
+            return self.noise_reduction
+        return "near_field" if channel == "phone" else "far_field"
 
     def ensure_dirs(self) -> None:
         """Create `data_dir` and its `tasks`/`calls` subdirectories."""

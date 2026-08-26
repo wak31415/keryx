@@ -142,7 +142,8 @@ def test_defaults_match_spec_table(settings):
     assert settings.max_concurrent_tasks == 3
     assert settings.dispatch_wait_max_seconds == 25
     assert settings.vad_mode == "semantic"
-    assert settings.vad_eagerness == "low"
+    assert settings.vad_eagerness == "medium"
+    assert settings.noise_reduction == "auto"
     assert settings.vad_silence_ms == 1200
     assert settings.local_silence_timeout == 30
     assert settings.max_call_seconds == 1800
@@ -289,3 +290,25 @@ def test_a_missing_or_broken_secrets_file_just_means_no_google(settings, tmp_pat
     empty.write_text("{}", encoding="utf-8")
     settings.google_client_secrets_file = empty
     assert settings.google_oauth_client() is None
+
+
+def test_noise_reduction_follows_the_channel_by_default():
+    """A phone is held to the head; the Mac's microphone is across the room."""
+    settings = Settings(_env_file=None, openai_api_key="test")
+
+    assert settings.noise_reduction_for("phone") == "near_field"
+    assert settings.noise_reduction_for("local") == "far_field"
+
+
+def test_noise_reduction_can_be_turned_off_entirely():
+    settings = Settings(_env_file=None, openai_api_key="test", noise_reduction="off")
+
+    assert settings.noise_reduction_for("phone") is None
+    assert settings.noise_reduction_for("local") is None
+
+
+def test_an_explicit_noise_reduction_profile_wins_on_every_channel():
+    settings = Settings(_env_file=None, openai_api_key="test", noise_reduction="far_field")
+
+    assert settings.noise_reduction_for("phone") == "far_field"
+    assert settings.noise_reduction_for("local") == "far_field"

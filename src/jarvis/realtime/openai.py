@@ -139,6 +139,11 @@ def build_session_update(config: SessionConfig) -> dict:
         "format": audio_format_block(config.audio_format),
         "turn_detection": turn_detection_block(config),
     }
+    if config.noise_reduction is not None:
+        # Omitted rather than sent as null when it is off: the API validates this value
+        # (`Supported values are: 'near_field' and 'far_field'`, verified 2026-08-26), and
+        # an absent field is how it is turned off.
+        audio_input["noise_reduction"] = {"type": config.noise_reduction}
     if config.transcription_model is not None:
         audio_input["transcription"] = {"model": config.transcription_model}
 

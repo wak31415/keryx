@@ -773,7 +773,9 @@ async def test_the_default_session_waits_for_a_finished_sentence(
         await eventually(lambda: provider.config is not None)
 
     assert provider.config.vad_mode == "semantic"
-    assert provider.config.vad_eagerness == "low"
+    assert provider.config.vad_eagerness == "medium"
+    # A phone is held to the head, so the near-field profile is the right one for it.
+    assert provider.config.noise_reduction == "near_field"
 
 
 # --- the briefing ----------------------------------------------------------

@@ -469,7 +469,8 @@ class SessionRegistry:
 | `DISPATCH_WAIT_MAX_SECONDS` | `dispatch_wait_max_seconds` | `25` |
 | `LOCAL_SILENCE_TIMEOUT` | `local_silence_timeout` | `30` |
 | `VAD_MODE` | `vad_mode` (`semantic` waits on a finished sentence, `server` on a silence timer) | `semantic` |
-| `VAD_EAGERNESS` | `vad_eagerness` (semantic mode: how soon it jumps in) | `low` |
+| `VAD_EAGERNESS` | `vad_eagerness` (semantic mode: how soon it jumps in) | `medium` (was `low` until 2026-08-26 — about two seconds of silence per turn) |
+| `NOISE_REDUCTION` | `noise_reduction` (`auto`/`near_field`/`far_field`/`off`) | `auto` → `near_field` on the phone, `far_field` on the local mic |
 | `VAD_SILENCE_MS` / `VAD_THRESHOLD` / `VAD_PREFIX_MS` | `vad_silence_ms` / `vad_threshold` / `vad_prefix_ms` (server mode) | `1200` / `0.5` / `300` |
 | `MAX_CALL_SECONDS` | `max_call_seconds` | `1800` |
 | `DAILY_TASK_CAP` | `daily_task_cap` | `50` |
@@ -497,13 +498,19 @@ header `Authorization: Bearer …`, **no** `OpenAI-Beta` header.
   "audio":{"input":{"format":{"type":"audio/pcmu"},"turn_detection":{"type":"server_vad",
   "threshold":0.5,"prefix_padding_ms":300,"silence_duration_ms":500,"create_response":true,
   "interrupt_response":true}  — or `{"type":"semantic_vad","eagerness":"low",…}`, which takes no
-  `silence_duration_ms` (the API rejects it) and ends the turn on the *sense* of the sentence,"transcription":{"model":"gpt-4o-mini-transcribe"}},
+  `silence_duration_ms` (the API rejects it) and ends the turn on the *sense* of the sentence,"transcription":{"model":"gpt-4o-mini-transcribe"},
+  "noise_reduction":{"type":"near_field"}},
   "output":{"format":{"type":"audio/pcmu"},"voice":"marin"}}}}`.
   Formats: `audio/pcmu`, `audio/pcma` (8 kHz G.711 — Twilio path, no transcoding),
   `audio/pcm` (24 kHz 16-bit LE mono — local path). **Corrected 2026-08-24:** `audio/pcm`
   must carry its rate — `{"type":"audio/pcm","rate":24000}` — or the session is refused with
   `missing_required_parameter: session.audio.input.format.rate`; the G.711 formats must
   *not* carry one (`Unknown parameter`). Verified against the live GA API.
+- `audio.input.noise_reduction` takes `{"type":"near_field"}` or `{"type":"far_field"}` and
+  nothing else — a bogus value is refused with `Supported values are: 'near_field' and
+  'far_field'`, so it is a validated field and not one the API quietly ignores. Absent is how
+  it is turned off; the session reports it back as `null` when unset (verified 2026-08-26
+  against the live GA API).
 - Session tools accept **only** `{"type":"function"}` and `{"type":"mcp"}` — there is no hosted
   `web_search` in a Realtime session (verified 2026-08-24; the hosted tool lives in the Responses API,
   which is what `web_search.py` calls).
