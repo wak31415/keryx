@@ -11,8 +11,9 @@ Realtime API and Claude Agent SDK subagents.
 - Check the machine's setup: `uv run jarvis doctor` (`--no-mic` where there is none)
 - Run the agent: `uv run jarvis serve` (`--no-phone` / `--no-wakeword` /
   `--fake-agents` / `--host` / `--port`); `scripts/dev.sh` adds the Cloudflare tunnel
-- Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N]`,
-  `uv run jarvis tasks show <id>`
+- Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N] [--internal]`,
+  `uv run jarvis tasks show <id>` (the `TOLD` column is `NO` until Jarvis has said it)
+- Read what Jarvis remembers between calls: `uv run jarvis memory` (`--path` for the file)
 - Restart the service: `uv run jarvis restart [--reason …] [--force] [--no-callback]`
   (it phones back when it is up again); `uv run jarvis restart --status` for the last one
 - One-off setup: `uv run jarvis download-models`, `uv run jarvis setup-google`
@@ -36,6 +37,29 @@ its own, and decides for itself what a request needs. The voice model's only rou
 decision is answer-it-myself (small facts go through its `web_search` tool, backed by the
 Responses API) versus dispatch. Do not reintroduce kinds to express "this one is
 read-only" — the phone PIN gates every dispatch instead.
+
+## Continuity is three pieces
+
+A realtime session starts blank — the provider keeps nothing across sockets — so what
+Jarvis knows at the top of a call is assembled every time by `jarvis/briefing.py`:
+
+- **The digest.** `Task.reported_at` is the only record that Jarvis *told him*; `announced`
+  and `sms_sent` only say a delivery was attempted, and neither survives a call he missed.
+  Until `reported_at` is stamped, the task rides at the top of the next call. Exactly one
+  thing stamps it: the voice model's `mark_reported` tool, after it has spoken the result.
+  Do not stamp it from a delivery path — hearing something twice is recoverable, never
+  hearing it is not.
+- **The memory.** `jarvis/memory.py` subscribes to `SessionEnded` and dispatches a subagent
+  (`prompts/memory_update.md`) that folds the call into `data_dir/memory.md`; the next call
+  reads it back. Its headings are nested one level when embedded, so its sections cannot be
+  mistaken for instructions.
+- **`recall`.** `jarvis/recall.py` searches past transcripts and past task summaries on
+  demand. Matching stays literal on purpose: the query is speech that transcription has
+  already mangled once, and a fuzzy hit gets read out as if it were fact.
+
+`Task.internal` marks work Jarvis asked for itself (today: the memory update). It hides the
+task from the spoken lists, the digest, `recall`, the daily cap and the notifier — and
+restricts *nothing* about the subagent. It is not a task kind; do not grow it into one.
 
 ## Restarts are two halves
 

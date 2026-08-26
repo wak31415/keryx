@@ -73,6 +73,9 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `config.py` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails |
 | `projects.py` | `discover_projects` (configured projects plus `projects_root` subdirectories, shared by `TaskManager` and the voice prompt) and `discover_briefs` (each project's own `.jarvis-brief.md`) |
 | `transcripts.py` | `read_tail`: the end of an earlier call, read back out of `data_dir/calls/<session_id>.log` for a call-back's opening context |
+| `briefing.py` | `Briefer`/`Briefing`: what a call opens knowing — the digest of finished-but-unreported tasks, and `data_dir/memory.md` |
+| `recall.py` | `Recaller`: keyword search across past call transcripts and past task summaries, behind the voice model's `recall` tool |
+| `memory.py` | `MemoryWriter`: on `SessionEnded`, dispatches the internal subagent that folds the call into `data_dir/memory.md` |
 | `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
 | `web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool |
 | `slack.py` | `SlackSender` protocol + `SlackWebApi` (`chat.postMessage`), behind the voice model's `send_to_slack`; credentials resolve from the `auto-research` skill's MCP server config |
@@ -98,7 +101,8 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `app.py` | `AppState` composition root (settings → store, bus, manager, registry, notifier, session registry) |
 | `prompts/voice_system.md` | receptionist persona + tool-use guidance |
 | `prompts/subagent_suffix.md` | appended to Agent SDK system prompt: autonomous, ends with `SPOKEN_SUMMARY:` block |
-| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `setup-google`, `doctor`, `restart` |
+| `prompts/memory_update.md` | the internal memory subagent's prompt: merge this call's transcript into `memory.md`, keep the structure, stay under budget |
+| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory`, `setup-google`, `doctor`, `restart` |
 
 ### 3.2 Binding interfaces
 
@@ -220,8 +224,13 @@ class TaskStore:
     async def create(self, task: Task) -> Task            # assigns id
     async def get(self, task_id: int) -> Task | None
     async def update(self, task_id: int, **fields) -> Task
-    async def list(self, *, status: TaskStatus | None = None, limit: int = 20) -> list[Task]   # newest first
-    async def count_created_since(self, since: datetime) -> int
+    async def list(self, *, status=None, limit=20, include_internal=False) -> list[Task]  # newest first
+    async def count_created_since(self, since: datetime) -> int   # excludes internal (the daily cap)
+    async def list_unreported(self, *, limit=MAX_UNREPORTED) -> list[Task]   # done/failed, oldest first
+    async def count_unreported(self) -> int
+    async def mark_reported(self, task_ids: Iterable[int], *, when: datetime) -> list[int]  # ids stamped
+    async def search(self, terms: Sequence[str], *, limit=5) -> list[Task]   # every term, newest first
+    async def list_for_session(self, session_id: str, *, limit=20) -> list[Task]
     async def close(self) -> None
 ```
 
@@ -342,6 +351,43 @@ class SessionRegistry:
   that cannot be placed falls back to SMS; and a confirmation that fails outright leaves the
   record behind as `failed`, for `jarvis restart --status`. A process nothing supervises refuses
   to restart at all — stopping would take it off the air for good.
+- **A finished task is not delivered until Jarvis has said it (added 2026-08-25).**
+  `announced` and `sms_sent` record that a *delivery was attempted*; neither survives a call
+  he missed or a text he never read. `Task.reported_at` records that the voice model actually
+  told him, and it is stamped by exactly one thing: the `mark_reported` tool, which the model
+  calls after speaking the result. Until then the task is in `TaskStore.list_unreported()`
+  (done/failed only, oldest first, capped at `MAX_UNREPORTED`) and `Briefer` puts it at the
+  top of the next call — in the system prompt under "What he has not heard yet", and as a
+  one-line nudge appended to the opening message, because a realtime model leads with what it
+  was just handed. Ruling: no other code path stamps `reported_at`. A model that forgets the
+  tool costs him hearing something twice; a delivery flag that stamps it costs him never
+  hearing it at all, and only one of those is recoverable. Rows that were already terminal
+  when the v3 migration ran are back-filled as reported, so the first call after an upgrade
+  is not a recital of the whole history.
+- **Continuity across calls is a memory file a subagent writes (added 2026-08-25).** The
+  provider keeps no history across sockets, so `MemoryWriter` subscribes to `SessionEnded` and
+  dispatches a subagent whose only job is to fold the call that just ended into
+  `data_dir/memory.md` (`prompts/memory_update.md`); `Briefer` reads it back into the next
+  call's prompt, with its headings nested one level so its sections cannot read as
+  instructions. A call with fewer than `MIN_SPOKEN_LINES` spoken lines is a misfire and gets
+  no subagent. It is a real subagent rather than a summarising API call because the memory is
+  worth more when whoever writes it can go and look — at the task's report, at the repo, at
+  whether the thing he was waiting on has landed.
+- **`Task.internal` is not a task kind (added 2026-08-25).** Work Jarvis asked for itself —
+  today only the memory update — is dispatched `internal=True`. That keeps it out of
+  `list_tasks`, out of `list_unreported`, out of `search`, out of `count_created_since` (so it
+  cannot eat `DAILY_TASK_CAP`), and out of the Notifier entirely: he never asked for it, so
+  announcing, texting or ringing him about it would be Jarvis interrupting him to talk about
+  Jarvis. It restricts *nothing* about what that subagent may do, which is what keeps it
+  distinct from the task kinds removed on 2026-08-24. `jarvis tasks list --internal` shows it.
+- **`recall` answers questions about the past without a subagent (added 2026-08-25).**
+  `Recaller` searches the call transcripts in `data_dir/calls/` and the store's descriptions
+  and summaries, and hands back a handful of dated snippets. Matching is whole-substring
+  conjunction over stop-word-filtered terms: the query arrives as speech, already mangled once
+  by transcription, and fuzzy matching on top of that produces confident nonsense that is then
+  read out loud. Empty results are a `message` telling the model to say it has nothing, never
+  a guess. Transcript lines carry a full ISO timestamp as of this change so a hit can be
+  dated; older lines stamped with a wall clock alone fall back to the file's mtime.
 - **PIN gate**: an empty/blank `JARVIS_PIN` counts as *not configured* (dispatching refused on phone). `session.authorized` starts False on phone; `submit_pin` (spoken) or DTMF
   digits (collected in the session, never shown to the model) flip it; `dispatch_task`
   returns `{"status":"pin_required"}` until authorized — every task, since 2026-08-24, because
