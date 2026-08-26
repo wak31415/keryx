@@ -237,11 +237,16 @@ def resolve_model(name: str | None, settings: Settings) -> str:
 
 
 def render_subagent_suffix(task: Task) -> str:
-    """The subagent system-prompt suffix, with this task's project and description."""
+    """The subagent system-prompt suffix, with this task's project, request and number.
+
+    The number is in there for the commit trailer: it is what ties a change in a repo back
+    to the sentence he said out loud, which is the one thing `git log` cannot recover.
+    """
     return render_prompt(
         SUBAGENT_SUFFIX_PROMPT,
         project=task.project or "none",
         description=task.description,
+        task_id=str(task.id) if task.id is not None else "unknown",
     )
 
 

@@ -118,7 +118,9 @@ scope, so the test suite can run on a machine with no mic.
   arguments are fine). §3.3/§4 hold rulings: follow them, and amend the spec in a
   docs commit when one changes.
 - Conventional commits (`feat:`/`fix:`/`chore:`/`docs:`) with the Co-Authored-By
-  Claude trailer.
+  Claude trailer. A subagent Jarvis dispatched adds `Jarvis-Task: <id>` as well, so
+  `git log --grep '^Jarvis-Task:'` is everything William asked for out loud rather than
+  typed — the one thing `git log` cannot otherwise recover.
 - Clean and minimal over clever; TDD, with `uv run pytest -q` and
   `uv run ruff check src tests` pristine before a commit.
 

@@ -28,6 +28,7 @@ from jarvis.tasks.agent_runner import (
     build_options,
     extract_restart_request,
     extract_spoken_summary,
+    render_subagent_suffix,
     resolve_model,
 )
 from jarvis.tasks.models import Task, TaskKind
@@ -641,3 +642,30 @@ def test_merely_talking_about_a_restart_is_not_asking_for_one():
 
 def test_the_reason_is_trimmed_to_something_sayable():
     assert len(extract_restart_request("RESTART_REQUIRED: " + "x " * 400)) <= 120
+
+
+def test_the_subagent_suffix_carries_the_task_number_for_the_commit_trailer(settings):
+    """`git log` cannot recover which edits he asked for out loud; the trailer can."""
+    task = Task(id=31, kind=TaskKind.AGENT, description="add a recall tool")
+
+    suffix = render_subagent_suffix(task)
+
+    assert "Jarvis-Task: 31" in suffix
+    assert "Task number: 31" in suffix
+
+
+def test_a_task_with_no_number_yet_still_renders():
+    """The suffix is built at open(), after the row exists — but never crash if it is not."""
+    suffix = render_subagent_suffix(Task(id=None, kind=TaskKind.AGENT, description="x"))
+
+    assert "Jarvis-Task: unknown" in suffix
+
+
+def test_the_subagent_suffix_tells_it_not_to_restart_jarvis_itself(settings):
+    """It runs inside the service: restarting from there kills it mid-report."""
+    suffix = render_subagent_suffix(
+        Task(id=1, kind=TaskKind.AGENT, description="change jarvis")
+    )
+
+    assert "RESTART_REQUIRED:" in suffix
+    assert "Do not restart it yourself" in suffix
