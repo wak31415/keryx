@@ -38,12 +38,13 @@ import subprocess
 import sys
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from jarvis.config import Settings
+from jarvis.logscan import errors_since, marks
 from jarvis.notify.notifier import CALLBACK_TOKEN_TTL_S
 from jarvis.notify.twilio_out import stream_twiml
 from jarvis.session import SessionRegistry
@@ -86,13 +87,17 @@ RESTART_ANNOUNCEMENT = "The restart is done and Jarvis is back up: {status}."
 #: The opening context of the call-back itself: a confirmation, not a report.
 RESTART_CONTEXT = (
     "You are calling the user back because the Jarvis service — you — has just restarted "
-    "and is running again. He asked for the restart {when}{reason} and this call is the "
-    "confirmation that it worked. Status: {status}. Greet him, tell him in one or two "
-    "sentences that the restart went through and anything in the status he would want to "
-    "know, then ask if he needs anything else. Keep it short: he asked for a restart, not "
-    "a report. This is a new call: he may have to give the PIN again before you can start "
-    "more work."
+    "and is running again. He asked for the restart {when}{reason}{change}, and this call "
+    "is the confirmation. Status: {status}. Greet him and tell him in one or two sentences "
+    "whether it worked. If the status mentions errors in the log, or says the checkout did "
+    "not change, that is the headline: say plainly that the update may not have taken, say "
+    "what the error was, and offer to put Claude on it. Otherwise say it went through, "
+    "mention anything else in the status he would want to know, and ask if he needs "
+    "anything else. Keep it short: he asked for a restart, not a report. This is a new "
+    "call: he may have to give the PIN again before you can start more work."
 )
+#: The clause that names the work a restart was loading, for the context above.
+LOADING_TASK = ", to load the work from task {task_id}"
 #: The same confirmation as a text, when no call can be placed.
 RESTART_SMS = "Jarvis restarted and is back up: {status}"
 FAILED_SMS = "Jarvis tried to restart and it did not go through: {error}"
@@ -214,6 +219,17 @@ class RestartRecord:
     state: str = "pending"  # "pending" until delivered, then the file is gone or "failed"
     attempts: int = 0
     error: str | None = None
+    #: The task whose work this restart is loading, when it is loading one. A restart that
+    #: exists to pick up a change Jarvis made to its own code is the only kind where "did
+    #: it work" is a question about the *change* and not just about the process, so the
+    #: confirmation names it and the version check below is only worth making with one.
+    task_id: int | None = None
+    #: How long each service log file was when the restart was asked for, so the process
+    #: that comes back can tell this restart's errors from every earlier one (`logscan`).
+    log_marks: dict[str, int] = field(default_factory=dict)
+    #: How the out-of-process watchdog was started, or why it was not — the only thing that
+    #: notices a service that never came back at all. See `jarvis.restart_watch`.
+    watchdog: str = ""
 
     @classmethod
     def from_dict(cls, data: dict) -> "RestartRecord":
@@ -347,6 +363,7 @@ class RestartCoordinator:
         number: str | None = None,
         origin_channel: str = "local",
         origin_session_id: str | None = None,
+        task_id: int | None = None,
         force: bool = False,
     ) -> dict:
         """Schedule a restart of this service. Never raises; the status says what happened.
@@ -355,6 +372,10 @@ class RestartCoordinator:
         call is live; it goes ahead when the line clears), `already_pending`, `unsupported`
         (nothing supervises this process) or `failed`. `message` is what the voice model
         should say — the caller is usually about to be cut off by their own request.
+
+        `task_id` is the work this restart exists to load, when it exists to load any. It
+        turns the confirmation from "the process came back" into "the change you asked for
+        is running", and it is what licenses the version check in `status_summary`.
         """
         target = resolve_target(self._settings)
         if target is None:
@@ -372,6 +393,8 @@ class RestartCoordinator:
             origin_session_id=origin_session_id,
             target=target.describe(),
             version=await asyncio.to_thread(current_version),
+            task_id=task_id,
+            log_marks=await asyncio.to_thread(marks, self._settings.data_dir),
         )
         if not self._store.save(record):
             # Without the record the new process has no idea it should call anyone, and a
@@ -501,14 +524,33 @@ class RestartCoordinator:
         wakeword: bool = False,
         now: datetime | None = None,
     ) -> str:
-        """The one line the call-back leads with: down for how long, on what, with what."""
+        """The one line the call-back leads with: did it work, and what is it running.
+
+        Ordered for somebody who is about to hear it read out: how long it was down, then
+        anything that went wrong, then what it is running and what it is listening on.
+        Errors come second because they are the answer to the only question worth asking
+        about a restart that was loading a change — "did the change work" — and burying
+        them behind three clauses of housekeeping is how they get skipped.
+        """
         parts = [f"back up after {format_duration(record.age_seconds(now))} down"]
+
+        errors = await asyncio.to_thread(errors_since, self._settings.data_dir, record.log_marks)
+        if errors:
+            parts.append(f"but {errors.spoken()}")
 
         version = await asyncio.to_thread(current_version)
         if version and record.version and version != record.version:
             parts.append(f"now on {version}, was {record.version}")
         elif version:
             parts.append(f"still on {version}")
+        if record.task_id is not None and version and version == record.version:
+            # A restart asked for in order to load a change, running the same checkout it
+            # was running before, has loaded nothing. Worth saying: the alternative is a
+            # confident "all done" over work that never reached the disk.
+            parts.append(
+                f"the checkout did not change, so the work from task {record.task_id} may "
+                "not have landed"
+            )
 
         channels = [name for name, up in (("phone", phone_up), ("wake word", wakeword)) if up]
         parts.append(f"{' and '.join(channels)} listening" if channels else "no channel listening")
@@ -580,6 +622,7 @@ class RestartCoordinator:
         context = RESTART_CONTEXT.format(
             when=f"{format_duration(record.age_seconds())} ago",
             reason=reason,
+            change=LOADING_TASK.format(task_id=record.task_id) if record.task_id else "",
             status=status,
         )
         token = self._stream_tokens.issue(

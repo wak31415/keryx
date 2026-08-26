@@ -16,6 +16,8 @@ import pytest
 from fakes import FakeVoiceSession
 
 from jarvis.config import Settings
+from jarvis.logscan import log_dir
+from jarvis.logscan import marks as log_marks
 from jarvis.restart import (
     EXEC_CONFIRM_S,
     LAUNCHD_LABEL,
@@ -40,6 +42,19 @@ OWNER = "+15550000001"
 CALLER = "+15551234567"
 HOST = "jarvis.example"
 VERSION = "v1-abc1234"
+TRACEBACK = (
+    "Traceback (most recent call last):\n"
+    '  File "/repo/src/jarvis/cli.py", line 12, in <module>\n'
+    "ModuleNotFoundError: No module named 'jarvis.nope'\n"
+)
+
+
+def write_log(settings, name: str, text: str) -> None:
+    """Append to one of the service log files, as systemd/launchd would."""
+    directory = log_dir(settings.data_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / name).open("a", encoding="utf-8") as handle:
+        handle.write(text)
 
 
 # --- doubles ---------------------------------------------------------------
@@ -507,6 +522,92 @@ async def test_the_summary_says_what_changed(tmp_path):
     assert f"now on {VERSION}, was v0-old0000" in summary
     assert "phone and wake word listening" in summary
     assert "no tasks were lost" in summary
+
+
+async def test_the_summary_reports_what_went_wrong_since_the_restart(tmp_path):
+    """"Back up" is not "working": the logs are the only place the difference is written."""
+    settings = make_settings(tmp_path)
+    write_log(settings, "jarvis.log", "2026-08-26 INFO    jarvis: from an earlier life\n")
+    harness = Harness(settings)
+    record = pending(log_marks=log_marks(settings.data_dir))
+    write_log(settings, "jarvis.err.log", TRACEBACK)
+
+    summary = await harness.coordinator.status_summary(record, phone_up=True)
+
+    assert "but 1 error in the log since" in summary
+    assert "ModuleNotFoundError" in summary
+
+
+async def test_a_clean_log_says_nothing_about_errors(tmp_path):
+    settings = make_settings(tmp_path)
+    harness = Harness(settings)
+    record = pending(log_marks=log_marks(settings.data_dir))
+    write_log(settings, "jarvis.log", "2026-08-26 INFO    jarvis: serving\n")
+
+    summary = await harness.coordinator.status_summary(record, phone_up=True)
+
+    assert "error" not in summary
+
+
+async def test_errors_are_said_before_the_housekeeping(tmp_path):
+    """The one question a restart has to answer is "did it work" — it cannot be buried."""
+    settings = make_settings(tmp_path)
+    harness = Harness(settings)
+    record = pending(log_marks=log_marks(settings.data_dir))
+    write_log(settings, "jarvis.err.log", TRACEBACK)
+
+    summary = await harness.coordinator.status_summary(record, phone_up=True)
+
+    assert summary.index("error in the log") < summary.index("listening")
+
+
+async def test_a_restart_that_loaded_nothing_says_so(tmp_path):
+    """Same checkout after a restart asked for to load a change: the change is not there."""
+    harness = Harness(make_settings(tmp_path))
+    record = pending(version=VERSION, task_id=7)
+
+    summary = await harness.coordinator.status_summary(record, phone_up=True)
+
+    assert "the checkout did not change" in summary
+    assert "task 7" in summary
+
+
+async def test_an_unchanged_checkout_is_only_worth_saying_when_a_task_was_loading(tmp_path):
+    """He restarts to clear a wedged process too, and that one is meant to change nothing."""
+    harness = Harness(make_settings(tmp_path))
+
+    summary = await harness.coordinator.status_summary(pending(version=VERSION), phone_up=True)
+
+    assert "did not change" not in summary
+    assert f"still on {VERSION}" in summary
+
+
+async def test_the_call_back_names_the_task_the_restart_loaded(harness):
+    harness.store.save(pending(task_id=12))
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
+    info = harness.tokens.redeem(parameters["token"])
+    assert info is not None
+    assert "task 12" in info.extra["opening_context"]
+
+
+async def test_a_restart_records_where_the_logs_had_got_to(tmp_path):
+    """Without the mark, the process that comes back cannot tell new errors from old."""
+    settings = make_settings(tmp_path)
+    write_log(settings, "jarvis.log", "2026-08-26 ERROR   jarvis: yesterday's problem\n")
+    harness = Harness(settings)
+
+    await harness.coordinator.request(reason="new code", task_id=5)
+    await harness.settle()
+
+    record = harness.record()
+    assert record is not None
+    assert record.task_id == 5
+    assert record.log_marks["jarvis.log"] > 0
+    # And the error that was already there is not attributed to this restart.
+    assert "error" not in await harness.coordinator.status_summary(record, phone_up=True)
 
 
 async def test_the_summary_counts_what_the_restart_interrupted(tmp_path):
