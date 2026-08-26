@@ -669,3 +669,14 @@ async def test_an_ordinary_task_asks_for_no_restart(harness):
 
     assert harness.restarter.requests == []
     assert harness.twilio.calls
+
+
+def test_a_summary_that_ends_in_a_stop_does_not_get_a_second_one():
+    """The template supplies its own, and "the tests pass.." is what a voice reads out."""
+    from jarvis.notify.notifier import no_trailing_stop
+
+    assert no_trailing_stop("I added the recall tool and the tests pass.") == (
+        "I added the recall tool and the tests pass"
+    )
+    assert no_trailing_stop("no stop here") == "no stop here"
+    assert no_trailing_stop("trailing space. ") == "trailing space"

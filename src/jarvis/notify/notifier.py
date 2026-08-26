@@ -85,6 +85,16 @@ RESTART_REASON = "to load what task {task_id} changed"
 RESTART_ARMED = frozenset({"restarting", "deferred", "already_pending"})
 
 
+def no_trailing_stop(text: str) -> str:
+    """`text` without a full stop on the end, for a template that supplies its own.
+
+    A spoken summary usually ends in one and the sentence around it always does, so
+    without this the context reads "the tests pass.." — which a text-to-speech voice
+    does not swallow as gracefully as a reader would.
+    """
+    return text.rstrip().rstrip(".").rstrip()
+
+
 def report_token(task_id: int, secret: str) -> str:
     """The unguessable half of a report link: HMAC-SHA256 of the id under `secret`."""
     digest = hmac.new(secret.encode(), str(task_id).encode(), hashlib.sha256).hexdigest()
@@ -307,7 +317,7 @@ class Notifier:
             context = (FAILED_CONTEXT if failed else DONE_CONTEXT).format(
                 task_id=task.id,
                 request=request,
-                detail=detail,
+                detail=no_trailing_stop(detail),
                 history=self._previous_call(task),
             )
             token = self._stream_tokens.issue(
