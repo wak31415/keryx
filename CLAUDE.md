@@ -121,6 +121,11 @@ scope, so the test suite can run on a machine with no mic.
 ## Working agreements
 
 - Only scripts read the env file; never print or paste its contents.
+- The database runs ahead of the code. `_migrate` upgrades `tasks.db` from whichever process
+  opens it first, and `jarvis serve` holds the `Task` it imported at startup, so a new column
+  reaches the file while the service is still a build behind. `Task.from_row` drops columns it
+  has no field for; keep it that way, and keep writes naming their columns so the older build
+  cannot blank the newer one's data.
 - Jarvis does not text. `SMS_ENABLED` is false (the account has no SMS geo-permission for
   his region, and Slack is the written channel he actually asks for), so gate any send on
   `TwilioOut.can_text` and never on `configured` — outbound *calls* are unaffected, and the
