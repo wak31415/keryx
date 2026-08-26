@@ -111,6 +111,21 @@ class Harness:
         return self.twilio.sms[0][1]
 
 
+class FakeRestarter:
+    """A `RestartCoordinator` that records what it was asked for and answers as told."""
+
+    def __init__(self, status: str = "deferred") -> None:
+        self.requests: list[dict] = []
+        self.status = status
+        self.error: Exception | None = None
+
+    async def request(self, **kwargs) -> dict:
+        self.requests.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return {"status": self.status, "message": "…"}
+
+
 @pytest.fixture
 async def harnesses(tmp_path) -> Callable[..., Harness]:
     """Factory for started Notifiers; every one built is stopped and closed afterwards."""
@@ -124,11 +139,15 @@ async def harnesses(tmp_path) -> Callable[..., Harness]:
         twilio = FakeTwilioOut()
         tokens = StreamTokenStore()
         inline_waits = InlineWaits()
-        notifier = Notifier(bus, store, sessions, twilio, settings, tokens, inline_waits)
+        restarter = FakeRestarter()
+        notifier = Notifier(
+            bus, store, sessions, twilio, settings, tokens, inline_waits, restarter
+        )
         notifier.start()
         harness = Harness(
             notifier, bus, store, sessions, twilio, tokens, settings, inline_waits
         )
+        harness.restarter = restarter
         made.append(harness)
         return harness
 
@@ -562,3 +581,91 @@ async def test_an_internal_task_that_fails_is_just_as_quiet(harness):
     assert harness.twilio.sms == []
     row = await harness.row(task)
     assert row.announced is False and row.sms_sent is False
+
+
+# --- (4) a task that changed Jarvis's own code ------------------------------
+
+
+async def test_a_task_that_needs_a_restart_asks_for_one(harness):
+    task = await harness.task(
+        needs_restart=True, callback_requested=True, callback_number=CALLER,
+        origin_channel="phone", origin_caller=CALLER, origin_session_id="sess-1",
+    )
+
+    await harness.finished(task, "added the recall tool")
+
+    assert harness.restarter.requests == [
+        {
+            "reason": "to load what task 1 changed",
+            "number": CALLER,
+            "origin_channel": "phone",
+            "origin_session_id": "sess-1",
+            "task_id": task.id,
+        }
+    ]
+
+
+async def test_the_restart_confirmation_becomes_the_call_back(harness):
+    """Two calls a minute apart about the same work is what this exists to avoid."""
+    task = await harness.task(
+        needs_restart=True, callback_requested=True, callback_number=CALLER,
+        origin_channel="phone", origin_caller=CALLER,
+    )
+
+    await harness.finished(task)
+
+    assert harness.twilio.calls == []
+    row = await harness.row(task)
+    assert row.callback_requested is False  # nothing else will dial about this task
+    assert row.needs_restart is False  # and a follow-up will not restart a second time
+
+
+async def test_the_result_is_still_announced_and_texted_before_the_restart(harness):
+    """Both cost nothing and both survive a restart that does not come back."""
+    task = await harness.task(needs_restart=True, origin_channel="phone", origin_caller=CALLER)
+
+    await harness.finished(task, "added the recall tool")
+
+    assert "added the recall tool" in harness.sms_body
+    assert harness.restarter.requests
+
+
+async def test_a_refused_restart_does_not_swallow_the_call_back(harness):
+    """No service manager on the machine: the restart cannot happen, the result still must."""
+    harness.restarter.status = "unsupported"
+    task = await harness.task(
+        needs_restart=True, callback_requested=True, callback_number=CALLER,
+    )
+
+    await harness.finished(task)
+
+    assert harness.twilio.calls, "the result went nowhere because the restart was refused"
+
+
+async def test_a_restarter_that_raises_does_not_swallow_the_call_back(harness):
+    harness.restarter.error = RuntimeError("systemd is unhappy")
+    task = await harness.task(
+        needs_restart=True, callback_requested=True, callback_number=CALLER,
+    )
+
+    await harness.finished(task)
+
+    assert harness.twilio.calls
+
+
+async def test_a_failed_task_never_restarts_anything(harness):
+    """If the edit did not work, loading it is the last thing anybody wants."""
+    task = await harness.task(needs_restart=True)
+
+    await harness.failed(task)
+
+    assert harness.restarter.requests == []
+
+
+async def test_an_ordinary_task_asks_for_no_restart(harness):
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task)
+
+    assert harness.restarter.requests == []
+    assert harness.twilio.calls

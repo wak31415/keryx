@@ -62,6 +62,13 @@ Jarvis knows at the top of a call is assembled every time by `jarvis/briefing.py
 task from the spoken lists, the digest, `recall`, the daily cap and the notifier — and
 restricts *nothing* about the subagent. It is not a task kind; do not grow it into one.
 
+`Task.needs_restart` is the other flag, and it is a *request*, not a fact: the subagent says
+`RESTART_REQUIRED: <why>` above its `SPOKEN_SUMMARY:` because it is the only thing that knows
+it edited `src/jarvis/**` (`git describe --dirty` flips on any open edit). Honoured only on a
+task that succeeded, never on an internal one. The Notifier then hands that task's call-back
+to the restart's confirmation, which carries both halves — what the work came to, and whether
+it is running. Do not make a subagent restart Jarvis itself; it is inside the cgroup.
+
 ## Restarts are three halves
 
 The process that runs `systemctl restart` is the one that gets killed, so `jarvis/restart.py`

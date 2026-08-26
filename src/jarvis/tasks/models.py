@@ -40,7 +40,9 @@ class TaskStatus(StrEnum):
 
 
 _ENUM_FIELDS: dict[str, type[StrEnum]] = {"kind": TaskKind, "status": TaskStatus}
-_BOOL_FIELDS = frozenset({"callback_requested", "announced", "sms_sent", "internal"})
+_BOOL_FIELDS = frozenset(
+    {"callback_requested", "announced", "sms_sent", "internal", "needs_restart"}
+)
 _DATETIME_FIELDS = frozenset({"created_at", "started_at", "finished_at", "reported_at"})
 
 
@@ -135,6 +137,12 @@ class Task:
     #: daily cap, and out of the notifier. It is *not* a task kind: it restricts nothing
     #: about what the subagent may do, it only says who asked for it.
     internal: bool = False
+    #: The subagent said it changed Jarvis's own code and that only a restart loads it
+    #: (its `RESTART_REQUIRED:` line — see `prompts/subagent_suffix.md`). It is a request,
+    #: not a fact about the repo: nothing here inspects the checkout, because a dirty
+    #: working tree says only that *somebody* has an edit open. The Notifier reads it and
+    #: arms the restart, whose confirmation call then doubles as this task's call-back.
+    needs_restart: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     finished_at: datetime | None = None

@@ -20,7 +20,7 @@ from jarvis.tasks.models import Task, TaskStatus, to_utc_iso
 
 log = logging.getLogger("jarvis.tasks.store")
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 #: How many unreported tasks a call opens with. He is on a phone: past a handful, the
 #: digest stops being a briefing and becomes a recital, and the rest keep until next time.
@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     sms_sent INTEGER NOT NULL DEFAULT 0,
     reported_at TEXT,
     internal INTEGER NOT NULL DEFAULT 0,
+    needs_restart INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     started_at TEXT,
     finished_at TEXT
@@ -87,6 +88,9 @@ _V2_COLUMNS = ("origin_session_id TEXT", "callback_note TEXT")
 #: and whether Jarvis asked for it of its own accord. Rows written before this are treated
 #: as already reported — see `_migrate`.
 _V3_COLUMNS = ("reported_at TEXT", "internal INTEGER NOT NULL DEFAULT 0")
+#: v3 -> v4 (2026-08-26): a task can say it changed Jarvis's own code and needs a restart
+#: to take effect. Rows written before this never asked for one, which the default says.
+_V4_COLUMNS = ("needs_restart INTEGER NOT NULL DEFAULT 0",)
 
 
 class TaskStore:
@@ -140,6 +144,9 @@ class TaskStore:
                     "WHERE reported_at IS NULL AND status IN (?, ?, ?)",
                     (TaskStatus.DONE.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value),
                 )
+            if version < 4:
+                for column in _V4_COLUMNS:
+                    conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
             conn.execute("UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,))
             log.info(
                 "migrated tasks schema v%d -> v%d at %s", version, _SCHEMA_VERSION, self._path

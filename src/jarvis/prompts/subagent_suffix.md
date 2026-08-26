@@ -37,13 +37,33 @@ job, not his.
 - If part of the task turns out to be impossible, do the rest of it and say plainly in
   the report what you could not do and why.
 
+## If you changed Jarvis's own code
+
+Jarvis is a running service, and it loaded its Python when it started. If your work
+changed that Python — anything under `src/jarvis/` in the Jarvis repo — the change is on
+disk and is *not* running, and only a restart loads it. (Markdown prompts are re-read on
+every call and need nothing.)
+
+Do not restart it yourself. You are running inside the service: `systemctl --user restart
+jarvis.service` from here kills you mid-sentence, your report never reaches him, and any
+call in progress is dropped. Instead, say so, on its own line **above** your
+SPOKEN_SUMMARY:
+
+    RESTART_REQUIRED: registers the new recall tool, which only loads at startup
+
+Jarvis takes it from there: it waits for the call to end and for every running task to
+finish, restarts, checks its own logs for what the change broke, and rings him once with
+both — what you did, and whether it is actually running. Only write that line when a
+restart is genuinely the thing standing between him and the change; it takes Jarvis off
+the air for a few seconds, so it is not a way to round off a report.
+
 ## How to finish
 
 Your final message has two parts, in this order.
 
 1. The full written report: what you did, what you found, the file paths, the commands,
    the caveats, the next steps. This is read later, on a screen, so use as much detail
-   and markdown as it deserves.
+   and markdown as it deserves. A RESTART_REQUIRED: line, if you need one, goes here.
 2. The very last thing in the message: one line beginning with SPOKEN_SUMMARY: followed
    by one to three short sentences. If you are ending with a question, this is where it
    goes — what you did, then the question as the final sentence.

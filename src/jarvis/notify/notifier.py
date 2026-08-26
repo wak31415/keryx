@@ -12,6 +12,14 @@ Three stages, in order, on every `TaskCompleted` / `TaskFailed`:
    carries a fresh single-use stream token whose `extra` tells the new session why it
    opened, so Jarvis leads with the result instead of "hello?".
 
+There is a fourth route, for the one task that cannot be delivered by the first three: a
+task that changed Jarvis's own code. Loading it means restarting, restarting means dropping
+whatever call would have carried the result, and confirming the restart means ringing him
+anyway. So a task whose subagent asked for a restart hands its call-back over to the
+restart's own confirmation, which then carries both — what the work came to, and whether it
+is actually running (`jarvis.restart`). The announcement and the text still go out first:
+they cost nothing and they survive a restart that does not come back.
+
 Every stage is independently guarded: a Twilio outage during the text must not cost the
 call-back, and nothing here may ever raise into the event bus.
 """
@@ -20,6 +28,7 @@ import hashlib
 import hmac
 import logging
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed
@@ -30,6 +39,9 @@ from jarvis.stream_tokens import StreamTokenStore
 from jarvis.tasks.models import Task
 from jarvis.tasks.store import TaskStore
 from jarvis.transcripts import read_tail
+
+if TYPE_CHECKING:  # pragma: no cover - `restart` imports this module for its own reasons
+    from jarvis.restart import RestartCoordinator
 
 log = logging.getLogger("jarvis.notify.notifier")
 
@@ -65,6 +77,12 @@ HISTORY_PREAMBLE = (
 NOTE_PREAMBLE = " Where you left off: {note}."
 #: How much of the original request the call-back context carries.
 MAX_REQUEST_CHARS = 200
+#: Why the restart a finished task asks for is happening, read back on the confirmation.
+RESTART_REASON = "to load what task {task_id} changed"
+#: The `request()` outcomes that mean a restart really is coming, and that its confirmation
+#: is therefore going to ring him. Anything else (`unsupported`, `failed`) is not a
+#: call-back, so the ordinary one still has to go out.
+RESTART_ARMED = frozenset({"restarting", "deferred", "already_pending"})
 
 
 def report_token(task_id: int, secret: str) -> str:
@@ -95,6 +113,7 @@ class Notifier:
         settings: Settings,
         stream_tokens: StreamTokenStore,
         inline_waits: InlineWaits,
+        restart: "RestartCoordinator | None" = None,
     ) -> None:
         self._bus = bus
         self._store = store
@@ -103,6 +122,7 @@ class Notifier:
         self._settings = settings
         self._stream_tokens = stream_tokens
         self._inline_waits = inline_waits
+        self._restart = restart
         self._removals: list[Callable[[], None]] = []
 
     def start(self) -> None:
@@ -154,6 +174,11 @@ class Notifier:
         )
         delivered = await self._announce(task, text)
         await self._send_sms(task, text, delivered=delivered)
+        if not failed and await self._arm_restart(task):
+            # The restart's confirmation call is this task's call-back, and it is a better
+            # one: it can say whether the change he asked for is actually running. Two
+            # calls a minute apart about the same piece of work would be the alternative.
+            return
         await self._call_back(task, detail, failed=failed, delivered=delivered)
 
     # --- (1) live sessions -------------------------------------------------
@@ -217,6 +242,40 @@ class Notifier:
         body = text[:SMS_BODY_LIMIT]
         url = self.report_url(task.id) if task.report_path else None
         return f"{body}\n{url}" if url else body
+
+    # --- (4) hand the call-back to a restart --------------------------------
+
+    async def _arm_restart(self, task: Task) -> bool:
+        """Ask for the restart this task needs; True when it is on and owns the call-back.
+
+        False for every ordinary task, and for one that asked on a machine where nothing
+        supervises the service — there the restart is refused, and refusing to restart must
+        not also swallow the result he was waiting for.
+        """
+        if not task.needs_restart or self._restart is None:
+            return False
+        try:
+            answer = await self._restart.request(
+                reason=RESTART_REASON.format(task_id=task.id),
+                number=task.callback_number or self._sms_recipient(task),
+                origin_channel=task.origin_channel,
+                origin_session_id=task.origin_session_id,
+                task_id=task.id,
+            )
+        except Exception:
+            log.exception("could not arm the restart task %s asked for", task.id)
+            return False
+        status = answer.get("status")
+        log.info("task %s asked for a restart: %s", task.id, status)
+        if status not in RESTART_ARMED:
+            return False
+        # Only once: a follow-up on the same task must not restart a second time, and the
+        # confirmation is the call-back, so nothing else should dial about this task.
+        try:
+            await self._store.update(task.id, needs_restart=False, callback_requested=False)
+        except Exception:
+            log.exception("could not clear the restart request on task %s", task.id)
+        return True
 
     # --- (3) the call-back -------------------------------------------------
 
