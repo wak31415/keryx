@@ -57,6 +57,9 @@ CANCEL_TIMEOUT_S = 5.0
 MAX_CALLBACK_NOTE_CHARS = 300
 #: How many project names an `UnknownProjectError` message spells out.
 MAX_LISTED_CANDIDATES = 10
+#: How many abandoned `queued` rows one startup will pick back up. A bound, not a policy:
+#: more than this waiting means something is wrong that resuming will not fix.
+MAX_RESUMED = 20
 
 UNKNOWN_ERROR = "unknown error"
 FAILURE_SUMMARY = "The task failed: {error}"
@@ -145,6 +148,37 @@ class TaskManager:
     async def start(self) -> None:
         """Nothing to warm up; the data directories are the only prerequisite."""
         self._settings.ensure_dirs()
+
+    async def resume_queued(self) -> list[int]:
+        """Start the tasks a previous process was killed before it could ever run.
+
+        `queued` is not a waiting room. A task is *born* queued and flips to `running`
+        about a second later, when the coroutine `dispatch` created gets its first slice
+        and takes the semaphore; under the concurrency cap nothing normally waits there at
+        all. So a row still `queued` in a fresh process is one that never executed a single
+        instruction — the process was killed inside that second — and starting it here is
+        running it for the first time, not running it twice. Nothing is half-done, because
+        nothing was done.
+
+        A `running` row is the opposite and is deliberately left alone: that subagent had
+        opened, and what it got through before the machine went down is unknowable from
+        here. `RestartCoordinator.status_summary` reports those as lost, which they are.
+        """
+        try:
+            waiting = await self._store.list(status=TaskStatus.QUEUED, limit=MAX_RESUMED)
+        except Exception:
+            log.exception("could not look for tasks to pick back up")
+            return []
+        # Oldest first: he asked for them in that order, so they run in it.
+        found = sorted(
+            (task for task in waiting if task.id is not None and task.id not in self._tasks),
+            key=lambda task: task.created_at,
+        )
+        for task in found:
+            log.info("picking task %s back up, queued since %s", task.id, task.created_at)
+            self._done_events.setdefault(task.id, asyncio.Event())
+            self._spawn(task.id)
+        return [task.id for task in found]
 
     async def shutdown(self) -> None:
         """Cancel every queued/running task, wait for them, then close any open session."""

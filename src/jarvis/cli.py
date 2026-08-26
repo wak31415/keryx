@@ -35,6 +35,7 @@ from jarvis.restart import (
     health_probe,
     loaded_version,
     mark_running,
+    mark_startup_logs,
     mask_number,
     resolve_target,
     spawn_watchdog,
@@ -167,6 +168,9 @@ async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
     # First, before anything can commit on top of us: the next restart compares against
     # this to say whether it loaded anything, and the checkout will have moved by then.
     mark_running(settings.data_dir)
+    # And before we log a line of our own: everything past here is this process's doing,
+    # which is what the confirmation call should be reading. See `mark_startup_logs`.
+    mark_startup_logs(settings.data_dir)
     state = build_app_state(settings)
     server = _build_server(state) if phone else None
     server_task = None
@@ -183,12 +187,8 @@ async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
     # server is really listening. It is deliberately not one of the `tasks` below: finishing
     # is what it does, and that must not bring the server down with it.
     ready = (lambda: wait_until_serving(server)) if server is not None else None
-    callback_task = (
-        asyncio.create_task(
-            state.restart.resume(wait_ready=ready, wakeword=wakeword), name="restart-callback"
-        )
-        if state.restart is not None
-        else None
+    callback_task = asyncio.create_task(
+        _confirm_then_drain(state, ready=ready, wakeword=wakeword), name="restart-callback"
     )
 
     def shutdown() -> None:
@@ -214,6 +214,27 @@ async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
                 log.error("serve task failed", exc_info=result)
         # Subagents outlive a session but not the process: stop them and close the store.
         await shutdown_app_state(state)
+
+
+async def _confirm_then_drain(state: AppState, *, ready, wakeword: bool) -> None:
+    """Confirm the restart, then pick up the work the last process never got to.
+
+    In that order, and never the other way round: the confirmation counts what was left
+    `queued`, and picking those up first would have it counting tasks this process had
+    already started as ones the restart interrupted. Neither half may take the server down
+    with it, so both are guarded here rather than left to the caller.
+    """
+    if state.restart is not None:
+        await state.restart.resume(wait_ready=ready, wakeword=wakeword)
+    if state.manager is None:
+        return
+    try:
+        resumed = await state.manager.resume_queued()
+    except Exception:
+        log.exception("could not pick up the tasks the last process left queued")
+        return
+    if resumed:
+        typer.echo(f"picked up {len(resumed)} task(s) the last process never started")
 
 
 def _build_server(state: AppState) -> uvicorn.Server:

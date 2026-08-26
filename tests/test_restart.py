@@ -34,6 +34,7 @@ from jarvis.restart import (
     health_probe,
     loaded_version,
     mark_running,
+    mark_startup_logs,
     mask_number,
     resolve_target,
     running_version,
@@ -729,7 +730,8 @@ async def test_the_summary_counts_what_the_restart_interrupted(tmp_path):
     summary = await harness.coordinator.status_summary(pending(), phone_up=True)
 
     assert "1 task(s) were interrupted and will not resume" in summary
-    assert "1 task(s) left queued" in summary
+    # Queued means it never started, so it is picked back up rather than mourned.
+    assert "1 task(s) never started and are being picked back up" in summary
     await store.close()
 
 
@@ -1181,3 +1183,50 @@ async def test_a_restart_naming_a_task_that_is_gone_still_confirms_itself(tmp_pa
     assert "restarted" in context
     assert "task 999" in context
     await store.close()
+
+
+# --- whose errors are they anyway ------------------------------------------
+
+
+async def test_the_dying_process_last_gasps_are_not_this_restarts_errors(tmp_path):
+    """A Python shutting down with a subagent still open prints `Event loop is closed` out
+    of `base_subprocess.__del__`. Read as the new process's problem, that put "but 1 error
+    in the log since" on the confirmation for a restart that had gone perfectly — and it
+    would have said it on every self-edit restart, the one case the check exists for."""
+    settings = make_settings(tmp_path)
+    harness = Harness(settings)
+    record = pending(log_marks=log_marks(settings.data_dir))
+
+    # The old process dies noisily...
+    write_log(settings, "jarvis.err.log", "Traceback (most recent call last):\n")
+    write_log(settings, "jarvis.err.log", "RuntimeError: Event loop is closed\n")
+    # ...and only then do we start, which is where our own story begins.
+    mark_startup_logs(settings.data_dir)
+
+    summary = await harness.coordinator.status_summary(record, phone_up=True)
+
+    assert "error" not in summary
+
+
+async def test_what_the_new_process_logs_is_very_much_its_own(tmp_path):
+    settings = make_settings(tmp_path)
+    harness = Harness(settings)
+    record = pending(log_marks=log_marks(settings.data_dir))
+    mark_startup_logs(settings.data_dir)
+    write_log(settings, "jarvis.err.log", TRACEBACK)
+
+    summary = await harness.coordinator.status_summary(record, phone_up=True)
+
+    assert "ModuleNotFoundError" in summary
+
+
+async def test_without_a_startup_mark_the_record_is_still_used(tmp_path):
+    """A service too old to have stamped one is no worse off than it was before."""
+    settings = make_settings(tmp_path)
+    harness = Harness(settings)
+    record = pending(log_marks=log_marks(settings.data_dir))
+    write_log(settings, "jarvis.err.log", TRACEBACK)
+
+    summary = await harness.coordinator.status_summary(record, phone_up=True)
+
+    assert "ModuleNotFoundError" in summary

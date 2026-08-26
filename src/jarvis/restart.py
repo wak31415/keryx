@@ -65,6 +65,8 @@ RECORD_NAME = "restart.json"
 
 #: Where `jarvis serve` stamps the version it imported, under `data_dir`. See `mark_running`.
 RUNNING_NAME = "running-version"
+#: Where `jarvis serve` stamps how far the logs had got when it started. See `mark_startup_logs`.
+STARTUP_MARKS_NAME = "startup-log-marks.json"
 
 #: Default unit/label names, matching `ops/systemd/jarvis.service` and
 #: `ops/launchd/com.william.jarvis.plist`.
@@ -270,6 +272,40 @@ def loaded_version(data_dir: Path, repo: Path | None = None) -> str | None:
     same over the phone, and the guess is at least right when nothing has been committed.
     """
     return running_version(data_dir) or current_version(repo)
+
+
+def mark_startup_logs(data_dir: Path) -> dict[str, int]:
+    """Stamp how far the service logs had got when *this* process started.
+
+    There are two questions about a restart and they want different starting points.
+
+    The watchdog asks "did anything come back at all", so it has to read from the moment
+    the restart was *requested* — there may be no new process to have marked anything.
+
+    `resume()` asks the narrower and more useful question, "did I come up clean", and for
+    that the request is the wrong mark: it includes the dying process's last gasps. A
+    Python interpreter shutting down with a subagent subprocess still open reliably prints
+    `RuntimeError: Event loop is closed` out of `base_subprocess.__del__`, which is noise
+    from a process that is already gone — and read as this restart's error it put "but 1
+    error in the log since" on the confirmation call for a restart that went perfectly.
+    Every self-edit restart would have said it, which is the one case the check exists for.
+    """
+    found = marks(data_dir)
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / STARTUP_MARKS_NAME).write_text(json.dumps(found), encoding="utf-8")
+    except OSError:
+        log.warning("could not stamp the startup log marks in %s", data_dir)
+    return found
+
+
+def startup_log_marks(data_dir: Path) -> dict[str, int] | None:
+    """What this process stamped at startup, or None if it never got the chance."""
+    try:
+        found = json.loads((data_dir / STARTUP_MARKS_NAME).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return found if isinstance(found, dict) and found else None
 
 
 # --- the watchdog that outlives the restart ---------------------------------
@@ -777,7 +813,11 @@ class RestartCoordinator:
         """
         parts = [f"back up after {format_duration(record.age_seconds(now))} down"]
 
-        errors = await asyncio.to_thread(errors_since, self._settings.data_dir, record.log_marks)
+        # This process's own mark in preference to the record's: see `mark_startup_logs`
+        # for why the difference matters. The record's is the fallback for a service too
+        # old to have stamped one, which is no worse than what there was before.
+        since = startup_log_marks(self._settings.data_dir) or record.log_marks
+        errors = await asyncio.to_thread(errors_since, self._settings.data_dir, since)
         if errors:
             parts.append(f"but {errors.spoken()}")
 
@@ -802,7 +842,9 @@ class RestartCoordinator:
         if interrupted:
             parts.append(f"{interrupted} task(s) were interrupted and will not resume")
         if queued:
-            parts.append(f"{queued} task(s) left queued")
+            # Queued means never started, so these are picked back up rather than lost —
+            # `TaskManager.resume_queued`, which `jarvis serve` runs after this call.
+            parts.append(f"{queued} task(s) never started and are being picked back up")
         if not interrupted and not queued:
             parts.append("no tasks were lost")
         return "; ".join(parts)
