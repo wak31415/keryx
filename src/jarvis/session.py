@@ -41,6 +41,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from jarvis.audio.util import ms_for_bytes
+from jarvis.briefing import Briefing, BriefingSource
 from jarvis.config import Settings
 from jarvis.events import EventBus, SessionEnded, SessionStarted
 from jarvis.prompts import render_voice_prompt
@@ -118,6 +119,7 @@ class VoiceSession:
         opening_context: str | None = None,
         session_id: str | None = None,
         registry: "SessionRegistry | None" = None,
+        briefer: BriefingSource | None = None,
     ) -> None:
         self._transport = transport
         self._provider = provider
@@ -126,6 +128,10 @@ class VoiceSession:
         self._bus = bus
         self._registry = registry
         self._opening_context = opening_context
+        self._briefer = briefer
+        #: Filled in by `run()` before the prompt is built; an empty one until then, so a
+        #: session that never ran still renders a prompt.
+        self._briefing = Briefing()
 
         self.session_id = session_id or secrets.token_hex(4)
         self.channel: str = transport.channel
@@ -174,6 +180,7 @@ class VoiceSession:
 
     async def run(self) -> None:
         """Run the session to completion. Returns once the call has been torn down."""
+        self._briefing = await self._load_briefing()
         config = self._build_config()
         try:
             await self._provider.connect(config)
@@ -193,7 +200,7 @@ class VoiceSession:
         log.info("session %s started (%s, caller %s)", self.session_id, self.channel, self.caller)
 
         opened = await self._safe_call(
-            self._provider.inject_message, self._opening_context or OPENING_MESSAGE, respond=True
+            self._provider.inject_message, self._opening_message(), respond=True
         )
         if not opened:
             # Nothing will ever be spoken here, and no `ResponseDone` will arrive to arm
@@ -308,6 +315,29 @@ class VoiceSession:
 
     # --- startup -----------------------------------------------------------
 
+    async def _load_briefing(self) -> Briefing:
+        """What this session opens knowing: the unreported tasks and the memory.
+
+        A briefing that cannot be built is not a reason to drop a call — `Briefer` already
+        swallows its own failures, and this catches anything a substitute source raises.
+        """
+        if self._briefer is None:
+            return Briefing()
+        try:
+            return await self._briefer.build()
+        except Exception:
+            log.exception("session %s could not build its briefing", self.session_id)
+            return Briefing()
+
+    def _opening_message(self) -> str:
+        """The message that opens the session, plus the nudge about anything unreported.
+
+        The nudge rides on the opening message rather than on the system prompt alone
+        because a realtime model leads with what it was just handed far more reliably
+        than with a section it has to go looking for.
+        """
+        return (self._opening_context or OPENING_MESSAGE) + self._briefing.opening_nudge()
+
     def _build_config(self) -> SessionConfig:
         """The provider session: transport's audio format, our prompt, our tools."""
         return SessionConfig(
@@ -317,6 +347,8 @@ class VoiceSession:
                 caller=self.caller,
                 authorized=self.authorized,
                 opening_context=self._opening_context,
+                pending=self._briefing.pending,
+                memory=self._briefing.memory,
             ),
             tools=self._tools.schemas(),
             voice=self._settings.openai_voice,
@@ -639,8 +671,14 @@ class VoiceSession:
         self._item_bytes_sent = 0
 
     def _append_transcript(self, text: str) -> None:
-        """Append one line to `data_dir/calls/<session_id>.log`; never fatal."""
-        line = f"[{datetime.now().strftime('%H:%M:%S')}] {text}\n"
+        """Append one line to `data_dir/calls/<session_id>.log`; never fatal.
+
+        The stamp is a full local ISO timestamp rather than a wall clock: `jarvis.recall`
+        reads these back weeks later and "14:02:11" cannot say which day that was. Older
+        transcripts stamped with the time alone still parse — recall dates those from the
+        file's modification time instead.
+        """
+        line = f"[{datetime.now().isoformat(timespec='seconds')}] {text}\n"
         try:
             self.transcript_path.parent.mkdir(parents=True, exist_ok=True)
             with self.transcript_path.open("a", encoding="utf-8") as handle:

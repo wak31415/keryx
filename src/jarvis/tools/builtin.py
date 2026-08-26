@@ -24,6 +24,9 @@ from pathlib import Path
 
 from jarvis.config import Settings
 from jarvis.inline_waits import InlineWaits
+from jarvis.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
+from jarvis.recall import MAX_LIMIT as MAX_RECALL_LIMIT
+from jarvis.recall import Recaller
 from jarvis.restart import RestartCoordinator
 from jarvis.slack import SlackSender
 from jarvis.tasks.manager import TERMINAL_STATUSES, TaskLimitError, TaskManager, UnknownProjectError
@@ -52,6 +55,9 @@ CALLBACK_NUMBER_MESSAGE = (
 STILL_RUNNING_MESSAGE = "still running; you will be told when it finishes"
 SEARCH_FAILED_MESSAGE = "the search came back empty; say so, or offer to put Claude on it"
 SLACK_FAILED_MESSAGE = "Slack would not take the message; tell him it did not go through"
+RECALL_EMPTY_MESSAGE = (
+    "nothing on record about that; say so plainly and offer to put Claude on it"
+)
 ENDING_MESSAGE = "The session is ending now; do not say anything else."
 
 #: A phone number we are willing to call back: E.164, `+` and 7–15 digits.
@@ -124,6 +130,30 @@ def _clamp_limit(raw: object) -> int:
     return min(max(limit, 1), MAX_TASK_LIMIT)
 
 
+def _clamp_recall_limit(raw: object) -> int:
+    try:
+        limit = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_RECALL_LIMIT
+    return min(max(limit, 1), MAX_RECALL_LIMIT)
+
+
+def _task_ids(raw: object) -> list[int]:
+    """The `task_ids` argument as a list of ints, dropping anything that is not one.
+
+    The model sometimes hands over a single number, or a list with a stray string in it;
+    neither is worth an error it would have to explain out loud.
+    """
+    values = raw if isinstance(raw, list | tuple) else [raw]
+    ids: list[int] = []
+    for value in values:
+        try:
+            ids.append(int(value))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
 def _brief(task: Task) -> dict:
     """One task as a spoken list entry."""
     entry = {
@@ -157,12 +187,13 @@ def register_builtin_tools(
     searcher: WebSearcher | None = None,
     slack: SlackSender | None = None,
     restarter: RestartCoordinator | None = None,
+    recaller: Recaller | None = None,
 ) -> None:
     """Register every tool the voice model has, bound to this process's task manager.
 
-    `web_search`, `send_to_slack` and `restart_service` are registered only when a
-    `searcher` / `slack` / `restarter` is supplied, so a process without one simply does
-    not offer that tool. Registering
+    `web_search`, `send_to_slack`, `restart_service` and `recall` are registered only when
+    a `searcher` / `slack` / `restarter` / `recaller` is supplied, so a process without one
+    simply does not offer that tool. Registering
     `send_to_slack` only makes it *available*: whether it may be called is the voice
     model's decision, and both its description and the system prompt confine that to the
     turns where William explicitly asked for something on Slack.
@@ -433,6 +464,82 @@ def register_builtin_tools(
         _TASK_ID_SCHEMA,
         get_task_result,
     )
+
+    # --- mark_reported -----------------------------------------------------
+
+    async def mark_reported(ctx: ToolContext, arguments: dict) -> dict:
+        raw = arguments.get("task_ids")
+        ids = _task_ids(raw)
+        if not ids:
+            return {"error": "task_ids must be a list of task numbers, for example [3, 4]"}
+        reported = await manager.mark_reported(ids)
+        # Ids that were already reported (or never existed) come back missing rather than
+        # as an error: the model is working from a spoken conversation, and there is
+        # nothing useful it could say to him about either case.
+        return {"reported": reported}
+
+    registry.register(
+        "mark_reported",
+        "Record that you have now told him about tasks that finished. Call it immediately "
+        "after you say a result out loud — whether it came from the list of things he had "
+        "not heard, from a '[system]' note during the call, or inline from dispatch_task. "
+        "Until you call it, those tasks are still waiting to be told and he will hear them "
+        "again at the start of the next call. Only pass ids you actually mentioned to him.",
+        {
+            "type": "object",
+            "properties": {
+                "task_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "The task numbers you just told him about.",
+                }
+            },
+            "required": ["task_ids"],
+        },
+        mark_reported,
+    )
+
+    # --- recall ------------------------------------------------------------
+
+    async def recall(ctx: ToolContext, arguments: dict) -> dict:
+        query = _text(arguments, "query")
+        if not query:
+            return {"error": "query is required: say what to look for"}
+        assert recaller is not None  # only registered when there is one
+        hits = await recaller.recall(query, limit=_clamp_recall_limit(arguments.get("limit")))
+        if not hits:
+            return {"hits": [], "message": RECALL_EMPTY_MESSAGE}
+        return {"hits": [hit.as_dict() for hit in hits]}
+
+    if recaller is not None:
+        registry.register(
+            "recall",
+            "Search what was said in earlier calls and what past tasks returned. Use it "
+            "whenever he refers to something that already happened — 'what did we decide "
+            "about', 'what did I ask you to do with', 'remind me what came of' — before "
+            "you either guess or dispatch a task. It searches records, so it finds only "
+            "words that were actually said or written: if it comes back with nothing, say "
+            "you have nothing on it and offer to put Claude on it.",
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The distinctive words to look for — a project, a "
+                        "person, a thing. Not a full sentence: common words are ignored.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_RECALL_LIMIT,
+                        "description": f"How many results, at most {MAX_RECALL_LIMIT}. "
+                        f"Defaults to {DEFAULT_RECALL_LIMIT}.",
+                    },
+                },
+                "required": ["query"],
+            },
+            recall,
+        )
 
     # --- send_followup / cancel_task ---------------------------------------
 

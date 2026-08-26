@@ -14,6 +14,9 @@ import pytest
 from jarvis.config import Settings
 from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
+from jarvis.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
+from jarvis.recall import MAX_LIMIT as MAX_RECALL_LIMIT
+from jarvis.recall import Hit
 from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import TaskStatus
@@ -33,6 +36,7 @@ TOOL_NAMES = {
     "cancel_task",
     "list_projects",
     "request_callback",
+    "mark_reported",
     "submit_pin",
     "end_session",
 }
@@ -98,6 +102,7 @@ async def make_tools(tmp_path):
         searcher=None,
         slack=None,
         restarter=None,
+        recaller=None,
         **overrides,
     ) -> Harness:
         settings = Settings(
@@ -121,6 +126,7 @@ async def make_tools(tmp_path):
             searcher=searcher,
             slack=slack,
             restarter=restarter,
+            recaller=recaller,
         )
         harness = Harness(
             registry, manager, settings, store, agent_runner, StubSession(), inline_waits
@@ -969,3 +975,117 @@ async def test_restart_service_needs_the_pin_on_the_phone(make_tools):
 
     assert result["status"] == "pin_required"
     assert restarter.requests == []
+
+
+# --- mark_reported ---------------------------------------------------------
+
+
+async def _finish(harness, description: str = "rewrite the ingest script"):
+    """Dispatch a task and wait for it to land, so it is something to report."""
+    task = await harness.dispatch(description)
+    await wait_for_status(harness, task.id, TaskStatus.DONE)
+    return task
+
+
+async def test_mark_reported_records_the_ids_the_model_said_out_loud(tools):
+    task = await _finish(tools)
+
+    result = await tools.call("mark_reported", {"task_ids": [task.id]})
+
+    assert result == {"reported": [task.id]}
+    assert (await tools.manager.get(task.id)).reported_at is not None
+
+
+async def test_a_reported_task_stops_coming_back_in_the_briefing(tools):
+    task = await _finish(tools)
+    assert [one.id for one in await tools.manager.unreported()] == [task.id]
+
+    await tools.call("mark_reported", {"task_ids": [task.id]})
+
+    assert await tools.manager.unreported() == []
+
+
+async def test_mark_reported_shrugs_off_ids_that_do_not_exist(tools):
+    """The model is guessing at numbers from a spoken conversation."""
+    task = await _finish(tools)
+
+    result = await tools.call("mark_reported", {"task_ids": [task.id, 999]})
+
+    assert result == {"reported": [task.id]}
+
+
+async def test_mark_reported_needs_at_least_one_usable_id(tools):
+    assert "error" in await tools.call("mark_reported", {"task_ids": []})
+    assert "error" in await tools.call("mark_reported", {})
+    assert "error" in await tools.call("mark_reported", {"task_ids": ["nonsense"]})
+
+
+async def test_mark_reported_accepts_a_bare_number_as_well_as_a_list(tools):
+    task = await _finish(tools)
+
+    assert await tools.call("mark_reported", {"task_ids": task.id}) == {"reported": [task.id]}
+
+
+async def test_mark_reported_needs_no_pin_because_it_starts_no_work(tools):
+    task = await _finish(tools)
+
+    result = await tools.call(
+        "mark_reported", {"task_ids": [task.id]}, channel="phone", authorized=False
+    )
+
+    assert result == {"reported": [task.id]}
+
+
+# --- recall ----------------------------------------------------------------
+
+
+class FakeRecaller:
+    """Records the query and replays scripted hits."""
+
+    def __init__(self, hits=None) -> None:
+        self.hits = list(hits or ())
+        self.queries: list[tuple[str, int]] = []
+
+    async def recall(self, query: str, *, limit: int):
+        self.queries.append((query, limit))
+        return self.hits
+
+
+def test_recall_is_not_offered_when_there_is_nothing_to_search(tools):
+    assert "recall" not in {schema["name"] for schema in tools.registry.schemas()}
+
+
+async def test_recall_hands_back_what_it_found(make_tools):
+    recaller = FakeRecaller([Hit("call", "22 August", "we said poll every fifteen minutes")])
+    harness = make_tools(recaller=recaller)
+
+    result = await harness.call("recall", {"query": "garmin sync"})
+
+    assert recaller.queries == [("garmin sync", DEFAULT_RECALL_LIMIT)]
+    assert result["hits"] == [
+        {"source": "call", "text": "we said poll every fifteen minutes", "when": "22 August"}
+    ]
+
+
+async def test_recall_that_finds_nothing_tells_the_model_to_say_so(make_tools):
+    harness = make_tools(recaller=FakeRecaller([]))
+
+    result = await harness.call("recall", {"query": "submarine"})
+
+    assert result["hits"] == []
+    assert "nothing on record" in result["message"]
+
+
+async def test_recall_needs_something_to_look_for(make_tools):
+    harness = make_tools(recaller=FakeRecaller([]))
+
+    assert "error" in await harness.call("recall", {"query": "  "})
+
+
+async def test_the_recall_limit_is_clamped_to_something_speakable(make_tools):
+    recaller = FakeRecaller([])
+    harness = make_tools(recaller=recaller)
+
+    await harness.call("recall", {"query": "garmin", "limit": 99})
+
+    assert recaller.queries[0][1] == MAX_RECALL_LIMIT

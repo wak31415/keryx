@@ -12,6 +12,7 @@ import logging
 import pytest
 from fakes import TIMEOUT, DrainingFakeTransport, FakeProvider, FakeTransport, eventually
 
+from jarvis.briefing import Briefing
 from jarvis.config import Settings
 from jarvis.events import EventBus, SessionEnded, SessionStarted
 from jarvis.realtime.base import (
@@ -773,3 +774,104 @@ async def test_the_default_session_waits_for_a_finished_sentence(
 
     assert provider.config.vad_mode == "semantic"
     assert provider.config.vad_eagerness == "low"
+
+
+# --- the briefing ----------------------------------------------------------
+
+
+class FakeBriefer:
+    """A `BriefingSource` that hands back a fixed briefing, or refuses to."""
+
+    def __init__(self, briefing: Briefing | None = None, error: Exception | None = None) -> None:
+        self.briefing = briefing or Briefing()
+        self.error = error
+        self.builds = 0
+
+    async def build(self) -> Briefing:
+        self.builds += 1
+        if self.error is not None:
+            raise self.error
+        return self.briefing
+
+
+async def test_a_session_with_no_briefer_opens_exactly_as_it_always_did(
+    make_session, phone, provider
+):
+    session = make_session(phone, provider)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+    assert provider.injected[0][0] == OPENING_MESSAGE
+
+
+async def test_the_briefing_reaches_the_system_prompt(make_session, phone, provider):
+    briefer = FakeBriefer(
+        Briefing(
+            memory="He is mid-way through the garmin sync.",
+            pending="- task 41 (finished) — he asked for: the ingest script",
+            pending_count=1,
+        )
+    )
+    session = make_session(phone, provider, briefer=briefer)
+
+    async with running(session):
+        await eventually(lambda: provider.config is not None)
+
+    instructions = provider.config.instructions
+    assert "garmin sync" in instructions
+    assert "task 41" in instructions
+    assert briefer.builds == 1  # once per session, before the provider is connected
+
+
+async def test_unreported_work_is_pushed_at_the_opening_message_too(
+    make_session, phone, provider
+):
+    """A realtime model leads with what it was just handed far more reliably."""
+    briefer = FakeBriefer(Briefing(pending="- task 41 (finished)", pending_count=1))
+    session = make_session(phone, provider, briefer=briefer)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+    opening = provider.injected[0][0]
+    assert opening.startswith(OPENING_MESSAGE)
+    assert "1 task finished" in opening
+
+
+async def test_nothing_unreported_leaves_the_opening_message_alone(
+    make_session, phone, provider
+):
+    session = make_session(phone, provider, briefer=FakeBriefer(Briefing(memory="something")))
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+    assert provider.injected[0][0] == OPENING_MESSAGE
+
+
+async def test_a_briefer_that_raises_does_not_cost_the_call(make_session, phone, provider):
+    briefer = FakeBriefer(error=RuntimeError("the database is gone"))
+    session = make_session(phone, provider, briefer=briefer)
+
+    async with running(session):
+        await eventually(lambda: provider.config is not None)
+
+    assert "Jarvis" in provider.config.instructions
+    assert provider.injected[0][0] == OPENING_MESSAGE
+
+
+async def test_a_call_back_keeps_its_own_opening_context_and_gains_the_nudge(
+    make_session, phone, provider
+):
+    briefer = FakeBriefer(Briefing(pending="- task 41 (finished)", pending_count=2))
+    session = make_session(
+        phone, provider, briefer=briefer, opening_context="You are calling him back about task 41."
+    )
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+    opening = provider.injected[0][0]
+    assert opening.startswith("You are calling him back about task 41.")
+    assert "2 tasks finished" in opening
