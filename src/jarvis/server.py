@@ -143,6 +143,7 @@ async def _run_media_session(state: AppState, transport: TwilioTransport) -> Non
         authorized=False,  # the phone channel earns authorization with the PIN (spec §5)
         opening_context=token_info.extra.get("opening_context"),
         registry=state.sessions,
+        briefer=state.briefer,
     )
     await session.run()
 

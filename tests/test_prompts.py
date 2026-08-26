@@ -224,3 +224,11 @@ def test_the_memorys_own_headings_are_nested_under_the_section(settings):
 
     assert "### Standing facts" in rendered
     assert "\n## Standing facts" not in rendered
+
+
+def test_the_memory_prompt_is_packaged_and_fully_placeholdered():
+    text = load_prompt("memory_update.md")
+
+    assert "{transcript_path}" in text
+    assert "{memory_path}" in text
+    assert "Never record a PIN" in text

@@ -11,17 +11,25 @@ runner) in.
 something the user actually hears: an announcement into the live sessions, a text, or a
 call back (spec §3.3), and builds the `RestartCoordinator` that does the same for a
 restart of the service itself.
+
+It starts the `MemoryWriter` on the same bus, which is the other half of continuity: the
+Notifier carries a result *outwards* while somebody is listening, and the MemoryWriter
+writes down what happened so the *next* call opens knowing it. What neither route
+delivered is what `Briefer` puts at the top of the next call.
 """
 
 from dataclasses import dataclass, field
 
+from jarvis.briefing import Briefer
 from jarvis.config import Settings
 from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
+from jarvis.memory import MemoryWriter
 from jarvis.notify.notifier import Notifier
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.base import ProviderFactory
 from jarvis.realtime.openai import OpenAIRealtimeClient
+from jarvis.recall import Recaller
 from jarvis.restart import RestartCoordinator
 from jarvis.session import SessionRegistry
 from jarvis.slack import SlackWebApi, slack_credentials
@@ -57,6 +65,9 @@ class AppState:
     notifier: Notifier | None = None
     twilio_out: TwilioOut | None = None
     restart: RestartCoordinator | None = None
+    #: Built per session by whoever opens one, so a call knows what it was never told.
+    briefer: Briefer | None = None
+    memory: MemoryWriter | None = None
 
 
 def build_app_state(settings: Settings) -> AppState:
@@ -88,6 +99,7 @@ def build_app_state(settings: Settings) -> AppState:
         searcher=OpenAIWebSearch(settings.openai_api_key, settings.openai_web_search_model),
         slack=slack,
         restarter=restart,
+        recaller=Recaller(settings.data_dir, manager),
     )
 
     state = AppState(
@@ -105,6 +117,9 @@ def build_app_state(settings: Settings) -> AppState:
     )
     state.twilio_out = twilio_out
     state.restart = restart
+    state.briefer = Briefer(settings, manager)
+    state.memory = MemoryWriter(bus, manager, settings)
+    state.memory.start()
     state.notifier = Notifier(
         bus,
         store,
@@ -119,9 +134,11 @@ def build_app_state(settings: Settings) -> AppState:
 
 
 async def shutdown_app_state(state: AppState) -> None:
-    """Take the notifier off the bus, stop the manager, close the store. Idempotent."""
+    """Take the bus subscribers off, stop the manager, close the store. Idempotent."""
     if state.notifier is not None:
         state.notifier.stop()
+    if state.memory is not None:
+        state.memory.stop()
     if state.restart is not None:
         await state.restart.shutdown()
     if state.manager is not None:

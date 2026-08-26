@@ -14,6 +14,7 @@ import asyncio
 import logging
 from typing import Protocol
 
+from jarvis.briefing import BriefingSource
 from jarvis.config import Settings
 from jarvis.events import EventBus
 from jarvis.realtime.base import ProviderFactory, RealtimeProvider
@@ -56,6 +57,7 @@ class LocalRunner:
         bus: EventBus,
         sessions: SessionRegistry,
         session_factory: SessionFactory | None = None,
+        briefer: BriefingSource | None = None,
     ) -> None:
         self._settings = settings
         self._device = device
@@ -64,6 +66,7 @@ class LocalRunner:
         self._registry = registry
         self._bus = bus
         self._sessions = sessions
+        self._briefer = briefer
         self._session_factory = session_factory or self._build_session
         self._woken = asyncio.Event()
         self._in_session = False
@@ -117,4 +120,5 @@ class LocalRunner:
             self._bus,
             authorized=authorized,
             registry=self._sessions,
+            briefer=self._briefer,
         )

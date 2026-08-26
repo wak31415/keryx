@@ -4,7 +4,9 @@ import pytest
 from fakes import FakeVoiceSession
 
 from jarvis.app import AppState, build_app_state, shutdown_app_state
-from jarvis.events import TaskCompleted
+from jarvis.briefing import Briefer, memory_path
+from jarvis.events import SessionEnded, TaskCompleted
+from jarvis.memory import MemoryWriter
 from jarvis.notify.notifier import Notifier
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.openai import OpenAIRealtimeClient
@@ -13,6 +15,7 @@ from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import Task, TaskKind
 from jarvis.tasks.store import TaskStore
+from jarvis.transcripts import transcript_path
 
 
 @pytest.fixture
@@ -114,3 +117,41 @@ async def test_the_provider_factory_passes_the_configured_key_and_model(settings
 
     assert made == [(settings.openai_api_key, settings.openai_realtime_model)]
     await shutdown_app_state(built)
+
+
+# --- continuity: the briefer, the memory writer and recall ------------------
+
+
+async def test_build_app_state_wires_the_briefer_and_the_memory_writer(state):
+    assert isinstance(state.briefer, Briefer)
+    assert isinstance(state.memory, MemoryWriter)
+
+
+async def test_build_app_state_offers_recall_to_the_voice_model(state):
+    assert {"recall", "mark_reported"} <= {s["name"] for s in state.registry.schemas()}
+
+
+async def test_a_call_that_ends_leaves_a_memory_update_behind(state, settings):
+    """The other half of continuity: the notifier carries a result out, this writes it down."""
+    transcript_path(settings.data_dir, "abc123").write_text(
+        "[2026-08-25T14:00:00] user: how is the sync\n"
+        "[2026-08-25T14:00:05] assistant: it landed this morning\n"
+    )
+
+    await state.bus.publish(SessionEnded("abc123", "phone", "+15550001111", "user"))
+
+    internal = [task for task in await state.store.list(include_internal=True) if task.internal]
+    assert len(internal) == 1
+    assert str(memory_path(settings.data_dir)) in internal[0].description
+
+
+async def test_shutdown_takes_the_memory_writer_off_the_bus_too(state, settings):
+    transcript_path(settings.data_dir, "abc123").write_text(
+        "[2026-08-25T14:00:00] user: how is the sync\n"
+        "[2026-08-25T14:00:05] assistant: it landed\n"
+    )
+    await shutdown_app_state(state)
+
+    await state.bus.publish(SessionEnded("abc123", "phone", None, "user"))
+
+    assert state.memory._remove is None
