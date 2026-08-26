@@ -445,6 +445,23 @@ class SessionRegistry:
   hearing it at all, and only one of those is recoverable. Rows that were already terminal
   when the v3 migration ran are back-filled as reported, so the first call after an upgrade
   is not a recital of the whole history.
+- **The database runs ahead of the code, and a read must survive it (added 2026-08-26).**
+  `tasks.db` outlives every process that touches it and only moves forward: `_migrate` runs
+  in whichever process opens the file first, while `jarvis serve` holds the `Task` it
+  imported at startup. A self-edit that adds a column therefore lands in the database while
+  the running service is still a build behind, and stays that way until the restart — an
+  ordinary window, not an exotic one, since adding a column is usually *why* the restart is
+  coming. `Task.from_row` drops columns it has no field for (one log line per column, not
+  per row) rather than splatting the row into the constructor. It did splat it until now,
+  and on 2026-08-25 the v3 upgrade that added `reported_at` made every read in the live
+  process raise `TypeError: Task.__init__() got an unexpected keyword argument
+  'reported_at'` — which took down `dispatch_task`, the manager's own `_fail` bookkeeping
+  and the Notifier's "could not load task" path together, so tasks 20, 21 and 22 sat queued
+  and unrun, and `recall` quietly answered from call transcripts alone with every
+  task-sourced hit missing. Ruling: reads tolerate a column they cannot model; writes name
+  their columns (`INSERT`/`UPDATE` both list them), so the older build preserves the newer
+  build's data instead of blanking it. Forgetting a field costs nothing; refusing to read
+  costs the task runner.
 - **Continuity across calls is a memory file a subagent writes (added 2026-08-25).** The
   provider keeps no history across sockets, so `MemoryWriter` subscribes to `SessionEnded` and
   dispatches a subagent whose only job is to fold the call that just ended into
