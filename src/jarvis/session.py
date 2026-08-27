@@ -39,6 +39,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Protocol
 
 from jarvis.audio.util import ms_for_bytes
 from jarvis.briefing import Briefing, BriefingSource
@@ -84,6 +85,19 @@ PIN_REJECTED_MESSAGE = (
 #: absent because `submit_pin` has already said its piece.
 KEYPAD_PIN_MESSAGES = {"authorized": PIN_ACCEPTED_MESSAGE, "invalid": PIN_REJECTED_MESSAGE}
 
+
+class Keypad(Protocol):
+    """Whatever wants the keypad digits the PIN did not take (`jarvis.approvals`).
+
+    The PIN comes first and always: digits only reach here once the session is authorized,
+    so "he keyed something in" can never be mistaken for "he keyed the PIN in". `digit`
+    returns the `[system]` note to put to the model, or None when the key meant nothing to
+    it — an unclaimed digit is silently dropped, exactly as it is today.
+    """
+
+    def digit(self, session_id: str, key: str) -> str | None: ...  # pragma: no cover
+
+
 # How many PINs a caller may get wrong before the call ends (spec §3.3).
 PIN_MAX_ATTEMPTS = 3
 # How long a half-typed PIN survives between two keypresses.
@@ -120,6 +134,7 @@ class VoiceSession:
         session_id: str | None = None,
         registry: "SessionRegistry | None" = None,
         briefer: BriefingSource | None = None,
+        keypad: Keypad | None = None,
     ) -> None:
         self._transport = transport
         self._provider = provider
@@ -129,6 +144,7 @@ class VoiceSession:
         self._registry = registry
         self._opening_context = opening_context
         self._briefer = briefer
+        self._keypad = keypad
         #: Filled in by `run()` before the prompt is built; an empty one until then, so a
         #: session that never ran still renders a prompt.
         self._briefing = Briefing()
@@ -392,6 +408,11 @@ class VoiceSession:
         """
         log.debug("session %s received a keypad digit", self.session_id)
         expected = self._settings.pin
+        if self.authorized and self._keypad is not None:
+            # The PIN is behind us, so this digit is somebody else's: an approval waiting
+            # on a confirmation, today. Still never logged and never sent to the model.
+            self._spawn_task(self._offer_digit(digit), name="keypad")
+            return
         if not expected or self.authorized or self._pin_attempts >= PIN_MAX_ATTEMPTS:
             return
 
@@ -416,6 +437,21 @@ class VoiceSession:
         result = await self.submit_pin(pin)
         message = KEYPAD_PIN_MESSAGES.get(result["status"])
         if message is not None:
+            await self._safe_call(self._provider.inject_message, message, respond=True)
+
+    async def _offer_digit(self, digit: str) -> None:
+        """Hand a post-PIN digit to whoever is listening, and relay what it decided.
+
+        The keypad is the only thing that may answer an approval, so a broken listener must
+        not be able to turn a key press into anything at all: it is caught here and the
+        digit is simply dropped, which leaves the prompt where it was.
+        """
+        try:
+            message = self._keypad.digit(self.session_id, digit)
+        except Exception:
+            log.exception("session %s: the keypad listener failed", self.session_id)
+            return
+        if message:
             await self._safe_call(self._provider.inject_message, message, respond=True)
 
     # --- provider -> transport --------------------------------------------

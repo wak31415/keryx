@@ -11,6 +11,8 @@ Realtime API and Claude Agent SDK subagents.
 - Check the machine's setup: `uv run jarvis doctor` (`--no-mic` where there is none)
 - Run the agent: `uv run jarvis serve` (`--no-phone` / `--no-wakeword` /
   `--fake-agents` / `--host` / `--port`); `scripts/dev.sh` adds the Cloudflare tunnel
+- Approval bridge: `uv run jarvis approvals` (`--limit N`, `--disable` / `--enable` for
+  the kill switch); install the Claude hook with `scripts/install-claude-hook.sh`
 - Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N] [--internal]`,
   `uv run jarvis tasks show <id>` (the `TOLD` column is `NO` until Jarvis has said it)
 - Read what Jarvis remembers between calls: `uv run jarvis memory` (`--path` for the file)
@@ -101,6 +103,40 @@ restart command is the restart working: `systemctl` is inside the cgroup it tear
 is killed handing over and returns `-15`. And "back up" is not "working" — `jarvis/logscan.py`
 scopes the service's log files by byte offset (`marks()` before, `errors_since()` after) so the
 confirmation can say what broke, and those errors are spoken *before* the housekeeping.
+
+## The approval bridge runs the other way
+
+Everything else in Jarvis carries a result *outwards* from work he asked for.
+`jarvis/approvals/` is the opposite: a Claude Code session on his own screen has stopped
+and asked *him* something, and he is not at the keyboard. A hook in `~/.claude/hooks/`
+(canonical copy: `scripts/claude_hooks/jarvis_approval.py`, installed by
+`scripts/install-claude-hook.sh`) hands the pending prompt to the broker over a Unix socket
+and blocks; five minutes later, if he still has not answered, Jarvis rings him.
+
+Four rulings hold it up, and none of them is a preference:
+
+- **A Unix socket, never an HTTP route.** `cloudflared` puts the whole of port 8080 on the
+  internet. `data_dir/approvals.sock` at 0600 is unreachable through it by construction.
+- **`policy.py` is the *primary* control, not a second layer.** A `PermissionRequest` hook
+  returning `allow` appears to skip the CLI's own `permissions.deny` re-check, so whatever
+  `classify` calls eligible is what a keypad digit can run. It is an allowlist, it starts
+  small, and the denylist wins over it. Do not widen it without saying why in the commit.
+- **The keypad decides, never the transcription.** `answer_approval` cannot answer
+  anything; the most it does is put a menu in the model's mouth. `ApprovalBroker.digit` is
+  the only thing in Jarvis that can approve a tool call, it is reachable only after the PIN
+  (`VoiceSession._on_dtmf` routes to it only once `authorized`), and an unrecognised key
+  re-asks rather than agreeing.
+- **Failure is always "do nothing".** Broker down, socket missing, Twilio broken, call
+  unanswered, malformed reply, hook crash: all end with the hook printing nothing, which
+  leaves the ordinary on-screen prompt exactly as it is. There is no path where an error
+  approves something.
+
+Pending is a fact to be re-checked, never assumed: the hook is *not* killed when he answers
+at the keyboard, so `PostToolUse`/`PermissionDenied`/`Stop`/`SessionEnd` cancel the
+escalation, and pending is re-read before dialling and again before any verdict is applied.
+A prompt that arrives while he is already on the phone is announced into that call rather
+than ringing him a second time. `uv run jarvis approvals` is the audit trail and
+`--disable` is the kill switch, which is a file so it works without a restart.
 
 ## Platforms
 

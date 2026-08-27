@@ -22,6 +22,7 @@ import logging
 import re
 from pathlib import Path
 
+from jarvis.approvals.broker import ApprovalBroker
 from jarvis.config import Settings
 from jarvis.inline_waits import InlineWaits
 from jarvis.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
@@ -59,6 +60,18 @@ RECALL_EMPTY_MESSAGE = (
     "nothing on record about that; say so plainly and offer to put Claude on it"
 )
 ENDING_MESSAGE = "The session is ending now; do not say anything else."
+#: What `answer_approval` hands back. It never answers anything itself: the most it can do
+#: is put the menu in the model's mouth, and the keypad does the rest (jarvis/approvals).
+APPROVAL_KEYPAD_MESSAGE = (
+    "Read the request back to him once, as written, then read these options out and wait. "
+    "He answers with the keypad and only with the keypad — if he says yes out loud, ask him "
+    "to press the key anyway. Do not call this tool again unless he asks for the menu again."
+)
+APPROVAL_PHONE_ONLY_MESSAGE = (
+    "Approvals are answered on the phone keypad, and this is not a phone call. Tell him it "
+    "is still waiting on his screen."
+)
+APPROVAL_NONE_MESSAGE = "Nothing is waiting for an answer; tell him so."
 
 #: A phone number we are willing to call back: E.164, `+` and 7–15 digits.
 _E164_RE = re.compile(r"^\+\d{7,15}$")
@@ -98,6 +111,17 @@ def _shorten(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…"
+
+
+def _small_int(raw: object) -> int | None:
+    """`raw` as an int, whether the model sent a number or spelled it as a string."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.strip().lstrip("-").isdigit():
+        return int(raw.strip())
+    return None
 
 
 def _task_id(arguments: dict) -> int | None:
@@ -188,12 +212,13 @@ def register_builtin_tools(
     slack: SlackSender | None = None,
     restarter: RestartCoordinator | None = None,
     recaller: Recaller | None = None,
+    approvals: ApprovalBroker | None = None,
 ) -> None:
     """Register every tool the voice model has, bound to this process's task manager.
 
-    `web_search`, `send_to_slack`, `restart_service` and `recall` are registered only when
-    a `searcher` / `slack` / `restarter` / `recaller` is supplied, so a process without one
-    simply does not offer that tool. Registering
+    `web_search`, `send_to_slack`, `restart_service`, `recall` and the two approval tools
+    are registered only when a `searcher` / `slack` / `restarter` / `recaller` / `approvals`
+    is supplied, so a process without one simply does not offer that tool. Registering
     `send_to_slack` only makes it *available*: whether it may be called is the voice
     model's decision, and both its description and the system prompt confine that to the
     turns where William explicitly asked for something on Slack.
@@ -720,6 +745,67 @@ def register_builtin_tools(
         )
 
     # --- submit_pin / end_session ------------------------------------------
+
+    # --- approvals ---------------------------------------------------------
+
+    async def list_pending_approvals(ctx: ToolContext, arguments: dict) -> dict:
+        assert approvals is not None  # only registered when there is one
+        waiting = approvals.pending_requests()
+        if not waiting:
+            return {"status": "none", "message": APPROVAL_NONE_MESSAGE}
+        return {"status": "waiting", "requests": waiting}
+
+    async def answer_approval(ctx: ToolContext, arguments: dict) -> dict:
+        """Offer the keypad menu for one pending prompt. It answers nothing by itself.
+
+        Two gates before the menu is even read out: the PIN, exactly as for dispatching
+        work — this is a strictly larger capability, so it gets at least the same gate —
+        and the phone, because the keypad is where the answer has to come from.
+        """
+        assert approvals is not None  # only registered when there is one
+        refusal = _pin_gate(ctx)
+        if refusal is not None:
+            return refusal
+        if ctx.channel != "phone":
+            return {"status": "phone_only", "message": APPROVAL_PHONE_ONLY_MESSAGE}
+        request_id = _small_int(arguments.get("request_id"))
+        if request_id is None:
+            return {"error": "request_id must be a request number, for example 1"}
+        answer = approvals.arm(request_id, ctx.session.session_id)
+        if answer.get("status") == "awaiting_keypad":
+            answer["message"] = APPROVAL_KEYPAD_MESSAGE
+        return answer
+
+    if approvals is not None:
+        registry.register(
+            "list_pending_approvals",
+            "The prompts Claude Code is waiting on, on his screen. Call it when he asks "
+            "what is waiting, or when a call opened because something was.",
+            {"type": "object", "properties": {}},
+            list_pending_approvals,
+        )
+        registry.register(
+            "answer_approval",
+            "Start answering one prompt Claude Code is waiting on. It does not answer "
+            "anything: it hands you back the keypad menu for that request, which you read "
+            "out, and he decides by pressing a key. Never tell him it is done until the "
+            "machine says so — a spoken yes is not an answer, and you must never choose "
+            "for him. Needs the PIN and a phone call.",
+            {
+                "type": "object",
+                "properties": {
+                    "request_id": {
+                        "type": "integer",
+                        "description": "The request number, from the call's opening "
+                        "context or list_pending_approvals.",
+                    }
+                },
+                "required": ["request_id"],
+            },
+            answer_approval,
+        )
+
+    # --- submit_pin --------------------------------------------------------
 
     async def submit_pin(ctx: ToolContext, arguments: dict) -> dict:
         """Hand a spoken PIN to the session; only it ever sees the digits."""

@@ -36,6 +36,7 @@ OPTIONAL_STR_FIELDS = (
     "slack_bot_token",
     "slack_channel_id",
     "service_unit",
+    "approval_quiet_hours",
 )
 
 
@@ -158,6 +159,31 @@ class Settings(BaseSettings):
     slack_bot_token: str | None = Field(default=None, repr=False)
     slack_channel_id: str | None = None
 
+    # The approval bridge (jarvis/approvals): a Claude Code prompt he never answered
+    # becomes a phone call. Off makes the socket never bind, which is exactly what the
+    # hook finds on a machine that has not opted in — it exits and the prompt stays put.
+    approvals_enabled: bool = True
+    #: How long a prompt has to sit on his screen unanswered before Jarvis rings about it.
+    approval_escalate_seconds: float = 300
+    #: How long after that the hook keeps waiting for an answer from the call. The two
+    #: added together are the longest the hook can block, so the `timeout` on the hook
+    #: entry in `~/.claude/settings.json` has to be comfortably larger than the sum.
+    approval_call_window_seconds: float = 240
+    #: How many approval calls may go out in an hour, however many prompts pile up. Alert
+    #: fatigue is the real failure mode: a bridge that rings ten times a day gets muted,
+    #: and then it is not there for the one that mattered.
+    approval_max_per_hour: int = 4
+    #: `HH:MM-HH:MM` local time in which it never rings (may cross midnight); blank is never.
+    approval_quiet_hours: str | None = None
+    #: The only shell commands a keypad digit may ever run, matched as whole-word prefixes
+    #: of a command with no chaining or redirection in it (jarvis/approvals/policy.py).
+    approval_bash_allow: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["git push", "git commit", "pytest", "uv run pytest"]
+    )
+    #: Where a file may be written by phone approval; blank means the projects root plus
+    #: every explicitly configured project.
+    approval_roots: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
     # Logging
     log_level: str = "INFO"
 
@@ -165,9 +191,9 @@ class Settings(BaseSettings):
     debug_skip_twilio_validation: bool = False
     fake_agents: bool = False
 
-    @field_validator("allowed_callers", mode="before")
+    @field_validator("allowed_callers", "approval_bash_allow", "approval_roots", mode="before")
     @classmethod
-    def _parse_allowed_callers(cls, value: object) -> object:
+    def _parse_comma_list(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
@@ -230,10 +256,11 @@ class Settings(BaseSettings):
         return "near_field" if channel == "phone" else "far_field"
 
     def ensure_dirs(self) -> None:
-        """Create `data_dir` and its `tasks`/`calls` subdirectories."""
+        """Create `data_dir` and its `tasks`/`calls`/`approvals` subdirectories."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
         (self.data_dir / "tasks").mkdir(parents=True, exist_ok=True)
         (self.data_dir / "calls").mkdir(parents=True, exist_ok=True)
+        (self.data_dir / "approvals").mkdir(parents=True, exist_ok=True)
 
     def report_secret_value(self) -> str:
         """The configured report secret, or a persisted random one at `data_dir/report_secret`.
