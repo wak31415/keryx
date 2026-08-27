@@ -18,10 +18,10 @@ from pathlib import Path
 
 import pytest
 
+from approvals.test_broker import FakeSessions, FakeTwilio, until
 from jarvis.approvals.broker import ApprovalBroker
 from jarvis.config import Settings
 from jarvis.stream_tokens import StreamTokenStore
-from tests.approvals.test_broker import FakeSessions, FakeTwilio, until
 
 HOOK = Path(__file__).resolve().parents[2] / "scripts" / "claude_hooks" / "jarvis_approval.py"
 TIMEOUT = 10.0
