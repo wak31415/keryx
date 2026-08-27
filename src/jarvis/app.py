@@ -27,6 +27,7 @@ delivered is what `Briefer` puts at the top of the next call.
 from dataclasses import dataclass, field
 
 from jarvis.approvals.broker import ApprovalBroker
+from jarvis.billing import build_billing_reader
 from jarvis.briefing import Briefer
 from jarvis.config import Settings
 from jarvis.events import EventBus
@@ -109,6 +110,10 @@ def build_app_state(settings: Settings) -> AppState:
         inline_waits=inline_waits,
         searcher=OpenAIWebSearch(settings.openai_api_key, settings.openai_web_search_model),
         slack=slack,
+        # A factory, not a reader: the model may ask for either provider on any call, and
+        # "no admin key for that one" is a `BillingError` the tool speaks rather than a
+        # missing tool. Nothing is built or contacted until it is actually asked for.
+        billing=lambda provider: build_billing_reader(settings, provider),
         restarter=restart,
         recaller=Recaller(settings.data_dir, manager),
         approvals=approvals,

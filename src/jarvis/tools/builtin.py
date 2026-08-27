@@ -20,9 +20,11 @@ only thing that ever compares it.
 import asyncio
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 from jarvis.approvals.broker import ApprovalBroker
+from jarvis.billing import BillingError, BillingReader
 from jarvis.config import Settings
 from jarvis.inline_waits import InlineWaits
 from jarvis.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
@@ -36,6 +38,11 @@ from jarvis.tools.registry import ToolContext, ToolRegistry
 from jarvis.web_search import WebSearcher
 
 log = logging.getLogger("jarvis.tools.builtin")
+
+#: How `check_billing` gets a reader: a provider name (or None for the configured
+#: default) in, a `BillingReader` out, `BillingError` when there is no credential for it.
+#: A factory rather than a reader, because the model may name either provider per call.
+BillingFactory = Callable[[str | None], BillingReader]
 
 #: How much of a task description a spoken list may carry.
 MAX_DESCRIPTION_CHARS = 120
@@ -213,12 +220,14 @@ def register_builtin_tools(
     restarter: RestartCoordinator | None = None,
     recaller: Recaller | None = None,
     approvals: ApprovalBroker | None = None,
+    billing: BillingFactory | None = None,
 ) -> None:
     """Register every tool the voice model has, bound to this process's task manager.
 
-    `web_search`, `send_to_slack`, `restart_service`, `recall` and the two approval tools
-    are registered only when a `searcher` / `slack` / `restarter` / `recaller` / `approvals`
-    is supplied, so a process without one simply does not offer that tool. Registering
+    `web_search`, `send_to_slack`, `restart_service`, `recall`, `check_billing` and the two
+    approval tools are registered only when a `searcher` / `slack` / `restarter` /
+    `recaller` / `billing` / `approvals` is supplied, so a process without one simply does
+    not offer that tool. Registering
     `send_to_slack` only makes it *available*: whether it may be called is the voice
     model's decision, and both its description and the system prompt confine that to the
     turns where William explicitly asked for something on Slack.
@@ -301,6 +310,55 @@ def register_builtin_tools(
                 "required": ["query"],
             },
             web_search,
+        )
+
+    # --- check_billing -----------------------------------------------------
+
+    async def check_billing(ctx: ToolContext, arguments: dict) -> dict:
+        """This month's spend, read out of the provider's own billing API.
+
+        Read-only end to end, so it is not PIN-gated: it changes nothing, spends a
+        fraction of a cent, and "what am I spending" is exactly the sort of small
+        question the voice is supposed to answer itself rather than dispatch. Every
+        failure comes back as a `status` with a sentence to say, never as a raised
+        exception and never with a credential in it.
+        """
+        assert billing is not None  # only registered when there is one
+        provider = _text(arguments, "provider").lower() or None
+        try:
+            reader = billing(provider)
+            report = await reader.month_to_date()
+        except BillingError as exc:
+            log.warning("billing lookup failed: %s (%s)", exc.code, exc.detail)
+            return {"status": exc.code, "message": exc.spoken}
+        log.info(
+            "billing: %s %.2f %s month to date", report.provider, report.spend, report.currency
+        )
+        return {"status": "ok", **report.as_dict()}
+
+    if billing is not None:
+        registry.register(
+            "check_billing",
+            "What the API bill is so far this month, and what it is on track to be. Call "
+            "it when he asks what he is spending, what the bill looks like, or how much a "
+            "provider has cost. It reads the provider's billing API and changes nothing. "
+            "Say the figure to the nearest sensible amount rather than every decimal, and "
+            "call the month-end number an estimate, because it is a straight-line "
+            "projection from the month so far. Default is OpenAI — the account this call "
+            "itself runs on; ask for anthropic when he means what Claude has cost.",
+            {
+                "type": "object",
+                "properties": {
+                    "provider": {
+                        "type": "string",
+                        "enum": ["openai", "anthropic"],
+                        "description": "Whose bill. Leave it out for the configured "
+                        "default, which is OpenAI.",
+                    }
+                },
+                "required": [],
+            },
+            check_billing,
         )
 
     # --- dispatch_task -----------------------------------------------------

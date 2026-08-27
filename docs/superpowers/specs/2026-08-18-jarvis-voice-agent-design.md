@@ -78,6 +78,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `memory.py` | `MemoryWriter`: on `SessionEnded`, dispatches the internal subagent that folds the call into `data_dir/memory.md` |
 | `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
 | `web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool |
+| `billing.py` | `BillingReader` protocol + `OpenAIBilling` (Admin API `/v1/organization/costs` and `/usage/completions`) and `AnthropicBilling` (`/v1/organizations/cost_report` and `/usage_report/messages`), behind the voice model's `check_billing`; `build_billing_reader` picks one from `BILLING_PROVIDER`. Read-only: every request is a `GET` |
 | `slack.py` | `SlackSender` protocol + `SlackWebApi` (`chat.postMessage`), behind the voice model's `send_to_slack`; credentials resolve from the `auto-research` skill's MCP server config |
 | `restart.py` | `RestartCoordinator`: restart this service through systemd/launchd, and call back once it is up; `RestartStore` (the record that survives the restart), `resolve_target`, `health_probe`, `watch_command`/`spawn_watchdog` (arming the watchdog below) |
 | `restart_watch.py` | `watch`: the out-of-process watchdog armed by a restart, which alerts by text and a plain `<Say>` call when the service never comes back |
@@ -517,6 +518,13 @@ class SessionRegistry:
 | `OPENAI_TRANSCRIPTION_MODEL` | `openai_transcription_model` | `gpt-4o-mini-transcribe` |
 | `OPENAI_WEB_SEARCH_MODEL` | `openai_web_search_model` (answers the voice model's `web_search`) | `gpt-5.4-mini` |
 | `ANTHROPIC_API_KEY` | `anthropic_api_key` | `None` |
+| `BILLING_PROVIDER` | `billing_provider` (`auto`/`openai`/`anthropic`; whose bill `check_billing` reports) | `auto` → **`openai`**, the key the voice agent itself runs on |
+| `OPENAI_ADMIN_KEY` | `openai_admin_key` (Admin key; `/v1/organization/costs` refuses a project key) | `None` → falls back to `OPENAI_API_KEY` and reports the 401 |
+| `OPENAI_BILLING_PROJECT_ID` | `openai_billing_project_id` (narrows spend and usage to one project) | `None` → the whole organization |
+| `OPENAI_BILLING_API_KEY_ID` | `openai_billing_api_key_id` (narrows *usage* only; costs have no per-key filter) | `None` |
+| `ANTHROPIC_ADMIN_KEY` | `anthropic_admin_key` (`sk-ant-admin…`) | `None` → falls back to `ANTHROPIC_API_KEY` |
+| `ANTHROPIC_BILLING_WORKSPACE_ID` | `anthropic_billing_workspace_id` | `None` → the whole organization |
+| `BILLING_MONTHLY_BUDGET` | `billing_monthly_budget` (what he calls a month's budget; neither provider serves one) | `None` → no percentage is spoken |
 | `SUBAGENT_MODEL` | `subagent_model` | `claude-opus-5` |
 | `SUBAGENT_MAX_TURNS` | `subagent_max_turns` | `200` |
 | `SUBAGENT_MAX_BUDGET_USD` | `subagent_max_budget_usd` | `10.0` |
@@ -628,6 +636,37 @@ env `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRE
 **sounddevice 0.5.x** — `InputStream(samplerate=24000, dtype="int16", channels=1, blocksize=1920, callback=…)`
 (80 ms frames → soxr → 1280 samples @16 kHz for the wake word), `RawOutputStream(samplerate=24000, dtype="int16", channels=1, callback=…)`.
 Callbacks run on the PortAudio thread → hand off with `loop.call_soon_threadsafe`.
+
+**Billing / usage APIs (read-only, verified 2026-08-26 against the published references)** —
+both providers' month-to-date figures come from *admin*-scoped credentials, not the keys the
+agent talks to models with, and both endpoints are `GET` only.
+- **OpenAI** `GET https://api.openai.com/v1/organization/costs`, `Authorization: Bearer
+  <admin key>`. Params `start_time` (unix seconds, required), `end_time`, `bucket_width`
+  (**only `1d` is supported**), `project_ids[]`, `group_by[]` (`line_item`/`project_id`/
+  `api_key_id`), `limit`, `page`. Body: `{"object":"page","data":[{"object":"bucket",
+  "start_time":…,"end_time":…,"results":[{"amount":{"value":0.1308,"currency":"usd"},
+  "line_item":…,"project_id":…}]}],"has_more":…,"next_page":…}`. `amount.value` is in the
+  **major** unit (dollars). There is **no per-API-key filter on costs** — only `project_ids`
+  — which is why `BillingReport.scope` says what the figure covers rather than implying a
+  per-key number. `GET /v1/organization/usage/completions` takes the same window plus
+  `api_key_ids[]`, `user_ids[]`, `models[]`, `batch`, and returns `input_tokens`,
+  `output_tokens`, `input_cached_tokens`, `input_audio_tokens`, `output_audio_tokens`,
+  `num_model_requests` per bucket. An ordinary project key gets a 401 on both.
+- **Anthropic** `GET https://api.anthropic.com/v1/organizations/cost_report`, header
+  `anthropic-version: 2023-06-01` plus `x-api-key: <sk-ant-admin…>` (console OAuth tokens use
+  `Authorization: Bearer` instead). Params `starting_at` (**RFC 3339**, required),
+  `ending_at`, `bucket_width` (`1d`), `group_by[]` (`description`/`workspace_id`), `limit`
+  (default **7**, max 31 — it must be set explicitly or a month comes back a week short),
+  `page`. **`amount` is a decimal *string* in the lowest currency unit**: `"123.45"` USD is
+  `$1.2345`, not `$123.45`. Everything is divided by 100 on the way in, and that has its own
+  test, because a hundred-fold error read out loud as money is the worst bug this feature
+  has. `GET /v1/organizations/usage_report/messages` is the matching token report
+  (`uncached_input_tokens`, `cache_creation.{ephemeral_1h,ephemeral_5m}_input_tokens`,
+  `cache_read_input_tokens`, `output_tokens`, `server_tool_use.web_search_requests`).
+- Neither provider serves a plan, a spend limit or an invoice over the API; both serve
+  *accrued cost for a period*, which is what their own dashboards show. So the number is
+  labelled an estimate, the month-end figure is a straight-line projection made here, and any
+  budget percentage comes from `BILLING_MONTHLY_BUDGET` and nowhere else.
 
 ## 5. Security model
 

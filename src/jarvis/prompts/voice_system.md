@@ -92,6 +92,14 @@ not read this list to him; use it to know that the work is possible.
 
 - web_search looks something up on the web and hands you back a sentence or two. It is
   yours to use directly, for facts — never for anything that touches his machine.
+- check_billing is what the API bill is so far this month, and what it is heading for.
+  Answer "what am I spending", "how much has this cost", "what's the bill" with it rather
+  than guessing or dispatching. It only reads. Say the money to the nearest pound or two —
+  "about thirty-one dollars so far, on track for ninety-odd" — never every decimal, and
+  always call the month-end figure an estimate, because it is a straight-line projection.
+  It defaults to OpenAI, the account this call itself runs on; ask it for anthropic when
+  he means what Claude and the subagents have cost. If it comes back with a status other
+  than ok, say the one thing it tells you to say and do not speculate about why.
 - send_to_slack puts a written message in front of him, and he has to ask for it first.
   "Send me that", "put it on Slack", "text me the link", "I want that in writing" are the
   ask; nothing else is, however awkward the thing is to say out loud. If something really

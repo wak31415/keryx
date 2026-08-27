@@ -37,6 +37,11 @@ OPTIONAL_STR_FIELDS = (
     "slack_channel_id",
     "service_unit",
     "approval_quiet_hours",
+    "openai_admin_key",
+    "openai_billing_project_id",
+    "openai_billing_api_key_id",
+    "anthropic_admin_key",
+    "anthropic_billing_workspace_id",
 )
 
 
@@ -68,6 +73,25 @@ class Settings(BaseSettings):
     subagent_model: str = "claude-opus-5"
     subagent_max_turns: int = 200
     subagent_max_budget_usd: float = 10.0
+
+    # Billing (jarvis/billing.py, behind the voice model's `check_billing`). Read-only,
+    # and on an *admin*-scoped credential: the key the voice agent talks to the model with
+    # cannot read `/v1/organization/costs`, so a separate one is named here. Left unset,
+    # billing falls back to the ordinary key above and reports the 401 it gets, which is a
+    # clearer answer than pretending the tool does not exist.
+    #: Which account to report on. "auto" is OpenAI — the key this very call runs on.
+    billing_provider: Literal["auto", "openai", "anthropic"] = "auto"
+    openai_admin_key: str | None = Field(default=None, repr=False)
+    #: Narrows the spend figure to one project. Costs cannot be narrowed any finer than
+    #: this: the endpoint takes `project_ids` and has no per-key filter.
+    openai_billing_project_id: str | None = None
+    #: Narrows *token usage* (not spend) to the one key, if you know its `key_…` id.
+    openai_billing_api_key_id: str | None = None
+    anthropic_admin_key: str | None = Field(default=None, repr=False)
+    anthropic_billing_workspace_id: str | None = None
+    #: What he considers a month's budget, in the provider's currency. Neither provider
+    #: serves a spend limit over the API, so the percentage is only as real as this number.
+    billing_monthly_budget: float | None = None
 
     # Twilio
     twilio_account_sid: str | None = None

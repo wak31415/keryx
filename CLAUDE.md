@@ -138,6 +138,32 @@ A prompt that arrives while he is already on the phone is announced into that ca
 than ringing him a second time. `uv run jarvis approvals` is the audit trail and
 `--disable` is the kill switch, which is a file so it works without a restart.
 
+## Billing reads, and only reads
+
+`jarvis/billing.py` answers "what am I spending" from the provider's own billing API,
+behind the voice model's `check_billing`. Four rulings, and the first two are the ones
+that bite:
+
+- **Anthropic's amounts are decimal strings in cents.** `"123.45"` USD is `$1.2345`.
+  Divide by a hundred; there is a test named after it. OpenAI's `amount.value` is a float
+  in dollars. The two providers do not agree, and a hundred-fold error read out loud as
+  money is the worst thing this feature can do.
+- **It needs an admin key, not the agent's key.** `OPENAI_API_KEY` gets a 401 on
+  `/v1/organization/costs`; `OPENAI_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` are separate
+  settings. With neither set we still *try* the ordinary key and report the 401, because
+  a clear "that needs an admin key" beats a tool that is silently not registered.
+- **`GET` and nothing else.** `_get` takes no body and no method, so no caller can turn it
+  into a write. Keep it that way, and keep the tool un-PIN-gated: it is the one capability
+  in Jarvis that cannot change anything, and asking what a number is should not need a PIN.
+- **The spend figure is not per-key, and says so.** OpenAI's costs endpoint filters by
+  `project_ids` and nothing finer; `BillingReport.scope` carries what the number actually
+  covers. Token *usage* can be narrowed to a key id. Do not let the two blur.
+
+Nothing reaches the caller but the report: `as_dict()` carries no credential, `classify`
+reduces a failure to its status code (a 401 body can quote the key back), and the only
+place a key appears at all is `redact()` in a log line. Every failure is a `status` plus a
+sentence written to be spoken, never a raised exception.
+
 ## Platforms
 
 macOS runs both channels; Linux runs the phone channel only, because openwakeword
