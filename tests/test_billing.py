@@ -117,7 +117,16 @@ def anthropic_costs(*amounts: str) -> dict:
 
 
 def settings(**overrides: object) -> Settings:
-    return Settings(**{"openai_api_key": "sk-proj-abcdefghijkl", **overrides})
+    """A Settings with `.env` shut out, so a developer's real keys cannot join a test.
+
+    `conftest` strips the ambient environment, but `Settings` also reads `.env` from the
+    working directory: without `_env_file=None` a filled-in `.env` supplies the admin key
+    these tests assert is absent, and the assertion prints the real credential when it
+    fails.
+    """
+    return Settings(
+        **{"_env_file": None, "openai_api_key": "sk-proj-abcdefghijkl", **overrides}
+    )
 
 
 # --- the period ------------------------------------------------------------
