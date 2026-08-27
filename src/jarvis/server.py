@@ -144,6 +144,9 @@ async def _run_media_session(state: AppState, transport: TwilioTransport) -> Non
         opening_context=token_info.extra.get("opening_context"),
         registry=state.sessions,
         briefer=state.briefer,
+        # Post-PIN keypad digits: how an approval is confirmed, and the only route by
+        # which one ever can be (`jarvis.approvals`).
+        keypad=state.approvals,
     )
     await session.run()
 

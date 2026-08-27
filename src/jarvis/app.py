@@ -7,6 +7,12 @@ and manager behind the tools. Bundling them here keeps `create_app` and the CLI 
 construction logic and gives tests one seam to swap a fake provider (or a fake subagent
 runner) in.
 
+It also builds the `ApprovalBroker`, which is the other direction entirely: not Jarvis
+telling him what a subagent did, but a Claude Code session on his own screen that has been
+waiting on him and has given up expecting an answer at the keyboard. It is built here so
+the voice tools can bind to it and started only by `jarvis serve`, because starting it
+binds a Unix socket and two processes cannot both own that.
+
 `build_app_state` also starts the Notifier, which is what turns a finished task into
 something the user actually hears: an announcement into the live sessions, a text, or a
 call back (spec §3.3), and builds the `RestartCoordinator` that does the same for a
@@ -20,6 +26,7 @@ delivered is what `Briefer` puts at the top of the next call.
 
 from dataclasses import dataclass, field
 
+from jarvis.approvals.broker import ApprovalBroker
 from jarvis.briefing import Briefer
 from jarvis.config import Settings
 from jarvis.events import EventBus
@@ -68,6 +75,9 @@ class AppState:
     #: Built per session by whoever opens one, so a call knows what it was never told.
     briefer: Briefer | None = None
     memory: MemoryWriter | None = None
+    #: Built here so the tools can bind to it, but it binds no socket until `start()` —
+    #: which only `jarvis serve` calls, so a CLI command never takes the bridge over.
+    approvals: ApprovalBroker | None = None
 
 
 def build_app_state(settings: Settings) -> AppState:
@@ -87,6 +97,7 @@ def build_app_state(settings: Settings) -> AppState:
     stream_tokens = StreamTokenStore()
     twilio_out = TwilioOut(settings)
     restart = RestartCoordinator(settings, sessions, twilio_out, stream_tokens, store)
+    approvals = ApprovalBroker(settings, sessions, twilio_out, stream_tokens)
 
     # No Slack app configured anywhere is not an error: the tool is simply not offered.
     credentials = slack_credentials(settings.slack_bot_token, settings.slack_channel_id)
@@ -100,6 +111,7 @@ def build_app_state(settings: Settings) -> AppState:
         slack=slack,
         restarter=restart,
         recaller=Recaller(settings.data_dir, manager),
+        approvals=approvals,
     )
 
     state = AppState(
@@ -117,6 +129,7 @@ def build_app_state(settings: Settings) -> AppState:
     )
     state.twilio_out = twilio_out
     state.restart = restart
+    state.approvals = approvals
     state.briefer = Briefer(settings, manager)
     state.memory = MemoryWriter(bus, manager, settings)
     state.memory.start()
@@ -140,6 +153,8 @@ async def shutdown_app_state(state: AppState) -> None:
         state.notifier.stop()
     if state.memory is not None:
         state.memory.stop()
+    if state.approvals is not None:
+        await state.approvals.stop()
     if state.restart is not None:
         await state.restart.shutdown()
     if state.manager is not None:

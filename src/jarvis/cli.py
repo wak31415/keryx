@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import dataclasses
+import json
 import logging
 import logging.handlers
 import signal
@@ -18,6 +19,7 @@ import uvicorn
 from pydantic import ValidationError
 
 from jarvis.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
+from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from jarvis.briefing import memory_path, read_memory
 from jarvis.config import PLACEHOLDER_KEY, Settings, load_settings
 from jarvis.doctor import format_check, has_hard_failure, run_doctor_checks
@@ -172,6 +174,10 @@ async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
     # which is what the confirmation call should be reading. See `mark_startup_logs`.
     mark_startup_logs(settings.data_dir)
     state = build_app_state(settings)
+    # The approval bridge binds a Unix socket, so only a serving process ever starts it;
+    # a failure to bind is logged and the bridge simply stays off (jarvis/approvals).
+    if state.approvals is not None:
+        await state.approvals.start()
     server = _build_server(state) if phone else None
     server_task = None
     runner_task = None
@@ -644,3 +650,72 @@ def setup_google() -> None:
     except GoogleSetupError as exc:
         typer.echo(f"google setup failed: {exc}")
         raise typer.Exit(1) from None
+
+
+# --- approvals -------------------------------------------------------------
+
+
+APPROVALS_EMPTY = "nothing in the approvals log yet"
+APPROVALS_HEADER = f"{"WHEN":<17} {"EVENT":<20} {"ID":>3}  WHAT"
+
+
+@app.command()
+def approvals(
+    limit: Annotated[
+        int, typer.Option("--limit", "-n", help="How many of the most recent lines to show.")
+    ] = 20,
+    disable: Annotated[
+        bool, typer.Option("--disable", help="Stop the bridge escalating anything, now.")
+    ] = False,
+    enable: Annotated[
+        bool, typer.Option("--enable", help="Undo --disable.")
+    ] = False,
+) -> None:
+    """What the approval bridge has done, and the kill switch that stops it.
+
+    The switch is a file, deliberately: it is checked afresh on every single request, so it
+    takes effect on the next prompt with no restart and without editing any settings — and
+    it still works when the thing you want to stop is the thing you would have to ask.
+    """
+    settings = _configure_readonly()
+    state_dir = settings.data_dir / STATE_DIR_NAME
+    switch = state_dir / KILL_SWITCH_NAME
+    if disable and enable:
+        typer.echo("pick one of --disable and --enable")
+        raise typer.Exit(code=2)
+    if disable:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        switch.touch()
+        typer.echo(f"approval escalation is off ({switch})")
+        return
+    if enable:
+        switch.unlink(missing_ok=True)
+        typer.echo("approval escalation is on")
+        return
+
+    typer.echo(f"escalation: {"OFF (kill switch)" if switch.exists() else "on"}, "
+               f"after {settings.approval_escalate_seconds:g}s, "
+               f"at most {settings.approval_max_per_hour}/hour")
+    for line in _audit_lines(state_dir / AUDIT_NAME, limit):
+        typer.echo(line)
+
+
+def _audit_lines(path: Path, limit: int) -> list[str]:
+    """The tail of the audit log as table rows, or one line saying there is none."""
+    try:
+        raw = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return [APPROVALS_EMPTY]
+    rows = [APPROVALS_HEADER]
+    for line in raw[-max(limit, 1):]:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        when = str(entry.get("ts", ""))[:16].replace("T", " ")
+        what = entry.get("summary") or entry.get("reason") or entry.get("answer") or ""
+        rows.append(
+            f"{when:<17} {str(entry.get("event", "")):<20} "
+            f"{str(entry.get("request_id", "")):>3}  {_shorten(str(what), MAX_DESCRIPTION_CHARS)}"
+        )
+    return rows if len(rows) > 1 else [APPROVALS_EMPTY]
