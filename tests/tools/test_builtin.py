@@ -8,9 +8,11 @@ real `VoiceSession` PIN machinery has its own module (`tests/test_session_pin.py
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import pytest
 
+from jarvis.billing import BillingError, BillingReport
 from jarvis.config import Settings
 from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
@@ -103,6 +105,7 @@ async def make_tools(tmp_path):
         slack=None,
         restarter=None,
         recaller=None,
+        billing=None,
         **overrides,
     ) -> Harness:
         settings = Settings(
@@ -127,6 +130,7 @@ async def make_tools(tmp_path):
             slack=slack,
             restarter=restarter,
             recaller=recaller,
+            billing=billing,
         )
         harness = Harness(
             registry, manager, settings, store, agent_runner, StubSession(), inline_waits
@@ -833,6 +837,127 @@ async def test_an_empty_search_result_is_an_error_the_model_can_speak_to(make_to
 async def test_there_is_no_web_search_tool_without_a_searcher(tools):
     """A process wired without one simply does not offer it."""
     assert "web_search" not in {schema["name"] for schema in tools.registry.schemas()}
+
+
+# --- check_billing ---------------------------------------------------------
+
+
+class FakeBilling:
+    """A `BillingReader` that answers from a script, or raises the given `BillingError`."""
+
+    provider = "openai"
+
+    def __init__(self, report: BillingReport | BillingError) -> None:
+        self.report = report
+        self.asked = 0
+
+    async def month_to_date(self, *, now=None) -> BillingReport:
+        self.asked += 1
+        if isinstance(self.report, BillingError):
+            raise self.report
+        return self.report
+
+
+def billing_factory(answer, *, for_provider: BillingError | None = None):
+    """A `BillingFactory` recording which provider the model asked for."""
+    asked: list[str | None] = []
+
+    def factory(provider: str | None):
+        asked.append(provider)
+        if provider is not None and for_provider is not None:
+            raise for_provider
+        return FakeBilling(answer)
+
+    factory.asked = asked  # type: ignore[attr-defined]
+    return factory
+
+
+def a_report(**overrides) -> BillingReport:
+    defaults = dict(
+        provider="openai",
+        currency="USD",
+        spend=31.0,
+        period_start=datetime(2026, 8, 1, tzinfo=UTC),
+        period_end=datetime(2026, 9, 1, tzinfo=UTC),
+        as_of=datetime(2026, 8, 11, tzinfo=UTC),
+        usage={"input_tokens": 5, "requests": 2},
+    )
+    return BillingReport(**{**defaults, **overrides})
+
+
+async def test_check_billing_hands_back_the_month_with_a_sentence_to_say(make_tools):
+    tools = make_tools(billing=billing_factory(a_report()))
+
+    result = await tools.call("check_billing", {})
+
+    assert result["status"] == "ok"
+    assert result["provider"] == "openai"
+    assert result["spend_to_date"] == 31.0
+    assert result["period_start"] == "2026-08-01T00:00:00+00:00"
+    assert result["as_of"] == "2026-08-11T00:00:00+00:00"
+    assert result["estimate"] is True
+    assert result["usage"] == {"input_tokens": 5, "requests": 2}
+    assert "OpenAI so far this month" in result["spoken"]
+
+
+async def test_the_model_may_name_the_provider_and_the_default_is_none(make_tools):
+    factory = billing_factory(a_report())
+    tools = make_tools(billing=factory)
+
+    await tools.call("check_billing", {})
+    await tools.call("check_billing", {"provider": "Anthropic"})
+
+    assert factory.asked == [None, "anthropic"]
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["not_configured", "auth", "rate_limited", "unavailable"],
+)
+async def test_every_billing_failure_is_a_status_with_a_sentence(make_tools, code):
+    """Never a raised exception and never an `error` the model has to invent words for."""
+    tools = make_tools(billing=billing_factory(BillingError(code, "HTTP 401 sk-admin-SECRET")))
+
+    result = await tools.call("check_billing", {})
+
+    assert result["status"] == code
+    assert result["message"]
+    assert "sk-admin" not in str(result)
+
+
+async def test_a_provider_with_no_credential_is_refused_at_the_factory(make_tools):
+    tools = make_tools(
+        billing=billing_factory(
+            a_report(), for_provider=BillingError("not_configured", "ANTHROPIC_ADMIN_KEY is unset")
+        )
+    )
+
+    result = await tools.call("check_billing", {"provider": "anthropic"})
+
+    assert result["status"] == "not_configured"
+    assert "ANTHROPIC_ADMIN_KEY" not in result["message"]
+
+
+async def test_check_billing_is_not_pin_gated_because_it_only_reads(make_tools):
+    """An unauthorized phone caller asking what the bill is changes nothing by asking."""
+    tools = make_tools(billing=billing_factory(a_report()))
+
+    result = await tools.call("check_billing", {}, channel="phone", authorized=False)
+
+    assert result["status"] == "ok"
+
+
+async def test_there_is_no_check_billing_tool_without_a_billing_factory(tools):
+    assert "check_billing" not in {schema["name"] for schema in tools.registry.schemas()}
+
+
+async def test_the_billing_schema_offers_exactly_the_two_providers(make_tools):
+    tools = make_tools(billing=billing_factory(a_report()))
+
+    schema = next(s for s in tools.registry.schemas() if s["name"] == "check_billing")
+
+    assert schema["parameters"]["properties"]["provider"]["enum"] == ["openai", "anthropic"]
+    assert schema["parameters"]["required"] == []
 
 
 # --- send_to_slack ---------------------------------------------------------

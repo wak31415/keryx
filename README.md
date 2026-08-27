@@ -281,6 +281,8 @@ Call the number, or say **"hey jarvis"** at the Mac. Then talk normally:
 - *"Call me back when it's done."* — an outbound call when the task lands.
 - *"Send me that on Slack."* — the message arrives in your DM; a file or plot is sent by
   the subagent that made it. Only asking gets you one: Jarvis never sends unprompted.
+- *"What am I spending this month?"* — read straight off the provider's billing API with
+  `check_billing`; see **Asking what it costs** below.
 - *"Goodbye."* — ends the session (locally it also ends after 30 s of silence).
 
 **Anything that is work goes straight to Claude.** Jarvis does not repeat the request back
@@ -348,6 +350,8 @@ uv run jarvis restart --status                # how the last restart went
   usage limits, not per-token billing); with `ANTHROPIC_API_KEY` set they are pay-per-token
   instead. `claude-opus-5` is the default; ask for `sonnet` or `haiku` out loud for
   cheaper work.
+- **Ask it what it is spending** — *"what's the bill this month?"* reads the real figure
+  off the provider's billing API. See [Asking what it costs](#asking-what-it-costs).
 - Guardrails that keep a bad day from becoming an expensive one:
 
   | Setting | Default | What it caps |
@@ -357,6 +361,75 @@ uv run jarvis restart --status                # how the last restart went
   | `SUBAGENT_MAX_BUDGET_USD` | 10.0 | dollars one task may spend |
   | `DAILY_TASK_CAP` | 50 | tasks dispatched per day |
   | `MAX_CONCURRENT_TASKS` | 3 | subagents running at once; the rest queue |
+
+### Asking what it costs
+
+*"What's the bill this month?"*, *"how much has this cost me?"*, *"what has Claude spent?"*
+— the voice model answers these itself with the **`check_billing`** tool rather than
+dispatching a task. It is read-only: two `GET`s against the provider's billing API and
+nothing else. It is deliberately **not** PIN-gated — asking what a number is changes
+nothing — and it never puts a key, or any part of one, in its answer or in the log.
+
+**It needs an admin credential.** The key the voice agent talks to the model with cannot
+read billing: OpenAI's `/v1/organization/costs` wants an Admin key from
+[the org's admin-keys page](https://platform.openai.com/settings/organization/admin-keys),
+and Anthropic's cost report wants an `sk-ant-admin…` key. Set `OPENAI_ADMIN_KEY` (and/or
+`ANTHROPIC_ADMIN_KEY`). Left unset it falls back to the ordinary key and reports the 401
+it gets, which is a clearer answer than a tool that silently is not there.
+
+**Which provider.** `BILLING_PROVIDER` is `auto`, which means **OpenAI** — the account the
+call you are on is running against. Say *"what has Claude cost"* and the model passes
+`provider: anthropic` for the subagent side. `openai` and `anthropic` pin it either way.
+
+**What comes back** (as a tool result, for the model to speak — never read out verbatim):
+
+```json
+{
+  "status": "ok",
+  "provider": "openai",
+  "scope": "organization",
+  "currency": "USD",
+  "spend_to_date": 31.4021,
+  "projected_month_end": 96.14,
+  "estimate": true,
+  "period_start": "2026-08-01T00:00:00+00:00",
+  "period_end":   "2026-09-01T00:00:00+00:00",
+  "as_of":        "2026-08-11T09:14:03+00:00",
+  "usage": {"input_tokens": 4.1e6, "output_tokens": 310000, "input_audio_tokens": 2.2e6,
+            "output_audio_tokens": 1.4e6, "input_cached_tokens": 900000, "requests": 812},
+  "top_line_items": [{"name": "gpt-realtime-2.1, input", "amount": 19.8}],
+  "spoken": "OpenAI so far this month: 31.40 USD, on track for about 96 by month end."
+}
+```
+
+- The period is the **UTC calendar month**, because that is how both providers bill.
+- `projected_month_end` is a straight-line run rate computed here, not from the provider.
+  The prompt makes the model call it an estimate out loud. The elapsed window is floored at
+  one day, so asking at half past midnight on the 1st does not project a dollar into two
+  and a half thousand.
+- `scope` matters: OpenAI's costs endpoint has no per-API-key filter, so the figure is the
+  organization's (or one project's, with `OPENAI_BILLING_PROJECT_ID`). Token *usage* can be
+  narrowed to a single key with `OPENAI_BILLING_API_KEY_ID`; spend cannot.
+- Set `BILLING_MONTHLY_BUDGET` and the answer gains `monthly_budget` and
+  `budget_used_percent`, and the spoken line gains "…which is 31 percent of the budget".
+  Neither provider serves a spend limit over the API, so that number is yours or nothing.
+- A usage-endpoint outage does not lose the spend: `usage` comes back `{}` and the money
+  figure still lands.
+
+**When it fails** the tool returns a `status` and a `message` written to be spoken, never
+an exception and never a credential:
+
+| `status` | When | What the model is told to say |
+|---|---|---|
+| `not_configured` | no key for that provider | billing is not set up; offer to have Claude wire it up |
+| `auth` | 401/403 | the credential was refused — it needs an *admin* key |
+| `rate_limited` | 429, after one retry | rate-limited; offer to try again in a minute |
+| `unavailable` | 5xx, timeout, DNS | did not answer; offer to try again |
+
+Rate limits and 5xx are retried **once** after a second; auth failures are not retried.
+Logs carry the key as `sk-admin…CRET` — first eight characters and last four — and error
+details are reduced to the status code, because a provider's 401 body can quote the key
+back at you.
 
 ## Troubleshooting
 
