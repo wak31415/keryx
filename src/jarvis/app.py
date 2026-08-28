@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from jarvis.approvals.broker import ApprovalBroker
 from jarvis.billing import build_billing_reader
 from jarvis.briefing import Briefer
+from jarvis.cluster import build_cluster_stats
 from jarvis.config import Settings
 from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
@@ -114,6 +115,9 @@ def build_app_state(settings: Settings) -> AppState:
         # "no admin key for that one" is a `BillingError` the tool speaks rather than a
         # missing tool. Nothing is built or contacted until it is actually asked for.
         billing=lambda provider: build_billing_reader(settings, provider),
+        # Built unconditionally, and contacts nothing until it is asked: a missing ssh
+        # guard is a sentence the tool speaks, not a tool that silently is not there.
+        cluster=build_cluster_stats(settings),
         restarter=restart,
         recaller=Recaller(settings.data_dir, manager),
         approvals=approvals,

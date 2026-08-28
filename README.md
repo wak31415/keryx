@@ -283,6 +283,8 @@ Call the number, or say **"hey jarvis"** at the Mac. Then talk normally:
   the subagent that made it. Only asking gets you one: Jarvis never sends unprompted.
 - *"What am I spending this month?"* — read straight off the provider's billing API with
   `check_billing`; see **Asking what it costs** below.
+- *"What's free on Alpha?"* / *"Am I still running on Beta?"* — read straight off Slurm
+  with `cluster_stats`; see **Asking what the clusters are doing** below.
 - *"Goodbye."* — ends the session (locally it also ends after 30 s of silence).
 
 **Anything that is work goes straight to Claude.** Jarvis does not repeat the request back
@@ -430,6 +432,51 @@ Rate limits and 5xx are retried **once** after a second; auth failures are not r
 Logs carry the key as `sk-admin…CRET` — first eight characters and last four — and error
 details are reduced to the status code, because a provider's 401 body can quote the key
 back at you.
+
+### Asking what the clusters are doing
+
+*"What's free on Alpha?"*, *"Am I still running on Beta?"*, *"How busy is the cluster?"*,
+*"How long has my job got left?"* — the voice model answers these itself with the
+**`cluster_stats`** tool rather than dispatching a task. Naming no cluster gets you both.
+
+It is read-only: three Slurm reads (`squeue` for your jobs, `sinfo -N` for the partition,
+`squeue -t PD` for the queue) batched into one round trip per cluster, with both clusters
+asked at once. Nothing it can do submits, cancels or changes a job — that is still work for
+Claude, and still PIN-gated. Like `check_billing`, the tool itself needs no PIN: it changes
+nothing, and the payload is counts plus your own job ids, never a job name or a path.
+
+**How it reaches the cluster.** Every command goes through the `cluster-compute` skill's ssh
+guard — `CLUSTER_SSH_GUARD`, by default
+`~/.claude/skills/cluster-compute/scripts/cluster_ssh.sh`. That is not swappable for a plain
+connection: cluster auth is Duo 2FA behind an ssh ControlMaster, a non-interactive process
+cannot answer a Duo push, and an attempt against a dead master hangs rather than failing —
+a retry storm of those once got this machine's IP fail2ban-banned. The guard probes the
+*local* control socket first, so a dead session costs nothing and produces no failed login.
+Jarvis never retries it, and never opens a connection of its own.
+
+Which clusters: **beta** (partition `pci`) and **alpha** (partition `gpu`). Delta is
+deliberately absent — a third Duo session nobody keeps alive would answer every question
+with "expired".
+
+The free-GPU count already excludes GPUs that are `down` and GPUs that backfill has
+`planned` for a queued job, and those are reported separately rather than folded in; the
+queue count separates jobs actually waiting for hardware from ones blocked on a dependency.
+Both distinctions matter: a partition can look like it has 22 GPUs free and have none.
+
+**When it fails** the tool returns a `status` and a `message` written to be spoken, per
+cluster — one cluster being unreachable never costs you the other:
+
+| `status` | When | What the model is told to say |
+|---|---|---|
+| `auth_expired` | the Duo/ControlMaster session timed out | he needs to approve a Duo push on the desktop first |
+| `not_configured` | no ssh guard on this machine | cluster access is not set up; offer to have Claude wire it up |
+| `unknown_cluster` | a cluster it does not know | it knows Beta and Alpha; ask which he meant |
+| `timeout` | no answer within `CLUSTER_QUERY_TIMEOUT_S` (20 s) | offer to try again in a moment |
+| `unavailable` | the guard or Slurm failed | the numbers are not available; offer to put Claude on it |
+
+To clear an `auth_expired`, re-open the ControlMaster on this machine the way the
+`cluster-compute` skill documents (a backgrounded, no-command login to `beta` or `alpha`)
+and approve the Duo push; the next call answers normally.
 
 ## Troubleshooting
 

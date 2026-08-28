@@ -25,6 +25,7 @@ from pathlib import Path
 
 from jarvis.approvals.broker import ApprovalBroker
 from jarvis.billing import BillingError, BillingReader
+from jarvis.cluster import ClusterError, ClusterQuerier, ClusterReport
 from jarvis.config import Settings
 from jarvis.inline_waits import InlineWaits
 from jarvis.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
@@ -43,6 +44,9 @@ log = logging.getLogger("jarvis.tools.builtin")
 #: default) in, a `BillingReader` out, `BillingError` when there is no credential for it.
 #: A factory rather than a reader, because the model may name either provider per call.
 BillingFactory = Callable[[str | None], BillingReader]
+
+#: What `cluster_stats` answers for when he does not name one: everything it knows.
+ALL_CLUSTERS = ("both", "all", "everything")
 
 #: How much of a task description a spoken list may carry.
 MAX_DESCRIPTION_CHARS = 120
@@ -221,13 +225,14 @@ def register_builtin_tools(
     recaller: Recaller | None = None,
     approvals: ApprovalBroker | None = None,
     billing: BillingFactory | None = None,
+    cluster: ClusterQuerier | None = None,
 ) -> None:
     """Register every tool the voice model has, bound to this process's task manager.
 
-    `web_search`, `send_to_slack`, `restart_service`, `recall`, `check_billing` and the two
-    approval tools are registered only when a `searcher` / `slack` / `restarter` /
-    `recaller` / `billing` / `approvals` is supplied, so a process without one simply does
-    not offer that tool. Registering
+    `web_search`, `send_to_slack`, `restart_service`, `recall`, `check_billing`,
+    `cluster_stats` and the two approval tools are registered only when a `searcher` /
+    `slack` / `restarter` / `recaller` / `billing` / `cluster` / `approvals` is supplied,
+    so a process without one simply does not offer that tool. Registering
     `send_to_slack` only makes it *available*: whether it may be called is the voice
     model's decision, and both its description and the system prompt confine that to the
     turns where William explicitly asked for something on Slack.
@@ -359,6 +364,80 @@ def register_builtin_tools(
                 "required": [],
             },
             check_billing,
+        )
+
+    # --- cluster_stats -----------------------------------------------------
+
+    async def cluster_stats(ctx: ToolContext, arguments: dict) -> dict:
+        """What Beta and Alpha are doing right now, straight off Slurm.
+
+        Un-PIN-gated for the same reason as `check_billing`: it is three read-only Slurm
+        commands behind the ssh guard, it cannot start, stop or change anything, and the
+        numbers it carries are counts and his own job ids — never a job name or a path.
+        Both clusters are asked at once, and one being unreachable never costs the other:
+        a failure comes back beside the report that worked, as a `status` with a sentence
+        to say. See `jarvis/cluster.py` for why nothing here ever retries an expired login.
+        """
+        assert cluster is not None  # only registered when there is one
+        wanted = _text(arguments, "cluster").lower()
+        names = cluster.known() if wanted in ALL_CLUSTERS or not wanted else [wanted]
+        results = await asyncio.gather(
+            *(cluster.stats(name) for name in names), return_exceptions=True
+        )
+
+        reports: list[ClusterReport] = []
+        failures: list[dict] = []
+        for name, result in zip(names, results, strict=True):
+            if isinstance(result, ClusterReport):
+                reports.append(result)
+            elif isinstance(result, ClusterError):
+                log.warning("cluster %s unavailable: %s (%s)", name, result.code, result.detail)
+                failures.append(
+                    {"cluster": name, "status": result.code, "message": result.spoken}
+                )
+            elif isinstance(result, BaseException):
+                raise result  # the registry turns anything else into {"error": ...}
+
+        if not reports:
+            first = failures[0] if failures else {"status": "unavailable", "message": ""}
+            return {**first, "unavailable": failures}
+
+        log.info("cluster stats for %s", ", ".join(report.cluster for report in reports))
+        payload = {
+            "status": "ok",
+            "clusters": [report.as_dict() for report in reports],
+            "spoken": " ".join(report.spoken() for report in reports),
+        }
+        if failures:
+            payload["unavailable"] = failures
+        return payload
+
+    if cluster is not None:
+        registry.register(
+            "cluster_stats",
+            "What the Beta and Alpha clusters are doing right now: free, busy and down "
+            "GPUs, how many jobs of his are running or queued, and how busy the queue is. "
+            'Call it for "what\'s free on alpha", "am I still running on beta", "how '
+            'busy is the cluster", "how long until my job finishes". It only reads Slurm '
+            "and changes nothing — submitting, cancelling or debugging a job is "
+            "dispatch_task instead. Say the numbers roughly and say which cluster each "
+            "one is; the free count already leaves out GPUs that are down or held for a "
+            "queued job, so do not add them back. If a cluster comes back with a status "
+            "other than ok, say the one thing it tells you to say for that cluster and "
+            "still report the other.",
+            {
+                "type": "object",
+                "properties": {
+                    "cluster": {
+                        "type": "string",
+                        "enum": ["beta", "alpha", "both"],
+                        "description": "Which cluster. Leave it out for both, which is "
+                        "the right answer when he just says \"the cluster\".",
+                    }
+                },
+                "required": [],
+            },
+            cluster_stats,
         )
 
     # --- dispatch_task -----------------------------------------------------
