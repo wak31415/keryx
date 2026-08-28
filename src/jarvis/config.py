@@ -93,6 +93,18 @@ class Settings(BaseSettings):
     #: serves a spend limit over the API, so the percentage is only as real as this number.
     billing_monthly_budget: float | None = None
 
+    # Cluster stats (jarvis/cluster.py, behind the voice model's `cluster_stats`).
+    # Read-only Slurm reads on the Princeton clusters, routed through the cluster-compute
+    # skill's ssh guard. The guard is the whole point: cluster auth is Duo 2FA behind an
+    # ssh ControlMaster, and a direct connection against a dead one hangs rather than
+    # failing, which is how a retry storm once got this machine's IP fail2ban-banned.
+    #: The guard script. Missing, the tool says cluster access is not set up rather than
+    #: reaching for a connection of its own.
+    cluster_ssh_guard: Path = Path("~/.claude/skills/cluster-compute/scripts/cluster_ssh.sh")
+    #: How long one cluster may take to answer. Both are queried at once, so this is the
+    #: whole wait — and it is a wait inside a phone call.
+    cluster_query_timeout_s: float = 20.0
+
     # Twilio
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = Field(default=None, repr=False)
@@ -231,7 +243,12 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
-        "data_dir", "projects_root", "skills_dir", "google_client_secrets_file", mode="after"
+        "data_dir",
+        "projects_root",
+        "skills_dir",
+        "google_client_secrets_file",
+        "cluster_ssh_guard",
+        mode="after",
     )
     @classmethod
     def _expand_path(cls, value: Path) -> Path:

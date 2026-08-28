@@ -164,6 +164,34 @@ reduces a failure to its status code (a 401 body can quote the key back), and th
 place a key appears at all is `redact()` in a log line. Every failure is a `status` plus a
 sentence written to be spoken, never a raised exception.
 
+## Cluster stats read, and only read
+
+`jarvis/cluster.py` answers "what's free on tiger" and "am I still running on ionic" from
+Slurm, behind the voice model's `cluster_stats`. Three rulings, and the first is the one
+with a scar behind it:
+
+- **Never our own connection to the cluster.** Auth is Duo 2FA behind an ssh ControlMaster
+  that lasts about twelve hours, and no non-interactive process can answer a Duo push: a
+  direct attempt against a dead master *hangs*, and a storm of those retries is what got
+  this machine's IP fail2ban-banned. Everything goes through the cluster-compute skill's
+  guard (`CLUSTER_SSH_GUARD`, default `~/.claude/skills/…/cluster_ssh.sh`), which probes
+  the local control socket — no network, no auth attempt — and exits `42`. That `42` is
+  terminal: nothing retries it, and a missing guard is `not_configured`, never a fallback
+  that dials out by itself. `CLUSTER_SSH_NO_NOTIFY=1` is set because the guard would
+  otherwise Slack him unasked, and he is on the phone, which is where the sentence belongs.
+- **Read-only by construction.** `build_script` assembles the remote command from module
+  constants and refuses any command whose first word is not in `READ_ONLY` (`squeue`,
+  `sinfo`); there is a test named after it. The only thing the model chooses is a cluster
+  *name*, looked up in `CLUSTERS` and refused when it is not there — no string from the
+  model reaches a shell. Un-PIN-gated for the same reason as `check_billing`, and the
+  payload is counts plus his own job ids: no job name, no path, no other user.
+- **Idle, planned and down are three numbers, not one.** `sinfo` without `-N` aggregates by
+  state line and its totals are silently wrong; a `planned` node is backfill holding
+  hardware for a queued job, not a free one; and most pending jobs are blocked on a
+  dependency rather than competing for GPUs. The fixtures in `tests/test_cluster.py` are
+  real cluster output, and the totals asserted on are what the skill's own `cluster_avail.py`
+  reported for the same moment. Do not collapse them to be brief.
+
 ## Platforms
 
 macOS runs both channels; Linux runs the phone channel only, because openwakeword

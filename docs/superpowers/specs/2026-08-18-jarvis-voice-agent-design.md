@@ -79,6 +79,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
 | `web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool |
 | `billing.py` | `BillingReader` protocol + `OpenAIBilling` (Admin API `/v1/organization/costs` and `/usage/completions`) and `AnthropicBilling` (`/v1/organizations/cost_report` and `/usage_report/messages`), behind the voice model's `check_billing`; `build_billing_reader` picks one from `BILLING_PROVIDER`. Read-only: every request is a `GET` |
+| `cluster.py` | `ClusterQuerier`/`RemoteRunner` protocols + `SlurmClusterStats` and `GuardedSsh` (the cluster-compute skill's `cluster_ssh.sh`, never a connection of its own), behind the voice model's `cluster_stats`; `build_cluster_stats` wires one from settings. Read-only: `build_script` refuses any command outside `READ_ONLY` (`squeue`, `sinfo`) and the cluster name is resolved through `CLUSTERS`, never interpolated |
 | `slack.py` | `SlackSender` protocol + `SlackWebApi` (`chat.postMessage`), behind the voice model's `send_to_slack`; credentials resolve from the `auto-research` skill's MCP server config |
 | `restart.py` | `RestartCoordinator`: restart this service through systemd/launchd, and call back once it is up; `RestartStore` (the record that survives the restart), `resolve_target`, `health_probe`, `watch_command`/`spawn_watchdog` (arming the watchdog below) |
 | `restart_watch.py` | `watch`: the out-of-process watchdog armed by a restart, which alerts by text and a plain `<Say>` call when the service never comes back |
@@ -524,6 +525,8 @@ class SessionRegistry:
 | `OPENAI_BILLING_API_KEY_ID` | `openai_billing_api_key_id` (narrows *usage* only; costs have no per-key filter) | `None` |
 | `ANTHROPIC_ADMIN_KEY` | `anthropic_admin_key` (`sk-ant-admin…`) | `None` → falls back to `ANTHROPIC_API_KEY` |
 | `ANTHROPIC_BILLING_WORKSPACE_ID` | `anthropic_billing_workspace_id` | `None` → the whole organization |
+| `CLUSTER_SSH_GUARD` | `cluster_ssh_guard` (the Duo/ControlMaster guard `cluster_stats` runs every command through) | `~/.claude/skills/cluster-compute/scripts/cluster_ssh.sh` |
+| `CLUSTER_QUERY_TIMEOUT_S` | `cluster_query_timeout_s` (per cluster; both are queried at once, so it is the whole wait) | `20.0` |
 | `BILLING_MONTHLY_BUDGET` | `billing_monthly_budget` (what he calls a month's budget; neither provider serves one) | `None` → no percentage is spoken |
 | `SUBAGENT_MODEL` | `subagent_model` | `claude-opus-5` |
 | `SUBAGENT_MAX_TURNS` | `subagent_max_turns` | `200` |
