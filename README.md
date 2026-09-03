@@ -122,6 +122,10 @@ uv run jarvis download-models   # macOS only: fetches the openWakeWord "hey jarv
 uv run jarvis doctor            # tells you what is still missing
 ```
 
+Optional, and only if you use Claude Code on this machine:
+`scripts/install-claude-hook.sh` wires up [the approval bridge](#the-approval-bridge), so a
+prompt you leave unanswered on screen rings your phone.
+
 ### Configuration
 
 Every setting is an environment variable, read from `.env` in the working directory.
@@ -369,6 +373,7 @@ uv run jarvis tasks list --status running     # queued|running|done|failed|cance
 uv run jarvis tasks list --limit 50
 uv run jarvis tasks show 12                   # every field, plus the written report
 uv run jarvis doctor                          # is this machine set up?
+uv run jarvis approvals                       # what the approval bridge has escalated
 uv run jarvis loopback --wav sample.wav       # one session from a WAV, no mic needed
 uv run jarvis restart --reason "new code"     # restart the service; it calls you back
 uv run jarvis restart --status                # how the last restart went
@@ -376,6 +381,76 @@ uv run jarvis restart --status                # how the last restart went
 
 `jarvis tasks` reads the SQLite store directly, so it works while the server is running
 (or when it is not).
+
+## The approval bridge
+
+Everything above carries a result *outwards* from work you asked for. This runs the other
+way. A Claude Code session on your own screen has stopped and is asking *you* something —
+"may I run this?", "which of these three?" — and you are not at the keyboard. Five minutes
+later, Jarvis rings you about it, reads the question out, and lets you answer on the
+keypad.
+
+```bash
+scripts/install-claude-hook.sh              # add the hook to ~/.claude/settings.json
+scripts/install-claude-hook.sh --uninstall  # take it out again
+```
+
+The installer copies `scripts/claude_hooks/jarvis_approval.py` into `~/.claude/hooks/` and
+merges the hook entries into `~/.claude/settings.json`, backing the file up first and
+leaving any hooks you already have alone. Nothing else is needed: `APPROVALS_ENABLED`
+defaults to on, and Jarvis binds the socket when it starts.
+
+**Why a Unix socket and never an HTTP route.** `cloudflared` puts the whole of port 8080
+on the public internet. An `/approvals` endpoint would be reachable by anyone who found
+the hostname, and it would be the one endpoint that can run commands. The bridge listens
+on `~/.jarvis/approvals.sock` at mode 0600 instead, which is unreachable through the
+tunnel by construction — and filesystem permissions are the right authorization for
+something whose only legitimate client is a process already running as you.
+
+**`policy.py` is an allowlist, and it is the primary control.** A `PermissionRequest` hook
+that returns `allow` appears to skip the CLI's own re-check of `permissions.deny`, so
+nothing downstream is protecting you: whatever `classify` calls eligible is exactly what a
+keypad digit can run. It starts small — `APPROVAL_BASH_ALLOW` defaults to `git push`,
+`git commit`, `pytest`, `uv run pytest`, matched as whole-word prefixes of a command with
+no chaining, redirection or shell metacharacters in it, and file writes only inside
+`APPROVAL_ROOTS` — and a blunt denylist (`.env`, `.ssh/`, `sudo`, `curl`, key-shaped
+strings, …) wins over all of it. Anything not explicitly named comes back ineligible, the
+hook says nothing, and the prompt just waits on your screen as it always did. **Widening
+that list widens what a phone keypad can execute**; the ruling is to say why in the commit.
+
+**The keypad decides, never the transcription.** The voice model's `answer_approval` tool
+cannot answer anything — the most it does is read the question out and put a menu in its
+own mouth. `ApprovalBroker.digit` is the only thing in Jarvis that can approve a tool
+call, it is reachable only after the PIN, and an unrecognised key re-asks rather than
+agreeing. A television in the background cannot press a key.
+
+**Failure is always "do nothing".** Broker down, socket missing, Twilio broken, call
+unanswered, malformed reply, hook crash: every one of them ends with the hook printing
+nothing, which leaves the ordinary on-screen prompt exactly as it is. There is no path
+through this code where an error approves something. Answering at the keyboard always
+wins, and a prompt that arrives while you are already on the phone is announced into that
+call rather than ringing you a second time.
+
+**Turning it off.**
+
+```bash
+uv run jarvis approvals              # the audit trail: what it escalated and what happened
+uv run jarvis approvals --limit 5
+uv run jarvis approvals --disable    # kill switch, effective on the next prompt
+uv run jarvis approvals --enable
+```
+
+The switch is a file rather than a setting, deliberately: it is re-read on every request,
+so it needs no restart — and it still works when the thing you want to stop is the thing
+you would otherwise have to ask about. `APPROVALS_ENABLED=false` turns the whole bridge
+off at startup instead, and then the socket is never bound, which is exactly what the hook
+finds on a machine that never opted in.
+
+Tuning: `APPROVAL_ESCALATE_SECONDS` (300) is how long a prompt waits before it rings,
+`APPROVAL_CALL_WINDOW_SECONDS` (240) how long the hook keeps waiting after that,
+`APPROVAL_MAX_PER_HOUR` (4) caps the calls because a bridge that rings ten times a day gets
+muted and then is not there for the one that mattered, and `APPROVAL_QUIET_HOURS`
+(`HH:MM-HH:MM`, local time) is when it never rings at all.
 
 ## Security model
 
