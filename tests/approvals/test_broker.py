@@ -12,7 +12,9 @@ import asyncio
 import contextlib
 import json
 import os
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
@@ -68,12 +70,26 @@ class FakeClock:
 
 
 @pytest.fixture
-def settings(tmp_path):
+def short_tmp_path():
+    """A temp directory short enough to hold a unix socket path.
+
+    pytest's `tmp_path` is not: on macOS it lives under `/private/var/folders/…` and, with
+    the test's name and `jarvis/approvals.sock` on the end, comfortably exceeds the ~104
+    byte `sun_path` limit — so `start()` returns False and every broker test fails on the
+    fixture. Nothing about Jarvis needs a long path (`~/.jarvis/approvals.sock` is thirty
+    characters); only the fixture did.
+    """
+    with tempfile.TemporaryDirectory(prefix="jb", dir="/tmp") as name:
+        yield Path(name)
+
+
+@pytest.fixture
+def settings(tmp_path, short_tmp_path):
     (tmp_path / "roots" / "myproject").mkdir(parents=True)
     return Settings(
         _env_file=None,
         openai_api_key="test",
-        data_dir=tmp_path / "jarvis",
+        data_dir=short_tmp_path / "jarvis",
         google_client_secrets_file=tmp_path / "none.json",
         approval_roots=[str(tmp_path / "roots")],
         public_host="jarvis.example",
@@ -107,6 +123,17 @@ async def broker(settings, sessions, twilio, clock):
         yield made
     finally:
         await made.stop()
+
+
+async def test_a_data_dir_too_deep_for_a_unix_socket_is_explained(settings, sessions, twilio):
+    """`OSError: AF_UNIX path too long` says nothing anyone can act on; this says the fix."""
+    deep = settings.data_dir.joinpath(*["a-fairly-long-directory-name"] * 5)
+    broker = ApprovalBroker(
+        settings.model_copy(update={"data_dir": deep}), sessions, twilio, StreamTokenStore()
+    )
+
+    assert await broker.start() is False
+    assert not broker.socket_path.exists()
 
 
 def permission_event(tool="Bash", tool_input=None, session_id="claude1", cwd=None, **over):

@@ -56,6 +56,12 @@ MARKER_NAME = "PENDING"
 #: Its presence turns the whole bridge off without touching settings or restarting Jarvis.
 KILL_SWITCH_NAME = "DISABLED"
 
+#: The `sun_path` limit for an `AF_UNIX` socket — 108 bytes on Linux, 104 on macOS, and
+#: the *whole* path counts. `~/.jarvis/approvals.sock` is nowhere near it; a `DATA_DIR`
+#: nested somewhere deep is, and the bare `OSError: AF_UNIX path too long` it produces
+#: says nothing anyone can act on. Checked here so the log line names the fix instead.
+MAX_SOCKET_PATH_BYTES = 100
+
 PROTOCOL = 1
 #: How long the broker waits for a client to say what it wants before dropping it.
 CLIENT_READ_TIMEOUT_S = 10.0
@@ -185,6 +191,15 @@ class ApprovalBroker:
         self._clear_marker()
 
         path = self.socket_path
+        if len(str(path).encode()) > MAX_SOCKET_PATH_BYTES:
+            log.error(
+                "%s is %d bytes, too long for a unix socket (the limit is about %d); the "
+                "approval bridge is off — put DATA_DIR somewhere shorter",
+                path,
+                len(str(path).encode()),
+                MAX_SOCKET_PATH_BYTES,
+            )
+            return False
         if path.exists():
             if await self._someone_listening(path):
                 log.error("another Jarvis is already serving %s; the approval bridge is off", path)

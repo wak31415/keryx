@@ -40,6 +40,25 @@ def _no_dotenv():
 
 
 @pytest.fixture(autouse=True)
+def _plain_cli_output(monkeypatch):
+    """Render CLI output the same way on every machine — colour and width included.
+
+    Typer draws its help through rich, and rich *with colour on* splits an option name
+    across escape sequences: `--no-phone` comes out as `-`, `-no`, `-phone`, each in its
+    own styled span, so a test asserting the literal string fails. Locally there is no tty
+    and rich stays plain; GitHub Actions sets `FORCE_COLOR`, and that difference alone is
+    why four help tests passed here and failed there. Width is pinned for the same class of
+    reason — a narrow box wraps option names — and `TERM=dumb` needs `COLUMNS` with it, or
+    rich renders nothing at all.
+    """
+    for forced in ("FORCE_COLOR", "CLICOLOR_FORCE"):
+        monkeypatch.delenv(forced, raising=False)
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("TERM", "dumb")
+    monkeypatch.setenv("COLUMNS", "200")
+
+
+@pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch):
     """Strip ambient env vars `Settings` reads so tests are hermetic on any machine/CI."""
     for name in _settings_env_var_names():
