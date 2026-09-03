@@ -19,6 +19,26 @@ def _settings_env_var_names() -> set[str]:
     return names
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _no_dotenv():
+    """Make the developer's real `.env` unreachable for the whole suite.
+
+    `_isolated_env` strips the ambient environment, but `Settings` also reads
+    `env_file=".env"` relative to the working directory, so any `Settings(...)` built
+    without an explicit `_env_file=None` — including ones deep inside the code under test —
+    picks up whatever credentials are on the machine. That once printed a live
+    `OPENAI_ADMIN_KEY` into pytest output. Blanking the setting on the class closes it for
+    every construction and needs no cwd juggling; an explicit `_env_file=` argument still
+    wins, so the tests that point at a fixture `.env` are unaffected.
+    """
+    original = Settings.model_config.get("env_file")
+    Settings.model_config["env_file"] = None
+    try:
+        yield
+    finally:
+        Settings.model_config["env_file"] = original
+
+
 @pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch):
     """Strip ambient env vars `Settings` reads so tests are hermetic on any machine/CI."""

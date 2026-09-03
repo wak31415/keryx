@@ -194,6 +194,21 @@ def test_the_shipped_env_example_leaves_every_optional_setting_unset(tmp_path):
     assert settings.owner_number is None
 
 
+def test_the_suites_dotenv_guard_hides_a_real_env_file(tmp_path, monkeypatch):
+    """A `.env` in the working directory must not reach a `Settings` built without one.
+
+    `Settings.model_config` names `env_file=".env"`, so before the session-wide guard in
+    `conftest._no_dotenv` this read the developer's own credentials off disk — it once put
+    a live admin key into pytest output.
+    """
+    (tmp_path / ".env").write_text("OPENAI_ADMIN_KEY=leaked\n")
+    monkeypatch.chdir(tmp_path)
+
+    settings = Settings(openai_api_key="test")
+
+    assert settings.openai_admin_key is None
+
+
 def test_optional_str_fields_covers_every_optional_string_field():
     """The list the blank-is-unset validator is built from must not drift."""
     optional = {
