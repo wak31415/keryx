@@ -506,6 +506,37 @@ through the Claude CLI's own connectors. `check_billing` and `cluster_stats` tal
 provider's billing API and to the cluster over ssh. That is the whole list: there is no
 telemetry and no analytics of ours.
 
+## Assumptions and supported deployments
+
+Jarvis was built for one person on one machine, and several things that look like
+oversights are that decision showing through. None of them is hard to change; all of them
+are worth knowing before you deploy it.
+
+- **One owner.** There is no multi-user model anywhere: one `ALLOWED_CALLERS` list, one
+  PIN, one `~/.jarvis`, one Slack DM, one set of API keys. A second person who can call
+  the number and knows the PIN is not a second user — they are you.
+- **The subagents run as you**, with `permission_mode="bypassPermissions"`. "Who can reach
+  Jarvis" is "who can run commands on this machine". Do not put it on a host you share.
+- **Quiet hours are the host's local time.** `APPROVAL_QUIET_HOURS` is compared against a
+  naive `datetime.now()`, so `23:00-07:00` means eleven at night *where the machine is*.
+  On a laptop or a box at home that is what you meant. On a VPS in another region it is
+  not, and there is no timezone setting — set the host's `TZ` instead.
+- **`SERVICE_MANAGER=none` is a real, supported mode**, and it is also what `auto`
+  resolves to when neither `systemctl` nor `launchctl` is on `PATH` — a `jarvis serve` you
+  started in a terminal, for instance. Everything works except restarting: `jarvis restart`
+  and the voice model's `restart_service` both refuse, deliberately, because stopping the
+  process would leave nothing to start it again. The consequence worth knowing is that a
+  subagent which changes Jarvis's own code then has no way to make the change take effect.
+  `jarvis doctor` reports which manager it found, or that it found none.
+- **`git` is optional decoration.** Version reporting (`git describe`) is how a restart
+  confirmation says what was running before and after. Without `git` on `PATH`, or outside
+  a checkout, that degrades to "unknown" and nothing else changes. `jarvis doctor` says so.
+- **Linux runs the phone channel only.** openWakeWord needs `tflite-runtime`, which has no
+  cp312 wheel, so a Linux host serves with `--no-wakeword`. macOS runs both.
+- **The phone channel needs a public hostname you control** — a Cloudflare-routed name for
+  `cloudflared`, or a reserved ngrok domain. Twilio has to be able to reach the webhook,
+  and the webhook URL has to match `PUBLIC_HOST` exactly or signature validation fails.
+
 ## Costs
 
 - **Realtime voice** is the running cost of a call: roughly **$0.06–0.11 per minute** of
@@ -652,8 +683,10 @@ uv run jarvis doctor        # add --no-mic on a machine with no microphone
 It checks `.env`, both API keys, the `claude` CLI (bundled or on `PATH`), Twilio
 settings, `PUBLIC_HOST`, a tunnel binary (`cloudflared` or `ngrok`), the caller allowlist,
 the PIN, the wake-word model, the
-microphone, that `~/.jarvis` is writable and readable by nobody else, and whether Google
-credentials exist. `✅` is
+microphone, that `~/.jarvis` is writable and readable by nobody else, which service
+manager it found (see
+[Assumptions and supported deployments](#assumptions-and-supported-deployments)), and
+whether Google credentials exist. `✅` is
 fine, `⚠️` narrows what Jarvis can do (no mic, no PIN, no Google, no `claude` CLI), `❌`
 means it will not work — and only `❌` makes the command exit non-zero.
 
