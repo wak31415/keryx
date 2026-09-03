@@ -729,6 +729,16 @@ Tests never touch the network, a microphone, or a real subagent: OpenAI, Twilio,
 sounddevice, openWakeWord, and the Agent SDK all sit behind injectable interfaces with
 fakes.
 
+## Contributing
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the setup, the conventions and the two rules that
+are not negotiable (no network or hardware in a test; rulings live in the design spec).
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies to everyone taking part.
+
+**Found a security problem?** Do not open an issue — use the repository's **Security** tab
+→ *Report a vulnerability*. [SECURITY.md](SECURITY.md) says what is in scope and what to
+expect.
+
 ## Licence
 
 [Apache License 2.0](LICENSE) — Copyright 2026 William Koch.
