@@ -24,7 +24,7 @@ def test_render_fills_every_placeholder(settings):
         channel="phone",
         caller="+491555555555",
         authorized=False,
-        projects=["jarvis", "garmin"],
+        projects=["jarvis", "orchard"],
         skills=[Skill(name="mermaid", description="Author Mermaid diagrams.")],
         opening_context=None,
     )
@@ -33,7 +33,7 @@ def test_render_fills_every_placeholder(settings):
     assert "mermaid: Author Mermaid diagrams." in rendered
     assert "phone" in rendered
     assert "+491555555555" in rendered
-    assert "jarvis, garmin" in rendered
+    assert "jarvis, orchard" in rendered
 
 
 def test_render_uses_placeholders_for_an_unknown_caller(settings):
@@ -197,10 +197,10 @@ def test_the_unreported_digest_reaches_the_prompt_under_its_own_heading(settings
 
 
 def test_the_memory_reaches_the_prompt_as_background_not_as_news(settings, unwrapped):
-    rendered = _rendered(settings, memory="He is mid-way through the garmin sync.")
+    rendered = _rendered(settings, memory="He is mid-way through the orchard sync.")
 
     assert "## What you remember" in rendered
-    assert "He is mid-way through the garmin sync." in rendered
+    assert "He is mid-way through the orchard sync." in rendered
     assert "Do not read it out" in unwrapped(rendered)
 
 

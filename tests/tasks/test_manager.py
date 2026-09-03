@@ -232,7 +232,7 @@ async def test_dispatch_resolves_the_model_alias(make_harness):
 
 async def test_dispatch_without_a_project_starts_in_the_projects_root(make_harness, tmp_path):
     """Work is handed over as soon as it is recognised; the subagent finds the repo."""
-    root = make_projects(tmp_path, "garmin-voice-agent")
+    root = make_projects(tmp_path, "orchard-sensor-net")
     harness = make_harness(projects_root=root)
 
     task = await dispatch(harness.manager, "add a README")
@@ -242,13 +242,13 @@ async def test_dispatch_without_a_project_starts_in_the_projects_root(make_harne
 
 
 async def test_dispatch_sets_cwd_from_the_project(make_harness, tmp_path):
-    root = make_projects(tmp_path, "garmin-voice-agent")
+    root = make_projects(tmp_path, "orchard-sensor-net")
     harness = make_harness(projects_root=root)
 
-    task = await dispatch(harness.manager, "add a README", project="garmin")
+    task = await dispatch(harness.manager, "add a README", project="orchard")
 
-    assert task.project == "garmin-voice-agent"
-    assert task.cwd == str(root / "garmin-voice-agent")
+    assert task.project == "orchard-sensor-net"
+    assert task.cwd == str(root / "orchard-sensor-net")
 
 
 async def test_failed_result_marks_failed_and_publishes_taskfailed(make_harness):
@@ -605,7 +605,7 @@ async def test_daily_cap_blocks_further_dispatches(make_harness):
 
 
 async def test_resolve_project_prefers_the_configured_name(make_harness, tmp_path):
-    root = make_projects(tmp_path, "garmin-voice-agent")
+    root = make_projects(tmp_path, "orchard-sensor-net")
     checkout = tmp_path / "elsewhere" / "jarvis"
     checkout.mkdir(parents=True)
     harness = make_harness(projects={"jarvis": str(checkout)}, projects_root=root)
@@ -614,13 +614,13 @@ async def test_resolve_project_prefers_the_configured_name(make_harness, tmp_pat
 
 
 async def test_resolve_project_is_fuzzy_about_spaces_and_dashes(make_harness, tmp_path):
-    root = make_projects(tmp_path, "garmin-voice-agent")
+    root = make_projects(tmp_path, "orchard-sensor-net")
     harness = make_harness(projects_root=root)
 
-    for spoken in ("garmin voice agent", "Garmin_Voice_Agent", "garmin"):
+    for spoken in ("orchard sensor net", "Orchard_Sensor_Net", "orchard"):
         assert harness.manager.resolve_project(spoken) == (
-            "garmin-voice-agent",
-            root / "garmin-voice-agent",
+            "orchard-sensor-net",
+            root / "orchard-sensor-net",
         )
 
 
@@ -636,15 +636,15 @@ async def test_resolve_project_rejects_an_ambiguous_name(make_harness, tmp_path)
 
 
 async def test_resolve_project_unknown_name_lists_candidates(make_harness, tmp_path):
-    root = make_projects(tmp_path, "garmin-voice-agent")
+    root = make_projects(tmp_path, "orchard-sensor-net")
     harness = make_harness(projects_root=root)
 
     with pytest.raises(UnknownProjectError) as excinfo:
         harness.manager.resolve_project("nonesuch")
 
     assert excinfo.value.name == "nonesuch"
-    assert excinfo.value.candidates == ["garmin-voice-agent"]
-    assert "garmin-voice-agent" in str(excinfo.value)
+    assert excinfo.value.candidates == ["orchard-sensor-net"]
+    assert "orchard-sensor-net" in str(excinfo.value)
 
 
 async def test_dispatch_with_an_unknown_project_raises(make_harness, tmp_path):

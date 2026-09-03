@@ -1,6 +1,6 @@
 # Jarvis
 
-[![CI](https://github.com/wak31415/garmin-voice-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/wak31415/garmin-voice-agent/actions/workflows/ci.yml)
+[![CI](https://github.com/wak31415/jarvis-voice-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/wak31415/jarvis-voice-agent/actions/workflows/ci.yml)
 
 A personal voice agent you can reach two ways:
 
@@ -23,6 +23,13 @@ with `--no-wakeword`.
 
 The full design lives in
 `docs/superpowers/specs/2026-08-18-jarvis-voice-agent-design.md`.
+
+**Names.** The repository is `jarvis-voice-agent`; the Python package, the `jarvis` CLI and
+the data directory (`~/.jarvis`) all keep the shorter name. It was `garmin-voice-agent`
+until 2026-09-02 — the first caller was a Garmin watch — and GitHub still redirects the old
+URL. Nothing is published to PyPI or any other index: this is a single-tenant service you
+run on your own machine against your own API keys, not a library to depend on, so it is
+installed from a clone.
 
 ## Architecture
 

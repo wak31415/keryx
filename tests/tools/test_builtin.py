@@ -1344,9 +1344,9 @@ async def test_recall_hands_back_what_it_found(make_tools):
     recaller = FakeRecaller([Hit("call", "22 August", "we said poll every fifteen minutes")])
     harness = make_tools(recaller=recaller)
 
-    result = await harness.call("recall", {"query": "garmin sync"})
+    result = await harness.call("recall", {"query": "orchard sync"})
 
-    assert recaller.queries == [("garmin sync", DEFAULT_RECALL_LIMIT)]
+    assert recaller.queries == [("orchard sync", DEFAULT_RECALL_LIMIT)]
     assert result["hits"] == [
         {"source": "call", "text": "we said poll every fifteen minutes", "when": "22 August"}
     ]
@@ -1371,6 +1371,6 @@ async def test_the_recall_limit_is_clamped_to_something_speakable(make_tools):
     recaller = FakeRecaller([])
     harness = make_tools(recaller=recaller)
 
-    await harness.call("recall", {"query": "garmin", "limit": 99})
+    await harness.call("recall", {"query": "orchard", "limit": 99})
 
     assert recaller.queries[0][1] == MAX_RECALL_LIMIT
