@@ -11,7 +11,7 @@ Tool restriction per task kind goes through `ClaudeAgentOptions.tools` — the b
 built-in tools the subagent has at all. Do **not** use `allowed_tools` for that: it is an
 auto-approve list, and under `permission_mode="bypassPermissions"` everything is approved
 anyway, so a `chat` subagent listed there would still have Bash, Edit and Write. The one
-`allowed_tools` entry we keep is the `mcp__google__*` wildcard for cowork, because MCP
+`allowed_tools` entry we keep is the `mcp__google__*` wildcard for Google, because MCP
 tools are not built-ins and `tools` cannot express them.
 
 Every subagent is told (via `prompts/subagent_suffix.md`) to end its final message with a
@@ -254,7 +254,7 @@ def google_mcp_server_config(settings: Settings) -> dict[str, Any]:
     """The `workspace-mcp` stdio server config for Gmail + Calendar (spec §4).
 
     Public because `jarvis setup-google` runs the very same server once, by hand, to walk
-    through the browser OAuth flow that leaves credentials behind for cowork tasks.
+    through the browser OAuth flow that leaves credentials behind for later tasks.
     """
     client = settings.google_oauth_client()
     env = {

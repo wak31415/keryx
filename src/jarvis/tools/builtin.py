@@ -501,8 +501,7 @@ def register_builtin_tools(
         "cannot answer yourself in a sentence or two, and for anything to do with code the "
         "moment you recognise it — do not ask the caller to confirm the request first, and "
         "do not interview him about details Claude can work out for itself. On the phone, "
-        "coding and cowork tasks come back as pin_required until the caller has given the "
-        "PIN.",
+        "every dispatch comes back as pin_required until the caller has given the PIN.",
         {
             "type": "object",
             "properties": {
@@ -727,7 +726,7 @@ def register_builtin_tools(
         "send_followup",
         "Add something to a task that is already under way, or ask a finished task for more. "
         "Use it for 'also…' and 'actually, make that…' instead of dispatching a second task. "
-        "On the phone, coding and cowork tasks need the PIN here too.",
+        "On the phone, this needs the PIN too.",
         {
             "type": "object",
             "properties": {
@@ -758,8 +757,8 @@ def register_builtin_tools(
     registry.register(
         "cancel_task",
         "Stop a task that is queued or running. A task that has already finished comes back "
-        "unchanged, so say so rather than claiming you stopped it. On the phone, coding and "
-        "cowork tasks need the PIN here too.",
+        "unchanged, so say so rather than claiming you stopped it. On the phone, this needs "
+        "the PIN too.",
         _TASK_ID_SCHEMA,
         cancel_task,
     )
@@ -950,7 +949,7 @@ def register_builtin_tools(
 
     registry.register(
         "submit_pin",
-        "Check the PIN the caller just said, to unlock coding and cowork tasks on the phone. "
+        "Check the PIN the caller just said, to unlock dispatching work on the phone. "
         "Pass the digits exactly as you heard them, with nothing else. Never say them back "
         "out loud. The answer is authorized, invalid (with the attempts left) or locked.",
         {

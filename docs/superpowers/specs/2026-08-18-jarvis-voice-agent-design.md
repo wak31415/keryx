@@ -36,7 +36,7 @@ PIN gating, and the local wake-word transport.
 | Voice-side answers | The voice model answers small factual questions itself via a `web_search` function tool backed by the **Responses API** (a Realtime session accepts only `function` and `mcp` tools — there is no hosted search there). Everything else is dispatched. |
 | Results | Announce in live session → SMS summary → persist tasks (SQLite) → outbound call-back only when requested |
 | Exposure | **Cloudflare Tunnel** (`cloudflared`, `--protocol http2`) to a routed hostname; server as a launchd agent (macOS) or a systemd user unit (Linux). *Amended 2026-08-24, was: ngrok reserved domain + launchd.* |
-| Auth | Twilio signature + caller allowlist + one-time stream token; **PIN only for destructive kinds** (`coding`, `cowork`); local sessions pre-authorized |
+| Auth | Twilio signature + caller allowlist + one-time stream token; **PIN for every dispatch** (6-8 digits when set). *Amended 2026-08-24, was: PIN only for the destructive kinds `coding`/`cowork` — with one kind there is no subset to single out.* Local sessions pre-authorized |
 | Local audio | built-in mic/speakers, **half-duplex** (mic gated off while agent speaks); wake word via **openWakeWord `hey_jarvis`** (onnx) |
 | Subagent model | `claude-opus-5` default; `dispatch_task.model` accepts `opus`/`sonnet`/`fable`/`haiku` or a full model id |
 | Inbound SMS | Out of scope (SMS is outbound summaries only) |
@@ -687,8 +687,10 @@ agent talks to models with, and both endpoints are `GET` only.
 collapsed (2026-08-24) that includes Gmail and Calendar on every task — which is why the phone
 PIN now gates every dispatch rather than two of four kinds. Exposure surface: the
 Cloudflare tunnel to `/twilio/*` (signature-validated + allowlist + one-time stream token) and
-`/reports/{id}?t=` (HMAC token). PIN protects destructive task kinds on the phone channel.
-Caller ID is spoofable → the PIN is the real gate for `coding`/`cowork`.
+`/reports/{id}?t=` (HMAC token). Caller ID is spoofable, so the PIN is the real gate — and
+what it gates is **every dispatch**, not a subset: there are no destructive kinds to single
+out, because there is one kind and it reaches everything. A configured PIN is 6-8 digits
+(§3.3); no PIN at all means dispatching is simply refused from the phone.
 
 **The approval bridge (`jarvis/approvals/`, 2026-08-26).** This one runs *inwards*: a
 Claude Code session on William's own screen has stopped and is asking him something, a hook
