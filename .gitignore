@@ -22,6 +22,10 @@ credentials/
 # SDD scratch
 .superpowers/
 
+# Local scratch and launcher
+tmp/
+.claude-launch.sh
+
 # OS / editors
 .DS_Store
 .idea/
