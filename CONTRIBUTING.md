@@ -1,7 +1,62 @@
 # Contributing
 
 Thanks for looking. Jarvis is a single-tenant personal service rather than a library, so
-"contributing" here mostly means running it yourself and sending back what broke.
+"contributing" here mostly means running it yourself and sending back what broke. Issues
+about the setup being wrong, or the README lying, are as welcome as code.
+
+Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+Security problems do **not** go in an issue — see [SECURITY.md](SECURITY.md).
+
+## Getting set up
+
+```bash
+uv sync                            # Python 3.12; macOS also pulls the wake-word extras
+uv run pytest -q                   # must be green, with no warnings
+uv run ruff check src tests
+uv run jarvis doctor --no-mic      # what this machine is still missing
+```
+
+You do **not** need a `.env`, an API key, Twilio, or a microphone to run the tests. If you
+do have a `.env`, the suite still ignores it — see the fixture in `tests/conftest.py`, and
+do not weaken it.
+
+To run the thing itself without spending Claude tokens:
+
+```bash
+uv run jarvis serve --no-phone --fake-agents
+uv run jarvis loopback --wav sample.wav --out reply.wav
+```
+
+## The rules that are not negotiable
+
+**No network, no hardware, no real subagent in a test.** OpenAI, Twilio, Slack, the Claude
+Agent SDK, `sounddevice` and openWakeWord are all reached through an injectable `Protocol`
+with a fake in `tests/`. Heavy or platform-specific imports (`sounddevice`, `openwakeword`)
+live inside functions, never at module scope, so the suite runs on a machine with no
+microphone — which is exactly what the Linux CI leg proves every run.
+
+**TDD, and the tests are the contract.** A refactor that needs a test changed beyond its
+imports is not a refactor; stop and re-read what the test was protecting.
+
+**Rulings live in the spec.** `docs/superpowers/specs/2026-08-18-jarvis-voice-agent-design.md`
+§3.3 and §5 record decisions and *why*, including several that look like bugs until you know
+them. Changing one means amending the spec in the same change. `CLAUDE.md` is the short
+version, written for an agent working in this repository.
+
+**Conventional commits**, with a body that explains the why:
+
+```
+fix(server): stop serving the OpenAI schema through the tunnel
+
+<the reasoning, in prose>
+
+Closes #12
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+```
+
+A subagent Jarvis dispatched adds `Jarvis-Task: <id>` as well, which makes
+`git log --grep '^Jarvis-Task:'` the record of what was asked for out loud.
 
 ## Releases
 
