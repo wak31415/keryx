@@ -35,6 +35,7 @@ from typing import Any
 from jarvis.config import Settings
 from jarvis.logging_util import mask_number
 from jarvis.logscan import LogErrors, errors_since
+from jarvis.notify.deliver import safe_send_sms
 from jarvis.notify.twilio_out import TwilioOut, say_twiml
 from jarvis.restart import (
     RECORD_NAME,
@@ -200,13 +201,8 @@ def _recipient(record: RestartRecord, settings: Settings) -> str | None:
 async def _text(twilio: Any, settings: Settings, record: RestartRecord, body: str) -> bool:
     """Text him the detail. False when there was nothing to text it with."""
     to = _recipient(record, settings)
-    if not to or twilio is None or not twilio.can_text:
+    if not await safe_send_sms(twilio, to, body):
         log.info("not texting about the restart; the call below is the whole alert")
-        return False
-    try:
-        await twilio.send_sms(to, body)
-    except Exception:
-        log.exception("could not text about the restart that never came back")
         return False
     log.info("texted %s that the restart never landed", mask_number(to))
     return True

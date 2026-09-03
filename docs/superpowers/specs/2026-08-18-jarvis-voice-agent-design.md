@@ -105,6 +105,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `tasks/store.py` | SQLite store (`TaskStore`) |
 | `tasks/agent_runner.py` | `AgentRunner` protocol; `ClaudeAgentRunner` (Agent SDK); `FakeAgentRunner` (tests) |
 | `tasks/manager.py` | `TaskManager`: queue/semaphore, lifecycle, follow-up, cancel, logs, events |
+| `notify/deliver.py` | `announce_to_live_sessions` and `safe_send_sms`: the two ways a result reaches him, each in one place. The `can_text` gate is asserted here and nowhere else |
 | `notify/notifier.py` | routes task results: live sessions → SMS → call-back, or hands the call-back to a restart when the work changed Jarvis's own code |
 | `notify/twilio_out.py` | SMS + outbound call (TwiML with `<Parameter>`) |
 | `server.py` | FastAPI app: `/twilio/voice`, `/twilio/media`, `/twilio/status`, `/health`, `/reports/{id}` |

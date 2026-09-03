@@ -46,6 +46,7 @@ from typing import Any
 from jarvis.config import Settings
 from jarvis.logging_util import mask_number
 from jarvis.logscan import errors_since, marks
+from jarvis.notify.deliver import announce_to_live_sessions, safe_send_sms
 from jarvis.notify.notifier import (
     CALLBACK_TOKEN_TTL_S,
     HISTORY_PREAMBLE,
@@ -956,26 +957,15 @@ class RestartCoordinator:
 
     async def _announce(self, text: str) -> bool:
         """Speak `text` into every live session; True if one of them took it."""
-        heard = False
-        try:
-            for session in self._sessions.live():
-                heard = await session.announce(text) or heard
-        except Exception:
-            log.exception("could not announce the restart into the live sessions")
-        return heard
+        return (await announce_to_live_sessions(self._sessions, text)).heard
 
     async def _send_sms(self, number: str | None, body: str) -> bool:
         """Text `body`, if there is anything to text it with. Never raises."""
         to = number or self._settings.owner_number
-        if not to or self._twilio is None or not self._twilio.can_text:
-            log.error("could not text about the restart (%s); it is only in the log", body)
-            return False
-        try:
-            await self._twilio.send_sms(to, body)
-        except Exception:
-            log.exception("could not text about the restart")
-            return False
-        return True
+        if await safe_send_sms(self._twilio, to, body):
+            return True
+        log.error("could not text about the restart (%s); it is only in the log", body)
+        return False
 
     async def shutdown(self) -> None:
         """Drop a deferred restart that never got its quiet moment. Idempotent."""
