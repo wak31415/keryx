@@ -16,6 +16,7 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
 
+from jarvis.config import secure_file
 from jarvis.tasks.models import Task, TaskStatus, to_utc_iso
 
 log = logging.getLogger("jarvis.tasks.store")
@@ -105,6 +106,11 @@ class TaskStore:
         if self._path != ":memory:":
             conn.execute("PRAGMA journal_mode=WAL")
         self._migrate()
+        if self._path != ":memory:":
+            # The row text is what was asked for out loud and what came back. WAL leaves
+            # two sidecars next to the database holding the same content, so all three.
+            for suffix in ("", "-wal", "-shm"):
+                secure_file(Path(self._path + suffix))
 
     def _migrate(self) -> None:
         """Create the schema, or bring an older one up to `_SCHEMA_VERSION`.

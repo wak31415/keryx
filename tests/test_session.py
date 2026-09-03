@@ -8,6 +8,7 @@ the test rather than hanging if a session refuses to finish.
 import asyncio
 import contextlib
 import logging
+import stat
 
 import pytest
 from fakes import TIMEOUT, DrainingFakeTransport, FakeProvider, FakeTransport, eventually
@@ -145,6 +146,16 @@ async def test_starting_a_session_never_logs_the_callers_number(
     assert "started" in caplog.text
     assert phone.caller not in caplog.text
     assert phone.caller[-4:] in caplog.text
+
+
+async def test_the_transcript_is_created_owner_only(make_session, phone, provider):
+    """It ends up holding every word of the call; the default umask would publish it."""
+    session = make_session(phone, provider)
+
+    async with running(session):
+        await eventually(session.transcript_path.exists)
+
+    assert stat.S_IMODE(session.transcript_path.stat().st_mode) == 0o600
 
 
 async def test_local_sessions_are_half_duplex(make_session, local, provider):

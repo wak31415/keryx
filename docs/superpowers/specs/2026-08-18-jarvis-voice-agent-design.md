@@ -686,3 +686,10 @@ PIN now gates every dispatch rather than two of four kinds. Exposure surface: th
 Cloudflare tunnel to `/twilio/*` (signature-validated + allowlist + one-time stream token) and
 `/reports/{id}?t=` (HMAC token). PIN protects destructive task kinds on the phone channel.
 Caller ID is spoofable → the PIN is the real gate for `coding`/`cowork`.
+
+**At rest (2026-09-02).** `data_dir` and its `tasks`/`calls`/`approvals` subdirectories are
+created **0700** by `ensure_dirs`, which tightens an existing tree in place rather than only
+a new one; transcripts, `tasks.db` (with its WAL sidecars), task logs and task reports are
+**0600**. Nothing is encrypted at rest and nothing is deleted on a schedule. `jarvis doctor`
+reports the directory's actual mode rather than fixing it, so a loosened install is visible.
+Phone numbers appear in a log only through `logging_util.mask_number`.

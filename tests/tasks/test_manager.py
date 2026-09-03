@@ -6,6 +6,7 @@ no test may wait longer than `WAIT` seconds for anything.
 """
 
 import asyncio
+import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -204,6 +205,11 @@ async def test_dispatch_runs_to_done_with_events_and_files(make_harness):
     log = harness.log_text(task.id)
     assert "[tool] Read foo.py" in log
     assert "thinking hard" in log
+
+    # The report and the log both hold the work itself; neither is anyone else's business.
+    tasks_dir = harness.settings.data_dir / "tasks"
+    assert stat.S_IMODE((tasks_dir / f"{task.id}.md").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tasks_dir / f"{task.id}.log").stat().st_mode) == 0o600
 
 
 async def test_dispatch_prompts_the_agent_with_the_standing_preamble(make_harness):

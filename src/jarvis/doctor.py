@@ -12,13 +12,14 @@ merely narrows what Jarvis can do.
 """
 
 import shutil
+import stat
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from jarvis.config import PLACEHOLDER_KEY, Settings, env_var_name
+from jarvis.config import DATA_DIR_MODE, PLACEHOLDER_KEY, Settings, env_var_name
 
 Severity = Literal["hard", "soft"]
 
@@ -91,6 +92,7 @@ def run_doctor_checks(
     if probe_mic:
         checks.append(_microphone_check())
     checks.append(_data_dir_check(settings))
+    checks.append(_data_dir_privacy_check(settings))
     checks.append(_google_check(settings))
     return checks
 
@@ -298,12 +300,41 @@ def _data_dir_check(settings: Settings) -> Check:
     path = settings.data_dir
     probe = path / WRITE_PROBE_NAME
     try:
-        path.mkdir(parents=True, exist_ok=True)
+        # `mode=` rather than `secure_dir`: `doctor` must not leave a world-readable
+        # `~/.jarvis` behind on a machine that did not have one, and it must not quietly
+        # tighten one that does — the next check's job is to report what is actually there.
+        path.mkdir(mode=DATA_DIR_MODE, parents=True, exist_ok=True)
         probe.write_text("ok")
         probe.unlink()
     except OSError as exc:
         return Check("data dir writable", False, f"{path}: {exc}")
     return Check("data dir writable", True, str(path))
+
+
+def _data_dir_privacy_check(settings: Settings) -> Check:
+    """Who besides the owner can read the call transcripts.
+
+    Warn-only: on a single-user machine a loose mode costs nothing, and refusing to run
+    over it would be out of proportion. On a shared host it is the whole story —
+    `calls/*.log` is every word of every call. `ensure_dirs` tightens the directory on
+    every start, so a warning here means something else loosened it afterwards.
+    """
+    path = settings.data_dir
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except OSError as exc:
+        return Check("data dir private", False, f"{path}: {exc}", severity="soft")
+
+    exposed = mode & (stat.S_IRWXG | stat.S_IRWXO)
+    if exposed:
+        return Check(
+            "data dir private",
+            False,
+            f"{path} is {mode:04o} — transcripts and reports are readable by others; "
+            f"chmod {DATA_DIR_MODE:04o} it",
+            severity="soft",
+        )
+    return Check("data dir private", True, f"{mode:04o} (owner only)", severity="soft")
 
 
 def _google_check(settings: Settings) -> Check:

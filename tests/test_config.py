@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from jarvis.config import OPTIONAL_STR_FIELDS, Settings, load_settings
+from jarvis.config import (
+    OPTIONAL_STR_FIELDS,
+    Settings,
+    load_settings,
+    secure_file,
+)
 
 
 def test_allowed_callers_parses_comma_separated_env(monkeypatch, tmp_path):
@@ -112,6 +117,37 @@ def test_ensure_dirs_creates_data_dir_tree(settings):
     assert settings.data_dir.is_dir()
     assert (settings.data_dir / "tasks").is_dir()
     assert (settings.data_dir / "calls").is_dir()
+
+
+def test_ensure_dirs_makes_the_whole_tree_owner_only(settings):
+    """`calls/*.log` is every word of every call; the default umask would publish it."""
+    settings.ensure_dirs()
+
+    for path in (
+        settings.data_dir,
+        settings.data_dir / "tasks",
+        settings.data_dir / "calls",
+        settings.data_dir / "approvals",
+    ):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o700, path
+
+
+def test_ensure_dirs_tightens_a_directory_that_already_exists(settings):
+    """An install made before this becomes private the next time anything starts."""
+    settings.data_dir.mkdir(parents=True)
+    (settings.data_dir / "calls").mkdir()
+    settings.data_dir.chmod(0o755)
+    (settings.data_dir / "calls").chmod(0o755)
+
+    settings.ensure_dirs()
+
+    assert stat.S_IMODE(settings.data_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE((settings.data_dir / "calls").stat().st_mode) == 0o700
+
+
+def test_secure_file_leaves_a_missing_file_alone(tmp_path):
+    """Best effort: nothing under `data_dir` is worth refusing to run over."""
+    assert secure_file(tmp_path / "not-there") == tmp_path / "not-there"
 
 
 def test_data_dir_expands_tilde(monkeypatch):
