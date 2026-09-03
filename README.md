@@ -1,5 +1,7 @@
 # Jarvis
 
+[![CI](https://github.com/wak31415/garmin-voice-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/wak31415/garmin-voice-agent/actions/workflows/ci.yml)
+
 A personal voice agent you can reach two ways:
 
 - **By phone** — call a Twilio number (from a watch, a car, anywhere). The call opens a
