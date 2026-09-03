@@ -4,6 +4,9 @@ import json
 import stat
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from jarvis.config import OPTIONAL_STR_FIELDS, Settings, load_settings
 
 
@@ -37,12 +40,12 @@ def test_projects_defaults_to_empty_dict(settings):
 
 def test_jarvis_pin_env_alias(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("JARVIS_PIN", "1234")
+    monkeypatch.setenv("JARVIS_PIN", "123456")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
 
     settings = Settings(_env_file=None)
 
-    assert settings.pin == "1234"
+    assert settings.pin == "123456"
 
 
 def test_pin_defaults_to_none(settings):
@@ -218,6 +221,46 @@ def test_optional_str_fields_covers_every_optional_string_field():
     }
 
     assert set(OPTIONAL_STR_FIELDS) == optional
+
+
+# --- the PIN is strictly 6-8 digits (spec §5) --------------------------------
+
+
+@pytest.mark.parametrize("pin", ["123456", "1234567", "12345678"])
+def test_a_conforming_pin_is_accepted(tmp_path, pin):
+    assert Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path, pin=pin).pin == pin
+
+
+@pytest.mark.parametrize(
+    ("pin", "why"),
+    [
+        ("12345", "five digits is too few"),
+        ("1", "one digit is not a PIN"),
+        ("123456789", "nine digits is too many"),
+        ("12345a", "a letter cannot be keyed on a phone"),
+        ("12 34 56", "nor can a space"),
+        ("12-34-56", "nor a separator"),
+        ("hunter2", "nor a password"),
+    ],
+)
+def test_a_nonconforming_pin_is_refused(tmp_path, pin, why):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path, pin=pin)
+
+
+def test_no_pin_at_all_is_still_allowed(tmp_path):
+    """Unset means "no PIN", which refuses every dispatch from the phone. That is legal."""
+    assert Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path, pin=None).pin is None
+
+
+def test_the_rejection_names_the_rule_and_never_quotes_the_pin(tmp_path):
+    """A refused PIN reaches a journal or a terminal on its way to being fixed."""
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path, pin="12345")
+
+    message = str(excinfo.value)
+    assert "6 to 8 digits" in message
+    assert "12345" not in message
 
 
 def test_a_blank_pin_is_not_a_pin(tmp_path):

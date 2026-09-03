@@ -8,11 +8,11 @@ import logging
 import logging.handlers
 import signal
 import subprocess
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 import uvicorn
@@ -21,7 +21,7 @@ from pydantic import ValidationError
 from jarvis.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from jarvis.briefing import memory_path, read_memory
-from jarvis.config import PLACEHOLDER_KEY, Settings, load_settings
+from jarvis.config import PLACEHOLDER_KEY, Settings, env_var_name, load_settings
 from jarvis.doctor import format_check, has_hard_failure, run_doctor_checks
 from jarvis.events import EventBus
 from jarvis.google_setup import GoogleSetupError, run_google_setup
@@ -73,9 +73,39 @@ MAX_REPORT_CHARS = 4000
 MAX_MEMORY_PRINT_CHARS = 100_000
 
 
+#: What `doctor` puts in place of a field whose configured value does not validate, so a
+#: broken install still gets a report rather than a traceback. A field not listed here is
+#: one `doctor` cannot work around, and it re-raises.
+DOCTOR_FALLBACKS: dict[str, object] = {"openai_api_key": PLACEHOLDER_KEY, "pin": None}
+
+
+def _validation_message(detail: Mapping[str, Any]) -> str:
+    """One pydantic error as a sentence, without its framing."""
+    return str(detail.get("msg", "is not valid")).removeprefix("Value error, ")
+
+
+def _config_summary(error: ValidationError) -> str:
+    """A `ValidationError` in the env-var names whoever set them would recognise."""
+    parts = []
+    for detail in error.errors():
+        field = str(detail["loc"][0]) if detail.get("loc") else ""
+        name = env_var_name(field) if field else "the configuration"
+        parts.append(f"{name} {_validation_message(detail)}")
+    return "; ".join(parts) or "the configuration is not valid"
+
+
 def _configure(**overrides: object) -> Settings:
     """Load settings (with any command-line overrides), make the data dirs, set up logging."""
-    settings = load_settings()
+    try:
+        settings = load_settings()
+    except ValidationError as error:
+        # This is the path `jarvis serve` takes, so this message is what somebody reads in
+        # `journalctl` after a restart failed to bring the service back. A traceback would
+        # tell them nothing they could act on, and pydantic's own rendering of a rejected
+        # `JARVIS_PIN` is not something to put in a log at all.
+        typer.echo(f"jarvis cannot start: {_config_summary(error)}", err=True)
+        typer.echo("run `jarvis doctor` for the full picture.", err=True)
+        raise typer.Exit(2) from error
     if overrides:
         settings = settings.model_copy(update=overrides)
     settings.ensure_dirs()
@@ -83,17 +113,38 @@ def _configure(**overrides: object) -> Settings:
     return settings
 
 
-def _load_settings_optional() -> Settings:
-    """Settings for commands that only read: a missing `OPENAI_API_KEY` is not fatal.
+def _load_settings_reporting() -> tuple[Settings, dict[str, str]]:
+    """Settings for the read-only commands, plus why any field had to be given up on.
 
     `doctor` has to run *because* the install is incomplete, and `tasks`/`download-models`
-    never talk to OpenAI at all — so the one required field falls back to a placeholder
-    the doctor knows to report as unset.
+    never talk to OpenAI at all — so a field in `DOCTOR_FALLBACKS` is replaced rather than
+    allowed to raise. Each replacement is recorded against its field name, because "not
+    set" and "set to something unusable" are different problems and `doctor` has to be
+    able to tell them apart. Anything else still raises: an unreportable error beats a
+    report built on a guess.
     """
-    try:
-        return load_settings()
-    except ValidationError:
-        return load_settings(openai_api_key=PLACEHOLDER_KEY)
+    problems: dict[str, str] = {}
+    overrides: dict[str, object] = {}
+    while True:
+        try:
+            return load_settings(**overrides), problems
+        except ValidationError as error:
+            fresh = {
+                field: _validation_message(detail)
+                for detail in error.errors()
+                if (field := str(detail["loc"][0]) if detail.get("loc") else "")
+                in DOCTOR_FALLBACKS
+                and field not in overrides
+            }
+            if not fresh:
+                raise
+            problems.update(fresh)
+            overrides.update({field: DOCTOR_FALLBACKS[field] for field in fresh})
+
+
+def _load_settings_optional() -> Settings:
+    """`_load_settings_reporting` for the callers that only want the settings."""
+    return _load_settings_reporting()[0]
 
 
 def _configure_readonly() -> Settings:
@@ -629,8 +680,8 @@ def doctor(
     ] = False,
 ) -> None:
     """Check that this machine is set up to run Jarvis; exits non-zero on a hard failure."""
-    settings = _load_settings_optional()
-    checks = run_doctor_checks(settings, probe_mic=not no_mic)
+    settings, problems = _load_settings_reporting()
+    checks = run_doctor_checks(settings, probe_mic=not no_mic, config_problems=problems)
     for check in checks:
         typer.echo(format_check(check))
 

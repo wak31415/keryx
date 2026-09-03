@@ -13,11 +13,12 @@ merely narrows what Jarvis can do.
 
 import shutil
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from jarvis.config import PLACEHOLDER_KEY, Settings
+from jarvis.config import PLACEHOLDER_KEY, Settings, env_var_name
 
 Severity = Literal["hard", "soft"]
 
@@ -57,8 +58,19 @@ def has_hard_failure(checks: list[Check]) -> bool:
     return any(not check.ok and check.severity == "hard" for check in checks)
 
 
-def run_doctor_checks(settings: Settings, *, probe_mic: bool = True) -> list[Check]:
-    """Every check, in the order they are printed. Never raises: problems come back as checks."""
+def run_doctor_checks(
+    settings: Settings,
+    *,
+    probe_mic: bool = True,
+    config_problems: Mapping[str, str] | None = None,
+) -> list[Check]:
+    """Every check, in the order they are printed. Never raises: problems come back as checks.
+
+    `config_problems` maps a `Settings` field name to why its configured value was refused,
+    for the fields the CLI had to replace to load at all (see `cli.DOCTOR_FALLBACKS`).
+    Without it a rejected value is indistinguishable from an unset one.
+    """
+    problems = config_problems or {}
     checks = [
         _env_file_check(),
         _openai_key_check(settings),
@@ -73,7 +85,7 @@ def run_doctor_checks(settings: Settings, *, probe_mic: bool = True) -> list[Che
         ),
         _tunnel_check(),
         _allowed_callers_check(settings),
-        _pin_check(settings),
+        _pin_check(settings, problems.get("pin")),
         _wakeword_check(settings),
     ]
     if probe_mic:
@@ -170,8 +182,16 @@ def _allowed_callers_check(settings: Settings) -> Check:
     return Check("allowed callers", True, ", ".join(settings.allowed_callers))
 
 
-def _pin_check(settings: Settings) -> Check:
-    """Warn-only: no PIN just means no destructive work from the phone."""
+def _pin_check(settings: Settings, problem: str | None = None) -> Check:
+    """No PIN is a warning; a PIN that does not conform is a machine that will not start.
+
+    The two are different failures. Unset means every dispatch is refused from the phone —
+    limited, but safe, and a deliberate way to run. Set-but-malformed means `jarvis serve`
+    raises on load, so this has to be hard, and it has to say what is wrong: `doctor` is
+    the command whose whole job is to be runnable when nothing else is.
+    """
+    if problem is not None:
+        return Check("PIN", False, f"{env_var_name('pin')} is set but unusable — {problem}")
     if not settings.pin:
         return Check("PIN", False, "not set — coding/cowork refused on phone", severity="soft")
     return Check("PIN", True, "set", severity="soft")

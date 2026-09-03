@@ -654,7 +654,7 @@ def test_doctor_passes_on_a_complete_install(monkeypatch, tmp_path, wakeword_mod
         twilio_auth_token="token",
         twilio_number="+15550000000",
         allowed_callers=["+15551234567"],
-        pin="1234",
+        pin="123456",
         public_host="jarvis.example.com",
         data_dir=tmp_path / "jarvis",
     )
@@ -664,6 +664,65 @@ def test_doctor_passes_on_a_complete_install(monkeypatch, tmp_path, wakeword_mod
 
     assert result.exit_code == 0, result.output
     assert "❌" not in result.output
+
+
+def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path, wakeword_models):
+    """`doctor` is the command that has to work when nothing else does.
+
+    A `JARVIS_PIN` that breaks the 6-8 digit rule stops `jarvis serve` from loading at all,
+    so if it stopped `doctor` too there would be nothing left to diagnose it with.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
+    (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
+
+    def load(**overrides):
+        # What the real loader does with JARVIS_PIN=1234 in the environment: refuse, until
+        # the caller says what to put there instead.
+        values = {
+            "openai_api_key": "sk-test",
+            "anthropic_api_key": "sk-ant",
+            "twilio_account_sid": "AC1",
+            "twilio_auth_token": "token",
+            "twilio_number": "+15550000000",
+            "allowed_callers": ["+15551234567"],
+            "public_host": "jarvis.example.com",
+            "data_dir": tmp_path / "jarvis",
+            "pin": "9876",
+        }
+        values.update(overrides)
+        return Settings(_env_file=None, **values)
+
+    monkeypatch.setattr("jarvis.cli.load_settings", load)
+
+    result = runner.invoke(app, ["doctor", "--no-mic"])
+
+    assert result.exit_code == 1, result.output
+    assert "JARVIS_PIN" in result.output
+    assert "6 to 8 digits" in result.output
+    pin_line = next(line for line in result.output.splitlines() if "PIN:" in line)
+    assert "9876" not in pin_line
+    # Everything else was still checked rather than lost to the exception.
+    assert "allowed callers" in result.output
+
+
+def test_serve_refuses_to_start_on_a_malformed_pin(monkeypatch, tmp_path):
+    """The strict gate. A bad PIN must stop the thing that answers the phone."""
+    monkeypatch.chdir(tmp_path)
+
+    def load(**overrides):
+        return Settings(_env_file=None, openai_api_key="sk-test", data_dir=tmp_path, pin="9876")
+
+    monkeypatch.setattr("jarvis.cli.load_settings", load)
+
+    result = runner.invoke(app, ["serve", "--no-phone", "--no-wakeword"])
+
+    assert result.exit_code == 2, result.output
+    assert "JARVIS_PIN" in result.output
+    assert "6 to 8 digits" in result.output
+    assert "9876" not in result.output
+    assert "doctor" in result.output
 
 
 def test_doctor_help_documents_no_mic():

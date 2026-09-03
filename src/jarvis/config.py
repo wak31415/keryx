@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import secrets
 from pathlib import Path
 from typing import Annotated, Literal
@@ -45,11 +46,27 @@ OPTIONAL_STR_FIELDS = (
 )
 
 
+#: What a configured PIN has to be. Digits, because it is keyed into a phone: a PIN with
+#: a letter in it cannot be entered at all today, so accepting one only ever produced a
+#: caller who could not authorize. Six of them at minimum because this is the single thing
+#: between someone who has spoofed a caller ID and a subagent running with
+#: `bypassPermissions`, and eight at most because it is said or keyed under time pressure.
+PIN_PATTERN = re.compile(r"\d{6,8}")
+PIN_RULE = "must be 6 to 8 digits, and nothing but digits"
+
+
 class Settings(BaseSettings):
     """Jarvis runtime configuration. See spec §3.4 for the env-var table."""
 
     model_config = SettingsConfigDict(
-        env_file=".env", extra="ignore", populate_by_name=True, env_ignore_empty=True
+        env_file=".env",
+        extra="ignore",
+        populate_by_name=True,
+        env_ignore_empty=True,
+        # Almost every field here is a credential, and pydantic quotes the rejected input
+        # back in the error it raises. A `JARVIS_PIN` that fails the rule below must not
+        # end up in a traceback, a journal or a terminal on the way to being fixed.
+        hide_input_in_errors=True,
     )
 
     #: Cached `report_secret_value()`: it is asked for per notification and per report
@@ -119,6 +136,8 @@ class Settings(BaseSettings):
     # Access control
     allowed_callers: Annotated[list[str], NoDecode] = Field(default_factory=list)
     owner_number_explicit: str | None = Field(default=None, validation_alias="OWNER_NUMBER")
+    #: Six to eight digits when set, enforced below. Unset stays legal and means "no PIN":
+    #: every dispatch is refused from the phone.
     pin: str | None = Field(default=None, validation_alias="JARVIS_PIN", repr=False)
 
     # Networking
@@ -242,6 +261,19 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator("pin", mode="after")
+    @classmethod
+    def _pin_is_six_to_eight_digits(cls, value: str | None) -> str | None:
+        """A configured PIN must conform, or Jarvis does not start (spec §5).
+
+        Blank is handled upstream by `_blank_is_unset` and stays "no PIN", which is a
+        different and safe thing: it refuses every dispatch from the phone. What this
+        refuses is a PIN that is *set* and not worth having.
+        """
+        if value is None or PIN_PATTERN.fullmatch(value):
+            return value
+        raise ValueError(PIN_RULE)
+
     @field_validator(
         "data_dir",
         "projects_root",
@@ -325,6 +357,17 @@ class Settings(BaseSettings):
         secret_path.write_text(secret)
         os.chmod(secret_path, 0o600)
         return secret
+
+
+def env_var_name(field_name: str) -> str:
+    """The environment variable a `Settings` field is read from.
+
+    Its validation alias where it has one (`pin` is `JARVIS_PIN`), else the field name
+    upcased. Used to report a configuration problem in the name its owner set it under.
+    """
+    field = Settings.model_fields.get(field_name)
+    alias = getattr(field, "validation_alias", None) if field is not None else None
+    return alias if isinstance(alias, str) else field_name.upper()
 
 
 def load_settings(**overrides: object) -> Settings:

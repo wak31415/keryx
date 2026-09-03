@@ -30,8 +30,8 @@ from jarvis.session import (
 from jarvis.tools import ToolRegistry
 from jarvis.transports.base import Dtmf
 
-PIN = "4242"
-WRONG = "1111"
+PIN = "424242"
+WRONG = "111111"
 
 
 @pytest.fixture
@@ -139,7 +139,7 @@ async def test_a_wrong_pin_counts_the_attempts_down(make_session, phone, provide
 
     async with running(session):
         assert await session.submit_pin(WRONG) == {"status": "invalid", "attempts_left": 2}
-        assert await session.submit_pin("2222") == {"status": "invalid", "attempts_left": 1}
+        assert await session.submit_pin("222222") == {"status": "invalid", "attempts_left": 1}
         assert session.authorized is False
 
 
