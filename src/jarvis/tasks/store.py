@@ -89,6 +89,16 @@ _V2_COLUMNS = ("origin_session_id TEXT", "callback_note TEXT")
 #: and whether Jarvis asked for it of its own accord. Rows written before this are treated
 #: as already reported — see `_migrate`.
 _V3_COLUMNS = ("reported_at TEXT", "internal INTEGER NOT NULL DEFAULT 0")
+#: How long a statement waits for a lock another connection is holding, rather than
+#: failing with "database is locked". Explicit because the contention here is *between
+#: processes*, not between threads: `jarvis serve` holds this database open for the life of
+#: the service while `jarvis tasks`, `jarvis restart` and `jarvis forget` open it from the
+#: terminal — which the "the database runs ahead of the code" working agreement takes as
+#: normal. Python's implicit default is 5 seconds; this says so out loud and raises it,
+#: because a `jarvis tasks list` that waits two extra seconds is fine and one that raises
+#: mid-call is not.
+BUSY_TIMEOUT_S = 15.0
+
 #: v3 -> v4 (2026-08-26): a task can say it changed Jarvis's own code and needs a restart
 #: to take effect. Rows written before this never asked for one, which the default says.
 _V4_COLUMNS = ("needs_restart INTEGER NOT NULL DEFAULT 0",)
@@ -100,11 +110,20 @@ class TaskStore:
     def __init__(self, path: Path | str) -> None:
         self._path = str(path)
         self._lock = threading.Lock()
-        conn = sqlite3.connect(self._path, check_same_thread=False, isolation_level=None)
+        conn = sqlite3.connect(
+            self._path,
+            check_same_thread=False,
+            isolation_level=None,
+            timeout=BUSY_TIMEOUT_S,
+        )
         conn.row_factory = sqlite3.Row
         self._conn: sqlite3.Connection | None = conn
         if self._path != ":memory:":
             conn.execute("PRAGMA journal_mode=WAL")
+            # `timeout=` covers the connect handshake; the pragma covers every statement
+            # afterwards, including one a *different* process is blocking. Both, because
+            # they are not the same lock and neither is the other's fallback.
+            conn.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_S * 1000)}")
         self._migrate()
         if self._path != ":memory:":
             # The row text is what was asked for out loud and what came back. WAL leaves

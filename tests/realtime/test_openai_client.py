@@ -727,8 +727,16 @@ async def test_default_ws_connect_uses_the_documented_websockets_options(monkeyp
     assert captured["kwargs"] == {
         "additional_headers": {"Authorization": "Bearer k"},
         "max_size": None,
-        "ping_interval": 20,
+        "ping_interval": realtime_openai.WS_PING_INTERVAL_S,
+        "ping_timeout": realtime_openai.WS_PING_TIMEOUT_S,
+        "open_timeout": realtime_openai.WS_OPEN_TIMEOUT_S,
+        "close_timeout": realtime_openai.WS_CLOSE_TIMEOUT_S,
     }
+    # Named rather than inherited: every one of these is on the path of a caller already
+    # on the line, and `websockets` has no open timeout by default at all — a connect
+    # against a black-holed route would hang forever with the caller hearing silence.
+    for option in ("ping_interval", "ping_timeout", "open_timeout", "close_timeout"):
+        assert isinstance(captured["kwargs"][option], float), option
     assert await ws.recv() == '{"type": "session.created"}'
     await ws.send("ping")
     assert captured["sent"] == "ping"

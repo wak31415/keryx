@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import TaskStore
+from jarvis.tasks.store import BUSY_TIMEOUT_S, TaskStore
 
 
 @pytest.fixture(params=["file", "memory"])
@@ -203,6 +203,17 @@ async def test_close_is_idempotent():
     task_store = TaskStore(":memory:")
     await task_store.close()
     await task_store.close()  # must not raise
+
+
+def test_the_busy_timeout_is_set_explicitly(tmp_path):
+    """Cross-process contention is normal here: `jarvis serve` holds the database open for
+    the life of the service while the CLI opens it from a terminal. Waiting is the right
+    answer; "database is locked" mid-call is not."""
+    store = TaskStore(tmp_path / "tasks.db")
+
+    (millis,) = store._conn.execute("PRAGMA busy_timeout").fetchone()
+
+    assert millis == int(BUSY_TIMEOUT_S * 1000)
 
 
 async def test_the_database_is_created_owner_only(tmp_path):

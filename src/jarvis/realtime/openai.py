@@ -43,6 +43,22 @@ REALTIME_URL = "wss://api.openai.com/v1/realtime"
 #: (16-bit LE mono 24 kHz, spec §3.2).
 PCM_SAMPLE_RATE = 24000
 
+# How long each part of this socket may take, said out loud rather than inherited. All
+# four are on the path of a caller who is *already on the line* and hearing silence, so
+# the library's defaults (no open timeout at all; a 10-second close) are the wrong shape:
+# what matters is failing fast enough for `reconnect()` to get a word in.
+#: Opening the socket. Without it a connect against a black-holed route hangs forever, and
+#: the caller hears nothing while `VoiceSession.run` waits on `connect`.
+WS_OPEN_TIMEOUT_S = 10.0
+#: Keepalive ping cadence, and how long a pong may take before the socket is considered
+#: dead. A dead socket surfacing as `Disconnected` is what arms the reconnect; a socket
+#: that never notices is a call that stays silent.
+WS_PING_INTERVAL_S = 20.0
+WS_PING_TIMEOUT_S = 20.0
+#: Waiting for the closing handshake on the way out. Short: by the time we are closing,
+#: the session is over and nobody is listening.
+WS_CLOSE_TIMEOUT_S = 5.0
+
 # Errors that mean this socket/session is unusable; everything else is transient
 # (e.g. truncating past the end of an item, which happens routinely on barge-in).
 FATAL_ERROR_CODES = frozenset({"invalid_api_key", "session_expired", "session_not_found"})
@@ -89,7 +105,13 @@ class _WebSocketsAdapter:
 
 async def _default_ws_connect(url: str, headers: dict[str, str]) -> RealtimeWebSocket:
     connection = await websockets.connect(
-        url, additional_headers=headers, max_size=None, ping_interval=20
+        url,
+        additional_headers=headers,
+        max_size=None,
+        ping_interval=WS_PING_INTERVAL_S,
+        ping_timeout=WS_PING_TIMEOUT_S,
+        open_timeout=WS_OPEN_TIMEOUT_S,
+        close_timeout=WS_CLOSE_TIMEOUT_S,
     )
     return _WebSocketsAdapter(connection)
 
