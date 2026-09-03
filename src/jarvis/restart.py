@@ -69,9 +69,9 @@ RUNNING_NAME = "running-version"
 STARTUP_MARKS_NAME = "startup-log-marks.json"
 
 #: Default unit/label names, matching `ops/systemd/jarvis.service` and
-#: `ops/launchd/com.william.jarvis.plist`.
+#: `ops/launchd/dev.jarvis.agent.plist`.
 SYSTEMD_UNIT = "jarvis.service"
-LAUNCHD_LABEL = "com.william.jarvis"
+LAUNCHD_LABEL = "dev.jarvis.agent"
 
 #: How many times a pending record may be picked up before it is abandoned. A service
 #: that crash-loops must ring once, not once per crash.

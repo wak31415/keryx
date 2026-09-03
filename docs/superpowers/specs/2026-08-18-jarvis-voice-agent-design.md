@@ -539,7 +539,7 @@ class SessionRegistry:
 | `PUBLIC_HOST` | `public_host` (the tunnel's hostname, e.g. `jarvis.example.com`) | `None` |
 | `HOST` / `PORT` | `host` / `port` | `127.0.0.1` / `8080` |
 | `SERVICE_MANAGER` | `service_manager` (`auto`/`systemd`/`launchd`/`none`; what `jarvis restart` asks) | `auto` → systemd on Linux, launchd on macOS, none if neither is on PATH |
-| `SERVICE_UNIT` | `service_unit` (the unit/label to restart) | `None` → `jarvis.service` / `com.william.jarvis` |
+| `SERVICE_UNIT` | `service_unit` (the unit/label to restart) | `None` → `jarvis.service` / `dev.jarvis.agent` (renamed from `com.william.jarvis` 2026-09-02) |
 | `PROJECTS` | `projects: dict[str,str]` (JSON) | `{}` |
 | `PROJECTS_ROOT` | `projects_root` | `~/Local/coding_projects` |
 | `SKILLS_DIR` | `skills_dir` (Claude skills listed in the voice prompt) | `~/.claude/skills` |

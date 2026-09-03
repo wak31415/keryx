@@ -2,13 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   Template: scripts/install-launchd.sh fills in __UV__, __REPO__ and __HOME__ and writes
-  the result to ~/Library/LaunchAgents/com.william.jarvis.plist. Do not load this file
+  the result to ~/Library/LaunchAgents/dev.jarvis.agent.plist. Do not load this file
   directly.
 -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.william.jarvis</string>
+    <string>dev.jarvis.agent</string>
 
     <key>ProgramArguments</key>
     <array>

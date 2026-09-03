@@ -31,7 +31,7 @@ log = logging.getLogger("jarvis.logscan")
 
 #: The log files a service install writes, in the order a failure escalates through them.
 #: `jarvis.err.log`/`jarvis.out.log` come from `ops/systemd/jarvis.service` and
-#: `ops/launchd/com.william.jarvis.plist`; `jarvis.log` is our own rotating handler.
+#: `ops/launchd/dev.jarvis.agent.plist`; `jarvis.log` is our own rotating handler.
 LOG_NAMES = ("jarvis.err.log", "jarvis.out.log", "jarvis.log")
 
 #: How many error lines are kept. This is read out loud and texted, so it is a handful.
