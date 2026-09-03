@@ -30,20 +30,15 @@ from jarvis.logging_util import mask_number
 from jarvis.logscan import errors_since
 from jarvis.logscan import marks as log_marks
 from jarvis.realtime.openai import OpenAIRealtimeClient
-from jarvis.restart import (
-    RECORD_NAME,
+from jarvis.restart import health_probe, wait_until_serving
+from jarvis.restart_service import (
     UNSUPPORTED_HINT,
-    RestartRecord,
-    RestartStore,
-    health_probe,
-    loaded_version,
-    mark_running,
-    mark_startup_logs,
     resolve_target,
     spawn_watchdog,
-    wait_until_serving,
     watch_command,
 )
+from jarvis.restart_store import RECORD_NAME, RestartRecord, RestartStore
+from jarvis.restart_version import loaded_version, mark_running, mark_startup_logs
 from jarvis.restart_watch import watch
 from jarvis.retention import cutoff_for, prune, prune_with
 from jarvis.server import create_app
