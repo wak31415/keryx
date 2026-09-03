@@ -80,7 +80,7 @@ def _sample_task(**overrides):
         kind=TaskKind.AGENT,
         description="add README",
         status=TaskStatus.RUNNING,
-        project="garmin-voice-agent",
+        project="orchard-sensor-net",
         cwd="/repo",
         model="claude-opus-5",
         claude_session_id="sess-1",
@@ -208,12 +208,12 @@ def test_short_status_line_format():
     task = Task(
         id=3,
         kind=TaskKind.AGENT,
-        description="add README to garmin-voice-agent",
+        description="add README to orchard-sensor-net",
         status=TaskStatus.RUNNING,
     )
 
     assert (
-        task.short_status_line() == "task 3 (running): add README to garmin-voice-agent"
+        task.short_status_line() == "task 3 (running): add README to orchard-sensor-net"
     )
 
 

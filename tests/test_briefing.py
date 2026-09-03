@@ -141,12 +141,12 @@ async def test_a_fresh_machine_briefs_with_nothing_and_that_is_fine(settings, ta
 
 async def test_the_briefer_finds_the_memory_and_the_unreported_work(settings, tasks):
     settings.ensure_dirs()
-    memory_path(settings.data_dir).write_text("He is mid-way through the garmin sync.")
+    memory_path(settings.data_dir).write_text("He is mid-way through the orchard sync.")
     task = await tasks.store.create(_finished(description="wire up the poller"))
 
     briefing = await Briefer(settings, tasks.manager).build()
 
-    assert "garmin sync" in briefing.memory
+    assert "orchard sync" in briefing.memory
     assert f"task {task.id}" in briefing.pending
     assert briefing.pending_count == 1
 

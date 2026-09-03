@@ -7,7 +7,8 @@ Design spec, 2026-08-18. This is the binding authority for the implementation pl
 
 A personal voice agent William can reach two ways:
 
-1. **By phone** (Garmin watch / mobile → Twilio number). The call opens a realtime voice
+1. **By phone** (originally a Garmin watch, hence the repository's first name; any phone
+   → Twilio number). The call opens a realtime voice
    session; the agent chats, answers questions, and **dispatches powerful subagents** that
    run on the host machine with full local access (repos, files, web, email, calendar).
 2. **Locally, always-on** — a "hey jarvis" wake-word listener on the machine's mic/speaker
@@ -40,7 +41,7 @@ PIN gating, and the local wake-word transport.
 | Subagent model | `claude-opus-5` default; `dispatch_task.model` accepts `opus`/`sonnet`/`fable`/`haiku` or a full model id |
 | Inbound SMS | Out of scope (SMS is outbound summaries only) |
 | Language / tooling | Python 3.12, `uv`, FastAPI + uvicorn, typer, pytest (+ pytest-asyncio), ruff |
-| Repo | this folder; GitHub private repo `garmin-voice-agent` |
+| Repo | this folder; GitHub repo `jarvis-voice-agent` — renamed from `garmin-voice-agent` and made public 2026-09-02; package, CLI and data dir stay `jarvis`, and nothing is published to an index |
 
 Prerequisites William supplies (in `.env`): `OPENAI_API_KEY`, subagent auth (the Claude
 CLI subscription login by default; `ANTHROPIC_API_KEY` is the pay-per-token override —

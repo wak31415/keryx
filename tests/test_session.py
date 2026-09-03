@@ -810,7 +810,7 @@ async def test_a_session_with_no_briefer_opens_exactly_as_it_always_did(
 async def test_the_briefing_reaches_the_system_prompt(make_session, phone, provider):
     briefer = FakeBriefer(
         Briefing(
-            memory="He is mid-way through the garmin sync.",
+            memory="He is mid-way through the orchard sync.",
             pending="- task 41 (finished) — he asked for: the ingest script",
             pending_count=1,
         )
@@ -821,7 +821,7 @@ async def test_the_briefing_reaches_the_system_prompt(make_session, phone, provi
         await eventually(lambda: provider.config is not None)
 
     instructions = provider.config.instructions
-    assert "garmin sync" in instructions
+    assert "orchard sync" in instructions
     assert "task 41" in instructions
     assert briefer.builds == 1  # once per session, before the provider is connected
 

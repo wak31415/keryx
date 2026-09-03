@@ -1,7 +1,7 @@
 """Looking something up in what has already happened (spec §3.3).
 
 The briefing tells Jarvis what it should volunteer at the start of a call. This answers
-the other half — "what did we decide about the Garmin sync?" — without spending a
+the other half — "what did we decide about the Orchard sync?" — without spending a
 subagent on a question the machine already has the answer to on disk.
 
 Two sources, searched together and ranked as one list:

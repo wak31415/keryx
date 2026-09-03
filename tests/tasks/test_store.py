@@ -42,7 +42,7 @@ async def test_create_then_get_round_trips_every_field(store):
         kind=TaskKind.AGENT,
         description="ship the release",
         status=TaskStatus.RUNNING,
-        project="garmin-voice-agent",
+        project="orchard-sensor-net",
         cwd="/repo",
         model="claude-opus-5",
         claude_session_id="sess-42",
@@ -308,12 +308,12 @@ async def test_internal_tasks_are_visible_when_asked_for(store):
 
 
 async def test_search_requires_every_term_and_looks_at_the_summary_too(store):
-    await _finished(store, "wire up the garmin poller", summary="polls every 15 minutes")
+    await _finished(store, "wire up the orchard poller", summary="polls every 15 minutes")
     await _finished(store, "unrelated work", summary="nothing to do with it")
 
-    assert len(await store.search(["garmin"])) == 1
-    assert len(await store.search(["garmin", "poller"])) == 1
-    assert len(await store.search(["garmin", "kayak"])) == 0
+    assert len(await store.search(["orchard"])) == 1
+    assert len(await store.search(["orchard", "poller"])) == 1
+    assert len(await store.search(["orchard", "kayak"])) == 0
     assert len(await store.search(["minutes"])) == 1  # matched in the summary
 
 
@@ -325,9 +325,9 @@ async def test_search_treats_wildcards_as_literal_characters(store):
 
 
 async def test_search_ignores_housekeeping_and_an_empty_query(store):
-    await _finished(store, "memory update for the garmin call", internal=True)
+    await _finished(store, "memory update for the orchard call", internal=True)
 
-    assert await store.search(["garmin"]) == []
+    assert await store.search(["orchard"]) == []
     assert await store.search([]) == []
 
 
