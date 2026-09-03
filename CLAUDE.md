@@ -5,7 +5,7 @@ Realtime API and Claude Agent SDK subagents.
 
 ## Commands
 
-- Run tests: `uv run pytest -q`
+- Run tests: `uv run pytest -q` (coverage: `uv run pytest -q --cov`, floor 94%)
 - Lint: `uv run ruff check src tests`
 - Run the CLI: `uv run jarvis --help`
 - Check the machine's setup: `uv run jarvis doctor` (`--no-mic` where there is none)
@@ -16,6 +16,8 @@ Realtime API and Claude Agent SDK subagents.
 - Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N] [--internal]`,
   `uv run jarvis tasks show <id>` (the `TOLD` column is `NO` until Jarvis has said it)
 - Read what Jarvis remembers between calls: `uv run jarvis memory` (`--path` for the file)
+- Delete transcripts and finished task rows: `uv run jarvis forget [--older-than N]`
+  (`--transcripts-only` / `--tasks-only` / `--yes`)
 - Restart the service: `uv run jarvis restart [--reason …] [--force] [--no-callback]`
   (it phones back when it is up again, and texts if it never comes back);
   `uv run jarvis restart --status` for the last one, including what the logs said
@@ -30,7 +32,28 @@ live under `tests/`, mirroring the package structure. `cli.py` stays argument
 parsing plus wiring: the `doctor` checks live in `jarvis/doctor.py` and the
 Google OAuth bootstrap in `jarvis/google_setup.py`. Service templates are in
 `ops/systemd/` (Linux) and `ops/launchd/` (macOS), rendered by the matching
-`scripts/install-*.sh`; `scripts/lib.sh` holds what those scripts share.
+`scripts/install-*.sh`; `scripts/lib.sh` holds the scaffolding those scripts share
+(argument parsing, the env-file and PATH checks, `render`), so an installer is only
+its platform-specific half.
+
+Three groups were split apart on 2026-09-02 and are named here because the file you
+want is rarely the one whose name you remember:
+
+- **restart** — `restart.py` is `RestartCoordinator` and nothing else. `restart_service.py`
+  is talking to the service manager (`resolve_target`, `watch_command`, `spawn_watchdog`),
+  `restart_store.py` is the `restart.json` record, `restart_version.py` is what is
+  *running*, and `restart_watch.py` is the out-of-process watchdog.
+- **tools** — `tools/builtin.py` is a composition root; the registrations are in
+  `builtin_comms`, `builtin_billing`, `builtin_tasks`, `builtin_restart` and
+  `builtin_session`, with the wording, the parsing and the two gates (`pin_gate`,
+  `get_task`) in `builtin_common`. **The order `builtin.py` calls them in is the order
+  the tools are offered to the model.** A new tool goes in a domain module and the README
+  table, or `tests/test_docs_sync.py` fails.
+- **notify** — `notify/deliver.py` holds `announce_to_live_sessions` and `safe_send_sms`.
+  The `can_text` gate is asserted there and nowhere else.
+
+`logging_util.mask_number` is the only shape a phone number may take in a log line, and
+`retention.py` is the transcript and task pruning (off by default).
 
 ## One task kind
 
@@ -210,7 +233,10 @@ scope, so the test suite can run on a machine with no mic.
 
 ## Working agreements
 
-- Only scripts read the env file; never print or paste its contents.
+- Only scripts read the env file; never print or paste its contents. `.env.example` is a
+  different thing — tracked, secret-free, and the one place every setting is listed; keep
+  it in step with `Settings` (`tests/test_docs_sync.py` is meant to enforce that, and the
+  `.env.example` half of it is still missing — see issue #5).
 - The database runs ahead of the code. `_migrate` upgrades `tasks.db` from whichever process
   opens it first, and `jarvis serve` holds the `Task` it imported at startup, so a new column
   reaches the file while the service is still a build behind. `Task.from_row` drops columns it
@@ -228,7 +254,11 @@ scope, so the test suite can run on a machine with no mic.
   `git log --grep '^Jarvis-Task:'` is everything William asked for out loud rather than
   typed — the one thing `git log` cannot otherwise recover.
 - Clean and minimal over clever; TDD, with `uv run pytest -q` and
-  `uv run ruff check src tests` pristine before a commit.
+  `uv run ruff check src tests` pristine before a commit. Coverage has a floor (94%) and it
+  is a ratchet: raise it when the measured number moves up, never lower it to pass.
+- `data_dir` is 0700 and the files under it 0600 (`config.secure_dir` / `secure_file`).
+  Anything new that writes there goes through them.
+- A configured `JARVIS_PIN` is 6-8 digits and `jarvis serve` refuses to start otherwise.
 
 ## Reference docs
 
