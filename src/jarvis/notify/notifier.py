@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed
 from jarvis.inline_waits import InlineWaits
+from jarvis.notify.deliver import announce_to_live_sessions, safe_send_sms
 from jarvis.notify.twilio_out import TwilioOut, stream_twiml
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
@@ -200,26 +201,21 @@ class Notifier:
         `dispatch_task` tool result is about to say the same thing, and hearing it twice
         is worse than not hearing it here at all.
         """
-        heard = False
-        delivered = False
-        try:
-            for session in self._sessions.live():
-                if (session.session_id, task.id) in self._inline_waits:
-                    log.info(
-                        "session %s is holding the line for task %s",
-                        session.session_id,
-                        task.id,
-                    )
-                    heard = delivered = True
-                    continue
-                spoken = await session.announce(text)
-                heard = heard or spoken
-                delivered = delivered or (spoken and session.channel == "phone")
-            if heard:
+        def holding_the_line(session) -> bool:
+            if (session.session_id, task.id) not in self._inline_waits:
+                return False
+            log.info("session %s is holding the line for task %s", session.session_id, task.id)
+            return True
+
+        announced = await announce_to_live_sessions(
+            self._sessions, text, skip=holding_the_line
+        )
+        if announced.heard:
+            try:
                 await self._store.update(task.id, announced=True)
-        except Exception:
-            log.exception("could not announce task %s into the live sessions", task.id)
-        return delivered
+            except Exception:
+                log.exception("could not record that task %s was announced", task.id)
+        return announced.on_phone
 
     # --- (2) the text ------------------------------------------------------
 
@@ -231,14 +227,13 @@ class Notifier:
         was not there for either — the digest at the top of his next call, which is what
         `reported_at` exists to keep honest.
         """
-        if delivered or not self._twilio.can_text:
+        if delivered:
             return
         try:
             to = self._sms_recipient(task)
-            if not to:
-                log.info("no number to text about task %s", task.id)
+            if not await safe_send_sms(self._twilio, to, self._sms_body(task, text)):
+                log.info("did not text about task %s", task.id)
                 return
-            await self._twilio.send_sms(to, self._sms_body(task, text))
             await self._store.update(task.id, sms_sent=True)
         except Exception:
             log.exception("could not text the result of task %s", task.id)
