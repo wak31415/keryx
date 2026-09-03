@@ -149,10 +149,11 @@ repository's `CLAUDE.md`: that is thousands of tokens of build detail written fo
 the subagent reads it for itself anyway, and in a voice prompt it mostly drowns the persona.
 
 **If Jarvis cuts you off while you think**, that is turn detection. It defaults to
-`VAD_MODE=semantic` with `VAD_EAGERNESS=low`, which waits on whether your sentence sounds
-finished rather than on a stopwatch — the most patient setting. If it feels sluggish
-instead, `VAD_MODE=server` with `VAD_SILENCE_MS` (default 1200) goes back to a fixed timer
-you can tune directly.
+`VAD_MODE=semantic` with `VAD_EAGERNESS=medium`, which waits on whether your sentence
+sounds finished rather than on a stopwatch. `VAD_EAGERNESS=low` is more patient still — it
+was the default until it turned out to cost about two seconds of silence a turn. If it
+feels sluggish instead, `VAD_MODE=server` with `VAD_SILENCE_MS` (default 1200) goes back to
+a fixed timer you can tune directly.
 
 Useful optional ones: `HOST`/`PORT` (default `127.0.0.1:8080`), `DATA_DIR` (default
 `~/.jarvis`), `PROJECTS_ROOT` (every subdirectory is dispatchable by name), `SKILLS_DIR`
