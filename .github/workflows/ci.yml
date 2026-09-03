@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch supersedes the first; nothing here is a deployment.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: lint + tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS carries the wake-word channel (`sounddevice`, `openwakeword`,
+        # `onnxruntime` are `sys_platform == 'darwin'` dependencies); Linux runs the
+        # phone channel only. Both legs must stay green — the suite is meant to run on a
+        # machine with no microphone, and only the Linux leg proves that.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # Deliberately no `.env` is written, here or anywhere in this workflow. The suite
+      # must be hermetic: `Settings` reads `env_file=".env"` from the working directory,
+      # and a green run on a runner that has none is the standing regression test for
+      # that leak (#25).
+      - name: Install the locked dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check src tests
+
+      - name: Tests
+        run: uv run pytest -q
+
+  build:
+    name: wheel builds and installs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build the sdist and wheel
+        run: uv build
+
+      # `prompts/*.md` and `py.typed` are read at runtime, not just packaged for tidiness:
+      # a wheel without them installs and then fails on the first call. hatchling's
+      # `packages = ["src/jarvis"]` should carry them; verify rather than assume.
+      - name: The wheel carries the runtime data files
+        run: |
+          set -euo pipefail
+          contents="$(python -m zipfile -l dist/*.whl)"
+          echo "$contents"
+          grep -q 'jarvis/py\.typed' <<<"$contents"
+          grep -q 'jarvis/prompts/voice_system\.md' <<<"$contents"
+          grep -q 'jarvis/prompts/subagent_suffix\.md' <<<"$contents"
+          grep -q 'jarvis/prompts/memory_update\.md' <<<"$contents"
+
+      - name: The wheel installs into a clean venv and the CLI runs
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/pip install --upgrade pip
+          /tmp/wheel-venv/bin/pip install dist/*.whl
+          # From `/tmp`, so nothing resolves against the checkout.
+          cd /tmp && /tmp/wheel-venv/bin/jarvis --help
