@@ -5,6 +5,7 @@ matching is deliberately literal — every assertion here is about it staying th
 because a fuzzy match is read out loud as if it were fact.
 """
 
+import os
 from datetime import UTC, datetime
 
 import pytest
@@ -100,6 +101,51 @@ def test_an_older_transcript_with_only_a_wall_clock_is_dated_from_the_file(setti
 
     assert hit.when  # dated from the file's mtime rather than left blank
     assert "orchard" in hit.text
+
+
+def test_a_wall_clock_transcript_is_dated_from_the_files_own_mtime(settings):
+    """The fallback, pinned: transcripts written before the stamp carried a date."""
+    path = settings.data_dir / "calls" / "old.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[14:02:11] user: the orchard thing\n")
+    when = datetime(2026, 7, 4, 11, 30).timestamp()
+    os.utime(path, (when, when))
+
+    assert search_calls(settings.data_dir, ["orchard"], limit=4)[0].when == "4 July"
+
+
+def test_an_unreadable_mtime_leaves_the_date_blank_rather_than_guessing(settings, monkeypatch):
+    """A date read out loud is a claim; better to say nothing than to invent one."""
+    path = settings.data_dir / "calls" / "old.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[14:02:11] user: the orchard thing\n")
+    monkeypatch.setattr("jarvis.recall._file_date", lambda _path: None)
+
+    assert search_calls(settings.data_dir, ["orchard"], limit=4)[0].when == ""
+
+
+def test_a_transcript_line_with_a_broken_stamp_falls_back_too(settings):
+    """`datetime.fromisoformat` refusing the stamp must not lose the hit."""
+    path = settings.data_dir / "calls" / "broken.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[not-a-timestamp] user: the orchard thing\n")
+    when = datetime(2026, 7, 4, 11, 30).timestamp()
+    os.utime(path, (when, when))
+
+    hit = search_calls(settings.data_dir, ["orchard"], limit=4)[0]
+
+    assert (hit.when, "orchard" in hit.text) == ("4 July", True)
+
+
+def test_a_transcript_stamp_is_spoken_in_local_time(settings):
+    """`_spoken_date` calls `.astimezone()`, so a UTC stamp is said as the host sees it."""
+    path = settings.data_dir / "calls" / "tz.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[2026-08-22T23:30:00+00:00] user: the orchard thing\n")
+
+    expected = datetime(2026, 8, 22, 23, 30, tzinfo=UTC).astimezone().strftime("%-d %B")
+
+    assert search_calls(settings.data_dir, ["orchard"], limit=4)[0].when == expected
 
 
 def test_session_bookkeeping_lines_are_never_a_hit(settings):

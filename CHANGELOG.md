@@ -15,6 +15,7 @@ surface — a removed or renamed setting or command is a major bump.
   wrong with a malformed `JARVIS_PIN`.
 - The README documents the approval bridge, what is stored on disk and what is sent to
   which third party, and the single-owner assumptions the deployment rests on.
+- Test coverage is measured (94%) and CI fails below that floor.
 - Retention: `TRANSCRIPT_RETENTION_DAYS` and `TASK_RETENTION_DAYS` (both off by default)
   prune at the top of `jarvis serve`, and `jarvis forget` does it on demand. A finished
   task you have not been told about is never deleted.

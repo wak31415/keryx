@@ -74,6 +74,42 @@ a tag and a set of notes, not an upload.
 *Names* note. `pyproject.toml` carries the `Private :: Do Not Upload` classifier so that an
 accidental `uv publish` is refused by the index rather than quietly succeeding.
 
+## Coverage
+
+```bash
+uv run pytest -q --cov --cov-report=term:skip-covered
+```
+
+**The floor is 94%, and it is a ratchet rather than a target.** It was set at the number
+actually measured on 2026-09-02 (94.66%), floored to a whole point so a rounding wobble
+does not fail CI while real erosion does. Raise it when the measured number has moved up;
+do not lower it to make a branch pass. `pytest --cov` fails below it, and CI prints the
+per-module table into the run summary.
+
+Two modules are deliberately not measured, and neither omission flatters the number:
+`transports/local_audio.py` and `wakeword.py` are macOS-only and sit behind lazy imports
+precisely so the suite runs on a machine with no microphone. Neither CI leg can drive a
+real one.
+
+The modules that sit below the floor, and why, as of 2026-09-02:
+
+| Module | | What is uncovered |
+|---|---|---|
+| `skills.py` | 87% | Malformed and unreadable `SKILL.md` files on disk |
+| `transports/twilio_ws.py` | 89% | Media-socket error paths that need a half-closed real socket to reach honestly |
+| `recall.py` | 90% | Store failures and empty-result branches |
+| `approvals/policy.py` | 91% | Individual denylist entries; the classification itself is covered exhaustively |
+| `cluster.py` | 91% | Parser branches for `sinfo`/`squeue` shapes the captured fixtures do not contain |
+| `approvals/broker.py` | 91% | Socket-level failures (a client that disconnects mid-request) |
+| `projects.py`, `tools/builtin_billing.py` | 91% | `OSError` paths on project discovery, and two billing error branches |
+| `cli.py` | 93% | Argument-parsing edges and the `serve` loop, which is exercised end to end rather than by unit test |
+
+None of them is a gap in a *rule* — the PIN gate, the `reported_at` contract, the
+`can_text` gate, the read-only guarantees in `billing.py` and `cluster.py`, and the
+approval policy's allowlist are each covered by tests named after them. They are error
+paths that need a broken filesystem or a half-open socket to reach honestly. If you are
+touching one of these modules, adding the test is welcome.
+
 ## Dependencies and their licences
 
 Every direct dependency carries a lower bound at the version `uv.lock` pins — the version
