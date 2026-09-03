@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from jarvis.config import DATA_DIR_MODE, PLACEHOLDER_KEY, Settings, env_var_name
+from jarvis.restart import resolve_target
 
 Severity = Literal["hard", "soft"]
 
@@ -91,6 +92,7 @@ def run_doctor_checks(
     ]
     if probe_mic:
         checks.append(_microphone_check())
+    checks.append(_service_manager_check(settings))
     checks.append(_data_dir_check(settings))
     checks.append(_data_dir_privacy_check(settings))
     checks.append(_google_check(settings))
@@ -293,6 +295,32 @@ def _microphone_check() -> Check:
         return Check("microphone", False, f"no input device: {exc}", severity="soft")
     name = device.get("name") if isinstance(device, dict) else str(device)
     return Check("microphone", True, str(name), severity="soft")
+
+
+def _service_manager_check(settings: Settings) -> Check:
+    """What supervises this process, and what is unavailable when nothing does.
+
+    Warn-only: `SERVICE_MANAGER=none` — which is also what `auto` resolves to when neither
+    `systemctl` nor `launchctl` is on PATH — is a supported way to run Jarvis, just a
+    narrower one. It is worth saying out loud because the consequence is silent: `jarvis
+    restart` and the voice model's `restart_service` both refuse, so a subagent that
+    changes Jarvis's own code has no way to make the change take effect.
+    """
+    target = resolve_target(settings)
+    if target is None:
+        return Check(
+            "service manager",
+            False,
+            "nothing supervises this process — `jarvis restart` and the voice's "
+            "restart_service refuse, and nothing restarts Jarvis if it dies",
+            severity="soft",
+        )
+    detail = target.describe()
+    if shutil.which("git") is None:
+        # `current_version` is decoration and degrades quietly; say so once, here, rather
+        # than leave someone wondering why every restart reports an unknown version.
+        detail += " — but no git on PATH, so versions will report as unknown"
+    return Check("service manager", True, detail, severity="soft")
 
 
 def _data_dir_check(settings: Settings) -> Check:

@@ -255,7 +255,8 @@ class Settings(BaseSettings):
     #: fatigue is the real failure mode: a bridge that rings ten times a day gets muted,
     #: and then it is not there for the one that mattered.
     approval_max_per_hour: int = 4
-    #: `HH:MM-HH:MM` local time in which it never rings (may cross midnight); blank is never.
+    #: `HH:MM-HH:MM` in which it never rings (may cross midnight); blank is never. Local
+    #: time as the *host* sees it — see the note in `approvals/broker.py::_quiet_now`.
     approval_quiet_hours: str | None = None
     #: The only shell commands a keypad digit may ever run, matched as whole-word prefixes
     #: of a command with no chaining or redirection in it (jarvis/approvals/policy.py).

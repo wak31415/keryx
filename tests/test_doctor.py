@@ -258,6 +258,33 @@ def test_a_broken_openwakeword_install_is_reported_not_raised(healthy, monkeypat
     assert "openwakeword" in check.detail
 
 
+def test_the_detected_service_manager_is_reported(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["service manager"]
+
+    assert check.ok is True
+    assert check.detail.split()[0] in {"systemd", "launchd"}
+
+
+def test_nothing_supervising_the_process_is_a_warning_that_says_what_is_lost(healthy):
+    """`SERVICE_MANAGER=none` is a supported way to run; the consequence is just silent."""
+    settings = healthy.model_copy(update={"service_manager": "none"})
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["service manager"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "restart_service" in check.detail
+
+
+def test_a_missing_git_is_reported_next_to_the_service_manager(healthy, monkeypatch):
+    """Version reporting degrades quietly without it, which is worth saying once."""
+    monkeypatch.setattr("shutil.which", lambda name: None if name == "git" else f"/bin/{name}")
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["service manager"]
+
+    assert check.ok is True
+    assert "no git on PATH" in check.detail
+
+
 def test_an_unwritable_data_dir_is_a_hard_failure(healthy, tmp_path):
     settings = healthy.model_copy(update={"data_dir": Path("/dev/null/nope")})
 
