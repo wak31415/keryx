@@ -46,6 +46,20 @@ jobs:
       - name: Tests
         run: uv run pytest -q
 
+      # One leg only: the number is the same on both, and a second copy in the summary is
+      # noise. `fail_under` in pyproject.toml is what actually fails the build.
+      - name: Coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          uv run pytest -q --cov --cov-report=term:skip-covered --cov-report=xml
+          {
+            echo '### Coverage'
+            echo
+            echo '```'
+            uv run coverage report --precision=2 --skip-covered
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build:
     name: wheel builds and installs
     runs-on: ubuntu-latest

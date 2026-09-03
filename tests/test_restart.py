@@ -9,8 +9,10 @@ import asyncio
 import json
 import os
 import stat
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from xml.etree import ElementTree
 
 import pytest
@@ -31,8 +33,11 @@ from jarvis.restart_service import (
     SYSTEMD_UNIT,
     WATCH_UNIT_PREFIX,
     ServiceTarget,
+    WatchPlan,
     resolve_target,
+    spawn_watchdog,
     watch_command,
+    watch_log_path,
 )
 from jarvis.restart_store import RestartRecord, RestartStore, format_duration
 from jarvis.restart_version import (
@@ -41,6 +46,7 @@ from jarvis.restart_version import (
     mark_running,
     mark_startup_logs,
     running_version,
+    startup_log_marks,
 )
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
@@ -1234,3 +1240,153 @@ async def test_without_a_startup_mark_the_record_is_still_used(tmp_path):
     summary = await harness.coordinator.status_summary(record, phone_up=True)
 
     assert "ModuleNotFoundError" in summary
+
+
+# --- spawn_watchdog --------------------------------------------------------
+
+
+class RecordingPopen:
+    """`subprocess.Popen`, recorded rather than run.
+
+    No real child here on purpose: `spawn_watchdog` deliberately drops the `Popen` object
+    (the caller is about to be killed, so there must be nothing left to reap), and a test
+    that started a real process would be left holding exactly the unreaped handle that
+    design implies.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append({"argv": argv, **kwargs})
+        # Read while the file object is still open — `spawn_watchdog` closes it after.
+        stdout = kwargs.get("stdout")
+        self.calls[-1]["stdout_name"] = getattr(stdout, "name", None)
+        return SimpleNamespace(pid=4321)
+
+
+def test_spawn_watchdog_starts_a_detached_process_and_returns_its_pid(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    popen = RecordingPopen()
+    monkeypatch.setattr("jarvis.restart_service.subprocess.Popen", popen)
+    plan = WatchPlan(["/usr/bin/true", "--watch"], "jarvis-restart-watch-1", redirect=False)
+
+    assert spawn_watchdog(plan, settings) == 4321
+
+    (call,) = popen.calls
+    assert call["argv"] == ["/usr/bin/true", "--watch"]
+    # A new session, or the restart that signals our cgroup takes the watchdog with it.
+    assert call["start_new_session"] is True
+    # systemd redirects for us, so there is nothing to write to and nothing to close.
+    assert call["stdout"] is subprocess.DEVNULL
+    assert call["stdout_name"] is None
+
+
+def test_a_redirected_watchdog_is_pointed_at_its_own_log(tmp_path, monkeypatch):
+    """On launchd nothing redirects for us, and a watchdog that fails has no other voice."""
+    settings = make_settings(tmp_path)
+    popen = RecordingPopen()
+    monkeypatch.setattr("jarvis.restart_service.subprocess.Popen", popen)
+    plan = WatchPlan(["/usr/bin/true"], "detached", redirect=True)
+
+    spawn_watchdog(plan, settings)
+
+    (call,) = popen.calls
+    assert call["stdout_name"] == str(watch_log_path(settings))
+    assert call["stderr"] is subprocess.STDOUT
+    assert watch_log_path(settings).parent.is_dir()
+
+
+def test_the_watchdog_log_lives_under_the_data_dir(tmp_path):
+    settings = make_settings(tmp_path)
+
+    assert watch_log_path(settings).parent == settings.data_dir / "logs"
+
+
+# --- the record's failure paths ---------------------------------------------
+
+
+def test_an_unreadable_record_is_ignored_rather_than_fatal(tmp_path):
+    """Losing the breadcrumb must never be the thing that takes the service down."""
+    path = tmp_path / "restart.json"
+    path.write_text("{not json")
+
+    assert RestartStore(path).load() is None
+
+
+def test_a_record_that_is_not_an_object_is_ignored(tmp_path):
+    path = tmp_path / "restart.json"
+    path.write_text('["a list"]')
+
+    assert RestartStore(path).load() is None
+
+
+def test_a_missing_record_is_simply_none(tmp_path):
+    assert RestartStore(tmp_path / "never-written.json").load() is None
+
+
+def test_a_record_that_cannot_be_written_reports_false(tmp_path):
+    store = RestartStore(tmp_path / "nope" / "restart.json")
+    (tmp_path / "nope").write_text("this is a file, not a directory")
+
+    assert store.save(RestartRecord(reason="whatever")) is False
+
+
+def test_clearing_a_record_that_is_not_there_is_fine(tmp_path):
+    RestartStore(tmp_path / "never-written.json").clear()  # must not raise
+
+
+def test_a_record_from_a_newer_build_drops_the_fields_it_does_not_know(tmp_path):
+    """The other half of "the database runs ahead of the code"."""
+    path = tmp_path / "restart.json"
+    path.write_text(json.dumps({"reason": "new code", "invented_later": True}))
+
+    record = RestartStore(path).load()
+
+    assert record is not None
+    assert record.reason == "new code"
+
+
+def test_an_unparseable_timestamp_gives_an_unknown_age():
+    assert RestartRecord(requested_at="not a date").age_seconds() is None
+
+
+# --- the version stamp's failure paths --------------------------------------
+
+
+def test_a_version_that_cannot_be_stamped_is_still_returned(tmp_path, monkeypatch):
+    """Decoration: an unwritable data dir costs one line of the spoken summary, not more."""
+    monkeypatch.setattr("jarvis.restart_version.current_version", lambda repo=None: "v1-abc")
+    unwritable = tmp_path / "a-file"
+    unwritable.write_text("not a directory")
+
+    assert mark_running(unwritable / "data") == "v1-abc"
+
+
+def test_no_stamp_on_disk_reads_back_as_nothing(tmp_path):
+    assert running_version(tmp_path) is None
+
+
+def test_startup_marks_that_were_never_written_read_back_as_none(tmp_path):
+    assert startup_log_marks(tmp_path) is None
+
+
+def test_startup_marks_that_are_corrupt_read_back_as_none(tmp_path):
+    (tmp_path / "startup-log-marks.json").write_text("{not json")
+
+    assert startup_log_marks(tmp_path) is None
+
+
+def test_startup_marks_of_the_wrong_shape_read_back_as_none(tmp_path):
+    (tmp_path / "startup-log-marks.json").write_text('["a list"]')
+
+    assert startup_log_marks(tmp_path) is None
+
+
+def test_git_that_is_not_there_is_no_version_rather_than_an_error(tmp_path, monkeypatch):
+    def no_git(*args, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr("jarvis.restart_version.subprocess.run", no_git)
+
+    assert current_version(tmp_path) is None

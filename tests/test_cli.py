@@ -1,6 +1,7 @@
 """Tests for the `jarvis` command line: wiring only, no hardware and no network."""
 
 import asyncio
+import json
 import logging
 import wave
 from datetime import UTC, datetime
@@ -13,11 +14,19 @@ from fakes import FakeProvider
 from typer.testing import CliRunner
 
 from jarvis.app import TASK_DB_NAME
+from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from jarvis.briefing import memory_path
-from jarvis.cli import LOG_BACKUP_COUNT, LOG_MAX_BYTES, MAX_REPORT_CHARS, app
+from jarvis.cli import (
+    APPROVALS_EMPTY,
+    LOG_BACKUP_COUNT,
+    LOG_MAX_BYTES,
+    MAX_REPORT_CHARS,
+    app,
+)
 from jarvis.config import PLACEHOLDER_KEY, Settings
 from jarvis.realtime.base import AudioDelta, Transcript
-from jarvis.restart import RECORD_NAME, RestartRecord, RestartStore, ServiceTarget
+from jarvis.restart_service import ServiceTarget
+from jarvis.restart_store import RECORD_NAME, RestartRecord, RestartStore
 from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
@@ -723,6 +732,81 @@ def test_serve_refuses_to_start_on_a_malformed_pin(monkeypatch, tmp_path):
     assert "6 to 8 digits" in result.output
     assert "9876" not in result.output
     assert "doctor" in result.output
+
+
+# --- approvals -------------------------------------------------------------
+
+
+def _audit(settings, *entries) -> None:
+    path = settings.data_dir / STATE_DIR_NAME / AUDIT_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n")
+
+
+def test_approvals_says_when_there_is_nothing_yet(settings_stub):
+    result = runner.invoke(app, ["approvals"])
+
+    assert result.exit_code == 0, result.output
+    assert APPROVALS_EMPTY in result.output
+    assert "escalation: on" in result.output
+
+
+def test_approvals_prints_the_audit_trail(settings_stub):
+    _audit(
+        settings_stub,
+        {"ts": "2026-09-02T14:05:00Z", "event": "raised", "request_id": 7,
+         "summary": "Claude is asking to run pytest"},
+        {"ts": "2026-09-02T14:11:00Z", "event": "settled", "request_id": 7, "answer": "approve"},
+    )
+
+    result = runner.invoke(app, ["approvals"])
+
+    assert result.exit_code == 0, result.output
+    assert "2026-09-02 14:05" in result.output
+    assert "raised" in result.output and "settled" in result.output
+    assert "run pytest" in result.output
+
+
+def test_approvals_ignores_a_corrupt_audit_line_rather_than_failing(settings_stub):
+    path = settings_stub.data_dir / STATE_DIR_NAME / AUDIT_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('not json\n{"ts": "2026-09-02T14:05:00Z", "event": "raised"}\n')
+
+    result = runner.invoke(app, ["approvals"])
+
+    assert result.exit_code == 0, result.output
+    assert "raised" in result.output
+
+
+def test_approvals_limit_shows_only_the_tail(settings_stub):
+    _audit(settings_stub, *[
+        {"ts": f"2026-09-02T14:{index:02d}:00Z", "event": "raised", "request_id": index}
+        for index in range(10)
+    ])
+
+    result = runner.invoke(app, ["approvals", "--limit", "2"])
+
+    assert result.exit_code == 0, result.output
+    assert "14:09" in result.output
+    assert "14:00" not in result.output
+
+
+def test_the_kill_switch_is_a_file_so_it_needs_no_restart(settings_stub):
+    switch = settings_stub.data_dir / STATE_DIR_NAME / KILL_SWITCH_NAME
+
+    assert runner.invoke(app, ["approvals", "--disable"]).exit_code == 0
+    assert switch.exists()
+    assert "OFF (kill switch)" in runner.invoke(app, ["approvals"]).output
+
+    assert runner.invoke(app, ["approvals", "--enable"]).exit_code == 0
+    assert not switch.exists()
+    assert "escalation: on" in runner.invoke(app, ["approvals"]).output
+
+
+def test_approvals_refuses_both_switches_at_once(settings_stub):
+    result = runner.invoke(app, ["approvals", "--disable", "--enable"])
+
+    assert result.exit_code == 2
 
 
 # --- forget ----------------------------------------------------------------
