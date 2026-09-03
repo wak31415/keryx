@@ -533,3 +533,14 @@ uv run jarvis loopback --wav sample.wav --out reply.wav
 Tests never touch the network, a microphone, or a real subagent: OpenAI, Twilio,
 sounddevice, openWakeWord, and the Agent SDK all sit behind injectable interfaces with
 fakes.
+
+## Licence
+
+[Apache License 2.0](LICENSE) — Copyright 2026 William Koch.
+
+Apache-2.0 rather than MIT for two things MIT does not give you: an explicit patent
+grant from every contributor, and a trademark clause, which matters because "Jarvis" is a
+name with prior art all over it. Use the code; the name is not part of the grant.
+
+No third-party code is vendored into this repository. Everything else arrives through
+`pyproject.toml` under its own licence.
