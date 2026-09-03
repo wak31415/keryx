@@ -267,6 +267,13 @@ class Settings(BaseSettings):
     #: every explicitly configured project.
     approval_roots: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
+    # Retention (jarvis/retention.py). Both are **off** at 0, which is what Jarvis has
+    # always done: nothing is deleted, ever. A default that deleted a man's own call
+    # transcripts because nobody changed a number is not a default worth having, so the
+    # feature exists and the policy is his. See also `jarvis forget`.
+    transcript_retention_days: int = 0
+    task_retention_days: int = 0
+
     # Logging
     log_level: str = "INFO"
 
@@ -287,6 +294,14 @@ class Settings(BaseSettings):
         """A blank value is "not set" — `env_ignore_empty` for anything passed by hand."""
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("transcript_retention_days", "task_retention_days", mode="after")
+    @classmethod
+    def _retention_is_not_negative(cls, value: int) -> int:
+        """0 is off. A negative window would be a cutoff in the future — delete everything."""
+        if value < 0:
+            raise ValueError("must be 0 (keep everything) or a positive number of days")
         return value
 
     @field_validator("pin", mode="after")

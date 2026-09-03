@@ -234,6 +234,38 @@ class TaskStore:
             ).fetchall()
         return [Task.from_row(row) for row in rows]
 
+    async def delete_finished_before(self, cutoff: datetime) -> list[int]:
+        """Delete terminal task rows older than `cutoff`; returns the ids that went.
+
+        **Never deletes a task the caller has not been told about.** `reported_at` is the
+        only record that Jarvis said a result out loud, so a `done`/`failed` row still
+        waiting to be reported is kept however old it is — the alternative is a result he
+        will never hear, and hearing something late beats not hearing it. `internal` rows
+        (housekeeping he never asked about) and `cancelled` ones (work he stopped) are owed
+        to nobody and go on schedule.
+
+        `finished_at` can be NULL on a row cancelled before it ever ran, so the age of a
+        task falls back to when it was created.
+        """
+        return await asyncio.to_thread(self._delete_finished_before_sync, cutoff)
+
+    def _delete_finished_before_sync(self, cutoff: datetime) -> list[int]:
+        stamp = to_utc_iso(cutoff)
+        terminal = (TaskStatus.DONE.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM tasks WHERE status IN (?, ?, ?) "
+                "AND COALESCE(finished_at, created_at) < ? "
+                "AND NOT (reported_at IS NULL AND internal = 0 AND status IN (?, ?)) "
+                "ORDER BY id ASC",
+                (*terminal, stamp, TaskStatus.DONE.value, TaskStatus.FAILED.value),
+            ).fetchall()
+            ids = [int(row["id"]) for row in rows]
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                self._conn.execute(f"DELETE FROM tasks WHERE id IN ({placeholders})", ids)
+        return ids
+
     async def count_unreported(self) -> int:
         """How many finished tasks are still waiting to be told, in total."""
         return await asyncio.to_thread(self._count_unreported_sync)

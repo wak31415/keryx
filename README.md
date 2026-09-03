@@ -378,6 +378,7 @@ uv run jarvis approvals                       # what the approval bridge has esc
 uv run jarvis loopback --wav sample.wav       # one session from a WAV, no mic needed
 uv run jarvis restart --reason "new code"     # restart the service; it calls you back
 uv run jarvis restart --status                # how the last restart went
+uv run jarvis forget --older-than 30          # delete old transcripts and finished tasks
 ```
 
 `jarvis tasks` reads the SQLite store directly, so it works while the server is running
@@ -480,8 +481,8 @@ muted and then is not there for the one that mattered, and `APPROVAL_QUIET_HOURS
 
 Everything Jarvis keeps lives under `DATA_DIR` (default `~/.jarvis`), which is created
 **mode 0700**, with the files below **0600**. `jarvis doctor` warns if something has
-loosened that. Nothing here is encrypted at rest, and **nothing is deleted automatically**:
-transcripts and task rows accumulate for as long as the install lives.
+loosened that. Nothing here is encrypted at rest, and nothing is deleted unless you ask —
+see [Retention](#retention).
 
 | Path | What is in it |
 |---|---|
@@ -505,6 +506,39 @@ files go to **Slack**, but only when you ask. Gmail and Calendar work reaches **
 through the Claude CLI's own connectors. `check_billing` and `cluster_stats` talk to the
 provider's billing API and to the cluster over ssh. That is the whole list: there is no
 telemetry and no analytics of ours.
+
+### Retention
+
+Nothing is deleted by default. `jarvis.log` rotates; transcripts, task rows, task logs and
+task reports accumulate for as long as the install lives, which is the right default for a
+personal assistant and the wrong one for a machine you are about to hand on.
+
+Two settings turn it on, independently, and `0` (the default) means *keep everything*:
+
+| Env | What it prunes | Default |
+|---|---|---|
+| `TRANSCRIPT_RETENTION_DAYS` | `calls/*.log` older than this | `0` — never |
+| `TASK_RETENTION_DAYS` | finished task rows, and their `.log` and `.md`, older than this | `0` — never |
+
+The prune runs once at the top of `jarvis serve`, so changing a number takes effect on the
+next restart. Or do it now:
+
+```bash
+uv run jarvis forget --older-than 30       # asks first
+uv run jarvis forget --yes                 # everything eligible, no window
+uv run jarvis forget --transcripts-only --older-than 7
+```
+
+**One thing is never deleted, by either path: a finished task you have not been told about
+yet.** `reported_at` — stamped only when Jarvis has actually *said* the result out loud —
+is the only record that you heard it, so an unreported task survives any prune however old
+it is, and `jarvis forget` reports how many it kept for that reason. Hearing something late
+is recoverable; never hearing it is not. Internal housekeeping tasks and ones you cancelled
+are owed to nobody and go on schedule.
+
+`memory.md` is separate: it is rewritten by a subagent after every call and bounded on disk
+as soon as that subagent stops, so it does not grow without limit even though nothing
+prunes it.
 
 ## Assumptions and supported deployments
 

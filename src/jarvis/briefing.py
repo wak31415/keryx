@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from jarvis.config import Settings
+from jarvis.config import Settings, secure_file
 from jarvis.tasks.models import Task, TaskStatus
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -36,6 +36,10 @@ MEMORY_FILE = "memory.md"
 #: How much of the memory reaches the system prompt. It is spoken from, not read out, and
 #: a realtime session pays for every token of instructions on every turn.
 MAX_MEMORY_CHARS = 4000
+#: How much of it may sit on disk. Looser than the read limit on purpose: the memory
+#: subagent's prompt is what keeps the document short, and this is only the backstop that
+#: stops a runaway rewrite growing the file without limit. See `trim_memory`.
+MAX_MEMORY_FILE_CHARS = 3 * MAX_MEMORY_CHARS
 #: How much of one task's summary the digest carries. Enough to say a sentence about it.
 MAX_DIGEST_SUMMARY_CHARS = 200
 #: How much of one task's description the digest carries, to remind him what he asked for.
@@ -76,6 +80,36 @@ class Briefing:
 def memory_path(data_dir: Path) -> Path:
     """Where the rolling memory lives."""
     return data_dir / MEMORY_FILE
+
+
+def trim_memory(data_dir: Path, *, max_chars: int = MAX_MEMORY_FILE_CHARS) -> bool:
+    """Bound `memory.md` on disk. True when it was actually shortened.
+
+    `read_memory` bounds what reaches a *prompt*; this bounds the file, which nothing else
+    did — it is written by a subagent, under a prompt that asks it to stay within
+    `MAX_MEMORY_CHARS`, and a prompt is not a bound. The limit here is deliberately looser
+    than the read limit so that the subagent's own discipline stays the primary mechanism
+    and this stays a backstop against a runaway rewrite.
+
+    Trimmed from the *end*, for the same reason `read_memory` is: the document is written
+    standing-facts-first and recent-calls-last.
+    """
+    path = memory_path(data_dir)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if len(text) <= max_chars:
+        secure_file(path)
+        return False
+    try:
+        path.write_text(text[:max_chars].rstrip() + "\n", encoding="utf-8")
+    except OSError:
+        log.warning("could not trim %s", path)
+        return False
+    secure_file(path)
+    log.info("trimmed %s from %d to %d characters", path.name, len(text), max_chars)
+    return True
 
 
 def read_memory(data_dir: Path, *, max_chars: int = MAX_MEMORY_CHARS) -> str:
