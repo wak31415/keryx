@@ -85,6 +85,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `restart.py` | `RestartCoordinator`: restart this service through systemd/launchd, and call back once it is up; `RestartStore` (the record that survives the restart), `resolve_target`, `health_probe`, `watch_command`/`spawn_watchdog` (arming the watchdog below) |
 | `restart_watch.py` | `watch`: the out-of-process watchdog armed by a restart, which alerts by text and a plain `<Say>` call when the service never comes back |
 | `logscan.py` | `marks`/`errors_since`: the service's own log files, scoped by byte offset to what happened since a restart was asked for |
+| `logging_util.py` | `mask_number`: the only shape a phone number may take in a log line or a terminal (last four digits). Everything that writes one down goes through it |
 | `events.py` | in-process async pub/sub `EventBus` + event dataclasses |
 | `audio/util.py` | soxr resampling, chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` (µ-law codec removed 2026-08-19: phone audio is passed through as `audio/pcmu`, nothing transcodes) |
 | `transports/base.py` | `Transport` protocol + `AudioIn`/`Dtmf`/`Hangup` events |

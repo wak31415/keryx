@@ -30,6 +30,7 @@ from twilio.twiml.voice_response import VoiceResponse
 
 from jarvis.app import AppState
 from jarvis.config import Settings
+from jarvis.logging_util import mask_number
 from jarvis.notify.notifier import verify_report_token
 from jarvis.notify.twilio_out import stream_twiml
 from jarvis.session import VoiceSession
@@ -62,14 +63,16 @@ def create_app(state: AppState) -> FastAPI:
 
         caller = str(form.get("From") or "")
         if caller not in settings.allowed_callers:
-            log.warning("refused a call from %s: not in ALLOWED_CALLERS", caller or "<unknown>")
+            log.warning(
+                "refused a call from %s: not in ALLOWED_CALLERS", mask_number(caller)
+            )
             return _twiml(_private_number_twiml())
 
         token = state.stream_tokens.issue(
             caller=caller, extra={"call_sid": str(form.get("CallSid") or "")}
         )
         host = settings.public_host or external_host(request)
-        log.info("answering a call from %s; streaming to %s", caller, host)
+        log.info("answering a call from %s; streaming to %s", mask_number(caller), host)
         return _twiml(stream_twiml(host, {"token": token, "caller": caller}))
 
     @app.post("/twilio/status")

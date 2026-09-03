@@ -133,6 +133,20 @@ async def test_session_config_follows_the_phone_transport(make_session, phone, p
     assert "phone" in config.instructions
 
 
+async def test_starting_a_session_never_logs_the_callers_number(
+    make_session, phone, provider, caplog
+):
+    """The start line names the caller; `~/.jarvis/logs/jarvis.log` is not the place for one."""
+    with caplog.at_level(logging.INFO, logger="jarvis.session"):
+        session = make_session(phone, provider)
+        async with running(session):
+            await eventually(lambda: provider.config is not None)
+
+    assert "started" in caplog.text
+    assert phone.caller not in caplog.text
+    assert phone.caller[-4:] in caplog.text
+
+
 async def test_local_sessions_are_half_duplex(make_session, local, provider):
     session = make_session(local, provider)
 

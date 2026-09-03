@@ -6,6 +6,7 @@ Nothing here talks to Twilio or OpenAI: signatures are computed locally with Twi
 
 import base64
 import json
+import logging
 import time
 from types import SimpleNamespace
 from xml.etree import ElementTree
@@ -161,6 +162,24 @@ def test_a_caller_who_is_not_allowed_is_told_the_number_is_private(client, state
     assert twiml.find("Hangup") is not None
     assert twiml.find("Connect") is None
     assert len(state.stream_tokens) == 0
+
+
+def test_an_inbound_call_never_writes_the_caller_number_to_the_log(client, caplog):
+    """`~/.jarvis/logs/jarvis.log` and the journal are not a place for a phone number."""
+    with caplog.at_level(logging.INFO, logger="jarvis.server"):
+        post_signed(client, "/twilio/voice", {"From": CALLER, "CallSid": CALL_SID})
+
+    assert "answering a call" in caplog.text
+    assert CALLER not in caplog.text
+    assert CALLER[-4:] in caplog.text  # still enough to tell two callers apart
+
+
+def test_a_refused_caller_is_not_written_down_in_full_either(client, caplog):
+    with caplog.at_level(logging.WARNING, logger="jarvis.server"):
+        post_signed(client, "/twilio/voice", {"From": STRANGER, "CallSid": CALL_SID})
+
+    assert "ALLOWED_CALLERS" in caplog.text
+    assert STRANGER not in caplog.text
 
 
 def test_without_an_auth_token_every_request_is_refused(tmp_path):
