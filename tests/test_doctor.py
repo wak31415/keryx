@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 
 from jarvis.config import Settings
-from jarvis.doctor import Check, format_check, has_hard_failure, run_doctor_checks
+from jarvis.doctor import (
+    Check,
+    _data_dir_privacy_check,
+    format_check,
+    has_hard_failure,
+    run_doctor_checks,
+)
 
 
 @pytest.fixture
@@ -24,7 +30,7 @@ def healthy(tmp_path, monkeypatch):
     credentials.mkdir(parents=True)
     (credentials / "credentials.json").write_text("{}")
 
-    return Settings(
+    settings = Settings(
         _env_file=None,
         openai_api_key="sk-test",
         anthropic_api_key="sk-ant-test",
@@ -38,6 +44,10 @@ def healthy(tmp_path, monkeypatch):
         google_oauth_client_id="client-id",
         google_oauth_client_secret="client-secret",
     )
+    # As every entry point does before running anything — it is what makes `data_dir`
+    # owner-only, which the privacy check then looks at.
+    settings.ensure_dirs()
+    return settings
 
 
 def by_name(checks: list[Check]) -> dict[str, Check]:
@@ -251,6 +261,46 @@ def test_an_unwritable_data_dir_is_a_hard_failure(healthy, tmp_path):
 
     check = by_name(run_doctor_checks(settings, probe_mic=False))["data dir writable"]
     assert (check.ok, check.severity) == (False, "hard")
+
+
+def test_a_world_readable_data_dir_only_warns(healthy):
+    """A shared host is where this matters; a single-user one is not worth refusing over."""
+    healthy.data_dir.chmod(0o755)
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["data dir private"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "0755" in check.detail
+    assert "chmod 0700" in check.detail
+
+
+def test_a_group_readable_data_dir_is_reported_too(healthy):
+    healthy.data_dir.chmod(0o740)
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["data dir private"]
+
+    assert check.ok is False
+
+
+def test_an_owner_only_data_dir_passes(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["data dir private"]
+
+    assert (check.ok, check.detail) == (True, "0700 (owner only)")
+
+
+def test_doctor_creates_a_missing_data_dir_owner_only(healthy, tmp_path):
+    """The write probe creates the directory; it must not leave a loose one behind."""
+    settings = healthy.model_copy(update={"data_dir": tmp_path / "never-created"})
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["data dir private"]
+
+    assert (check.ok, check.detail) == (True, "0700 (owner only)")
+
+
+def test_a_data_dir_that_cannot_be_read_is_reported_not_raised(healthy):
+    check = _data_dir_privacy_check(healthy.model_copy(update={"data_dir": Path("/dev/null/nope")}))
+
+    assert (check.ok, check.severity) == (False, "soft")
 
 
 def test_google_is_reported_as_unused_while_workspace_mcp_is_off(healthy):

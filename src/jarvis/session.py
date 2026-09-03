@@ -43,7 +43,7 @@ from typing import Protocol
 
 from jarvis.audio.util import ms_for_bytes
 from jarvis.briefing import Briefing, BriefingSource
-from jarvis.config import Settings
+from jarvis.config import Settings, secure_dir, secure_file
 from jarvis.events import EventBus, SessionEnded, SessionStarted
 from jarvis.logging_util import mask_number
 from jarvis.prompts import render_voice_prompt
@@ -723,9 +723,13 @@ class VoiceSession:
         """
         line = f"[{datetime.now().isoformat(timespec='seconds')}] {text}\n"
         try:
-            self.transcript_path.parent.mkdir(parents=True, exist_ok=True)
+            secure_dir(self.transcript_path.parent)
+            existed = self.transcript_path.exists()
             with self.transcript_path.open("a", encoding="utf-8") as handle:
                 handle.write(line)
+            if not existed:
+                # On creation only: this file ends up holding every word of the call.
+                secure_file(self.transcript_path)
         except OSError:
             log.warning("session %s: could not write the transcript", self.session_id)
 

@@ -371,7 +371,38 @@ uv run jarvis restart --status                # how the last restart went
   PIN configured, every dispatch is simply refused over the phone.
 - Secrets are never logged, the PIN is compared with `hmac.compare_digest`, and the report
   signing secret is either `REPORT_SECRET` or a random one persisted at
-  `~/.jarvis/report_secret` with mode 600.
+  `~/.jarvis/report_secret` with mode 600. Caller phone numbers are masked to their last
+  four digits everywhere they are written down.
+
+### What is stored, and what is sent
+
+Everything Jarvis keeps lives under `DATA_DIR` (default `~/.jarvis`), which is created
+**mode 0700**, with the files below **0600**. `jarvis doctor` warns if something has
+loosened that. Nothing here is encrypted at rest, and **nothing is deleted automatically**:
+transcripts and task rows accumulate for as long as the install lives.
+
+| Path | What is in it |
+|---|---|
+| `calls/<session_id>.log` | the full transcript of a call — every line you said and every line Jarvis said |
+| `tasks.db` | every task: what you asked for, its status, and the spoken summary that came back |
+| `tasks/<id>.log` | a subagent's progress, tool by tool |
+| `tasks/<id>.md` | the written report a task produced |
+| `memory.md` | what Jarvis carries between calls, rewritten after each one |
+| `logs/*.log` | the server log and the service manager's stdout/stderr |
+| `report_secret` | the HMAC key for `/reports/{id}` links, if `REPORT_SECRET` is unset |
+| `restart.json`, `running-version`, `approvals/` | restart bookkeeping and the approval socket |
+
+Keyed PIN digits are never written anywhere: not to the log, not to the transcript, and
+not into the model's context.
+
+**What leaves the machine.** Call audio and the conversation go to the **OpenAI Realtime
+API**; the small factual questions the voice answers itself go to the OpenAI **Responses**
+API. Task text and whatever a subagent reads go to **Anthropic** through the Claude Agent
+SDK. Phone audio, caller ID and SMS go through **Twilio**. `send_to_slack` and a subagent's
+files go to **Slack**, but only when you ask. Gmail and Calendar work reaches **Google**
+through the Claude CLI's own connectors. `check_billing` and `cluster_stats` talk to the
+provider's billing API and to the cluster over ssh. That is the whole list: there is no
+telemetry and no analytics of ours.
 
 ## Costs
 
@@ -519,7 +550,8 @@ uv run jarvis doctor        # add --no-mic on a machine with no microphone
 It checks `.env`, both API keys, the `claude` CLI (bundled or on `PATH`), Twilio
 settings, `PUBLIC_HOST`, a tunnel binary (`cloudflared` or `ngrok`), the caller allowlist,
 the PIN, the wake-word model, the
-microphone, that `~/.jarvis` is writable, and whether Google credentials exist. `✅` is
+microphone, that `~/.jarvis` is writable and readable by nobody else, and whether Google
+credentials exist. `✅` is
 fine, `⚠️` narrows what Jarvis can do (no mic, no PIN, no Google, no `claude` CLI), `❌`
 means it will not work — and only `❌` makes the command exit non-zero.
 

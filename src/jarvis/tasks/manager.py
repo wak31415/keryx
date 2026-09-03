@@ -37,7 +37,7 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 
-from jarvis.config import Settings
+from jarvis.config import Settings, secure_file
 from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
 from jarvis.projects import discover_projects
 from jarvis.tasks.agent_runner import AgentRunner, AgentSession, RunResult, resolve_model
@@ -442,9 +442,13 @@ class TaskManager:
     def _append_log(self, task_id: int, text: str) -> None:
         """Append one timestamped line to the task's log (best effort, never fatal)."""
         stamp = datetime.now().strftime("%H:%M:%S")
+        path = self._log_path(task_id)
         try:
-            with self._log_path(task_id).open("a", encoding="utf-8") as handle:
+            existed = path.exists()
+            with path.open("a", encoding="utf-8") as handle:
                 handle.write(f"[{stamp}] {text}\n")
+            if not existed:
+                secure_file(path)
         except OSError:
             log.exception("could not append to the log of task %s", task_id)
 
@@ -454,6 +458,7 @@ class TaskManager:
         header = f"# Task {task.id}\n\n{task.description}\n\n---\n\n"
         try:
             path.write_text(header + (result.final_text or ""), encoding="utf-8")
+            secure_file(path)
         except OSError:
             log.exception("could not write the report of task %s", task.id)
         return path

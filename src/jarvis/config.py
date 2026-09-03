@@ -1,5 +1,6 @@
 """Application settings, loaded from environment variables / `.env`."""
 
+import contextlib
 import json
 import logging
 import os
@@ -53,6 +54,32 @@ OPTIONAL_STR_FIELDS = (
 #: `bypassPermissions`, and eight at most because it is said or keyed under time pressure.
 PIN_PATTERN = re.compile(r"\d{6,8}")
 PIN_RULE = "must be 6 to 8 digits, and nothing but digits"
+
+
+#: Modes for everything under `data_dir`. Owner-only, both of them, because of what is
+#: actually in there: `calls/*.log` is every word of every call, `tasks.db` and
+#: `tasks/*.md` are what was asked for and what came back, and `memory.md` is what Jarvis
+#: knows about its owner between calls. The default umask on most machines is 022, which
+#: makes all of that world-readable to anyone else with an account.
+DATA_DIR_MODE = 0o700
+DATA_FILE_MODE = 0o600
+
+
+def secure_dir(path: Path) -> Path:
+    """Create a directory under `data_dir`, owner-only, tightening one that already exists."""
+    path.mkdir(parents=True, exist_ok=True)
+    # Best effort: a mode that cannot be set (a mounted share, another owner) is not a
+    # reason to refuse to run, and `jarvis doctor` reports the result either way.
+    with contextlib.suppress(OSError):
+        os.chmod(path, DATA_DIR_MODE)
+    return path
+
+
+def secure_file(path: Path) -> Path:
+    """Tighten a file under `data_dir` to owner-only. A file that is not there is fine."""
+    with contextlib.suppress(OSError):
+        os.chmod(path, DATA_FILE_MODE)
+    return path
 
 
 class Settings(BaseSettings):
@@ -329,11 +356,16 @@ class Settings(BaseSettings):
         return "near_field" if channel == "phone" else "far_field"
 
     def ensure_dirs(self) -> None:
-        """Create `data_dir` and its `tasks`/`calls`/`approvals` subdirectories."""
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        (self.data_dir / "tasks").mkdir(parents=True, exist_ok=True)
-        (self.data_dir / "calls").mkdir(parents=True, exist_ok=True)
-        (self.data_dir / "approvals").mkdir(parents=True, exist_ok=True)
+        """Create `data_dir` and its `tasks`/`calls`/`approvals` subdirectories, owner-only.
+
+        Existing directories are tightened in place, so an install made before this simply
+        becomes private the next time anything starts. `approvals/` was already 0700 for
+        its socket; the rest of `data_dir` holds transcripts and reports and deserved the
+        same from the start.
+        """
+        secure_dir(self.data_dir)
+        for name in ("tasks", "calls", "approvals"):
+            secure_dir(self.data_dir / name)
 
     def report_secret_value(self) -> str:
         """The configured report secret, or a persisted random one at `data_dir/report_secret`.
@@ -352,10 +384,10 @@ class Settings(BaseSettings):
         if secret_path.exists():
             return secret_path.read_text().strip()
 
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        secure_dir(self.data_dir)
         secret = secrets.token_hex(32)
         secret_path.write_text(secret)
-        os.chmod(secret_path, 0o600)
+        secure_file(secret_path)
         return secret
 
 

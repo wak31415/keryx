@@ -2,6 +2,7 @@
 
 import asyncio
 import sqlite3
+import stat
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -202,6 +203,18 @@ async def test_close_is_idempotent():
     task_store = TaskStore(":memory:")
     await task_store.close()
     await task_store.close()  # must not raise
+
+
+async def test_the_database_is_created_owner_only(tmp_path):
+    """Row text is what was asked for out loud and what came back, plus the WAL sidecars."""
+    path = tmp_path / "tasks.db"
+    task_store = TaskStore(path)
+    await task_store.create(_task(description="something private"))
+    await task_store.close()
+
+    for candidate in (path, path.with_name("tasks.db-wal"), path.with_name("tasks.db-shm")):
+        if candidate.exists():
+            assert stat.S_IMODE(candidate.stat().st_mode) == 0o600, candidate
 
 
 async def test_store_persists_across_instances_for_file_path(tmp_path):
