@@ -725,6 +725,57 @@ def test_serve_refuses_to_start_on_a_malformed_pin(monkeypatch, tmp_path):
     assert "doctor" in result.output
 
 
+# --- forget ----------------------------------------------------------------
+
+
+def test_forget_asks_before_deleting_anything(settings_stub, monkeypatch):
+    settings_stub.ensure_dirs()
+    (settings_stub.data_dir / "calls" / "abc.log").write_text("user: hello")
+
+    result = runner.invoke(app, ["forget"], input="n\n")
+
+    assert result.exit_code == 1  # typer.confirm(abort=True)
+    assert (settings_stub.data_dir / "calls" / "abc.log").exists()
+
+
+def test_forget_deletes_transcripts_when_confirmed(settings_stub):
+    settings_stub.ensure_dirs()
+    (settings_stub.data_dir / "calls" / "abc.log").write_text("user: hello")
+
+    result = runner.invoke(app, ["forget", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert not (settings_stub.data_dir / "calls" / "abc.log").exists()
+    assert "removed 1 transcript" in result.output
+
+
+def test_forget_leaves_task_rows_alone_when_asked(settings_stub):
+    settings_stub.ensure_dirs()
+    (settings_stub.data_dir / "calls" / "abc.log").write_text("user: hello")
+
+    result = runner.invoke(app, ["forget", "--transcripts-only", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "transcript" in result.output
+
+
+def test_forget_refuses_both_only_flags(settings_stub):
+    result = runner.invoke(app, ["forget", "--transcripts-only", "--tasks-only", "--yes"])
+
+    assert result.exit_code == 2
+
+
+def test_forget_keeps_a_window_when_one_is_given(settings_stub):
+    """`--older-than 30` must not take a transcript written this morning."""
+    settings_stub.ensure_dirs()
+    (settings_stub.data_dir / "calls" / "today.log").write_text("user: hello")
+
+    result = runner.invoke(app, ["forget", "--older-than", "30", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert (settings_stub.data_dir / "calls" / "today.log").exists()
+
+
 def test_doctor_help_documents_no_mic():
     result = runner.invoke(app, ["doctor", "--help"])
 

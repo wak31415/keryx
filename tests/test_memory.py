@@ -7,8 +7,8 @@ is aimed at the right two files, and that a call not worth remembering creates n
 
 import pytest
 
-from jarvis.briefing import memory_path
-from jarvis.events import EventBus, SessionEnded
+from jarvis.briefing import MAX_MEMORY_FILE_CHARS, memory_path
+from jarvis.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
 from jarvis.memory import MIN_SPOKEN_LINES, MemoryWriter, count_spoken_lines, describe_tasks
 from jarvis.tasks.agent_runner import FakeAgentRunner
 from jarvis.tasks.manager import TaskManager
@@ -43,6 +43,46 @@ def ended(session_id: str = "abc123") -> SessionEnded:
 
 async def internal_tasks(store):
     return [task for task in await store.list(include_internal=True) if task.internal]
+
+
+# --- the memory is bounded when the subagent that wrote it stops -----------
+
+
+async def test_the_memory_is_trimmed_when_our_update_task_finishes(settings, writer):
+    """The "on write" half of the size limit: a subagent writes the file, so we trim after."""
+    _, bus, _, store = writer
+    write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
+    await bus.publish(ended())
+    task = (await internal_tasks(store))[0]
+    memory_path(settings.data_dir).write_text("x" * (MAX_MEMORY_FILE_CHARS * 2))
+
+    await bus.publish(TaskCompleted(task.id, "memory updated"))
+
+    assert len(memory_path(settings.data_dir).read_text()) <= MAX_MEMORY_FILE_CHARS + 1
+
+
+async def test_somebody_elses_task_finishing_does_not_trim_the_memory(settings, writer):
+    """Every task publishes `TaskCompleted`; only the one we dispatched wrote this file."""
+    _, bus, _, _ = writer
+    oversized = "x" * (MAX_MEMORY_FILE_CHARS * 2)
+    memory_path(settings.data_dir).write_text(oversized)
+
+    await bus.publish(TaskCompleted(999, "some other work"))
+
+    assert memory_path(settings.data_dir).read_text() == oversized
+
+
+async def test_a_failed_memory_update_still_trims(settings, writer):
+    """A subagent that wrote a runaway file and then errored is exactly the case to bound."""
+    _, bus, _, store = writer
+    write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
+    await bus.publish(ended())
+    task = (await internal_tasks(store))[0]
+    memory_path(settings.data_dir).write_text("x" * (MAX_MEMORY_FILE_CHARS * 2))
+
+    await bus.publish(TaskFailed(task.id, "it blew up"))
+
+    assert len(memory_path(settings.data_dir).read_text()) <= MAX_MEMORY_FILE_CHARS + 1
 
 
 # --- what counts as a call worth remembering -------------------------------

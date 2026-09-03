@@ -19,9 +19,9 @@ runs, and every failure path ends in a log line.
 import logging
 from pathlib import Path
 
-from jarvis.briefing import MAX_MEMORY_CHARS, memory_path
+from jarvis.briefing import MAX_MEMORY_CHARS, memory_path, trim_memory
 from jarvis.config import Settings
-from jarvis.events import EventBus, SessionEnded
+from jarvis.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
 from jarvis.prompts import render_prompt
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import Task
@@ -69,14 +69,27 @@ class MemoryWriter:
         self._manager = manager
         self._settings = settings
         self._remove = None
+        self._remove_finished: list = []
+        #: Memory-update tasks this writer dispatched and is still waiting on, so the trim
+        #: below fires for our subagent's write and not for every task that finishes.
+        self._writing: set[int] = set()
 
     def start(self) -> None:
-        """Subscribe to `SessionEnded`. Idempotent."""
+        """Subscribe to `SessionEnded`, and to the end of our own update tasks. Idempotent."""
         if self._remove is None:
             self._remove = self._bus.subscribe(SessionEnded, self._on_session_ended)
+        if not self._remove_finished:
+            self._remove_finished = [
+                self._bus.subscribe(event, self._on_task_finished)
+                for event in (TaskCompleted, TaskFailed)
+            ]
 
     def stop(self) -> None:
         """Unsubscribe. Idempotent."""
+        for remove in self._remove_finished:
+            remove()
+        self._remove_finished = []
+        self._writing.clear()
         if self._remove is not None:
             self._remove()
             self._remove = None
@@ -118,4 +131,22 @@ class MemoryWriter:
             cwd=str(self._settings.data_dir),
             internal=True,
         )
+        if task.id is not None:
+            self._writing.add(task.id)
         log.info("session %s: memory update dispatched as task %s", event.session_id, task.id)
+
+    async def _on_task_finished(self, event: TaskCompleted | TaskFailed) -> None:
+        """Bound `memory.md` as soon as the subagent that rewrote it has stopped.
+
+        This is the "on write" half of the memory's size limit. `read_memory` trims what
+        reaches a prompt; nothing trimmed the file, which is written by a subagent under a
+        prompt asking it to stay short — good discipline, not a bound. Doing it here rather
+        than on the next start means a runaway rewrite is corrected before anything reads it.
+        """
+        if event.task_id not in self._writing:
+            return
+        self._writing.discard(event.task_id)
+        try:
+            trim_memory(self._settings.data_dir)
+        except Exception:  # pragma: no cover - trim_memory swallows its own OSErrors
+            log.exception("could not trim the memory after task %s", event.task_id)

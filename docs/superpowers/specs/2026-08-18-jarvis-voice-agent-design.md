@@ -89,6 +89,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `approvals/models.py` | `ApprovalRequest`, `Kind`, `Verdict`, `Outcome`, `input_digest`: what a pending Claude Code prompt is, once |
 | `approvals/policy.py` | `classify`: the allowlist deciding which prompts may ever be escalated, and what is said about them. Pure — no file, no network |
 | `approvals/broker.py` | `ApprovalBroker`: the Unix-socket server the Claude Code hook blocks on, the escalation timer, `arm()`/`digit()`, the audit trail and the kill switch |
+| `retention.py` | `prune`/`prune_with`: the transcript and task windows, off by default; the one rule is that an unreported task is never deleted |
 | `events.py` | in-process async pub/sub `EventBus` + event dataclasses |
 | `audio/util.py` | soxr resampling, chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` (µ-law codec removed 2026-08-19: phone audio is passed through as `audio/pcmu`, nothing transcodes) |
 | `transports/base.py` | `Transport` protocol + `AudioIn`/`Dtmf`/`Hangup` events |
@@ -111,7 +112,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `prompts/voice_system.md` | receptionist persona + tool-use guidance |
 | `prompts/subagent_suffix.md` | appended to Agent SDK system prompt: autonomous, ends with `SPOKEN_SUMMARY:` block |
 | `prompts/memory_update.md` | the internal memory subagent's prompt: merge this call's transcript into `memory.md`, keep the structure, stay under budget |
-| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory`, `setup-google`, `doctor`, `restart`, `restart-watch` (hidden; armed by a restart, not run by hand) |
+| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory`, `forget`, `approvals`, `setup-google`, `doctor`, `restart`, `restart-watch` (hidden; armed by a restart, not run by hand) |
 
 ### 3.2 Binding interfaces
 
@@ -742,6 +743,16 @@ and pending is re-read before dialling and again before any verdict is applied. 
 arriving while he is already on the phone is announced into that call. `jarvis approvals` is
 the audit trail; `--disable` is the kill switch, and it is a file so it works without a
 restart.
+
+**Retention (2026-09-02).** Off by default (`TRANSCRIPT_RETENTION_DAYS` /
+`TASK_RETENTION_DAYS` = 0 = keep everything), because a default that deletes his own call
+transcripts is not one to ship. `jarvis/retention.py` prunes once at the top of
+`jarvis serve` and on demand from `jarvis forget`. **A finished task that has not been
+reported is never deleted**, however old: `reported_at` is the only record that he was told,
+and `TaskStore.delete_finished_before` therefore skips exactly what `list_unreported` would
+return. `internal` and `cancelled` rows are owed to nobody and go on schedule. `memory.md`
+is bounded on disk (`briefing.trim_memory`, `MAX_MEMORY_FILE_CHARS`) as soon as the subagent
+that rewrote it finishes — the prompt's own budget stays the primary mechanism.
 
 **At rest (2026-09-02).** `data_dir` and its `tasks`/`calls`/`approvals` subdirectories are
 created **0700** by `ensure_dirs`, which tightens an existing tree in place rather than only
