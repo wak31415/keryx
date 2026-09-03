@@ -45,7 +45,11 @@ REPORT_MEDIA_TYPE = "text/markdown; charset=utf-8"
 
 def create_app(state: AppState) -> FastAPI:
     """Build the FastAPI app around one `AppState`."""
-    app = FastAPI(title="Jarvis", docs_url=None, redoc_url=None)
+    # `cloudflared` publishes the whole of this port, so anything FastAPI serves by
+    # default is served to the internet. The interactive docs were already off;
+    # `openapi_url=None` takes the schema they read from with them, which is the half
+    # that actually enumerates every route, its parameters and its shapes to a stranger.
+    app = FastAPI(title="Jarvis", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.jarvis = state  # so later routes (and tests) can reach the shared wiring
     settings = state.settings
 
