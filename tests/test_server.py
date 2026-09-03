@@ -205,6 +205,19 @@ def test_a_status_callback_with_a_bad_signature_is_refused(client):
     assert response.status_code == 403
 
 
+# --- what the tunnel does not serve ----------------------------------------
+
+
+def test_the_openapi_schema_is_not_served(client):
+    """The tunnel publishes this whole port; the route schema is not for strangers."""
+    assert client.get("/openapi.json").status_code == 404
+
+
+def test_the_interactive_docs_are_not_served(client):
+    for path in ("/docs", "/redoc"):
+        assert client.get(path).status_code == 404, path
+
+
 # --- GET /health -----------------------------------------------------------
 
 

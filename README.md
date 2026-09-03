@@ -350,7 +350,9 @@ uv run jarvis restart --status                # how the last restart went
   to check), `/twilio/media` (needs a one-time, 60-second stream token minted by
   `/twilio/voice` for the same call), `/reports/{id}?t=…` (HMAC-signed link, the one you
   get by SMS), and `/health`, which is unauthenticated and answers with `ok` plus the
-  number of live sessions. Nothing else is served.
+  number of live sessions. Nothing else is served: FastAPI's interactive docs and its
+  `/openapi.json` schema are both switched off, so the tunnel does not hand out a list of
+  the routes above.
 - **Caller ID is spoofable**, so the allowlist alone is not a gate. The PIN is what
   actually protects destructive kinds on the phone. Set a long one, keep
   `ALLOWED_CALLERS` tight, and leave `JARVIS_PIN` set — with no PIN configured, `coding`
