@@ -33,7 +33,8 @@ surface — a removed or renamed setting or command is a major bump.
 ### Fixed
 
 - Tests could read a developer's real `.env`, which once printed a live admin key into
-  pytest output.
+  pytest output, and assumed the host they grew up on (systemd on `PATH`, no forced
+  colour, a short temp directory). The suite now passes on Linux and macOS alike.
 - `/openapi.json` was served through the public tunnel.
 - Caller phone numbers were written to the log in full.
 - The README listed 13 of the voice model's 19 tools, and the docs still described task
