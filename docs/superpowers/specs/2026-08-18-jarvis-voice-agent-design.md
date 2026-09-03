@@ -103,7 +103,14 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `realtime/base.py` | `RealtimeProvider` protocol, `SessionConfig`, typed provider events |
 | `realtime/openai.py` | OpenAI Realtime WS client (GA schema) |
 | `session.py` | `VoiceSession` (wires transport⇄provider, barge-in, tool dispatch, PIN gate, announcements, lifecycle, transcript log) + `SessionRegistry` |
-| `tools/registry.py` | `ToolRegistry`, `ToolContext`; `tools/builtin.py` registers the tool set |
+| `tools/registry.py` | `ToolRegistry`, `ToolContext` |
+| `tools/builtin.py` | `register_builtin_tools`: the composition root. Split 2026-09-02 — the order it calls the five modules below in *is* the order the tools are offered to the model |
+| `tools/builtin_common.py` | What they share: the spoken wording, the argument parsing, and the two gates (`pin_gate`, `get_task`) |
+| `tools/builtin_comms.py` | `send_to_slack`, `web_search` — reaching outside the call without dispatching |
+| `tools/builtin_billing.py` | `check_billing`, `cluster_stats` — read-only, and un-PIN-gated for that reason |
+| `tools/builtin_tasks.py` | `dispatch_task`, `list_tasks`, `get_task_status`, `get_task_result`, `mark_reported`, `recall`, `send_followup`, `cancel_task`, `list_projects`, `request_callback` |
+| `tools/builtin_restart.py` | `restart_service` |
+| `tools/builtin_session.py` | `list_pending_approvals`, `answer_approval`, `submit_pin`, `end_session` — the call itself |
 | `tasks/models.py` | `Task` (schema v4: `reported_at`, `internal`, `needs_restart`), `TaskKind`, `TaskStatus` |
 | `tasks/store.py` | SQLite store (`TaskStore`) |
 | `tasks/agent_runner.py` | `AgentRunner` protocol; `ClaudeAgentRunner` (Agent SDK); `FakeAgentRunner` (tests) |

@@ -13,20 +13,25 @@ from pathlib import Path
 #: The repository root, so the test does not depend on the working directory pytest ran in.
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
-BUILTIN = ROOT / "src" / "jarvis" / "tools" / "builtin.py"
+#: Every module registrations can live in. `builtin.py` is the aggregator and the five
+#: `builtin_*.py` are the domains it calls, so a new domain module is picked up by the glob
+#: rather than by somebody remembering to add it here.
+BUILTIN_DIR = ROOT / "src" / "jarvis" / "tools"
 
 #: The README's tool table, fenced so the test has an unambiguous region to read.
 TOOL_TABLE = re.compile(r"<!-- tools:start -->(.*?)<!-- tools:end -->", re.S)
 
 
 def registered_tool_names() -> set[str]:
-    """Every name passed to `registry.register(...)` in `tools/builtin.py`.
+    """Every name passed to `registry.register(...)` under `tools/builtin*.py`.
 
     Read out of the source rather than by registering for real: registration needs a
     `TaskManager`, a broker and half the application wired up, and this test is about what
-    the file says, not about what a particular wiring produces.
+    the files say, not about what a particular wiring produces.
     """
-    names = set(re.findall(r'registry\.register\(\s*\n\s*"([a-z_]+)"', BUILTIN.read_text()))
+    names: set[str] = set()
+    for path in sorted(BUILTIN_DIR.glob("builtin*.py")):
+        names |= set(re.findall(r'registry\.register\(\s*\n\s*"([a-z_]+)"', path.read_text()))
     assert names, "no `registry.register(...)` calls found — has the call shape changed?"
     return names
 
