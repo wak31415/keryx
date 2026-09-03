@@ -86,6 +86,9 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `restart_watch.py` | `watch`: the out-of-process watchdog armed by a restart, which alerts by text and a plain `<Say>` call when the service never comes back |
 | `logscan.py` | `marks`/`errors_since`: the service's own log files, scoped by byte offset to what happened since a restart was asked for |
 | `logging_util.py` | `mask_number`: the only shape a phone number may take in a log line or a terminal (last four digits). Everything that writes one down goes through it |
+| `approvals/models.py` | `ApprovalRequest`, `Kind`, `Verdict`, `Outcome`, `input_digest`: what a pending Claude Code prompt is, once |
+| `approvals/policy.py` | `classify`: the allowlist deciding which prompts may ever be escalated, and what is said about them. Pure — no file, no network |
+| `approvals/broker.py` | `ApprovalBroker`: the Unix-socket server the Claude Code hook blocks on, the escalation timer, `arm()`/`digit()`, the audit trail and the kill switch |
 | `events.py` | in-process async pub/sub `EventBus` + event dataclasses |
 | `audio/util.py` | soxr resampling, chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` (µ-law codec removed 2026-08-19: phone audio is passed through as `audio/pcmu`, nothing transcodes) |
 | `transports/base.py` | `Transport` protocol + `AudioIn`/`Dtmf`/`Hangup` events |
@@ -686,6 +689,35 @@ PIN now gates every dispatch rather than two of four kinds. Exposure surface: th
 Cloudflare tunnel to `/twilio/*` (signature-validated + allowlist + one-time stream token) and
 `/reports/{id}?t=` (HMAC token). PIN protects destructive task kinds on the phone channel.
 Caller ID is spoofable → the PIN is the real gate for `coding`/`cowork`.
+
+**The approval bridge (`jarvis/approvals/`, 2026-08-26).** This one runs *inwards*: a
+Claude Code session on William's own screen has stopped and is asking him something, a hook
+in `~/.claude/hooks/` hands the pending prompt to the broker over a Unix socket and blocks,
+and five minutes later Jarvis rings him. Four rulings, none of them a preference:
+
+- **A Unix socket, never an HTTP route.** `cloudflared` puts the whole of port 8080 on the
+  internet. `data_dir/approvals.sock` at 0600 is unreachable through it by construction, and
+  filesystem permissions are the right authorization for a client already running as him.
+- **`policy.py` is the *primary* control, not a second layer.** A `PermissionRequest` hook
+  returning `allow` appears to skip the CLI's own `permissions.deny` re-check (measured
+  2026-08-26), so whatever `classify` calls eligible is what a keypad digit can run. It is an
+  allowlist, it starts small, the denylist wins over it, and widening it is a change that says
+  why in the commit message.
+- **The keypad decides, never the transcription.** `answer_approval` cannot answer anything;
+  the most it does is put a menu in the model's mouth. `ApprovalBroker.digit` is the only
+  thing that can approve a tool call, it is reachable only after the PIN
+  (`VoiceSession._on_dtmf` routes there only once `authorized`), and an unrecognised key
+  re-asks rather than agreeing.
+- **Failure is always "do nothing".** Broker down, socket missing, Twilio broken, call
+  unanswered, malformed reply, hook crash: all end with the hook printing nothing, which
+  leaves the on-screen prompt exactly as it is. There is no path where an error approves.
+
+Pending is a fact to be re-checked, never assumed: the hook is not killed when he answers at
+the keyboard, so `PostToolUse`/`PermissionDenied`/`Stop`/`SessionEnd` cancel the escalation,
+and pending is re-read before dialling and again before any verdict is applied. A prompt
+arriving while he is already on the phone is announced into that call. `jarvis approvals` is
+the audit trail; `--disable` is the kill switch, and it is a file so it works without a
+restart.
 
 **At rest (2026-09-02).** `data_dir` and its `tasks`/`calls`/`approvals` subdirectories are
 created **0700** by `ensure_dirs`, which tightens an existing tree in place rather than only
