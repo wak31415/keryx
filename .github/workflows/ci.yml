@@ -87,11 +87,14 @@ jobs:
           grep -q 'jarvis/prompts/subagent_suffix\.md' <<<"$contents"
           grep -q 'jarvis/prompts/memory_update\.md' <<<"$contents"
 
+      # `uv venv --python 3.12`, not the runner's `python`: `requires-python` is
+      # `>=3.12,<3.13`, so a runner image that has moved on to 3.13 would fail the install
+      # with "requires a different Python" and say nothing about the wheel. Found by the
+      # clean-clone dry run on a host whose system Python is 3.13.
       - name: The wheel installs into a clean venv and the CLI runs
         run: |
           set -euo pipefail
-          python -m venv /tmp/wheel-venv
-          /tmp/wheel-venv/bin/pip install --upgrade pip
-          /tmp/wheel-venv/bin/pip install dist/*.whl
+          uv venv --python 3.12 /tmp/wheel-venv
+          uv pip install --python /tmp/wheel-venv/bin/python dist/*.whl
           # From `/tmp`, so nothing resolves against the checkout.
           cd /tmp && /tmp/wheel-venv/bin/jarvis --help
