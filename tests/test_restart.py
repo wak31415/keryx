@@ -976,7 +976,7 @@ def test_the_watchdogs_own_output_goes_somewhere_a_person_can_find(tmp_path):
 
 def test_launchd_needs_no_help_escaping(tmp_path):
     """There is no cgroup to get out of; a new session outlives `launchctl kickstart -k`."""
-    plan = watch_command(make_settings(tmp_path), ServiceTarget("launchd", "com.william.jarvis"))
+    plan = watch_command(make_settings(tmp_path), ServiceTarget("launchd", LAUNCHD_LABEL))
 
     assert plan is not None
     assert plan.argv == [sys.executable, "-m", "jarvis", "restart-watch"]

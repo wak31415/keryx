@@ -17,10 +17,14 @@ source "$REPO/scripts/lib.sh"
 TEMPLATES="$REPO/ops/launchd"
 AGENTS="$HOME/Library/LaunchAgents"
 LOGS="$HOME/.jarvis/logs"
-LABELS=(com.william.jarvis com.william.ngrok)
+LABELS=(dev.jarvis.agent dev.jarvis.tunnel)
+# Labels these agents used before 2026-09-02. `--uninstall` boots them out too, so an
+# install predating the rename does not survive as a second copy of the same service.
+LEGACY_LABELS=(com.william.jarvis com.william.ngrok)
 
 uninstall() {
-  for label in "${LABELS[@]}"; do
+  for label in "${LABELS[@]}" "${LEGACY_LABELS[@]}"; do
+    [[ -f "$AGENTS/$label.plist" ]] || continue
     launchctl bootout "gui/$UID/$label" 2>/dev/null || true
     rm -f "$AGENTS/$label.plist"
     echo "removed $label"
@@ -63,6 +67,15 @@ fi
 
 mkdir -p "$AGENTS" "$LOGS"
 
+# Same reason as LEGACY_LABELS: installing over a pre-rename agent must not leave it loaded.
+for label in "${LEGACY_LABELS[@]}"; do
+  if [[ -f "$AGENTS/$label.plist" ]]; then
+    launchctl bootout "gui/$UID/$label" 2>/dev/null || true
+    rm -f "$AGENTS/$label.plist"
+    echo "removed $label (renamed to dev.jarvis.*)"
+  fi
+done
+
 render() {
   # render <template> <destination>
   sed -e "s|__REPO__|$REPO|g" \
@@ -87,7 +100,7 @@ cat <<EOF
 
 Jarvis is running under launchd.
 
-  status:  launchctl print gui/$UID/com.william.jarvis | head -20
+  status:  launchctl print gui/$UID/dev.jarvis.agent | head -20
   logs:    tail -f $LOGS/jarvis.err.log $HOME/.jarvis/logs/jarvis.log
   stop:    $0 --uninstall
 

@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   Template: scripts/install-launchd.sh fills in __NGROK__, __HOME__, __PUBLIC_HOST__ and
-  __PORT__ and writes the result to ~/Library/LaunchAgents/com.william.ngrok.plist. Do not
+  __PORT__ and writes the result to ~/Library/LaunchAgents/dev.jarvis.tunnel.plist. Do not
   load this file directly.
 
   The tunnel is what Twilio reaches: https://__PUBLIC_HOST__/twilio/voice -> localhost:__PORT__.
@@ -10,7 +10,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.william.ngrok</string>
+    <string>dev.jarvis.tunnel</string>
 
     <key>ProgramArguments</key>
     <array>

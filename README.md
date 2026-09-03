@@ -234,13 +234,20 @@ scripts/install-launchd.sh              # render + load both agents
 scripts/install-launchd.sh --uninstall  # unload + remove them
 ```
 
-This renders `ops/launchd/com.william.jarvis.plist` (runs `uv run --project <repo> jarvis
-serve`) and `ops/launchd/com.william.ngrok.plist` (a tunnel on `PUBLIC_HOST`) into
+This renders `ops/launchd/dev.jarvis.agent.plist` (runs `uv run --project <repo> jarvis
+serve`) and `ops/launchd/dev.jarvis.tunnel.plist` (a tunnel on `PUBLIC_HOST`) into
 `~/Library/LaunchAgents/` and hands them to `launchctl bootstrap`. Both have `RunAtLoad`
 and `KeepAlive`, so they start at login and restart if they die. launchd's own stdout/
 stderr go to `~/.jarvis/logs/{jarvis,ngrok}.{out,err}.log`; Jarvis's own log is
 `~/.jarvis/logs/jarvis.log` (10 MB × 5 rotated files). A Mac that only listens for the
 wake word wants `serve --no-phone` and no tunnel agent at all.
+
+The macOS tunnel agent runs **ngrok**, not cloudflared — a reserved ngrok domain needs no
+DNS zone, which is the right trade for a laptop, while the always-on Linux host uses
+cloudflared. Either is fine; `jarvis doctor` accepts whichever it finds. Set
+`SERVICE_UNIT` if you rename the agent label, which defaults to `dev.jarvis.agent`.
+Installs made before 2026-09-02 used `com.william.jarvis` / `com.william.ngrok`; the
+installer boots those out on sight, so re-running it or `--uninstall` cleans them up.
 
 Grant the terminal (and, once installed, the launchd agent) **microphone** permission in
 System Settings → Privacy & Security, or the wake word never hears anything.
