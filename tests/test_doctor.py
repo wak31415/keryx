@@ -32,7 +32,7 @@ def healthy(tmp_path, monkeypatch):
         twilio_auth_token="token",
         twilio_number="+15550000000",
         allowed_callers=["+15551234567"],
-        pin="1234",
+        pin="123456",
         public_host="jarvis.example.com",
         data_dir=tmp_path / "jarvis",
         google_oauth_client_id="client-id",

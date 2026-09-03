@@ -108,7 +108,7 @@ Every setting is an environment variable, read from `.env` in the working direct
 | `CLAUDE_CODE_OAUTH_TOKEN` | optional — subscription token from `claude setup-token` |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_NUMBER` | phone channel + outbound SMS/calls |
 | `ALLOWED_CALLERS` | comma-separated E.164 numbers allowed to call in — everything else is refused |
-| `JARVIS_PIN` | PIN for destructive work over the phone (`coding`, `cowork`) |
+| `JARVIS_PIN` | 6–8 digits; required before Jarvis dispatches anything over the phone |
 | `PUBLIC_HOST` | the tunnel hostname Twilio reaches, e.g. `jarvis.example.com` |
 | `PROJECTS` | JSON map of spoken project names to repo paths, e.g. `{"jarvis": "/Users/me/code/jarvis"}` |
 
@@ -321,8 +321,19 @@ live, an SMS with a link to the written report, and a call back if you asked for
 
 **The PIN.** On the phone, dispatching anything is refused until you authorize: say the
 PIN or key it in on the keypad. Keyed digits are collected in the session and never enter
-the model transcript. Three failures ends the call. Local sessions are pre-authorized —
-you are already at the machine.
+the model transcript. Local sessions are pre-authorized — you are already at the machine.
+
+`JARVIS_PIN` must be **6 to 8 digits and nothing else**, and that is enforced rather than
+advised: `jarvis serve` refuses to start on anything else, and `jarvis doctor` says which
+rule was broken. Digits because it is keyed on a phone keypad — a PIN with a letter in it
+could never have been entered — and six at minimum because this is the only thing between
+somebody who has spoofed your caller ID and a subagent running as you. Leaving it unset is
+still allowed and means something different: no PIN, so every dispatch from the phone is
+simply refused.
+
+Three wrong entries end the call, and the session **stays locked even if the right PIN
+arrives afterwards** — there is no fourth guess to be had by talking faster. The
+comparison is `hmac.compare_digest`, so a wrong PIN takes the same time as a right one.
 
 ### From the terminal
 
@@ -354,9 +365,10 @@ uv run jarvis restart --status                # how the last restart went
   `/openapi.json` schema are both switched off, so the tunnel does not hand out a list of
   the routes above.
 - **Caller ID is spoofable**, so the allowlist alone is not a gate. The PIN is what
-  actually protects destructive kinds on the phone. Set a long one, keep
-  `ALLOWED_CALLERS` tight, and leave `JARVIS_PIN` set — with no PIN configured, `coding`
-  and `cowork` are simply refused over the phone.
+  actually protects dispatching on the phone. It must be 6–8 digits (enforced — see
+  [The PIN](#using-it)), three wrong entries end the call for good, and it is compared with
+  `hmac.compare_digest`. Keep `ALLOWED_CALLERS` tight and leave `JARVIS_PIN` set — with no
+  PIN configured, every dispatch is simply refused over the phone.
 - Secrets are never logged, the PIN is compared with `hmac.compare_digest`, and the report
   signing secret is either `REPORT_SECRET` or a random one persisted at
   `~/.jarvis/report_secret` with mode 600.

@@ -20,7 +20,7 @@ from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolContext, ToolRegistry
 from jarvis.tools.builtin import register_builtin_tools
 
-PIN = "4242"
+PIN = "424242"
 
 
 @dataclass

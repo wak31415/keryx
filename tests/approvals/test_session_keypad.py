@@ -17,7 +17,7 @@ from jarvis.session import VoiceSession
 from jarvis.tools import ToolRegistry
 from jarvis.transports.base import Dtmf
 
-PIN = "4242"
+PIN = "424242"
 
 
 @dataclass

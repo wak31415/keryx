@@ -193,7 +193,7 @@ def test_the_dispatch_schema_asks_only_for_the_work_and_the_wait(tools):
 
 
 async def test_local_sessions_dispatch_destructive_work_without_a_pin(make_tools):
-    tools = make_tools(pin="4242")
+    tools = make_tools(pin="424242")
 
     result = await tools.call(
         "dispatch_task",
@@ -207,7 +207,7 @@ async def test_local_sessions_dispatch_destructive_work_without_a_pin(make_tools
 
 
 async def test_an_unauthorized_phone_caller_is_asked_for_the_pin(make_tools):
-    tools = make_tools(pin="4242")
+    tools = make_tools(pin="424242")
 
     result = await tools.call(
         "dispatch_task",
@@ -223,7 +223,7 @@ async def test_an_unauthorized_phone_caller_is_asked_for_the_pin(make_tools):
 
 
 async def test_an_authorized_phone_caller_dispatches_destructive_work(make_tools):
-    tools = make_tools(pin="4242")
+    tools = make_tools(pin="424242")
 
     result = await tools.call(
         "dispatch_task",
@@ -238,7 +238,7 @@ async def test_an_authorized_phone_caller_dispatches_destructive_work(make_tools
 
 async def test_every_phone_dispatch_needs_the_pin_now(make_tools):
     """There is one kind of task and it has the machine and the mailbox: all of it is gated."""
-    tools = make_tools(pin="4242")
+    tools = make_tools(pin="424242")
 
     result = await tools.call(
         "dispatch_task",
@@ -268,7 +268,7 @@ async def test_destructive_work_is_refused_when_no_pin_is_configured(make_tools)
 
 async def test_a_blank_pin_is_no_pin_at_all(make_tools):
     """Defence in depth: an empty PIN that slipped past `Settings` unlocks nothing."""
-    tools = make_tools(pin="4242")
+    tools = make_tools(pin="424242")
     tools.settings.pin = ""
 
     result = await tools.call(
@@ -590,7 +590,7 @@ async def test_cancel_task_stops_a_running_task(make_tools):
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
 async def test_an_unauthorized_phone_caller_cannot_touch_a_destructive_task(make_tools, tool):
     """`list_tasks` shows every task; reaching into a coding one still needs the PIN."""
-    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="424242")
     await tools.dispatch("add a README", project="jarvis")
 
     result = await tools.call(
@@ -607,7 +607,7 @@ async def test_an_unauthorized_phone_caller_cannot_touch_a_destructive_task(make
 
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
 async def test_an_authorized_phone_caller_may_touch_a_destructive_task(make_tools, tool):
-    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="424242")
     await tools.dispatch("add a README", project="jarvis")
     await wait_for_status(tools, 1, TaskStatus.RUNNING)
 
@@ -626,7 +626,7 @@ async def test_an_authorized_phone_caller_may_touch_a_destructive_task(make_tool
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
 async def test_reaching_into_a_running_task_needs_the_pin_too(make_tools, tool):
     """Following up opens the same bypassPermissions subagent that dispatching does."""
-    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="424242")
     await tools.dispatch("how tall is Everest")
     await wait_for_status(tools, 1, TaskStatus.RUNNING)
 
@@ -643,7 +643,7 @@ async def test_reaching_into_a_running_task_needs_the_pin_too(make_tools, tool):
 
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
 async def test_a_local_session_needs_no_pin_to_follow_up_or_cancel(make_tools, tool):
-    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="4242")
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="424242")
     await tools.dispatch("add a README", project="jarvis")
     await wait_for_status(tools, 1, TaskStatus.RUNNING)
 
@@ -781,10 +781,10 @@ async def test_an_authorized_phone_caller_may_name_any_number(make_tools):
 async def test_submit_pin_hands_the_digits_to_the_session(tools):
     tools.session.pin_result = {"status": "invalid", "attempts_left": 2}
 
-    result = await tools.call("submit_pin", {"pin": "1234"})
+    result = await tools.call("submit_pin", {"pin": "123456"})
 
     assert result == {"status": "invalid", "attempts_left": 2}
-    assert tools.session.pins == ["1234"]
+    assert tools.session.pins == ["123456"]
 
 
 async def test_end_session_asks_the_session_to_end(tools):
@@ -1252,7 +1252,7 @@ async def test_a_local_restart_names_no_number(make_tools):
 async def test_restart_service_needs_the_pin_on_the_phone(make_tools):
     """Taking the phone channel off the air is at least as serious as dispatching work."""
     restarter = FakeRestarter()
-    harness = make_tools(restarter=restarter, pin="4321")
+    harness = make_tools(restarter=restarter, pin="654321")
 
     result = await harness.call(
         "restart_service", {}, channel="phone", caller="+15551234567", authorized=False

@@ -490,7 +490,12 @@ class SessionRegistry:
   read out loud. Empty results are a `message` telling the model to say it has nothing, never
   a guess. Transcript lines carry a full ISO timestamp as of this change so a hit can be
   dated; older lines stamped with a wall clock alone fall back to the file's mtime.
-- **PIN gate**: an empty/blank `JARVIS_PIN` counts as *not configured* (dispatching refused on phone). `session.authorized` starts False on phone; `submit_pin` (spoken) or DTMF
+- **PIN gate**: a configured `JARVIS_PIN` is **strictly 6-8 digits** (`Settings`
+  refuses anything else, so `jarvis serve` will not start on a bad one — ruling 2026-09-02).
+  Digits because it is keyed on a phone: anything else was unenterable, and accepting it
+  only ever produced a caller who could not authorize. An empty/blank `JARVIS_PIN` still
+  counts as *not configured* (dispatching refused on phone), which is a different and safe
+  thing. `session.authorized` starts False on phone; `submit_pin` (spoken) or DTMF
   digits (collected in the session, never shown to the model) flip it; `dispatch_task`
   returns `{"status":"pin_required"}` until authorized — every task, since 2026-08-24, because
   every task can reach the files and the mailbox. Constant-time
@@ -536,7 +541,7 @@ class SessionRegistry:
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_NUMBER` | `twilio_account_sid` / `twilio_auth_token` / `twilio_number` | `None` |
 | `ALLOWED_CALLERS` | `allowed_callers: list[str]` (comma-separated E.164) | `[]` |
 | `OWNER_NUMBER` | `owner_number` | first of `allowed_callers` |
-| `JARVIS_PIN` | `pin` | `None` (PIN-gated kinds refused on phone if unset) |
+| `JARVIS_PIN` | `pin` (**6-8 digits** when set; refused otherwise) | `None` (every dispatch refused on phone if unset) |
 | `PUBLIC_HOST` | `public_host` (the tunnel's hostname, e.g. `jarvis.example.com`) | `None` |
 | `HOST` / `PORT` | `host` / `port` | `127.0.0.1` / `8080` |
 | `SERVICE_MANAGER` | `service_manager` (`auto`/`systemd`/`launchd`/`none`; what `jarvis restart` asks) | `auto` → systemd on Linux, launchd on macOS, none if neither is on PATH |
