@@ -33,6 +33,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from jarvis.config import Settings
+from jarvis.logging_util import mask_number
 from jarvis.logscan import LogErrors, errors_since
 from jarvis.notify.twilio_out import TwilioOut, say_twiml
 from jarvis.restart import (
@@ -41,7 +42,6 @@ from jarvis.restart import (
     RestartStore,
     format_duration,
     health_probe,
-    mask_number,
 )
 
 log = logging.getLogger("jarvis.restart_watch")

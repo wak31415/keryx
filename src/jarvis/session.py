@@ -45,6 +45,7 @@ from jarvis.audio.util import ms_for_bytes
 from jarvis.briefing import Briefing, BriefingSource
 from jarvis.config import Settings
 from jarvis.events import EventBus, SessionEnded, SessionStarted
+from jarvis.logging_util import mask_number
 from jarvis.prompts import render_voice_prompt
 from jarvis.realtime.base import (
     AudioDelta,
@@ -213,7 +214,12 @@ class VoiceSession:
             f"--- session {self.session_id} channel={self.channel} caller={self.caller or 'none'}"
         )
         await self._bus.publish(SessionStarted(self.session_id, self.channel, self.caller))
-        log.info("session %s started (%s, caller %s)", self.session_id, self.channel, self.caller)
+        log.info(
+            "session %s started (%s, caller %s)",
+            self.session_id,
+            self.channel,
+            mask_number(self.caller),
+        )
 
         opened = await self._safe_call(
             self._provider.inject_message, self._opening_message(), respond=True

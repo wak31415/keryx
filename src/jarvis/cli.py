@@ -26,6 +26,7 @@ from jarvis.doctor import format_check, has_hard_failure, run_doctor_checks
 from jarvis.events import EventBus
 from jarvis.google_setup import GoogleSetupError, run_google_setup
 from jarvis.local_runner import LocalRunner
+from jarvis.logging_util import mask_number
 from jarvis.logscan import errors_since
 from jarvis.logscan import marks as log_marks
 from jarvis.realtime.openai import OpenAIRealtimeClient
@@ -38,7 +39,6 @@ from jarvis.restart import (
     loaded_version,
     mark_running,
     mark_startup_logs,
-    mask_number,
     resolve_target,
     spawn_watchdog,
     wait_until_serving,

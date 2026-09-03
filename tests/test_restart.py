@@ -35,7 +35,6 @@ from jarvis.restart import (
     loaded_version,
     mark_running,
     mark_startup_logs,
-    mask_number,
     resolve_target,
     running_version,
     wait_until_serving,
@@ -878,11 +877,6 @@ async def _boom(*args, **kwargs):
 )
 def test_durations_are_spoken_not_printed(seconds, expected):
     assert format_duration(seconds) == expected
-
-
-def test_numbers_are_masked_where_they_are_printed():
-    assert mask_number("+15551234567") == "…4567"
-    assert mask_number(None) == "nobody"
 
 
 def test_health_probe_reads_the_live_session_count(monkeypatch):

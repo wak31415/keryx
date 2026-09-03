@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from jarvis.config import Settings
+from jarvis.logging_util import mask_number
 from jarvis.logscan import errors_since, marks
 from jarvis.notify.notifier import (
     CALLBACK_TOKEN_TTL_S,
@@ -504,13 +505,6 @@ def format_duration(seconds: float | None) -> str:
         return f"{count} second{'s' if count != 1 else ''}"
     minutes = int(round(seconds / 60))
     return f"{minutes} minute{'s' if minutes != 1 else ''}"
-
-
-def mask_number(number: str | None) -> str:
-    """A phone number as it may appear in a terminal or a log: last four digits only."""
-    if not number:
-        return "nobody"
-    return f"…{number[-4:]}" if len(number) > 4 else number
 
 
 # --- the coordinator --------------------------------------------------------
