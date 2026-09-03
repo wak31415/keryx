@@ -54,9 +54,35 @@ through untouched), the local mic/speaker (16-bit PCM 24 kHz, half-duplex — th
 gated off while Jarvis speaks), or a WAV file for the `loopback` dev harness. The session
 never knows which one it has.
 
-Tools the model can call: `web_search`, `send_to_slack`, `dispatch_task`, `list_tasks`, `get_task_status`,
-`get_task_result`, `send_followup`, `cancel_task`, `list_projects`, `request_callback`,
-`restart_service`, `submit_pin`, `end_session`.
+The voice model has nineteen tools. Most of them are about tasks; the rest are the things
+it can answer or do without one.
+
+<!-- tools:start -->
+| Tool | What it does |
+|---|---|
+| `send_to_slack` | send a written message to the Slack DM — only when asked |
+| `web_search` | answer a small factual question on the spot, through the Responses API |
+| `check_billing` | what the month has cost, read off the provider's billing API |
+| `cluster_stats` | what is free and what is running on the Slurm clusters |
+| `dispatch_task` | hand the work to a Claude subagent and get back a task number |
+| `list_tasks` | what is queued, running and recently finished |
+| `get_task_status` | how one task is getting on |
+| `get_task_result` | the spoken summary a finished task produced |
+| `mark_reported` | record that a result has now been *said out loud* — the only thing that stops it riding the next call's digest |
+| `recall` | search past call transcripts and past task summaries |
+| `send_followup` | add something to a task already in flight |
+| `cancel_task` | stop one |
+| `list_projects` | the project names that can be dispatched into |
+| `request_callback` | call back when a task lands |
+| `restart_service` | restart Jarvis (after the call ends) |
+| `list_pending_approvals` | what a Claude Code session on the desktop is waiting on |
+| `answer_approval` | read that prompt out and offer the keypad — it cannot approve anything itself |
+| `submit_pin` | check a spoken PIN |
+| `end_session` | hang up |
+<!-- tools:end -->
+
+`check_billing` and `cluster_stats` are deliberately not PIN-gated: they cannot change
+anything. Everything that can is.
 
 Slack is opt-in: nothing goes to it unless you asked for it. When you do ask, the voice
 sends text with `send_to_slack` and subagents send files, plots and reports through the
