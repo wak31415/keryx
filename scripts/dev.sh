@@ -10,26 +10,11 @@ cd "$(dirname "$0")/.."
 # shellcheck source=scripts/lib.sh
 source scripts/lib.sh
 
-ENV_FILE=".env"
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "no env file found: copy .env.example to .env and fill it in" >&2
-  exit 1
-fi
-
-PUBLIC_HOST="$(env_value PUBLIC_HOST "$ENV_FILE")"
-PORT="$(env_value PORT "$ENV_FILE")"
-PORT="${PORT:-8080}"
-TUNNEL="$(env_value CLOUDFLARE_TUNNEL "$ENV_FILE")"
+require_env_file
+require_public_host "the hostname routed to the Cloudflare tunnel"
+TUNNEL="$(env_value CLOUDFLARE_TUNNEL)"
 TUNNEL="${TUNNEL:-jarvis}"
-
-if [[ -z "$PUBLIC_HOST" ]]; then
-  echo "PUBLIC_HOST is not set (the hostname routed to the Cloudflare tunnel)" >&2
-  exit 1
-fi
-if ! command -v cloudflared >/dev/null 2>&1; then
-  echo "cloudflared is not installed (https://developers.cloudflare.com/cloudflare-one/)" >&2
-  exit 1
-fi
+require_command CLOUDFLARED cloudflared "https://developers.cloudflare.com/cloudflare-one/"
 
 cloudflared tunnel --no-autoupdate --protocol http2 run \
   --url "http://localhost:$PORT" "$TUNNEL" > .cloudflared.log 2>&1 &

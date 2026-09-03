@@ -7,23 +7,28 @@
 #
 # The templates in ops/launchd/ carry __PLACEHOLDER__ names; this script fills them in
 # from `command -v` and .env, writes the result to ~/Library/LaunchAgents/, and hands them
-# to launchctl. Logs land in ~/.jarvis/logs/.
+# to launchctl. The tunnel agent runs ngrok here rather than cloudflared: a reserved ngrok
+# domain needs no DNS zone, which is the right trade on a laptop. Logs land in
+# ~/.jarvis/logs/.
+#
+# The scaffolding every installer needs — argument parsing, the env-file and PATH checks,
+# template rendering — is in scripts/lib.sh.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=scripts/lib.sh
-source "$REPO/scripts/lib.sh"
+source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 
 TEMPLATES="$REPO/ops/launchd"
 AGENTS="$HOME/Library/LaunchAgents"
-LOGS="$HOME/.jarvis/logs"
 LABELS=(dev.jarvis.agent dev.jarvis.tunnel)
-# Labels these agents used before 2026-09-02. `--uninstall` boots them out too, so an
-# install predating the rename does not survive as a second copy of the same service.
+# Labels these agents used before 2026-09-02. They are booted out on install as well as on
+# --uninstall, so an install predating the rename does not survive as a second copy of the
+# same service, with KeepAlive, fighting over the same port.
 LEGACY_LABELS=(com.william.jarvis com.william.ngrok)
 
-uninstall() {
-  for label in "${LABELS[@]}" "${LEGACY_LABELS[@]}"; do
+remove_agents() {
+  # remove_agents LABEL... — unload and delete each one that is actually installed.
+  for label in "$@"; do
     [[ -f "$AGENTS/$label.plist" ]] || continue
     launchctl bootout "gui/$UID/$label" 2>/dev/null || true
     rm -f "$AGENTS/$label.plist"
@@ -31,78 +36,36 @@ uninstall() {
   done
 }
 
-if [[ "${1:-}" == "--uninstall" ]]; then
-  uninstall
+parse_install_args "$@"
+if (( UNINSTALL )); then
+  remove_agents "${LABELS[@]}" "${LEGACY_LABELS[@]}"
   exit 0
 fi
-if [[ -n "${1:-}" ]]; then
-  echo "usage: $(basename "$0") [--uninstall]" >&2
-  exit 2
-fi
 
-if [[ ! -f "$REPO/.env" ]]; then
-  echo "no .env in $REPO: copy .env.example to .env and fill it in" >&2
-  exit 1
-fi
+require_env_file
+require_public_host "use a reserved ngrok domain"
+require_command UV uv "https://docs.astral.sh/uv/"
+require_command NGROK ngrok "brew install ngrok"
 
-PUBLIC_HOST="$(env_value PUBLIC_HOST "$REPO/.env")"
-PORT="$(env_value PORT "$REPO/.env")"
-PORT="${PORT:-8080}"
-
-if [[ -z "$PUBLIC_HOST" ]]; then
-  echo "PUBLIC_HOST is not set in .env (use a reserved ngrok domain)" >&2
-  exit 1
-fi
-
-UV="$(command -v uv || true)"
-NGROK="$(command -v ngrok || true)"
-if [[ -z "$UV" ]]; then
-  echo "uv is not on PATH (https://docs.astral.sh/uv/)" >&2
-  exit 1
-fi
-if [[ -z "$NGROK" ]]; then
-  echo "ngrok is not on PATH (brew install ngrok)" >&2
-  exit 1
-fi
-
-mkdir -p "$AGENTS" "$LOGS"
-
-# Same reason as LEGACY_LABELS: installing over a pre-rename agent must not leave it loaded.
-for label in "${LEGACY_LABELS[@]}"; do
-  if [[ -f "$AGENTS/$label.plist" ]]; then
-    launchctl bootout "gui/$UID/$label" 2>/dev/null || true
-    rm -f "$AGENTS/$label.plist"
-    echo "removed $label (renamed to dev.jarvis.*)"
-  fi
-done
-
-render() {
-  # render <template> <destination>
-  sed -e "s|__REPO__|$REPO|g" \
-      -e "s|__HOME__|$HOME|g" \
-      -e "s|__UV__|$UV|g" \
-      -e "s|__NGROK__|$NGROK|g" \
-      -e "s|__PUBLIC_HOST__|$PUBLIC_HOST|g" \
-      -e "s|__PORT__|$PORT|g" \
-      "$1" > "$2"
-}
+make_dirs "$AGENTS"
+remove_agents "${LEGACY_LABELS[@]}"
 
 for label in "${LABELS[@]}"; do
   plist="$AGENTS/$label.plist"
-  render "$TEMPLATES/$label.plist" "$plist"
+  render "$TEMPLATES/$label.plist" "$plist" \
+    "UV=$UV" "NGROK=$NGROK" "PUBLIC_HOST=$PUBLIC_HOST" "PORT=$PORT"
   # A previous version may still be loaded; booting it out first makes this re-runnable.
   launchctl bootout "gui/$UID/$label" 2>/dev/null || true
   launchctl bootstrap "gui/$UID" "$plist"
   echo "loaded $label ($plist)"
 done
 
-cat <<EOF
+cat <<INFO
 
 Jarvis is running under launchd.
 
   status:  launchctl print gui/$UID/dev.jarvis.agent | head -20
-  logs:    tail -f $LOGS/jarvis.err.log $HOME/.jarvis/logs/jarvis.log
+  logs:    tail -f $LOGS/jarvis.err.log $LOGS/jarvis.log
   stop:    $0 --uninstall
-
-Point the Twilio number's voice webhook at https://$PUBLIC_HOST/twilio/voice (HTTP POST).
-EOF
+INFO
+webhook_hint
