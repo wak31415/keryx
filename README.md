@@ -116,11 +116,17 @@ the installed skills, and subagents of its own. Nothing classifies the work in a
 ### Install
 
 ```bash
+git clone https://github.com/wak31415/jarvis-voice-agent.git
+cd jarvis-voice-agent
 uv sync
 cp .env.example .env      # then fill it in (see the table below)
 uv run jarvis download-models   # macOS only: fetches the openWakeWord "hey jarvis" model
 uv run jarvis doctor            # tells you what is still missing
 ```
+
+`uv sync` builds a Python 3.12 environment from `uv.lock` — nothing here is installed from
+a package index. `jarvis doctor` is safe to run before anything is configured; that is what
+it is for, and it never prints a secret.
 
 Optional, and only if you use Claude Code on this machine:
 `scripts/install-claude-hook.sh` wires up [the approval bridge](#the-approval-bridge), so a
