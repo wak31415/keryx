@@ -33,22 +33,27 @@ classifiers = [
     "Topic :: Communications :: Telephony",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
+# Every lower bound is the version `uv.lock` pins today — the versions this is actually
+# tested against — and every upper bound is the next release that may break us. For a 0.x
+# project that is the next *minor*, which is where its breaking changes land.
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "websockets",
-    "twilio",
-    "pydantic-settings",
-    "numpy",
-    "soxr",
+    "fastapi>=0.141.1,<1.0",
+    "uvicorn[standard]>=0.52.3,<1.0",
+    # Majors here retire APIs: the legacy client/server went at 14.
+    "websockets>=17.0.1,<18",
+    "twilio>=9.11.0,<10",
+    "pydantic-settings>=2.15.0,<3",
+    "numpy>=2.5.2,<3",
+    "soxr>=1.1.0,<2",
     # The wake-word channel is macOS-only: openwakeword 0.6.0 requires tflite-runtime on
     # Linux, whose newest release (2.14.0) has no cp312 wheel. A Linux host therefore runs
     # the phone channel only (`jarvis serve --no-wakeword`); every import of these is lazy.
-    "sounddevice; sys_platform == 'darwin'",
-    "openwakeword>=0.6.0; sys_platform == 'darwin'",
-    "onnxruntime; sys_platform == 'darwin'",
-    "claude-agent-sdk",
-    "typer",
+    "sounddevice>=0.5.6,<1.0; sys_platform == 'darwin'",
+    "openwakeword>=0.6.0,<1.0; sys_platform == 'darwin'",
+    "onnxruntime>=1.29.0,<2; sys_platform == 'darwin'",
+    # Young and moving fast, and the thing every task runs through. Held to one minor.
+    "claude-agent-sdk>=0.2.139,<0.3",
+    "typer>=0.27.1,<1.0",
 ]
 
 [project.urls]
@@ -67,10 +72,12 @@ environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 dev = [
     # Not imported by the tests: starlette's TestClient wants httpx2 and warns (which
     # `filterwarnings = ["error"]` turns into a collection error) when only httpx is there.
-    "httpx2>=2.12.0",
-    "pytest",
-    "pytest-asyncio",
-    "ruff",
+    "httpx2>=2.12.0,<3",
+    "pytest>=9.1.1,<10",
+    "pytest-asyncio>=1.4.0,<2",
+    # Held to one minor on purpose: ruff adds and changes lint rules between minors, and a
+    # release that fails CI on untouched code is a bad way to find that out.
+    "ruff>=0.16.3,<0.17",
 ]
 
 [build-system]
