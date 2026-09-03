@@ -1,0 +1,239 @@
+"""What every builtin tool module shares (spec §3.2, §3.3).
+
+Split out of `builtin.py` (2026-09-02), where it had accumulated at the top of one very
+long function. Three kinds of thing live here.
+
+**The wording.** Everything the model is handed is written for something that is
+*speaking*: ids are small integers, lists are short by default, long text is cut down
+before it can reach a text-to-speech engine, and a failure comes back as a sentence the
+assistant can say. Several of those sentences are shared by more than one tool, and prose
+that gets read down a phone is worth reviewing in one place.
+
+**The parsing.** `_task_id`, `_clamp_limit` and friends turn whatever a speech model put in
+an argument into something a task store can take, without ever raising.
+
+**The two gates.** `pin_gate` is the refusal returned before anything opens a subagent —
+`dispatch_task`, `send_followup`, `cancel_task`, and also `restart_service` (it can take
+the phone channel off the air) and `answer_approval` (it can run a command on his machine).
+It reads `ctx.authorized` live, so a PIN keyed while the model was thinking is honoured on
+the very next call, and the digits themselves never pass through here: `submit_pin` hands
+what the caller said straight to the session, which is the only thing that compares it.
+`get_task` is the other one — a task number in, a `Task` or the error dict to hand back.
+"""
+
+import asyncio
+import logging
+import re
+from collections.abc import Callable
+from pathlib import Path
+
+from jarvis.billing import BillingReader
+from jarvis.config import Settings
+from jarvis.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
+from jarvis.recall import MAX_LIMIT as MAX_RECALL_LIMIT
+from jarvis.tasks.manager import TaskManager
+from jarvis.tasks.models import Task, TaskStatus
+from jarvis.tools.registry import ToolContext
+
+log = logging.getLogger("jarvis.tools.builtin")
+
+#: How `check_billing` gets a reader: a provider name (or None for the configured
+#: default) in, a `BillingReader` out, `BillingError` when there is no credential for it.
+#: A factory rather than a reader, because the model may name either provider per call.
+BillingFactory = Callable[[str | None], BillingReader]
+
+#: What `cluster_stats` answers for when he does not name one: everything it knows.
+ALL_CLUSTERS = ("both", "all", "everything")
+
+#: How much of a task description a spoken list may carry.
+MAX_DESCRIPTION_CHARS = 120
+#: How much of a report `get_task_result` hands back for the model to summarise.
+MAX_REPORT_CHARS = 1500
+#: Default and maximum number of tasks `list_tasks` returns (short: this is spoken).
+DEFAULT_TASK_LIMIT = 5
+MAX_TASK_LIMIT = 20
+
+PIN_REQUIRED_MESSAGE = (
+    "Ask the caller to say the PIN or enter it on the keypad, then call the tool again."
+)
+PIN_MISSING_MESSAGE = "A PIN is required to dispatch work but none is configured."
+CALLBACK_NUMBER_MESSAGE = (
+    "Without the PIN I can only call back on the number of this call or a number I "
+    "already know. Offer that instead."
+)
+STILL_RUNNING_MESSAGE = "still running; you will be told when it finishes"
+SEARCH_FAILED_MESSAGE = "the search came back empty; say so, or offer to put Claude on it"
+SLACK_FAILED_MESSAGE = "Slack would not take the message; tell him it did not go through"
+RECALL_EMPTY_MESSAGE = (
+    "nothing on record about that; say so plainly and offer to put Claude on it"
+)
+ENDING_MESSAGE = "The session is ending now; do not say anything else."
+#: What `answer_approval` hands back. It never answers anything itself: the most it can do
+#: is put the menu in the model's mouth, and the keypad does the rest (jarvis/approvals).
+APPROVAL_KEYPAD_MESSAGE = (
+    "Read the request back to him once, as written, then read these options out and wait. "
+    "He answers with the keypad and only with the keypad — if he says yes out loud, ask him "
+    "to press the key anyway. Do not call this tool again unless he asks for the menu again."
+)
+APPROVAL_PHONE_ONLY_MESSAGE = (
+    "Approvals are answered on the phone keypad, and this is not a phone call. Tell him it "
+    "is still waiting on his screen."
+)
+APPROVAL_NONE_MESSAGE = "Nothing is waiting for an answer; tell him so."
+
+#: A phone number we are willing to call back: E.164, `+` and 7–15 digits.
+_E164_RE = re.compile(r"^\+\d{7,15}$")
+
+#: The task statuses `list_tasks` can filter on, in the words the model uses.
+_STATUS_FILTERS: dict[str, tuple[TaskStatus, ...]] = {
+    "all": (),
+    "running": (TaskStatus.QUEUED, TaskStatus.RUNNING),
+    "done": (TaskStatus.DONE,),
+    "failed": (TaskStatus.FAILED,),
+}
+
+#: The task number every task-scoped tool takes, and the whole parameter schema of a
+#: tool that takes nothing else. Read-only once registered, so one copy is shared.
+_TASK_ID_PROPERTY = {"type": "integer", "description": "The task number."}
+_TASK_ID_SCHEMA = {
+    "type": "object",
+    "properties": {"task_id": _TASK_ID_PROPERTY},
+    "required": ["task_id"],
+}
+
+MODEL_DESCRIPTION = (
+    "Optional model for the subagent: opus (strongest, the default), sonnet, fable or "
+    "haiku (fastest). Leave this out unless the user asks for it."
+)
+WAIT_DESCRIPTION = (
+    "How many seconds to hold the line for the answer, 0 to 25. Use about 20 for quick "
+    "questions so you can answer inline; use 0 for long jobs, which are announced later."
+)
+
+
+# --- small helpers ---------------------------------------------------------
+
+
+def _shorten(text: str, limit: int) -> str:
+    """`text` cut to at most `limit` characters, ending in an ellipsis when cut."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+def _small_int(raw: object) -> int | None:
+    """`raw` as an int, whether the model sent a number or spelled it as a string."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.strip().lstrip("-").isdigit():
+        return int(raw.strip())
+    return None
+
+
+def _task_id(arguments: dict) -> int | None:
+    """The `task_id` argument as an int, or None if the model made one up."""
+    try:
+        return int(arguments.get("task_id"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _text(arguments: dict, name: str) -> str:
+    value = arguments.get(name)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _clamp_wait(raw: object, settings: Settings) -> float:
+    """The requested inline wait, clamped to `[0, dispatch_wait_max_seconds]`."""
+    try:
+        wait = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+    return min(max(wait, 0.0), float(settings.dispatch_wait_max_seconds))
+
+
+def _clamp_limit(raw: object) -> int:
+    try:
+        limit = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_TASK_LIMIT
+    return min(max(limit, 1), MAX_TASK_LIMIT)
+
+
+def _clamp_recall_limit(raw: object) -> int:
+    try:
+        limit = int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_RECALL_LIMIT
+    return min(max(limit, 1), MAX_RECALL_LIMIT)
+
+
+def _task_ids(raw: object) -> list[int]:
+    """The `task_ids` argument as a list of ints, dropping anything that is not one.
+
+    The model sometimes hands over a single number, or a list with a stray string in it;
+    neither is worth an error it would have to explain out loud.
+    """
+    values = raw if isinstance(raw, list | tuple) else [raw]
+    ids: list[int] = []
+    for value in values:
+        try:
+            ids.append(int(value))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _brief(task: Task) -> dict:
+    """One task as a spoken list entry."""
+    entry = {
+        "id": task.id,
+        "status": task.status.value,
+        "description": _shorten(task.description, MAX_DESCRIPTION_CHARS),
+    }
+    if task.summary:
+        entry["summary"] = task.summary
+    return entry
+
+
+async def _report_excerpt(task: Task) -> str | None:
+    """The head of the task's report file, or None when there is no readable report."""
+    if not task.report_path:
+        return None
+    try:
+        text = await asyncio.to_thread(Path(task.report_path).read_text, encoding="utf-8")
+    except OSError:
+        log.warning("could not read the report of task %s", task.id)
+        return None
+    return _shorten(text.strip(), MAX_REPORT_CHARS) or None
+
+
+
+
+def pin_gate(ctx: ToolContext, settings: Settings) -> dict | None:
+    """The refusal to return before putting a subagent to work, if any (spec §3.3).
+
+    Applies to `dispatch_task`, `send_followup` and `cancel_task` alike: reaching into
+    a task that is already running opens the very same bypassPermissions subagent that
+    dispatching one would. `restart_service` and `answer_approval` go through it too —
+    one stops the service, the other can run a command on his machine.
+    """
+    if ctx.channel != "phone" or ctx.authorized:
+        return None
+    if not settings.pin:
+        return {"status": "refused", "message": PIN_MISSING_MESSAGE}
+    log.info("session %s needs a PIN before dispatching", ctx.session.session_id)
+    return {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}
+
+
+async def get_task(manager: TaskManager, arguments: dict) -> Task | dict:
+    """The task named by `arguments`, or the error dict to hand back instead."""
+    task_id = _task_id(arguments)
+    if task_id is None:
+        return {"error": "task_id must be a task number, for example 3"}
+    task = await manager.get(task_id)
+    if task is None:
+        return {"error": f"no task {task_id}"}
+    return task
