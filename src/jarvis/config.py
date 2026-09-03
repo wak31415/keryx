@@ -318,7 +318,7 @@ class Settings(BaseSettings):
 
         The console hands out that file with the pair nested under `installed` (desktop
         clients) or `web`; either shape is accepted. A missing or malformed file simply
-        means "no Google", which the doctor reports and cowork tasks refuse.
+        means "no Google", which the doctor reports and Gmail/Calendar work refuses.
         """
         if self.google_oauth_client_id and self.google_oauth_client_secret:
             return self.google_oauth_client_id, self.google_oauth_client_secret

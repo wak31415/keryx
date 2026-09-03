@@ -1,6 +1,6 @@
-"""`jarvis setup-google`: walk the Google OAuth flow once, so cowork tasks can run.
+"""`jarvis setup-google`: walk the Google OAuth flow once, so mail and calendar work can run.
 
-Cowork subagents reach Gmail and Calendar through the `workspace-mcp` stdio server
+Subagents reach Gmail and Calendar through the `workspace-mcp` stdio server
 (spec §4). That server only opens its browser consent screen when a tool is actually
 called, and a subagent that hits it mid-call would stall behind a login nobody is
 watching. So this module starts the very same server by hand — same command, same env as

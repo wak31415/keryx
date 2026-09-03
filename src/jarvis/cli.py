@@ -694,7 +694,7 @@ def doctor(
 
 @app.command("setup-google")
 def setup_google() -> None:
-    """Authorize Gmail + Calendar access once, so cowork subagents can use them."""
+    """Authorize Gmail + Calendar access once, so subagents can use them."""
     settings = _configure_readonly()
     try:
         run_google_setup(settings, echo=typer.echo)

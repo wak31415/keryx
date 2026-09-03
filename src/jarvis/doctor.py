@@ -195,7 +195,7 @@ def _pin_check(settings: Settings, problem: str | None = None) -> Check:
     if problem is not None:
         return Check("PIN", False, f"{env_var_name('pin')} is set but unusable — {problem}")
     if not settings.pin:
-        return Check("PIN", False, "not set — coding/cowork refused on phone", severity="soft")
+        return Check("PIN", False, "not set — every task is refused on the phone", severity="soft")
     return Check("PIN", True, "set", severity="soft")
 
 
@@ -354,7 +354,7 @@ def _google_check(settings: Settings) -> Check:
         return Check(
             "Google credentials",
             True,
-            "not configured — cowork tasks are unavailable",
+            "not configured — Gmail and Calendar are unavailable to subagents",
             severity="soft",
         )
     credentials_dir = settings.data_dir / "google"

@@ -216,7 +216,9 @@ def test_a_missing_pin_only_warns(healthy):
     checks = run_doctor_checks(settings, probe_mic=False)
     check = by_name(checks)["PIN"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "coding" in check.detail
+    # Not "coding/cowork": those kinds have not existed since 2026-08-24, and the PIN gates
+    # every dispatch now.
+    assert "every task is refused" in check.detail
     assert has_hard_failure(checks) is False
 
 
