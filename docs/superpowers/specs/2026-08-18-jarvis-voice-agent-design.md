@@ -118,6 +118,12 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 These signatures are shared across tasks; implementers must match them exactly (adding
 optional keyword args is fine, renaming is not).
 
+Note that the `SessionConfig` defaults below are **not** the running configuration: every
+one of them is overwritten from `Settings` by `VoiceSession._build_config`, so they only
+apply to a `SessionConfig` built by hand (which in practice means a test). Where the two
+disagree — `vad_silence_ms` is 500 here and `VAD_SILENCE_MS` is 1200 in §3.4 — §3.4 is what
+a call actually uses. Checked against `src/jarvis/` on 2026-09-02.
+
 ```python
 # events.py
 class EventBus:
@@ -158,10 +164,11 @@ class Transport(Protocol):
     voice: str
     audio_format: AudioFormat               # used for both input and output
     vad_mode: Literal["server","semantic"] = "semantic"   # amended 2026-08-24 (was: server only)
-    vad_eagerness: Literal["low","medium","high","auto"] = "low"
+    vad_eagerness: Literal["low","medium","high","auto"] = "medium"  # amended 2026-08-26 (was: "low")
     vad_threshold: float = 0.5
     vad_silence_ms: int = 500                # server mode only; semantic_vad rejects it
     vad_prefix_ms: int = 300
+    noise_reduction: Literal["near_field","far_field"] | None = None   # input stream; None = off (the API default)
     interrupt_response: bool = True         # False for local (half-duplex)
     transcription_model: str | None = "gpt-4o-mini-transcribe"
 
@@ -220,10 +227,13 @@ class TaskStatus(StrEnum): QUEUED="queued"; RUNNING="running"; DONE="done"; FAIL
     project: str | None = None; cwd: str | None = None; model: str = "claude-opus-5"
     claude_session_id: str | None = None; summary: str | None = None; report_path: str | None = None
     error: str | None = None
-    origin_channel: str = "local"; origin_caller: str | None = None
-    callback_requested: bool = False; callback_number: str | None = None
-    announced: bool = False; sms_sent: bool = False
-    created_at: datetime; started_at: datetime | None; finished_at: datetime | None
+    origin_channel: str = "local"; origin_caller: str | None = None; origin_session_id: str | None = None
+    callback_requested: bool = False; callback_number: str | None = None; callback_note: str | None = None
+    announced: bool = False; sms_sent: bool = False        # a delivery was *attempted*, not that he heard it
+    reported_at: datetime | None = None                    # the only record that he was told (schema v3)
+    internal: bool = False                                 # work Jarvis asked for itself (schema v3)
+    needs_restart: bool = False                            # the subagent *asked* for one (schema v4)
+    created_at: datetime; started_at: datetime | None = None; finished_at: datetime | None = None
 ```
 
 ```python
@@ -246,7 +256,9 @@ class TaskStore:
 ```python
 # tasks/agent_runner.py
 @dataclass class RunResult:
-    ok: bool; final_text: str; spoken_summary: str; session_id: str | None; cost_usd: float | None; error: str | None
+    ok: bool; final_text: str = ""; spoken_summary: str = ""; session_id: str | None = None
+    cost_usd: float | None = None; error: str | None = None
+    restart_reason: str | None = None      # the subagent's `RESTART_REQUIRED:` line, if it wrote one
 
 class AgentSession(Protocol):                                     # one live subagent conversation
     async def run(self, prompt: str, *, on_progress: Callable[[str], Any]) -> RunResult   # one turn to completion; ok=False on error
@@ -268,12 +280,19 @@ def extract_spoken_summary(text: str) -> str                      # SPOKEN_SUMMA
 class TaskManager:
     def __init__(self, store: TaskStore, runner: AgentRunner, bus: EventBus, settings: Settings)
     async def start(self) -> None; async def shutdown(self) -> None
-    async def dispatch(self, description, *, project=None, model=None, origin_channel, origin_caller) -> Task   # raises TaskLimitError / UnknownProjectError
+    async def resume_queued(self) -> list[int]                         # queued rows left by a restart
+    async def dispatch(self, description, *, project=None, model=None, origin_channel, origin_caller,
+                       origin_session_id=None, cwd=None, internal=False) -> Task   # raises TaskLimitError / UnknownProjectError
     async def wait_for(self, task_id: int, timeout: float) -> Task     # returns as soon as terminal or timeout
     async def followup(self, task_id: int, text: str) -> Task
     async def cancel(self, task_id: int) -> Task
     async def get(self, task_id: int) -> Task | None
-    async def list(self, *, status=None, limit=20) -> list[Task]
+    async def list(self, *, status=None, limit=20, include_internal=False) -> list[Task]
+    async def unreported(self, *, limit=5) -> list[Task]; async def count_unreported(self) -> int
+    async def mark_reported(self, task_ids: Iterable[int]) -> list[int]
+    async def search(self, terms: Sequence[str], *, limit=5) -> list[Task]
+    async def tasks_for_session(self, session_id: str) -> list[Task]
+    async def request_callback(self, task_id: int, number: str, note: str | None = None) -> Task
     def resolve_project(self, name: str) -> tuple[str, Path]           # raises UnknownProjectError
     def list_projects(self) -> list[tuple[str, Path]]
 ```
@@ -282,10 +301,13 @@ class TaskManager:
 # session.py
 class VoiceSession:
     def __init__(self, transport, provider, settings, tools: ToolRegistry, bus: EventBus, *,
-                 authorized: bool, opening_context: str | None = None, session_id: str | None = None)
+                 authorized: bool, opening_context: str | None = None, session_id: str | None = None,
+                 registry: SessionRegistry | None = None, briefer: BriefingSource | None = None,
+                 keypad: Keypad | None = None)
     session_id: str; channel: str; caller: str | None; authorized: bool
     async def run(self) -> None                       # returns when session ends
     async def announce(self, text: str) -> bool       # inject + speak; False if session not live
+    async def submit_pin(self, pin: str) -> dict      # the one place a PIN is compared (spec §3.3)
     def request_end(self, reason: str = "user") -> None
     def authorize(self) -> None
 
