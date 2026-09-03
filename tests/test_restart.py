@@ -21,24 +21,26 @@ from jarvis.logscan import log_dir
 from jarvis.logscan import marks as log_marks
 from jarvis.restart import (
     EXEC_CONFIRM_S,
-    LAUNCHD_LABEL,
     MAX_CALLBACK_ATTEMPTS,
+    RestartCoordinator,
+    health_probe,
+    wait_until_serving,
+)
+from jarvis.restart_service import (
+    LAUNCHD_LABEL,
     SYSTEMD_UNIT,
     WATCH_UNIT_PREFIX,
-    RestartCoordinator,
-    RestartRecord,
-    RestartStore,
     ServiceTarget,
+    resolve_target,
+    watch_command,
+)
+from jarvis.restart_store import RestartRecord, RestartStore, format_duration
+from jarvis.restart_version import (
     current_version,
-    format_duration,
-    health_probe,
     loaded_version,
     mark_running,
     mark_startup_logs,
-    resolve_target,
     running_version,
-    wait_until_serving,
-    watch_command,
 )
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
@@ -219,7 +221,7 @@ class contextlib_suppress:
 @pytest.fixture(autouse=True)
 def _fixed_version(monkeypatch):
     """`git describe` is real work on a real checkout; pin it so summaries are assertable."""
-    monkeypatch.setattr("jarvis.restart.current_version", lambda repo=None: VERSION)
+    monkeypatch.setattr("jarvis.restart_version.current_version", lambda repo=None: VERSION)
 
 
 @pytest.fixture
@@ -670,7 +672,7 @@ def test_without_a_stamp_the_checkout_is_the_best_guess(tmp_path):
 def test_the_stamp_beats_a_checkout_that_has_moved_on(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     mark_running(settings.data_dir)
-    monkeypatch.setattr("jarvis.restart.current_version", lambda repo=None: "v2-newer00")
+    monkeypatch.setattr("jarvis.restart_version.current_version", lambda repo=None: "v2-newer00")
 
     assert loaded_version(settings.data_dir) == VERSION
 
@@ -685,7 +687,7 @@ async def test_a_commit_made_before_the_restart_still_counts_as_loaded(tmp_path,
     settings = make_settings(tmp_path)
     harness = Harness(settings)
     mark_running(settings.data_dir)  # the process that is about to be restarted
-    monkeypatch.setattr("jarvis.restart.current_version", lambda repo=None: "v2-newer00")
+    monkeypatch.setattr("jarvis.restart_version.current_version", lambda repo=None: "v2-newer00")
 
     await harness.coordinator.request(reason="new code", task_id=7)
     await harness.settle()

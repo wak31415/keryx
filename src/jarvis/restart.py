@@ -29,18 +29,11 @@ notice. `Restart=always` (systemd) / `KeepAlive` (launchd) is what covers that, 
 
 import asyncio
 import contextlib
-import dataclasses
 import json
 import logging
-import os
-import shutil
-import subprocess
-import sys
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from jarvis.config import Settings
@@ -54,6 +47,18 @@ from jarvis.notify.notifier import (
     no_trailing_stop,
 )
 from jarvis.notify.twilio_out import stream_twiml
+from jarvis.restart_service import (
+    ServiceTarget,
+    WatchPlan,
+    resolve_target,
+    spawn_watchdog,
+    watch_command,
+)
+from jarvis.restart_store import RECORD_NAME, RestartRecord, RestartStore, format_duration
+from jarvis.restart_version import (
+    loaded_version,
+    startup_log_marks,
+)
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
 from jarvis.tasks.models import Task, TaskStatus
@@ -61,19 +66,6 @@ from jarvis.tasks.store import TaskStore
 from jarvis.transcripts import read_tail
 
 log = logging.getLogger("jarvis.restart")
-
-#: Where the two halves of a restart meet, under `data_dir`.
-RECORD_NAME = "restart.json"
-
-#: Where `jarvis serve` stamps the version it imported, under `data_dir`. See `mark_running`.
-RUNNING_NAME = "running-version"
-#: Where `jarvis serve` stamps how far the logs had got when it started. See `mark_startup_logs`.
-STARTUP_MARKS_NAME = "startup-log-marks.json"
-
-#: Default unit/label names, matching `ops/systemd/jarvis.service` and
-#: `ops/launchd/dev.jarvis.agent.plist`.
-SYSTEMD_UNIT = "jarvis.service"
-LAUNCHD_LABEL = "dev.jarvis.agent"
 
 #: How many times a pending record may be picked up before it is abandoned. A service
 #: that crash-loops must ring once, not once per crash.
@@ -90,16 +82,8 @@ QUIET_TIMEOUT_S = 120.0
 #: How long we wait to be killed after the service manager accepted the restart. Being
 #: alive after this means the restart did not happen, whatever the command's exit code.
 EXEC_CONFIRM_S = 20.0
-#: Bound on `git describe`, which is only ever decoration on the summary.
-GIT_TIMEOUT_S = 2.0
 #: How many rows the task counts in the summary look at.
 TASK_SCAN_LIMIT = 50
-#: The transient unit the watchdog runs as, suffixed with the pid that armed it so a
-#: second restart during a crash loop does not collide with the watch still running.
-WATCH_UNIT_PREFIX = "jarvis-restart-watch"
-#: Where the watchdog's own output goes, under `data_dir/logs`.
-WATCH_LOG_NAME = "restart-watch.log"
-
 #: What a live session hears instead of a call — nobody is rung mid-conversation.
 RESTART_ANNOUNCEMENT = "The restart is done and Jarvis is back up: {status}."
 #: The opening context of the call-back itself: a confirmation, not a report.
@@ -155,358 +139,6 @@ UNSUPPORTED_MESSAGE = (
     "hand with `jarvis restart` once the service is installed."
 )
 ALREADY_PENDING_MESSAGE = "Tell him a restart is already scheduled for when this call ends."
-
-#: What `jarvis restart` prints when there is no service manager to ask.
-UNSUPPORTED_HINT = """no service manager to restart through on this machine.
-
-Install the service first (it is what starts Jarvis again after it stops):
-
-  scripts/install-systemd.sh    # Linux
-  scripts/install-launchd.sh    # macOS
-
-Or set SERVICE_MANAGER / SERVICE_UNIT in .env if the unit is named something else. To
-restart by hand instead, stop the process and start `jarvis serve` again — nothing else
-will do it for you."""
-
-
-# --- the service manager ----------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ServiceTarget:
-    """The unit this process runs as, and how to ask its manager to restart it."""
-
-    manager: str  # "systemd" | "launchd"
-    unit: str
-
-    def command(self) -> list[str]:
-        """The restart command, as a list (never a shell string)."""
-        if self.manager == "systemd":
-            return ["systemctl", "--user", "restart", self.unit]
-        # `kickstart -k` kills the job and starts it again; `launchctl restart` is gone.
-        return ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{self.unit}"]
-
-    def describe(self) -> str:
-        return f"{self.manager} {self.unit}"
-
-
-def resolve_target(
-    settings: Settings,
-    *,
-    platform: str = sys.platform,
-    which: Callable[[str], str | None] = shutil.which,
-) -> ServiceTarget | None:
-    """The service manager to restart through, or None when nothing supervises us.
-
-    `SERVICE_MANAGER=auto` (the default) picks systemd on Linux and launchd on macOS, and
-    only when the tool is actually on PATH — a Jarvis started by hand from a terminal has
-    nothing that would bring it back, and must refuse to stop rather than take itself off
-    the air. `none` refuses outright.
-    """
-    manager = settings.service_manager
-    if manager == "auto":
-        if platform.startswith("linux") and which("systemctl"):
-            manager = "systemd"
-        elif platform == "darwin" and which("launchctl"):
-            manager = "launchd"
-        else:
-            manager = "none"
-    if manager == "none":
-        return None
-    if not which("systemctl" if manager == "systemd" else "launchctl"):
-        log.warning("SERVICE_MANAGER=%s but its command is not on PATH", manager)
-        return None
-    default = SYSTEMD_UNIT if manager == "systemd" else LAUNCHD_LABEL
-    return ServiceTarget(manager, settings.service_unit or default)
-
-
-def current_version(repo: Path | None = None) -> str | None:
-    """`git describe` of the checkout we are running from — decoration, never required."""
-    root = repo or Path(__file__).resolve().parents[2]
-    try:
-        done = subprocess.run(
-            ["git", "-C", str(root), "describe", "--always", "--dirty", "--abbrev=7"],
-            capture_output=True,
-            text=True,
-            timeout=GIT_TIMEOUT_S,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return done.stdout.strip() or None if done.returncode == 0 else None
-
-
-def mark_running(data_dir: Path, repo: Path | None = None) -> str | None:
-    """Stamp the version this process imported. Called once, at the top of `jarvis serve`.
-
-    The checkout keeps moving underneath a long-lived process. Reading it when a restart is
-    *asked for* therefore answers "what will we load", not "what are we running" — and the
-    normal flow (edit, commit, ask for the restart) puts the new commit on disk before the
-    question is ever put, so the two reads match and the restart looks like it loaded
-    nothing. Process start is the one moment the checkout and the running code are the same
-    thing, so it is the only honest place to take the "before".
-    """
-    version = current_version(repo)
-    path = data_dir / RUNNING_NAME
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"{version}\n" if version else "")
-    except OSError:
-        # Decoration, like `current_version` itself: a missing stamp costs one comparison,
-        # and falling back to the checkout is no worse than what there was before.
-        log.warning("could not stamp the running version at %s", path)
-    return version
-
-
-def running_version(data_dir: Path) -> str | None:
-    """The version the live process stamped at startup, or None if it never got the chance."""
-    try:
-        return (data_dir / RUNNING_NAME).read_text().strip() or None
-    except OSError:
-        return None
-
-
-def loaded_version(data_dir: Path, repo: Path | None = None) -> str | None:
-    """What the service process is running: its own stamp, else the checkout as a guess.
-
-    The guess is what a service too old to stamp anything falls back to, and it is wrong in
-    exactly the way described in `mark_running` — but a wrong guess and no answer read the
-    same over the phone, and the guess is at least right when nothing has been committed.
-    """
-    return running_version(data_dir) or current_version(repo)
-
-
-def mark_startup_logs(data_dir: Path) -> dict[str, int]:
-    """Stamp how far the service logs had got when *this* process started.
-
-    There are two questions about a restart and they want different starting points.
-
-    The watchdog asks "did anything come back at all", so it has to read from the moment
-    the restart was *requested* — there may be no new process to have marked anything.
-
-    `resume()` asks the narrower and more useful question, "did I come up clean", and for
-    that the request is the wrong mark: it includes the dying process's last gasps. A
-    Python interpreter shutting down with a subagent subprocess still open reliably prints
-    `RuntimeError: Event loop is closed` out of `base_subprocess.__del__`, which is noise
-    from a process that is already gone — and read as this restart's error it put "but 1
-    error in the log since" on the confirmation call for a restart that went perfectly.
-    Every self-edit restart would have said it, which is the one case the check exists for.
-    """
-    found = marks(data_dir)
-    try:
-        data_dir.mkdir(parents=True, exist_ok=True)
-        (data_dir / STARTUP_MARKS_NAME).write_text(json.dumps(found), encoding="utf-8")
-    except OSError:
-        log.warning("could not stamp the startup log marks in %s", data_dir)
-    return found
-
-
-def startup_log_marks(data_dir: Path) -> dict[str, int] | None:
-    """What this process stamped at startup, or None if it never got the chance."""
-    try:
-        found = json.loads((data_dir / STARTUP_MARKS_NAME).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    return found if isinstance(found, dict) and found else None
-
-
-# --- the watchdog that outlives the restart ---------------------------------
-
-
-@dataclass(frozen=True)
-class WatchPlan:
-    """How to start the watchdog: the command, what to call it, and who redirects it."""
-
-    argv: list[str]
-    label: str
-    #: True when we have to point its output at a file ourselves; systemd does it for us.
-    redirect: bool
-
-
-def watch_command(
-    settings: Settings,
-    target: ServiceTarget,
-    *,
-    which: Callable[[str], str | None] = shutil.which,
-    pid: int | None = None,
-) -> WatchPlan | None:
-    """How to start the watchdog *outside* this service, or None when nothing can be.
-
-    Outside is the whole point. A restart signals the service's entire cgroup, and a
-    process we merely fork is in it — it would be killed by the very restart it exists to
-    watch. `systemd-run --user` hands the job to the service manager instead, which starts
-    it in a transient unit of its own; launchd has no cgroup of its own to escape, so a
-    new session is enough there.
-
-    None means the watch cannot be armed at all (systemd with no `systemd-run`). Saying so
-    on the record is better than starting something that will quietly die with us.
-    """
-    inner = [sys.executable, "-m", "jarvis", "restart-watch"]
-    if target.manager != "systemd":
-        return WatchPlan(inner, "detached", redirect=True)
-    runner = which("systemd-run")
-    if runner is None:
-        return None
-    unit = f"{WATCH_UNIT_PREFIX}-{pid or os.getpid()}"
-    log_path = watch_log_path(settings)
-    return WatchPlan(
-        [
-            runner,
-            "--user",
-            "--quiet",
-            "--collect",  # take the unit away once it exits, so the next one is free to run
-            f"--unit={unit}",
-            f"--property=WorkingDirectory={Path.cwd()}",
-            f"--property=StandardOutput=append:{log_path}",
-            f"--property=StandardError=append:{log_path}",
-            "--",
-            *inner,
-        ],
-        unit,
-        redirect=False,
-    )
-
-
-def watch_log_path(settings: Settings) -> Path:
-    """Where the watchdog writes; it has no other way to be heard if it fails itself."""
-    return settings.data_dir / "logs" / WATCH_LOG_NAME
-
-
-def spawn_watchdog(plan: WatchPlan, settings: Settings) -> int:
-    """Start the watchdog and return its pid, without ever waiting for it.
-
-    Blocking, and deliberately `Popen`: we are about to be killed, so there must be no
-    child watcher attached to an event loop that is going away, and nothing to reap.
-    """
-    output = subprocess.DEVNULL
-    if plan.redirect:
-        path = watch_log_path(settings)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        output = path.open("a", encoding="utf-8")  # noqa: SIM115 - the child owns it now
-    try:
-        process = subprocess.Popen(  # noqa: S603 - a fixed argv, never a shell string
-            plan.argv,
-            stdin=subprocess.DEVNULL,
-            stdout=output,
-            stderr=subprocess.STDOUT if plan.redirect else subprocess.DEVNULL,
-            start_new_session=True,
-            cwd=Path.cwd(),
-        )
-    finally:
-        if plan.redirect:
-            output.close()  # the child holds its own duplicate
-    return process.pid
-
-
-# --- the record that survives the restart -----------------------------------
-
-
-@dataclass
-class RestartRecord:
-    """What the process that asked for the restart left for the one that comes back."""
-
-    requested_at: str = ""
-    reason: str = ""
-    number: str | None = None
-    origin_channel: str = "local"
-    origin_session_id: str | None = None
-    target: str = ""
-    #: What the process being restarted was *running* — its startup stamp, not the checkout
-    #: as it stands now. The distinction is the whole point: see `mark_running`.
-    version: str | None = None
-    state: str = "pending"  # "pending" until delivered, then the file is gone or "failed"
-    attempts: int = 0
-    error: str | None = None
-    #: The task whose work this restart is loading, when it is loading one. A restart that
-    #: exists to pick up a change Jarvis made to its own code is the only kind where "did
-    #: it work" is a question about the *change* and not just about the process, so the
-    #: confirmation names it and the version check below is only worth making with one.
-    task_id: int | None = None
-    #: How long each service log file was when the restart was asked for, so the process
-    #: that comes back can tell this restart's errors from every earlier one (`logscan`).
-    log_marks: dict[str, int] = field(default_factory=dict)
-    #: How the out-of-process watchdog was started, or why it was not — the only thing that
-    #: notices a service that never came back at all. See `jarvis.restart_watch`.
-    watchdog: str = ""
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "RestartRecord":
-        """Build from JSON, ignoring anything an older or newer version wrote."""
-        known = {field.name for field in dataclasses.fields(cls)}
-        return cls(**{key: value for key, value in data.items() if key in known})
-
-    def age_seconds(self, now: datetime | None = None) -> float | None:
-        """Seconds since the restart was asked for, or None if the stamp is unreadable."""
-        try:
-            asked = datetime.fromisoformat(self.requested_at)
-        except ValueError:
-            return None
-        moment = now or datetime.now(UTC)
-        return max((moment - asked).total_seconds(), 0.0)
-
-
-class RestartStore:
-    """The restart record on disk. Every method swallows I/O errors: this is a breadcrumb,
-    and losing it must never be what takes the service down."""
-
-    def __init__(self, path: Path) -> None:
-        self._path = path
-
-    @property
-    def path(self) -> Path:
-        return self._path
-
-    def load(self) -> RestartRecord | None:
-        """The record, or None when there is none (or it is unreadable/corrupt)."""
-        try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return None
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            log.warning("could not read the restart record at %s; ignoring it", self._path)
-            return None
-        if not isinstance(data, dict):
-            return None
-        try:
-            return RestartRecord.from_dict(data)
-        except TypeError:
-            log.warning("the restart record at %s has an unexpected shape", self._path)
-            return None
-
-    def save(self, record: RestartRecord) -> bool:
-        """Write the record atomically (0600). False if it could not be written."""
-        tmp = self._path.with_name(self._path.name + ".tmp")
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(json.dumps(dataclasses.asdict(record), indent=2), encoding="utf-8")
-            os.chmod(tmp, 0o600)  # it holds a phone number
-            os.replace(tmp, self._path)
-            return True
-        except OSError:
-            log.exception("could not write the restart record at %s", self._path)
-            with contextlib.suppress(OSError):
-                tmp.unlink()
-            return False
-
-    def clear(self) -> None:
-        """Remove the record; a missing one is already cleared."""
-        with contextlib.suppress(OSError):
-            self._path.unlink(missing_ok=True)
-
-
-# --- summary helpers --------------------------------------------------------
-
-
-def format_duration(seconds: float | None) -> str:
-    """A spoken-length duration: seconds under two minutes, else whole minutes."""
-    if seconds is None:
-        return "an unknown time"
-    if seconds < 90:
-        count = max(int(round(seconds)), 1)
-        return f"{count} second{'s' if count != 1 else ''}"
-    minutes = int(round(seconds / 60))
-    return f"{minutes} minute{'s' if minutes != 1 else ''}"
-
 
 # --- the coordinator --------------------------------------------------------
 

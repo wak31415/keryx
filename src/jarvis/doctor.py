@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from jarvis.config import DATA_DIR_MODE, PLACEHOLDER_KEY, Settings, env_var_name
-from jarvis.restart import resolve_target
+from jarvis.restart_service import resolve_target
 
 Severity = Literal["hard", "soft"]
 

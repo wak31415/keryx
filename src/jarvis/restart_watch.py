@@ -37,13 +37,8 @@ from jarvis.logging_util import mask_number
 from jarvis.logscan import LogErrors, errors_since
 from jarvis.notify.deliver import safe_send_sms
 from jarvis.notify.twilio_out import TwilioOut, say_twiml
-from jarvis.restart import (
-    RECORD_NAME,
-    RestartRecord,
-    RestartStore,
-    format_duration,
-    health_probe,
-)
+from jarvis.restart import health_probe
+from jarvis.restart_store import RECORD_NAME, RestartRecord, RestartStore, format_duration
 
 log = logging.getLogger("jarvis.restart_watch")
 
