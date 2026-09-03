@@ -8,6 +8,7 @@ plays dead where the real process would be killed by the restart it just asked f
 import asyncio
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -161,6 +162,26 @@ class FakeWatchSpawn:
         if self.error is not None:
             raise self.error
         return self.pid
+
+
+@pytest.fixture(autouse=True)
+def _systemd_on_path(monkeypatch):
+    """Pretend this host has systemd, whatever host it is.
+
+    These tests are about what the coordinator *does* with a service manager, not about
+    whether the machine running pytest happens to have one — and `resolve_target` refuses
+    outright when `systemctl` is not on PATH, so on macOS two dozen of them failed on the
+    fixture instead of on anything they were checking. The tests that are about resolution
+    itself pass their own `which` and are unaffected.
+    """
+    real = shutil.which
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name, *a, **k: f"/usr/bin/{name}"
+        if name in {"systemctl", "systemd-run"}
+        else real(name, *a, **k),
+    )
 
 
 def make_settings(tmp_path, **overrides) -> Settings:

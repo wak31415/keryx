@@ -28,9 +28,10 @@ TIMEOUT = 10.0
 
 
 @pytest.fixture
-def data_dir(tmp_path):
+def data_dir(tmp_path, short_tmp_path):
+    """Short, because the broker binds `data_dir/approvals.sock` — see the conftest."""
     (tmp_path / "roots" / "myproject").mkdir(parents=True)
-    return tmp_path / "jarvis"
+    return short_tmp_path / "jarvis"
 
 
 @pytest.fixture

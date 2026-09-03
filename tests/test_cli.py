@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import shutil
 import wave
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
@@ -486,6 +487,17 @@ def restart_settings(monkeypatch, tmp_path):
         "jarvis.cli.resolve_target", lambda _settings: ServiceTarget("systemd", "jarvis.service")
     )
     monkeypatch.setattr("jarvis.cli.health_probe", lambda _settings: 0)
+    # `resolve_target` is stubbed above, but `watch_command` still looks for `systemd-run`
+    # on PATH — and on a macOS runner it is not there, so the watchdog silently did not arm
+    # and this fixture failed on the host rather than on anything it was testing.
+    real_which = shutil.which
+
+    def which(name, *args, **kwargs):
+        if name == "systemd-run":
+            return "/usr/bin/systemd-run"
+        return real_which(name, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "which", which)
     return settings
 
 

@@ -12,9 +12,7 @@ import asyncio
 import contextlib
 import json
 import os
-import tempfile
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import pytest
 
@@ -67,20 +65,6 @@ class FakeClock:
 
     def __call__(self):
         return self.value
-
-
-@pytest.fixture
-def short_tmp_path():
-    """A temp directory short enough to hold a unix socket path.
-
-    pytest's `tmp_path` is not: on macOS it lives under `/private/var/folders/…` and, with
-    the test's name and `jarvis/approvals.sock` on the end, comfortably exceeds the ~104
-    byte `sun_path` limit — so `start()` returns False and every broker test fails on the
-    fixture. Nothing about Jarvis needs a long path (`~/.jarvis/approvals.sock` is thirty
-    characters); only the fixture did.
-    """
-    with tempfile.TemporaryDirectory(prefix="jb", dir="/tmp") as name:
-        yield Path(name)
 
 
 @pytest.fixture

@@ -70,7 +70,7 @@ def resolve_target(
     settings: Settings,
     *,
     platform: str = sys.platform,
-    which: Callable[[str], str | None] = shutil.which,
+    which: Callable[[str], str | None] | None = None,
 ) -> ServiceTarget | None:
     """The service manager to restart through, or None when nothing supervises us.
 
@@ -79,6 +79,10 @@ def resolve_target(
     nothing that would bring it back, and must refuse to stop rather than take itself off
     the air. `none` refuses outright.
     """
+    # Resolved here rather than as a default argument: a default is bound once, at import,
+    # so `monkeypatch.setattr(shutil, "which", ...)` could never reach it — which is how a
+    # suite that assumes systemd ends up failing two dozen tests on a Mac.
+    which = which or shutil.which
     manager = settings.service_manager
     if manager == "auto":
         if platform.startswith("linux") and which("systemctl"):
@@ -113,7 +117,7 @@ def watch_command(
     settings: Settings,
     target: ServiceTarget,
     *,
-    which: Callable[[str], str | None] = shutil.which,
+    which: Callable[[str], str | None] | None = None,
     pid: int | None = None,
 ) -> WatchPlan | None:
     """How to start the watchdog *outside* this service, or None when nothing can be.
@@ -127,6 +131,7 @@ def watch_command(
     None means the watch cannot be armed at all (systemd with no `systemd-run`). Saying so
     on the record is better than starting something that will quietly die with us.
     """
+    which = which or shutil.which  # late-bound, for the reason in `resolve_target`
     inner = [sys.executable, "-m", "jarvis", "restart-watch"]
     if target.manager != "systemd":
         return WatchPlan(inner, "detached", redirect=True)
