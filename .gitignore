@@ -7,6 +7,10 @@ __pycache__/
 .ruff_cache/
 dist/
 build/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # Secrets & local state
 .env
