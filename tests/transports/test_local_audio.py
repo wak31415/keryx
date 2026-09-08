@@ -13,9 +13,8 @@ import pytest
 from fakes_audio import FakeStreamFactory
 
 from jarvis.audio.util import AudioGate, resample_pcm16
-from jarvis.transports import LocalAudioDevice, LocalTransport
 from jarvis.transports.base import AudioIn, Hangup, Transport
-from jarvis.transports.local_audio import build_chime
+from jarvis.transports.local_audio import LocalAudioDevice, LocalTransport, build_chime
 
 SAMPLE_RATE = 24000
 FRAME_SAMPLES = 1920

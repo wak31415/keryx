@@ -1,5 +1,7 @@
-"""Transports: the audio pipe of a session (shared protocol + the local mic/speaker)."""
+"""Transports: the audio pipe of a session (shared protocol + the local mic/speaker).
 
-from jarvis.transports.local_audio import LocalAudioDevice, LocalTransport
-
-__all__ = ["LocalAudioDevice", "LocalTransport"]
+Nothing is re-exported here; import from the modules themselves. Importing any
+submodule executes this file, so a package whose members must be importable
+independently re-exports nothing: `local_audio` needs `sounddevice`, which no
+Linux host has, and it must not arrive on the back of `transports.base`.
+"""
