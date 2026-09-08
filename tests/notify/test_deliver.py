@@ -1,9 +1,9 @@
 """Tests for the two shared delivery helpers.
 
 `can_text` is asserted here and only here. Before these existed, `Notifier`,
-`RestartCoordinator` and `restart_watch` each had their own copy of this gate, and the one
-thing they all had to agree on — that `SMS_ENABLED=false` means no text, whatever the
-Twilio credentials say — was three separate chances to disagree.
+`RestartCoordinator` and `restart/watchdog.py` each had their own copy of this gate, and
+the one thing they all had to agree on — that `SMS_ENABLED=false` means no text, whatever
+the Twilio credentials say — was three separate chances to disagree.
 """
 
 from types import SimpleNamespace
