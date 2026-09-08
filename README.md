@@ -1,8 +1,19 @@
-# Jarvis
+<p align="center">
+  <img src="docs/assets/jarvis-mark.svg" width="88" alt="">
+</p>
 
-[![CI](https://github.com/wak31415/jarvis-voice-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/wak31415/jarvis-voice-agent/actions/workflows/ci.yml)
+<h1 align="center">Jarvis</h1>
 
-A personal voice agent you can reach two ways:
+<p align="center"><em>A personal voice agent you can phone.</em></p>
+
+<p align="center">
+  <a href="https://github.com/wak31415/jarvis-voice-agent/actions/workflows/ci.yml"><img src="https://github.com/wak31415/jarvis-voice-agent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache--2.0-6366f1.svg" alt="Apache-2.0"></a>
+  <img src="https://img.shields.io/badge/python-3.12-6366f1.svg" alt="Python 3.12">
+  <img src="https://img.shields.io/badge/coverage-94%25-22d3ee.svg" alt="Coverage 94%">
+</p>
+
+Reach it two ways:
 
 - **By phone** — call a Twilio number (from a watch, a car, anywhere). The call opens a
   realtime voice session.
@@ -33,21 +44,39 @@ installed from a clone.
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    caller(["Phone or watch"])
+    mic(["Mac microphone"])
+    twilio["Twilio + Cloudflare tunnel"]
+    wake["openWakeWord"]
+    session["VoiceSession"]
+    realtime["OpenAI Realtime"]
+    manager["TaskManager"]
+    agent["Claude subagent"]
+    db[("tasks.db")]
+
+    caller -- PSTN --> twilio
+    mic -- "hey jarvis" --> wake
+    twilio & wake --> session
+    session <-- "speech, both ways" --> realtime
+    session -- "tool calls" --> manager
+    manager -- "one per task" --> agent
+    manager --> db
+    agent -. "minutes later: announced into the call, or a call back" .-> caller
+
+    classDef person fill:#8250df18,stroke:#8250df,stroke-width:1.5px
+    classDef core fill:#1f6feb18,stroke:#1f6feb,stroke-width:2px
+    classDef task fill:#1a7f3718,stroke:#1a7f37,stroke-width:1.5px
+    classDef plain fill:#8b949e14,stroke:#8b949e,stroke-width:1px
+    class caller,mic person
+    class session,realtime core
+    class manager,agent,db task
+    class twilio,wake plain
 ```
-Phone/Watch ─PSTN─▶ Twilio ─WSS media stream─▶ Cloudflare Tunnel ─▶ FastAPI (Linux)
-                                                          │
-Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTransport   (macOS)
-                                                          ▼
-                                    VoiceSession  (transport-agnostic core)
-                               audio pump ▲▼   tool calls   ▲ announce()
-                                          │                 │
-                            OpenAIRealtimeClient        Notifier ◀── EventBus
-                                          │                 ▲
-                                    ToolRegistry ──▶ TaskManager ──▶ Claude Agent SDK
-                                                          │  (one AgentSession per task)
-                                                          ▼
-                                             SQLite tasks  +  Twilio SMS / call-back
-```
+
+The dotted line is the part that makes this an *agent* rather than a voice interface: work
+outlives the call it was asked for in, and comes back on its own.
 
 One `VoiceSession` drives any transport: Twilio media streams (µ-law 8 kHz, passed
 through untouched), the local mic/speaker (16-bit PCM 24 kHz, half-duplex — the mic is
@@ -466,6 +495,34 @@ way. A Claude Code session on your own screen has stopped and is asking *you* so
 "may I run this?", "which of these three?" — and you are not at the keyboard. Five minutes
 later, Jarvis rings you about it, reads the question out, and lets you answer on the
 keypad.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CC as Claude Code
+    participant H as The hook
+    participant J as Jarvis
+    participant P as Your phone
+
+    CC->>H: about to put a prompt on screen
+    H->>J: hands it over, then blocks
+    Note over CC,H: the prompt is drawn exactly as it always was
+    alt you answer at the keyboard
+        CC-->>H: PostToolUse / Stop
+        H-->>CC: prints nothing — the keyboard always wins
+    else five minutes pass
+        J->>J: classify() — allowlist, denylist,<br/>quiet hours, rate limit
+        J->>P: rings, reads it out, offers a menu
+        P->>J: PIN, then one keypad digit
+        J->>J: is it still pending?
+        J-->>H: the verdict
+        H-->>CC: allow or deny
+    end
+```
+
+Every branch that is not step 7 ends the same way — the hook prints nothing and the prompt
+waits on your screen. That is the whole safety story, and the rest of this section is why
+each step is where it is.
 
 ```bash
 scripts/install-claude-hook.sh              # add the hook to ~/.claude/settings.json
