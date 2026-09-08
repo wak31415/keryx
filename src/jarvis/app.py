@@ -39,7 +39,7 @@ from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.base import ProviderFactory
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.recall import Recaller
-from jarvis.restart import RestartCoordinator
+from jarvis.restart.coordinator import RestartCoordinator
 from jarvis.session import SessionRegistry
 from jarvis.slack import SlackWebApi, slack_credentials
 from jarvis.stream_tokens import StreamTokenStore

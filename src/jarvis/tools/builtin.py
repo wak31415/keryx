@@ -29,7 +29,7 @@ from jarvis.cluster import ClusterQuerier
 from jarvis.config import Settings
 from jarvis.inline_waits import InlineWaits
 from jarvis.recall import Recaller
-from jarvis.restart import RestartCoordinator
+from jarvis.restart.coordinator import RestartCoordinator
 from jarvis.slack import SlackSender
 from jarvis.tasks.manager import TaskManager
 from jarvis.tools.builtin_billing import register_billing_tools

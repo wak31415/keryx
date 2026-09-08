@@ -10,7 +10,7 @@ from jarvis.memory import MemoryWriter
 from jarvis.notify.notifier import Notifier
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.openai import OpenAIRealtimeClient
-from jarvis.restart import RestartCoordinator
+from jarvis.restart.coordinator import RestartCoordinator
 from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import Task, TaskKind

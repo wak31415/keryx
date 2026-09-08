@@ -26,8 +26,8 @@ from jarvis.cli import (
 )
 from jarvis.config import PLACEHOLDER_KEY, Settings
 from jarvis.realtime.base import AudioDelta, Transcript
-from jarvis.restart_service import ServiceTarget
-from jarvis.restart_store import RECORD_NAME, RestartRecord, RestartStore
+from jarvis.restart.service import ServiceTarget
+from jarvis.restart.store import RECORD_NAME, RestartRecord, RestartStore
 from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore

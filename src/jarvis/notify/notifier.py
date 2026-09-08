@@ -42,7 +42,7 @@ from jarvis.tasks.store import TaskStore
 from jarvis.transcripts import read_tail
 
 if TYPE_CHECKING:  # pragma: no cover - `restart` imports this module for its own reasons
-    from jarvis.restart import RestartCoordinator
+    from jarvis.restart.coordinator import RestartCoordinator
 
 log = logging.getLogger("jarvis.notify.notifier")
 

@@ -13,10 +13,10 @@ from xml.etree import ElementTree
 import pytest
 
 from jarvis.config import Settings
-from jarvis.logscan import log_dir
-from jarvis.logscan import marks as log_marks
-from jarvis.restart import RECORD_NAME, RestartRecord, RestartStore
-from jarvis.restart_watch import (
+from jarvis.restart.logscan import log_dir
+from jarvis.restart.logscan import marks as log_marks
+from jarvis.restart.store import RECORD_NAME, RestartRecord, RestartStore
+from jarvis.restart.watchdog import (
     ALERTED,
     CONFIRMED,
     MAX_SMS_CHARS,

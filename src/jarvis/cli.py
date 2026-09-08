@@ -27,19 +27,19 @@ from jarvis.events import EventBus
 from jarvis.google_setup import GoogleSetupError, run_google_setup
 from jarvis.local_runner import LocalRunner
 from jarvis.logging_util import mask_number
-from jarvis.logscan import errors_since
-from jarvis.logscan import marks as log_marks
 from jarvis.realtime.openai import OpenAIRealtimeClient
-from jarvis.restart import health_probe, wait_until_serving
-from jarvis.restart_service import (
+from jarvis.restart.coordinator import health_probe, wait_until_serving
+from jarvis.restart.logscan import errors_since
+from jarvis.restart.logscan import marks as log_marks
+from jarvis.restart.service import (
     UNSUPPORTED_HINT,
     resolve_target,
     spawn_watchdog,
     watch_command,
 )
-from jarvis.restart_store import RECORD_NAME, RestartRecord, RestartStore
-from jarvis.restart_version import loaded_version, mark_running, mark_startup_logs
-from jarvis.restart_watch import watch
+from jarvis.restart.store import RECORD_NAME, RestartRecord, RestartStore
+from jarvis.restart.version import loaded_version, mark_running, mark_startup_logs
+from jarvis.restart.watchdog import watch
 from jarvis.retention import cutoff_for, prune, prune_with
 from jarvis.server import create_app
 from jarvis.session import VoiceSession
@@ -431,7 +431,7 @@ def restart_watch() -> None:
     """Watch a pending restart from outside the service; started by the restart itself.
 
     Not for hand use — `jarvis restart` arms this, in a unit of its own so the restart
-    cannot kill it (see `jarvis.restart.watch_command`). Deliberately without
+    cannot kill it (see `jarvis.restart.service.watch_command`). Deliberately without
     `_add_file_logging`: its output belongs in `logs/restart-watch.log`, and writing its
     own "the restart never came back" into `jarvis.log` would leave the next restart
     scanning that line back as a fault of Jarvis's.

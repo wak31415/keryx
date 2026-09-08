@@ -1,7 +1,7 @@
 """The two ways a result reaches him, in one place each.
 
 Three modules independently grew the same pair of loops — `Notifier`, the
-`RestartCoordinator` and the standalone `restart_watch` — each iterating `sessions.live()`,
+`RestartCoordinator` and the standalone `restart.watchdog` — each iterating `sessions.live()`,
 each swallowing its own exceptions, and each deciding for itself whether a text may be
 sent. Three copies of a gate is three chances to get it wrong, and this is the gate where
 being wrong is expensive: **`TwilioOut.can_text`, never `configured`.** `SMS_ENABLED` is
@@ -22,7 +22,7 @@ log = logging.getLogger("jarvis.notify.deliver")
 
 
 class _Sessions(Protocol):
-    """Just the part of `SessionRegistry` this needs — it is imported by `restart_watch`."""
+    """Just the part of `SessionRegistry` this needs — it is imported by `restart.watchdog`."""
 
     def live(self) -> list: ...
 

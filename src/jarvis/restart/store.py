@@ -52,7 +52,7 @@ class RestartRecord:
     #: that comes back can tell this restart's errors from every earlier one (`logscan`).
     log_marks: dict[str, int] = field(default_factory=dict)
     #: How the out-of-process watchdog was started, or why it was not — the only thing that
-    #: notices a service that never came back at all. See `jarvis.restart_watch`.
+    #: notices a service that never came back at all. See `jarvis.restart.watchdog`.
     watchdog: str = ""
 
     @classmethod

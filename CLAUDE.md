@@ -39,10 +39,8 @@ its platform-specific half.
 Three groups were split apart on 2026-09-02 and are named here because the file you
 want is rarely the one whose name you remember:
 
-- **restart** — `restart.py` is `RestartCoordinator` and nothing else. `restart_service.py`
-  is talking to the service manager (`resolve_target`, `watch_command`, `spawn_watchdog`),
-  `restart_store.py` is the `restart.json` record, `restart_version.py` is what is
-  *running*, and `restart_watch.py` is the out-of-process watchdog.
+- **restart** — `restart/` is the whole subsystem: `coordinator`, `service`, `store`,
+  `version`, `watchdog` and `logscan`. The directory listing is the index now.
 - **tools** — `tools/builtin.py` is a composition root; the registrations are in
   `builtin_comms`, `builtin_billing`, `builtin_tasks`, `builtin_restart` and
   `builtin_session`, with the wording, the parsing and the two gates (`pin_gate`,
@@ -96,13 +94,14 @@ it is running. Do not make a subagent restart Jarvis itself; it is inside the cg
 
 ## Restarts are three halves
 
-The process that runs `systemctl restart` is the one that gets killed, so `jarvis/restart.py`
-splits the flow across that death and joins it with `data_dir/restart.json`: `request()` writes
-the record and hands over, `resume()` (one task per `jarvis serve`) finds it on the far side and
-rings back with a status summary. Neither half may interrupt a call — a restart asked for during
-one waits for the line to clear, and the confirmation is announced or texted rather than dialled
-into a live session. Keep it that way, and keep every failure path landing somewhere a human can
-find it (`jarvis restart --status`).
+The process that runs `systemctl restart` is the one that gets killed, so
+`jarvis/restart/coordinator.py` splits the flow across that death and joins it with
+`data_dir/restart.json`: `request()` writes the record and hands over, `resume()` (one task
+per `jarvis serve`) finds it on the far side and rings back with a status summary. Neither
+half may interrupt a call — a restart asked for during one waits for the line to clear, and
+the confirmation is announced or texted rather than dialled into a live session. Keep it
+that way, and keep every failure path landing somewhere a human can find it
+(`jarvis restart --status`).
 
 "Did it load the change" is answered from `data_dir/running-version`, stamped by `mark_running()`
 at the top of `jarvis serve` — *not* from `current_version()` at request time. The checkout moves
@@ -111,7 +110,7 @@ commit on disk before the question is put, so a request-time read compares the n
 itself and reports that nothing loaded. Process start is the only moment the checkout and the
 running code are the same thing.
 
-The third half is `jarvis/restart_watch.py`, and it exists because the first two both live
+The third half is `jarvis/restart/watchdog.py`, and it exists because the first two both live
 *inside* Jarvis. A restart is usually loading a change Jarvis just made to its own code; a
 change that will not import means there is no new process, so nothing runs `resume()` and
 nobody is told anything — silence that reads exactly like success. So `_execute()` arms
@@ -123,9 +122,10 @@ by the process that is not running.
 
 Two rulings that look like bugs if you do not know them. A **negative** exit code from the
 restart command is the restart working: `systemctl` is inside the cgroup it tears down, so it
-is killed handing over and returns `-15`. And "back up" is not "working" — `jarvis/logscan.py`
-scopes the service's log files by byte offset (`marks()` before, `errors_since()` after) so the
-confirmation can say what broke, and those errors are spoken *before* the housekeeping.
+is killed handing over and returns `-15`. And "back up" is not "working" —
+`jarvis/restart/logscan.py` scopes the service's log files by byte offset (`marks()` before,
+`errors_since()` after) so the confirmation can say what broke, and those errors are spoken
+*before* the housekeeping.
 
 ## The approval bridge runs the other way
 

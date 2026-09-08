@@ -38,7 +38,6 @@ from typing import Any
 
 from jarvis.config import Settings
 from jarvis.logging_util import mask_number
-from jarvis.logscan import errors_since, marks
 from jarvis.notify.deliver import announce_to_live_sessions, safe_send_sms
 from jarvis.notify.notifier import (
     CALLBACK_TOKEN_TTL_S,
@@ -47,15 +46,16 @@ from jarvis.notify.notifier import (
     no_trailing_stop,
 )
 from jarvis.notify.twilio_out import stream_twiml
-from jarvis.restart_service import (
+from jarvis.restart.logscan import errors_since, marks
+from jarvis.restart.service import (
     ServiceTarget,
     WatchPlan,
     resolve_target,
     spawn_watchdog,
     watch_command,
 )
-from jarvis.restart_store import RECORD_NAME, RestartRecord, RestartStore, format_duration
-from jarvis.restart_version import (
+from jarvis.restart.store import RECORD_NAME, RestartRecord, RestartStore, format_duration
+from jarvis.restart.version import (
     loaded_version,
     startup_log_marks,
 )

@@ -20,7 +20,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-from jarvis.logscan import marks
+from jarvis.restart.logscan import marks
 
 log = logging.getLogger("jarvis.restart")
 

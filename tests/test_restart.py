@@ -20,16 +20,16 @@ import pytest
 from fakes import FakeVoiceSession
 
 from jarvis.config import Settings
-from jarvis.logscan import log_dir
-from jarvis.logscan import marks as log_marks
-from jarvis.restart import (
+from jarvis.restart.coordinator import (
     EXEC_CONFIRM_S,
     MAX_CALLBACK_ATTEMPTS,
     RestartCoordinator,
     health_probe,
     wait_until_serving,
 )
-from jarvis.restart_service import (
+from jarvis.restart.logscan import log_dir
+from jarvis.restart.logscan import marks as log_marks
+from jarvis.restart.service import (
     LAUNCHD_LABEL,
     SYSTEMD_UNIT,
     WATCH_UNIT_PREFIX,
@@ -40,8 +40,8 @@ from jarvis.restart_service import (
     watch_command,
     watch_log_path,
 )
-from jarvis.restart_store import RestartRecord, RestartStore, format_duration
-from jarvis.restart_version import (
+from jarvis.restart.store import RestartRecord, RestartStore, format_duration
+from jarvis.restart.version import (
     current_version,
     loaded_version,
     mark_running,
@@ -248,7 +248,7 @@ class contextlib_suppress:
 @pytest.fixture(autouse=True)
 def _fixed_version(monkeypatch):
     """`git describe` is real work on a real checkout; pin it so summaries are assertable."""
-    monkeypatch.setattr("jarvis.restart_version.current_version", lambda repo=None: VERSION)
+    monkeypatch.setattr("jarvis.restart.version.current_version", lambda repo=None: VERSION)
 
 
 @pytest.fixture
@@ -699,7 +699,7 @@ def test_without_a_stamp_the_checkout_is_the_best_guess(tmp_path):
 def test_the_stamp_beats_a_checkout_that_has_moved_on(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     mark_running(settings.data_dir)
-    monkeypatch.setattr("jarvis.restart_version.current_version", lambda repo=None: "v2-newer00")
+    monkeypatch.setattr("jarvis.restart.version.current_version", lambda repo=None: "v2-newer00")
 
     assert loaded_version(settings.data_dir) == VERSION
 
@@ -714,7 +714,7 @@ async def test_a_commit_made_before_the_restart_still_counts_as_loaded(tmp_path,
     settings = make_settings(tmp_path)
     harness = Harness(settings)
     mark_running(settings.data_dir)  # the process that is about to be restarted
-    monkeypatch.setattr("jarvis.restart_version.current_version", lambda repo=None: "v2-newer00")
+    monkeypatch.setattr("jarvis.restart.version.current_version", lambda repo=None: "v2-newer00")
 
     await harness.coordinator.request(reason="new code", task_id=7)
     await harness.settle()
@@ -1289,7 +1289,7 @@ class RecordingPopen:
 def test_spawn_watchdog_starts_a_detached_process_and_returns_its_pid(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     popen = RecordingPopen()
-    monkeypatch.setattr("jarvis.restart_service.subprocess.Popen", popen)
+    monkeypatch.setattr("jarvis.restart.service.subprocess.Popen", popen)
     plan = WatchPlan(["/usr/bin/true", "--watch"], "jarvis-restart-watch-1", redirect=False)
 
     assert spawn_watchdog(plan, settings) == 4321
@@ -1307,7 +1307,7 @@ def test_a_redirected_watchdog_is_pointed_at_its_own_log(tmp_path, monkeypatch):
     """On launchd nothing redirects for us, and a watchdog that fails has no other voice."""
     settings = make_settings(tmp_path)
     popen = RecordingPopen()
-    monkeypatch.setattr("jarvis.restart_service.subprocess.Popen", popen)
+    monkeypatch.setattr("jarvis.restart.service.subprocess.Popen", popen)
     plan = WatchPlan(["/usr/bin/true"], "detached", redirect=True)
 
     spawn_watchdog(plan, settings)
@@ -1377,7 +1377,7 @@ def test_an_unparseable_timestamp_gives_an_unknown_age():
 
 def test_a_version_that_cannot_be_stamped_is_still_returned(tmp_path, monkeypatch):
     """Decoration: an unwritable data dir costs one line of the spoken summary, not more."""
-    monkeypatch.setattr("jarvis.restart_version.current_version", lambda repo=None: "v1-abc")
+    monkeypatch.setattr("jarvis.restart.version.current_version", lambda repo=None: "v1-abc")
     unwritable = tmp_path / "a-file"
     unwritable.write_text("not a directory")
 
@@ -1408,6 +1408,6 @@ def test_git_that_is_not_there_is_no_version_rather_than_an_error(tmp_path, monk
     def no_git(*args, **kwargs):
         raise FileNotFoundError("git")
 
-    monkeypatch.setattr("jarvis.restart_version.subprocess.run", no_git)
+    monkeypatch.setattr("jarvis.restart.version.subprocess.run", no_git)
 
     assert current_version(tmp_path) is None

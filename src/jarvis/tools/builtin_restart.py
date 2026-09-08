@@ -6,7 +6,7 @@ a restart drops every call in progress, including the one that asked for it.
 """
 
 from jarvis.config import Settings
-from jarvis.restart import RestartCoordinator
+from jarvis.restart.coordinator import RestartCoordinator
 from jarvis.tools.builtin_common import _task_id, _text, pin_gate
 from jarvis.tools.registry import ToolContext, ToolRegistry
 

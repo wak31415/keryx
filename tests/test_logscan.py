@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.logscan import (
+from jarvis.restart.logscan import (
     LOG_NAMES,
     MAX_ERRORS,
     MAX_LINE_CHARS,
