@@ -36,7 +36,7 @@ Google OAuth bootstrap in `jarvis/google_setup.py`. Service templates are in
 (argument parsing, the env-file and PATH checks, `render`), so an installer is only
 its platform-specific half.
 
-Four groups are named here because the file you want is rarely the one whose name you
+Five groups are named here because the file you want is rarely the one whose name you
 remember:
 
 - **restart** — `restart/` is the whole subsystem: `coordinator`, `service`, `store`,
@@ -52,9 +52,11 @@ remember:
 - **integrations** — `integrations/` is one module per outside service (`billing`,
   `cluster`, `slack`, `web_search`), each behind exactly one voice tool. The tool's
   *registration* goes in `tools/builtin_<domain>.py`; its *client* goes here.
+- **continuity** — `continuity/` is what survives the end of a call: `briefing`, `memory`
+  and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
+  `retention`, which prunes exactly those artefacts.
 
-`logging_util.mask_number` is the only shape a phone number may take in a log line, and
-`retention.py` is the transcript and task pruning (off by default).
+`logging_util.mask_number` is the only shape a phone number may take in a log line.
 
 ## One task kind
 
@@ -68,7 +70,8 @@ read-only" — the phone PIN gates every dispatch instead.
 ## Continuity is three pieces
 
 A realtime session starts blank — the provider keeps nothing across sockets — so what
-Jarvis knows at the top of a call is assembled every time by `jarvis/briefing.py`:
+Jarvis knows at the top of a call is assembled every time by
+`jarvis/continuity/briefing.py`:
 
 - **The digest.** `Task.reported_at` is the only record that Jarvis *told him*; `announced`
   and `sms_sent` only say a delivery was attempted, and neither survives a call he missed.
@@ -76,13 +79,14 @@ Jarvis knows at the top of a call is assembled every time by `jarvis/briefing.py
   thing stamps it: the voice model's `mark_reported` tool, after it has spoken the result.
   Do not stamp it from a delivery path — hearing something twice is recoverable, never
   hearing it is not.
-- **The memory.** `jarvis/memory.py` subscribes to `SessionEnded` and dispatches a subagent
-  (`prompts/memory_update.md`) that folds the call into `data_dir/memory.md`; the next call
-  reads it back. Its headings are nested one level when embedded, so its sections cannot be
-  mistaken for instructions.
-- **`recall`.** `jarvis/recall.py` searches past transcripts and past task summaries on
-  demand. Matching stays literal on purpose: the query is speech that transcription has
-  already mangled once, and a fuzzy hit gets read out as if it were fact.
+- **The memory.** `jarvis/continuity/memory.py` owns `data_dir/memory.md` outright — the
+  file API *and* the writer. It subscribes to `SessionEnded` and dispatches a subagent
+  (`prompts/memory_update.md`) that folds the call into the file; the next call reads it
+  back through `briefing`. Its headings are nested one level when embedded, so its
+  sections cannot be mistaken for instructions.
+- **`recall`.** `jarvis/continuity/recall.py` searches past transcripts and past task
+  summaries on demand. Matching stays literal on purpose: the query is speech that
+  transcription has already mangled once, and a fuzzy hit gets read out as if it were fact.
 
 `Task.internal` marks work Jarvis asked for itself (today: the memory update). It hides the
 task from the spoken lists, the digest, `recall`, the daily cap and the notifier — and

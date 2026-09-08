@@ -14,8 +14,8 @@ import asyncio
 import logging
 from typing import Protocol
 
-from jarvis.briefing import BriefingSource
 from jarvis.config import Settings
+from jarvis.continuity.briefing import BriefingSource
 from jarvis.events import EventBus
 from jarvis.realtime.base import ProviderFactory, RealtimeProvider
 from jarvis.session import SessionRegistry, VoiceSession

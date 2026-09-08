@@ -7,13 +7,19 @@ is aimed at the right two files, and that a call not worth remembering creates n
 
 import pytest
 
-from jarvis.briefing import MAX_MEMORY_FILE_CHARS, memory_path
+from jarvis.continuity.memory import (
+    MAX_MEMORY_FILE_CHARS,
+    MIN_SPOKEN_LINES,
+    MemoryWriter,
+    count_spoken_lines,
+    describe_tasks,
+    memory_path,
+)
+from jarvis.continuity.transcripts import transcript_path
 from jarvis.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
-from jarvis.memory import MIN_SPOKEN_LINES, MemoryWriter, count_spoken_lines, describe_tasks
 from jarvis.tasks.agent_runner import FakeAgentRunner
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.store import TaskStore
-from jarvis.transcripts import transcript_path
 
 
 @pytest.fixture

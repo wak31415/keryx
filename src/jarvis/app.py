@@ -27,20 +27,20 @@ delivered is what `Briefer` puts at the top of the next call.
 from dataclasses import dataclass, field
 
 from jarvis.approvals.broker import ApprovalBroker
-from jarvis.briefing import Briefer
 from jarvis.config import Settings
+from jarvis.continuity.briefing import Briefer
+from jarvis.continuity.memory import MemoryWriter
+from jarvis.continuity.recall import Recaller
 from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
 from jarvis.integrations.billing import build_billing_reader
 from jarvis.integrations.cluster import build_cluster_stats
 from jarvis.integrations.slack import SlackWebApi, slack_credentials
 from jarvis.integrations.web_search import OpenAIWebSearch
-from jarvis.memory import MemoryWriter
 from jarvis.notify.notifier import Notifier
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.base import ProviderFactory
 from jarvis.realtime.openai import OpenAIRealtimeClient
-from jarvis.recall import Recaller
 from jarvis.restart.coordinator import RestartCoordinator
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore

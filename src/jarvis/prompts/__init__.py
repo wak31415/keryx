@@ -107,8 +107,8 @@ def render_voice_prompt(
     `briefs` defaults to the `.jarvis-brief.md` of every project that wrote one.
     `opening_context` is the reason the session was opened (a task summary on a call-back,
     say) and is dropped from the prompt when there is none. `pending` and `memory` come
-    from a `Briefing` (see `jarvis.briefing`) and are dropped the same way: a first call on
-    a fresh machine renders neither section, rather than an empty heading.
+    from a `Briefing` (see `jarvis.continuity.briefing`) and are dropped the same way: a
+    first call on a fresh machine renders neither section, rather than an empty heading.
     """
     known = discover_projects(settings)
     names = list(known) if projects is None else projects

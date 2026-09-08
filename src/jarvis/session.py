@@ -42,8 +42,8 @@ from pathlib import Path
 from typing import Protocol
 
 from jarvis.audio.util import ms_for_bytes
-from jarvis.briefing import Briefing, BriefingSource
 from jarvis.config import Settings, secure_dir, secure_file
+from jarvis.continuity.briefing import Briefing, BriefingSource
 from jarvis.events import EventBus, SessionEnded, SessionStarted
 from jarvis.logging_util import mask_number
 from jarvis.prompts import render_voice_prompt
@@ -716,7 +716,7 @@ class VoiceSession:
     def _append_transcript(self, text: str) -> None:
         """Append one line to `data_dir/calls/<session_id>.log`; never fatal.
 
-        The stamp is a full local ISO timestamp rather than a wall clock: `jarvis.recall`
+        The stamp is a full local ISO timestamp rather than a wall clock: `jarvis.continuity.recall`
         reads these back weeks later and "14:02:11" cannot say which day that was. Older
         transcripts stamped with the time alone still parse — recall dates those from the
         file's modification time instead.

@@ -10,14 +10,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jarvis.briefing import (
-    MAX_MEMORY_CHARS,
-    Briefer,
-    Briefing,
-    format_digest,
-    memory_path,
-    read_memory,
-)
+from jarvis.continuity.briefing import Briefer, Briefing, format_digest
+from jarvis.continuity.memory import MAX_MEMORY_CHARS, memory_path, read_memory
 from jarvis.events import EventBus
 from jarvis.tasks.agent_runner import FakeAgentRunner
 from jarvis.tasks.manager import TaskManager

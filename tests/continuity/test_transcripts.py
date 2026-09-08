@@ -1,6 +1,6 @@
 """Tests for reading an earlier call back out of its transcript."""
 
-from jarvis.transcripts import MAX_TRANSCRIPT_CHARS, read_tail, transcript_path
+from jarvis.continuity.transcripts import MAX_TRANSCRIPT_CHARS, read_tail, transcript_path
 
 
 def write_transcript(data_dir, session_id: str, body: str):

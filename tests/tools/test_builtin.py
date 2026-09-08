@@ -13,13 +13,13 @@ from datetime import UTC, datetime
 import pytest
 
 from jarvis.config import Settings
+from jarvis.continuity.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
+from jarvis.continuity.recall import MAX_LIMIT as MAX_RECALL_LIMIT
+from jarvis.continuity.recall import Hit
 from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
 from jarvis.integrations.billing import BillingError, BillingReport
 from jarvis.integrations.cluster import MESSAGES, ClusterError, ClusterReport, GpuCounts, MyJobs
-from jarvis.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
-from jarvis.recall import MAX_LIMIT as MAX_RECALL_LIMIT
-from jarvis.recall import Hit
 from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import TaskStatus

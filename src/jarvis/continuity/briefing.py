@@ -10,8 +10,9 @@ both are assembled here, once, at session start:
    and until it is stamped the task comes back at the top of the next call. The voice
    model stamps it with `mark_reported` once it has told him (spec §3.3 ruling).
 2. **The memory.** `data_dir/memory.md`, rewritten after every call by the subagent
-   `jarvis.memory` dispatches. Standing facts and what recent calls were about, so "the
-   thing we talked about yesterday" resolves to something.
+   `jarvis.continuity.memory` dispatches, and read back through its `read_memory`.
+   Standing facts and what recent calls were about, so "the thing we talked about
+   yesterday" resolves to something.
 
 Nothing here may fail a call. Every read is guarded and the worst case is a briefing with
 empty parts, which renders as a prompt with those sections left out entirely.
@@ -20,10 +21,10 @@ empty parts, which renders as a prompt with those sections left out entirely.
 import asyncio
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from jarvis.config import Settings, secure_file
+from jarvis.config import Settings
+from jarvis.continuity.memory import read_memory
 from jarvis.tasks.models import Task, TaskStatus
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -31,15 +32,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 log = logging.getLogger("jarvis.briefing")
 
-MEMORY_FILE = "memory.md"
-
-#: How much of the memory reaches the system prompt. It is spoken from, not read out, and
-#: a realtime session pays for every token of instructions on every turn.
-MAX_MEMORY_CHARS = 4000
-#: How much of it may sit on disk. Looser than the read limit on purpose: the memory
-#: subagent's prompt is what keeps the document short, and this is only the backstop that
-#: stops a runaway rewrite growing the file without limit. See `trim_memory`.
-MAX_MEMORY_FILE_CHARS = 3 * MAX_MEMORY_CHARS
 #: How much of one task's summary the digest carries. Enough to say a sentence about it.
 MAX_DIGEST_SUMMARY_CHARS = 200
 #: How much of one task's description the digest carries, to remind him what he asked for.
@@ -57,7 +49,6 @@ OPENING_NUDGE = (
     " [system] {count} finished while you were away and he has not heard yet — see "
     '"What he has not heard yet" and lead with it, briefly, after your greeting.'
 )
-_TRIMMED_NOTE = "\n\n(older memory trimmed)"
 
 
 @dataclass(frozen=True)
@@ -75,56 +66,6 @@ class Briefing:
             return ""
         noun = "task" if self.pending_count == 1 else "tasks"
         return OPENING_NUDGE.format(count=f"{self.pending_count} {noun}")
-
-
-def memory_path(data_dir: Path) -> Path:
-    """Where the rolling memory lives."""
-    return data_dir / MEMORY_FILE
-
-
-def trim_memory(data_dir: Path, *, max_chars: int = MAX_MEMORY_FILE_CHARS) -> bool:
-    """Bound `memory.md` on disk. True when it was actually shortened.
-
-    `read_memory` bounds what reaches a *prompt*; this bounds the file, which nothing else
-    did — it is written by a subagent, under a prompt that asks it to stay within
-    `MAX_MEMORY_CHARS`, and a prompt is not a bound. The limit here is deliberately looser
-    than the read limit so that the subagent's own discipline stays the primary mechanism
-    and this stays a backstop against a runaway rewrite.
-
-    Trimmed from the *end*, for the same reason `read_memory` is: the document is written
-    standing-facts-first and recent-calls-last.
-    """
-    path = memory_path(data_dir)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    if len(text) <= max_chars:
-        secure_file(path)
-        return False
-    try:
-        path.write_text(text[:max_chars].rstrip() + "\n", encoding="utf-8")
-    except OSError:
-        log.warning("could not trim %s", path)
-        return False
-    secure_file(path)
-    log.info("trimmed %s from %d to %d characters", path.name, len(text), max_chars)
-    return True
-
-
-def read_memory(data_dir: Path, *, max_chars: int = MAX_MEMORY_CHARS) -> str:
-    """The memory document, trimmed to `max_chars`. Empty when there is none yet.
-
-    Trimmed from the *end*: the document is written standing-facts-first and
-    recent-calls-last, so what survives a trim is the part that is true for longest.
-    """
-    try:
-        text = memory_path(data_dir).read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars].rstrip() + _TRIMMED_NOTE
 
 
 def _shorten(text: str, limit: int) -> str:

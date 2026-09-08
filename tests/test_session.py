@@ -13,8 +13,8 @@ import stat
 import pytest
 from fakes import TIMEOUT, DrainingFakeTransport, FakeProvider, FakeTransport, eventually
 
-from jarvis.briefing import Briefing
 from jarvis.config import Settings
+from jarvis.continuity.briefing import Briefing
 from jarvis.events import EventBus, SessionEnded, SessionStarted
 from jarvis.realtime.base import (
     AudioDelta,

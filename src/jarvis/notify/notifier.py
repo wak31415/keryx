@@ -29,6 +29,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from jarvis.config import Settings
+from jarvis.continuity.transcripts import read_tail
 from jarvis.events import EventBus, TaskCompleted, TaskFailed
 from jarvis.inline_waits import InlineWaits
 from jarvis.notify.callback import (
@@ -44,7 +45,6 @@ from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
 from jarvis.tasks.models import Task
 from jarvis.tasks.store import TaskStore
-from jarvis.transcripts import read_tail
 
 if TYPE_CHECKING:  # pragma: no cover - `restart` imports this module for its own reasons
     from jarvis.restart.coordinator import RestartCoordinator

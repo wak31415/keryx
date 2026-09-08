@@ -1,4 +1,4 @@
-"""Tests for `jarvis.retention`: what gets deleted, and the one thing that never does.
+"""Tests for `jarvis.continuity.retention`: what gets deleted, and the one thing that never does.
 
 The rule with a consequence behind it is that a finished task the caller has not been told
 about survives any prune, however old. `Task.reported_at` is the only record that Jarvis
@@ -12,9 +12,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
-from jarvis.briefing import MAX_MEMORY_FILE_CHARS, memory_path, trim_memory
 from jarvis.config import Settings
-from jarvis.retention import PruneReport, cutoff_for, prune, prune_transcripts, prune_with
+from jarvis.continuity.memory import MAX_MEMORY_FILE_CHARS, memory_path, trim_memory
+from jarvis.continuity.retention import (
+    PruneReport,
+    cutoff_for,
+    prune,
+    prune_transcripts,
+    prune_with,
+)
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
 

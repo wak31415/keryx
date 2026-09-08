@@ -10,8 +10,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from jarvis.continuity.recall import MAX_LIMIT, Recaller, search_calls, terms
 from jarvis.events import EventBus
-from jarvis.recall import MAX_LIMIT, Recaller, search_calls, terms
 from jarvis.tasks.agent_runner import FakeAgentRunner
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
@@ -119,7 +119,7 @@ def test_an_unreadable_mtime_leaves_the_date_blank_rather_than_guessing(settings
     path = settings.data_dir / "calls" / "old.log"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("[14:02:11] user: the orchard thing\n")
-    monkeypatch.setattr("jarvis.recall._file_date", lambda _path: None)
+    monkeypatch.setattr("jarvis.continuity.recall._file_date", lambda _path: None)
 
     assert search_calls(settings.data_dir, ["orchard"], limit=4)[0].when == ""
 

@@ -12,10 +12,10 @@ top of the next call. Nothing but the voice model, having spoken, may stamp it.
 """
 
 from jarvis.config import Settings
+from jarvis.continuity.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
+from jarvis.continuity.recall import MAX_LIMIT as MAX_RECALL_LIMIT
+from jarvis.continuity.recall import Recaller
 from jarvis.inline_waits import InlineWaits
-from jarvis.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
-from jarvis.recall import MAX_LIMIT as MAX_RECALL_LIMIT
-from jarvis.recall import Recaller
 from jarvis.tasks.manager import (
     TERMINAL_STATUSES,
     TaskLimitError,

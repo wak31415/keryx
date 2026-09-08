@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from jarvis.config import Settings
+from jarvis.continuity.transcripts import read_tail
 from jarvis.logging_util import mask_number
 from jarvis.notify.callback import (
     CALLBACK_TOKEN_TTL_S,
@@ -61,7 +62,6 @@ from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
 from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tasks.store import TaskStore
-from jarvis.transcripts import read_tail
 
 log = logging.getLogger("jarvis.restart")
 

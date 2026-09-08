@@ -23,13 +23,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from jarvis.briefing import memory_path, trim_memory
 from jarvis.config import Settings
+from jarvis.continuity.memory import memory_path, trim_memory
 from jarvis.tasks.store import TaskStore
 
 log = logging.getLogger("jarvis.retention")
 
-#: Transcripts live here, one file per session (`jarvis.transcripts`).
+#: Transcripts live here, one file per session (`jarvis.continuity.transcripts`).
 CALLS_DIR = "calls"
 #: A task's progress log and its written report.
 TASKS_DIR = "tasks"

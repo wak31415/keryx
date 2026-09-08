@@ -20,8 +20,9 @@ from pydantic import ValidationError
 
 from jarvis.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
-from jarvis.briefing import memory_path, read_memory
 from jarvis.config import PLACEHOLDER_KEY, Settings, env_var_name, load_settings
+from jarvis.continuity.memory import memory_path, read_memory
+from jarvis.continuity.retention import cutoff_for, prune, prune_with
 from jarvis.doctor import format_check, has_hard_failure, run_doctor_checks
 from jarvis.events import EventBus
 from jarvis.google_setup import GoogleSetupError, run_google_setup
@@ -40,7 +41,6 @@ from jarvis.restart.service import (
 from jarvis.restart.store import RECORD_NAME, RestartRecord, RestartStore
 from jarvis.restart.version import loaded_version, mark_running, mark_startup_logs
 from jarvis.restart.watchdog import watch
-from jarvis.retention import cutoff_for, prune, prune_with
 from jarvis.server import create_app
 from jarvis.session import VoiceSession
 from jarvis.tasks.models import Task, TaskStatus

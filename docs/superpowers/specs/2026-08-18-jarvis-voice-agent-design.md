@@ -73,10 +73,10 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 |---|---|
 | `config.py` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails |
 | `projects.py` | `discover_projects` (configured projects plus `projects_root` subdirectories, shared by `TaskManager` and the voice prompt) and `discover_briefs` (each project's own `.jarvis-brief.md`) |
-| `transcripts.py` | `read_tail`: the end of an earlier call, read back out of `data_dir/calls/<session_id>.log` for a call-back's opening context |
-| `briefing.py` | `Briefer`/`Briefing`: what a call opens knowing — the digest of finished-but-unreported tasks, and `data_dir/memory.md` |
-| `recall.py` | `Recaller`: keyword search across past call transcripts and past task summaries, behind the voice model's `recall` tool |
-| `memory.py` | `MemoryWriter`: on `SessionEnded`, dispatches the internal subagent that folds the call into `data_dir/memory.md` |
+| `continuity/transcripts.py` | `read_tail`: the end of an earlier call, read back out of `data_dir/calls/<session_id>.log` for a call-back's opening context |
+| `continuity/briefing.py` | `Briefer`/`Briefing`: what a call opens knowing — the digest of finished-but-unreported tasks, and the memory it reads back through `continuity.memory`. Grouped with the four around it under `continuity/` 2026-09-08 |
+| `continuity/recall.py` | `Recaller`: keyword search across past call transcripts and past task summaries, behind the voice model's `recall` tool |
+| `continuity/memory.py` | `data_dir/memory.md`, both halves: the file API (`memory_path`, `read_memory`, `trim_memory`, `MAX_MEMORY_CHARS`, `MAX_MEMORY_FILE_CHARS`, moved here from `briefing.py` 2026-09-08) and `MemoryWriter`, which on `SessionEnded` dispatches the internal subagent that rewrites it. `TaskManager` is `TYPE_CHECKING`-only here, so that reading the memory does not cost an import of the Agent SDK |
 | `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
 | `integrations/web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool. Grouped with the three below under `integrations/` 2026-09-08 — one module per outside service, each behind exactly one voice tool, sharing no code with each other. Not `services/`: `service` already means the systemd unit here |
 | `integrations/billing.py` | `BillingReader` protocol + `OpenAIBilling` (Admin API `/v1/organization/costs` and `/usage/completions`) and `AnthropicBilling` (`/v1/organizations/cost_report` and `/usage_report/messages`), behind the voice model's `check_billing`; `build_billing_reader` picks one from `BILLING_PROVIDER`. Read-only: every request is a `GET` |
@@ -93,7 +93,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `approvals/models.py` | `ApprovalRequest`, `Kind`, `Verdict`, `Outcome`, `input_digest`: what a pending Claude Code prompt is, once |
 | `approvals/policy.py` | `classify`: the allowlist deciding which prompts may ever be escalated, and what is said about them. Pure — no file, no network |
 | `approvals/broker.py` | `ApprovalBroker`: the Unix-socket server the Claude Code hook blocks on, the escalation timer, `arm()`/`digit()`, the audit trail and the kill switch |
-| `retention.py` | `prune`/`prune_with`: the transcript and task windows, off by default; the one rule is that an unreported task is never deleted |
+| `continuity/retention.py` | `prune`/`prune_with`: the transcript and task windows, off by default; the one rule is that an unreported task is never deleted |
 | `events.py` | in-process async pub/sub `EventBus` + event dataclasses |
 | `audio/util.py` | soxr resampling, chunk helpers, `AudioGate` (half-duplex state machine), `PlaybackBuffer` (µ-law codec removed 2026-08-19: phone audio is passed through as `audio/pcmu`, nothing transcodes) |
 | `transports/base.py` | `Transport` protocol + `AudioIn`/`Dtmf`/`Hangup` events |
@@ -760,7 +760,7 @@ restart.
 
 **Retention (2026-09-02).** Off by default (`TRANSCRIPT_RETENTION_DAYS` /
 `TASK_RETENTION_DAYS` = 0 = keep everything), because a default that deletes his own call
-transcripts is not one to ship. `jarvis/retention.py` prunes once at the top of
+transcripts is not one to ship. `jarvis/continuity/retention.py` prunes once at the top of
 `jarvis serve` and on demand from `jarvis forget`. **A finished task that has not been
 reported is never deleted**, however old: `reported_at` is the only record that he was told,
 and `TaskStore.delete_finished_before` therefore skips exactly what `list_unreported` would

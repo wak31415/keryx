@@ -16,7 +16,6 @@ from typer.testing import CliRunner
 
 from jarvis.app import TASK_DB_NAME
 from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
-from jarvis.briefing import memory_path
 from jarvis.cli import (
     APPROVALS_EMPTY,
     LOG_BACKUP_COUNT,
@@ -25,6 +24,7 @@ from jarvis.cli import (
     app,
 )
 from jarvis.config import PLACEHOLDER_KEY, Settings
+from jarvis.continuity.memory import memory_path
 from jarvis.realtime.base import AudioDelta, Transcript
 from jarvis.restart.service import ServiceTarget
 from jarvis.restart.store import RECORD_NAME, RestartRecord, RestartStore

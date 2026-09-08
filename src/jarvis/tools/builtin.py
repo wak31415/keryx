@@ -26,11 +26,11 @@ offered to the model, so it is the order they were registered in before the spli
 
 from jarvis.approvals.broker import ApprovalBroker
 from jarvis.config import Settings
+from jarvis.continuity.recall import Recaller
 from jarvis.inline_waits import InlineWaits
 from jarvis.integrations.cluster import ClusterQuerier
 from jarvis.integrations.slack import SlackSender
 from jarvis.integrations.web_search import WebSearcher
-from jarvis.recall import Recaller
 from jarvis.restart.coordinator import RestartCoordinator
 from jarvis.tasks.manager import TaskManager
 from jarvis.tools.builtin_billing import register_billing_tools

@@ -4,9 +4,10 @@ import pytest
 from fakes import FakeVoiceSession
 
 from jarvis.app import AppState, build_app_state, shutdown_app_state
-from jarvis.briefing import Briefer, memory_path
+from jarvis.continuity.briefing import Briefer
+from jarvis.continuity.memory import MemoryWriter, memory_path
+from jarvis.continuity.transcripts import transcript_path
 from jarvis.events import SessionEnded, TaskCompleted
-from jarvis.memory import MemoryWriter
 from jarvis.notify.notifier import Notifier
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.realtime.openai import OpenAIRealtimeClient
@@ -15,7 +16,6 @@ from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import Task, TaskKind
 from jarvis.tasks.store import TaskStore
-from jarvis.transcripts import transcript_path
 
 
 @pytest.fixture

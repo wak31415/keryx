@@ -267,7 +267,7 @@ class Settings(BaseSettings):
     #: every explicitly configured project.
     approval_roots: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
-    # Retention (jarvis/retention.py). Both are **off** at 0, which is what Jarvis has
+    # Retention (jarvis/continuity/retention.py). Both are **off** at 0, which is what Jarvis has
     # always done: nothing is deleted, ever. A default that deleted a man's own call
     # transcripts because nobody changed a number is not a default worth having, so the
     # feature exists and the policy is his. See also `jarvis forget`.
