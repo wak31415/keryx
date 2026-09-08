@@ -1,4 +1,4 @@
-"""Which repositories a coding task may be pointed at.
+"""Which repositories a task may be pointed at.
 
 Both the `TaskManager` (which resolves a spoken name to a working directory) and the
 voice prompt (which tells the model what names exist) have to agree on the answer, so

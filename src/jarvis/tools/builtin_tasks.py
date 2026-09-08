@@ -118,7 +118,7 @@ def register_task_tools(
                 "project": {
                     "type": "string",
                     "description": "The name of the project to work in. Optional: leave it "
-                    "out when he did not name one and a coding task starts in his projects "
+                    "out when he did not name one and the task starts in his projects "
                     "folder, where the subagent finds the repo itself. Use list_projects "
                     "only when he asks what exists.",
                 },
@@ -375,7 +375,7 @@ def register_task_tools(
 
     registry.register(
         "list_projects",
-        "The names of the projects a coding task can run in. Use it when the user names a "
+        "The names of the projects a task can run in. Use it when the user names a "
         "project you do not recognise, and offer the closest match instead of guessing.",
         {"type": "object", "properties": {}, "required": []},
         list_projects,

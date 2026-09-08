@@ -512,7 +512,7 @@ reasoning behind each of those four:
 ## Security model
 
 - **The subagents run as you.** They use `permission_mode="bypassPermissions"`, so a
-  `coding` task has your full user access to files, repos, and the network. Treat "who can
+  task has your full user access to files, repos, and the network. Treat "who can
   reach Jarvis" as "who can run commands on this machine".
 - **What the tunnel exposes** is only: `/twilio/voice` (Twilio signature-validated *and*
   caller-allowlisted), `/twilio/status` (signature-validated only — it carries no caller
