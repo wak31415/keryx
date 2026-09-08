@@ -26,6 +26,47 @@ change, mail and calendar chores — is handed to a **Claude Agent SDK subagent*
 on the host machine with full local access and reports back by voice, SMS, or a call
 back.
 
+## One request, end to end
+
+Asking for something substantial: a training run that takes hours, started in a call that
+lasts a minute.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as You
+    participant T as Twilio
+    participant J as Jarvis
+    participant C as Claude subagent
+    participant S as Alpha, over Slurm
+
+    U->>T: dial the number
+    T->>J: POST /twilio/voice
+    J-->>T: signature and caller checked:<br/>TwiML with a one-time stream token
+    T->>J: the media stream opens (µ-law 8 kHz)
+    U->>J: "train a model on the microscopy<br/>images and tell me when it's running"
+    Note over U,J: the PIN comes first, spoken or keyed —<br/>every dispatch, and keyed digits never reach the model
+    J->>C: dispatch_task(…)
+    J-->>U: "that's task 12 — I'll ring you"<br/>(request_callback)
+    U->>T: hangs up
+    Note over U,C: the call is over — the work is not
+    C->>S: the cluster-compute skill's ssh guard, then sbatch
+    S-->>C: job 4831 running on two GPUs
+    C-->>J: SPOKEN_SUMMARY: it is training
+    alt you are on the phone again
+        J->>U: announced into that call
+    else you asked to be rung back
+        J->>T: outbound call, the result in its opening context
+        T->>U: "task 12 is training on two GPUs"
+    else neither
+        Note over J,C: it rides the digest at the top of your next call
+    end
+    J->>J: mark_reported(12), once it has actually been said
+```
+
+Steps 9 to 15 happen with nobody on the line, and step 15 is the record that you were
+actually told — until it is stamped, task 12 is still waiting at the top of your next call.
+
 The two channels can live on one machine or two. The phone channel runs anywhere —
 in practice a Linux box that is up 24/7, reached through a Cloudflare tunnel — while the
 wake word needs macOS, because openwakeword cannot be installed on Linux under Python
