@@ -3,14 +3,15 @@
 `check_billing` reads the provider's own billing API; `cluster_stats` reads Slurm through
 the cluster-compute skill's ssh guard. Neither is PIN-gated, and that is the point: asking
 what a number is should not need a PIN, and neither of these can do anything but ask. The
-read-only guarantees themselves live in `jarvis/billing.py` (`_get` takes no method and no
-body) and `jarvis/cluster.py` (`build_script` refuses any command outside `READ_ONLY`).
+read-only guarantees themselves live in `jarvis/integrations/billing.py` (`_get` takes no
+method and no body) and `jarvis/integrations/cluster.py` (`build_script` refuses any command
+outside `READ_ONLY`).
 """
 
 import asyncio
 
-from jarvis.billing import BillingError
-from jarvis.cluster import ClusterError, ClusterQuerier, ClusterReport
+from jarvis.integrations.billing import BillingError
+from jarvis.integrations.cluster import ClusterError, ClusterQuerier, ClusterReport
 from jarvis.tools.builtin_common import (
     ALL_CLUSTERS,
     BillingFactory,
@@ -86,7 +87,8 @@ def register_billing_tools(
         numbers it carries are counts and his own job ids — never a job name or a path.
         Both clusters are asked at once, and one being unreachable never costs the other:
         a failure comes back beside the report that worked, as a `status` with a sentence
-        to say. See `jarvis/cluster.py` for why nothing here ever retries an expired login.
+        to say. See `jarvis/integrations/cluster.py` for why nothing here ever retries an
+        expired login.
         """
         assert cluster is not None  # only registered when there is one
         wanted = _text(arguments, "cluster").lower()

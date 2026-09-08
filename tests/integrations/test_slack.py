@@ -2,7 +2,7 @@
 
 import json
 
-from jarvis.slack import SlackWebApi, slack_credentials
+from jarvis.integrations.slack import SlackWebApi, slack_credentials
 
 
 def write_config(path, *, token="xoxb-test", channel="D0TEST", server="slack-research"):

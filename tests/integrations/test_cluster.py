@@ -14,7 +14,7 @@ import subprocess
 
 import pytest
 
-from jarvis.cluster import (
+from jarvis.integrations.cluster import (
     CLUSTERS,
     MARK,
     READ_ONLY,
@@ -351,7 +351,7 @@ def fake_run(monkeypatch, *, returncode=0, stdout="", stderr="", raises=None):
             raise raises
         return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
 
-    monkeypatch.setattr("jarvis.cluster.subprocess.run", run)
+    monkeypatch.setattr("jarvis.integrations.cluster.subprocess.run", run)
     return calls
 
 

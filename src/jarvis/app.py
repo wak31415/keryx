@@ -27,12 +27,14 @@ delivered is what `Briefer` puts at the top of the next call.
 from dataclasses import dataclass, field
 
 from jarvis.approvals.broker import ApprovalBroker
-from jarvis.billing import build_billing_reader
 from jarvis.briefing import Briefer
-from jarvis.cluster import build_cluster_stats
 from jarvis.config import Settings
 from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
+from jarvis.integrations.billing import build_billing_reader
+from jarvis.integrations.cluster import build_cluster_stats
+from jarvis.integrations.slack import SlackWebApi, slack_credentials
+from jarvis.integrations.web_search import OpenAIWebSearch
 from jarvis.memory import MemoryWriter
 from jarvis.notify.notifier import Notifier
 from jarvis.notify.twilio_out import TwilioOut
@@ -41,14 +43,12 @@ from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.recall import Recaller
 from jarvis.restart.coordinator import RestartCoordinator
 from jarvis.session import SessionRegistry
-from jarvis.slack import SlackWebApi, slack_credentials
 from jarvis.stream_tokens import StreamTokenStore
 from jarvis.tasks.agent_runner import AgentRunner, ClaudeAgentRunner, FakeAgentRunner
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolRegistry
 from jarvis.tools.builtin import register_builtin_tools
-from jarvis.web_search import OpenAIWebSearch
 
 TASK_DB_NAME = "tasks.db"
 

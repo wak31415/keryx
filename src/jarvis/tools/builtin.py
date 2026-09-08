@@ -25,12 +25,13 @@ offered to the model, so it is the order they were registered in before the spli
 """
 
 from jarvis.approvals.broker import ApprovalBroker
-from jarvis.cluster import ClusterQuerier
 from jarvis.config import Settings
 from jarvis.inline_waits import InlineWaits
+from jarvis.integrations.cluster import ClusterQuerier
+from jarvis.integrations.slack import SlackSender
+from jarvis.integrations.web_search import WebSearcher
 from jarvis.recall import Recaller
 from jarvis.restart.coordinator import RestartCoordinator
-from jarvis.slack import SlackSender
 from jarvis.tasks.manager import TaskManager
 from jarvis.tools.builtin_billing import register_billing_tools
 from jarvis.tools.builtin_common import BillingFactory
@@ -39,7 +40,6 @@ from jarvis.tools.builtin_restart import register_restart_tools
 from jarvis.tools.builtin_session import register_session_tools
 from jarvis.tools.builtin_tasks import register_task_tools
 from jarvis.tools.registry import ToolRegistry
-from jarvis.web_search import WebSearcher
 
 
 def register_builtin_tools(

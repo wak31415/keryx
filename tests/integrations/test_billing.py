@@ -12,7 +12,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jarvis.billing import (
+from jarvis.config import Settings
+from jarvis.integrations.billing import (
     ANTHROPIC_COST_URL,
     ANTHROPIC_USAGE_URL,
     OPENAI_COSTS_URL,
@@ -27,7 +28,6 @@ from jarvis.billing import (
     month_bounds,
     redact,
 )
-from jarvis.config import Settings
 
 ADMIN_KEY = "sk-admin-0123456789abcdefSECRET"
 NOW = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)

@@ -10,14 +10,14 @@ makes. It goes through the Responses API because a Realtime session has no hoste
 tool of its own.
 """
 
-from jarvis.slack import SlackSender
+from jarvis.integrations.slack import SlackSender
+from jarvis.integrations.web_search import WebSearcher
 from jarvis.tools.builtin_common import (
     SEARCH_FAILED_MESSAGE,
     SLACK_FAILED_MESSAGE,
     _text,
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
-from jarvis.web_search import WebSearcher
 
 
 def register_comms_tools(

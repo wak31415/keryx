@@ -27,8 +27,8 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-from jarvis.billing import BillingReader
 from jarvis.config import Settings
+from jarvis.integrations.billing import BillingReader
 from jarvis.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
 from jarvis.recall import MAX_LIMIT as MAX_RECALL_LIMIT
 from jarvis.tasks.manager import TaskManager

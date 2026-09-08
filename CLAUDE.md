@@ -36,8 +36,8 @@ Google OAuth bootstrap in `jarvis/google_setup.py`. Service templates are in
 (argument parsing, the env-file and PATH checks, `render`), so an installer is only
 its platform-specific half.
 
-Three groups were split apart on 2026-09-02 and are named here because the file you
-want is rarely the one whose name you remember:
+Four groups are named here because the file you want is rarely the one whose name you
+remember:
 
 - **restart** — `restart/` is the whole subsystem: `coordinator`, `service`, `store`,
   `version`, `watchdog` and `logscan`. The directory listing is the index now.
@@ -49,6 +49,9 @@ want is rarely the one whose name you remember:
   table, or `tests/test_docs_sync.py` fails.
 - **notify** — `notify/deliver.py` holds `announce_to_live_sessions` and `safe_send_sms`.
   The `can_text` gate is asserted there and nowhere else.
+- **integrations** — `integrations/` is one module per outside service (`billing`,
+  `cluster`, `slack`, `web_search`), each behind exactly one voice tool. The tool's
+  *registration* goes in `tools/builtin_<domain>.py`; its *client* goes here.
 
 `logging_util.mask_number` is the only shape a phone number may take in a log line, and
 `retention.py` is the transcript and task pruning (off by default).
@@ -163,7 +166,7 @@ than ringing him a second time. `uv run jarvis approvals` is the audit trail and
 
 ## Billing reads, and only reads
 
-`jarvis/billing.py` answers "what am I spending" from the provider's own billing API,
+`jarvis/integrations/billing.py` answers "what am I spending" from the provider's own billing API,
 behind the voice model's `check_billing`. Four rulings, and the first two are the ones
 that bite:
 
@@ -189,7 +192,7 @@ sentence written to be spoken, never a raised exception.
 
 ## Cluster stats read, and only read
 
-`jarvis/cluster.py` answers "what's free on alpha" and "am I still running on beta" from
+`jarvis/integrations/cluster.py` answers "what's free on alpha" and "am I still running on beta" from
 Slurm, behind the voice model's `cluster_stats`. Three rulings, and the first is the one
 with a scar behind it:
 

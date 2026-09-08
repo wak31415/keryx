@@ -209,7 +209,10 @@ What it will do, and what to check if you are writing it by hand:
 1. **A new `src/jarvis/tools/builtin_<domain>.py`**, exporting one `register_*` function.
    The existing five are `builtin_comms`, `builtin_billing`, `builtin_tasks`,
    `builtin_restart` and `builtin_session`; `builtin_common` holds the wording, the
-   argument parsing and the two gates.
+   argument parsing and the two gates. If the tool talks to something outside this
+   machine, the *client* is a separate module under `src/jarvis/integrations/` —
+   `billing`, `cluster`, `slack` and `web_search` are the four that exist — and the
+   `builtin_*` module only registers it.
 2. **One line in `src/jarvis/tools/builtin.py`**, which is only a composition root. Where
    you put that line matters: *the order it calls the register functions in is the order
    the tools are offered to the model.*
@@ -220,8 +223,9 @@ What it will do, and what to check if you are writing it by hand:
    goes through the gate, and a tool that can run a command needs a better reason than
    convenience.
 5. **A fake behind a `Protocol`**, never the real service. Nothing in the test suite
-   touches the network or hardware; see `jarvis/billing.py` for a small example of the
-   protocol-plus-fake shape and `tests/tools/test_builtin.py` for how it is driven.
+   touches the network or hardware; see `jarvis/integrations/billing.py` for a small
+   example of the protocol-plus-fake shape and `tests/tools/test_builtin.py` for how it
+   is driven.
 6. **A description written to be *heard*.** The model reads it to decide when to reach for
    the tool, so say when to use it and when not to. Look at how `check_billing`'s
    description names the actual phrasings — "what am I spending", "what has Claude cost" —

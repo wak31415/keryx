@@ -118,7 +118,7 @@ class Settings(BaseSettings):
     subagent_max_turns: int = 200
     subagent_max_budget_usd: float = 10.0
 
-    # Billing (jarvis/billing.py, behind the voice model's `check_billing`). Read-only,
+    # Billing (jarvis/integrations/billing.py, behind the voice model's `check_billing`). Read-only,
     # and on an *admin*-scoped credential: the key the voice agent talks to the model with
     # cannot read `/v1/organization/costs`, so a separate one is named here. Left unset,
     # billing falls back to the ordinary key above and reports the 401 it gets, which is a
@@ -137,7 +137,7 @@ class Settings(BaseSettings):
     #: serves a spend limit over the API, so the percentage is only as real as this number.
     billing_monthly_budget: float | None = None
 
-    # Cluster stats (jarvis/cluster.py, behind the voice model's `cluster_stats`).
+    # Cluster stats (jarvis/integrations/cluster.py, behind the voice model's `cluster_stats`).
     # Read-only Slurm reads on the owner's clusters, routed through the cluster-compute
     # skill's ssh guard. The guard is the whole point: cluster auth is Duo 2FA behind an
     # ssh ControlMaster, and a direct connection against a dead one hangs rather than
