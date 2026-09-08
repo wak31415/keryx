@@ -28,7 +28,7 @@ from jarvis.google_setup import GoogleSetupError, run_google_setup
 from jarvis.local_runner import LocalRunner
 from jarvis.logging_util import mask_number
 from jarvis.realtime.openai import OpenAIRealtimeClient
-from jarvis.restart.coordinator import health_probe, wait_until_serving
+from jarvis.restart.health import health_probe, wait_until_serving
 from jarvis.restart.logscan import errors_since
 from jarvis.restart.logscan import marks as log_marks
 from jarvis.restart.service import (

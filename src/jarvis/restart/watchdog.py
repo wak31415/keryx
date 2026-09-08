@@ -36,7 +36,7 @@ from jarvis.config import Settings
 from jarvis.logging_util import mask_number
 from jarvis.notify.deliver import safe_send_sms
 from jarvis.notify.twilio_out import TwilioOut, say_twiml
-from jarvis.restart.coordinator import health_probe
+from jarvis.restart.health import health_probe
 from jarvis.restart.logscan import LogErrors, errors_since
 from jarvis.restart.store import RECORD_NAME, RestartRecord, RestartStore, format_duration
 

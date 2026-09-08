@@ -24,9 +24,8 @@ from jarvis.restart.coordinator import (
     EXEC_CONFIRM_S,
     MAX_CALLBACK_ATTEMPTS,
     RestartCoordinator,
-    health_probe,
-    wait_until_serving,
 )
+from jarvis.restart.health import health_probe, wait_until_serving
 from jarvis.restart.logscan import log_dir
 from jarvis.restart.logscan import marks as log_marks
 from jarvis.restart.service import (

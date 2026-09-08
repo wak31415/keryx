@@ -29,9 +29,7 @@ notice. `Restart=always` (systemd) / `KeepAlive` (launchd) is what covers that, 
 
 import asyncio
 import contextlib
-import json
 import logging
-import time
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -70,8 +68,6 @@ log = logging.getLogger("jarvis.restart")
 #: How many times a pending record may be picked up before it is abandoned. A service
 #: that crash-loops must ring once, not once per crash.
 MAX_CALLBACK_ATTEMPTS = 2
-#: How long `resume()` waits for the phone server to start listening.
-READY_TIMEOUT_S = 60.0
 #: How often the deferred restart and the call-back look for a clear line.
 QUIET_POLL_S = 2.0
 #: How long a restart waits for a call to end before giving up on itself. Longer than
@@ -624,39 +620,3 @@ async def _spawn_detached(command: Sequence[str]) -> int | None:
         start_new_session=True,
     )
     return await process.wait()
-
-
-def health_probe(settings: Settings, *, timeout: float = 2.0) -> int | None:
-    """How many sessions the running Jarvis has live, or None if it is not answering.
-
-    Used by `jarvis restart` from *outside* the process: the answer is what decides whether
-    a restart would cut somebody off mid-call. `urllib` rather than a client library —
-    this is one GET against localhost, on a machine that may be half-broken.
-    """
-    import urllib.error
-    import urllib.request
-
-    url = f"http://{settings.host}:{settings.port}/health"
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - localhost
-            payload = json.loads(response.read().decode("utf-8"))
-    except (OSError, urllib.error.URLError, json.JSONDecodeError, ValueError):
-        return None
-    live = payload.get("live_sessions")
-    return live if isinstance(live, int) else None
-
-
-async def wait_until_serving(
-    server: Any,
-    *,
-    timeout: float = READY_TIMEOUT_S,
-    poll_s: float = 0.05,
-    clock: Callable[[], float] = time.monotonic,
-) -> bool:
-    """True once uvicorn reports it is serving; False if it never does inside `timeout`."""
-    deadline = clock() + timeout
-    while not getattr(server, "started", False):
-        if clock() >= deadline:
-            return False
-        await asyncio.sleep(poll_s)
-    return True
