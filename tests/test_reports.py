@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from jarvis.app import build_app_state
 from jarvis.config import Settings
-from jarvis.notify.notifier import report_token, verify_report_token
+from jarvis.notify.reports import report_token, verify_report_token
 from jarvis.server import create_app
 from jarvis.tasks.models import Task, TaskKind
 

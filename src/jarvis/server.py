@@ -31,7 +31,7 @@ from twilio.twiml.voice_response import VoiceResponse
 from jarvis.app import AppState
 from jarvis.config import Settings
 from jarvis.logging_util import mask_number
-from jarvis.notify.notifier import verify_report_token
+from jarvis.notify.reports import verify_report_token
 from jarvis.notify.twilio_out import stream_twiml
 from jarvis.session import VoiceSession
 from jarvis.transports.twilio_ws import TransportError, TwilioTransport

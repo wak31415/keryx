@@ -24,8 +24,6 @@ Every stage is independently guarded: a Twilio outage during the text must not c
 call-back, and nothing here may ever raise into the event bus.
 """
 
-import hashlib
-import hmac
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -34,6 +32,7 @@ from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed
 from jarvis.inline_waits import InlineWaits
 from jarvis.notify.deliver import announce_to_live_sessions, safe_send_sms
+from jarvis.notify.reports import report_token
 from jarvis.notify.twilio_out import TwilioOut, stream_twiml
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
@@ -48,7 +47,6 @@ log = logging.getLogger("jarvis.notify.notifier")
 
 SMS_BODY_LIMIT = 1200  # characters of summary; the report link is appended after it
 CALLBACK_TOKEN_TTL_S = 120.0  # Twilio has to ring and be answered inside this
-TOKEN_HEX_CHARS = 32  # half a sha256, plenty against guessing and short enough for a URL
 
 DONE_TEXT = "Task {task_id} finished: {detail}"
 FAILED_TEXT = "Task {task_id} failed: {detail}"
@@ -94,22 +92,6 @@ def no_trailing_stop(text: str) -> str:
     does not swallow as gracefully as a reader would.
     """
     return text.rstrip().rstrip(".").rstrip()
-
-
-def report_token(task_id: int, secret: str) -> str:
-    """The unguessable half of a report link: HMAC-SHA256 of the id under `secret`."""
-    digest = hmac.new(secret.encode(), str(task_id).encode(), hashlib.sha256).hexdigest()
-    return digest[:TOKEN_HEX_CHARS]
-
-
-def verify_report_token(task_id: int, token: str, secret: str) -> bool:
-    """True if `token` is the report token for `task_id` (constant-time compare).
-
-    Compared as bytes: `hmac.compare_digest` refuses `str` operands with non-ASCII
-    characters, and this one comes straight off a public query string.
-    """
-    expected = report_token(task_id, secret).encode()
-    return hmac.compare_digest(expected, token.encode("utf-8", "surrogatepass"))
 
 
 class Notifier:

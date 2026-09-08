@@ -18,7 +18,8 @@ from fakes import FakeVoiceSession
 from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed
 from jarvis.inline_waits import InlineWaits
-from jarvis.notify.notifier import SMS_BODY_LIMIT, Notifier, report_token
+from jarvis.notify.notifier import SMS_BODY_LIMIT, Notifier
+from jarvis.notify.reports import report_token
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
