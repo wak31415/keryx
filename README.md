@@ -54,31 +54,47 @@ through untouched), the local mic/speaker (16-bit PCM 24 kHz, half-duplex — th
 gated off while Jarvis speaks), or a WAV file for the `loopback` dev harness. The session
 never knows which one it has.
 
-The voice model has nineteen tools. Most of them are about tasks; the rest are the things
-it can answer or do without one.
+## The tools the voice model can call
+
+There are nineteen, and they fall into two groups that you should treat very differently.
+
+**The core is the machinery of a call** — dispatching work, following it, and getting off
+the phone. It is the same for everybody and it is not where you should be making changes:
+several of these carry rulings that are easy to break by accident. `mark_reported` in
+particular is the only thing that records that a result was actually *said out loud*, and
+the digest at the top of your next call depends on it.
 
 <!-- tools:start -->
-| Tool | What it does |
+| Core tool | What it does |
 |---|---|
-| `send_to_slack` | send a written message to the Slack DM — only when asked |
-| `web_search` | answer a small factual question on the spot, through the Responses API |
-| `check_billing` | what the month has cost, read off the provider's billing API |
-| `cluster_stats` | what is free and what is running on the Slurm clusters |
 | `dispatch_task` | hand the work to a Claude subagent and get back a task number |
 | `list_tasks` | what is queued, running and recently finished |
 | `get_task_status` | how one task is getting on |
 | `get_task_result` | the spoken summary a finished task produced |
-| `mark_reported` | record that a result has now been *said out loud* — the only thing that stops it riding the next call's digest |
-| `recall` | search past call transcripts and past task summaries |
 | `send_followup` | add something to a task already in flight |
 | `cancel_task` | stop one |
+| `mark_reported` | record that a result has now been *said out loud* — the only thing that stops it riding the next call's digest |
+| `recall` | search past call transcripts and past task summaries |
 | `list_projects` | the project names that can be dispatched into |
 | `request_callback` | call back when a task lands |
+| `web_search` | answer a small factual question on the spot, through the Responses API |
 | `restart_service` | restart Jarvis (after the call ends) |
-| `list_pending_approvals` | what a Claude Code session on the desktop is waiting on |
-| `answer_approval` | read that prompt out and offer the keypad — it cannot approve anything itself |
 | `submit_pin` | check a spoken PIN |
 | `end_session` | hang up |
+
+**The rest are examples.** They are the tools one person actually wanted, kept here
+because they are worked examples of the shape rather than because you need them.
+`cluster_stats` reads a Slurm cluster at a university and will mean nothing to you;
+`check_billing` reads an API bill; the approval pair is for someone who uses Claude Code
+on the same machine. Read them for the pattern, then delete them and write your own.
+
+| Example tool | What it does | Why it is a tool and not a task |
+|---|---|---|
+| `send_to_slack` | send a written message to the Slack DM — only when asked | the answer belongs somewhere you can read later |
+| `check_billing` | what the month has cost, read off the provider's billing API | two numbers, wanted mid-sentence |
+| `cluster_stats` | what is free and what is running on the Slurm clusters | same — "is my job still going" is a question, not a job |
+| `list_pending_approvals` | what a Claude Code session on the desktop is waiting on | you are being asked, not asking |
+| `answer_approval` | read that prompt out and offer the keypad — it cannot approve anything itself | the keypad decides, never the transcription |
 <!-- tools:end -->
 
 `check_billing` and `cluster_stats` are deliberately not PIN-gated: they cannot change
@@ -90,11 +106,60 @@ same Slack app, which they already have from the `auto-research` skill. Unasked,
 stays in the written report — Jarvis tells you it is there and offers to send it, rather
 than reading a path down the phone.
 
-There is exactly one routing decision. Small talk, task status and small factual questions
-the voice answers itself — `web_search` goes through the Responses API, because a Realtime
-session has no hosted search tool of its own. Everything else becomes a task, and a task is
-just "Claude, on this machine": one kind, every tool, the repositories, Gmail and Calendar,
-the installed skills, and subagents of its own. Nothing classifies the work in advance.
+### One routing decision
+
+Small talk, task status and small factual questions the voice answers itself — `web_search`
+goes through the Responses API, because a Realtime session has no hosted search tool of its
+own. Everything else becomes a task, and a task is just "Claude, on this machine": one
+kind, every tool, the repositories, Gmail and Calendar, the installed skills, and subagents
+of its own. Nothing classifies the work in advance.
+
+That is why the example tools are short. **The default answer to "can Jarvis do X" is "ask
+Claude to do X"** — a task already has your machine, your repositories, your mailbox and
+every skill you have installed. A tool only earns its place when the answer is needed
+*inside the call*, in the second or two before a silence gets awkward. Half a minute of
+nothing while a subagent goes and looks is the thing a tool exists to avoid, and it is the
+only thing it buys you.
+
+### Writing your own
+
+The quickest way is to ask for one out loud:
+
+> *"In the jarvis project, add a tool called `next_train` that reads the departure board
+> for my station and tells me the next two trains. Same shape as `check_billing`."*
+
+That is an ordinary task. The subagent has the repository, the tests and this README, and
+`prompts/subagent_suffix.md` already tells it how work here is expected to end. It will
+need the PIN, like every dispatch from the phone, and a `.py` change needs a restart before
+the tool exists — say *"restart yourself"* when it is done and Jarvis will ring you back
+once it is up.
+
+What it will do, and what to check if you are writing it by hand:
+
+1. **A new `src/jarvis/tools/builtin_<domain>.py`**, exporting one `register_*` function.
+   The existing five are `builtin_comms`, `builtin_billing`, `builtin_tasks`,
+   `builtin_restart` and `builtin_session`; `builtin_common` holds the wording, the
+   argument parsing and the two gates.
+2. **One line in `src/jarvis/tools/builtin.py`**, which is only a composition root. Where
+   you put that line matters: *the order it calls the register functions in is the order
+   the tools are offered to the model.*
+3. **A row in the table above.** `tests/test_docs_sync.py` compares the registrations
+   against this README and fails if they disagree, in either direction.
+4. **`pin_gate(ctx, settings)` if the tool can change anything.** Read-only tools skip it
+   on purpose — asking what a number is should not need a PIN — but anything that acts
+   goes through the gate, and a tool that can run a command needs a better reason than
+   convenience.
+5. **A fake behind a `Protocol`**, never the real service. Nothing in the test suite
+   touches the network or hardware; see `jarvis/billing.py` for a small example of the
+   protocol-plus-fake shape and `tests/tools/test_builtin.py` for how it is driven.
+6. **A description written to be *heard*.** The model reads it to decide when to reach for
+   the tool, so say when to use it and when not to. Look at how `check_billing`'s
+   description names the actual phrasings — "what am I spending", "what has Claude cost" —
+   rather than describing the API it calls.
+
+Skills are the other half of this and often the better answer. Anything under `SKILLS_DIR`
+is listed in the voice prompt, so a subagent already knows what it is good at without you
+naming it — a new skill needs no code here at all, and no restart.
 
 ## Setup
 
@@ -334,11 +399,15 @@ Call the number, or say **"hey jarvis"** at the Mac. Then talk normally:
 - *"Call me back when it's done."* — an outbound call when the task lands.
 - *"Send me that on Slack."* — the message arrives in your DM; a file or plot is sent by
   the subagent that made it. Only asking gets you one: Jarvis never sends unprompted.
-- *"What am I spending this month?"* — read straight off the provider's billing API with
-  `check_billing`; see **Asking what it costs** below.
-- *"What's free on Alpha?"* / *"Am I still running on Beta?"* — read straight off Slurm
-  with `cluster_stats`; see **Asking what the clusters are doing** below.
 - *"Goodbye."* — ends the session (locally it also ends after 30 s of silence).
+
+And two that are somebody's own tools rather than part of the machinery, kept as worked
+examples of what one looks like — see [Writing your own](#writing-your-own):
+
+- *"What am I spending this month?"* — read straight off the provider's billing API with
+  `check_billing`; see **Example: asking what it costs** below.
+- *"What's free on Alpha?"* / *"Am I still running on Beta?"* — read straight off Slurm
+  with `cluster_stats`; see **Example: asking what the clusters are doing** below.
 
 **Anything that is work goes straight to Claude.** Jarvis does not repeat the request back
 for a yes, ask which file you mean, or argue about the approach — it dispatches and tells
@@ -587,7 +656,7 @@ are worth knowing before you deploy it.
   instead. `claude-opus-5` is the default; ask for `sonnet` or `haiku` out loud for
   cheaper work.
 - **Ask it what it is spending** — *"what's the bill this month?"* reads the real figure
-  off the provider's billing API. See [Asking what it costs](#asking-what-it-costs).
+  off the provider's billing API. See [Example: asking what it costs](#example-asking-what-it-costs).
 - Guardrails that keep a bad day from becoming an expensive one:
 
   | Setting | Default | What it caps |
@@ -598,7 +667,11 @@ are worth knowing before you deploy it.
   | `DAILY_TASK_CAP` | 50 | tasks dispatched per day |
   | `MAX_CONCURRENT_TASKS` | 3 | subagents running at once; the rest queue |
 
-### Asking what it costs
+### Example: asking what it costs
+
+> One of the two example tools. Read it for the shape — a read-only API call, a payload
+> written to be spoken, and every failure turned into a sentence rather than an exception —
+> and then write the one *you* want. [Writing your own](#writing-your-own) has the steps.
 
 *"What's the bill this month?"*, *"how much has this cost me?"*, *"what has Claude spent?"*
 — the voice model answers these itself with the **`check_billing`** tool rather than
@@ -667,7 +740,12 @@ Logs carry the key as `sk-admin…CRET` — first eight characters and last four
 details are reduced to the status code, because a provider's 401 body can quote the key
 back at you.
 
-### Asking what the clusters are doing
+### Example: asking what the clusters are doing
+
+> The second example tool, and the more personal of the two: it reads a Slurm cluster at
+> a university, which is almost certainly not your problem. It is here because it is the best
+> illustration in the tree of a tool that has to reach *outside* the machine safely — see
+> the ssh-guard paragraph below, which is a scar rather than a design preference.
 
 *"What's free on Alpha?"*, *"Am I still running on Beta?"*, *"How busy is the cluster?"*,
 *"How long has my job got left?"* — the voice model answers these itself with the
