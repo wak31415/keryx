@@ -31,6 +31,12 @@ from typing import TYPE_CHECKING
 from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed
 from jarvis.inline_waits import InlineWaits
+from jarvis.notify.callback import (
+    CALLBACK_TOKEN_TTL_S,
+    HISTORY_PREAMBLE,
+    MAX_REQUEST_CHARS,
+    no_trailing_stop,
+)
 from jarvis.notify.deliver import announce_to_live_sessions, safe_send_sms
 from jarvis.notify.reports import report_token
 from jarvis.notify.twilio_out import TwilioOut, stream_twiml
@@ -46,7 +52,6 @@ if TYPE_CHECKING:  # pragma: no cover - `restart` imports this module for its ow
 log = logging.getLogger("jarvis.notify.notifier")
 
 SMS_BODY_LIMIT = 1200  # characters of summary; the report link is appended after it
-CALLBACK_TOKEN_TTL_S = 120.0  # Twilio has to ring and be answered inside this
 
 DONE_TEXT = "Task {task_id} finished: {detail}"
 FAILED_TEXT = "Task {task_id} failed: {detail}"
@@ -67,31 +72,14 @@ FAILED_CONTEXT = (
     "tell him what went wrong briefly, then ask if he needs anything else. This is a new "
     "call: he may have to give the PIN again before you can start more work."
 )
-#: What the model is told the transcript is, so it treats it as memory rather than script.
-HISTORY_PREAMBLE = (
-    " You have no memory of that call, so here is how it ended — do not read it back to "
-    "him, just know it:\n{history}\n"
-)
 #: The note the earlier session left for this call, if it left one.
 NOTE_PREAMBLE = " Where you left off: {note}."
-#: How much of the original request the call-back context carries.
-MAX_REQUEST_CHARS = 200
 #: Why the restart a finished task asks for is happening, read back on the confirmation.
 RESTART_REASON = "to load what task {task_id} changed"
 #: The `request()` outcomes that mean a restart really is coming, and that its confirmation
 #: is therefore going to ring him. Anything else (`unsupported`, `failed`) is not a
 #: call-back, so the ordinary one still has to go out.
 RESTART_ARMED = frozenset({"restarting", "deferred", "already_pending"})
-
-
-def no_trailing_stop(text: str) -> str:
-    """`text` without a full stop on the end, for a template that supplies its own.
-
-    A spoken summary usually ends in one and the sentence around it always does, so
-    without this the context reads "the tests pass.." — which a text-to-speech voice
-    does not swallow as gracefully as a reader would.
-    """
-    return text.rstrip().rstrip(".").rstrip()
 
 
 class Notifier:

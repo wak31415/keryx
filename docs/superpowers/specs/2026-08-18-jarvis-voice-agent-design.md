@@ -116,6 +116,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `tasks/store.py` | SQLite store (`TaskStore`) |
 | `tasks/agent_runner.py` | `AgentRunner` protocol; `ClaudeAgentRunner` (Agent SDK); `FakeAgentRunner` (tests) |
 | `tasks/manager.py` | `TaskManager`: queue/semaphore, lifecycle, follow-up, cancel, logs, events |
+| `notify/callback.py` | `CALLBACK_TOKEN_TTL_S`, `HISTORY_PREAMBLE`, `MAX_REQUEST_CHARS`, `no_trailing_stop`: what the notifier's call-back and the restart's confirmation both have to agree on. Shared prompt copy, deliberately not in `deliver.py` |
 | `notify/deliver.py` | `announce_to_live_sessions` and `safe_send_sms`: the two ways a result reaches him, each in one place. The `can_text` gate is asserted here and nowhere else |
 | `notify/notifier.py` | routes task results: live sessions → SMS → call-back, or hands the call-back to a restart when the work changed Jarvis's own code |
 | `notify/reports.py` | `report_token`/`verify_report_token`, `TOKEN_HEX_CHARS`: the HMAC on a `/reports/{id}?t=` link. Minted by the notifier, checked by `server.py`, and owned by neither |

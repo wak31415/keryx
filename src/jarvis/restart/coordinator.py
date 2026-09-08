@@ -36,13 +36,13 @@ from typing import Any
 
 from jarvis.config import Settings
 from jarvis.logging_util import mask_number
-from jarvis.notify.deliver import announce_to_live_sessions, safe_send_sms
-from jarvis.notify.notifier import (
+from jarvis.notify.callback import (
     CALLBACK_TOKEN_TTL_S,
     HISTORY_PREAMBLE,
     MAX_REQUEST_CHARS,
     no_trailing_stop,
 )
+from jarvis.notify.deliver import announce_to_live_sessions, safe_send_sms
 from jarvis.notify.twilio_out import stream_twiml
 from jarvis.restart.logscan import errors_since, marks
 from jarvis.restart.service import (
