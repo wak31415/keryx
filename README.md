@@ -227,6 +227,11 @@ What it will do, and what to check if you are writing it by hand:
    description names the actual phrasings — "what am I spending", "what has Claude cost" —
    rather than describing the API it calls.
 
+Two of the example tools are written up end to end as templates to work from:
+[`check_billing`](https://github.com/wak31415/jarvis-voice-agent/wiki/Worked-Example-check_billing) for the read-only-API shape, and
+[`cluster_stats`](https://github.com/wak31415/jarvis-voice-agent/wiki/Worked-Example-cluster_stats) for reaching outside the machine
+safely.
+
 Skills are the other half of this and often the better answer. Anything under `SKILLS_DIR`
 is listed in the voice prompt, so a subagent already knows what it is good at without you
 naming it — a new skill needs no code here at all, and no restart.
@@ -340,28 +345,8 @@ Ask for mail or calendar work and it just happens.
 The older path — a `workspace-mcp` stdio server of our own — is still in the tree but off
 (`GOOGLE_WORKSPACE_MCP=false`). Turn it on only if your subagents authenticate with an
 `ANTHROPIC_API_KEY` rather than the subscription login, since the connectors come with that
-login. The setup below is for that case.
-
-<details>
-<summary>Setting up workspace-mcp (only with GOOGLE_WORKSPACE_MCP=true)</summary>
-
-
-1. Google Cloud console → **APIs & Services → Credentials → Create credentials → OAuth
-   client ID**, type **Desktop app**. Enable the Gmail and Calendar APIs.
-2. Put the client id/secret in `.env` as `GOOGLE_OAUTH_CLIENT_ID` /
-   `GOOGLE_OAUTH_CLIENT_SECRET` (and your address as `USER_GOOGLE_EMAIL`).
-3. Run the one-off consent flow:
-
-   ```bash
-   uv run jarvis setup-google
-   ```
-
-   It starts `uvx workspace-mcp --tools gmail calendar --transport stdio --single-user`
-   once and calls a harmless tool, which opens the browser sign-in. Credentials are stored
-   under `~/.jarvis/google/` and reused by every subagent afterwards. `jarvis doctor`
-   warns when that directory is still empty.
-
-</details>
+login; setting that up is a page of its own,
+[Google Workspace MCP](https://github.com/wak31415/jarvis-voice-agent/wiki/Google-Workspace-MCP).
 
 ## Running
 
@@ -381,48 +366,21 @@ passing any extra flags through:
 scripts/dev.sh
 ```
 
-### As a background service (Linux, systemd)
+### Keeping it running
 
 ```bash
-scripts/install-systemd.sh              # render + start both units
-scripts/install-systemd.sh --uninstall  # stop + remove them
+scripts/install-systemd.sh      # Linux: two user units, enabled and started
+scripts/install-launchd.sh      # macOS: two launch agents, loaded
 ```
 
-This renders `ops/systemd/jarvis.service` (runs `uv run --project <repo> jarvis serve
---no-wakeword`) and `ops/systemd/cloudflared.service` (the tunnel to `localhost:$PORT`)
-into `~/.config/systemd/user/`, enables both, and turns on lingering with `loginctl
-enable-linger` so they keep running with nobody logged in and come back after a reboot.
-Both restart on failure. Unit stdout/stderr go to
-`~/.jarvis/logs/{jarvis,cloudflared}.{out,err}.log` (and `journalctl --user -u jarvis`);
-Jarvis's own log is `~/.jarvis/logs/jarvis.log` (10 MB × 5 rotated files).
+Each installer renders the templates under `ops/` into the user's own service directory,
+starts them, and arranges for them to survive a logout and come back after a reboot. Both
+take `--uninstall`. What exactly they render, where each one logs, and why the macOS tunnel
+agent runs ngrok while the Linux one runs cloudflared:
+[Running as a service](https://github.com/wak31415/jarvis-voice-agent/wiki/Running-as-a-Service).
 
-The installer stops early if the named tunnel does not exist yet and prints the three
-commands above that create it.
-
-### As a background service (macOS, launchd)
-
-```bash
-scripts/install-launchd.sh              # render + load both agents
-scripts/install-launchd.sh --uninstall  # unload + remove them
-```
-
-This renders `ops/launchd/dev.jarvis.agent.plist` (runs `uv run --project <repo> jarvis
-serve`) and `ops/launchd/dev.jarvis.tunnel.plist` (a tunnel on `PUBLIC_HOST`) into
-`~/Library/LaunchAgents/` and hands them to `launchctl bootstrap`. Both have `RunAtLoad`
-and `KeepAlive`, so they start at login and restart if they die. launchd's own stdout/
-stderr go to `~/.jarvis/logs/{jarvis,ngrok}.{out,err}.log`; Jarvis's own log is
-`~/.jarvis/logs/jarvis.log` (10 MB × 5 rotated files). A Mac that only listens for the
-wake word wants `serve --no-phone` and no tunnel agent at all.
-
-The macOS tunnel agent runs **ngrok**, not cloudflared — a reserved ngrok domain needs no
-DNS zone, which is the right trade for a laptop, while the always-on Linux host uses
-cloudflared. Either is fine; `jarvis doctor` accepts whichever it finds. Set
-`SERVICE_UNIT` if you rename the agent label, which defaults to `dev.jarvis.agent`.
-Installs made before 2026-09-02 used `com.william.jarvis` / `com.william.ngrok`; the
-installer boots those out on sight, so re-running it or `--uninstall` cleans them up.
-
-Grant the terminal (and, once installed, the launchd agent) **microphone** permission in
-System Settings → Privacy & Security, or the wake word never hears anything.
+On macOS, grant the terminal — and, once installed, the launch agent — **microphone**
+permission in System Settings → Privacy & Security, or the wake word never hears anything.
 
 ### Restarting it
 
@@ -431,26 +389,20 @@ uv run jarvis restart --reason "picked up new code"
 uv run jarvis restart --status     # how the last one went
 ```
 
-This asks the service manager (systemd on Linux, launchd on macOS — `SERVICE_MANAGER`
-overrides the guess) to restart the unit, and **Jarvis phones you back by itself once it is
-up again**, with a one-line status: how long it was down, the version before and after,
-which channels are listening, and how many tasks the restart interrupted. You can also just
-ask it on the phone — "restart yourself" — and the voice model's `restart_service` does the
-same thing; that restart waits until you have hung up, because a restart drops every call in
-progress.
+A `.py` change does not take effect until the process restarts, and the process is usually
+the thing that just made the change — so this is a first-class operation that reports back
+on itself. **Jarvis phones you back once it is up again**, with how long it was down, the
+version before and after, which channels are listening, and how many tasks the restart
+interrupted. You can also just ask on the phone — *"restart yourself"* — and that one waits
+until you have hung up, because a restart drops every call in progress. Nothing rings while
+you are already talking to Jarvis: a confirmation that lands during a call is spoken into
+that call instead.
 
-Nothing rings while you are already talking to Jarvis: a confirmation that lands during a
-call is spoken into that call, and one that cannot be spoken is texted instead. If the call
-cannot be placed at all — Twilio down, no `PUBLIC_HOST`, the phone channel not running — the
-summary goes out as a text, and if even that fails the attempt is left on the record for
-`jarvis restart --status` to read back. Nothing supervising the process (a `jarvis serve` you
-started in a terminal) means `restart` refuses: stopping would leave nothing to start it
-again.
-
-The one thing it cannot tell you is that the service never came back — nothing of Jarvis's
-is left running to notice. That is what `Restart=always` / `KeepAlive` is for; if the call
-never comes, `systemctl --user status jarvis` and `~/.jarvis/logs/jarvis.log` are the place
-to look.
+Nothing supervising the process — a `jarvis serve` you started in a terminal — means
+`restart` refuses, because stopping would leave nothing to start it again. How it knows
+whether the change actually *loaded*, what happens when the service never comes back at
+all, and why a `-15` exit code is the restart working:
+[Restarting Jarvis](https://github.com/wak31415/jarvis-voice-agent/wiki/Restarting-Jarvis).
 
 ## Using it
 
@@ -475,9 +427,11 @@ And two that are somebody's own tools rather than part of the machinery, kept as
 examples of what one looks like — see [Writing your own](#writing-your-own):
 
 - *"What am I spending this month?"* — read straight off the provider's billing API with
-  `check_billing`; see **Example: asking what it costs** below.
+  `check_billing`; the tool end to end is
+  [a worked example](https://github.com/wak31415/jarvis-voice-agent/wiki/Worked-Example-check_billing).
 - *"What's free on Alpha?"* / *"Am I still running on Beta?"* — read straight off Slurm
-  with `cluster_stats`; see **Example: asking what the clusters are doing** below.
+  with `cluster_stats`; likewise
+  [a worked example](https://github.com/wak31415/jarvis-voice-agent/wiki/Worked-Example-cluster_stats).
 
 **Anything that is work goes straight to Claude.** Jarvis does not repeat the request back
 for a yes, ask which file you mean, or argue about the approach — it dispatches and tells
@@ -501,33 +455,24 @@ the model transcript. Local sessions are pre-authorized — you are already at t
 
 `JARVIS_PIN` must be **6 to 8 digits and nothing else**, and that is enforced rather than
 advised: `jarvis serve` refuses to start on anything else, and `jarvis doctor` says which
-rule was broken. Digits because it is keyed on a phone keypad — a PIN with a letter in it
-could never have been entered — and six at minimum because this is the only thing between
-somebody who has spoofed your caller ID and a subagent running as you. Leaving it unset is
-still allowed and means something different: no PIN, so every dispatch from the phone is
-simply refused.
-
-Three wrong entries end the call, and the session **stays locked even if the right PIN
-arrives afterwards** — there is no fourth guess to be had by talking faster. The
-comparison is `hmac.compare_digest`, so a wrong PIN takes the same time as a right one.
+rule was broken. Three wrong entries end the call, and the session stays locked even if the
+right PIN arrives afterwards. Why those particular rules, and what leaving it unset means
+instead, is in
+[the security model](https://github.com/wak31415/jarvis-voice-agent/wiki/Security-Model).
 
 ### From the terminal
 
 ```bash
-uv run jarvis tasks list                      # 20 most recent, newest first
-uv run jarvis tasks list --status running     # queued|running|done|failed|cancelled|all
-uv run jarvis tasks list --limit 50
-uv run jarvis tasks show 12                   # every field, plus the written report
-uv run jarvis doctor                          # is this machine set up?
-uv run jarvis approvals                       # what the approval bridge has escalated
-uv run jarvis loopback --wav sample.wav       # one session from a WAV, no mic needed
-uv run jarvis restart --reason "new code"     # restart the service; it calls you back
-uv run jarvis restart --status                # how the last restart went
-uv run jarvis forget --older-than 30          # delete old transcripts and finished tasks
+uv run jarvis tasks list              # 20 most recent; TOLD is NO until Jarvis has said it
+uv run jarvis tasks show 12           # every field, plus the written report
+uv run jarvis memory                  # what Jarvis carries between calls
+uv run jarvis doctor                  # is this machine set up?
+uv run jarvis forget --older-than 30  # delete old transcripts and finished tasks
 ```
 
-`jarvis tasks` reads the SQLite store directly, so it works while the server is running
-(or when it is not).
+These read the SQLite store and the data directory directly, so they work whether or not
+the server is running. Every command and what each is for:
+[Command line reference](https://github.com/wak31415/jarvis-voice-agent/wiki/Command-Line-Reference).
 
 ## The approval bridge
 
@@ -537,95 +482,32 @@ way. A Claude Code session on your own screen has stopped and is asking *you* so
 later, Jarvis rings you about it, reads the question out, and lets you answer on the
 keypad.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant CC as Claude Code
-    participant H as The hook
-    participant J as Jarvis
-    participant P as Your phone
-
-    CC->>H: about to put a prompt on screen
-    H->>J: hands it over, then blocks
-    Note over CC,H: the prompt is drawn exactly as it always was
-    alt you answer at the keyboard
-        CC-->>H: PostToolUse / Stop
-        H-->>CC: prints nothing — the keyboard always wins
-    else five minutes pass
-        J->>J: classify() — allowlist, denylist,<br/>quiet hours, rate limit
-        J->>P: rings, reads it out, offers a menu
-        P->>J: PIN, then one keypad digit
-        J->>J: is it still pending?
-        J-->>H: the verdict
-        H-->>CC: allow or deny
-    end
-```
-
-Every branch that is not step 7 ends the same way — the hook prints nothing and the prompt
-waits on your screen. That is the whole safety story, and the rest of this section is why
-each step is where it is.
-
 ```bash
 scripts/install-claude-hook.sh              # add the hook to ~/.claude/settings.json
 scripts/install-claude-hook.sh --uninstall  # take it out again
+uv run jarvis approvals                     # the audit trail
+uv run jarvis approvals --disable           # kill switch, effective on the next prompt
 ```
 
-The installer copies `scripts/claude_hooks/jarvis_approval.py` into `~/.claude/hooks/` and
-merges the hook entries into `~/.claude/settings.json`, backing the file up first and
-leaving any hooks you already have alone. Nothing else is needed: `APPROVALS_ENABLED`
-defaults to on, and Jarvis binds the socket when it starts.
+It is optional, and it is off on any machine that never installs the hook. Four rulings
+hold it up, and none of them is a preference:
 
-**Why a Unix socket and never an HTTP route.** `cloudflared` puts the whole of port 8080
-on the public internet. An `/approvals` endpoint would be reachable by anyone who found
-the hostname, and it would be the one endpoint that can run commands. The bridge listens
-on `~/.jarvis/approvals.sock` at mode 0600 instead, which is unreachable through the
-tunnel by construction — and filesystem permissions are the right authorization for
-something whose only legitimate client is a process already running as you.
+- **A Unix socket, never an HTTP route.** `cloudflared` puts the whole of port 8080 on the
+  internet. `~/.jarvis/approvals.sock` at mode 0600 is unreachable through it by
+  construction.
+- **`policy.py` is an allowlist, and it is the *primary* control.** Nothing downstream
+  re-checks it, so whatever it calls eligible is exactly what a keypad digit can run.
+  Widening it widens that.
+- **The keypad decides, never the transcription.** `answer_approval` cannot answer
+  anything; the most it does is put a menu in the model's mouth. A television in the
+  background cannot press a key.
+- **Failure is always "do nothing".** Broker down, call unanswered, hook crash: every one
+  of them ends with the hook printing nothing, which leaves the on-screen prompt exactly as
+  it was.
 
-**`policy.py` is an allowlist, and it is the primary control.** A `PermissionRequest` hook
-that returns `allow` appears to skip the CLI's own re-check of `permissions.deny`, so
-nothing downstream is protecting you: whatever `classify` calls eligible is exactly what a
-keypad digit can run. It starts small — `APPROVAL_BASH_ALLOW` defaults to `git push`,
-`git commit`, `pytest`, `uv run pytest`, matched as whole-word prefixes of a command with
-no chaining, redirection or shell metacharacters in it, and file writes only inside
-`APPROVAL_ROOTS` — and a blunt denylist (`.env`, `.ssh/`, `sudo`, `curl`, key-shaped
-strings, …) wins over all of it. Anything not explicitly named comes back ineligible, the
-hook says nothing, and the prompt just waits on your screen as it always did. **Widening
-that list widens what a phone keypad can execute**; the ruling is to say why in the commit.
-
-**The keypad decides, never the transcription.** The voice model's `answer_approval` tool
-cannot answer anything — the most it does is read the question out and put a menu in its
-own mouth. `ApprovalBroker.digit` is the only thing in Jarvis that can approve a tool
-call, it is reachable only after the PIN, and an unrecognised key re-asks rather than
-agreeing. A television in the background cannot press a key.
-
-**Failure is always "do nothing".** Broker down, socket missing, Twilio broken, call
-unanswered, malformed reply, hook crash: every one of them ends with the hook printing
-nothing, which leaves the ordinary on-screen prompt exactly as it is. There is no path
-through this code where an error approves something. Answering at the keyboard always
-wins, and a prompt that arrives while you are already on the phone is announced into that
-call rather than ringing you a second time.
-
-**Turning it off.**
-
-```bash
-uv run jarvis approvals              # the audit trail: what it escalated and what happened
-uv run jarvis approvals --limit 5
-uv run jarvis approvals --disable    # kill switch, effective on the next prompt
-uv run jarvis approvals --enable
-```
-
-The switch is a file rather than a setting, deliberately: it is re-read on every request,
-so it needs no restart — and it still works when the thing you want to stop is the thing
-you would otherwise have to ask about. `APPROVALS_ENABLED=false` turns the whole bridge
-off at startup instead, and then the socket is never bound, which is exactly what the hook
-finds on a machine that never opted in.
-
-Tuning: `APPROVAL_ESCALATE_SECONDS` (300) is how long a prompt waits before it rings,
-`APPROVAL_CALL_WINDOW_SECONDS` (240) how long the hook keeps waiting after that,
-`APPROVAL_MAX_PER_HOUR` (4) caps the calls because a bridge that rings ten times a day gets
-muted and then is not there for the one that mattered, and `APPROVAL_QUIET_HOURS`
-(`HH:MM-HH:MM`, local time) is when it never rings at all.
+The sequence diagram, what the allowlist actually contains, the tuning settings and the
+reasoning behind each of those four:
+[The approval bridge](https://github.com/wak31415/jarvis-voice-agent/wiki/The-Approval-Bridge).
 
 ## Security model
 
@@ -650,99 +532,13 @@ muted and then is not there for the one that mattered, and `APPROVAL_QUIET_HOURS
   `~/.jarvis/report_secret` with mode 600. Caller phone numbers are masked to their last
   four digits everywhere they are written down.
 
-### What is stored, and what is sent
-
-Everything Jarvis keeps lives under `DATA_DIR` (default `~/.jarvis`), which is created
-**mode 0700**, with the files below **0600**. `jarvis doctor` warns if something has
-loosened that. Nothing here is encrypted at rest, and nothing is deleted unless you ask —
-see [Retention](#retention).
-
-| Path | What is in it |
-|---|---|
-| `calls/<session_id>.log` | the full transcript of a call — every line you said and every line Jarvis said |
-| `tasks.db` | every task: what you asked for, its status, and the spoken summary that came back |
-| `tasks/<id>.log` | a subagent's progress, tool by tool |
-| `tasks/<id>.md` | the written report a task produced |
-| `memory.md` | what Jarvis carries between calls, rewritten after each one |
-| `logs/*.log` | the server log and the service manager's stdout/stderr |
-| `report_secret` | the HMAC key for `/reports/{id}` links, if `REPORT_SECRET` is unset |
-| `restart.json`, `running-version`, `approvals/` | restart bookkeeping and the approval socket |
-
-Keyed PIN digits are never written anywhere: not to the log, not to the transcript, and
-not into the model's context.
-
-**What leaves the machine.** Call audio and the conversation go to the **OpenAI Realtime
-API**; the small factual questions the voice answers itself go to the OpenAI **Responses**
-API. Task text and whatever a subagent reads go to **Anthropic** through the Claude Agent
-SDK. Phone audio, caller ID and SMS go through **Twilio**. `send_to_slack` and a subagent's
-files go to **Slack**, but only when you ask. Gmail and Calendar work reaches **Google**
-through the Claude CLI's own connectors. `check_billing` and `cluster_stats` talk to the
-provider's billing API and to the cluster over ssh. That is the whole list: there is no
-telemetry and no analytics of ours.
-
-### Retention
-
-Nothing is deleted by default. `jarvis.log` rotates; transcripts, task rows, task logs and
-task reports accumulate for as long as the install lives, which is the right default for a
-personal assistant and the wrong one for a machine you are about to hand on.
-
-Two settings turn it on, independently, and `0` (the default) means *keep everything*:
-
-| Env | What it prunes | Default |
-|---|---|---|
-| `TRANSCRIPT_RETENTION_DAYS` | `calls/*.log` older than this | `0` — never |
-| `TASK_RETENTION_DAYS` | finished task rows, and their `.log` and `.md`, older than this | `0` — never |
-
-The prune runs once at the top of `jarvis serve`, so changing a number takes effect on the
-next restart. Or do it now:
-
-```bash
-uv run jarvis forget --older-than 30       # asks first
-uv run jarvis forget --yes                 # everything eligible, no window
-uv run jarvis forget --transcripts-only --older-than 7
-```
-
-**One thing is never deleted, by either path: a finished task you have not been told about
-yet.** `reported_at` — stamped only when Jarvis has actually *said* the result out loud —
-is the only record that you heard it, so an unreported task survives any prune however old
-it is, and `jarvis forget` reports how many it kept for that reason. Hearing something late
-is recoverable; never hearing it is not. Internal housekeeping tasks and ones you cancelled
-are owed to nobody and go on schedule.
-
-`memory.md` is separate: it is rewritten by a subagent after every call and bounded on disk
-as soon as that subagent stops, so it does not grow without limit even though nothing
-prunes it.
-
-## Assumptions and supported deployments
-
-Jarvis was built for one person on one machine, and several things that look like
-oversights are that decision showing through. None of them is hard to change; all of them
-are worth knowing before you deploy it.
-
-- **One owner.** There is no multi-user model anywhere: one `ALLOWED_CALLERS` list, one
-  PIN, one `~/.jarvis`, one Slack DM, one set of API keys. A second person who can call
-  the number and knows the PIN is not a second user — they are you.
-- **The subagents run as you**, with `permission_mode="bypassPermissions"`. "Who can reach
-  Jarvis" is "who can run commands on this machine". Do not put it on a host you share.
-- **Quiet hours are the host's local time.** `APPROVAL_QUIET_HOURS` is compared against a
-  naive `datetime.now()`, so `23:00-07:00` means eleven at night *where the machine is*.
-  On a laptop or a box at home that is what you meant. On a VPS in another region it is
-  not, and there is no timezone setting — set the host's `TZ` instead.
-- **`SERVICE_MANAGER=none` is a real, supported mode**, and it is also what `auto`
-  resolves to when neither `systemctl` nor `launchctl` is on `PATH` — a `jarvis serve` you
-  started in a terminal, for instance. Everything works except restarting: `jarvis restart`
-  and the voice model's `restart_service` both refuse, deliberately, because stopping the
-  process would leave nothing to start it again. The consequence worth knowing is that a
-  subagent which changes Jarvis's own code then has no way to make the change take effect.
-  `jarvis doctor` reports which manager it found, or that it found none.
-- **`git` is optional decoration.** Version reporting (`git describe`) is how a restart
-  confirmation says what was running before and after. Without `git` on `PATH`, or outside
-  a checkout, that degrades to "unknown" and nothing else changes. `jarvis doctor` says so.
-- **Linux runs the phone channel only.** openWakeWord needs `tflite-runtime`, which has no
-  cp312 wheel, so a Linux host serves with `--no-wakeword`. macOS runs both.
-- **The phone channel needs a public hostname you control** — a Cloudflare-routed name for
-  `cloudflared`, or a reserved ngrok domain. Twilio has to be able to reach the webhook,
-  and the webhook URL has to match `PUBLIC_HOST` exactly or signature validation fails.
+Three things this summary leaves out are in the wiki: the PIN rules in full, on
+[Security model](https://github.com/wak31415/jarvis-voice-agent/wiki/Security-Model);
+what is written to disk and what leaves the machine, on
+[Data and retention](https://github.com/wak31415/jarvis-voice-agent/wiki/Data-and-Retention);
+and where building this for one person on one machine shows through, on
+[Assumptions and deployments](https://github.com/wak31415/jarvis-voice-agent/wiki/Assumptions-and-Deployments)
+— which is worth reading before you deploy it anywhere.
 
 ## Costs
 
@@ -754,7 +550,8 @@ are worth knowing before you deploy it.
   instead. `claude-opus-5` is the default; ask for `sonnet` or `haiku` out loud for
   cheaper work.
 - **Ask it what it is spending** — *"what's the bill this month?"* reads the real figure
-  off the provider's billing API. See [Example: asking what it costs](#example-asking-what-it-costs).
+  off the provider's billing API. See the worked example for
+  [`check_billing`](https://github.com/wak31415/jarvis-voice-agent/wiki/Worked-Example-check_billing).
 - Guardrails that keep a bad day from becoming an expensive one:
 
   | Setting | Default | What it caps |
@@ -765,129 +562,6 @@ are worth knowing before you deploy it.
   | `DAILY_TASK_CAP` | 50 | tasks dispatched per day |
   | `MAX_CONCURRENT_TASKS` | 3 | subagents running at once; the rest queue |
 
-### Example: asking what it costs
-
-> One of the two example tools. Read it for the shape — a read-only API call, a payload
-> written to be spoken, and every failure turned into a sentence rather than an exception —
-> and then write the one *you* want. [Writing your own](#writing-your-own) has the steps.
-
-*"What's the bill this month?"*, *"how much has this cost me?"*, *"what has Claude spent?"*
-— the voice model answers these itself with the **`check_billing`** tool rather than
-dispatching a task. It is read-only: two `GET`s against the provider's billing API and
-nothing else. It is deliberately **not** PIN-gated — asking what a number is changes
-nothing — and it never puts a key, or any part of one, in its answer or in the log.
-
-**It needs an admin credential.** The key the voice agent talks to the model with cannot
-read billing: OpenAI's `/v1/organization/costs` wants an Admin key from
-[the org's admin-keys page](https://platform.openai.com/settings/organization/admin-keys),
-and Anthropic's cost report wants an `sk-ant-admin…` key. Set `OPENAI_ADMIN_KEY` (and/or
-`ANTHROPIC_ADMIN_KEY`). Left unset it falls back to the ordinary key and reports the 401
-it gets, which is a clearer answer than a tool that silently is not there.
-
-**Which provider.** `BILLING_PROVIDER` is `auto`, which means **OpenAI** — the account the
-call you are on is running against. Say *"what has Claude cost"* and the model passes
-`provider: anthropic` for the subagent side. `openai` and `anthropic` pin it either way.
-
-**What comes back** (as a tool result, for the model to speak — never read out verbatim):
-
-```json
-{
-  "status": "ok",
-  "provider": "openai",
-  "scope": "organization",
-  "currency": "USD",
-  "spend_to_date": 31.4021,
-  "projected_month_end": 96.14,
-  "estimate": true,
-  "period_start": "2026-08-01T00:00:00+00:00",
-  "period_end":   "2026-09-01T00:00:00+00:00",
-  "as_of":        "2026-08-11T09:14:03+00:00",
-  "usage": {"input_tokens": 4.1e6, "output_tokens": 310000, "input_audio_tokens": 2.2e6,
-            "output_audio_tokens": 1.4e6, "input_cached_tokens": 900000, "requests": 812},
-  "top_line_items": [{"name": "gpt-realtime-2.1, input", "amount": 19.8}],
-  "spoken": "OpenAI so far this month: 31.40 USD, on track for about 96 by month end."
-}
-```
-
-- The period is the **UTC calendar month**, because that is how both providers bill.
-- `projected_month_end` is a straight-line run rate computed here, not from the provider.
-  The prompt makes the model call it an estimate out loud. The elapsed window is floored at
-  one day, so asking at half past midnight on the 1st does not project a dollar into two
-  and a half thousand.
-- `scope` matters: OpenAI's costs endpoint has no per-API-key filter, so the figure is the
-  organization's (or one project's, with `OPENAI_BILLING_PROJECT_ID`). Token *usage* can be
-  narrowed to a single key with `OPENAI_BILLING_API_KEY_ID`; spend cannot.
-- Set `BILLING_MONTHLY_BUDGET` and the answer gains `monthly_budget` and
-  `budget_used_percent`, and the spoken line gains "…which is 31 percent of the budget".
-  Neither provider serves a spend limit over the API, so that number is yours or nothing.
-- A usage-endpoint outage does not lose the spend: `usage` comes back `{}` and the money
-  figure still lands.
-
-**When it fails** the tool returns a `status` and a `message` written to be spoken, never
-an exception and never a credential:
-
-| `status` | When | What the model is told to say |
-|---|---|---|
-| `not_configured` | no key for that provider | billing is not set up; offer to have Claude wire it up |
-| `auth` | 401/403 | the credential was refused — it needs an *admin* key |
-| `rate_limited` | 429, after one retry | rate-limited; offer to try again in a minute |
-| `unavailable` | 5xx, timeout, DNS | did not answer; offer to try again |
-
-Rate limits and 5xx are retried **once** after a second; auth failures are not retried.
-Logs carry the key as `sk-admin…CRET` — first eight characters and last four — and error
-details are reduced to the status code, because a provider's 401 body can quote the key
-back at you.
-
-### Example: asking what the clusters are doing
-
-> The second example tool, and the more personal of the two: it reads a Slurm cluster at
-> a university, which is almost certainly not your problem. It is here because it is the best
-> illustration in the tree of a tool that has to reach *outside* the machine safely — see
-> the ssh-guard paragraph below, which is a scar rather than a design preference.
-
-*"What's free on Alpha?"*, *"Am I still running on Beta?"*, *"How busy is the cluster?"*,
-*"How long has my job got left?"* — the voice model answers these itself with the
-**`cluster_stats`** tool rather than dispatching a task. Naming no cluster gets you both.
-
-It is read-only: three Slurm reads (`squeue` for your jobs, `sinfo -N` for the partition,
-`squeue -t PD` for the queue) batched into one round trip per cluster, with both clusters
-asked at once. Nothing it can do submits, cancels or changes a job — that is still work for
-Claude, and still PIN-gated. Like `check_billing`, the tool itself needs no PIN: it changes
-nothing, and the payload is counts plus your own job ids, never a job name or a path.
-
-**How it reaches the cluster.** Every command goes through the `cluster-compute` skill's ssh
-guard — `CLUSTER_SSH_GUARD`, by default
-`~/.claude/skills/cluster-compute/scripts/cluster_ssh.sh`. That is not swappable for a plain
-connection: cluster auth is Duo 2FA behind an ssh ControlMaster, a non-interactive process
-cannot answer a Duo push, and an attempt against a dead master hangs rather than failing —
-a retry storm of those once got this machine's IP fail2ban-banned. The guard probes the
-*local* control socket first, so a dead session costs nothing and produces no failed login.
-Jarvis never retries it, and never opens a connection of its own.
-
-Which clusters: **beta** (partition `pci`) and **alpha** (partition `gpu`). Delta is
-deliberately absent — a third Duo session nobody keeps alive would answer every question
-with "expired".
-
-The free-GPU count already excludes GPUs that are `down` and GPUs that backfill has
-`planned` for a queued job, and those are reported separately rather than folded in; the
-queue count separates jobs actually waiting for hardware from ones blocked on a dependency.
-Both distinctions matter: a partition can look like it has 22 GPUs free and have none.
-
-**When it fails** the tool returns a `status` and a `message` written to be spoken, per
-cluster — one cluster being unreachable never costs you the other:
-
-| `status` | When | What the model is told to say |
-|---|---|---|
-| `auth_expired` | the Duo/ControlMaster session timed out | he needs to approve a Duo push on the desktop first |
-| `not_configured` | no ssh guard on this machine | cluster access is not set up; offer to have Claude wire it up |
-| `unknown_cluster` | a cluster it does not know | it knows Beta and Alpha; ask which he meant |
-| `timeout` | no answer within `CLUSTER_QUERY_TIMEOUT_S` (20 s) | offer to try again in a moment |
-| `unavailable` | the guard or Slurm failed | the numbers are not available; offer to put Claude on it |
-
-To clear an `auth_expired`, re-open the ControlMaster on this machine the way the
-`cluster-compute` skill documents (a backgrounded, no-command login to `beta` or `alpha`)
-and approve the Duo push; the next call answers normally.
-
 ## Troubleshooting
 
 Start with:
@@ -896,41 +570,17 @@ Start with:
 uv run jarvis doctor        # add --no-mic on a machine with no microphone
 ```
 
-It checks `.env`, both API keys, the `claude` CLI (bundled or on `PATH`), Twilio
-settings, `PUBLIC_HOST`, a tunnel binary (`cloudflared` or `ngrok`), the caller allowlist,
-the PIN, the wake-word model, the
-microphone, that `~/.jarvis` is writable and readable by nobody else, which service
-manager it found (see
-[Assumptions and supported deployments](#assumptions-and-supported-deployments)), and
-whether Google credentials exist. `✅` is
-fine, `⚠️` narrows what Jarvis can do (no mic, no PIN, no Google, no `claude` CLI), `❌`
-means it will not work — and only `❌` makes the command exit non-zero.
+It checks `.env`, both API keys, the `claude` CLI, Twilio, `PUBLIC_HOST`, a tunnel binary,
+the caller allowlist, the PIN, the wake-word model, the microphone, that `~/.jarvis` is
+writable and readable by nobody else, which service manager it found, and whether Google
+credentials exist. `✅` is fine, `⚠️` narrows what Jarvis can do (no mic, no PIN, no Google,
+no `claude` CLI), `❌` means it will not work — and only `❌` makes the command exit
+non-zero. It is safe to run before anything is configured; that is what it is for, and it
+never prints a secret.
 
-Where to look when something misbehaves:
-
-| Thing | Where |
-|---|---|
-| Server log | `~/.jarvis/logs/jarvis.log` (rotated, 10 MB × 5) |
-| Service stdout/stderr | `~/.jarvis/logs/{jarvis,cloudflared,ngrok}.{out,err}.log` |
-| Voice transcripts | `~/.jarvis/calls/<session_id>.log` |
-| Subagent progress | `~/.jarvis/tasks/<id>.log` |
-| Written reports | `~/.jarvis/tasks/<id>.md` |
-| Task rows | `~/.jarvis/tasks.db` (or just `jarvis tasks show <id>`) |
-
-Common cases:
-
-- **The call connects but nobody speaks** — the media socket was rejected. Check the
-  caller is in `ALLOWED_CALLERS` and that the webhook URL matches `PUBLIC_HOST` exactly.
-- **Twilio shows 403** — signature validation failed; the tunnel host and the configured
-  webhook URL disagree.
-- **"hey jarvis" does nothing** — run `jarvis download-models`, check microphone
-  permission, and try lowering `WAKEWORD_THRESHOLD`. On Linux there is no wake word at
-  all: openwakeword is not installable there, and `doctor` says so.
-- **Tasks fail instantly** — no subagent auth (subscription login, token, or API key) or
-  the `claude` CLI is missing (`jarvis doctor` says so).
-- **Work is refused on the phone** — no PIN configured, or you have not entered it yet.
-- **Google tools fail in a task** — run `jarvis setup-google` again; the stored
-  credentials may have expired.
+The server log is `~/.jarvis/logs/jarvis.log`, rotated at 10 MB × 5. Where everything else
+is written, and the common failures with what each one actually means:
+[Troubleshooting](https://github.com/wak31415/jarvis-voice-agent/wiki/Troubleshooting).
 
 ## Development
 
@@ -944,6 +594,31 @@ uv run jarvis loopback --wav sample.wav --out reply.wav
 Tests never touch the network, a microphone, or a real subagent: OpenAI, Twilio,
 sounddevice, openWakeWord, and the Agent SDK all sit behind injectable interfaces with
 fakes.
+
+## Documentation
+
+This README is the front door. The manual is the [wiki](https://github.com/wak31415/jarvis-voice-agent/wiki),
+which is a separate git repository and so does not arrive with a `git clone`:
+
+| Page | What is on it |
+|---|---|
+| [Running as a service](https://github.com/wak31415/jarvis-voice-agent/wiki/Running-as-a-Service) | the systemd and launchd units, what they render, where they log |
+| [Restarting Jarvis](https://github.com/wak31415/jarvis-voice-agent/wiki/Restarting-Jarvis) | the call back, the version stamp, and the watchdog for a restart that never lands |
+| [Command line reference](https://github.com/wak31415/jarvis-voice-agent/wiki/Command-Line-Reference) | every `jarvis` command and what it is for |
+| [Troubleshooting](https://github.com/wak31415/jarvis-voice-agent/wiki/Troubleshooting) | `jarvis doctor`, where everything is written, and the common failures |
+| [The approval bridge](https://github.com/wak31415/jarvis-voice-agent/wiki/The-Approval-Bridge) | the sequence, the allowlist, the kill switch, the tuning |
+| [Security model](https://github.com/wak31415/jarvis-voice-agent/wiki/Security-Model) | what the tunnel exposes, and the PIN rules in full |
+| [Data and retention](https://github.com/wak31415/jarvis-voice-agent/wiki/Data-and-Retention) | what is on disk, what leaves the machine, how to delete it |
+| [Assumptions and deployments](https://github.com/wak31415/jarvis-voice-agent/wiki/Assumptions-and-Deployments) | where one person's deployment shows through |
+| [Worked example: `check_billing`](https://github.com/wak31415/jarvis-voice-agent/wiki/Worked-Example-check_billing) | a read-only API tool, end to end |
+| [Worked example: `cluster_stats`](https://github.com/wak31415/jarvis-voice-agent/wiki/Worked-Example-cluster_stats) | reaching outside the machine safely |
+| [Google Workspace MCP](https://github.com/wak31415/jarvis-voice-agent/wiki/Google-Workspace-MCP) | the legacy Gmail/Calendar path, off by default |
+
+**Rulings live in the repository, not the wiki.** The design spec at
+`docs/superpowers/specs/2026-08-18-jarvis-voice-agent-design.md` is the authority on why
+anything here is the way it is, and it travels with a clone;
+`docs/superpowers/plans/2026-08-18-jarvis-voice-agent-plan.md` is how it was built. Wiki
+pages cite the relevant section rather than restating it as their own.
 
 ## Contributing
 

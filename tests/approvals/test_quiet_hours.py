@@ -2,8 +2,8 @@
 
 The window is compared against a naive `datetime.now()`, so "23:00-07:00" means eleven at
 night *where the machine is*. That is a real assumption about the deployment — the host's
-timezone is taken to be the owner's — and it is written down in the README's
-"Assumptions and supported deployments" and at the line itself. These tests pin the
+timezone is taken to be the owner's — and it is written down on the wiki's
+"Assumptions and Deployments" page and at the line itself. These tests pin the
 behaviour so a later change to a timezone-aware clock is a deliberate one, not an accident
 that only shows up as a phone call at four in the morning.
 """
