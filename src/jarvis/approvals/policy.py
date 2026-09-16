@@ -181,6 +181,17 @@ def classify(event: dict, settings) -> dict | None:
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict):
         return None
+    if "truncated" not in event:
+        log.warning(
+            "not escalating a %s prompt: the approval hook that sent it does not say whether "
+            "it trimmed the request — re-run scripts/install-claude-hook.sh",
+            tool or "?",
+        )
+        return None
+    if event["truncated"] is not False:
+        # The CLI runs the original, not the part of it the hook sent: nothing to decide on.
+        log.info("not escalating a %s prompt: the hook had to trim it", tool or "?")
+        return None
 
     try:
         _refuse_denied(tool, tool_input)

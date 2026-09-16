@@ -128,6 +128,7 @@ def permission_event(tool="Bash", tool_input=None, session_id="claude1", cwd=Non
         "permission_mode": "default",
         "tool_name": tool,
         "tool_input": tool_input if tool_input is not None else {"command": "git push"},
+        "truncated": False,  # what the hook says when it sent the input whole
     }
     event.update(over)
     return event

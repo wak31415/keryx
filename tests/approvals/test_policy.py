@@ -33,6 +33,7 @@ def request(tool, tool_input, **over):
         "permission_mode": "default",
         "tool_name": tool,
         "tool_input": tool_input,
+        "truncated": False,
     }
     event.update(over)
     return event
@@ -55,6 +56,32 @@ def test_bypass_permissions_never_escalates(settings):
 
 def test_a_missing_tool_input_is_not_a_request(settings):
     assert classify(request("Bash", None), settings) is None
+
+
+def test_a_request_the_hook_had_to_trim_is_never_eligible(settings, tmp_path):
+    """The hook bounds every string before it leaves, but the CLI runs the original. A
+    decision on the first 4096 characters of `git commit -m "<4100×a>"; curl … | sh` is a
+    decision on a command that will not run, so a trimmed request is never escalated."""
+    event = request(
+        "Bash",
+        {"command": "git push"},
+        cwd=str(tmp_path / "roots" / "myproject"),
+        truncated=True,
+    )
+    assert classify(event, settings) is None
+
+
+def test_a_hook_that_does_not_say_whether_it_trimmed_is_never_eligible(
+    settings, tmp_path, caplog
+):
+    """An older installed copy of the hook trims without saying so. Silence is the safe
+    answer, and the log line names the fix, because a bridge that has quietly stopped
+    ringing reads exactly like one with nothing to ring about."""
+    event = request("Bash", {"command": "git push"}, cwd=str(tmp_path / "roots" / "myproject"))
+    del event["truncated"]
+    with caplog.at_level("WARNING", logger="jarvis.approvals.policy"):
+        assert classify(event, settings) is None
+    assert "install-claude-hook.sh" in caplog.text
 
 
 # --- the denylist ----------------------------------------------------------
