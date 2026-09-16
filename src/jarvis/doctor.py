@@ -266,7 +266,8 @@ def _wakeword_check(settings: Settings) -> Check:
         return Check(
             "wake-word model",
             False,
-            "openwakeword is not installed — the wake word needs macOS; serve --no-wakeword",
+            "openwakeword is not installed — the wake word needs macOS, so `jarvis serve` "
+            "runs the phone channel alone",
             severity="soft",
         )
     except Exception as exc:

@@ -243,7 +243,7 @@ def test_an_uninstalled_openwakeword_only_warns(healthy, monkeypatch):
     checks = run_doctor_checks(healthy, probe_mic=False)
     check = by_name(checks)["wake-word model"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "--no-wakeword" in check.detail
+    assert "phone channel alone" in check.detail
     assert has_hard_failure(checks) is False
 
 

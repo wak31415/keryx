@@ -230,8 +230,9 @@ with a scar behind it:
 
 macOS runs both channels; Linux runs the phone channel only, because openwakeword
 needs `tflite-runtime`, which has no cp312 wheel. `sounddevice`, `openwakeword` and
-`onnxruntime` are therefore `sys_platform == 'darwin'` dependencies and a Linux host
-serves with `--no-wakeword` — one more reason every import of them stays lazy.
+`onnxruntime` are therefore `sys_platform == 'darwin'` dependencies, and on a Linux host
+`jarvis serve` finds them missing (`wakeword_unavailable`, which imports nothing), says so in
+one line and serves the phone alone — one more reason every import of them stays lazy.
 
 ## Testing rule
 

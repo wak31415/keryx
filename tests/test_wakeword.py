@@ -9,6 +9,7 @@ from jarvis.wakeword import (
     OpenWakeWordDetector,
     WakeWordDetector,
     WakeWordListener,
+    wakeword_unavailable,
 )
 
 FRAME = b"\x01\x00" * WAKE_FRAME_SAMPLES
@@ -122,3 +123,36 @@ def test_openwakeword_detector_declares_the_wake_frame_contract():
 
 def test_openwakeword_is_never_imported_at_module_scope():
     assert "openwakeword" not in sys.modules
+
+
+# --- whether this machine can run it at all --------------------------------
+
+
+def test_the_wake_word_is_available_when_both_packages_are_installed():
+    assert wakeword_unavailable(platform="darwin", find_spec=lambda name: object()) is None
+
+
+def test_off_macos_the_wake_word_is_simply_not_available():
+    """Linux has no wheel for it: that is the platform, not a broken install."""
+    why = wakeword_unavailable(platform="linux", find_spec=lambda name: None)
+
+    assert why == "the wake word needs macOS"
+
+
+def test_on_macos_a_missing_package_is_named():
+    def find_spec(name):
+        return None if name == "openwakeword" else object()
+
+    why = wakeword_unavailable(platform="darwin", find_spec=find_spec)
+
+    assert why is not None
+    assert "openwakeword" in why
+    assert "uv sync" in why
+
+
+def test_asking_whether_it_is_available_imports_nothing():
+    before = set(sys.modules)
+
+    wakeword_unavailable()
+
+    assert not {"openwakeword", "sounddevice"} & (set(sys.modules) - before)

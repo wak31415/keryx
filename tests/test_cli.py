@@ -121,6 +121,8 @@ def stub_local_runner(monkeypatch, built: dict, *, run=None) -> None:
     monkeypatch.setattr("jarvis.cli.LocalAudioDevice", StubDevice)
     monkeypatch.setattr("jarvis.cli.OpenWakeWordDetector", StubDetector)
     monkeypatch.setattr("jarvis.cli.LocalRunner", StubRunner)
+    # As if on a Mac with its packages installed, whatever host runs the suite.
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: None)
 
 
 def stub_uvicorn(monkeypatch, built: dict) -> None:
@@ -152,6 +154,49 @@ def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
     assert device is built["device"]
     assert kwargs["sessions"] is not None
     assert (settings_stub.data_dir / "calls").is_dir()  # ensure_dirs() ran
+
+
+def test_serve_where_the_wake_word_cannot_run_serves_the_phone_alone(
+    settings_stub, monkeypatch
+):
+    """`jarvis serve` on Linux: one line saying so, not a traceback after the server is up."""
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+    monkeypatch.setattr(
+        "jarvis.cli.OpenWakeWordDetector",
+        lambda *a, **k: pytest.fail("the wake word was started anyway"),
+    )
+
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 0, result.output
+    assert "the wake word needs macOS; serving the phone channel only" in result.output
+    assert built["served"] is True
+    assert "Traceback" not in result.output
+
+
+def test_serve_with_no_phone_where_the_wake_word_cannot_run_has_nothing_to_run(
+    settings_stub, monkeypatch
+):
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+
+    result = runner.invoke(app, ["serve", "--no-phone"])
+
+    assert result.exit_code == 1
+    assert "nothing to run" in result.output
+    assert "the wake word needs macOS" in result.output
+
+
+def test_serve_no_wakeword_does_not_mention_the_platform(settings_stub, monkeypatch):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 0, result.output
+    assert "macOS" not in result.output
 
 
 def test_serve_runs_the_phone_server_on_the_configured_address(settings_stub, monkeypatch):
@@ -925,6 +970,19 @@ def test_download_models_help():
     result = runner.invoke(app, ["download-models", "--help"])
 
     assert result.exit_code == 0
+
+
+def test_download_models_where_the_wake_word_cannot_run_says_so_in_one_line(
+    settings_stub, monkeypatch
+):
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+
+    result = runner.invoke(app, ["download-models"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)  # a clean exit, not a traceback
+    assert result.output.strip().count("\n") == 0
+    assert "the wake word needs macOS" in result.output
 
 
 # --- housekeeping and the memory -------------------------------------------

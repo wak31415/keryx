@@ -70,8 +70,8 @@ actually told — until it is stamped, task 12 is still waiting at the top of yo
 The two channels can live on one machine or two. The phone channel runs anywhere —
 in practice a Linux box that is up 24/7, reached through a Cloudflare tunnel — while the
 wake word needs macOS, because openwakeword cannot be installed on Linux under Python
-3.12 (its `tflite-runtime` dependency has no cp312 wheel). A Linux host therefore serves
-with `--no-wakeword`.
+3.12 (its `tflite-runtime` dependency has no cp312 wheel). On a Linux host `jarvis serve`
+says so in one line and serves the phone channel alone.
 
 The full design lives in
 `docs/superpowers/specs/2026-08-18-jarvis-voice-agent-design.md`.

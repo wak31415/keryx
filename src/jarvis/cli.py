@@ -48,7 +48,7 @@ from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolRegistry
 from jarvis.transports.local_audio import LocalAudioDevice
 from jarvis.transports.wav import WavTransport
-from jarvis.wakeword import OpenWakeWordDetector, WakeWordListener
+from jarvis.wakeword import OpenWakeWordDetector, WakeWordListener, wakeword_unavailable
 
 app = typer.Typer(help="Jarvis voice agent.")
 tasks_app = typer.Typer(help="Inspect the tasks handed to subagents.")
@@ -170,6 +170,10 @@ def _add_file_logging(settings: Settings) -> None:
 @app.command("download-models")
 def download_models() -> None:
     """Download the configured wake-word model via openwakeword."""
+    why = wakeword_unavailable()
+    if why is not None:
+        typer.echo(f"{why}: there is no wake-word model to download on this machine", err=True)
+        raise typer.Exit(1)
     import openwakeword.utils
 
     settings = _load_settings_optional()
@@ -209,7 +213,18 @@ def serve(
     if no_phone and no_wakeword:
         typer.echo("nothing to run: both the phone server and the wake word are disabled")
         return
-    asyncio.run(_serve(settings, phone=not no_phone, wakeword=not no_wakeword))
+    wakeword = not no_wakeword
+    # Asked before anything starts, not discovered after the phone server is up: off macOS
+    # the wake word's packages are not installed at all, and that is the platform rather
+    # than a fault — so the phone channel serves on its own, and says so once.
+    why = wakeword_unavailable() if wakeword else None
+    if why is not None:
+        if no_phone:
+            typer.echo(f"nothing to run: {why}, and --no-phone turned the phone off", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"{why}; serving the phone channel only")
+        wakeword = False
+    asyncio.run(_serve(settings, phone=not no_phone, wakeword=wakeword))
 
 
 async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
