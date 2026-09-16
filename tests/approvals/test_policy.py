@@ -50,7 +50,7 @@ def test_only_permission_requests_are_classified(settings):
 
 def test_bypass_permissions_never_escalates(settings):
     """Jarvis's own subagents run this way; nobody is being asked, so nobody is rung."""
-    event = request("Bash", {"command": "pytest"}, permission_mode="bypassPermissions")
+    event = request("Bash", {"command": "git push"}, permission_mode="bypassPermissions")
     assert classify(event, settings) is None
 
 
@@ -288,8 +288,23 @@ def test_git_commit_reads_no_file_and_skips_no_hook(settings, tmp_path, command)
 )
 def test_a_command_with_no_argument_rule_matches_only_word_for_word(settings, tmp_path, command):
     """`--basetemp` is a directory pytest deletes; `-p` imports any module. Nothing but the
-    two git commands has a rule for its arguments, so anything else runs as listed or not
-    at all."""
+    two git commands has a rule for its arguments, so even an owner who lists `pytest` gets
+    exactly `pytest`."""
+    settings.approval_bash_allow = ["pytest", "uv run pytest"]
+    assert classify(run(tmp_path, "pytest"), settings) is not None
+    assert classify(run(tmp_path, command), settings) is None
+
+
+@pytest.mark.parametrize("command", ["pytest", "uv run pytest", "python -m pytest"])
+def test_running_the_test_suite_is_not_keypad_approvable_by_default(settings, tmp_path, command):
+    """A test run executes the working tree — test files, `conftest.py`, the plugins and
+    `addopts` in `pyproject.toml` — which is what the session edits all day, often without
+    asking. "Claude wants to run: pytest" says none of that, so no argument rule could make
+    a digit pressed on it mean what it sounds like."""
+    assert Settings(_env_file=None, openai_api_key="test").approval_bash_allow == [
+        "git push",
+        "git commit",
+    ]
     assert classify(run(tmp_path, command), settings) is None
 
 

@@ -317,7 +317,7 @@ async def test_the_hourly_cap_stops_it_ringing_again(broker, twilio, clock, tmp_
         await until(lambda expected=index + 1: len(twilio.calls) == expected)
         clock.value += 300  # past the "a call is already going out" window
     await hooks.raise_request(
-        permission_event(cwd=cwd, session_id="last", tool_input={"command": "pytest"})
+        permission_event(cwd=cwd, session_id="last", tool_input={"command": "git commit -m last"})
     )
     await asyncio.sleep(0.2)
     assert len(twilio.calls) == broker._settings.approval_max_per_hour
