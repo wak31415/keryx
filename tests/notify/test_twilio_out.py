@@ -4,13 +4,16 @@ No REST client is ever built here: every test either injects a fake one or asser
 the credentials the lazy constructor would have been handed.
 """
 
+import logging
+import traceback
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
 import pytest
 
 from jarvis.config import Settings
-from jarvis.notify.twilio_out import TwilioOut, stream_twiml
+from jarvis.logging_util import mask_number
+from jarvis.notify.twilio_out import TwilioError, TwilioOut, stream_twiml
 
 SID = "AC00000000000000000000000000000001"
 AUTH_TOKEN = "an-auth-token"
@@ -181,3 +184,45 @@ def test_calling_is_unaffected_by_texting_being_off(tmp_path):
 
     assert out.can_text is False
     assert out.configured is True  # which is what `place_call` is gated on
+
+
+# --- what reaches a log ----------------------------------------------------
+
+
+async def test_a_text_is_logged_with_the_number_masked(out, caplog):
+    """`logging_util.mask_number` is the only shape a phone number may take in a log."""
+    with caplog.at_level(logging.INFO, logger="jarvis.notify.twilio_out"):
+        await out.send_sms(TO, "task 3 finished")
+
+    assert "texted" in caplog.text
+    assert TO not in caplog.text
+    assert mask_number(TO) in caplog.text
+
+
+async def test_a_call_is_logged_with_the_number_masked(out, caplog):
+    with caplog.at_level(logging.INFO, logger="jarvis.notify.twilio_out"):
+        await out.place_call(TO, twiml="<Response/>")
+
+    assert "calling" in caplog.text
+    assert TO not in caplog.text
+    assert mask_number(TO) in caplog.text
+
+
+@pytest.mark.parametrize("resource", ["messages", "calls"])
+async def test_a_twilio_error_does_not_quote_the_number_back(out, client, resource):
+    """Twilio's own error text names the number, and every caller logs it with a traceback."""
+    getattr(client, resource).error = RuntimeError(
+        f"HTTP 400 error: The 'To' number {TO} is not a valid phone number, from {NUMBER}"
+    )
+
+    with pytest.raises(TwilioError) as excinfo:
+        if resource == "messages":
+            await out.send_sms(TO, "never sent")
+        else:
+            await out.place_call(TO, twiml="<Response/>")
+
+    written = "".join(traceback.format_exception(excinfo.value))
+    assert "not a valid phone number" in written
+    assert TO not in written
+    assert NUMBER not in written
+    assert mask_number(TO) in written

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from jarvis.config import DATA_DIR_MODE, PLACEHOLDER_KEY, Settings, env_var_name
+from jarvis.logging_util import mask_number
 from jarvis.restart.service import resolve_target
 
 Severity = Literal["hard", "soft"]
@@ -176,14 +177,14 @@ def _twilio_check(settings: Settings) -> Check:
         return Check(
             "Twilio credentials", False, f"missing {', '.join(missing)} — no phone channel"
         )
-    return Check("Twilio credentials", True, str(settings.twilio_number))
+    return Check("Twilio credentials", True, mask_number(settings.twilio_number))
 
 
 def _allowed_callers_check(settings: Settings) -> Check:
     """Without an allowlist every inbound call is refused."""
     if not settings.allowed_callers:
         return Check("allowed callers", False, "ALLOWED_CALLERS is empty — every call is refused")
-    return Check("allowed callers", True, ", ".join(settings.allowed_callers))
+    return Check("allowed callers", True, ", ".join(map(mask_number, settings.allowed_callers)))
 
 
 def _pin_check(settings: Settings, problem: str | None = None) -> Check:

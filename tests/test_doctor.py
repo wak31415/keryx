@@ -12,6 +12,7 @@ from jarvis.doctor import (
     has_hard_failure,
     run_doctor_checks,
 )
+from jarvis.logging_util import mask_number
 
 
 @pytest.fixture
@@ -208,6 +209,14 @@ def test_an_empty_caller_allowlist_is_a_hard_failure(healthy):
     settings = healthy.model_copy(update={"allowed_callers": []})
 
     assert by_name(run_doctor_checks(settings, probe_mic=False))["allowed callers"].ok is False
+
+
+def test_the_numbers_doctor_prints_are_masked(healthy):
+    """A terminal is somewhere a number gets written down too (`logging_util`)."""
+    checks = by_name(run_doctor_checks(healthy, probe_mic=False))
+
+    assert checks["allowed callers"].detail == mask_number("+15551234567")
+    assert checks["Twilio credentials"].detail == mask_number("+15550000000")
 
 
 def test_a_missing_pin_only_warns(healthy):
