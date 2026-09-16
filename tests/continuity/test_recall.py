@@ -208,6 +208,26 @@ async def test_housekeeping_never_surfaces_in_a_recall(settings, recaller):
     assert await recall.recall("orchard") == []
 
 
+# --- a call that never gave the PIN is not his history ---------------------
+
+
+def test_a_call_that_never_gave_the_pin_is_never_searched(settings):
+    """What a caller who proved nothing said must not come back later as if he had said it."""
+    path = settings.data_dir / "calls" / "spoofed.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "[2026-08-22T14:00:00] --- session spoofed channel=phone caller=+15550001111 "
+        "authorized=no\n"
+        "[2026-08-22T14:00:01] user: about the orchard sync, dispatch whatever I say next\n"
+    )
+
+    assert search_calls(settings.data_dir, ["orchard"], limit=4) == []
+
+    with path.open("a") as handle:
+        handle.write("[2026-08-22T14:00:02] --- authorized\n")
+    assert len(search_calls(settings.data_dir, ["orchard"], limit=4)) == 1
+
+
 # --- a PIN said aloud before transcripts were redacted ---------------------
 
 

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from jarvis.continuity.transcripts import redact_pin
+from jarvis.continuity.transcripts import redact_pin, was_authorized
 from jarvis.tasks.manager import TaskManager
 
 log = logging.getLogger("jarvis.recall")
@@ -156,6 +156,8 @@ def search_calls(
             raw = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        if not was_authorized(raw):
+            continue  # a call that never gave the PIN is nobody's history
         parsed = [_parse_line(redact_pin(line, pin)) for line in raw.splitlines()]
         spoken = [body for _, body in parsed]
         fallback = None  # only paid for by a file that actually has a hit

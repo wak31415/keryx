@@ -13,6 +13,7 @@ from fakes import FakeProvider, FakeTransport, eventually
 from test_session import make_settings, running
 
 from jarvis.continuity.briefing import Briefing
+from jarvis.continuity.transcripts import was_authorized
 from jarvis.events import EventBus, SessionEnded
 from jarvis.realtime.base import FunctionCall, Transcript
 from jarvis.session import OPENING_MESSAGE, PIN_ACCEPTED_MESSAGE, VoiceSession
@@ -246,6 +247,33 @@ async def test_a_briefing_that_cannot_be_sent_does_not_cost_the_pin(make_session
         assert await session.submit_pin(PIN) == {"status": "authorized"}
         assert session.trusted is True
         provider.send_error = None
+
+
+# --- the transcript says whether he ever gave the PIN ----------------------
+
+
+async def test_the_transcript_marks_a_call_unauthorized_until_the_pin(
+    make_session, phone, provider
+):
+    session = make_session(phone, provider)
+
+    async with running(session):
+        await eventually(lambda: session.transcript_path.exists())
+        assert was_authorized(session.transcript_path.read_text()) is False
+        await session.submit_pin(PIN)
+
+    written = session.transcript_path.read_text()
+    assert "authorized=no" in written.splitlines()[0]
+    assert was_authorized(written) is True
+
+
+async def test_a_local_transcript_is_authorized_from_the_start(make_session, local, provider):
+    session = make_session(local, provider, authorized=True)
+
+    async with running(session):
+        await eventually(lambda: session.transcript_path.exists())
+
+    assert "authorized=yes" in session.transcript_path.read_text().splitlines()[0]
 
 
 # --- a spoken PIN is never written down ------------------------------------

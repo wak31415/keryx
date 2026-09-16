@@ -27,6 +27,10 @@ MAX_TRANSCRIPT_CHARS = 1200
 #: Lines that are session bookkeeping (`--- session … ended`), not conversation.
 _MARKER_PREFIX = "---"
 
+#: Written when a call gives the PIN part-way through (see `was_authorized`).
+AUTHORIZED_MARKER = "--- authorized"
+_UNAUTHORIZED_FLAG = " authorized=no"
+
 #: What a PIN is written down as, wherever it was said.
 PIN_REDACTED = "[PIN]"
 #: Each digit as transcription may render it: the numeral, or the word ("oh" and a bare "o"
@@ -67,6 +71,25 @@ def redact_pin(text: str, pin: str | None) -> str:
     if not pin or not (pin.isascii() and pin.isdigit()):
         return text
     return _pin_pattern(pin).sub(PIN_REDACTED, text)
+
+
+def session_header(session_id: str, channel: str, caller: str | None, *, authorized: bool) -> str:
+    """The line a transcript opens with, saying whether the call started authorized."""
+    flag = "yes" if authorized else "no"
+    return f"--- session {session_id} channel={channel} caller={caller or 'none'} authorized={flag}"
+
+
+def was_authorized(raw: str) -> bool:
+    """Whether the call in transcript `raw` was ever authorized.
+
+    False only for a call that opened `authorized=no` and never wrote `AUTHORIZED_MARKER`:
+    a phone call that did not give the PIN, whose words are nobody's history — reading them
+    back later would let a caller who proved nothing speak as him. A transcript from before
+    the header carried the flag is his own, and counts as authorized.
+    """
+    lines = [line.split("] ", 1)[-1].strip() for line in raw.splitlines()]
+    header = next((line for line in lines if line.startswith("--- session ")), "")
+    return not header.endswith(_UNAUTHORIZED_FLAG) or AUTHORIZED_MARKER in lines
 
 
 def transcript_path(data_dir: Path, session_id: str) -> Path:

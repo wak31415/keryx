@@ -44,7 +44,7 @@ from typing import Protocol
 from jarvis.audio.util import ms_for_bytes
 from jarvis.config import Settings, secure_dir, secure_file
 from jarvis.continuity.briefing import Briefing, BriefingSource
-from jarvis.continuity.transcripts import redact_pin
+from jarvis.continuity.transcripts import AUTHORIZED_MARKER, redact_pin, session_header
 from jarvis.events import EventBus, SessionEnded, SessionStarted
 from jarvis.logging_util import mask_number
 from jarvis.prompts import render_voice_prompt
@@ -229,7 +229,7 @@ class VoiceSession:
         if self._registry is not None:
             self._registry.add(self)
         self._append_transcript(
-            f"--- session {self.session_id} channel={self.channel} caller={self.caller or 'none'}"
+            session_header(self.session_id, self.channel, self.caller, authorized=self.authorized)
         )
         await self._bus.publish(SessionStarted(self.session_id, self.channel, self.caller))
         log.info(
@@ -297,6 +297,9 @@ class VoiceSession:
         """Mark the caller as authorized for destructive work (PIN accepted)."""
         self.authorized = True
         log.info("session %s authorized", self.session_id)
+        if self._state is not SessionState.NEW:
+            # The header said `authorized=no`; without this, `recall` never reads the call.
+            self._append_transcript(AUTHORIZED_MARKER)
 
     async def submit_pin(self, pin: str) -> dict:
         """Check a PIN and authorize the session if it matches (spec §3.3, §5).
