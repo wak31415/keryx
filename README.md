@@ -379,7 +379,9 @@ scripts/install-launchd.sh      # macOS: two launch agents, loaded
 
 Each installer renders the templates under `ops/` into the user's own service directory,
 starts them, and arranges for them to survive a logout and come back after a reboot. Both
-take `--uninstall`. What exactly they render, where each one logs, and why the macOS tunnel
+take `--uninstall`. The service gets the `PATH` of the shell you run the installer from, so
+subagents find the same tools a terminal does (nvm, Homebrew, conda, cargo…), and logs to
+`DATA_DIR/logs/`; run the installer again after changing either. What exactly they render, where each one logs, and why the macOS tunnel
 agent runs ngrok while the Linux one runs cloudflared:
 [Running as a service](https://github.com/wak31415/jarvis-voice-agent/wiki/Running-as-a-Service).
 
@@ -584,7 +586,8 @@ no `claude` CLI), `❌` means it will not work — and only `❌` makes the comm
 non-zero. It is safe to run before anything is configured; that is what it is for, and it
 never prints a secret.
 
-The server log is `~/.jarvis/logs/jarvis.log`, rotated at 10 MB × 5. Where everything else
+The server log is `DATA_DIR/logs/jarvis.log` (`~/.jarvis/logs/` by default), rotated at
+10 MB × 5. Where everything else
 is written, and the common failures with what each one actually means:
 [Troubleshooting](https://github.com/wak31415/jarvis-voice-agent/wiki/Troubleshooting).
 

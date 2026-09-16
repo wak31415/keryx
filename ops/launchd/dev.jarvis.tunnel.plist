@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Template: scripts/install-launchd.sh fills in __NGROK__, __HOME__, __PUBLIC_HOST__ and
-  __PORT__ and writes the result to ~/Library/LaunchAgents/dev.jarvis.tunnel.plist. Do not
-  load this file directly.
+  Template: scripts/install-launchd.sh fills in the placeholders (NGROK, HOME, PATH, LOGS,
+  PUBLIC_HOST and PORT, each between double underscores) and writes the result to
+  ~/Library/LaunchAgents/dev.jarvis.tunnel.plist. Do not load this file directly.
 
-  The tunnel is what Twilio reaches: https://__PUBLIC_HOST__/twilio/voice -> localhost:__PORT__.
+  The tunnel is what Twilio reaches: https://PUBLIC_HOST/twilio/voice -> localhost:PORT.
 -->
 <plist version="1.0">
 <dict>
@@ -23,7 +23,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>__PATH__</string>
         <key>HOME</key>
         <string>__HOME__</string>
     </dict>
@@ -34,8 +34,8 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>__HOME__/.jarvis/logs/ngrok.out.log</string>
+    <string>__LOGS__/ngrok.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/.jarvis/logs/ngrok.err.log</string>
+    <string>__LOGS__/ngrok.err.log</string>
 </dict>
 </plist>

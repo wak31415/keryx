@@ -9,7 +9,9 @@
 # from `command -v` and .env, writes the result to ~/Library/LaunchAgents/, and hands them
 # to launchctl. The tunnel agent runs ngrok here rather than cloudflared: a reserved ngrok
 # domain needs no DNS zone, which is the right trade on a laptop. Logs land in
-# ~/.jarvis/logs/.
+# DATA_DIR/logs/ (~/.jarvis/logs/ unless the env file says otherwise), and the agents get
+# this shell's PATH — run it from the shell whose tools the subagents should have, and
+# again after that changes.
 #
 # The scaffolding every installer needs — argument parsing, the env-file and PATH checks,
 # template rendering — is in scripts/lib.sh.
@@ -53,7 +55,8 @@ remove_agents "${LEGACY_LABELS[@]}"
 for label in "${LABELS[@]}"; do
   plist="$AGENTS/$label.plist"
   render "$TEMPLATES/$label.plist" "$plist" \
-    "UV=$UV" "NGROK=$NGROK" "PUBLIC_HOST=$PUBLIC_HOST" "PORT=$PORT"
+    "UV=$UV" "NGROK=$NGROK" "PUBLIC_HOST=$PUBLIC_HOST" "PORT=$PORT" \
+    "PATH=$(xml_escape "$PATH")" "LOGS=$(xml_escape "$LOGS")"
   # A previous version may still be loaded; booting it out first makes this re-runnable.
   launchctl bootout "gui/$UID/$label" 2>/dev/null || true
   launchctl bootstrap "gui/$UID" "$plist"

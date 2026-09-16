@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Template: scripts/install-launchd.sh fills in __UV__, __REPO__ and __HOME__ and writes
-  the result to ~/Library/LaunchAgents/dev.jarvis.agent.plist. Do not load this file
-  directly.
+  Template: scripts/install-launchd.sh fills in the placeholders (UV, REPO, HOME, PATH and
+  LOGS, each between double underscores) and writes the result to
+  ~/Library/LaunchAgents/dev.jarvis.agent.plist. Do not load this file directly. They are
+  not spelled out in this comment: a value rendered into it that held "-" twice in a row
+  would end the comment early and leave a plist launchd refuses.
 -->
 <plist version="1.0">
 <dict>
@@ -26,9 +28,10 @@
 
     <key>EnvironmentVariables</key>
     <dict>
-        <!-- launchd agents start with a bare PATH: uv, ngrok and the claude CLI live here. -->
+        <!-- launchd agents start with a bare PATH, so the installer's own is rendered here:
+             subagents find what a terminal finds. Re-run the installer after changing it. -->
         <key>PATH</key>
-        <string>/opt/homebrew/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>__PATH__</string>
         <key>HOME</key>
         <string>__HOME__</string>
     </dict>
@@ -39,8 +42,8 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>__HOME__/.jarvis/logs/jarvis.out.log</string>
+    <string>__LOGS__/jarvis.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/.jarvis/logs/jarvis.err.log</string>
+    <string>__LOGS__/jarvis.err.log</string>
 </dict>
 </plist>
