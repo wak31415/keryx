@@ -460,8 +460,10 @@ the model transcript. Local sessions are pre-authorized — you are already at t
 `JARVIS_PIN` must be **6 to 8 digits and nothing else**, and that is enforced rather than
 advised: `jarvis serve` refuses to start on anything else, and `jarvis doctor` says which
 rule was broken. Three wrong entries end the call, and the session stays locked even if the
-right PIN arrives afterwards. Why those particular rules, and what leaving it unset means
-instead, is in
+right PIN arrives afterwards. Wrong entries are also counted across calls: ten in a day lock
+PIN entry on every call for an hour, the right PIN included, and you are told — what that
+costs you is in [SECURITY.md](SECURITY.md#pin-brute-force-and-the-wake-word). Why those
+particular rules, and what leaving it unset means instead, is in
 [the security model](https://github.com/wak31415/jarvis-voice-agent/wiki/Security-Model).
 
 ### From the terminal
@@ -528,9 +530,10 @@ reasoning behind each of those four:
   the routes above.
 - **Caller ID is spoofable**, so the allowlist alone is not a gate. The PIN is what
   actually protects dispatching on the phone. It must be 6–8 digits (enforced — see
-  [The PIN](#using-it)), three wrong entries end the call for good, and it is compared with
-  `hmac.compare_digest`. Keep `ALLOWED_CALLERS` tight and leave `JARVIS_PIN` set — with no
-  PIN configured, every dispatch is simply refused over the phone.
+  [The PIN](#using-it)), three wrong entries end the call for good, ten across all calls in
+  24 hours lock PIN entry for an hour, no more than two calls run at once, and it is compared
+  with `hmac.compare_digest`. Keep `ALLOWED_CALLERS` tight and leave `JARVIS_PIN` set — with
+  no PIN configured, every dispatch is simply refused over the phone.
 - Secrets are never logged, the PIN is compared with `hmac.compare_digest`, and the report
   signing secret is either `REPORT_SECRET` or a random one persisted at
   `~/.jarvis/report_secret` with mode 600. Caller phone numbers are masked to their last
@@ -561,6 +564,7 @@ and where building this for one person on one machine shows through, on
   | Setting | Default | What it caps |
   |---|---|---|
   | `MAX_CALL_SECONDS` | 1800 | a phone call's length — Jarvis is told to wrap up 30 s before, then hangs up |
+  | `MAX_PHONE_SESSIONS` | 2 | phone calls in progress at once; another hears the line is busy |
   | `SUBAGENT_MAX_TURNS` | 200 | agent turns in one task |
   | `SUBAGENT_MAX_BUDGET_USD` | 10.0 | dollars one task may spend |
   | `DAILY_TASK_CAP` | 50 | tasks dispatched per day |

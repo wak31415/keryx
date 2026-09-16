@@ -555,6 +555,18 @@ class SessionRegistry:
   returns `{"status":"pin_required"}` until authorized — every task, since 2026-08-24, because
   every task can reach the files and the mailbox. Constant-time
   compare; 3 failures → say goodbye and hang up.
+  *Amended 2026-09-16:* wrong PINs are also counted **across calls** by `PinGuard`
+  (`data_dir/pin-failures.json`, survives restarts): `PIN_FAILURE_LIMIT` (10) inside
+  `PIN_FAILURE_WINDOW_HOURS` (24) locks PIN entry on every call for `PIN_LOCKOUT_MINUTES` (60).
+  While locked, a PIN is refused *before* it is compared — the right one too — and the call
+  ends after one sentence saying so. Nothing resets the count early (not the lock lifting, not
+  a right PIN), so past the limit every further wrong PIN re-locks: one guess per cooldown.
+  The owner is told once per run of lockouts (`PinLockedOut` → an *authorized* live session,
+  Slack, a text only via `can_text`). An unreadable count file is a lock for exactly one
+  cooldown; a missing one is a fresh start. At most `MAX_PHONE_SESSIONS` (2) phone sessions
+  run at once — the webhook counts open sessions plus outstanding stream tokens and answers a
+  busy `<Say>`, and the media socket counts again after the token. `jarvis serve` refuses
+  the phone channel with `DEBUG_SKIP_TWILIO_VALIDATION` on and `PUBLIC_HOST` set.
 - **Follow-ups**: `send_followup(task_id, text)` → finished task: new run with
   `resume=claude_session_id`; running task: the text is queued and, when the current run
   finishes, the task is immediately re-run with `resume` and the queued follow-ups as the
@@ -597,6 +609,7 @@ class SessionRegistry:
 | `ALLOWED_CALLERS` | `allowed_callers: list[str]` (comma-separated E.164) | `[]` |
 | `OWNER_NUMBER` | `owner_number` | first of `allowed_callers` |
 | `JARVIS_PIN` | `pin` (**6-8 digits** when set; refused otherwise) | `None` (every dispatch refused on phone if unset) |
+| `PIN_FAILURE_LIMIT` / `PIN_FAILURE_WINDOW_HOURS` / `PIN_LOCKOUT_MINUTES` | `pin_failure_limit` / `pin_failure_window_hours` / `pin_lockout_minutes` (wrong PINs across calls before PIN entry locks, how long each counts, how long it locks) | `10` / `24` / `60` (added 2026-09-16) |
 | `PUBLIC_HOST` | `public_host` (the tunnel's hostname, e.g. `jarvis.example.com`) | `None` |
 | `HOST` / `PORT` | `host` / `port` | `127.0.0.1` / `8080` |
 | `SERVICE_MANAGER` | `service_manager` (`auto`/`systemd`/`launchd`/`none`; what `jarvis restart` asks) | `auto` → systemd on Linux, launchd on macOS, none if neither is on PATH |
@@ -613,6 +626,7 @@ class SessionRegistry:
 | `NOISE_REDUCTION` | `noise_reduction` (`auto`/`near_field`/`far_field`/`off`) | `auto` → `near_field` on the phone, `far_field` on the local mic |
 | `VAD_SILENCE_MS` / `VAD_THRESHOLD` / `VAD_PREFIX_MS` | `vad_silence_ms` / `vad_threshold` / `vad_prefix_ms` (server mode) | `1200` / `0.5` / `300` |
 | `MAX_CALL_SECONDS` | `max_call_seconds` | `1800` |
+| `MAX_PHONE_SESSIONS` | `max_phone_sessions` (phone sessions at once; past it the caller hears the line is busy) | `2` (added 2026-09-16) |
 | `DAILY_TASK_CAP` | `daily_task_cap` | `50` |
 | `WAKEWORD_MODEL` / `WAKEWORD_THRESHOLD` | `wakeword_model` / `wakeword_threshold` | `hey_jarvis` / `0.5` |
 | `REPORT_SECRET` | `report_secret` | `None` → random secret persisted at `data_dir/report_secret` |
@@ -626,7 +640,8 @@ class SessionRegistry:
 Data layout under `data_dir`: `tasks.db`, `tasks/<id>.log` (agent transcript),
 `tasks/<id>.md` (final report), `calls/<session_id>.log` (voice transcript),
 `report_secret`, `restart.json` (0600; the pending restart's call-back, its log marks and
-its watchdog), `memory.md` (what Jarvis remembers between calls), `logs/jarvis.log` (our own
+its watchdog), `pin-failures.json` (0600; wrong PINs across calls and the lock they set),
+`memory.md` (what Jarvis remembers between calls), `logs/jarvis.log` (our own
 rotated handler) alongside the `jarvis.out.log`/`jarvis.err.log` the service unit appends to
 and `logs/restart-watch.log` (the watchdog's own output), `google/` (MCP credentials).
 
