@@ -308,6 +308,31 @@ def test_running_the_test_suite_is_not_keypad_approvable_by_default(settings, tm
     assert classify(run(tmp_path, command), settings) is None
 
 
+def test_the_ordinary_bash_fields_do_not_stop_a_command_ringing(settings, tmp_path):
+    tool_input = {
+        "command": "git push",
+        "description": "Push the branch",
+        "timeout": 120000,
+        "run_in_background": False,
+        "dangerouslyDisableSandbox": False,
+    }
+    event = request("Bash", tool_input, cwd=str(tmp_path / "roots" / "myproject"))
+    assert classify(event, settings) is not None
+
+
+@pytest.mark.parametrize(
+    "extra", [{"dangerouslyDisableSandbox": True}, {"something_new": "that changes how it runs"}]
+)
+def test_a_command_that_asks_for_more_than_running_is_not_eligible(settings, tmp_path, extra):
+    """Leaving the sandbox is on the screen's prompt and not in the read-back, so a digit
+    pressed on "run git push" would be a digit on something he was never told. A field
+    nobody has seen before is refused for the same reason."""
+    event = request(
+        "Bash", {"command": "git push", **extra}, cwd=str(tmp_path / "roots" / "myproject")
+    )
+    assert classify(event, settings) is None
+
+
 def test_an_entry_is_matched_word_for_word(settings, tmp_path):
     settings.approval_bash_allow = ["make test"]
     assert classify(run(tmp_path, "make test"), settings) is not None

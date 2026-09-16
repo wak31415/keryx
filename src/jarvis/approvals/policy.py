@@ -46,6 +46,12 @@ EDIT_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 #: is a file that says where all of that lives. `.claude` and `.mcp.json` hold the hooks,
 #: permissions and servers the Claude CLI runs by itself on the next tool call or session.
 EXECUTED_NAMES = frozenset({".git", ".claude", ".mcp.json"})
+#: The fields a `Bash` request may carry and still be escalated. Anything else may change
+#: how the command runs in a way the read-back never says, so an unknown field is refused;
+#: `dangerouslyDisableSandbox` is allowed only when it is not set.
+BASH_FIELDS = frozenset(
+    {"command", "description", "timeout", "run_in_background", "dangerouslyDisableSandbox"}
+)
 
 #: The permission modes in which nobody is really being asked. `PermissionRequest` does
 #: not fire under `claude -p` at all, so this is belt and braces for the interactive case.
@@ -332,6 +338,11 @@ def _refuse_executed(relative: Path) -> None:
 
 
 def _describe_bash(tool_input: dict, event: dict, settings) -> tuple[Kind, str, list[str]]:
+    unknown = set(tool_input) - BASH_FIELDS
+    if unknown:
+        raise Ineligible(f"it carries {', '.join(sorted(unknown))} as well as a command")
+    if tool_input.get("dangerouslyDisableSandbox"):
+        raise Ineligible("it asks to run outside the sandbox, which the read-back does not say")
     raw = str(tool_input.get("command") or "")
     # Both checks run on the command exactly as the shell will get it. Normalising first is
     # how a newline once became a space: eligible, read out as one line, and run as two.
