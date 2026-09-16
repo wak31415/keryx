@@ -5,7 +5,7 @@ Realtime API and Claude Agent SDK subagents.
 
 ## Commands
 
-- Run tests: `uv run pytest -q` (coverage: `uv run pytest -q --cov`, floor 94%)
+- Run tests: `uv run pytest -q` (coverage: `uv run pytest -q --cov`, floor 95%)
 - Lint: `uv run ruff check src tests`
 - Run the CLI: `uv run jarvis --help`
 - Check the machine's setup: `uv run jarvis doctor` (`--no-mic` where there is none)
@@ -22,7 +22,8 @@ Realtime API and Claude Agent SDK subagents.
 - Delete transcripts and finished task rows: `uv run jarvis forget [--older-than N]`
   (`--transcripts-only` / `--tasks-only` / `--yes`)
 - Restart the service: `uv run jarvis restart [--reason …] [--force] [--no-callback]`
-  (it phones back when it is up again, and texts if it never comes back);
+  (it phones back when it is up again, and rings with a plain spoken alert — texting too,
+  when `SMS_ENABLED` is on — if it never comes back);
   `uv run jarvis restart --status` for the last one, including what the logs said
 - One-off setup: `uv run jarvis download-models`, `uv run jarvis setup-google`
 - Background service: `scripts/install-systemd.sh [--uninstall]` on Linux,
@@ -285,8 +286,7 @@ scope, so the test suite can run on a machine with no mic.
 
 - Only scripts read the env file; never print or paste its contents. `.env.example` is a
   different thing — tracked, secret-free, and the one place every setting is listed; keep
-  it in step with `Settings` (`tests/test_docs_sync.py` is meant to enforce that, and the
-  `.env.example` half of it is still missing — see issue #5).
+  it in step with `Settings` (`tests/test_docs_sync.py` enforces that).
 - The database runs ahead of the code. `_migrate` upgrades `tasks.db` from whichever process
   opens it first, and `jarvis serve` holds the `Task` it imported at startup, so a new column
   reaches the file while the service is still a build behind. `Task.from_row` drops columns it
@@ -311,7 +311,7 @@ scope, so the test suite can run on a machine with no mic.
   `git log --grep '^Jarvis-Task:'` is everything the owner asked for out loud rather than
   typed — the one thing `git log` cannot otherwise recover.
 - Clean and minimal over clever; TDD, with `uv run pytest -q` and
-  `uv run ruff check src tests` pristine before a commit. Coverage has a floor (94%) and it
+  `uv run ruff check src tests` pristine before a commit. Coverage has a floor (95%) and it
   is a ratchet: raise it when the measured number moves up, never lower it to pass.
 - `data_dir` is 0700 and the files under it 0600 (`config.secure_dir` / `secure_file`).
   Anything new that writes there goes through them.
