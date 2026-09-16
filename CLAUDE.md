@@ -222,9 +222,10 @@ with a scar behind it:
 - **Idle, planned and down are three numbers, not one.** `sinfo` without `-N` aggregates by
   state line and its totals are silently wrong; a `planned` node is backfill holding
   hardware for a queued job, not a free one; and most pending jobs are blocked on a
-  dependency rather than competing for GPUs. The fixtures in `tests/test_cluster.py` are
-  real cluster output, and the totals asserted on are what the skill's own `cluster_avail.py`
-  reported for the same moment. Do not collapse them to be brief.
+  dependency rather than competing for GPUs. The fixtures in
+  `tests/integrations/test_cluster.py` are synthetic but preserve the shapes of real cluster
+  output, and the totals asserted on are worked out by hand from their rows. Do not collapse
+  them to be brief.
 
 ## Platforms
 

@@ -1073,13 +1073,13 @@ class FakeClusters:
         return answer
 
 
-def a_cluster_report(name: str = "beta", **overrides) -> ClusterReport:
+def a_cluster_report(name: str = "alpha", **overrides) -> ClusterReport:
     defaults = dict(
         cluster=name,
         spoken_name=name.capitalize(),
-        partition="pci",
+        partition="shared",
         gpus=GpuCounts(total=30, busy=4, free=26, nodes=3),
-        jobs=MyJobs(running=1, gpus=2, soonest_end_s=3600, ids=[1000004]),
+        jobs=MyJobs(running=1, gpus=2, soonest_end_s=3600, ids=[100042]),
         queue_competing=0,
         queue_pending=1,
     )
@@ -1087,7 +1087,7 @@ def a_cluster_report(name: str = "beta", **overrides) -> ClusterReport:
 
 
 def both_clusters(**overrides):
-    answers = {"beta": a_cluster_report("beta"), "alpha": a_cluster_report("alpha")}
+    answers = {"alpha": a_cluster_report("alpha"), "beta": a_cluster_report("beta")}
     answers.update(overrides)
     return FakeClusters(answers)
 
@@ -1098,43 +1098,43 @@ async def test_cluster_stats_asks_every_cluster_when_he_names_none(make_tools):
 
     result = await tools.call("cluster_stats", {})
 
-    assert clusters.asked == ["beta", "alpha"]
+    assert clusters.asked == ["alpha", "beta"]
     assert result["status"] == "ok"
-    assert [entry["cluster"] for entry in result["clusters"]] == ["beta", "alpha"]
-    assert "Beta" in result["spoken"] and "Alpha" in result["spoken"]
+    assert [entry["cluster"] for entry in result["clusters"]] == ["alpha", "beta"]
+    assert "Alpha" in result["spoken"] and "Beta" in result["spoken"]
 
 
 async def test_cluster_stats_answers_for_one_cluster_when_he_names_it(make_tools):
     clusters = both_clusters()
     tools = make_tools(cluster=clusters)
 
-    result = await tools.call("cluster_stats", {"cluster": "Alpha"})
+    result = await tools.call("cluster_stats", {"cluster": "Beta"})
 
-    assert clusters.asked == ["alpha"]
-    assert [entry["cluster"] for entry in result["clusters"]] == ["alpha"]
+    assert clusters.asked == ["beta"]
+    assert [entry["cluster"] for entry in result["clusters"]] == ["beta"]
 
 
 async def test_the_payload_carries_counts_and_job_ids_but_never_a_job_name(make_tools):
     """Anyone past the caller allowlist learns how busy a machine is, and nothing else."""
     tools = make_tools(cluster=both_clusters())
 
-    result = await tools.call("cluster_stats", {"cluster": "beta"})
+    result = await tools.call("cluster_stats", {"cluster": "alpha"})
 
     entry = result["clusters"][0]
     assert entry["gpus_free"] == 26 and entry["gpus_total"] == 30
-    assert entry["my_job_ids"] == [1000004]
+    assert entry["my_job_ids"] == [100042]
     assert "name" not in entry and "cwd" not in entry
 
 
 async def test_one_cluster_failing_never_costs_the_other(make_tools):
-    tools = make_tools(cluster=both_clusters(alpha=ClusterError("auth_expired", "Duo dead")))
+    tools = make_tools(cluster=both_clusters(beta=ClusterError("auth_expired", "login expired")))
 
     result = await tools.call("cluster_stats", {})
 
     assert result["status"] == "ok"
-    assert [entry["cluster"] for entry in result["clusters"]] == ["beta"]
+    assert [entry["cluster"] for entry in result["clusters"]] == ["alpha"]
     assert result["unavailable"] == [
-        {"cluster": "alpha", "status": "auth_expired", "message": MESSAGES["auth_expired"]}
+        {"cluster": "beta", "status": "auth_expired", "message": MESSAGES["auth_expired"]}
     ]
 
 
@@ -1144,7 +1144,7 @@ async def test_one_cluster_failing_never_costs_the_other(make_tools):
 async def test_every_cluster_failure_is_a_status_with_a_sentence(make_tools, code):
     """Never a raised exception, and never a path or a host for the model to read out."""
     detail = "no guard at /home/someone/.claude/skills/x/cluster_ssh.sh"
-    answers = {name: ClusterError(code, detail) for name in ("beta", "alpha")}
+    answers = {name: ClusterError(code, detail) for name in ("alpha", "beta")}
     tools = make_tools(cluster=FakeClusters(answers))
 
     result = await tools.call("cluster_stats", {})

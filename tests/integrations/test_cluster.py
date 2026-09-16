@@ -3,11 +3,12 @@
 Two things get most of the attention, because both are the kind of bug that gets read out
 loud as fact. The **arithmetic**: a `planned` node is reserved for a queued job rather than
 free, a `down` node is not free either, and most pending jobs are blocked on a dependency
-rather than competing for GPUs — the fixtures below are real `sinfo`/`squeue` output
-captured from beta and alpha on 2026-08-28, and the totals asserted on are the ones the
-cluster-compute skill's own `cluster_avail.py` reported for the same moment. And the
-**guard**: an expired Duo session must come back as one spoken status with no retry, because
-a retry storm against a dead ControlMaster is what got this machine's IP fail2ban-banned.
+rather than competing for GPUs. The fixtures below are synthetic, but they keep every shape
+real `sinfo`/`squeue` output takes — both GRES spellings, an `IDX` list with a comma in it,
+the trailing `-` that marks a planned node — and the totals asserted on are worked out by
+hand from the rows. And the **guard**: an expired login must come back as one spoken status
+with no retry, because a retry storm against a dead ControlMaster is how an address gets
+banned by a cluster's login nodes.
 """
 
 import subprocess
@@ -15,10 +16,10 @@ import subprocess
 import pytest
 
 from jarvis.integrations.cluster import (
-    CLUSTERS,
     MARK,
     READ_ONLY,
     ClusterError,
+    ClusterSpec,
     GuardedSsh,
     SlurmClusterStats,
     build_script,
@@ -32,36 +33,39 @@ from jarvis.integrations.cluster import (
     state_tokens,
 )
 
-# Real output, captured 2026-08-28. Beta spells GRES `gpu:a6000:10`, alpha
+#: The two clusters these tests know. Passed in explicitly: which clusters exist is
+#: configuration, never something the module decides.
+SPECS = {
+    "alpha": ClusterSpec("alpha", "alpha", "shared", "Alpha"),
+    "beta": ClusterSpec("beta", "beta", "gpu", "Beta"),
+}
+
+# Synthetic, in the shapes real output takes. Alpha spells GRES `gpu:a6000:8`, beta
 # `gpu:h100:4(S:0-1)`, and `mixed-` is a node backfill is holding for a queued job.
-BETA_NODES = """\
-node001                gpu:a6000:10    gpu:a6000:2(IDX:2-3)    mixed
-node002                gpu:a6000:10    gpu:a6000:0(IDX:N/A)    idle
-node003                gpu:a6000:10    gpu:a6000:2(IDX:0-1)    mixed
-"""
-
 ALPHA_NODES = """\
-alpha-c1g2          gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed
-alpha-c1g4          gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed-
-alpha-c2g2          gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed-
-alpha-c2g4          gpu:h100:4(S:0-1)   gpu:h100:3(IDX:0,2-3)   mixed-
-alpha-c3g2          gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed-
-alpha-c3g4          gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed
-alpha-c4g2          gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed-
-alpha-c4g4          gpu:h100:4(S:0-1)   gpu:h100:0(IDX:N/A)     down
-alpha-c5g2          gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed-
-alpha-c5g4          gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed
-alpha-c6g2          gpu:h100:4(S:0-1)   gpu:h100:0(IDX:N/A)     planned
-alpha-c6g4          gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed-
+alpha-n01              gpu:a6000:8     gpu:a6000:2(IDX:2-3)    mixed
+alpha-n02              gpu:a6000:8     gpu:a6000:0(IDX:N/A)    idle
+alpha-n03              gpu:a6000:8     gpu:a6000:3(IDX:0-1,5)  mixed
 """
 
-BETA_JOBS = "1000004|RUNNING|pci|gres/gpu:2|10:35:03|1|None\n"
+BETA_NODES = """\
+beta-g01               gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed
+beta-g02               gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed-
+beta-g03               gpu:h100:4(S:0-1)   gpu:h100:3(IDX:0,2-3)   mixed-
+beta-g04               gpu:h100:4(S:0-1)   gpu:h100:0(IDX:N/A)     down
+beta-g05               gpu:h100:4(S:0-1)   gpu:h100:0(IDX:N/A)     planned
+beta-g06               gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed
+beta-g07               gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed-
+beta-g08               gpu:h100:4(S:0-1)   gpu:h100:4(IDX:0-3)     mixed
+"""
 
-ALPHA_PENDING = """\
-1000001|Resources
-3956813_[4-21%4]|JobArrayTaskLimit
-1000002|Priority
-1000003|Dependency
+ALPHA_JOBS = "100042|RUNNING|shared|gres/gpu:2|10:35:03|1|None\n"
+
+BETA_PENDING = """\
+200301|Resources
+200288_[4-21%4]|JobArrayTaskLimit
+200295|Priority
+200270|Dependency
 """
 
 
@@ -92,9 +96,9 @@ class FakeRunner:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("gpu:a6000:10", 10),  # beta inventory
-        ("gpu:a6000:2(IDX:2-3)", 2),  # beta in-use: commas live inside the parens
-        ("gpu:h100:4(S:0-1)", 4),  # alpha inventory
+        ("gpu:a6000:8", 8),  # one spelling of an inventory
+        ("gpu:a6000:3(IDX:0-1,5)", 3),  # in use: commas live inside the parens
+        ("gpu:h100:4(S:0-1)", 4),  # the other spelling, with a socket suffix
         ("gpu:h100:0(IDX:N/A)", 0),
         ("gres/gpu:2", 2),  # squeue's `%b`
         ("gpu:10", 10),
@@ -151,20 +155,21 @@ def test_a_duration_is_spoken_roughly_or_not_at_all():
 # --- the arithmetic ---------------------------------------------------------
 
 
-def test_beta_nodes_come_out_as_the_cluster_reported_them():
-    counts, bad = parse_nodes(BETA_NODES)
+def test_a_quiet_partition_adds_up():
+    counts, bad = parse_nodes(ALPHA_NODES)
 
-    assert (counts.total, counts.busy, counts.free) == (30, 4, 26)
+    assert (counts.total, counts.busy, counts.free) == (24, 5, 19)
     assert (counts.reserved, counts.down, counts.nodes) == (0, 0, 3)
     assert bad == []
 
 
 def test_planned_and_down_gpus_are_never_counted_as_free():
-    """The same moment `cluster_avail.py` read as 39 in use, 0 idle, 5 planned, 4 down."""
-    counts, bad = parse_nodes(ALPHA_NODES)
+    """23 in use, 0 idle, 5 held (a whole planned node, plus the one spare GPU on a node
+    marked `mixed-`), and 4 down."""
+    counts, bad = parse_nodes(BETA_NODES)
 
-    assert counts.total == 48
-    assert counts.busy == 39
+    assert counts.total == 32
+    assert counts.busy == 23
     assert counts.free == 0  # not 5, and certainly not 9
     assert counts.reserved == 5
     assert counts.down == 4
@@ -173,31 +178,31 @@ def test_planned_and_down_gpus_are_never_counted_as_free():
 
 
 def test_a_node_in_two_partitions_is_counted_once():
-    counts, _ = parse_nodes(BETA_NODES + "node001  gpu:a6000:10  gpu:a6000:2(IDX:2-3)  mixed\n")
+    counts, _ = parse_nodes(ALPHA_NODES + "alpha-n01  gpu:a6000:8  gpu:a6000:2(IDX:2-3)  mixed\n")
 
-    assert counts.total == 30
+    assert counts.total == 24
 
 
 def test_an_unreadable_row_is_reported_rather_than_dropped():
     """A row we cannot read makes the total low; the count of them rides in the payload."""
-    counts, bad = parse_nodes(BETA_NODES + "node004 gpu:a6000:8 mixed\n")
+    counts, bad = parse_nodes(ALPHA_NODES + "alpha-n04 gpu:a6000:8 mixed\n")
 
-    assert counts.total == 30
+    assert counts.total == 24
     assert len(bad) == 1
 
 
 def test_a_cpu_only_node_is_not_a_node_with_no_gpus():
-    counts, bad = parse_nodes(BETA_NODES + "cpu001  (null)  (null)  idle\n")
+    counts, bad = parse_nodes(ALPHA_NODES + "alpha-c01  (null)  (null)  idle\n")
 
     assert counts.nodes == 3
     assert bad == []
 
 
 def test_my_jobs_split_into_running_and_queued():
-    jobs, bad = parse_my_jobs(BETA_JOBS)
+    jobs, bad = parse_my_jobs(ALPHA_JOBS)
 
     assert (jobs.running, jobs.pending, jobs.gpus) == (1, 0, 2)
-    assert jobs.ids == [1000004]
+    assert jobs.ids == [100042]
     assert jobs.soonest_end_s == 38103
     assert bad == []
 
@@ -210,7 +215,7 @@ def test_a_multi_node_job_holds_gpus_per_node():
 
 
 def test_an_array_job_is_the_number_he_can_repeat_down_the_phone():
-    jobs, _ = parse_my_jobs("991_[0-3]|PENDING|pci|gres/gpu:1|1:00:00|1|Priority\n")
+    jobs, _ = parse_my_jobs("991_[0-3]|PENDING|shared|gres/gpu:1|1:00:00|1|Priority\n")
 
     assert jobs.ids == [991]
     assert (jobs.running, jobs.pending) == (0, 1)
@@ -218,7 +223,7 @@ def test_an_array_job_is_the_number_he_can_repeat_down_the_phone():
 
 def test_the_soonest_finish_is_the_job_that_ends_first():
     jobs, _ = parse_my_jobs(
-        "1|RUNNING|pci|gres/gpu:1|10:00:00|1|None\n2|RUNNING|pci|gres/gpu:1|0:20:00|1|None\n"
+        "1|RUNNING|gpu|gres/gpu:1|10:00:00|1|None\n2|RUNNING|gpu|gres/gpu:1|0:20:00|1|None\n"
     )
 
     assert jobs.soonest_end_s == 1200
@@ -226,7 +231,7 @@ def test_the_soonest_finish_is_the_job_that_ends_first():
 
 def test_a_queue_of_dependencies_is_not_a_queue_of_competition():
     """Four pending, of which two are blocked on other jobs rather than on hardware."""
-    competing, total = parse_pending(ALPHA_PENDING)
+    competing, total = parse_pending(BETA_PENDING)
 
     assert (competing, total) == (2, 4)
 
@@ -242,7 +247,7 @@ def test_pending_reasons_are_matched_however_slurm_punctuates_them():
 
 def test_every_command_in_the_script_is_a_slurm_reader():
     """The guard against a future edit that batches a `scancel` in with the reads."""
-    script = build_script("pci")
+    script = build_script("shared")
 
     heads = [part.strip().split()[0] for part in script.split("{ ")[1:]]
     assert heads and set(heads) <= READ_ONLY
@@ -260,7 +265,7 @@ def test_a_partition_that_is_not_a_bare_word_never_reaches_a_shell():
 
 
 def test_every_known_cluster_builds_a_script():
-    for spec in CLUSTERS.values():
+    for spec in SPECS.values():
         assert spec.partition in build_script(spec.partition)
 
 
@@ -274,58 +279,58 @@ def test_sections_survive_the_round_trip():
 
 
 async def test_a_whole_report_comes_back_as_a_sentence_worth_saying():
-    runner = FakeRunner(sections(jobs=BETA_JOBS, nodes=BETA_NODES, pending="1|Dependency\n"))
+    runner = FakeRunner(sections(jobs=ALPHA_JOBS, nodes=ALPHA_NODES, pending="1|Dependency\n"))
 
-    report = await SlurmClusterStats(runner).stats("beta")
+    report = await SlurmClusterStats(runner, SPECS).stats("alpha")
 
-    assert runner.calls[0][0] == "beta"
+    assert runner.calls[0][0] == "alpha"
     payload = report.as_dict()
-    assert payload["gpus_free"] == 26
-    assert payload["my_job_ids"] == [1000004]
+    assert payload["gpus_free"] == 19
+    assert payload["my_job_ids"] == [100042]
     assert payload["queue_pending"] == 1
     assert payload["queue_waiting_for_hardware"] == 0
     assert payload["spoken"] == (
-        "Beta: 26 of 30 GPUs free; you have 1 job running on 2 GPUs, "
+        "Alpha: 19 of 24 GPUs free; you have 1 job running on 2 GPUs, "
         "the first finishing in about 11 hours."
     )
 
 
 async def test_a_busy_cluster_says_what_is_held_and_what_is_down():
-    runner = FakeRunner(sections(nodes=ALPHA_NODES, pending=ALPHA_PENDING))
+    runner = FakeRunner(sections(nodes=BETA_NODES, pending=BETA_PENDING))
 
-    report = await SlurmClusterStats(runner).stats("alpha")
+    report = await SlurmClusterStats(runner, SPECS).stats("beta")
 
     assert report.spoken() == (
-        "Alpha: no free GPUs out of 48 (5 held for queued jobs, 4 down); "
+        "Beta: no free GPUs out of 32 (5 held for queued jobs, 4 down); "
         "you have nothing running. 2 other jobs are waiting for hardware."
     )
 
 
 async def test_a_cluster_it_does_not_know_never_reaches_the_runner():
     """The cluster name is the only thing the model chooses, so it is looked up, not passed."""
-    runner = FakeRunner(sections(nodes=BETA_NODES))
+    runner = FakeRunner(sections(nodes=ALPHA_NODES))
 
     with pytest.raises(ClusterError) as caught:
-        await SlurmClusterStats(runner).stats("gamma")
+        await SlurmClusterStats(runner, SPECS).stats("gamma")
 
     assert caught.value.code == "unknown_cluster"
     assert runner.calls == []
 
 
 async def test_a_name_is_matched_however_he_said_it():
-    runner = FakeRunner(sections(nodes=BETA_NODES))
+    runner = FakeRunner(sections(nodes=ALPHA_NODES))
 
-    report = await SlurmClusterStats(runner).stats("  Beta ")
+    report = await SlurmClusterStats(runner, SPECS).stats("  Alpha ")
 
-    assert report.cluster == "beta"
+    assert report.cluster == "alpha"
 
 
 async def test_slurms_own_error_is_a_failure_rather_than_an_empty_cluster():
     """`stderr` is folded into the section, so "no nodes" is how a broken command arrives."""
-    runner = FakeRunner(sections(nodes="sinfo: error: invalid partition specified: pci\n"))
+    runner = FakeRunner(sections(nodes="sinfo: error: invalid partition specified: shared\n"))
 
     with pytest.raises(ClusterError) as caught:
-        await SlurmClusterStats(runner).stats("beta")
+        await SlurmClusterStats(runner, SPECS).stats("alpha")
 
     assert caught.value.code == "unavailable"
 
@@ -356,32 +361,32 @@ def fake_run(monkeypatch, *, returncode=0, stdout="", stderr="", raises=None):
 
 
 async def test_the_guard_is_called_with_the_host_and_told_not_to_slack(monkeypatch, guard):
-    """The Duo expiry belongs in the sentence he is listening to, not in an unasked-for DM."""
+    """A login expiry belongs in the sentence he is listening to, not in an unasked-for DM."""
     calls = fake_run(monkeypatch, stdout="out")
 
-    assert await GuardedSsh(guard).run("alpha", "sinfo") == "out"
+    assert await GuardedSsh(guard).run("beta", "sinfo") == "out"
 
-    assert calls[0]["argv"] == [str(guard), "--host", "alpha", "sinfo"]
+    assert calls[0]["argv"] == [str(guard), "--host", "beta", "sinfo"]
     assert calls[0]["env"]["CLUSTER_SSH_NO_NOTIFY"] == "1"
     assert "shell" not in calls[0]  # the script is one argv element; nothing expands it
 
 
-async def test_an_expired_duo_session_is_said_once_and_never_retried(monkeypatch, guard):
-    """A retry cannot answer a Duo push, and a storm of them is what fail2ban counts."""
-    calls = fake_run(monkeypatch, returncode=42, stderr="CONTROL_MASTER_EXPIRED host=beta")
+async def test_an_expired_login_is_said_once_and_never_retried(monkeypatch, guard):
+    """A retry cannot answer a 2FA push, and a storm of them is what a ban counts."""
+    calls = fake_run(monkeypatch, returncode=42, stderr="CONTROL_MASTER_EXPIRED host=alpha")
 
     with pytest.raises(ClusterError) as caught:
-        await GuardedSsh(guard).run("beta", "sinfo")
+        await GuardedSsh(guard).run("alpha", "sinfo")
 
     assert caught.value.code == "auth_expired"
     assert len(calls) == 1
 
 
 async def test_an_expiry_is_recognised_from_the_marker_even_on_a_zero_exit(monkeypatch, guard):
-    fake_run(monkeypatch, returncode=0, stderr="CONTROL_MASTER_EXPIRED host=beta")
+    fake_run(monkeypatch, returncode=0, stderr="CONTROL_MASTER_EXPIRED host=alpha")
 
     with pytest.raises(ClusterError) as caught:
-        await GuardedSsh(guard).run("beta", "sinfo")
+        await GuardedSsh(guard).run("alpha", "sinfo")
 
     assert caught.value.code == "auth_expired"
 
@@ -390,7 +395,7 @@ async def test_any_other_nonzero_exit_is_unavailable(monkeypatch, guard):
     fake_run(monkeypatch, returncode=1, stderr="boom")
 
     with pytest.raises(ClusterError) as caught:
-        await GuardedSsh(guard).run("beta", "sinfo")
+        await GuardedSsh(guard).run("alpha", "sinfo")
 
     assert caught.value.code == "unavailable"
 
@@ -399,7 +404,7 @@ async def test_a_cluster_that_does_not_answer_in_time_is_a_timeout(monkeypatch, 
     fake_run(monkeypatch, raises=subprocess.TimeoutExpired("guard", 20))
 
     with pytest.raises(ClusterError) as caught:
-        await GuardedSsh(guard, timeout_s=20).run("beta", "sinfo")
+        await GuardedSsh(guard, timeout_s=20).run("alpha", "sinfo")
 
     assert caught.value.code == "timeout"
 
@@ -409,7 +414,7 @@ async def test_without_the_guard_on_disk_nothing_is_run_at_all(monkeypatch, tmp_
     calls = fake_run(monkeypatch)
 
     with pytest.raises(ClusterError) as caught:
-        await GuardedSsh(tmp_path / "missing.sh").run("beta", "sinfo")
+        await GuardedSsh(tmp_path / "missing.sh").run("alpha", "sinfo")
 
     assert caught.value.code == "not_configured"
     assert calls == []
@@ -419,7 +424,7 @@ async def test_a_host_that_is_not_a_bare_word_is_refused_before_the_guard(monkey
     calls = fake_run(monkeypatch)
 
     with pytest.raises(ClusterError) as caught:
-        await GuardedSsh(guard).run("beta; rm -rf /", "sinfo")
+        await GuardedSsh(guard).run("alpha; rm -rf /", "sinfo")
 
     assert caught.value.code == "unknown_cluster"
     assert calls == []
