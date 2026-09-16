@@ -154,8 +154,8 @@ def test_stream_twiml_is_a_string_ready_for_the_calls_api():
 
 
 def test_texting_is_off_by_default(tmp_path):
-    """This account has no SMS geo-permission for the owner's region, and he does not
-    want the channel: written messages go to Slack, which he has to ask for."""
+    """Off by default: many accounts lack SMS permission for their region, and written
+    messages go to Slack, which has to be asked for."""
     out = TwilioOut(make_settings(tmp_path))
 
     assert out.configured is True

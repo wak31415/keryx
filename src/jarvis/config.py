@@ -162,11 +162,11 @@ class Settings(BaseSettings):
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = Field(default=None, repr=False)
     twilio_number: str | None = None
-    #: Whether Jarvis may text at all. Off: this account has no SMS geo-permission for the
-    #: owner's region, so every send failed with an HTTP 400, and William does not want the
-    #: channel regardless — written messages go to Slack, and he asks for those. Outbound
-    #: *calls* are unaffected, which matters: the restart watchdog's alert is a call, and
-    #: it is the only thing that still works when Jarvis itself is down.
+    #: Whether Jarvis may text at all. Off by default: many Twilio accounts lack SMS
+    #: permission for their region, where every send fails with an HTTP 400, and written
+    #: messages go to Slack when asked for. Outbound *calls* are unaffected, which matters:
+    #: the restart watchdog's alert is a call, and it is the only thing that still works
+    #: when Jarvis itself is down.
     sms_enabled: bool = False
 
     # Access control

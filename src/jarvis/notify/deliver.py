@@ -5,10 +5,10 @@ Three modules independently grew the same pair of loops — `Notifier`, the
 each swallowing its own exceptions, and each deciding for itself whether a text may be
 sent. Three copies of a gate is three chances to get it wrong, and this is the gate where
 being wrong is expensive: **`TwilioOut.can_text`, never `configured`.** `SMS_ENABLED` is
-false on this account (no SMS geo-permission for the owner's region, and Slack is the
-written channel he actually asks for), so a send gated on `configured` is an HTTP 400 every
-time. Outbound *calls* are a different capability and are unaffected — which matters,
-because the restart watchdog's `<Say>` alert is the last thing working when Jarvis is down.
+off by default (many accounts lack SMS permission for their region, and Slack is the
+written channel), so a send gated on `configured` can be an HTTP 400 every time. Outbound
+*calls* are a different capability and are unaffected — which matters, because the restart
+watchdog's `<Say>` alert is the last thing working when Jarvis is down.
 
 Nothing here raises. A delivery that did not happen comes back as `False`, and the caller
 decides whether that is worth a log line, a fallback, or nothing at all.

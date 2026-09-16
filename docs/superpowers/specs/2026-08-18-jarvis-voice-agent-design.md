@@ -453,10 +453,10 @@ class SessionRegistry:
   request and not a fact about the checkout, honoured only on a task that *succeeded* and
   never on an `internal` one: nothing Jarvis dispatches to itself may take Jarvis off the
   air.
-- **Texting is off (added 2026-08-26).** `SMS_ENABLED` defaults false: the Twilio account
-  has no SMS geo-permission for the owner's region (`HTTP 400: Permission to send an SMS has
-  not been enabled for the region indicated by the 'To' number`), and he does not want the
-  channel regardless — written messages go to Slack, which he has to ask for. Every send
+- **Texting is off (added 2026-08-26).** `SMS_ENABLED` defaults false: many Twilio accounts
+  have no SMS permission for their region (`HTTP 400: Permission to send an SMS has not been
+  enabled for the region indicated by the 'To' number`), and written messages go to Slack,
+  which has to be asked for. Every send
   site is gated on `TwilioOut.can_text` (credentials *and* the flag), never on `configured`,
   because calling and texting are separate capabilities and only one is off: the restart
   watchdog's alert is a `<Say>` call and stays the one thing that works when Jarvis is down.

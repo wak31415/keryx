@@ -258,8 +258,8 @@ scope, so the test suite can run on a machine with no mic.
   reaches the file while the service is still a build behind. `Task.from_row` drops columns it
   has no field for; keep it that way, and keep writes naming their columns so the older build
   cannot blank the newer one's data.
-- Jarvis does not text. `SMS_ENABLED` is false (the account has no SMS geo-permission for
-  his region, and Slack is the written channel he actually asks for), so gate any send on
+- Jarvis does not text. `SMS_ENABLED` is off by default (many accounts lack SMS permission
+  for their region, and Slack is the written channel), so gate any send on
   `TwilioOut.can_text` and never on `configured` — outbound *calls* are unaffected, and the
   restart watchdog's `<Say>` alert is the last thing working when Jarvis is down.
 - **One action is one sentence.** The wording the model is handed — the tool descriptions,
