@@ -16,7 +16,13 @@ import pytest
 from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
 from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult
-from jarvis.tasks.manager import TaskLimitError, TaskManager, UnknownProjectError, build_prompt
+from jarvis.tasks.manager import (
+    CLOSE_TIMEOUT_S,
+    TaskLimitError,
+    TaskManager,
+    UnknownProjectError,
+    build_prompt,
+)
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
 
@@ -712,6 +718,13 @@ async def test_shutdown_cancels_running_tasks_and_closes_sessions(make_harness):
     assert (await harness.manager.get(task.id)).status is TaskStatus.CANCELLED
     assert harness.runner.sessions[0].closed is True
     assert harness.events.of(TaskCompleted, TaskFailed) == []
+
+
+def test_closing_a_session_outlasts_the_sdks_terminate_and_kill_escalation():
+    # The SDK's `close()` waits up to 5 s for the write lock, then 5 s for a clean exit,
+    # 5 s after SIGTERM and 5 s after SIGKILL. Giving up sooner abandons a CLI that is
+    # still mid-turn instead of terminating it.
+    assert CLOSE_TIMEOUT_S > 5.0 * 4
 
 
 # --- a task that changed Jarvis's own code ---------------------------------

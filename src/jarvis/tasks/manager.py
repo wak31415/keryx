@@ -48,9 +48,13 @@ log = logging.getLogger("jarvis.tasks.manager")
 
 TERMINAL_STATUSES = frozenset({TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED})
 
-#: Bound on the best-effort `interrupt()`/`close()` calls, so a wedged subagent process
-#: can never block a cancel or a shutdown.
+#: Bound on the best-effort `interrupt()` call, so a wedged subagent process can never
+#: block a cancel.
 SESSION_TIMEOUT_S = 5.0
+#: Bound on `close()` alone. Longer than the SDK's own bounded close (up to 5 s for the
+#: write lock, then 5 s each for a clean exit, SIGTERM and SIGKILL), so a CLI still
+#: mid-turn gets terminated rather than abandoned.
+CLOSE_TIMEOUT_S = 25.0
 #: Bound on waiting for a cancelled asyncio task to unwind.
 CANCEL_TIMEOUT_S = 5.0
 #: How much "where we left off" a call-back carries; it is spoken from, not read out.
@@ -423,7 +427,7 @@ class TaskManager:
         if session is None:
             return
         try:
-            await asyncio.wait_for(session.close(), SESSION_TIMEOUT_S)
+            await asyncio.wait_for(session.close(), CLOSE_TIMEOUT_S)
         except Exception:
             log.exception("closing the subagent session of task %s failed", task_id)
 

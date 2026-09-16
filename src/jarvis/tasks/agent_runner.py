@@ -84,6 +84,11 @@ GOOGLE_MCP_ARGS = [
 ]
 GOOGLE_OAUTH_REDIRECT_URI = "http://localhost:8000/oauth2callback"
 
+#: The largest single message the SDK will accept from the `claude` CLI. The default
+#: (1 MiB) is smaller than the echo of one `Read` of a screenshot or figure, which
+#: arrives as base64 in a single NDJSON line and killed the turn (tasks 68-98).
+SUBAGENT_MAX_BUFFER_BYTES = 64 * 1024 * 1024
+
 _MAX_TOOL_INPUT_CHARS = 200
 _MAX_ERROR_CHARS = 160
 
@@ -296,6 +301,7 @@ def build_options(
         "max_turns": settings.subagent_max_turns,
         "max_budget_usd": settings.subagent_max_budget_usd,
         "resume": resume,
+        "max_buffer_size": SUBAGENT_MAX_BUFFER_BYTES,
     }
     if settings.google_workspace_mcp:
         options["mcp_servers"] = {"google": google_mcp_server_config(settings)}

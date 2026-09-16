@@ -21,6 +21,7 @@ from jarvis.tasks.agent_runner import (
     DEFAULT_FAKE_RESULT,
     INTERRUPTED_RESULT,
     NO_SUMMARY,
+    SUBAGENT_MAX_BUFFER_BYTES,
     ClaudeAgentRunner,
     ClaudeAgentSession,
     FakeAgentRunner,
@@ -209,6 +210,15 @@ def test_build_options_sets_the_shared_agent_configuration(settings):
     assert options.model == "claude-opus-5"
     assert options.resume is None
     assert options.include_partial_messages is False
+
+
+def test_build_options_lifts_the_sdk_message_size_limit(settings):
+    # One `Read` of a figure echoes back as a single base64 NDJSON line; at the SDK's
+    # 1 MiB default that line killed tasks 68-98 mid-turn.
+    options = build_options(make_task(), settings)
+
+    assert options.max_buffer_size == SUBAGENT_MAX_BUFFER_BYTES
+    assert SUBAGENT_MAX_BUFFER_BYTES > 1024 * 1024
 
 
 def test_build_options_appends_the_rendered_subagent_suffix(settings):
@@ -470,6 +480,23 @@ async def test_session_run_survives_a_transport_exception():
     assert outcome.error == "RuntimeError: stream closed"
     assert outcome.final_text == "Partial work."
     assert outcome.spoken_summary == "The task failed: stream closed"
+
+
+async def test_session_run_survives_a_buffer_overflow():
+    # The exact shape the SDK raises: a bare `Exception` re-raised from its query loop.
+    client = FakeSdkClient(
+        messages=[assistant(TextBlock(text="Opened the contact sheet."))],
+        error=Exception(
+            "Failed to decode JSON: JSON message exceeded maximum buffer size of "
+            "1048576 bytes..."
+        ),
+    )
+
+    outcome = await ClaudeAgentSession(client).run("go", on_progress=lambda text: None)
+
+    assert outcome.ok is False
+    assert outcome.final_text == "Opened the contact sheet."
+    assert outcome.spoken_summary.startswith("The task failed")
 
 
 async def test_session_send_interrupt_and_close_reach_the_client():
