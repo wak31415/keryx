@@ -120,6 +120,19 @@ def test_one_pending_task_is_spoken_of_in_the_singular():
     assert "1 task finished" in nudge
 
 
+def test_nothing_pending_means_no_nudge_after_the_pin_either():
+    assert Briefing(memory="something").after_pin_nudge() == ""
+
+
+def test_the_nudge_after_the_pin_does_not_greet_him_a_second_time():
+    """He has been talking for a while by the time the PIN goes in."""
+    nudge = Briefing(pending="…", pending_count=2).after_pin_nudge()
+
+    assert nudge.startswith("[system] 2 tasks finished")
+    assert "What he has not heard yet" in nudge
+    assert "greeting" not in nudge and "not greet him again" in nudge
+
+
 def test_several_pending_tasks_are_plural():
     assert "3 tasks finished" in Briefing(pending="…", pending_count=3).opening_nudge()
 

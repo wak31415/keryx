@@ -14,6 +14,12 @@ both are assembled here, once, at session start:
    Standing facts and what recent calls were about, so "the thing we talked about
    yesterday" resolves to something.
 
+Both are private, so a phone call is not briefed until the PIN is accepted: caller id is
+spoofable, and an allowed number proves nothing. `VoiceSession` asks for a briefing at
+session start only when it is already trusted (the local channel, or a call authorized
+before it connected), and otherwise the moment the PIN goes in — updating the prompt and
+handing over `after_pin_nudge()` in place of the opening nudge.
+
 Nothing here may fail a call. Every read is guarded and the worst case is a briefing with
 empty parts, which renders as a prompt with those sections left out entirely.
 """
@@ -49,6 +55,13 @@ OPENING_NUDGE = (
     " [system] {count} finished while you were away and he has not heard yet — see "
     '"What he has not heard yet" and lead with it, briefly, after your greeting.'
 )
+#: The same nudge for a phone call, which is briefed only once the PIN is accepted — by
+#: which time he has been greeted and has usually asked for something.
+AFTER_PIN_NUDGE = (
+    "[system] {count} finished while you were away and he has not heard yet — see "
+    '"What he has not heard yet". Tell him briefly, once what he just asked for is in hand '
+    "(straight away if he asked for nothing), and do not greet him again."
+)
 
 
 @dataclass(frozen=True)
@@ -62,10 +75,15 @@ class Briefing:
 
     def opening_nudge(self) -> str:
         """The clause to append to the message that opens the session, if any."""
-        if not self.pending_count:
-            return ""
+        return OPENING_NUDGE.format(count=self._count()) if self.pending_count else ""
+
+    def after_pin_nudge(self) -> str:
+        """The note to hand a phone call once the PIN has let its briefing in, if any."""
+        return AFTER_PIN_NUDGE.format(count=self._count()) if self.pending_count else ""
+
+    def _count(self) -> str:
         noun = "task" if self.pending_count == 1 else "tasks"
-        return OPENING_NUDGE.format(count=f"{self.pending_count} {noun}")
+        return f"{self.pending_count} {noun}"
 
 
 def _shorten(text: str, limit: int) -> str:

@@ -194,6 +194,16 @@ class VoiceSession:
         return self._state is SessionState.RUNNING
 
     @property
+    def trusted(self) -> bool:
+        """True when what is private may reach this session: always locally, after the PIN
+        on the phone.
+
+        Caller id is spoofable, so an allowed number proves nothing. Until this is true a
+        call is not briefed (memory, unheard results) and is announced nothing.
+        """
+        return self.channel != "phone" or self.authorized
+
+    @property
     def response_active(self) -> bool:
         """True while the model is producing a response."""
         return self._response_active
@@ -304,6 +314,7 @@ class VoiceSession:
         candidate = (pin or "").strip()
         if candidate and hmac.compare_digest(candidate.encode(), expected.encode()):
             self.authorize()
+            await self._brief_after_pin()
             return {"status": "authorized"}
 
         self._pin_attempts += 1
@@ -347,16 +358,37 @@ class VoiceSession:
     async def _load_briefing(self) -> Briefing:
         """What this session opens knowing: the unreported tasks and the memory.
 
-        A briefing that cannot be built is not a reason to drop a call — `Briefer` already
-        swallows its own failures, and this catches anything a substitute source raises.
+        Nothing, for a phone call that has not given the PIN — `_brief_after_pin` fetches it
+        then. A briefing that cannot be built is not a reason to drop a call — `Briefer`
+        already swallows its own failures, and this catches anything a substitute raises.
         """
-        if self._briefer is None:
+        if self._briefer is None or not self.trusted:
             return Briefing()
         try:
             return await self._briefer.build()
         except Exception:
             log.exception("session %s could not build its briefing", self.session_id)
             return Briefing()
+
+    async def _brief_after_pin(self) -> None:
+        """Hand a call what the PIN was holding back: the full prompt, and a nudge if due.
+
+        The nudge goes in without a response of its own. Whatever answers the PIN — the tool
+        result for a spoken one, the accepted note for a keyed one — is the turn that comes
+        next and it now sees both, so the PIN still costs one turn. Before `run()` has
+        connected there is nothing to update: `run()` builds the briefing itself, and the
+        session is trusted by then. A send that fails is swallowed like any other; the PIN
+        still counts.
+        """
+        if self._state is not SessionState.RUNNING:
+            return
+        self._briefing = await self._load_briefing()
+        await self._safe_call(
+            self._provider.update_instructions, self._build_config().instructions
+        )
+        nudge = self._briefing.after_pin_nudge()
+        if nudge:
+            await self._safe_call(self._provider.inject_message, nudge, respond=False)
 
     def _opening_message(self) -> str:
         """The message that opens the session, plus the nudge about anything unreported.
