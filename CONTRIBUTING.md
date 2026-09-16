@@ -97,16 +97,17 @@ The modules that sit below the floor, and why, as of 2026-09-02:
 |---|---|---|
 | `skills.py` | 87% | Malformed and unreadable `SKILL.md` files on disk |
 | `transports/twilio_ws.py` | 89% | Media-socket error paths that need a half-closed real socket to reach honestly |
-| `recall.py` | 90% | Store failures and empty-result branches |
+| `continuity/recall.py` | 90% | Store failures and empty-result branches |
 | `approvals/policy.py` | 91% | Individual denylist entries; the classification itself is covered exhaustively |
-| `cluster.py` | 91% | Parser branches for `sinfo`/`squeue` shapes the captured fixtures do not contain |
+| `integrations/cluster.py` | 91% | Parser branches for `sinfo`/`squeue` shapes the fixtures do not contain |
 | `approvals/broker.py` | 91% | Socket-level failures (a client that disconnects mid-request) |
 | `projects.py`, `tools/builtin_billing.py` | 91% | `OSError` paths on project discovery, and two billing error branches |
 | `cli.py` | 93% | Argument-parsing edges and the `serve` loop, which is exercised end to end rather than by unit test |
 
 None of them is a gap in a *rule* — the PIN gate, the `reported_at` contract, the
-`can_text` gate, the read-only guarantees in `billing.py` and `cluster.py`, and the
-approval policy's allowlist are each covered by tests named after them. They are error
+`can_text` gate, the read-only guarantees in `integrations/billing.py` and
+`integrations/cluster.py`, and the approval policy's allowlist are each covered by tests
+named after them. They are error
 paths that need a broken filesystem or a half-open socket to reach honestly. If you are
 touching one of these modules, adding the test is welcome.
 
