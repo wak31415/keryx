@@ -1,6 +1,7 @@
 """Tests for the `jarvis` command line: wiring only, no hardware and no network."""
 
 import asyncio
+import importlib.metadata
 import json
 import logging
 import shutil
@@ -70,6 +71,18 @@ def test_help_lists_the_commands():
         "restart",
     ):
         assert command in result.output
+
+
+def test_version_prints_the_installed_package_version():
+    """The bug report template asks for it."""
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == f"jarvis {importlib.metadata.version('jarvis')}"
+
+
+def test_help_documents_version():
+    assert "--version" in runner.invoke(app, ["--help"]).output
 
 
 def test_serve_help_documents_its_switches():

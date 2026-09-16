@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import dataclasses
+import importlib.metadata
 import json
 import logging
 import logging.handlers
@@ -54,6 +55,27 @@ app = typer.Typer(help="Jarvis voice agent.")
 tasks_app = typer.Typer(help="Inspect the tasks handed to subagents.")
 app.add_typer(tasks_app, name="tasks")
 log = logging.getLogger("jarvis.cli")
+
+
+def _print_version(value: bool) -> None:
+    if value:
+        typer.echo(f"jarvis {importlib.metadata.version('jarvis')}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=_print_version,
+            is_eager=True,
+            help="Print the installed version and exit.",
+        ),
+    ] = False,
+) -> None:
+    """Jarvis voice agent."""
 
 LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 LOG_MAX_BYTES = 10 * 1024 * 1024
