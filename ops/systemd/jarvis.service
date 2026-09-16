@@ -1,6 +1,8 @@
-# Template: scripts/install-systemd.sh fills in __UV__, __REPO__, __PATH__ and __LOGS__ and
-# writes the result to ~/.config/systemd/user/jarvis.service. Do not enable this file
-# directly.
+# Template: scripts/install-systemd.sh fills in __UV__ and __REPO__, plus its own PATH and
+# the log directory under DATA_DIR, and writes the result to
+# ~/.config/systemd/user/jarvis.service. Do not enable this file directly. (Those last two
+# are not named here as placeholders: a value rendered into a comment that ended in a
+# backslash would carry the comment onto the next line.)
 #
 # The Linux host runs the phone channel only: openwakeword cannot be installed here (see
 # pyproject.toml), so the wake word lives on the macOS machine.
