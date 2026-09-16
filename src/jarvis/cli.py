@@ -165,11 +165,19 @@ def _load_settings_optional() -> Settings:
     return _load_settings_reporting()[0]
 
 
-def _configure_readonly() -> Settings:
-    """`_configure` for the read-only commands (no `OPENAI_API_KEY` required)."""
+def _configure_readonly(*, quiet: bool = True) -> Settings:
+    """`_configure` for the read-only commands (no `OPENAI_API_KEY` required).
+
+    `quiet` because these print an answer, and `LOG_LEVEL` is the service's setting: the
+    INFO lines it wants in `jarvis.log` (a schema created, a migration run) are noise above
+    a table. Warnings still show, and `LOG_LEVEL=DEBUG` still means everything.
+    """
     settings = _load_settings_optional()
     settings.ensure_dirs()
-    logging.basicConfig(level=settings.log_level.upper(), format=LOG_FORMAT)
+    level = logging.getLevelNamesMapping().get(settings.log_level.upper(), logging.INFO)
+    if quiet and level != logging.DEBUG:
+        level = max(level, logging.WARNING)
+    logging.basicConfig(level=level, format=LOG_FORMAT)
     return settings
 
 
@@ -473,7 +481,7 @@ def restart_watch() -> None:
     own "the restart never came back" into `jarvis.log` would leave the next restart
     scanning that line back as a fault of Jarvis's.
     """
-    settings = _configure_readonly()
+    settings = _configure_readonly(quiet=False)
     typer.echo(asyncio.run(watch(settings)))
 
 

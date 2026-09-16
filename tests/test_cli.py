@@ -527,6 +527,56 @@ def test_read_only_commands_run_without_an_openai_key(monkeypatch, tmp_path):
     assert calls == [{}, {"openai_api_key": PLACEHOLDER_KEY}]
 
 
+# --- how loud the commands are ---------------------------------------------
+
+
+@pytest.fixture
+def log_levels(monkeypatch):
+    """The level each command configures logging at, instead of configuring it.
+
+    pytest owns the root logger's handlers, which turns the real `basicConfig` into a
+    no-op here — so the level asked for is what there is to assert on.
+    """
+    asked: list[object] = []
+    monkeypatch.setattr(
+        "jarvis.cli.logging.basicConfig", lambda **kwargs: asked.append(kwargs["level"])
+    )
+    return asked
+
+
+def test_read_only_commands_print_their_answer_without_info_lines(settings_stub, log_levels):
+    """`tasks list` on a fresh data dir led with "created tasks schema v4 at …"."""
+    for command in (["tasks", "list"], ["memory"], ["approvals"]):
+        assert runner.invoke(app, command).exit_code == 0
+
+    assert log_levels == [logging.WARNING] * 3
+
+
+def test_log_level_debug_still_reaches_a_read_only_command(monkeypatch, tmp_path, log_levels):
+    settings = Settings(
+        _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", log_level="debug"
+    )
+    monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
+
+    assert runner.invoke(app, ["tasks", "list"]).exit_code == 0
+
+    assert log_levels == [logging.DEBUG]
+
+
+def test_the_restart_watchdog_keeps_its_info_lines(settings_stub, log_levels, monkeypatch):
+    """Its log file is the only place it is ever heard, so it is not a quiet command."""
+
+    async def watch(_settings):
+        return "nothing"
+
+    monkeypatch.setattr("jarvis.cli.watch", watch)
+
+    result = runner.invoke(app, ["restart-watch"])
+
+    assert result.exit_code == 0, result.output
+    assert log_levels == [logging.INFO]
+
+
 # --- restart ---------------------------------------------------------------
 
 
