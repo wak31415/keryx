@@ -22,7 +22,7 @@ def test_render_fills_every_placeholder(settings):
     rendered = render_voice_prompt(
         settings,
         channel="phone",
-        caller="+491555555555",
+        caller="+15555555555",
         authorized=False,
         projects=["jarvis", "orchard"],
         skills=[Skill(name="mermaid", description="Author Mermaid diagrams.")],
@@ -32,7 +32,7 @@ def test_render_fills_every_placeholder(settings):
     assert "{" not in rendered and "}" not in rendered
     assert "mermaid: Author Mermaid diagrams." in rendered
     assert "phone" in rendered
-    assert "+491555555555" in rendered
+    assert "+15555555555" in rendered
     assert "jarvis, orchard" in rendered
 
 

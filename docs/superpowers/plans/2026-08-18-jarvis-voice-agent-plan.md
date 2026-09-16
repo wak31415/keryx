@@ -43,7 +43,7 @@ Files:
 - `src/jarvis/config.py` — `Settings(BaseSettings)` with every field from spec §3.4 (exact env names, defaults).
   `model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)`; fields whose env name differs from
   the field name (`JARVIS_PIN`→`pin`) use `Field(validation_alias=...)`. `allowed_callers` parses a comma-separated string
-  (use `NoDecode` + a `field_validator` in `mode="before"`, so `ALLOWED_CALLERS=+4915..,+4916..` works). `projects` parses JSON.
+  (use `NoDecode` + a `field_validator` in `mode="before"`, so `ALLOWED_CALLERS=+1555..,+1556..` works). `projects` parses JSON.
   Paths (`data_dir`, `projects_root`) expand `~`. Property `owner_number` → explicit `OWNER_NUMBER` else first allowed caller
   else None. Method `ensure_dirs()` creates `data_dir`, `data_dir/tasks`, `data_dir/calls`. Method `report_secret_value()`
   returns `report_secret` if set else reads/creates `data_dir/report_secret` (32 random hex bytes, mode 0600).

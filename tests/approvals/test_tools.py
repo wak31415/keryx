@@ -27,7 +27,7 @@ PIN = "424242"
 class StubSession:
     authorized: bool = True
     channel: str = "phone"
-    caller: str | None = "+491700000000"
+    caller: str | None = "+15557000000"
     session_id: str = "call1"
 
 

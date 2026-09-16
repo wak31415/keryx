@@ -43,7 +43,7 @@ def settings(tmp_path, data_dir):
         google_client_secrets_file=tmp_path / "none.json",
         approval_roots=[str(tmp_path / "roots")],
         public_host="jarvis.example",
-        owner_number_explicit="+491700000000",
+        owner_number_explicit="+15557000000",
         approval_escalate_seconds=0.05,
         approval_call_window_seconds=1.0,
     )

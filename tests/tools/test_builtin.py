@@ -220,7 +220,7 @@ async def test_an_unauthorized_phone_caller_is_asked_for_the_pin(make_tools):
         "dispatch_task",
         {"description": "add a README", "project": "jarvis"},
         channel="phone",
-        caller="+491555555555",
+        caller="+15555555555",
         authorized=False,
     )
 
@@ -236,7 +236,7 @@ async def test_an_authorized_phone_caller_dispatches_destructive_work(make_tools
         "dispatch_task",
         {"description": "draft a reply to Anna"},
         channel="phone",
-        caller="+491555555555",
+        caller="+15555555555",
         authorized=True,
     )
 
@@ -251,7 +251,7 @@ async def test_every_phone_dispatch_needs_the_pin_now(make_tools):
         "dispatch_task",
         {"description": "what happened at CES"},
         channel="phone",
-        caller="+491555555555",
+        caller="+15555555555",
         authorized=False,
     )
 
@@ -265,7 +265,7 @@ async def test_destructive_work_is_refused_when_no_pin_is_configured(make_tools)
         "dispatch_task",
         {"description": "add a README", "project": "jarvis"},
         channel="phone",
-        caller="+491555555555",
+        caller="+15555555555",
         authorized=False,
     )
 
@@ -282,7 +282,7 @@ async def test_a_blank_pin_is_no_pin_at_all(make_tools):
         "dispatch_task",
         {"description": "add a README", "project": "jarvis"},
         channel="phone",
-        caller="+491555555555",
+        caller="+15555555555",
         authorized=False,
     )
 
@@ -607,7 +607,7 @@ async def test_an_unauthorized_phone_caller_cannot_touch_a_destructive_task(make
         tool,
         {"task_id": 1, "message": "and push it"},
         channel="phone",
-        caller="+491555555555",
+        caller="+15555555555",
         authorized=False,
     )
 
@@ -625,7 +625,7 @@ async def test_an_authorized_phone_caller_may_touch_a_destructive_task(make_tool
         tool,
         {"task_id": 1, "message": "and push it"},
         channel="phone",
-        caller="+491555555555",
+        caller="+15555555555",
         authorized=True,
     )
 
@@ -644,7 +644,7 @@ async def test_reaching_into_a_running_task_needs_the_pin_too(make_tools, tool):
         tool,
         {"task_id": 1, "message": "and the tides"},
         channel="phone",
-        caller="+491555555555",
+        caller="+15555555555",
         authorized=False,
     )
 
@@ -679,32 +679,32 @@ async def test_request_callback_uses_an_explicit_number(make_tools):
     await tools.dispatch(description="a long one")
 
     result = await tools.call(
-        "request_callback", {"task_id": 1, "number": "+491777777777"}, channel="local"
+        "request_callback", {"task_id": 1, "number": "+15557777777"}, channel="local"
     )
 
     assert result["task_id"] == 1
     task = await tools.manager.get(1)
-    assert (task.callback_requested, task.callback_number) == (True, "+491777777777")
+    assert (task.callback_requested, task.callback_number) == (True, "+15557777777")
 
 
 async def test_request_callback_falls_back_to_the_caller(make_tools):
     tools = make_tools(FakeAgentRunner(delay_s=SLOW))
     await tools.dispatch(description="a long one")
 
-    await tools.call("request_callback", {"task_id": 1}, channel="phone", caller="+491555555555")
+    await tools.call("request_callback", {"task_id": 1}, channel="phone", caller="+15555555555")
 
     task = await tools.manager.get(1)
-    assert task.callback_number == "+491555555555"
+    assert task.callback_number == "+15555555555"
 
 
 async def test_request_callback_falls_back_to_the_owner_number(make_tools):
-    tools = make_tools(FakeAgentRunner(delay_s=SLOW), owner_number_explicit="+491666666666")
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), owner_number_explicit="+15556666666")
     await tools.dispatch(description="a long one")
 
     await tools.call("request_callback", {"task_id": 1}, channel="local", caller=None)
 
     task = await tools.manager.get(1)
-    assert task.callback_number == "+491666666666"
+    assert task.callback_number == "+15556666666"
 
 
 async def test_request_callback_without_any_number_asks_for_one(make_tools):
@@ -731,7 +731,7 @@ async def test_request_callback_on_a_finished_task_just_reports_it(tools):
     await tools.dispatch()
     await tools.manager.wait_for(1, WAIT)
 
-    result = await tools.call("request_callback", {"task_id": 1, "number": "+491777777777"})
+    result = await tools.call("request_callback", {"task_id": 1, "number": "+15557777777"})
 
     assert result["status"] == "already_finished"
     assert result["summary"] == "I finished the task."
@@ -745,9 +745,9 @@ async def test_an_unauthorized_phone_caller_cannot_be_called_back_anywhere(make_
 
     result = await tools.call(
         "request_callback",
-        {"task_id": 1, "number": "+491999999999"},
+        {"task_id": 1, "number": "+15559999999"},
         channel="phone",
-        caller="+491555555555",
+        caller="+15555555555",
         authorized=False,
     )
 
@@ -756,15 +756,15 @@ async def test_an_unauthorized_phone_caller_cannot_be_called_back_anywhere(make_
 
 
 async def test_an_unauthorized_phone_caller_may_ask_for_their_own_number(make_tools):
-    tools = make_tools(FakeAgentRunner(delay_s=SLOW), allowed_callers=["+491666666666"])
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), allowed_callers=["+15556666666"])
     await tools.dispatch(description="a long one")
 
-    for number in (None, "+491555555555", "+491666666666"):
+    for number in (None, "+15555555555", "+15556666666"):
         result = await tools.call(
             "request_callback",
             {"task_id": 1} if number is None else {"task_id": 1, "number": number},
             channel="phone",
-            caller="+491555555555",
+            caller="+15555555555",
             authorized=False,
         )
         assert result["status"] == "callback_requested", number
@@ -776,9 +776,9 @@ async def test_an_authorized_phone_caller_may_name_any_number(make_tools):
 
     result = await tools.call(
         "request_callback",
-        {"task_id": 1, "number": "+491999999999"},
+        {"task_id": 1, "number": "+15559999999"},
         channel="phone",
-        caller="+491555555555",
+        caller="+15555555555",
         authorized=True,
     )
 
@@ -796,7 +796,7 @@ async def test_a_requested_callback_is_one_fact_the_model_states_once(make_tools
     task = await tools.dispatch("something slow")
 
     result = await tools.call(
-        "request_callback", {"task_id": task.id}, channel="phone", caller="+491555555555"
+        "request_callback", {"task_id": task.id}, channel="phone", caller="+15555555555"
     )
 
     assert result["message"] == CALLBACK_SET_MESSAGE
@@ -810,7 +810,7 @@ async def test_a_callback_on_a_finished_task_is_answered_not_arranged(tools):
     task = await _finish(tools)
 
     result = await tools.call(
-        "request_callback", {"task_id": task.id}, channel="phone", caller="+491555555555"
+        "request_callback", {"task_id": task.id}, channel="phone", caller="+15555555555"
     )
 
     assert result["status"] == "already_finished"

@@ -53,7 +53,7 @@ def provider():
 
 @pytest.fixture
 def phone():
-    return FakeTransport(channel="phone", caller="+491555555555", audio_format="audio/pcmu")
+    return FakeTransport(channel="phone", caller="+15555555555", audio_format="audio/pcmu")
 
 
 @pytest.fixture

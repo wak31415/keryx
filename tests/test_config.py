@@ -17,12 +17,12 @@ from jarvis.config import (
 
 def test_allowed_callers_parses_comma_separated_env(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("ALLOWED_CALLERS", "+491555555555,+491666666666")
+    monkeypatch.setenv("ALLOWED_CALLERS", "+15555555555,+15556666666")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
 
     settings = Settings(_env_file=None)
 
-    assert settings.allowed_callers == ["+491555555555", "+491666666666"]
+    assert settings.allowed_callers == ["+15555555555", "+15556666666"]
 
 
 def test_allowed_callers_defaults_to_empty_list(settings):
@@ -92,23 +92,23 @@ def test_pin_defaults_to_none(settings):
 
 def test_owner_number_explicit_env_wins(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("OWNER_NUMBER", "+491000000000")
-    monkeypatch.setenv("ALLOWED_CALLERS", "+491555555555,+491666666666")
+    monkeypatch.setenv("OWNER_NUMBER", "+15551000000")
+    monkeypatch.setenv("ALLOWED_CALLERS", "+15555555555,+15556666666")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
 
     settings = Settings(_env_file=None)
 
-    assert settings.owner_number == "+491000000000"
+    assert settings.owner_number == "+15551000000"
 
 
 def test_owner_number_falls_back_to_first_allowed_caller(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("ALLOWED_CALLERS", "+491555555555,+491666666666")
+    monkeypatch.setenv("ALLOWED_CALLERS", "+15555555555,+15556666666")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
 
     settings = Settings(_env_file=None)
 
-    assert settings.owner_number == "+491555555555"
+    assert settings.owner_number == "+15555555555"
 
 
 def test_owner_number_none_when_nothing_set(settings):

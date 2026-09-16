@@ -13,7 +13,7 @@ class StubSession:
     def __init__(self, *, authorized: bool = False) -> None:
         self.session_id = "abcd1234"
         self.channel = "phone"
-        self.caller = "+491555555555"
+        self.caller = "+15555555555"
         self.authorized = authorized
         self.end_reason: str | None = None
 

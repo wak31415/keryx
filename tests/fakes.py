@@ -138,7 +138,7 @@ class FakeTransport:
         self,
         *,
         channel: str = "phone",
-        caller: str | None = "+491555555555",
+        caller: str | None = "+15555555555",
         audio_format: AudioFormat = "audio/pcmu",
     ) -> None:
         self.channel = channel

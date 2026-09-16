@@ -93,7 +93,7 @@ def provider():
 
 @pytest.fixture
 def phone():
-    return FakeTransport(channel="phone", caller="+491555555555", audio_format="audio/pcmu")
+    return FakeTransport(channel="phone", caller="+15555555555", audio_format="audio/pcmu")
 
 
 @pytest.fixture
@@ -215,7 +215,7 @@ async def test_session_publishes_session_started_and_registers(
     assert (start.session_id, start.channel, start.caller) == (
         session.session_id,
         "phone",
-        "+491555555555",
+        "+15555555555",
     )
     assert sessions.live() == []
 
@@ -340,7 +340,7 @@ async def test_a_function_call_runs_the_tool_and_submits_the_result(
     assert provider.tool_results == [("call_1", {"answer": "when"})]
     assert (seen[0].channel, seen[0].caller, seen[0].authorized) == (
         "phone",
-        "+491555555555",
+        "+15555555555",
         False,
     )
     assert seen[0].session is session

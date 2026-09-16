@@ -11,7 +11,7 @@ from jarvis.logging_util import mask_number
     ("number", "expected"),
     [
         ("+15551234567", "…4567"),
-        ("+491701234567", "…4567"),
+        ("+442079460123", "…0123"),  # a longer, non-NANP number
         # Short enough that masking would leave nothing; there is nothing to hide either.
         ("911", "911"),
         ("1234", "1234"),

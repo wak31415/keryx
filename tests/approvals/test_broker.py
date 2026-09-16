@@ -77,7 +77,7 @@ def settings(tmp_path, short_tmp_path):
         google_client_secrets_file=tmp_path / "none.json",
         approval_roots=[str(tmp_path / "roots")],
         public_host="jarvis.example",
-        owner_number_explicit="+491700000000",
+        owner_number_explicit="+15557000000",
         approval_escalate_seconds=0.05,
         approval_call_window_seconds=1.5,
     )
@@ -265,7 +265,7 @@ async def test_an_eligible_prompt_pends_and_marks(broker, tmp_path, hooks):
 async def test_it_rings_him_when_nobody_answers(broker, twilio, tmp_path, hooks):
     await hooks.raise_request(permission_event(cwd=str(tmp_path / "roots" / "myproject")))
     await until(lambda: twilio.calls)
-    assert twilio.calls[0]["to"] == "+491700000000"
+    assert twilio.calls[0]["to"] == "+15557000000"
     assert "jarvis.example" in twilio.calls[0]["twiml"]
 
 

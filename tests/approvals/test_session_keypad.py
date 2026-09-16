@@ -45,7 +45,7 @@ def provider():
 
 @pytest.fixture
 def phone():
-    return FakeTransport(channel="phone", caller="+491555555555", audio_format="audio/pcmu")
+    return FakeTransport(channel="phone", caller="+15555555555", audio_format="audio/pcmu")
 
 
 def build(phone, provider, keypad, *, authorized, tmp_path):
