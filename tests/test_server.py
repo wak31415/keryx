@@ -20,7 +20,7 @@ from twilio.request_validator import RequestValidator
 from jarvis.app import build_app_state
 from jarvis.config import Settings
 from jarvis.realtime.base import AudioDelta
-from jarvis.server import create_app
+from jarvis.server import LINE_BUSY_MESSAGE, create_app
 
 AUTH_TOKEN = "an-auth-token"
 CALLER = "+15551234567"
@@ -162,6 +162,31 @@ def test_a_caller_who_is_not_allowed_is_told_the_number_is_private(client, state
     assert twiml.find("Hangup") is not None
     assert twiml.find("Connect") is None
     assert len(state.stream_tokens) == 0
+
+
+def test_a_call_past_the_line_limit_is_told_the_line_is_busy(tmp_path):
+    """Calls already answered but not yet streaming count: they are sessions a moment away."""
+    state = build_app_state(make_settings(tmp_path, max_phone_sessions=1))
+    state.stream_tokens.issue(CALLER, {"call_sid": "CA00000000000000000000000000000002"})
+    with TestClient(create_app(state)) as client:
+        response = post_signed(client, "/twilio/voice", {"From": CALLER, "CallSid": CALL_SID})
+
+    assert response.status_code == 200
+    twiml = ElementTree.fromstring(response.text)
+    assert twiml.find("Say").text == LINE_BUSY_MESSAGE
+    assert twiml.find("Hangup") is not None
+    assert twiml.find("Connect") is None
+    assert len(state.stream_tokens) == 1  # nothing new was minted
+
+
+def test_the_default_line_limit_takes_two_calls(client, state):
+    for sid in ("CA00000000000000000000000000000002", "CA00000000000000000000000000000003"):
+        response = post_signed(client, "/twilio/voice", {"From": CALLER, "CallSid": sid})
+        assert ElementTree.fromstring(response.text).find("Connect") is not None
+
+    response = post_signed(client, "/twilio/voice", {"From": CALLER, "CallSid": CALL_SID})
+
+    assert ElementTree.fromstring(response.text).find("Connect") is None
 
 
 def test_an_inbound_call_never_writes_the_caller_number_to_the_log(client, caplog):
@@ -318,6 +343,57 @@ def test_a_valid_token_runs_a_session_that_speaks_back_to_the_caller(client, sta
     assert provider.config.audio_format == "audio/pcmu"  # no transcoding on the phone path
     eventually(lambda: state.sessions.live() == [])
     eventually(lambda: provider.closed)
+
+
+def test_a_media_stream_past_the_line_limit_never_opens_a_realtime_session(tmp_path):
+    """The webhook cannot see a call-back's stream coming, so the socket counts again."""
+    state = build_app_state(make_settings(tmp_path, max_phone_sessions=1))
+    providers: list[FakeProvider] = []
+
+    def factory() -> FakeProvider:
+        # A second provider fails the session outright, so a broken cap fails this test
+        # rather than leaving the extra socket running forever.
+        assert not providers, "a realtime session was opened past the line limit"
+        providers.append(FakeProvider())
+        return providers[-1]
+
+    state.provider_factory = factory
+    first = state.stream_tokens.issue(CALLER, {"call_sid": CALL_SID})
+    second_sid = "CA00000000000000000000000000000002"
+    second = state.stream_tokens.issue(CALLER, {"call_sid": second_sid})
+
+    with TestClient(create_app(state)) as client:
+        with client.websocket_connect("/twilio/media") as ws:
+            ws.send_text(start_frame(first))
+            eventually(lambda: client.get("/health").json()["live_sessions"] == 1)
+
+            with client.websocket_connect("/twilio/media") as extra:
+                extra.send_text(start_frame(second, call_sid=second_sid))
+                with pytest.raises(WebSocketDisconnect) as excinfo:
+                    extra.receive_text()
+
+            assert excinfo.value.code == 1013  # try again later
+            assert len(providers) == 1
+
+            ws.send_text(json.dumps({"event": "stop", "streamSid": STREAM_SID}))
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_text()
+
+
+def test_a_finished_call_gives_its_line_back(tmp_path):
+    state = build_app_state(make_settings(tmp_path, max_phone_sessions=1))
+    state.provider_factory = FakeProvider
+    with TestClient(create_app(state)) as client:
+        for sid in (CALL_SID, "CA00000000000000000000000000000002"):
+            token = state.stream_tokens.issue(CALLER, {"call_sid": sid})
+            with client.websocket_connect("/twilio/media") as ws:
+                ws.send_text(start_frame(token, call_sid=sid))
+                eventually(lambda: client.get("/health").json()["live_sessions"] == 1)
+                ws.send_text(json.dumps({"event": "stop", "streamSid": STREAM_SID}))
+                with pytest.raises(WebSocketDisconnect) as excinfo:
+                    ws.receive_text()
+                assert excinfo.value.code != 1013
+            eventually(lambda: client.get("/health").json()["live_sessions"] == 0)
 
 
 def test_the_session_opens_with_the_context_carried_by_the_token(client, state):

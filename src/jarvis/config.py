@@ -195,6 +195,10 @@ class Settings(BaseSettings):
     dispatch_wait_max_seconds: int = 25
     local_silence_timeout: float = 30  # seconds; 0 disables the local silence timeout
     max_call_seconds: float = 1800  # seconds; 0 disables the phone call-duration limit
+    #: Phone sessions open at once, each of them a realtime session being paid for. Two, so
+    #: a dropped call can be redialled while the old session is still saying its goodbye;
+    #: a call past it is told the line is busy and never reaches the model.
+    max_phone_sessions: int = Field(default=2, ge=1)
     daily_task_cap: int = 50
 
     # Turn detection: how long Jarvis waits before deciding you have finished speaking.

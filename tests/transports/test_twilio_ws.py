@@ -9,7 +9,7 @@ from fakes import eventually
 from starlette.websockets import WebSocketDisconnect
 
 from jarvis.transports.base import AudioIn, Dtmf, Hangup
-from jarvis.transports.twilio_ws import TransportError, TwilioTransport
+from jarvis.transports.twilio_ws import START_TIMEOUT_SECONDS, TransportError, TwilioTransport
 
 STREAM_SID = "MZ0123456789abcdef"
 CALL_SID = "CA0123456789abcdef"
@@ -150,6 +150,15 @@ async def test_start_raises_when_no_start_frame_arrives():
 
     with pytest.raises(TransportError):
         await asyncio.wait_for(TwilioTransport(ws).start(timeout=0.05), TIMEOUT)
+
+
+def test_the_wait_for_start_is_short():
+    """Until `start` arrives the socket is unauthenticated, and anyone can open one.
+
+    Twilio sends `start` straight after `connected`; a socket still silent after a few
+    seconds is not a call, and every second it is held is a second a stranger holds it.
+    """
+    assert START_TIMEOUT_SECONDS <= 5.0
 
 
 # --- inbound events --------------------------------------------------------
