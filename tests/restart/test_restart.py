@@ -403,6 +403,16 @@ def test_service_manager_none_refuses(tmp_path):
     assert target is None
 
 
+def test_auto_on_a_platform_with_neither_manager_is_no_target(tmp_path):
+    settings = make_settings(tmp_path, service_manager="auto")
+
+    target = resolve_target(
+        settings, platform="win32", which=lambda name: "/usr/bin/x", supervising=yes
+    )
+
+    assert target is None
+
+
 def test_a_configured_manager_without_its_command_is_no_target(tmp_path):
     settings = make_settings(tmp_path, service_manager="systemd")
 

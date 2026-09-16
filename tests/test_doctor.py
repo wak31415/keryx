@@ -289,6 +289,15 @@ def test_nothing_supervising_the_process_is_a_warning_that_says_what_is_lost(hea
     assert "restart_service" in check.detail
 
 
+def test_no_service_manager_at_all_says_so_rather_than_naming_a_unit(healthy, monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda name: None)
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["service manager"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert check.detail.startswith("no service manager on this machine")
+
+
 def test_a_missing_git_is_reported_next_to_the_service_manager(healthy, monkeypatch):
     """Version reporting degrades quietly without it, which is worth saying once."""
     monkeypatch.setattr("shutil.which", lambda name: None if name == "git" else f"/bin/{name}")
