@@ -132,8 +132,8 @@ def test_render_says_so_when_no_project_wrote_a_brief(settings, tmp_path):
 def test_a_withheld_prompt_carries_nothing_of_theirs(settings, tmp_path):
     """A phone call before the PIN: no project, brief, skill, memory or unheard result."""
     root = tmp_path / "projects"
-    (root / "vidmem").mkdir(parents=True)
-    (root / "vidmem" / ".jarvis-brief.md").write_text("A video model with a memory.")
+    (root / "weather-station").mkdir(parents=True)
+    (root / "weather-station" / ".jarvis-brief.md").write_text("A rain gauge on the roof.")
     skills = tmp_path / "skills"
     (skills / "wandb-query").mkdir(parents=True)
     (skills / "wandb-query" / "SKILL.md").write_text(
@@ -151,7 +151,7 @@ def test_a_withheld_prompt_carries_nothing_of_theirs(settings, tmp_path):
         withheld=True,
     )
 
-    for secret in ("vidmem", "video model", "orchard", "wandb-query", "task 41", "lawyer"):
+    for secret in ("weather-station", "rain gauge", "orchard", "wandb-query", "task 41", "lawyer"):
         assert secret not in rendered, secret
     assert "held back until the PIN" in rendered
     assert "{" not in rendered and "}" not in rendered

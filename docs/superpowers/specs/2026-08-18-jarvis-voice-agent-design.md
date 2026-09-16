@@ -670,7 +670,7 @@ class SessionRegistry:
 | `SERVICE_MANAGER` | `service_manager` (`auto`/`systemd`/`launchd`/`none`; what `jarvis restart` asks) | `auto` → systemd on Linux / launchd on macOS when this process runs as the unit (for `jarvis restart` and `doctor`: when it is installed), otherwise none; `systemd`/`launchd` are taken at their word |
 | `SERVICE_UNIT` | `service_unit` (the unit/label to restart) | `None` → `jarvis.service` / `dev.jarvis.agent` (renamed from `com.william.jarvis` 2026-09-02) |
 | `PROJECTS` | `projects: dict[str,str]` (JSON) | `{}` |
-| `PROJECTS_ROOT` | `projects_root` (where a task with no project starts; never created) | `~/projects` (was one machine's `~/Local/coding_projects` until 2026-09-16); not a directory → such a task starts in `data_dir/workspace` |
+| `PROJECTS_ROOT` | `projects_root` (where a task with no project starts; never created) | `~/projects` (was a machine-specific path until 2026-09-16); not a directory → such a task starts in `data_dir/workspace` |
 | `SKILLS_DIR` | `skills_dir` (Claude skills listed in the voice prompt) | `~/.claude/skills` |
 | `DATA_DIR` | `data_dir` | `~/.jarvis` |
 | `MAX_CONCURRENT_TASKS` | `max_concurrent_tasks` | `3` |
