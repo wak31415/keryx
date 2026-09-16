@@ -130,10 +130,10 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-# The measured baseline (94.66% on 2026-09-02), floored to a whole point: a rounding
+# The measured baseline (95.32% on 2026-09-16), floored to a whole point: a rounding
 # wobble does not fail CI, real erosion does. It is a ratchet, not a target — raise it
 # when the measured number has moved up, never lower it to make a branch pass.
-fail_under = 94
+fail_under = 95
 exclude_also = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",

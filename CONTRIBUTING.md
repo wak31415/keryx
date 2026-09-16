@@ -80,8 +80,8 @@ accidental `uv publish` is refused by the index rather than quietly succeeding.
 uv run pytest -q --cov --cov-report=term:skip-covered
 ```
 
-**The floor is 94%, and it is a ratchet rather than a target.** It was set at the number
-actually measured on 2026-09-02 (94.66%), floored to a whole point so a rounding wobble
+**The floor is 95%, and it is a ratchet rather than a target.** It was last raised to the number
+actually measured on 2026-09-16 (95.32%), floored to a whole point so a rounding wobble
 does not fail CI while real erosion does. Raise it when the measured number has moved up;
 do not lower it to make a branch pass. `pytest --cov` fails below it, and CI prints the
 per-module table into the run summary.
