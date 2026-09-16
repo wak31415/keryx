@@ -11,6 +11,7 @@ from datetime import datetime
 from importlib import resources
 from typing import TYPE_CHECKING
 
+from jarvis.notify.twilio_out import TwilioOut
 from jarvis.projects import ProjectBrief, discover_briefs, discover_projects
 from jarvis.skills import Skill, discover_skills
 
@@ -25,8 +26,21 @@ VOICE_SYSTEM_PROMPT = "voice_system.md"
 #: tool: describing one it was not given is an invitation to call something that is not
 #: there.
 OPTIONAL_TOOL_PROMPTS = {"cluster_stats": ("cluster_stats_tool", "voice_tool_cluster_stats.md")}
+#: The same rule inside a sentence: words that name a tool only some machines offer, by tool
+#: name, as the placeholder and what fills it when the session has the tool.
+OPTIONAL_TOOL_PHRASES = {"cluster_stats": ("cluster_phrase", "the cluster, ")}
+#: How the voice prompt says a result reaches the owner when nobody is on the line, by
+#: whether Jarvis can text (`TwilioOut.can_text`): the restart watchdog's alert, and where an
+#: answer turns up for somebody who would rather not be called. With texting off, the alert
+#: is the watchdog's spoken call and the answer is the digest at the top of the next call.
+_DELIVERY = {
+    True: {"restart_alert": "a text", "later_route": "a text"},
+    False: {"restart_alert": "a call", "later_route": "at the top of the next call"},
+}
 
-_TIME_FORMAT = "%A %d %B %Y, %H:%M"
+#: With the zone, because the host's clock is the model's only clock and a server keeping
+#: UTC would otherwise have it tell the owner the wrong hour with confidence.
+_TIME_FORMAT = "%A %d %B %Y, %H:%M %Z"
 _OPENING_HEADING = "## Why this session opened"
 #: Both of these sections carry their own heading so that an empty one disappears from the
 #: prompt entirely, rather than leaving a heading with nothing under it for the model to
@@ -38,6 +52,14 @@ _MEMORY_HEADING = (
     "background: use it to understand what he means and what he is in the middle of. Do "
     "not read it out, and do not treat it as today's news — check before you assert "
     "anything from it as still true."
+)
+#: What a trusted session is told when there is no memory yet. Said rather than left out,
+#: because a model told nothing about whom it is talking to fills the gap with an invented
+#: familiarity.
+_NO_MEMORY = (
+    "## What you remember\n\n"
+    "Nothing yet. You know nothing about {owner} beyond what this call tells you: do not act "
+    "familiar, and do not talk as if you remember an earlier call."
 )
 _NO_SKILLS = "none installed"
 _NO_BRIEFS = "nothing written down yet"
@@ -107,6 +129,7 @@ def render_voice_prompt(
     memory: str | None = None,
     tool_names: Collection[str] = (),
     withheld: bool = False,
+    can_text: bool | None = None,
 ) -> str:
     """Render the voice system prompt for one session.
 
@@ -120,7 +143,9 @@ def render_voice_prompt(
     from a `Briefing` (see `jarvis.continuity.briefing`) and are dropped the same way: a
     first call on a fresh machine renders neither section, rather than an empty heading.
     `tool_names` is what the session was actually given, and decides which of the
-    `OPTIONAL_TOOL_PROMPTS` paragraphs appear.
+    `OPTIONAL_TOOL_PROMPTS` paragraphs and `OPTIONAL_TOOL_PHRASES` appear. `can_text`
+    defaults to `TwilioOut.can_text`, and decides whether the prompt may promise a text.
+    An authorized session with no memory is told it knows nothing about the owner yet.
 
     `withheld` is a phone call that has not given the PIN. Caller id is spoofable, so its
     prompt carries nothing of his: the project names, their briefs and the skill catalog
@@ -142,10 +167,21 @@ def render_voice_prompt(
         placeholder: load_prompt(template).strip() if tool in tool_names else ""
         for tool, (placeholder, template) in OPTIONAL_TOOL_PROMPTS.items()
     }
+    optional |= {
+        placeholder: phrase if tool in tool_names else ""
+        for tool, (placeholder, phrase) in OPTIONAL_TOOL_PHRASES.items()
+    }
+    texting = TwilioOut(settings).can_text if can_text is None else can_text
+    if memory:
+        remembered = f"{_MEMORY_HEADING}\n\n{_nest_headings(memory)}"
+    elif authorized and not withheld:
+        remembered = _NO_MEMORY.format(owner=settings.owner_label)
+    else:
+        remembered = ""
     return render_prompt(
         VOICE_SYSTEM_PROMPT,
         owner=settings.owner_label,
-        now=datetime.now().strftime(_TIME_FORMAT),
+        now=datetime.now().astimezone().strftime(_TIME_FORMAT),
         channel=channel,
         caller=caller or "unknown",
         authorized="yes" if authorized else "no",
@@ -154,6 +190,7 @@ def render_voice_prompt(
         project_briefs=brief_blocks,
         opening_context=f"{_OPENING_HEADING}\n\n{opening_context}" if opening_context else "",
         pending_tasks=f"{_PENDING_HEADING}\n\n{pending}" if pending else "",
-        memory=f"{_MEMORY_HEADING}\n\n{_nest_headings(memory)}" if memory else "",
+        memory=remembered,
+        **_DELIVERY[texting],
         **optional,
     )

@@ -2,6 +2,7 @@
 
 import re
 import tomllib
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -212,13 +213,31 @@ def _rendered(settings, **kwargs) -> str:
     return render_voice_prompt(settings, **values)
 
 
-def test_a_first_call_has_no_briefing_sections_at_all(settings):
-    """An empty heading is something for the model to wonder about; leave it out."""
+def test_a_first_call_has_no_digest_and_says_it_remembers_nothing(settings, unwrapped):
+    """An empty heading is something for the model to wonder about; leave the digest out.
+
+    The memory is the exception. With nothing in it the model used to be told nothing at
+    all, and a model told nothing about whom it is talking to fills the gap with a warm,
+    invented familiarity. So a trusted session with no memory is told so, in one line.
+    """
     rendered = _rendered(settings)
 
     assert "What he has not heard yet" not in rendered
-    assert "What you remember" not in rendered
+    assert "## What you remember" in rendered
+    assert "You know nothing about the owner beyond what this call tells you" in unwrapped(
+        rendered
+    )
     assert "{" not in rendered and "}" not in rendered
+
+
+def test_an_empty_memory_is_only_admitted_to_a_trusted_session(settings):
+    """Before the PIN, "nothing remembered" would be a claim about the owner's memory."""
+    withheld = _rendered(settings, authorized=False, withheld=True)
+    unauthorized = _rendered(settings, authorized=False)
+    remembered = _rendered(settings, memory="Works nights.")
+
+    for rendered in (withheld, unauthorized, remembered):
+        assert "You know nothing about" not in rendered
 
 
 def test_the_unreported_digest_reaches_the_prompt_under_its_own_heading(settings):
@@ -388,3 +407,48 @@ def test_no_packaged_prompt_or_source_names_the_author():
     ]
 
     assert files and not offenders, offenders
+
+
+# --- what the prompt promises has to be true on this machine ----------------
+
+
+def test_the_clock_carries_the_time_zone(settings):
+    """On a server running in UTC, "14:00" alone is an hour the owner is not living in."""
+    zone = datetime.now().astimezone().strftime("%Z")
+
+    time_line = next(line for line in _rendered(settings).splitlines() if "- Time:" in line)
+
+    assert zone and time_line.endswith(f" {zone}")
+
+
+def test_the_cluster_is_only_a_slow_thing_when_there_is_a_cluster_tool(settings, unwrapped):
+    """Naming the cluster as a wait, or as PIN-free, invites a call to a tool that is not
+    there."""
+    without = unwrapped(_rendered(settings))
+    with_it = unwrapped(_rendered(settings, tool_names=["cluster_stats"]))
+
+    assert "the cluster" not in without
+    assert "a dispatch, a search, the bill" in without
+    assert "Only the bill, a web search and hanging up do not" in without
+    assert "a dispatch, a search, the cluster, the bill" in with_it
+    assert "Only the bill, the cluster, a web search and hanging up do not" in with_it
+
+
+def test_without_texting_the_prompt_promises_no_text(settings, unwrapped):
+    """`SMS_ENABLED` is off by default, and a promised text that never comes is a result
+    the owner never hears about."""
+    rendered = unwrapped(_rendered(settings))
+
+    assert "a text" not in rendered
+    assert "gets a call saying so instead" in rendered
+    assert "will turn up instead — at the top of the next call —" in rendered
+
+
+def test_with_texting_on_the_prompt_says_a_text(settings, unwrapped):
+    settings.twilio_account_sid, settings.twilio_auth_token = "AC1", "token"
+    settings.twilio_number, settings.sms_enabled = "+15550000000", True
+
+    rendered = unwrapped(_rendered(settings))
+
+    assert "gets a text saying so instead" in rendered
+    assert "will turn up instead — a text —" in rendered

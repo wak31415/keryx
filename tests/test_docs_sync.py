@@ -134,6 +134,7 @@ def test_the_prompt_tells_the_model_not_to_announce_the_instant_tools():
     """The list of tools too fast to be worth announcing has to stay a list of real ones."""
     text = (ROOT / "src" / "jarvis" / "prompts" / "voice_system.md").read_text()
     sentence = text[text.index("all answer in\n  milliseconds") - 400 :][:500]
+    sentence = re.sub(r"\{[a-z_]+\}", "", sentence)
 
     instant = set(re.findall(r"\b([a-z]+_[a-z_]+)\b", sentence)) - NOT_TOOLS
     assert instant, "the instant-tool list is gone from the prompt"
