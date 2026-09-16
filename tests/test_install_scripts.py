@@ -11,9 +11,11 @@ break a naive render: `|` is `render`'s sed delimiter, `&` means "the whole matc
 `%` is a systemd specifier, and `&`/`<` are markup in a plist.
 """
 
+import json
 import os
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -169,3 +171,59 @@ def test_the_launch_agents_carry_this_shell_path_and_data_dir(machine, tmp_path)
         assert plist["EnvironmentVariables"]["PATH"] == machine["env"]["PATH"]
         assert plist["StandardOutPath"] == f"{logs}/{log}.out.log"
         assert plist["StandardErrorPath"] == f"{logs}/{log}.err.log"
+
+
+# --- the approval hook -----------------------------------------------------------
+
+
+def hook_commands(machine) -> dict[str, str]:
+    settings = json.loads((machine["home"] / ".claude" / "settings.json").read_text())
+    return {
+        event: groups[0]["hooks"][0]["command"] for event, groups in settings["hooks"].items()
+    }
+
+
+def test_the_hook_needs_no_data_dir_when_it_is_the_default(machine):
+    run("install-claude-hook.sh", machine)
+
+    commands = hook_commands(machine)
+    target = machine["home"] / ".claude" / "hooks" / "jarvis_approval.py"
+    assert commands["PermissionRequest"] == f"python3 {target}"
+    assert "JARVIS_DATA_DIR" not in commands["PostToolUse"]
+
+
+def test_the_hook_is_pointed_at_a_data_dir_set_in_the_env_file(machine):
+    """The hook reads JARVIS_DATA_DIR, never the env file; the broker's socket is not in
+    ~/.jarvis when DATA_DIR says otherwise, and every prompt would go unescalated."""
+    machine["env_file"].write_text("DATA_DIR=~/jarvis data\n")
+
+    run("install-claude-hook.sh", machine)
+
+    data_dir = f"{machine['home']}/jarvis data"
+    commands = hook_commands(machine)
+    assert shlex.split(commands["PermissionRequest"])[:2] == [
+        "env",
+        f"JARVIS_DATA_DIR={data_dir}",
+    ]
+    shell = shlex.split(commands["PostToolUse"])
+    assert shell[:2] == ["sh", "-c"]
+    assert f"[ -e '{data_dir}/approvals/PENDING' ]" in shell[2]
+    assert f"exec {commands['PermissionRequest']};" in shell[2]
+
+
+def test_the_resolve_command_still_runs_when_nothing_is_pending(machine):
+    machine["env_file"].write_text("DATA_DIR=~/jarvis data\n")
+    run("install-claude-hook.sh", machine)
+
+    result = subprocess.run(
+        hook_commands(machine)["PostToolUse"],
+        shell=True,  # noqa: S602 - it is a shell command line; this is how the CLI runs it
+        input="{}",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=machine["env"],
+    )
+
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
