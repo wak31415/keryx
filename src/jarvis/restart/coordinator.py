@@ -554,7 +554,9 @@ class RestartCoordinator:
         request = task.description
         if len(request) > MAX_REQUEST_CHARS:
             request = request[: MAX_REQUEST_CHARS - 1].rstrip() + "…"
-        history = read_tail(self._settings.data_dir, record.origin_session_id or "")
+        history = read_tail(
+            self._settings.data_dir, record.origin_session_id or "", pin=self._settings.pin
+        )
         return RESTART_WITH_TASK_CONTEXT.format(
             task_id=task.id,
             request=request,

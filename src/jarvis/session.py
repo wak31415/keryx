@@ -44,6 +44,7 @@ from typing import Protocol
 from jarvis.audio.util import ms_for_bytes
 from jarvis.config import Settings, secure_dir, secure_file
 from jarvis.continuity.briefing import Briefing, BriefingSource
+from jarvis.continuity.transcripts import redact_pin
 from jarvis.events import EventBus, SessionEnded, SessionStarted
 from jarvis.logging_util import mask_number
 from jarvis.prompts import render_voice_prompt
@@ -783,6 +784,7 @@ class VoiceSession:
         transcripts stamped with the time alone still parse — recall dates those from the
         file's modification time instead.
         """
+        text = redact_pin(text, self._settings.pin)  # said aloud, it is still never kept
         line = f"[{datetime.now().isoformat(timespec='seconds')}] {text}\n"
         try:
             secure_dir(self.transcript_path.parent)

@@ -267,7 +267,9 @@ class Notifier:
         parts = []
         if task.callback_note:
             parts.append(NOTE_PREAMBLE.format(note=task.callback_note))
-        history = read_tail(self._settings.data_dir, task.origin_session_id or "")
+        history = read_tail(
+            self._settings.data_dir, task.origin_session_id or "", pin=self._settings.pin
+        )
         if history:
             parts.append(HISTORY_PREAMBLE.format(history=history))
         return "".join(parts)

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from jarvis.continuity.transcripts import redact_pin
 from jarvis.tasks.manager import TaskManager
 
 log = logging.getLogger("jarvis.recall")
@@ -138,8 +139,15 @@ def _file_date(path: Path) -> datetime | None:
         return None
 
 
-def search_calls(data_dir: Path, wanted: list[str], *, limit: int) -> list[Hit]:
-    """Hits from the call transcripts, newest call first. Blocking: run it in a thread."""
+def search_calls(
+    data_dir: Path, wanted: list[str], *, limit: int, pin: str | None = None
+) -> list[Hit]:
+    """Hits from the call transcripts, newest call first. Blocking: run it in a thread.
+
+    `pin` is redacted from every line *before* it is matched, not just from what comes
+    back: logs written before redaction still hold the PIN he said aloud, and a search
+    that found it would confirm a guess even with the digits blanked out.
+    """
     if not wanted:
         return []
     hits: list[Hit] = []
@@ -148,7 +156,7 @@ def search_calls(data_dir: Path, wanted: list[str], *, limit: int) -> list[Hit]:
             raw = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        parsed = [_parse_line(line) for line in raw.splitlines()]
+        parsed = [_parse_line(redact_pin(line, pin)) for line in raw.splitlines()]
         spoken = [body for _, body in parsed]
         fallback = None  # only paid for by a file that actually has a hit
         for index, (when, body) in enumerate(parsed):
@@ -165,9 +173,11 @@ def search_calls(data_dir: Path, wanted: list[str], *, limit: int) -> list[Hit]:
 class Recaller:
     """Answers "what did we say about X" from the transcripts and the task store."""
 
-    def __init__(self, data_dir: Path, manager: TaskManager) -> None:
+    def __init__(self, data_dir: Path, manager: TaskManager, *, pin: str | None = None) -> None:
         self._data_dir = data_dir
         self._manager = manager
+        #: The configured PIN, redacted from every hit (see `search_calls`).
+        self._pin = pin
 
     async def recall(self, query: str, *, limit: int = DEFAULT_LIMIT) -> list[Hit]:
         """Up to `limit` hits for `query`, tasks first then calls. Never raises."""
@@ -192,14 +202,16 @@ class Recaller:
             Hit(
                 "task",
                 _spoken_date(task.finished_at or task.created_at),
-                _task_text(task),
+                redact_pin(_task_text(task), self._pin),
                 task_id=task.id,
             )
             for task in found
         ]
 
     async def _calls(self, wanted: list[str], limit: int) -> list[Hit]:
-        return await asyncio.to_thread(search_calls, self._data_dir, wanted, limit=limit)
+        return await asyncio.to_thread(
+            search_calls, self._data_dir, wanted, limit=limit, pin=self._pin
+        )
 
 
 def _task_text(task) -> str:

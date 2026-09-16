@@ -6,13 +6,15 @@ announced into the session, and nothing the caller says or does outlives the cal
 local channel is authorized by construction and is unchanged.
 """
 
+import logging
+
 import pytest
 from fakes import FakeProvider, FakeTransport, eventually
 from test_session import make_settings, running
 
 from jarvis.continuity.briefing import Briefing
 from jarvis.events import EventBus, SessionEnded
-from jarvis.realtime.base import FunctionCall
+from jarvis.realtime.base import FunctionCall, Transcript
 from jarvis.session import OPENING_MESSAGE, PIN_ACCEPTED_MESSAGE, VoiceSession
 from jarvis.tools import ToolRegistry
 from jarvis.transports.base import Dtmf
@@ -244,6 +246,28 @@ async def test_a_briefing_that_cannot_be_sent_does_not_cost_the_pin(make_session
         assert await session.submit_pin(PIN) == {"status": "authorized"}
         assert session.trusted is True
         provider.send_error = None
+
+
+# --- a spoken PIN is never written down ------------------------------------
+
+
+async def test_a_spoken_pin_reaches_neither_the_transcript_nor_the_log(
+    make_session, phone, provider, caplog
+):
+    session = make_session(phone, provider)
+    caplog.set_level(logging.DEBUG)
+
+    async with running(session):
+        provider.feed(Transcript(role="assistant", text="What's your PIN?", item_id="a"))
+        provider.feed(Transcript(role="user", text="It's one two three 4 5 6.", item_id="b"))
+        provider.feed(FunctionCall(call_id="c1", name="submit_pin", arguments={"pin": PIN}))
+        await eventually(lambda: provider.tool_results != [])
+        await eventually(lambda: "[PIN]" in session.transcript_path.read_text())
+
+    written = session.transcript_path.read_text()
+    assert "user: It's [PIN]." in written
+    assert "4 5 6" not in written and "three" not in written
+    assert PIN not in caplog.text and "4 5 6" not in caplog.text
 
 
 # --- nothing is announced into it ------------------------------------------

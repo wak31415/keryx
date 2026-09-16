@@ -119,7 +119,7 @@ def build_app_state(settings: Settings) -> AppState:
         # guard is a sentence the tool speaks, not a tool that silently is not there.
         cluster=build_cluster_stats(settings),
         restarter=restart,
-        recaller=Recaller(settings.data_dir, manager),
+        recaller=Recaller(settings.data_dir, manager, pin=settings.pin),
         approvals=approvals,
     )
 

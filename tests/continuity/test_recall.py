@@ -208,6 +208,32 @@ async def test_housekeeping_never_surfaces_in_a_recall(settings, recaller):
     assert await recall.recall("orchard") == []
 
 
+# --- a PIN said aloud before transcripts were redacted ---------------------
+
+
+def test_a_pin_still_on_disk_never_comes_back_in_a_hit(settings):
+    """Transcripts written before redaction hold the PIN he said; recall must not read it
+    out, and must not confirm a guess by finding it."""
+    write_call(settings, "old", ["assistant: What's your PIN?", "user: 1 2 3 4 5 6."])
+
+    hits = search_calls(settings.data_dir, ["pin"], limit=4, pin="123456")
+
+    assert {hit.text for hit in hits} == {"assistant: What's your PIN? user: [PIN]."}
+    assert search_calls(settings.data_dir, ["123456"], limit=4, pin="123456") == []
+
+
+async def test_a_pin_in_a_task_never_comes_back_either(settings):
+    store = TaskStore(":memory:")
+    manager = TaskManager(store, FakeAgentRunner(), EventBus(), settings)
+    await _finished(store, "log in to the bank with 123456", summary="done")
+
+    hits = await Recaller(settings.data_dir, manager, pin="123456").recall("bank")
+
+    assert [hit.text for hit in hits] == ["he asked: log in to the bank with [PIN] — result: done"]
+    await manager.shutdown()
+    await store.close()
+
+
 async def test_half_of_a_recall_failing_still_returns_the_other_half(settings, recaller):
     _, store = recaller
     write_call(settings, "abc123", ["user: the orchard sync again"])
