@@ -103,6 +103,26 @@ def test_a_chained_command_is_never_eligible(settings, tmp_path):
     assert classify(event, settings) is None
 
 
+@pytest.mark.parametrize(
+    "separator",
+    ["\n", "\r", "\r\n", "\x00", "\t", "\x0b", "\x0c", "\x1b", "\x7f", "\x85", " ", "​"],
+)
+def test_a_control_character_is_refused_before_the_command_is_normalised(
+    settings, tmp_path, separator
+):
+    """`\\s+` used to fold a newline into a space *before* the metacharacter test, so
+    `git commit -m wip⏎bash /tmp/x.sh` was eligible, was read out as one harmless line, and
+    an approval ran both. The check is on the raw command, and it refuses anything that is
+    not a printable character or a plain space: NUL, other C0 and C1 controls, DEL, and the
+    invisible or line-breaking Unicode a read-back would hide."""
+    event = request(
+        "Bash",
+        {"command": f"git commit -m wip{separator}bash /tmp/x.sh"},
+        cwd=str(tmp_path / "roots" / "myproject"),
+    )
+    assert classify(event, settings) is None
+
+
 # --- the allowlist ---------------------------------------------------------
 
 

@@ -15,6 +15,7 @@ Nothing here reads a file or touches the network: it is pure, so the tests are t
 
 import logging
 import re
+import unicodedata
 from pathlib import Path
 
 from jarvis.approvals.models import Kind, input_digest
@@ -263,12 +264,16 @@ def _describe_edit(tool: str, tool_input: dict, settings) -> tuple[Kind, str, li
 
 
 def _describe_bash(tool_input: dict, event: dict, settings) -> tuple[Kind, str, list[str]]:
-    command = _WHITESPACE.sub(" ", str(tool_input.get("command") or "")).strip()
+    raw = str(tool_input.get("command") or "")
+    # Both checks run on the command exactly as the shell will get it. Normalising first is
+    # how a newline once became a space: eligible, read out as one line, and run as two.
+    _refuse_unprintable(raw)
+    for character in SHELL_METACHARACTERS:
+        if character in raw:
+            raise Ineligible("the command chains or redirects, so a prefix means nothing")
+    command = _WHITESPACE.sub(" ", raw).strip()
     if not command:
         raise Ineligible("there is no command in the request")
-    for character in SHELL_METACHARACTERS:
-        if character in command:
-            raise Ineligible("the command chains or redirects, so a prefix means nothing")
     if not any(_matches_prefix(command, prefix) for prefix in settings.approval_bash_allow):
         raise Ineligible("the command is not on the shell allowlist")
     cwd = Path(str(event.get("cwd") or "."))
@@ -277,6 +282,19 @@ def _describe_bash(tool_input: dict, event: dict, settings) -> tuple[Kind, str, 
         raise Ineligible("it would run outside every project root")
     where = _project_name(cwd.expanduser().resolve(), root)
     return Kind.APPROVAL, f"Claude wants to run: {command}, in {where}", list(APPROVAL_OPTIONS)
+
+
+def _refuse_unprintable(command: str) -> None:
+    """Raise `Ineligible` for any character that is neither printable nor a plain space.
+
+    Unicode categories `C*` (NUL and the other C0 and C1 controls, DEL, zero-width and
+    bidirectional formatting) and `Z*` other than U+0020 (tabs are `Cc`; line and paragraph
+    separators, no-break spaces). A shell may split on some of them and a read-back hides all
+    of them, and a command that needs one is not a command to approve by ear.
+    """
+    for character in command:
+        if character != " " and unicodedata.category(character)[0] in "CZ":
+            raise Ineligible(f"the command carries U+{ord(character):04X}, which is not printable")
 
 
 def _matches_prefix(command: str, prefix: str) -> bool:
