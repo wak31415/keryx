@@ -438,7 +438,7 @@ def register_task_tools(
                 "number": {
                     "type": "string",
                     "description": "The number to call, in full international form such as "
-                    "+491701234567. Leave it out to use the number of this call.",
+                    "+15551234567. Leave it out to use the number of this call.",
                 },
                 "note": {
                     "type": "string",

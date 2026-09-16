@@ -145,12 +145,12 @@ def test_a_february_and_a_leap_february_both_end_on_the_first():
 
 
 def test_a_local_time_is_converted_before_the_month_is_taken():
-    """A call at half past midnight Berlin time on the first is still July in UTC."""
+    """Half past midnight on the first, two hours ahead of UTC, is still July in UTC."""
     from datetime import timedelta, timezone
 
-    berlin = datetime(2026, 8, 1, 0, 30, tzinfo=timezone(timedelta(hours=2)))
+    local = datetime(2026, 8, 1, 0, 30, tzinfo=timezone(timedelta(hours=2)))
 
-    assert month_bounds(berlin)[0] == datetime(2026, 7, 1, tzinfo=UTC)
+    assert month_bounds(local)[0] == datetime(2026, 7, 1, tzinfo=UTC)
 
 
 # --- redaction -------------------------------------------------------------

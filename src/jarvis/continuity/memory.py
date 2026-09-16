@@ -51,7 +51,7 @@ _TRIMMED_NOTE = "\n\n(older memory trimmed)"
 
 #: A call has to have been a conversation before it is worth a subagent. Two spoken lines
 #: is the greeting and one reply — below that it was a misfire, a wrong number, or a wake
-#: word the dog set off, and there is nothing to remember.
+#: word the television set off, and there is nothing to remember.
 MIN_SPOKEN_LINES = 2
 
 _NO_TASKS = "none"

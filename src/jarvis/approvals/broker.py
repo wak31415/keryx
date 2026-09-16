@@ -458,7 +458,7 @@ class ApprovalBroker:
         # Naive local time, deliberately: `HH:MM` in a window called "quiet hours" means
         # the clock on the wall next to whoever set it, and this is a single-owner service
         # running on his own machine. The assumption is therefore that the *host's*
-        # timezone is his — which is true of a laptop and of a box in his flat, and not
+        # timezone is his — which is true of a laptop and of a server at home, and not
         # true of a VPS in another region. There is no timezone setting because there is
         # no second user to have a different one; if that ever changes, this is the line.
         current = datetime.now().hour * 60 + datetime.now().minute

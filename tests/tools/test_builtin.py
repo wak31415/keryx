@@ -902,10 +902,10 @@ async def test_web_search_hands_back_a_spoken_answer(make_tools):
     searcher = FakeSearcher()
     tools = make_tools(searcher=searcher)
 
-    result = await tools.call("web_search", {"query": "weather in Springfield"})
+    result = await tools.call("web_search", {"query": "weather tomorrow"})
 
     assert result == {"answer": "It is seventeen degrees and clear."}
-    assert searcher.queries == ["weather in Springfield"]
+    assert searcher.queries == ["weather tomorrow"]
 
 
 async def test_web_search_needs_a_query(make_tools):
