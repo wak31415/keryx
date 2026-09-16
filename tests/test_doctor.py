@@ -26,6 +26,8 @@ def healthy(tmp_path, monkeypatch):
     (models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
     monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda: models)
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
+    # The service is installed. Asked of a fake: the real question goes to `systemctl`.
+    monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target: True)
 
     credentials = tmp_path / "jarvis" / "google"
     credentials.mkdir(parents=True)
@@ -275,7 +277,7 @@ def test_an_uninstalled_openwakeword_only_warns(healthy, monkeypatch):
     checks = run_doctor_checks(healthy, probe_mic=False)
     check = by_name(checks)["wake-word model"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "--no-wakeword" in check.detail
+    assert "phone channel alone" in check.detail
     assert has_hard_failure(checks) is False
 
 
@@ -290,11 +292,23 @@ def test_a_broken_openwakeword_install_is_reported_not_raised(healthy, monkeypat
     assert "openwakeword" in check.detail
 
 
-def test_the_detected_service_manager_is_reported(healthy):
+def test_an_installed_service_is_reported(healthy):
     check = by_name(run_doctor_checks(healthy, probe_mic=False))["service manager"]
 
     assert check.ok is True
     assert check.detail.split()[0] in {"systemd", "launchd"}
+
+
+def test_a_service_manager_with_nothing_installed_is_not_a_tick(healthy, monkeypatch):
+    """`systemctl` on PATH used to be enough for a ✅ naming a unit that did not exist."""
+    monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target: False)
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["service manager"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "not installed" in check.detail
+    assert "install-" in check.detail  # which installer puts it there
+    assert "restart_service" in check.detail
 
 
 def test_nothing_supervising_the_process_is_a_warning_that_says_what_is_lost(healthy):
@@ -305,6 +319,15 @@ def test_nothing_supervising_the_process_is_a_warning_that_says_what_is_lost(hea
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "restart_service" in check.detail
+
+
+def test_no_service_manager_at_all_says_so_rather_than_naming_a_unit(healthy, monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda name: None)
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["service manager"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert check.detail.startswith("no service manager on this machine")
 
 
 def test_a_missing_git_is_reported_next_to_the_service_manager(healthy, monkeypatch):

@@ -94,3 +94,16 @@ def unwrapped():
         return " ".join(text.split())
 
     return _flat
+
+
+@pytest.fixture(autouse=True)
+def _outside_any_service(monkeypatch):
+    """Never find ourselves inside a service unit, and never ask a real manager about one.
+
+    `SERVICE_MANAGER=auto` reads this process's cgroup and asks `systemctl`/`launchctl`
+    whether the unit is installed. A suite run by a subagent of the live service *is*
+    inside `jarvis.service`, and would resolve to it. The tests about those two probes
+    import the real functions, which this does not reach.
+    """
+    monkeypatch.setattr("jarvis.restart.service.runs_under", lambda target, **_: False)
+    monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target, **_: False)

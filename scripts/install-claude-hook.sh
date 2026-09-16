@@ -30,12 +30,18 @@ else
   install -m 0755 "${here}/claude_hooks/jarvis_approval.py" "${target}"
 fi
 
-marker="${JARVIS_DATA_DIR:-${HOME}/.jarvis}/approvals/PENDING"
+# Where the broker listens: DATA_DIR as the service resolves it from the env file (lib.sh
+# sets JARVIS_DIR), unless JARVIS_DATA_DIR in this shell says otherwise. The hook itself
+# reads only JARVIS_DATA_DIR, defaulting to ~/.jarvis, so anything else is written into
+# its command below.
+data_dir="${JARVIS_DATA_DIR:-${JARVIS_DIR:-${HOME}/.jarvis}}"
 
-python3 - "${settings}" "${target}" "${uninstall}" "${marker}" <<'PY'
-import json, shlex, sys
+python3 - "${settings}" "${target}" "${uninstall}" "${data_dir%/}" "${HOME}/.jarvis" <<'PY'
+import json, os, shlex, sys
 
-path, target, uninstall, marker = sys.argv[1], sys.argv[2], sys.argv[3] == "1", sys.argv[4]
+path, target, uninstall = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+data_dir, default_dir = sys.argv[4], sys.argv[5]
+marker = os.path.join(data_dir, "approvals", "PENDING")
 settings = json.loads(open(path).read() or "{}")
 hooks = settings.setdefault("hooks", {})
 
@@ -49,12 +55,14 @@ WANTED = {
     "SessionEnd": 15,
 }
 raise_command = f"python3 {shlex.quote(target)}"
+if data_dir != default_dir:
+    raise_command = f"env JARVIS_DATA_DIR={shlex.quote(data_dir)} {raise_command}"
 # The resolving events fire on *every* tool call, so the common case — nothing pending —
 # must not pay for a Python interpreter. `sh` costs a millisecond, and it drains stdin
-# rather than leaving the CLI writing into a closed pipe.
-resolve_command = (
-    f"sh -c 'if [ -e {shlex.quote(marker)} ]; then exec {raise_command}; "
-    f"else cat >/dev/null; fi'"
+# rather than leaving the CLI writing into a closed pipe. Quoted as a whole, so a path that
+# needs quoting of its own cannot end the outer quotes early.
+resolve_command = "sh -c " + shlex.quote(
+    f"if [ -e {shlex.quote(marker)} ]; then exec {raise_command}; else cat >/dev/null; fi"
 )
 
 for event, timeout in WANTED.items():

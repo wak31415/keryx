@@ -7,10 +7,12 @@ machine with no models downloaded. A Porcupine (`pvporcupine`) detector would be
 drop-in fallback: implement `WakeWordDetector` and pass it to `WakeWordListener`.
 """
 
+import importlib.util
 import logging
+import sys
 import time
 from collections.abc import Callable
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -19,6 +21,28 @@ log = logging.getLogger("jarvis.wakeword")
 WAKE_SAMPLE_RATE = 16000
 WAKE_FRAME_SAMPLES = 1280  # 80 ms, the frame size openWakeWord expects
 MODEL_MISSING_ERROR = "wake-word model missing; run `jarvis download-models`"
+#: What the wake-word channel imports. Both are `sys_platform == 'darwin'` dependencies
+#: (see pyproject.toml), so on any other platform neither is installed.
+WAKEWORD_PACKAGES = ("openwakeword", "sounddevice")
+
+
+def wakeword_unavailable(
+    *,
+    platform: str = sys.platform,
+    find_spec: Callable[[str], Any] = importlib.util.find_spec,
+) -> str | None:
+    """Why the wake word cannot run on this machine, or None when it can.
+
+    Asks the import system whether the packages are there without importing them, so it
+    costs nothing and is safe on a machine with no mic. Off macOS their absence is the
+    platform rather than a broken install, and says so.
+    """
+    missing = [name for name in WAKEWORD_PACKAGES if find_spec(name) is None]
+    if not missing:
+        return None
+    if platform != "darwin":
+        return "the wake word needs macOS"
+    return f"{' and '.join(missing)} not installed — run `uv sync`"
 
 
 class WakeWordDetector(Protocol):

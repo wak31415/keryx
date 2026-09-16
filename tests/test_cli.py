@@ -1,6 +1,7 @@
 """Tests for the `jarvis` command line: wiring only, no hardware and no network."""
 
 import asyncio
+import importlib.metadata
 import json
 import logging
 import shutil
@@ -70,6 +71,18 @@ def test_help_lists_the_commands():
         "restart",
     ):
         assert command in result.output
+
+
+def test_version_prints_the_installed_package_version():
+    """The bug report template asks for it."""
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == f"jarvis {importlib.metadata.version('jarvis')}"
+
+
+def test_help_documents_version():
+    assert "--version" in runner.invoke(app, ["--help"]).output
 
 
 def test_serve_help_documents_its_switches():
@@ -151,6 +164,8 @@ def stub_local_runner(monkeypatch, built: dict, *, run=None) -> None:
     monkeypatch.setattr("jarvis.cli.LocalAudioDevice", StubDevice)
     monkeypatch.setattr("jarvis.cli.OpenWakeWordDetector", StubDetector)
     monkeypatch.setattr("jarvis.cli.LocalRunner", StubRunner)
+    # As if on a Mac with its packages installed, whatever host runs the suite.
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: None)
 
 
 def stub_uvicorn(monkeypatch, built: dict) -> None:
@@ -182,6 +197,49 @@ def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
     assert device is built["device"]
     assert kwargs["sessions"] is not None
     assert (settings_stub.data_dir / "calls").is_dir()  # ensure_dirs() ran
+
+
+def test_serve_where_the_wake_word_cannot_run_serves_the_phone_alone(
+    settings_stub, monkeypatch
+):
+    """`jarvis serve` on Linux: one line saying so, not a traceback after the server is up."""
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+    monkeypatch.setattr(
+        "jarvis.cli.OpenWakeWordDetector",
+        lambda *a, **k: pytest.fail("the wake word was started anyway"),
+    )
+
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 0, result.output
+    assert "the wake word needs macOS; serving the phone channel only" in result.output
+    assert built["served"] is True
+    assert "Traceback" not in result.output
+
+
+def test_serve_with_no_phone_where_the_wake_word_cannot_run_has_nothing_to_run(
+    settings_stub, monkeypatch
+):
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+
+    result = runner.invoke(app, ["serve", "--no-phone"])
+
+    assert result.exit_code == 1
+    assert "nothing to run" in result.output
+    assert "the wake word needs macOS" in result.output
+
+
+def test_serve_no_wakeword_does_not_mention_the_platform(settings_stub, monkeypatch):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 0, result.output
+    assert "macOS" not in result.output
 
 
 def test_serve_runs_the_phone_server_on_the_configured_address(settings_stub, monkeypatch):
@@ -499,6 +557,56 @@ def test_read_only_commands_run_without_an_openai_key(monkeypatch, tmp_path):
     assert calls == [{}, {"openai_api_key": PLACEHOLDER_KEY}]
 
 
+# --- how loud the commands are ---------------------------------------------
+
+
+@pytest.fixture
+def log_levels(monkeypatch):
+    """The level each command configures logging at, instead of configuring it.
+
+    pytest owns the root logger's handlers, which turns the real `basicConfig` into a
+    no-op here — so the level asked for is what there is to assert on.
+    """
+    asked: list[object] = []
+    monkeypatch.setattr(
+        "jarvis.cli.logging.basicConfig", lambda **kwargs: asked.append(kwargs["level"])
+    )
+    return asked
+
+
+def test_read_only_commands_print_their_answer_without_info_lines(settings_stub, log_levels):
+    """`tasks list` on a fresh data dir led with "created tasks schema v4 at …"."""
+    for command in (["tasks", "list"], ["memory"], ["approvals"]):
+        assert runner.invoke(app, command).exit_code == 0
+
+    assert log_levels == [logging.WARNING] * 3
+
+
+def test_log_level_debug_still_reaches_a_read_only_command(monkeypatch, tmp_path, log_levels):
+    settings = Settings(
+        _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", log_level="debug"
+    )
+    monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
+
+    assert runner.invoke(app, ["tasks", "list"]).exit_code == 0
+
+    assert log_levels == [logging.DEBUG]
+
+
+def test_the_restart_watchdog_keeps_its_info_lines(settings_stub, log_levels, monkeypatch):
+    """Its log file is the only place it is ever heard, so it is not a quiet command."""
+
+    async def watch(_settings):
+        return "nothing"
+
+    monkeypatch.setattr("jarvis.cli.watch", watch)
+
+    result = runner.invoke(app, ["restart-watch"])
+
+    assert result.exit_code == 0, result.output
+    assert log_levels == [logging.INFO]
+
+
 # --- restart ---------------------------------------------------------------
 
 
@@ -514,7 +622,8 @@ def restart_settings(monkeypatch, tmp_path):
     monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
     monkeypatch.setattr("jarvis.cli.loaded_version", lambda data_dir, repo=None: "v-test")
     monkeypatch.setattr(
-        "jarvis.cli.resolve_target", lambda _settings: ServiceTarget("systemd", "jarvis.service")
+        "jarvis.cli.resolve_target",
+        lambda _settings, **_kwargs: ServiceTarget("systemd", "jarvis.service"),
     )
     monkeypatch.setattr("jarvis.cli.health_probe", lambda _settings: 0)
     # `resolve_target` is stubbed above, but `watch_command` still looks for `systemd-run`
@@ -605,13 +714,29 @@ def test_restart_without_a_service_manager_says_how_to_install_one(
     restart_settings, ran, monkeypatch
 ):
     calls, _ = ran
-    monkeypatch.setattr("jarvis.cli.resolve_target", lambda _settings: None)
+    monkeypatch.setattr("jarvis.cli.resolve_target", lambda _settings, **_kwargs: None)
 
     result = runner.invoke(app, ["restart"])
 
     assert result.exit_code == 1
     assert "install-systemd.sh" in result.output
     assert calls == []
+
+
+def test_restart_from_a_terminal_restarts_the_installed_service(
+    restart_settings, ran, monkeypatch
+):
+    """The command is never run *inside* the unit, so it asks for an installed one."""
+    asked: list[dict] = []
+
+    def resolve(_settings, **kwargs):
+        asked.append(kwargs)
+        return ServiceTarget("systemd", "jarvis.service")
+
+    monkeypatch.setattr("jarvis.cli.resolve_target", resolve)
+
+    assert runner.invoke(app, ["restart"]).exit_code == 0
+    assert asked == [{"from_outside": True}]
 
 
 def test_restart_no_callback_leaves_no_number(restart_settings, ran):
@@ -955,6 +1080,19 @@ def test_download_models_help():
     result = runner.invoke(app, ["download-models", "--help"])
 
     assert result.exit_code == 0
+
+
+def test_download_models_where_the_wake_word_cannot_run_says_so_in_one_line(
+    settings_stub, monkeypatch
+):
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+
+    result = runner.invoke(app, ["download-models"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)  # a clean exit, not a traceback
+    assert result.output.strip().count("\n") == 0
+    assert "the wake word needs macOS" in result.output
 
 
 # --- housekeeping and the memory -------------------------------------------

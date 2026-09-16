@@ -23,8 +23,8 @@ Reach it two ways:
 Speech goes through the **OpenAI Realtime API** (speech-to-speech, server VAD, function
 calling), so the conversation stays snappy. Anything that is real work — research, a code
 change, mail and calendar chores — is handed to a **Claude Agent SDK subagent** that runs
-on the host machine with full local access and reports back by voice, SMS, or a call
-back.
+on the host machine with full local access and reports back by voice or a call back
+(or by SMS, which is off unless you set `SMS_ENABLED=true`).
 
 ## One request, end to end
 
@@ -70,8 +70,8 @@ actually told — until it is stamped, task 12 is still waiting at the top of yo
 The two channels can live on one machine or two. The phone channel runs anywhere —
 in practice a Linux box that is up 24/7, reached through a Cloudflare tunnel — while the
 wake word needs macOS, because openwakeword cannot be installed on Linux under Python
-3.12 (its `tflite-runtime` dependency has no cp312 wheel). A Linux host therefore serves
-with `--no-wakeword`.
+3.12 (its `tflite-runtime` dependency has no cp312 wheel). On a Linux host `jarvis serve`
+says so in one line and serves the phone channel alone.
 
 The full design lives in
 `docs/superpowers/specs/2026-08-18-jarvis-voice-agent-design.md`.
@@ -255,7 +255,8 @@ naming it — a new skill needs no code here at all, and no restart.
   over `PATH`. Install one yourself (`npm i -g @anthropic-ai/claude-code`) only if
   `jarvis doctor` says there is neither
 - A **Twilio** account, a phone number, and a **Cloudflare Tunnel** with a hostname
-  routed to it — `cloudflared` plus a zone on Cloudflare (for the phone channel)
+  routed to it — `cloudflared` plus a zone on Cloudflare (for the phone channel). The
+  macOS service installer uses **ngrok** instead: `ngrok` plus a reserved ngrok domain
 - Gmail and Calendar need nothing: they come from the Claude CLI's claude.ai connectors
 
 ### Install
@@ -287,7 +288,7 @@ Every setting is an environment variable, read from `.env` in the working direct
 | `OPENAI_API_KEY` | Realtime API key (required) |
 | `ANTHROPIC_API_KEY` | optional — pay-per-token override for subagent auth |
 | `CLAUDE_CODE_OAUTH_TOKEN` | optional — subscription token from `claude setup-token` |
-| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_NUMBER` | phone channel + outbound SMS/calls |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_NUMBER` | phone channel + outbound calls (and SMS, only with `SMS_ENABLED=true`) |
 | `ALLOWED_CALLERS` | comma-separated E.164 numbers allowed to call in — everything else is refused |
 | `JARVIS_PIN` | 6–8 digits; required before Jarvis dispatches anything over the phone |
 | `PUBLIC_HOST` | the tunnel hostname Twilio reaches, e.g. `jarvis.example.com` |
@@ -328,6 +329,19 @@ That writes credentials under `~/.cloudflared/` and a CNAME in the zone. Put the
 hostname in `.env` as `PUBLIC_HOST`; name the tunnel something else and set
 `CLOUDFLARE_TUNNEL` to match. `scripts/dev.sh` and `scripts/install-systemd.sh` run it
 for you from there.
+
+**On macOS, the installed service tunnels through ngrok instead.** `scripts/install-launchd.sh`
+runs `ngrok http --domain=<PUBLIC_HOST> <PORT>` as its tunnel agent, because a reserved ngrok
+domain needs no DNS zone, and it will not install without `ngrok` on `PATH`. Set it up once:
+
+```bash
+brew install ngrok
+ngrok config add-authtoken <your-token>   # from the ngrok dashboard
+```
+
+then reserve a domain in the ngrok dashboard and put it in `.env` as `PUBLIC_HOST`.
+`CLOUDFLARE_TUNNEL` is not used there, and `scripts/dev.sh` still runs cloudflared on either
+platform.
 
 ### Twilio console
 
@@ -380,7 +394,9 @@ scripts/install-launchd.sh      # macOS: two launch agents, loaded
 
 Each installer renders the templates under `ops/` into the user's own service directory,
 starts them, and arranges for them to survive a logout and come back after a reboot. Both
-take `--uninstall`. What exactly they render, where each one logs, and why the macOS tunnel
+take `--uninstall`. The service gets the `PATH` of the shell you run the installer from, so
+subagents find the same tools a terminal does (nvm, Homebrew, conda, cargo…), and logs to
+`DATA_DIR/logs/`; run the installer again after changing either. What exactly they render, where each one logs, and why the macOS tunnel
 agent runs ngrok while the Linux one runs cloudflared:
 [Running as a service](https://github.com/wak31415/jarvis-voice-agent/wiki/Running-as-a-Service).
 
@@ -403,8 +419,10 @@ until you have hung up, because a restart drops every call in progress. Nothing 
 you are already talking to Jarvis: a confirmation that lands during a call is spoken into
 that call instead.
 
-Nothing supervising the process — a `jarvis serve` you started in a terminal — means
-`restart` refuses, because stopping would leave nothing to start it again. How it knows
+Nothing supervising the process — a `jarvis serve` you started in a terminal, even on a
+machine where the service is installed too — means `restart` refuses in one sentence,
+because stopping would leave nothing to start it again. `jarvis doctor` says which case
+you are in. How it knows
 whether the change actually *loaded*, what happens when the service never comes back at
 all, and why a `-15` exit code is the restart working:
 [Restarting Jarvis](https://github.com/wak31415/jarvis-voice-agent/wiki/Restarting-Jarvis).
@@ -452,7 +470,8 @@ then ends with one spoken question; Jarvis asks it and sends your answer back in
 same session as a follow-up.
 
 Short tasks answer inline; longer ones come back as an announcement in whatever session is
-live, an SMS with a link to the written report, and a call back if you asked for one.
+live, and as a call back if you asked for one. Texting is off by default: with
+`SMS_ENABLED=true` an SMS with a link to the written report comes too.
 
 **The PIN.** On the phone, dispatching anything is refused until you authorize: say the
 PIN or key it in on the keypad. Keyed digits are collected in the session and never enter
@@ -530,9 +549,9 @@ reasoning behind each of those four:
 - **What the tunnel exposes** is only: `/twilio/voice` (Twilio signature-validated *and*
   caller-allowlisted), `/twilio/status` (signature-validated only — it carries no caller
   to check), `/twilio/media` (needs a one-time, 60-second stream token minted by
-  `/twilio/voice` for the same call), `/reports/{id}?t=…` (HMAC-signed link, the one you
-  get by SMS), and `/health`, which is unauthenticated and answers with `ok` plus the
-  number of live sessions. Nothing else is served: FastAPI's interactive docs and its
+  `/twilio/voice` for the same call), `/reports/{id}?t=…` (HMAC-signed link, the one sent
+  by SMS when `SMS_ENABLED` is on), and `/health`, which is unauthenticated and answers
+  with `ok` plus the number of live sessions. Nothing else is served: FastAPI's interactive docs and its
   `/openapi.json` schema are both switched off, so the tunnel does not hand out a list of
   the routes above.
 - **Caller ID is spoofable**, so the allowlist alone is not a gate. The PIN is what
@@ -593,7 +612,8 @@ no `claude` CLI), `❌` means it will not work — and only `❌` makes the comm
 non-zero. It is safe to run before anything is configured; that is what it is for, and it
 never prints a secret.
 
-The server log is `~/.jarvis/logs/jarvis.log`, rotated at 10 MB × 5. Where everything else
+The server log is `DATA_DIR/logs/jarvis.log` (`~/.jarvis/logs/` by default), rotated at
+10 MB × 5. Where everything else
 is written, and the common failures with what each one actually means:
 [Troubleshooting](https://github.com/wak31415/jarvis-voice-agent/wiki/Troubleshooting).
 

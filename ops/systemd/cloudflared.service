@@ -1,6 +1,6 @@
-# Template: scripts/install-systemd.sh fills in __CLOUDFLARED__, __HOME__, __TUNNEL__ and
-# __PORT__ and writes the result to ~/.config/systemd/user/cloudflared.service. Do not
-# enable this file directly.
+# Template: scripts/install-systemd.sh fills in __CLOUDFLARED__, __TUNNEL__ and __PORT__,
+# plus its own PATH and the log directory under DATA_DIR, and writes the result to
+# ~/.config/systemd/user/cloudflared.service. Do not enable this file directly.
 #
 # The tunnel is what Twilio reaches: https://PUBLIC_HOST/twilio/voice -> localhost:__PORT__.
 # It needs the named tunnel to exist already (`cloudflared tunnel create __TUNNEL__` plus
@@ -12,11 +12,11 @@ Description=Cloudflare tunnel for Jarvis
 [Service]
 Type=simple
 ExecStart=__CLOUDFLARED__ tunnel --no-autoupdate --protocol http2 run --url http://localhost:__PORT__ __TUNNEL__
-Environment=PATH=__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment="PATH=__PATH__"
 Restart=always
 RestartSec=5
-StandardOutput=append:__HOME__/.jarvis/logs/cloudflared.out.log
-StandardError=append:__HOME__/.jarvis/logs/cloudflared.err.log
+StandardOutput=append:__LOGS__/cloudflared.out.log
+StandardError=append:__LOGS__/cloudflared.err.log
 
 [Install]
 WantedBy=default.target

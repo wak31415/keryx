@@ -112,7 +112,11 @@ per `jarvis serve`) finds it on the far side and rings back with a status summar
 half may interrupt a call — a restart asked for during one waits for the line to clear, and
 the confirmation is announced or texted rather than dialled into a live session. Keep it
 that way, and keep every failure path landing somewhere a human can find it
-(`jarvis restart --status`).
+(`jarvis restart --status`). Whether a restart may be attempted at all is a fact about the
+*process*: `SERVICE_MANAGER=auto` resolves from its own cgroup (systemd) or
+`XPC_SERVICE_NAME` (launchd), never from `systemctl` being on PATH, so a hand-started copy
+refuses rather than restart the installed one. Only `jarvis restart` and `doctor`, which run
+outside the unit, ask whether it is installed.
 
 "Did it load the change" is answered from `data_dir/running-version`, stamped by `mark_running()`
 at the top of `jarvis serve` — *not* from `current_version()` at request time. The checkout moves
@@ -237,8 +241,9 @@ rulings, and the first is the one with a scar behind it:
 
 macOS runs both channels; Linux runs the phone channel only, because openwakeword
 needs `tflite-runtime`, which has no cp312 wheel. `sounddevice`, `openwakeword` and
-`onnxruntime` are therefore `sys_platform == 'darwin'` dependencies and a Linux host
-serves with `--no-wakeword` — one more reason every import of them stays lazy.
+`onnxruntime` are therefore `sys_platform == 'darwin'` dependencies, and on a Linux host
+`jarvis serve` finds them missing (`wakeword_unavailable`, which imports nothing), says so in
+one line and serves the phone alone — one more reason every import of them stays lazy.
 
 ## Testing rule
 

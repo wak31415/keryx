@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import dataclasses
+import importlib.metadata
 import json
 import logging
 import logging.handlers
@@ -48,12 +49,34 @@ from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolRegistry
 from jarvis.transports.local_audio import LocalAudioDevice
 from jarvis.transports.wav import WavTransport
-from jarvis.wakeword import OpenWakeWordDetector, WakeWordListener
+from jarvis.wakeword import OpenWakeWordDetector, WakeWordListener, wakeword_unavailable
 
 app = typer.Typer(help="Jarvis voice agent.")
 tasks_app = typer.Typer(help="Inspect the tasks handed to subagents.")
 app.add_typer(tasks_app, name="tasks")
 log = logging.getLogger("jarvis.cli")
+
+
+def _print_version(value: bool) -> None:
+    if value:
+        typer.echo(f"jarvis {importlib.metadata.version('jarvis')}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=_print_version,
+            is_eager=True,
+            help="Print the installed version and exit.",
+        ),
+    ] = False,
+) -> None:
+    """Jarvis voice agent."""
+
 
 LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 LOG_MAX_BYTES = 10 * 1024 * 1024
@@ -143,11 +166,19 @@ def _load_settings_optional() -> Settings:
     return _load_settings_reporting()[0]
 
 
-def _configure_readonly() -> Settings:
-    """`_configure` for the read-only commands (no `OPENAI_API_KEY` required)."""
+def _configure_readonly(*, quiet: bool = True) -> Settings:
+    """`_configure` for the read-only commands (no `OPENAI_API_KEY` required).
+
+    `quiet` because these print an answer, and `LOG_LEVEL` is the service's setting: the
+    INFO lines it wants in `jarvis.log` (a schema created, a migration run) are noise above
+    a table. Warnings still show, and `LOG_LEVEL=DEBUG` still means everything.
+    """
     settings = _load_settings_optional()
     settings.ensure_dirs()
-    logging.basicConfig(level=settings.log_level.upper(), format=LOG_FORMAT)
+    level = logging.getLevelNamesMapping().get(settings.log_level.upper(), logging.INFO)
+    if quiet and level != logging.DEBUG:
+        level = max(level, logging.WARNING)
+    logging.basicConfig(level=level, format=LOG_FORMAT)
     return settings
 
 
@@ -170,6 +201,10 @@ def _add_file_logging(settings: Settings) -> None:
 @app.command("download-models")
 def download_models() -> None:
     """Download the configured wake-word model via openwakeword."""
+    why = wakeword_unavailable()
+    if why is not None:
+        typer.echo(f"{why}: there is no wake-word model to download on this machine", err=True)
+        raise typer.Exit(1)
     import openwakeword.utils
 
     settings = _load_settings_optional()
@@ -212,7 +247,18 @@ def serve(
     if no_phone and no_wakeword:
         typer.echo("nothing to run: both the phone server and the wake word are disabled")
         return
-    asyncio.run(_serve(settings, phone=not no_phone, wakeword=not no_wakeword))
+    wakeword = not no_wakeword
+    # Asked before anything starts, not discovered after the phone server is up: off macOS
+    # the wake word's packages are not installed at all, and that is the platform rather
+    # than a fault — so the phone channel serves on its own, and says so once.
+    why = wakeword_unavailable() if wakeword else None
+    if why is not None:
+        if no_phone:
+            typer.echo(f"nothing to run: {why}, and --no-phone turned the phone off", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"{why}; serving the phone channel only")
+        wakeword = False
+    asyncio.run(_serve(settings, phone=not no_phone, wakeword=wakeword))
 
 
 async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
@@ -375,7 +421,8 @@ def restart(
         _echo_restart_status(store)
         return
 
-    target = resolve_target(settings)
+    # From a terminal, never from inside the unit: the installed service is the target.
+    target = resolve_target(settings, from_outside=True)
     if target is None:
         typer.echo(UNSUPPORTED_HINT)
         raise typer.Exit(1)
@@ -439,7 +486,7 @@ def restart_watch() -> None:
     own "the restart never came back" into `jarvis.log` would leave the next restart
     scanning that line back as a fault of Jarvis's.
     """
-    settings = _configure_readonly()
+    settings = _configure_readonly(quiet=False)
     typer.echo(asyncio.run(watch(settings)))
 
 
