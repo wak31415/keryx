@@ -43,10 +43,13 @@ class FakeTwilio:
 class FakeSession:
     session_id: str = "call1"
     announcements: list[str] = field(default_factory=list)
+    #: What `announce` answers. False is what a phone call that has not given the PIN says.
+    accepts: bool = True
 
     async def announce(self, text: str) -> bool:
-        self.announcements.append(text)
-        return True
+        if self.accepts:
+            self.announcements.append(text)
+        return self.accepts
 
 
 @dataclass
@@ -291,6 +294,19 @@ async def test_a_live_call_is_told_instead_of_a_second_one_being_placed(
     await until(lambda: session.announcements)
     assert twilio.calls == []
     assert "Request 1" in session.announcements[0]
+
+
+async def test_a_call_that_has_not_given_the_pin_is_not_told_and_he_is_rung_instead(
+    broker, hooks, sessions, twilio, tmp_path
+):
+    """Caller id is spoofable: a live call proves nothing until the PIN, so the command
+    waiting on his screen is not read into it, and it does not count as telling him."""
+    unauthorized = FakeSession(accepts=False)
+    sessions.sessions.append(unauthorized)
+    await hooks.raise_request(permission_event(cwd=str(tmp_path / "roots" / "myproject")))
+    await until(lambda: twilio.calls)
+    assert unauthorized.announcements == []
+    assert twilio.calls[0]["to"] == "+15557000000"
 
 
 async def test_a_second_request_rides_the_call_already_going_out(broker, twilio, tmp_path, hooks):

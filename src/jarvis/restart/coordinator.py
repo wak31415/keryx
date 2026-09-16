@@ -528,7 +528,9 @@ class RestartCoordinator:
         context = await self._opening_context(record, status)
         token = self._stream_tokens.issue(
             caller=record.number,
-            extra={"opening_context": context, "restart": True},
+            # `task_id` lets the call stamp that task reported before the PIN: it opens by
+            # saying the result.
+            extra={"opening_context": context, "restart": True, "task_id": record.task_id},
             ttl_s=CALLBACK_TOKEN_TTL_S,
         )
         twiml = stream_twiml(host, {"token": token, "caller": record.number})
@@ -551,7 +553,9 @@ class RestartCoordinator:
         request = task.description
         if len(request) > MAX_REQUEST_CHARS:
             request = request[: MAX_REQUEST_CHARS - 1].rstrip() + "…"
-        history = read_tail(self._settings.data_dir, record.origin_session_id or "")
+        history = read_tail(
+            self._settings.data_dir, record.origin_session_id or "", pin=self._settings.pin
+        )
         return RESTART_WITH_TASK_CONTEXT.format(
             task_id=task.id,
             request=request,

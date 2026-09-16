@@ -154,3 +154,11 @@ async def test_listing_hands_back_what_is_waiting(registry, broker):
     broker.waiting = [{"request_id": 1, "summary": "s", "options": "press 1 for approve"}]
     answer = await registry.call("list_pending_approvals", {}, context())
     assert answer["requests"] == broker.waiting
+
+
+async def test_listing_needs_the_pin_because_a_waiting_command_is_private(registry, broker):
+    """What his screen is waiting on names his projects and his commands."""
+    broker.waiting = [{"request_id": 1, "summary": "git push", "options": "press 1"}]
+    answer = await registry.call("list_pending_approvals", {}, context(authorized=False))
+    assert answer["status"] == "pin_required"
+    assert "git push" not in str(answer)

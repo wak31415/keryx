@@ -124,6 +124,34 @@ def test_render_says_so_when_no_project_wrote_a_brief(settings, tmp_path):
     assert "nothing written down yet" in rendered
 
 
+def test_a_withheld_prompt_carries_nothing_of_his(settings, tmp_path):
+    """A phone call before the PIN: no project, brief, skill, memory or unheard result."""
+    root = tmp_path / "projects"
+    (root / "vidmem").mkdir(parents=True)
+    (root / "vidmem" / ".jarvis-brief.md").write_text("A video model with a memory.")
+    skills = tmp_path / "skills"
+    (skills / "wandb-query").mkdir(parents=True)
+    (skills / "wandb-query" / "SKILL.md").write_text(
+        "---\nname: wandb-query\ndescription: Query W&B runs.\n---\n", encoding="utf-8"
+    )
+    settings.projects, settings.projects_root, settings.skills_dir = {"orchard": "/x"}, root, skills
+
+    rendered = render_voice_prompt(
+        settings,
+        channel="phone",
+        caller="+15550001111",
+        authorized=False,
+        pending="- task 41 (finished) — his bank balance",
+        memory="He is waiting on the letter from the lawyer.",
+        withheld=True,
+    )
+
+    for secret in ("vidmem", "video model", "orchard", "wandb-query", "task 41", "lawyer"):
+        assert secret not in rendered, secret
+    assert "held back until the PIN" in rendered
+    assert "{" not in rendered and "}" not in rendered
+
+
 # --- Slack is opt-in -------------------------------------------------------
 #
 # Whether a Slack message goes out is the voice model's decision, taken turn by turn, so

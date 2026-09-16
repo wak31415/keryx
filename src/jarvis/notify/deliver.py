@@ -50,6 +50,10 @@ async def announce_to_live_sessions(
 ) -> Announced:
     """Speak `text` into every live session. Never raises.
 
+    A session that answers False did not hear it — one already on its way out, or a phone
+    call that has not given the PIN (`VoiceSession.announce` refuses those, because what is
+    announced is private) — and it counts for nothing, so the caller's fallback still runs.
+
     `skip(session)` marks a session that must not be spoken to but counts as having
     heard — today that is a session holding the line for the very task being announced,
     whose tool result is about to say the same thing, and hearing it twice in one breath

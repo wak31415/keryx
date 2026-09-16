@@ -205,6 +205,7 @@ async def _open_session(
         state.bus,
         authorized=False,  # the phone channel earns authorization with the PIN (spec §5)
         opening_context=token_info.extra.get("opening_context"),
+        opening_task_id=token_info.extra.get("task_id"),
         registry=state.sessions,
         briefer=state.briefer,
         # Post-PIN keypad digits: how an approval is confirmed, and the only route by

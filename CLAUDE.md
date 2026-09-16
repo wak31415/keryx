@@ -71,6 +71,26 @@ decision is answer-it-myself (small facts go through its `web_search` tool, back
 Responses API) versus dispatch. Do not reintroduce kinds to express "this one is
 read-only" — the phone PIN gates every dispatch instead.
 
+## Before the PIN, the phone gets nothing
+
+Caller ID is spoofable, so an allowed number proves nothing. **On the phone, before the PIN,
+nothing private is read out, nothing is announced into the call, and nothing the caller says
+or does outlives it.** `VoiceSession.trusted` (local always, the phone once authorized) is the
+one predicate, and `SECURITY.md` is the threat model:
+
+- An untrusted call renders `withheld` — no memory, digest, projects, briefs or skills — and an
+  accepted PIN sends the full prompt with `update_instructions` plus a nudge that asks for no
+  response of its own, so the PIN still costs one turn.
+- `announce` refuses it and answers False, so it never counts as delivery.
+- `pin_gate` runs first in every tool but `check_billing`, `cluster_stats`, `web_search`,
+  `submit_pin` and `end_session` (`UNGATED` in `tests/tools/test_builtin.py`). The one carve-out:
+  `mark_reported` may stamp `opening_task_id`, the task a call Jarvis placed opened by saying,
+  which is set only from Jarvis's own stream token.
+- `SessionEnded.authorized` is False, so no memory update; the transcript header says
+  `authorized=no`, so `recall` never reads it. Do not narrow the subagent's tools instead.
+- A spoken PIN is `[PIN]` in every transcript line (`continuity.transcripts.redact_pin`), and
+  everything that hands a transcript to a model redacts again, for logs written before.
+
 ## Continuity is three pieces
 
 A realtime session starts blank — the provider keeps nothing across sockets — so what
@@ -79,18 +99,20 @@ Jarvis knows at the top of a call is assembled every time by
 
 - **The digest.** `Task.reported_at` is the only record that Jarvis *told him*; `announced`
   and `sms_sent` only say a delivery was attempted, and neither survives a call he missed.
-  Until `reported_at` is stamped, the task rides at the top of the next call. Exactly one
-  thing stamps it: the voice model's `mark_reported` tool, after it has spoken the result.
+  Until `reported_at` is stamped, the task rides at the top of the next call (on the phone,
+  from the moment the PIN is accepted). Exactly one thing stamps it: the voice model's
+  `mark_reported` tool, after it has spoken the result.
   Do not stamp it from a delivery path — hearing something twice is recoverable, never
   hearing it is not.
 - **The memory.** `jarvis/continuity/memory.py` owns `data_dir/memory.md` outright — the
-  file API *and* the writer. It subscribes to `SessionEnded` and dispatches a subagent
-  (`prompts/memory_update.md`) that folds the call into the file; the next call reads it
-  back through `briefing`. Its headings are nested one level when embedded, so its
-  sections cannot be mistaken for instructions.
+  file API *and* the writer. It subscribes to `SessionEnded` and, for an authorized call only,
+  dispatches a subagent (`prompts/memory_update.md`) that folds the call into the file; the
+  next call reads it back through `briefing`. Its headings are nested one level when
+  embedded, so its sections cannot be mistaken for instructions.
 - **`recall`.** `jarvis/continuity/recall.py` searches past transcripts and past task
   summaries on demand. Matching stays literal on purpose: the query is speech that
   transcription has already mangled once, and a fuzzy hit gets read out as if it were fact.
+  It needs the PIN, redacts it, and skips calls that never gave it.
 
 `Task.internal` marks work Jarvis asked for itself (today: the memory update). It hides the
 task from the spoken lists, the digest, `recall`, the daily cap and the notifier — and
@@ -174,8 +196,8 @@ Four rulings hold it up, and none of them is a preference:
 Pending is a fact to be re-checked, never assumed: the hook is *not* killed when he answers
 at the keyboard, so `PostToolUse`/`PermissionDenied`/`Stop`/`SessionEnd` cancel the
 escalation, and pending is re-read before dialling and again before any verdict is applied.
-A prompt that arrives while he is already on the phone is announced into that call rather
-than ringing him a second time. `uv run jarvis approvals` is the audit trail and
+A prompt that arrives while he is already on the phone, past the PIN, is announced into that
+call rather than ringing him a second time. `uv run jarvis approvals` is the audit trail and
 `--disable` is the kill switch, which is a file so it works without a restart.
 
 ## Billing reads, and only reads

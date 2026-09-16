@@ -40,6 +40,7 @@ from pathlib import Path
 from jarvis.approvals.models import ApprovalRequest, Kind, Outcome, Verdict, input_digest
 from jarvis.approvals.policy import classify
 from jarvis.config import Settings
+from jarvis.notify.deliver import announce_to_live_sessions
 from jarvis.notify.twilio_out import TwilioOut, stream_twiml
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore
@@ -390,13 +391,14 @@ class ApprovalBroker:
     async def _escalate(self, request: ApprovalRequest) -> None:
         """Announce it into a call already in progress, or place one."""
         waited = self._waited(request)
-        live = self._sessions.live()
-        if live:
+        line = REQUEST_LINE.format(id=request.id, summary=request.summary, menu=request.menu())
+        announced = await announce_to_live_sessions(
+            self._sessions, ANNOUNCE_TEXT.format(waited=waited, line=line)
+        )
+        if announced.heard:
             # He is already on the phone. A second call about the same thing is the exact
-            # duplicate this feature has to avoid, so it goes into the call he is on.
-            line = REQUEST_LINE.format(id=request.id, summary=request.summary, menu=request.menu())
-            for session in live:
-                await session.announce(ANNOUNCE_TEXT.format(waited=waited, line=line))
+            # duplicate this feature has to avoid, so it goes into the call he is on. Only a
+            # call that took it counts: one that has not given the PIN refuses it.
             request.escalated_at = self._now()
             request.escalated_via = "announce"
             self._audit("escalated", request, via="announce")

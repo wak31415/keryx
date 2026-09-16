@@ -10,12 +10,14 @@ makes. It goes through the Responses API because a Realtime session has no hoste
 tool of its own.
 """
 
+from jarvis.config import Settings
 from jarvis.integrations.slack import SlackSender
 from jarvis.integrations.web_search import WebSearcher
 from jarvis.tools.builtin_common import (
     SEARCH_FAILED_MESSAGE,
     SLACK_FAILED_MESSAGE,
     _text,
+    pin_gate,
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
 
@@ -23,6 +25,7 @@ from jarvis.tools.registry import ToolContext, ToolRegistry
 def register_comms_tools(
     registry: ToolRegistry,
     *,
+    settings: Settings,
     slack: SlackSender | None = None,
     searcher: WebSearcher | None = None,
 ) -> None:
@@ -30,6 +33,9 @@ def register_comms_tools(
     # --- send_to_slack -----------------------------------------------------
 
     async def send_to_slack(ctx: ToolContext, arguments: dict) -> dict:
+        # Not before the PIN: it posts as his own bot, into the channel he trusts.
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            return refusal
         message = _text(arguments, "message")
         if not message:
             return {"error": "message is required: say what to send"}

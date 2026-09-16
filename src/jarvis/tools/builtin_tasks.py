@@ -1,8 +1,10 @@
 """Everything about tasks: dispatching one, watching it, and reaching back into it.
 
-Ten tools, and the PIN gate is on three of them — `dispatch_task`, `send_followup` and
-`cancel_task` — because reaching into a task that is already running opens the very same
-`bypassPermissions` subagent that dispatching one would.
+Ten tools, and on the phone every one of them needs the PIN. `dispatch_task`,
+`send_followup` and `cancel_task` because reaching into a task opens the very same
+`bypassPermissions` subagent that dispatching one would; the rest because they read his
+tasks and his past calls, or leave something behind that outlives the call — and caller id
+is spoofable, so an allowed number proves nothing.
 
 `mark_reported` is the load-bearing one and the easiest to mistake for bookkeeping. It is
 the *only* thing that stamps `Task.reported_at`, and `reported_at` is the only record that
@@ -29,7 +31,6 @@ from jarvis.tools.builtin_common import (
     _TASK_ID_PROPERTY,
     _TASK_ID_SCHEMA,
     CALLBACK_ALREADY_DONE_MESSAGE,
-    CALLBACK_NUMBER_MESSAGE,
     CALLBACK_SET_MESSAGE,
     DEFAULT_TASK_LIMIT,
     MAX_TASK_LIMIT,
@@ -46,7 +47,6 @@ from jarvis.tools.builtin_common import (
     _task_ids,
     _text,
     get_task,
-    log,
     pin_gate,
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
@@ -145,6 +145,8 @@ def register_task_tools(
     # --- list_tasks --------------------------------------------------------
 
     async def list_tasks(ctx: ToolContext, arguments: dict) -> dict:
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            return refusal
         status = (_text(arguments, "status") or "all").lower()
         if status not in _STATUS_FILTERS:
             return {"error": f"unknown status {status!r}; use running, done, failed or all"}
@@ -190,6 +192,8 @@ def register_task_tools(
     # --- get_task_status / get_task_result ---------------------------------
 
     async def get_task_status(ctx: ToolContext, arguments: dict) -> dict:
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            return refusal
         task = await get_task(manager, arguments)
         if isinstance(task, dict):
             return task
@@ -212,6 +216,8 @@ def register_task_tools(
     )
 
     async def get_task_result(ctx: ToolContext, arguments: dict) -> dict:
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            return refusal
         task = await get_task(manager, arguments)
         if isinstance(task, dict):
             return task
@@ -237,8 +243,13 @@ def register_task_tools(
     # --- mark_reported -----------------------------------------------------
 
     async def mark_reported(ctx: ToolContext, arguments: dict) -> dict:
-        raw = arguments.get("task_ids")
-        ids = _task_ids(raw)
+        ids = _task_ids(arguments.get("task_ids"))
+        # Stamping a task takes it out of his next call's digest, so not before the PIN —
+        # except the task a call Jarvis placed was about, whose result opened the call.
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            ids = [task_id for task_id in ids if task_id == ctx.session.opening_task_id]
+            if not ids:
+                return refusal
         if not ids:
             return {"error": "task_ids must be a list of task numbers, for example [3, 4]"}
         reported = await manager.mark_reported(ids)
@@ -276,6 +287,8 @@ def register_task_tools(
     # --- recall ------------------------------------------------------------
 
     async def recall(ctx: ToolContext, arguments: dict) -> dict:
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            return refusal
         query = _text(arguments, "query")
         if not query:
             return {"error": "query is required: say what to look for"}
@@ -318,12 +331,11 @@ def register_task_tools(
     # --- send_followup / cancel_task ---------------------------------------
 
     async def send_followup(ctx: ToolContext, arguments: dict) -> dict:
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            return refusal
         task = await get_task(manager, arguments)
         if isinstance(task, dict):
             return task
-        refusal = pin_gate(ctx, settings)
-        if refusal is not None:
-            return refusal
         message = _text(arguments, "message")
         if not message:
             return {"error": "message is required: say what to add to the task"}
@@ -355,12 +367,11 @@ def register_task_tools(
     )
 
     async def cancel_task(ctx: ToolContext, arguments: dict) -> dict:
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            return refusal
         task = await get_task(manager, arguments)
         if isinstance(task, dict):
             return task
-        refusal = pin_gate(ctx, settings)
-        if refusal is not None:
-            return refusal
         try:
             cancelled = await manager.cancel(task.id)
         except KeyError:
@@ -379,6 +390,8 @@ def register_task_tools(
     # --- list_projects -----------------------------------------------------
 
     async def list_projects(ctx: ToolContext, arguments: dict) -> dict:
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            return refusal
         return {"projects": [name for name, _path in manager.list_projects()]}
 
     registry.register(
@@ -392,6 +405,10 @@ def register_task_tools(
     # --- request_callback --------------------------------------------------
 
     async def request_callback(ctx: ToolContext, arguments: dict) -> dict:
+        # Not before the PIN: its note opens his real call-back, and the call goes out on
+        # his account.
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            return refusal
         task = await get_task(manager, arguments)
         if isinstance(task, dict):
             return task
@@ -408,13 +425,6 @@ def register_task_tools(
             return {"error": "no number to call back on; ask the user for one"}
         if not _E164_RE.match(number):
             return {"error": f"{number!r} is not a phone number I can call back"}
-        # An outbound call is the one thing an unauthorized caller could aim at a stranger,
-        # so without the PIN it may only go back to a number we already trust (spec §5).
-        if ctx.channel == "phone" and not ctx.authorized:
-            known = {ctx.caller, settings.owner_number, *settings.allowed_callers}
-            if number not in known:
-                log.warning("session %s asked to call an unknown number", ctx.session.session_id)
-                return {"status": "refused", "message": CALLBACK_NUMBER_MESSAGE}
 
         await manager.request_callback(task.id, number, _text(arguments, "note") or None)
         return {
@@ -430,7 +440,7 @@ def register_task_tools(
         "conversation is winding down — do not wait to be asked. It returns at once, so do "
         "not say you are setting it up first: once he says yes, call it and then tell him "
         "in one clause that you will ring him. Without a number it uses the number they are "
-        "calling from, which is the only number an unauthorized caller may name.",
+        "calling from. On the phone, this needs the PIN too.",
         {
             "type": "object",
             "properties": {

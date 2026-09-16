@@ -129,7 +129,7 @@ def build_app_state(settings: Settings) -> AppState:
         # disk: which clusters exist is one machine's setup, never a default.
         cluster=build_cluster_stats(settings),
         restarter=restart,
-        recaller=Recaller(settings.data_dir, manager),
+        recaller=Recaller(settings.data_dir, manager, pin=settings.pin),
         approvals=approvals,
     )
 

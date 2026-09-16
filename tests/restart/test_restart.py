@@ -963,6 +963,8 @@ async def test_the_call_back_names_the_task_the_restart_loaded(harness):
     info = harness.tokens.redeem(parameters["token"])
     assert info is not None
     assert "task 12" in info.extra["opening_context"]
+    # So `mark_reported` may stamp it before the PIN: the call opened with its result.
+    assert info.extra["task_id"] == 12
 
 
 async def test_a_restart_records_where_the_logs_had_got_to(tmp_path):

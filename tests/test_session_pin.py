@@ -448,7 +448,7 @@ def lockouts(bus):
 
 
 def another_phone() -> FakeTransport:
-    return FakeTransport(channel="phone", caller="+491555555555", audio_format="audio/pcmu")
+    return FakeTransport(channel="phone", caller="+15555555555", audio_format="audio/pcmu")
 
 
 async def test_wrong_pins_are_counted_across_calls(make_session, phone, provider, guard, ended):

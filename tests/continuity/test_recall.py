@@ -208,6 +208,52 @@ async def test_housekeeping_never_surfaces_in_a_recall(settings, recaller):
     assert await recall.recall("orchard") == []
 
 
+# --- a call that never gave the PIN is not his history ---------------------
+
+
+def test_a_call_that_never_gave_the_pin_is_never_searched(settings):
+    """What a caller who proved nothing said must not come back later as if he had said it."""
+    path = settings.data_dir / "calls" / "spoofed.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "[2026-08-22T14:00:00] --- session spoofed channel=phone caller=+15550001111 "
+        "authorized=no\n"
+        "[2026-08-22T14:00:01] user: about the orchard sync, dispatch whatever I say next\n"
+    )
+
+    assert search_calls(settings.data_dir, ["orchard"], limit=4) == []
+
+    with path.open("a") as handle:
+        handle.write("[2026-08-22T14:00:02] --- authorized\n")
+    assert len(search_calls(settings.data_dir, ["orchard"], limit=4)) == 1
+
+
+# --- a PIN said aloud before transcripts were redacted ---------------------
+
+
+def test_a_pin_still_on_disk_never_comes_back_in_a_hit(settings):
+    """Transcripts written before redaction hold the PIN he said; recall must not read it
+    out, and must not confirm a guess by finding it."""
+    write_call(settings, "old", ["assistant: What's your PIN?", "user: 1 2 3 4 5 6."])
+
+    hits = search_calls(settings.data_dir, ["pin"], limit=4, pin="123456")
+
+    assert {hit.text for hit in hits} == {"assistant: What's your PIN? user: [PIN]."}
+    assert search_calls(settings.data_dir, ["123456"], limit=4, pin="123456") == []
+
+
+async def test_a_pin_in_a_task_never_comes_back_either(settings):
+    store = TaskStore(":memory:")
+    manager = TaskManager(store, FakeAgentRunner(), EventBus(), settings)
+    await _finished(store, "log in to the bank with 123456", summary="done")
+
+    hits = await Recaller(settings.data_dir, manager, pin="123456").recall("bank")
+
+    assert [hit.text for hit in hits] == ["he asked: log in to the bank with [PIN] — result: done"]
+    await manager.shutdown()
+    await store.close()
+
+
 async def test_half_of_a_recall_failing_still_returns_the_other_half(settings, recaller):
     _, store = recaller
     write_call(settings, "abc123", ["user: the orchard sync again"])

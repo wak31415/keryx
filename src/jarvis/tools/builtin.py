@@ -6,11 +6,11 @@ cut down before it ever reaches a text-to-speech engine. Handlers never raise �
 problem comes back as `{"error": ...}` (or a `status` the model is told how to relay),
 so a bad task id is a sentence the assistant can say rather than a dropped call.
 
-The PIN gate guards every tool that can put a subagent to work — `dispatch_task`,
-`send_followup` and `cancel_task` — and `restart_service`, which can take the phone
-channel off the air: on the phone they are refused with
-`{"status": "pin_required"}` until the session is authorized. Every task is gated now
-that there is one kind of task, and it has the machine and the mailbox. The check reads
+The PIN gate guards every tool but five on the phone: they are refused with
+`{"status": "pin_required"}` until the session is authorized. Caller id is spoofable, so
+before the PIN nothing private is read out and nothing the caller says or does outlives
+the call; only `check_billing`, `cluster_stats`, `web_search`, `submit_pin` and
+`end_session` answer without it (`builtin_common` says why). The check reads
 `ctx.authorized` live, so a PIN entered on the keypad while the model was thinking is
 honoured on the very next call. The digits themselves never pass through here: the
 `submit_pin` tool hands whatever the caller said straight to the session, which is the
@@ -66,7 +66,7 @@ def register_builtin_tools(
     model's decision, and both its description and the system prompt confine that to the
     turns where the owner explicitly asked for something on Slack.
     """
-    register_comms_tools(registry, slack=slack, searcher=searcher)
+    register_comms_tools(registry, settings=settings, slack=slack, searcher=searcher)
     register_billing_tools(registry, billing=billing, cluster=cluster)
     register_task_tools(
         registry,

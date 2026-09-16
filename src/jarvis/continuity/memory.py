@@ -13,6 +13,12 @@ The cost is that it is a task like any other, so it is dispatched `internal=True
 `Task.internal` — which keeps it out of the spoken task lists, out of the daily cap and
 out of the notifier. It restricts nothing about what that subagent may do.
 
+Which is why it only ever runs for a call that was **authorized**: a local session, or a
+phone call that gave the PIN. Caller id is spoofable, and this subagent reads the
+transcript with a shell at its disposal, so the words of a caller who never gave the PIN
+would be instructions to that shell — and anything it wrote into `memory.md` would ride
+into the prompt of every call after. The PIN is the control, not a narrower tool set.
+
 Nothing here is allowed to break a call. The session has already ended by the time this
 runs, and every failure path ends in a log line.
 """
@@ -170,6 +176,9 @@ class MemoryWriter:
             log.exception("could not dispatch the memory update for session %s", event.session_id)
 
     async def _update(self, event: SessionEnded) -> None:
+        if not event.authorized:
+            log.info("session %s never gave the PIN; nothing of it is kept", event.session_id)
+            return
         path = transcript_path(self._settings.data_dir, event.session_id)
         spoken = count_spoken_lines(path)
         if spoken < MIN_SPOKEN_LINES:

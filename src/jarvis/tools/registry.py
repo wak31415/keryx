@@ -33,9 +33,9 @@ class ToolContext:
     """What a handler gets to know about the session it was called from.
 
     `session` is duck-typed (`.authorized`, `.channel`, `.caller`, `.session_id`,
-    `.request_end()`, `.authorize()`) so tools can be tested with a stub. `authorized` is
-    a property rather than a snapshot: a PIN entered *during* a long-running tool call
-    must be visible to the next check.
+    `.opening_task_id`, `.request_end()`, `.authorize()`) so tools can be tested with a
+    stub. `authorized` is a property rather than a snapshot: a PIN entered *during* a
+    long-running tool call must be visible to the next check.
     """
 
     session: "VoiceSession"

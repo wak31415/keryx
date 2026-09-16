@@ -220,6 +220,19 @@ async def test_a_phone_session_that_refuses_the_announcement_still_gets_the_sms(
     assert harness.twilio.sms[0][0] == OWNER
 
 
+async def test_a_call_that_has_not_given_the_pin_does_not_cost_him_the_call_back(harness):
+    """An unauthorized phone session refuses the announcement, and so it is no delivery:
+    he still gets the call-back he asked for, rather than the caller getting his result."""
+    unauthorized = harness.session(channel="phone", accepts=False)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task, "the balance is 1,234 pounds")
+
+    assert unauthorized.announced == []
+    assert (await harness.row(task)).announced is False
+    assert [call["to"] for call in harness.twilio.calls] == [CALLER]
+
+
 async def test_only_the_local_channel_hearing_it_does_not_replace_the_sms(harness):
     session = harness.session(channel="local")
     task = await harness.task()

@@ -44,6 +44,7 @@ from typing import Protocol
 from jarvis.audio.util import ms_for_bytes
 from jarvis.config import Settings, secure_dir, secure_file
 from jarvis.continuity.briefing import Briefing, BriefingSource
+from jarvis.continuity.transcripts import AUTHORIZED_MARKER, redact_pin, session_header
 from jarvis.events import EventBus, PinLockedOut, SessionEnded, SessionStarted
 from jarvis.logging_util import mask_number
 from jarvis.pin_guard import PinGuard
@@ -147,6 +148,7 @@ class VoiceSession:
         briefer: BriefingSource | None = None,
         keypad: Keypad | None = None,
         pin_guard: PinGuard | None = None,
+        opening_task_id: int | None = None,
     ) -> None:
         self._transport = transport
         self._provider = provider
@@ -167,6 +169,10 @@ class VoiceSession:
         self.channel: str = transport.channel
         self.caller: str | None = transport.caller
         self.authorized = authorized
+        #: The task whose result `opening_context` carries, on a call Jarvis placed about it
+        #: (a call-back, a restart's confirmation). Set only from a token Jarvis minted, and
+        #: the one task `mark_reported` may stamp before the PIN: the call opened by saying it.
+        self.opening_task_id = opening_task_id
 
         self._state = SessionState.NEW
         self._finish_now = asyncio.Event()
@@ -201,6 +207,16 @@ class VoiceSession:
         return self._state is SessionState.RUNNING
 
     @property
+    def trusted(self) -> bool:
+        """True when what is private may reach this session: always locally, after the PIN
+        on the phone.
+
+        Caller id is spoofable, so an allowed number proves nothing. Until this is true a
+        call is not briefed (memory, unheard results) and is announced nothing.
+        """
+        return self.channel != "phone" or self.authorized
+
+    @property
     def response_active(self) -> bool:
         """True while the model is producing a response."""
         return self._response_active
@@ -225,7 +241,7 @@ class VoiceSession:
         if self._registry is not None:
             self._registry.add(self)
         self._append_transcript(
-            f"--- session {self.session_id} channel={self.channel} caller={self.caller or 'none'}"
+            session_header(self.session_id, self.channel, self.caller, authorized=self.authorized)
         )
         await self._bus.publish(SessionStarted(self.session_id, self.channel, self.caller))
         log.info(
@@ -262,8 +278,14 @@ class VoiceSession:
             await self._teardown()
 
     async def announce(self, text: str) -> bool:
-        """Speak an out-of-band message (a finished task, say). False if not live."""
-        if not self.is_live:
+        """Speak an out-of-band message (a finished task, say). False if not live or trusted.
+
+        An untrusted session is a phone call that has not given the PIN. What is announced
+        is private — a task's result, a command waiting on his screen — and the False is
+        what stops that call counting as having told him, so the call-back or the ring
+        that would otherwise have been skipped still goes out.
+        """
+        if not self.is_live or not self.trusted:
             return False
         log.info("session %s announcing: %s", self.session_id, text)
         return await self._safe_call(
@@ -287,6 +309,9 @@ class VoiceSession:
         """Mark the caller as authorized for destructive work (PIN accepted)."""
         self.authorized = True
         log.info("session %s authorized", self.session_id)
+        if self._state is not SessionState.NEW:
+            # The header said `authorized=no`; without this, `recall` never reads the call.
+            self._append_transcript(AUTHORIZED_MARKER)
 
     async def submit_pin(self, pin: str) -> dict:
         """Check a PIN and authorize the session if it matches (spec §3.3, §5).
@@ -319,6 +344,7 @@ class VoiceSession:
         candidate = (pin or "").strip()
         if candidate and hmac.compare_digest(candidate.encode(), expected.encode()):
             self.authorize()
+            await self._brief_after_pin()
             return {"status": "authorized"}
 
         self._pin_attempts += 1
@@ -369,16 +395,37 @@ class VoiceSession:
     async def _load_briefing(self) -> Briefing:
         """What this session opens knowing: the unreported tasks and the memory.
 
-        A briefing that cannot be built is not a reason to drop a call — `Briefer` already
-        swallows its own failures, and this catches anything a substitute source raises.
+        Nothing, for a phone call that has not given the PIN — `_brief_after_pin` fetches it
+        then. A briefing that cannot be built is not a reason to drop a call — `Briefer`
+        already swallows its own failures, and this catches anything a substitute raises.
         """
-        if self._briefer is None:
+        if self._briefer is None or not self.trusted:
             return Briefing()
         try:
             return await self._briefer.build()
         except Exception:
             log.exception("session %s could not build its briefing", self.session_id)
             return Briefing()
+
+    async def _brief_after_pin(self) -> None:
+        """Hand a call what the PIN was holding back: the full prompt, and a nudge if due.
+
+        The nudge goes in without a response of its own. Whatever answers the PIN — the tool
+        result for a spoken one, the accepted note for a keyed one — is the turn that comes
+        next and it now sees both, so the PIN still costs one turn. Before `run()` has
+        connected there is nothing to update: `run()` builds the briefing itself, and the
+        session is trusted by then. A send that fails is swallowed like any other; the PIN
+        still counts.
+        """
+        if self._state is not SessionState.RUNNING:
+            return
+        self._briefing = await self._load_briefing()
+        await self._safe_call(
+            self._provider.update_instructions, self._build_config().instructions
+        )
+        nudge = self._briefing.after_pin_nudge()
+        if nudge:
+            await self._safe_call(self._provider.inject_message, nudge, respond=False)
 
     def _opening_message(self) -> str:
         """The message that opens the session, plus the nudge about anything unreported.
@@ -401,6 +448,7 @@ class VoiceSession:
                 pending=self._briefing.pending,
                 memory=self._briefing.memory,
                 tool_names={schema["name"] for schema in self._tools.schemas()},
+                withheld=not self.trusted,
             ),
             tools=self._tools.schemas(),
             voice=self._settings.openai_voice,
@@ -703,7 +751,11 @@ class VoiceSession:
         await self._safe_call(self._provider.close)
         if self._registry is not None:
             self._registry.remove(self)
-        await self._bus.publish(SessionEnded(self.session_id, self.channel, self.caller, reason))
+        await self._bus.publish(
+            SessionEnded(
+                self.session_id, self.channel, self.caller, reason, authorized=self.authorized
+            )
+        )
         self._append_transcript(f"--- session ended ({reason})")
         log.info("session %s ended (%s)", self.session_id, reason)
 
@@ -763,6 +815,7 @@ class VoiceSession:
         transcripts stamped with the time alone still parse — recall dates those from the
         file's modification time instead.
         """
+        text = redact_pin(text, self._settings.pin)  # said aloud, it is still never kept
         line = f"[{datetime.now().isoformat(timespec='seconds')}] {text}\n"
         try:
             secure_dir(self.transcript_path.parent)
