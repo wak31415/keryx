@@ -69,6 +69,7 @@ def test_help_lists_the_commands():
         "doctor",
         "setup-google",
         "restart",
+        "init",
     ):
         assert command in result.output
 

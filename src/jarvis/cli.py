@@ -29,6 +29,7 @@ from jarvis.events import EventBus
 from jarvis.google_setup import GoogleSetupError, run_google_setup
 from jarvis.local_runner import LocalRunner
 from jarvis.logging_util import mask_number
+from jarvis.onboarding import read_facts, run_init
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.restart.health import health_probe, wait_until_serving
 from jarvis.restart.logscan import errors_since
@@ -694,6 +695,61 @@ def _echo_report(path: Path) -> None:
 
 
 # --- memory ----------------------------------------------------------------
+
+
+@app.command()
+def init(
+    name: Annotated[
+        str | None, typer.Option("--name", help="What Jarvis should call you (OWNER_NAME).")
+    ] = None,
+    fact: Annotated[
+        list[str] | None,
+        typer.Option("--fact", help="Something Jarvis should know about you; repeatable."),
+    ] = None,
+    from_file: Annotated[
+        str | None,
+        typer.Option("--from", help="Read the facts from a file, one per line; - is stdin."),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Replace a memory that already has something in it.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Ask nothing: write what was given.")
+    ] = False,
+) -> None:
+    """Tell Jarvis whom it works for before its first call: a name and a first memory.
+
+    Writes `memory.md` and nothing else — the `OWNER_NAME=` line for `.env` is printed for you
+    to add — and ends with what every call will carry.
+    """
+    if from_file == "-" and not yes:
+        typer.echo(
+            "--from - reads the facts from stdin, which leaves nothing to answer questions "
+            "with: add --yes",
+            err=True,
+        )
+        raise typer.Exit(2)
+    settings = _configure_readonly()
+    facts: list[str] | None = None
+    if fact or from_file is not None:
+        facts = list(fact or [])
+        try:
+            facts += read_facts(from_file) if from_file is not None else []
+        except OSError as exc:
+            typer.echo(f"could not read {from_file}: {exc}", err=True)
+            raise typer.Exit(2) from None
+    code = run_init(
+        settings,
+        name=name,
+        facts=facts,
+        force=force,
+        yes=yes,
+        echo=typer.echo,
+        ask=lambda text: typer.prompt(text, default="", show_default=False),
+        confirm=lambda text: typer.confirm(text, default=True),
+    )
+    if code:
+        raise typer.Exit(code)
 
 
 @app.command()
