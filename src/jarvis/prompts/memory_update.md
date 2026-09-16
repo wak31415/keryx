@@ -23,11 +23,7 @@ that "the thing we talked about yesterday" resolves to something.
 Keep this exact structure:
 
 ```
-# What Jarvis knows about {owner}
-
-## Standing facts
-## Ongoing threads
-## Recent calls
+{structure}
 ```
 
 - **Standing facts** — things that stay true: how he works, what he cares about, people

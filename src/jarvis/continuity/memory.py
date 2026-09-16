@@ -4,7 +4,8 @@ The provider keeps no history across sockets, so every call opens blank unless s
 writes down what happened in the last one. That is this: on `SessionEnded`, Jarvis
 dispatches a subagent to itself whose whole job is to fold the call that just ended into
 `data_dir/memory.md`, which `jarvis.continuity.briefing` reads back into the next call's
-prompt.
+prompt. The only other writer is `jarvis init`, which `seed_memory`s a first draft before
+any call has happened; `memory_skeleton` is the structure the two share.
 
 It is a real subagent rather than a summarising API call because the memory is worth more
 when whoever writes it can go and look: open the report of the task that call dispatched,
@@ -24,10 +25,12 @@ runs, and every failure path ends in a log line.
 """
 
 import logging
+import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from jarvis.config import Settings, secure_file
+from jarvis.config import Settings, secure_dir, secure_file
 from jarvis.continuity.transcripts import transcript_path
 from jarvis.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
 from jarvis.prompts import render_prompt
@@ -63,6 +66,13 @@ MIN_SPOKEN_LINES = 2
 _NO_TASKS = "none"
 _SPOKEN_PREFIXES = ("user:", "assistant:")
 
+#: The memory's sections, in the order they are written: what stays true first, what
+#: happened lately last — which is why both trims cut from the end. `memory_skeleton` is the
+#: only thing that reads this.
+_SECTIONS = ("Standing facts", "Ongoing threads", "Recent calls")
+#: A bullet somebody typed in front of a fact, which `compose_memory` supplies itself.
+_BULLET = re.compile(r"^(?:[-*•]\s+)+")
+
 
 def count_spoken_lines(path: Path) -> int:
     """How many `user:`/`assistant:` lines a transcript has. 0 when it cannot be read."""
@@ -88,6 +98,61 @@ def describe_tasks(tasks: list["Task"]) -> str:
 def memory_path(data_dir: Path) -> Path:
     """Where the rolling memory lives."""
     return data_dir / MEMORY_FILE
+
+
+def memory_skeleton(owner: str) -> str:
+    """The memory document's structure, and the one place it is written down.
+
+    The update prompt shows it to the subagent that keeps the file, and `compose_memory`
+    fills it in for a first memory typed at `jarvis init`: a section renamed here is renamed
+    for both.
+    """
+    headings = "\n".join(f"## {section}" for section in _SECTIONS)
+    return f"# What Jarvis knows about {owner}\n\n{headings}"
+
+
+def compose_memory(owner: str, facts: Iterable[str]) -> str:
+    """A first memory document: the skeleton, with `facts` as its standing facts.
+
+    Each fact becomes one bullet on one line, whatever bullet or line breaks it arrived
+    with, and a blank one is dropped.
+    """
+    cleaned = (_BULLET.sub("", " ".join(fact.split())) for fact in facts)
+    bullets = "\n".join(f"- {fact}" for fact in cleaned if fact)
+    standing = f"## {_SECTIONS[0]}"
+    blocks: list[str] = []
+    for line in memory_skeleton(owner).splitlines():
+        if line.strip():
+            blocks.append(line)
+        if line == standing and bullets:
+            blocks.append(bullets)
+    return "\n\n".join(blocks) + "\n"
+
+
+def seed_memory(
+    data_dir: Path, *, owner: str, facts: Iterable[str], force: bool = False
+) -> bool:
+    """Write a first `memory.md` from `facts`. True when written.
+
+    False, and nothing touched, when there is already a memory with anything in it and
+    `force` is not set: what calls have written down is worth more than a first draft.
+    Raises `ValueError` when the document is longer than `MAX_MEMORY_CHARS`, which is what a
+    call reads — somebody is at the keyboard to shorten it, where a trim would quietly lose
+    the end of it on every call.
+    """
+    if not force and read_memory(data_dir):
+        return False
+    text = compose_memory(owner, facts)
+    if len(text) > MAX_MEMORY_CHARS:
+        raise ValueError(
+            f"that memory is {len(text)} characters, and a call reads {MAX_MEMORY_CHARS}"
+        )
+    secure_dir(data_dir)
+    path = memory_path(data_dir)
+    path.write_text(text, encoding="utf-8")
+    secure_file(path)
+    log.info("seeded %s with %d characters", path, len(text))
+    return True
 
 
 def trim_memory(data_dir: Path, *, max_chars: int = MAX_MEMORY_FILE_CHARS) -> bool:
@@ -192,7 +257,7 @@ class MemoryWriter:
         dispatched = await self._manager.tasks_for_session(event.session_id)
         prompt = render_prompt(
             MEMORY_PROMPT,
-            owner=self._settings.owner_label,
+            structure=memory_skeleton(self._settings.owner_label),
             transcript_path=str(path),
             memory_path=str(memory_path(self._settings.data_dir)),
             max_chars=str(MAX_MEMORY_CHARS),

@@ -276,6 +276,8 @@ def test_the_memory_prompt_is_packaged_and_fully_placeholdered():
 
     assert "{transcript_path}" in text
     assert "{memory_path}" in text
+    assert "{structure}" in text
+    assert "## Standing facts" not in text  # continuity.memory.memory_skeleton owns those
     assert "Never record a PIN" in text
 
 
