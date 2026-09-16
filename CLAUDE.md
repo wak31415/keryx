@@ -112,7 +112,11 @@ per `jarvis serve`) finds it on the far side and rings back with a status summar
 half may interrupt a call — a restart asked for during one waits for the line to clear, and
 the confirmation is announced or texted rather than dialled into a live session. Keep it
 that way, and keep every failure path landing somewhere a human can find it
-(`jarvis restart --status`).
+(`jarvis restart --status`). Whether a restart may be attempted at all is a fact about the
+*process*: `SERVICE_MANAGER=auto` resolves from its own cgroup (systemd) or
+`XPC_SERVICE_NAME` (launchd), never from `systemctl` being on PATH, so a hand-started copy
+refuses rather than restart the installed one. Only `jarvis restart` and `doctor`, which run
+outside the unit, ask whether it is installed.
 
 "Did it load the change" is answered from `data_dir/running-version`, stamped by `mark_running()`
 at the top of `jarvis serve` — *not* from `current_version()` at request time. The checkout moves
