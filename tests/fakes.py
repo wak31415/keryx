@@ -284,5 +284,6 @@ class FakeVoiceSession:
     async def announce(self, text: str) -> bool:
         if self.error is not None:
             raise self.error
-        self.announced.append(text)
+        if self.accepts:
+            self.announced.append(text)
         return self.accepts

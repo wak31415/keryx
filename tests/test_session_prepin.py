@@ -246,6 +246,30 @@ async def test_a_briefing_that_cannot_be_sent_does_not_cost_the_pin(make_session
         provider.send_error = None
 
 
+# --- nothing is announced into it ------------------------------------------
+
+
+async def test_nothing_is_announced_into_a_call_before_the_pin(make_session, phone, provider):
+    """And False, so the notifier and the broker do not count it as having told him."""
+    session = make_session(phone, provider)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert await session.announce("Task 41 finished: 1,234 pounds") is False
+        assert [text for text, *_ in provider.injected] == [OPENING_MESSAGE]
+
+        await session.submit_pin(PIN)
+        assert await session.announce("Task 41 finished: 1,234 pounds") is True
+
+
+async def test_a_local_session_is_announced_to_as_before(make_session, local, provider):
+    session = make_session(local, provider, authorized=True)
+
+    async with running(session):
+        assert await session.announce("Task 41 finished.") is True
+
+
 # --- a call Jarvis placed itself --------------------------------------------
 
 

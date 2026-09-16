@@ -265,8 +265,14 @@ class VoiceSession:
             await self._teardown()
 
     async def announce(self, text: str) -> bool:
-        """Speak an out-of-band message (a finished task, say). False if not live."""
-        if not self.is_live:
+        """Speak an out-of-band message (a finished task, say). False if not live or trusted.
+
+        An untrusted session is a phone call that has not given the PIN. What is announced
+        is private — a task's result, a command waiting on his screen — and the False is
+        what stops that call counting as having told him, so the call-back or the ring
+        that would otherwise have been skipped still goes out.
+        """
+        if not self.is_live or not self.trusted:
             return False
         log.info("session %s announcing: %s", self.session_id, text)
         return await self._safe_call(
