@@ -16,6 +16,9 @@ Realtime API and Claude Agent SDK subagents.
 - Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N] [--internal]`,
   `uv run jarvis tasks show <id>` (the `TOLD` column is `NO` until Jarvis has said it)
 - Read what Jarvis remembers between calls: `uv run jarvis memory` (`--path` for the file)
+- Start that memory before any call has: `uv run jarvis init [--name NAME] [--fact TEXT]…
+  [--from FILE|-] [--force] [--yes]` (writes `memory.md` only, never `.env`; prints the
+  `OWNER_NAME=` line and what every call will carry)
 - Delete transcripts and finished task rows: `uv run jarvis forget [--older-than N]`
   (`--transcripts-only` / `--tasks-only` / `--yes`)
 - Restart the service: `uv run jarvis restart [--reason …] [--force] [--no-callback]`
@@ -29,9 +32,9 @@ Realtime API and Claude Agent SDK subagents.
 
 Source lives under `src/jarvis/` (installable package, `src/` layout). Tests
 live under `tests/`, mirroring the package structure. `cli.py` stays argument
-parsing plus wiring: the `doctor` checks live in `jarvis/doctor.py` and the
-Google OAuth bootstrap in `jarvis/google_setup.py`. Service templates are in
-`ops/systemd/` (Linux) and `ops/launchd/` (macOS), rendered by the matching
+parsing plus wiring: the `doctor` checks live in `jarvis/doctor.py`, the `init` flow in
+`jarvis/onboarding.py` and the Google OAuth bootstrap in `jarvis/google_setup.py`. Service
+templates are in `ops/systemd/` (Linux) and `ops/launchd/` (macOS), rendered by the matching
 `scripts/install-*.sh`; `scripts/lib.sh` holds the scaffolding those scripts share
 (argument parsing, the env-file and PATH checks, `render`), so an installer is only
 its platform-specific half.
@@ -108,7 +111,9 @@ Jarvis knows at the top of a call is assembled every time by
   file API *and* the writer. It subscribes to `SessionEnded` and, for an authorized call only,
   dispatches a subagent (`prompts/memory_update.md`) that folds the call into the file; the
   next call reads it back through `briefing`. Its headings are nested one level when
-  embedded, so its sections cannot be mistaken for instructions.
+  embedded, so its sections cannot be mistaken for instructions. `memory_skeleton(owner)` is
+  the only place its sections are written down — the update prompt renders it, and
+  `seed_memory` (behind `jarvis init`) fills it; never restate the structure elsewhere.
 - **`recall`.** `jarvis/continuity/recall.py` searches past transcripts and past task
   summaries on demand. Matching stays literal on purpose: the query is speech that
   transcription has already mangled once, and a fuzzy hit gets read out as if it were fact.

@@ -270,12 +270,14 @@ cd jarvis-voice-agent
 uv sync
 cp .env.example .env      # then fill it in (see the table below)
 uv run jarvis download-models   # macOS only: fetches the openWakeWord "hey jarvis" model
+uv run jarvis init              # what to call you, and a first memory (see below)
 uv run jarvis doctor            # tells you what is still missing
 ```
 
 `uv sync` builds a Python 3.12 environment from `uv.lock` — nothing here is installed from
-a package index. `jarvis doctor` is safe to run before anything is configured; that is what
-it is for, and it never prints a secret.
+a package index. `jarvis init` writes one file, `DATA_DIR/memory.md`, and never touches
+`.env`: it prints the `OWNER_NAME=` line for you to add. `jarvis doctor` is safe to run
+before anything is configured; that is what it is for, and it never prints a secret.
 
 Optional, and only if you use Claude Code on this machine:
 `scripts/install-claude-hook.sh` wires up [the approval bridge](#the-approval-bridge), so a
@@ -297,12 +299,6 @@ Every setting is an environment variable, read from `.env` in the working direct
 | `PUBLIC_HOST` | the tunnel hostname Twilio reaches, e.g. `jarvis.example.com` |
 | `PROJECTS` | JSON map of spoken project names to repo paths, e.g. `{"jarvis": "/Users/me/code/jarvis"}` |
 
-A project can also introduce itself: put a **`.jarvis-brief.md`** at its root and the voice
-prompt carries it verbatim — what the project is, what the jargon means out loud, what
-state it is in. Keep it short (it is capped at 1500 characters). Do not point this at a
-repository's `CLAUDE.md`: that is thousands of tokens of build detail written for a screen,
-the subagent reads it for itself anyway, and in a voice prompt it mostly drowns the persona.
-
 **If Jarvis cuts you off while you think**, that is turn detection. It defaults to
 `VAD_MODE=semantic` with `VAD_EAGERNESS=medium`, which waits on whether your sentence
 sounds finished rather than on a stopwatch. `VAD_EAGERNESS=low` is more patient still — it
@@ -310,12 +306,47 @@ was the default until it turned out to cost about two seconds of silence a turn.
 feels sluggish instead, `VAD_MODE=server` with `VAD_SILENCE_MS` (default 1200) goes back to
 a fixed timer you can tune directly.
 
-Useful optional ones: `HOST`/`PORT` (default `127.0.0.1:8080`), `DATA_DIR` (default
-`~/.jarvis`), `PROJECTS_ROOT` (every subdirectory is dispatchable by name), `SKILLS_DIR`
-(default `~/.claude/skills`, listed in the voice prompt), `SUBAGENT_MODEL` (default
-`claude-opus-5`), `LOG_LEVEL`, `SERVICE_MANAGER`/`SERVICE_UNIT` (which unit
-[`jarvis restart`](#restarting-it) asks to restart; `auto` finds it), and the guardrails
-below. The full table is spec §3.4.
+Useful optional ones: `OWNER_NAME` (what Jarvis calls you; blank is "the owner"),
+`HOST`/`PORT` (default `127.0.0.1:8080`), `DATA_DIR` (default `~/.jarvis`),
+`PROJECTS_ROOT` (default `~/projects`; every subdirectory is dispatchable by name, and a task
+with no project starts there — or, when it does not exist, in `DATA_DIR/workspace`, since
+Jarvis never creates it), `SKILLS_DIR` (default `~/.claude/skills`, listed in the voice
+prompt), `SUBAGENT_MODEL` (default `claude-opus-5`), `LOG_LEVEL`,
+`SERVICE_MANAGER`/`SERVICE_UNIT` (which unit [`jarvis restart`](#restarting-it) asks to
+restart; `auto` finds it), and the guardrails below. The full table is spec §3.4.
+
+### Teaching Jarvis about you
+
+A realtime session starts blank: the provider keeps nothing between calls, so Jarvis knows
+only what it is handed at the top of each one. What it knows about you lives in three
+places, and the third is read by the subagents rather than by the voice.
+
+- **Its memory**, `DATA_DIR/memory.md`. `jarvis init` asks what to call you and a few
+  things worth knowing — what you do, what keeps coming up, how you like to be answered —
+  shows you the document, and writes it (owner-only). `--name`, `--fact` (repeatable),
+  `--from FILE` (`-` for stdin) and `--yes` do the same without the questions, and
+  `--force` replaces a memory that already has something in it. After that it keeps itself:
+  when an authorized call ends, a subagent folds that call into the file. `jarvis memory`
+  prints it; it is plain markdown, and safe to edit by hand.
+- **Project briefs.** Put a **`.jarvis-brief.md`** at a project's root and the voice prompt
+  carries it verbatim — what the project is, what the jargon means out loud, what state it
+  is in. Keep it short: each is capped at 1,500 characters, and all of them together at
+  6,000 (a brief past that is left out whole, and the log says which). Do not point this at a
+  repository's `CLAUDE.md`: that is thousands of tokens of build detail written for a
+  screen, the subagent reads it for itself anyway, and in a voice prompt it mostly drowns
+  the persona.
+- **`~/.claude/CLAUDE.md`.** The subagents are Claude Code, and they read your user-level
+  `CLAUDE.md` like any other session. Where your repositories live, which machines you use,
+  how you want commits written: the subagents' map of your world belongs there, not in a
+  memory written for a voice.
+
+**The memory and the briefs are sent to the realtime provider on every call** — OpenAI,
+as part of the system prompt, re-sent each time; on the phone, from the moment the PIN is
+accepted. Put nothing in either that you would not send there. `jarvis init` ends by saying
+how many characters that comes to on this machine, along with the projects it found, which
+of them have a brief and how many skills are installed; `jarvis doctor` warns while the
+memory is empty or `PROJECTS_ROOT` does not exist, and says why `cluster_stats` or
+`send_to_slack` is not offered when one of them is not.
 
 ### Cloudflare tunnel (for the phone channel)
 
@@ -461,9 +492,10 @@ examples of what one looks like — see [Writing your own](#writing-your-own):
 
 **Anything that is work goes straight to Claude.** Jarvis does not repeat the request back
 for a yes, ask which file you mean, or argue about the approach — it dispatches and tells
-you it has. If you did not name a project the task starts in `PROJECTS_ROOT` and the
-subagent finds the repo itself; the voice prompt already knows every project name there,
-so "in the orchard repo" is enough. It also knows every skill installed under
+you it has. If you did not name a project the task starts in `PROJECTS_ROOT` (or in
+`DATA_DIR/workspace` when there is no such folder) and the subagent finds the repo itself;
+the voice prompt already knows every project name there, so "in the orchard repo" is
+enough. It also knows every skill installed under
 `SKILLS_DIR`, so work a skill covers — a sweep, a profile, a cluster job — is recognised
 without you naming the skill.
 
@@ -501,6 +533,7 @@ particular rules, and what leaving it unset means instead, is in
 uv run jarvis tasks list              # 20 most recent; TOLD is NO until Jarvis has said it
 uv run jarvis tasks show 12           # every field, plus the written report
 uv run jarvis memory                  # what Jarvis carries between calls
+uv run jarvis init                    # a first memory, before any call has written one
 uv run jarvis doctor                  # is this machine set up?
 uv run jarvis forget --older-than 30  # delete old transcripts and finished tasks
 ```

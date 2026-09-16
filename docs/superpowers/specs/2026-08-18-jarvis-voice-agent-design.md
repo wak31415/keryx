@@ -72,11 +72,11 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | Module | Responsibility |
 |---|---|
 | `config.py` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails |
-| `projects.py` | `discover_projects` (configured projects plus `projects_root` subdirectories, shared by `TaskManager` and the voice prompt) and `discover_briefs` (each project's own `.jarvis-brief.md`) |
+| `projects.py` | `discover_projects` (configured projects plus `projects_root` subdirectories, shared by `TaskManager` and the voice prompt) and `discover_briefs` (each project's own `.jarvis-brief.md`, `MAX_BRIEF_CHARS` each and `MAX_BRIEFS_CHARS` together) |
 | `continuity/transcripts.py` | `read_tail`: the end of an earlier call, read back out of `data_dir/calls/<session_id>.log` for a call-back's opening context |
 | `continuity/briefing.py` | `Briefer`/`Briefing`: what a call opens knowing — the digest of finished-but-unreported tasks, and the memory it reads back through `continuity.memory`. Grouped with the four around it under `continuity/` 2026-09-08 |
 | `continuity/recall.py` | `Recaller`: keyword search across past call transcripts and past task summaries, behind the voice model's `recall` tool |
-| `continuity/memory.py` | `data_dir/memory.md`, both halves: the file API (`memory_path`, `read_memory`, `trim_memory`, `MAX_MEMORY_CHARS`, `MAX_MEMORY_FILE_CHARS`, moved here from `briefing.py` 2026-09-08) and `MemoryWriter`, which on `SessionEnded` dispatches the internal subagent that rewrites it. `TaskManager` is `TYPE_CHECKING`-only here, so that reading the memory does not cost an import of the Agent SDK |
+| `continuity/memory.py` | `data_dir/memory.md`, both halves: the file API (`memory_path`, `read_memory`, `trim_memory`, `MAX_MEMORY_CHARS`, `MAX_MEMORY_FILE_CHARS`, moved here from `briefing.py` 2026-09-08; `memory_skeleton`, `compose_memory` and `seed_memory`, added 2026-09-16) and `MemoryWriter`, which on `SessionEnded` dispatches the internal subagent that rewrites it. `TaskManager` is `TYPE_CHECKING`-only here, so that reading the memory does not cost an import of the Agent SDK |
 | `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
 | `integrations/web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool. Grouped with the three below under `integrations/` 2026-09-08 — one module per outside service, each behind exactly one voice tool, sharing no code with each other. Not `services/`: `service` already means the systemd unit here |
 | `integrations/billing.py` | `BillingReader` protocol + `OpenAIBilling` (Admin API `/v1/organization/costs` and `/usage/completions`) and `AnthropicBilling` (`/v1/organizations/cost_report` and `/usage_report/messages`), behind the voice model's `check_billing`; `build_billing_reader` picks one from `BILLING_PROVIDER`. Read-only: every request is a `GET` |
@@ -125,8 +125,9 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `app.py` | `AppState` composition root (settings → store, bus, manager, registry, notifier, session registry) |
 | `prompts/voice_system.md` | receptionist persona + tool-use guidance |
 | `prompts/subagent_suffix.md` | appended to Agent SDK system prompt: autonomous, ends with `SPOKEN_SUMMARY:` block |
-| `prompts/memory_update.md` | the internal memory subagent's prompt: merge this call's transcript into `memory.md`, keep the structure, stay under budget |
-| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory`, `forget`, `approvals`, `setup-google`, `doctor`, `restart`, `restart-watch` (hidden; armed by a restart, not run by hand) |
+| `prompts/memory_update.md` | the internal memory subagent's prompt: merge this call's transcript into `memory.md`, keep the structure (rendered from `memory_skeleton` into `{structure}`), stay under budget |
+| `onboarding.py` | `run_init` and `setup_report`, behind `jarvis init`: a name and a first `memory.md` through `seed_memory`, and a report of what every call will carry (added 2026-09-16) |
+| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory`, `init`, `forget`, `approvals`, `setup-google`, `doctor`, `restart`, `restart-watch` (hidden; armed by a restart, not run by hand) |
 
 ### 3.2 Binding interfaces
 
@@ -544,6 +545,26 @@ class SessionRegistry:
   no subagent. It is a real subagent rather than a summarising API call because the memory is
   worth more when whoever writes it can go and look — at the task's report, at the repo, at
   whether the thing he was waiting on has landed.
+- **A first memory can be typed, and the structure has one owner (added 2026-09-16).** Until
+  an authorized call has ended, `memory.md` does not exist, and a trusted session with no
+  memory is told in one line that it knows nothing about the owner yet and must not act
+  familiar. `jarvis init` (`onboarding.py`) closes that gap from the keyboard: a name, a few
+  facts, the document shown back, and `seed_memory`, which writes through `secure_dir` /
+  `secure_file`, refuses more than `MAX_MEMORY_CHARS`, and never overwrites a memory with
+  anything in it unless forced. It never writes `.env`; a new name is printed as the
+  `OWNER_NAME=` line to add. `memory_skeleton(owner)` is the only place the memory's title
+  and sections are defined — `memory_update.md` renders it and `compose_memory` fills it.
+  Ruling: nothing is built around one person. The owner is `OWNER_NAME` (`Settings.owner_label`,
+  "the owner" when blank) in every prompt and tool description, and a test keeps the package
+  author's name out of `src/jarvis`. The memory and the project briefs are sent to the
+  realtime provider on every trusted call, which is why both are bounded and why `init` says
+  how many characters they come to.
+- **The voice prompt only promises what this machine does (added 2026-09-16).** Its clock
+  carries the time zone. Words naming a tool only some machines offer are spliced in with
+  `OPTIONAL_TOOL_PHRASES`, as whole paragraphs are with `OPTIONAL_TOOL_PROMPTS` ("the cluster"
+  as a slow, PIN-free thing only with `cluster_stats`). Where it says a result reaches the owner
+  off the line, it follows `TwilioOut.can_text`: a text, or else the watchdog's call and the
+  digest at the top of the next call.
 - **`Task.internal` is not a task kind (added 2026-08-25).** Work Jarvis asked for itself —
   today only the memory update — is dispatched `internal=True`. That keeps it out of
   `list_tasks`, out of `list_unreported`, out of `search`, out of `count_created_since` (so it
@@ -641,6 +662,7 @@ class SessionRegistry:
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_NUMBER` | `twilio_account_sid` / `twilio_auth_token` / `twilio_number` | `None` |
 | `ALLOWED_CALLERS` | `allowed_callers: list[str]` (comma-separated E.164) | `[]` |
 | `OWNER_NUMBER` | `owner_number` | first of `allowed_callers` |
+| `OWNER_NAME` | `owner_name` (what the prompts call the owner; read through `owner_label`) | `None` → "the owner" (added 2026-09-16) |
 | `JARVIS_PIN` | `pin` (**6-8 digits** when set; refused otherwise) | `None` (every dispatch refused on phone if unset) |
 | `PIN_FAILURE_LIMIT` / `PIN_FAILURE_WINDOW_HOURS` / `PIN_LOCKOUT_MINUTES` | `pin_failure_limit` / `pin_failure_window_hours` / `pin_lockout_minutes` (wrong PINs across calls before PIN entry locks, how long each counts, how long it locks) | `10` / `24` / `60` (added 2026-09-16) |
 | `PUBLIC_HOST` | `public_host` (the tunnel's hostname, e.g. `jarvis.example.com`) | `None` |
