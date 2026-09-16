@@ -362,6 +362,52 @@ def test_a_write_outside_every_project_is_not_eligible(settings, tmp_path):
     assert classify(request("Write", {"file_path": str(target)}), settings) is None
 
 
+@pytest.mark.parametrize(
+    "inside",
+    [
+        ".git/hooks/pre-commit",
+        ".git/config",
+        ".GIT/config",
+        "vendored/.git",
+        ".claude/settings.json",
+        ".claude/settings.local.json",
+        ".Claude/commands/x.md",
+        ".mcp.json",
+    ],
+)
+def test_a_write_the_cli_or_git_would_execute_is_not_eligible(settings, tmp_path, inside):
+    """`.git/hooks` and `.git/config` (`core.fsmonitor`, `core.hooksPath`, a remote's URL) are
+    run or obeyed by the very `git commit` and `git push` a keypad may approve next; a
+    project's `.claude/settings*.json` and `.mcp.json` hold hooks, permissions and servers
+    the CLI runs by itself. Approving the write would be approving whatever it installs."""
+    target = tmp_path / "roots" / "myproject" / inside
+    assert classify(request("Write", {"file_path": str(target), "content": "x"}), settings) is None
+
+
+def test_a_symlink_into_git_is_followed_before_it_is_judged(settings, tmp_path):
+    project = tmp_path / "roots" / "myproject"
+    (project / ".git").mkdir()
+    (project / "innocent").symlink_to(project / ".git")
+    target = project / "innocent" / "config"
+    assert classify(request("Edit", {"file_path": str(target)}), settings) is None
+
+
+def test_a_file_merely_named_like_git_is_still_eligible(settings, tmp_path):
+    target = tmp_path / "roots" / "myproject" / ".gitignore"
+    assert classify(request("Write", {"file_path": str(target), "content": "x"}), settings)
+
+
+def test_a_claude_code_worktree_is_an_ordinary_checkout(settings, tmp_path):
+    """Claude Code puts worktrees in `.claude/worktrees/<name>/`; the source in one is no
+    more executable than the source anywhere else, but its own `.git` and `.claude` are."""
+    worktree = tmp_path / "roots" / "myproject" / ".claude" / "worktrees" / "agent-1"
+    source = request("Write", {"file_path": str(worktree / "src" / "app.py"), "content": "x"})
+    assert classify(source, settings) is not None
+    for inside in (".claude/settings.json", ".git", "../settings.json"):
+        event = request("Write", {"file_path": str(worktree / inside), "content": "x"})
+        assert classify(event, settings) is None
+
+
 def test_dot_dot_cannot_walk_out_of_a_project(settings, tmp_path):
     """The prefix test runs on the resolved path, or `project/../../x` escapes it."""
     target = tmp_path / "roots" / "myproject" / ".." / ".." / "escaped.txt"

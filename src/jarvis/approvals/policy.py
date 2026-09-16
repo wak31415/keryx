@@ -39,6 +39,13 @@ MAX_OPTIONS = 9
 QUESTION_TOOLS = frozenset({"AskUserQuestion", "ExitPlanMode"})
 #: Tools that write to a file, eligible only when the file is inside a known project.
 EDIT_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+#: Path components (compared lowercased, for case-insensitive filesystems) that no phone
+#: approval may write into, because what lands there is *executed* rather than read.
+#: `.git` holds the hooks and the config (`core.fsmonitor`, `core.hooksPath`, a remote's
+#: URL) that the allowlisted `git commit` and `git push` run or obey, and in a worktree it
+#: is a file that says where all of that lives. `.claude` and `.mcp.json` hold the hooks,
+#: permissions and servers the Claude CLI runs by itself on the next tool call or session.
+EXECUTED_NAMES = frozenset({".git", ".claude", ".mcp.json"})
 
 #: The permission modes in which nobody is really being asked. `PermissionRequest` does
 #: not fire under `claude -p` at all, so this is belt and braces for the interactive case.
@@ -295,10 +302,28 @@ def _describe_edit(tool: str, tool_input: dict, settings) -> tuple[Kind, str, li
     root = _inside(path, approval_roots(settings))
     if root is None:
         raise Ineligible("the file is outside every project root")
+    _refuse_executed(path.expanduser().resolve().relative_to(root))
     verb = "create" if tool == "Write" else "edit"
     where = _project_name(path.expanduser().resolve(), root)
     summary = f"Claude wants to {verb} the file {path.name}, in {where}"
     return Kind.APPROVAL, summary, list(APPROVAL_OPTIONS)
+
+
+def _refuse_executed(relative: Path) -> None:
+    """Raise `Ineligible` if a path inside a project passes through an `EXECUTED_NAMES` entry.
+
+    One exception: `.claude/worktrees/<name>/…` is a checkout Claude Code made, as ordinary
+    as the one around it, so the walk carries on into it and judges its own `.git` and
+    `.claude` in turn.
+    """
+    parts = [part.lower() for part in relative.parts]
+    for index, part in enumerate(parts):
+        if part not in EXECUTED_NAMES:
+            continue
+        if part == ".claude" and parts[index + 1 : index + 2] == ["worktrees"]:
+            if len(parts) > index + 3:
+                continue
+        raise Ineligible(f"it writes into {relative.parts[index]}, which git or the CLI acts on")
 
 
 def _describe_bash(tool_input: dict, event: dict, settings) -> tuple[Kind, str, list[str]]:
