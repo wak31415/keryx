@@ -22,6 +22,12 @@ log = logging.getLogger("jarvis.projects")
 #: reads for itself anyway, and that would drown a receptionist's prompt.
 BRIEF_FILE = ".jarvis-brief.md"
 MAX_BRIEF_CHARS = 1500
+#: All the briefs together. They ride in the system prompt of every call, re-sent to the
+#: realtime provider each time, so a projects root with forty briefed repositories would
+#: otherwise make every call carry forty of them. Four full briefs: one and a half times
+#: what the memory may add (`continuity.memory.MAX_MEMORY_CHARS`), which is the other thing
+#: every call carries — the prompt stays a receptionist's notes, not a filing cabinet.
+MAX_BRIEFS_CHARS = 4 * MAX_BRIEF_CHARS
 
 
 @dataclass(frozen=True)
@@ -71,8 +77,15 @@ def discover_projects(settings: "Settings") -> dict[str, Path]:
 
 
 def discover_briefs(projects: dict[str, Path]) -> list[ProjectBrief]:
-    """The brief of every project that wrote one; the rest simply have none."""
+    """The brief of every project that wrote one; the rest simply have none.
+
+    Taken in discovery order (configured projects first) until `MAX_BRIEFS_CHARS`: a brief
+    that would go past it is left out whole, and named in a warning, rather than cut off
+    mid-sentence — and a shorter one after it still gets in.
+    """
     briefs: list[ProjectBrief] = []
+    left_out: list[str] = []
+    total = 0
     for name, path in projects.items():
         brief = path / BRIEF_FILE
         try:
@@ -86,5 +99,16 @@ def discover_briefs(projects: dict[str, Path]) -> list[ProjectBrief]:
             continue
         if len(text) > MAX_BRIEF_CHARS:
             text = text[: MAX_BRIEF_CHARS - 1].rstrip() + "…"
+        if total + len(text) > MAX_BRIEFS_CHARS:
+            left_out.append(name)
+            continue
+        total += len(text)
         briefs.append(ProjectBrief(name=name, text=text))
+    if left_out:
+        log.warning(
+            "left %d project brief(s) out of the prompt, past %d characters in all: %s",
+            len(left_out),
+            MAX_BRIEFS_CHARS,
+            ", ".join(left_out),
+        )
     return briefs

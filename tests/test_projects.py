@@ -1,6 +1,13 @@
 """Tests for project discovery, which the manager and the voice prompt share."""
 
-from jarvis.projects import MAX_BRIEF_CHARS, discover_briefs, discover_projects
+import logging
+
+from jarvis.projects import (
+    MAX_BRIEF_CHARS,
+    MAX_BRIEFS_CHARS,
+    discover_briefs,
+    discover_projects,
+)
 
 
 def test_configured_projects_come_first_then_the_root(settings, tmp_path):
@@ -78,3 +85,27 @@ def test_an_empty_brief_is_no_brief(settings, tmp_path):
     settings.projects_root = root
 
     assert discover_briefs(discover_projects(settings)) == []
+
+
+def test_the_briefs_together_are_capped_and_what_is_left_out_is_logged(tmp_path, caplog):
+    """Every brief rides on every call; a folder of forty projects must not mean a prompt
+    forty briefs long. Whole briefs are left out rather than one cut mid-sentence."""
+    projects = {}
+    for index in range(10):
+        path = tmp_path / f"project-{index}"
+        path.mkdir()
+        (path / ".jarvis-brief.md").write_text(f"{index} " + "x" * (MAX_BRIEF_CHARS - 10))
+        projects[f"project-{index}"] = path
+    (tmp_path / "short").mkdir()
+    (tmp_path / "short" / ".jarvis-brief.md").write_text("A short one.")
+    projects["short"] = tmp_path / "short"
+
+    with caplog.at_level(logging.WARNING, logger="jarvis.projects"):
+        briefs = discover_briefs(projects)
+
+    assert sum(len(brief.text) for brief in briefs) <= MAX_BRIEFS_CHARS
+    kept = [brief.name for brief in briefs]
+    assert kept[0] == "project-0"  # in discovery order: configured projects first
+    assert "short" in kept  # a brief that still fits is not dropped for coming late
+    assert "project-9" not in kept
+    assert "project-9" in caplog.text
