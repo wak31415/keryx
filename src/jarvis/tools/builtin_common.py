@@ -53,15 +53,61 @@ MAX_REPORT_CHARS = 1500
 DEFAULT_TASK_LIMIT = 5
 MAX_TASK_LIMIT = 20
 
+#: The four PIN answers, written to cost one short sentence each. Transcripts of real
+#: calls had a single PIN take four spoken turns — "that'll need your PIN", "please say it
+#: or key it in", "let me verify that", "okay, you're authorized" — of which one carries
+#: any information. Each message therefore says what to say *and* what not to say after it.
 PIN_REQUIRED_MESSAGE = (
-    "Ask the caller to say the PIN or enter it on the keypad, then call the tool again."
+    "Ask for the PIN in one short sentence and wait. Do not explain why it is needed, do "
+    "not say what you are about to do with it, and do not announce that you are checking "
+    "it. Call this same tool again once he has given it, spoken or keyed in."
+)
+PIN_OK_MESSAGE = (
+    "Correct, and he is authorized for the rest of this call. Say nothing about the PIN — "
+    "not that it worked, not that you are verifying it, not that you are unlocking "
+    "anything — and go straight on with what he asked for."
+)
+PIN_INVALID_MESSAGE = (
+    "Not the PIN. One sentence: that it was not right, that he should try again, and how "
+    "many attempts are left. Never repeat a digit back, and do not explain why a phone "
+    "line mishears digits — he knows."
+)
+PIN_LOCKED_MESSAGE = (
+    "Too many wrong attempts and the call is ending. Say one short goodbye and nothing "
+    "else; you have already been told this, so do not say it twice."
 )
 PIN_MISSING_MESSAGE = "A PIN is required to dispatch work but none is configured."
+PIN_NOT_CONFIGURED_MESSAGE = (
+    "There is no PIN set on this machine, so there is nothing to check. Tell him that in "
+    "one sentence rather than asking again."
+)
 CALLBACK_NUMBER_MESSAGE = (
     "Without the PIN I can only call back on the number of this call or a number I "
     "already know. Offer that instead."
 )
-STILL_RUNNING_MESSAGE = "still running; you will be told when it finishes"
+#: What `request_callback` hands back. The one thing it exists to prevent is the pair
+#: "let me set that up for you" / "all set, I'll call you" around a tool that takes
+#: milliseconds: arranging it and having arranged it are one fact, not two.
+CALLBACK_SET_MESSAGE = (
+    "Arranged. Tell him once, in a short clause — \"I'll ring you when it lands\" — and "
+    "stop there. Not the task number again, not what that call will contain, and not a "
+    "second confirmation if you already said you were setting it up."
+)
+CALLBACK_ALREADY_DONE_MESSAGE = (
+    "That task has already finished, so there is nothing to call back about. Tell him what "
+    "came of it now instead, and then call mark_reported."
+)
+#: What `mark_reported` hands back. It is also registered `silent=True`, so in the normal
+#: case nothing is generated over this at all; the wording is here for the model that goes
+#: looking at the result anyway.
+REPORTED_MESSAGE = (
+    "Recorded. This is bookkeeping and he has already heard the result, so say nothing "
+    "about it and do not repeat what you just told him."
+)
+STILL_RUNNING_MESSAGE = (
+    "still running. Say the task number once and that you will tell him when it lands. "
+    "Nothing about what the answer will contain — you do not know yet."
+)
 SEARCH_FAILED_MESSAGE = "the search came back empty; say so, or offer to put Claude on it"
 SLACK_FAILED_MESSAGE = "Slack would not take the message; tell him it did not go through"
 RECALL_EMPTY_MESSAGE = (

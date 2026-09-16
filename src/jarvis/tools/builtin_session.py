@@ -8,7 +8,11 @@ re-asks rather than agreeing. The keypad decides, never the transcription — a 
 the background cannot press a key.
 
 `submit_pin` hands whatever the caller said straight to the session, which is the only
-thing that ever compares a PIN; the digits are neither logged nor kept here.
+thing that ever compares a PIN; the digits are neither logged nor kept here. What it adds
+on the way back is only wording: the session answers `authorized` / `invalid` / `locked` /
+`not_configured`, and each of those gets the one sentence the model should spend on it. A
+PIN used to cost four spoken turns on a real call and carry one fact; the messages say
+what not to say as firmly as what to say.
 """
 
 from jarvis.approvals.broker import ApprovalBroker
@@ -18,10 +22,23 @@ from jarvis.tools.builtin_common import (
     APPROVAL_NONE_MESSAGE,
     APPROVAL_PHONE_ONLY_MESSAGE,
     ENDING_MESSAGE,
+    PIN_INVALID_MESSAGE,
+    PIN_LOCKED_MESSAGE,
+    PIN_NOT_CONFIGURED_MESSAGE,
+    PIN_OK_MESSAGE,
     _small_int,
     pin_gate,
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
+
+#: The sentence to hand back for each `VoiceSession.submit_pin` status. Wording only: the
+#: statuses themselves, and the lockout behind `locked`, are the session's business.
+PIN_MESSAGES = {
+    "authorized": PIN_OK_MESSAGE,
+    "invalid": PIN_INVALID_MESSAGE,
+    "locked": PIN_LOCKED_MESSAGE,
+    "not_configured": PIN_NOT_CONFIGURED_MESSAGE,
+}
 
 
 def register_session_tools(
@@ -95,14 +112,24 @@ def register_session_tools(
     # --- submit_pin --------------------------------------------------------
 
     async def submit_pin(ctx: ToolContext, arguments: dict) -> dict:
-        """Hand a spoken PIN to the session; only it ever sees the digits."""
-        return await ctx.session.submit_pin(str(arguments.get("pin") or ""))
+        """Hand a spoken PIN to the session; only it ever sees the digits.
+
+        The answer comes back as the session wrote it, plus the sentence for that status.
+        A `message` the session already set wins, so nothing here can talk over it.
+        """
+        result = await ctx.session.submit_pin(str(arguments.get("pin") or ""))
+        message = PIN_MESSAGES.get(str(result.get("status")))
+        if message is not None:
+            result.setdefault("message", message)
+        return result
 
     registry.register(
         "submit_pin",
         "Check the PIN the caller just said, to unlock dispatching work on the phone. "
         "Pass the digits exactly as you heard them, with nothing else. Never say them back "
-        "out loud. The answer is authorized, invalid (with the attempts left) or locked.",
+        "out loud, and do not announce that you are checking — it answers at once. The "
+        "answer is authorized, invalid (with the attempts left) or locked; when it is "
+        "authorized, say nothing about the PIN and carry straight on with his request.",
         {
             "type": "object",
             "properties": {
@@ -124,4 +151,7 @@ def register_session_tools(
         "heard. Never call it while a question is still open.",
         {"type": "object", "properties": {}, "required": []},
         end_session,
+        # Silent: the goodbye came before the call, and a turn generated over this answer
+        # is a second goodbye racing a hangup that is already under way.
+        silent=True,
     )

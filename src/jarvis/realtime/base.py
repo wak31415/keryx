@@ -124,7 +124,8 @@ class RealtimeProvider(Protocol):
     Only one response may be active at a time: `submit_tool_result` and
     `inject_message(respond=True)` go through an internal response queue, so a
     `response.create` issued while a response is in flight is held back until the
-    active one finishes. Conversation items are always sent immediately.
+    active one finishes. Conversation items are always sent immediately, and
+    `submit_tool_result(respond=False)` sends one without asking for a turn at all.
     """
 
     async def connect(self, config: SessionConfig) -> None: ...
@@ -139,8 +140,14 @@ class RealtimeProvider(Protocol):
         """Append caller audio, in `config.audio_format`, to the input buffer."""
         ...
 
-    async def submit_tool_result(self, call_id: str, output: dict | str) -> None:
-        """Create the `function_call_output` item and request a response."""
+    async def submit_tool_result(
+        self, call_id: str, output: dict | str, *, respond: bool = True
+    ) -> None:
+        """Create the `function_call_output` item and, by default, request a response.
+
+        `respond=False` submits the output and stops there, for a tool whose result has
+        nothing to say out loud (`ToolRegistry.is_silent`).
+        """
         ...
 
     async def inject_message(

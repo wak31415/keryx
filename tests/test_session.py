@@ -346,6 +346,53 @@ async def test_a_function_call_runs_the_tool_and_submits_the_result(
     assert seen[0].session is session
 
 
+async def test_an_ordinary_tool_result_asks_for_the_turn_that_speaks_about_it(
+    make_session, phone, provider, tools
+):
+    async def handler(ctx: ToolContext, args: dict) -> dict:
+        return {"answer": 42}
+
+    tools.register("ask", "Ask.", {"type": "object", "properties": {}}, handler)
+    session = make_session(phone, provider)
+
+    async with running(session):
+        provider.feed(FunctionCall(call_id="call_1", name="ask", arguments={}))
+        await eventually(lambda: provider.tool_results != [])
+
+    assert provider.tool_responses == [True]
+
+
+async def test_a_silent_tool_result_does_not_buy_another_spoken_turn(
+    make_session, phone, provider, tools
+):
+    """`mark_reported` is called *after* the result was spoken (spec §3.3).
+
+    Asking for a response over its answer is what made a call-back greet him, say the
+    result, and then say the whole greeting over again (session 54d90826).
+    """
+
+    async def handler(ctx: ToolContext, args: dict) -> dict:
+        return {"reported": [7]}
+
+    tools.register(
+        "mark_reported",
+        "Bookkeeping.",
+        {"type": "object", "properties": {}},
+        handler,
+        silent=True,
+    )
+    session = make_session(phone, provider)
+
+    async with running(session):
+        provider.feed(FunctionCall(call_id="call_1", name="mark_reported", arguments={}))
+        await eventually(lambda: provider.tool_results != [])
+
+    # The output still reaches the conversation — a function call with no answer is worse
+    # than a spare sentence — but nothing is generated over it.
+    assert provider.tool_results == [("call_1", {"reported": [7]})]
+    assert provider.tool_responses == [False]
+
+
 async def test_an_unknown_tool_reports_an_error_to_the_model(make_session, phone, provider):
     session = make_session(phone, provider)
 

@@ -502,7 +502,16 @@ class OpenAIRealtimeClient:
             }
         )
 
-    async def submit_tool_result(self, call_id: str, output: dict | str) -> None:
+    async def submit_tool_result(
+        self, call_id: str, output: dict | str, *, respond: bool = True
+    ) -> None:
+        """Hand a tool's output back, and by default ask for the turn that speaks about it.
+
+        `respond=False` is for a tool whose result has nothing to say (see
+        `ToolRegistry.is_silent`): the output still has to reach the conversation, or the
+        model's next turn sees a function call with no answer, but nothing is generated
+        over it.
+        """
         await self._send(
             {
                 "type": "conversation.item.create",
@@ -513,7 +522,8 @@ class OpenAIRealtimeClient:
                 },
             }
         )
-        await self._request_response()
+        if respond:
+            await self._request_response()
 
     async def inject_message(
         self,

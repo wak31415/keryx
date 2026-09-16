@@ -46,7 +46,11 @@ remember:
   `builtin_session`, with the wording, the parsing and the two gates (`pin_gate`,
   `get_task`) in `builtin_common`. **The order `builtin.py` calls them in is the order
   the tools are offered to the model.** A new tool goes in a domain module and the README
-  table, or `tests/test_docs_sync.py` fails.
+  table, or `tests/test_docs_sync.py` fails. A tool may also be registered `silent=True`
+  (`mark_reported`, `end_session`): its result is submitted without asking for a response,
+  because both are called *after* the thing worth saying has been said and the turn would
+  only be spent saying it again. Only for those; anything he is waiting to hear keeps
+  its turn.
 - **notify** — `notify/deliver.py` holds `announce_to_live_sessions` and `safe_send_sms`.
   The `can_text` gate is asserted there and nowhere else.
 - **integrations** — `integrations/` is one module per outside service (`billing`,
@@ -253,6 +257,11 @@ scope, so the test suite can run on a machine with no mic.
   his region, and Slack is the written channel he actually asks for), so gate any send on
   `TwilioOut.can_text` and never on `configured` — outbound *calls* are unaffected, and the
   restart watchdog's `<Say>` alert is the last thing working when Jarvis is down.
+- **One action is one sentence.** The wording the model is handed — the tool descriptions,
+  the `*_MESSAGE` constants in `builtin_common`, the call-back contexts, the voice prompt —
+  says what *not* to say as firmly as what to say, because the failure mode is never
+  silence, it is a second turn restating the first. Transcripts of real calls are in
+  `~/.jarvis/calls/`; read a few before editing any of it.
 - Spec §3.2 interface names and signatures stay stable (extra optional keyword
   arguments are fine). §3.3/§4 hold rulings: follow them, and amend the spec in a
   docs commit when one changes.

@@ -203,7 +203,7 @@ class RealtimeProvider(Protocol):
     async def close(self) -> None
     def events(self) -> AsyncIterator[ProviderEvent]          # ends after Disconnected
     async def send_audio(self, data: bytes) -> None            # bytes in config.audio_format
-    async def submit_tool_result(self, call_id: str, output: dict | str) -> None   # creates function_call_output item + requests a response
+    async def submit_tool_result(self, call_id: str, output: dict | str, *, respond: bool = True) -> None   # creates function_call_output item; requests a response unless respond=False
     async def inject_message(self, text: str, *, respond: bool = True, response_instructions: str | None = None) -> None
     async def truncate(self, item_id: str, audio_end_ms: int) -> None
     async def cancel_response(self) -> None
@@ -214,7 +214,8 @@ Provider rule: **only one active response at a time.** `submit_tool_result` and
 `inject_message(respond=True)` go through an internal response queue: if a response is
 active (between `response.created` and `response.done`), the `response.create` is queued
 and sent when the active response finishes. Items (`conversation.item.create`) are sent
-immediately.
+immediately, and `submit_tool_result(respond=False)` sends one without asking for a
+response at all.
 
 ```python
 # tools/registry.py
@@ -489,6 +490,20 @@ class SessionRegistry:
   hearing it at all, and only one of those is recoverable. Rows that were already terminal
   when the v3 migration ran are back-filled as reported, so the first call after an upgrade
   is not a recital of the whole history.
+- **A tool result may be silent (added 2026-09-16).** Submitting a tool result normally
+  asks for a `response.create`, so every tool the model calls costs a spoken turn. For
+  `mark_reported` and `end_session` that turn is pure repetition: both are called *after*
+  the thing worth saying has been said, and the model, handed a turn it has nothing new to
+  fill, re-says it. One real call-back (session 54d90826) greeted him, gave the result,
+  called `mark_reported`, and then delivered the entire greeting a second time in slightly
+  different words. So `ToolRegistry.register(..., silent=True)` marks a tool whose output
+  is submitted with `respond=False`: the `function_call_output` item still reaches the
+  conversation — a function call left unanswered is worse than a spare sentence — but
+  nothing is generated over it, and the next turn is the caller's. Ruling: silence is only
+  for a tool the model calls after speaking. Anything whose answer he is waiting to hear
+  keeps its turn, and `is_silent` is false for a name the registry does not know, because
+  "you called something that does not exist" is a sentence he needs.
+
 - **The database runs ahead of the code, and a read must survive it (added 2026-08-26).**
   `tasks.db` outlives every process that touches it and only moves forward: `_migrate` runs
   in whichever process opens the file first, while `jarvis serve` holds the `Task` it

@@ -59,6 +59,8 @@ class FakeProvider:
         self.send_error: Exception | None = None
         self.sent_audio: list[bytes] = []
         self.tool_results: list[tuple[str, dict | str]] = []
+        #: Whether each tool result asked for a spoken turn, in the same order.
+        self.tool_responses: list[bool] = []
         self.injected: list[tuple[str, bool, str | None]] = []
         self.truncations: list[tuple[str, int]] = []
         self.cancels = 0
@@ -96,9 +98,12 @@ class FakeProvider:
         self._guard()
         self.sent_audio.append(data)
 
-    async def submit_tool_result(self, call_id: str, output: dict | str) -> None:
+    async def submit_tool_result(
+        self, call_id: str, output: dict | str, *, respond: bool = True
+    ) -> None:
         self._guard()
         self.tool_results.append((call_id, output))
+        self.tool_responses.append(respond)
 
     async def inject_message(
         self, text: str, *, respond: bool = True, response_instructions: str | None = None

@@ -77,10 +77,12 @@ PIN_LOCKOUT_MESSAGE = (
 )
 PIN_ACCEPTED_MESSAGE = (
     "[system] The caller entered the correct PIN on the keypad and is now authorized for "
-    "all tasks. Acknowledge briefly and continue."
+    "all tasks. Say nothing about the PIN — not that it worked, not that he is authorized "
+    "— and carry straight on with what he asked for."
 )
 PIN_REJECTED_MESSAGE = (
-    "[system] The caller entered an incorrect PIN on the keypad. Ask them to try again."
+    "[system] The caller entered an incorrect PIN on the keypad. Ask them to try again, in "
+    "one sentence, without repeating any digits back."
 )
 #: What the model is told after a keypad entry, per `submit_pin` status. A lockout is
 #: absent because `submit_pin` has already said its piece.
@@ -557,9 +559,21 @@ class VoiceSession:
         task.add_done_callback(self._tool_tasks.discard)
 
     async def _run_tool(self, call: FunctionCall) -> None:
+        """Run one tool and hand its result back, with or without a turn to speak about it.
+
+        A silent tool (`mark_reported`, `end_session`) is called *after* the thing worth
+        saying has been said; asking for a response over its result is how the model came
+        to repeat a greeting it had already given. Everything else answers a question the
+        caller is waiting on, and still gets its turn.
+        """
         ctx = ToolContext(session=self, channel=self.channel, caller=self.caller)
         result = await self._tools.call(call.name, call.arguments, ctx)
-        await self._safe_call(self._provider.submit_tool_result, call.call_id, result)
+        await self._safe_call(
+            self._provider.submit_tool_result,
+            call.call_id,
+            result,
+            respond=not self._tools.is_silent(call.name),
+        )
 
     # --- timers ------------------------------------------------------------
 

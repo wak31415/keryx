@@ -137,3 +137,47 @@ def test_context_authorized_reads_the_session_live():
     session.authorize()
 
     assert ctx.authorized is True
+
+
+# --- silence ---------------------------------------------------------------
+
+
+async def test_a_tool_speaks_about_its_result_unless_it_says_otherwise(registry):
+    async def handler(context: ToolContext, args: dict) -> dict:
+        return {}
+
+    registry.register("loud", "Say something.", PARAMS, handler)
+
+    assert registry.is_silent("loud") is False
+
+
+async def test_a_silent_tool_is_marked_as_one(registry):
+    """Bookkeeping the caller has already heard the point of (`mark_reported`)."""
+
+    async def handler(context: ToolContext, args: dict) -> dict:
+        return {}
+
+    registry.register("quiet", "Say nothing.", PARAMS, handler, silent=True)
+
+    assert registry.is_silent("quiet") is True
+
+
+def test_an_unknown_tool_is_never_silent(registry):
+    """"You called something that does not exist" is a sentence, and he should hear it."""
+    assert registry.is_silent("no-such-tool") is False
+
+
+async def test_silence_does_not_leak_into_the_schema_the_model_sees(registry):
+    async def handler(context: ToolContext, args: dict) -> dict:
+        return {}
+
+    registry.register("quiet", "Say nothing.", PARAMS, handler, silent=True)
+
+    assert registry.schemas() == [
+        {
+            "type": "function",
+            "name": "quiet",
+            "description": "Say nothing.",
+            "parameters": PARAMS,
+        }
+    ]

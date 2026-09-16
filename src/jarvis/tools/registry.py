@@ -7,6 +7,14 @@ connect time and routes `FunctionCall` events to `call()`.
 `call()` never raises (except cancellation): a missing tool or a broken handler comes
 back as `{"error": ...}` so the model can apologize and carry on instead of the session
 dying on a bug in one tool.
+
+A tool may also be **silent**. Submitting a tool result normally asks the provider for a
+new response, which is why every call the model makes costs a spoken turn — and why pure
+bookkeeping (`mark_reported`) used to make it say the thing it had just said all over
+again. `silent=True` says "this result has nothing to speak about": the session submits
+the output without asking for a response, and the model's next turn is the caller's.
+Only for tools the model calls *after* it has spoken, never for one whose answer he is
+waiting to hear.
 """
 
 import logging
@@ -48,6 +56,8 @@ class _Tool:
     description: str
     parameters: dict
     handler: ToolHandler = field(repr=False)
+    #: True when this tool's result must not provoke a spoken turn (see the module docstring).
+    silent: bool = False
 
     def schema(self) -> dict:
         return {
@@ -65,12 +75,31 @@ class ToolRegistry:
         self._tools: dict[str, _Tool] = {}
 
     def register(
-        self, name: str, description: str, parameters: dict, handler: ToolHandler
+        self,
+        name: str,
+        description: str,
+        parameters: dict,
+        handler: ToolHandler,
+        *,
+        silent: bool = False,
     ) -> None:
-        """Add (or replace) a tool. `parameters` is a JSON-Schema object."""
+        """Add (or replace) a tool. `parameters` is a JSON-Schema object.
+
+        `silent` marks a tool whose result must not provoke a spoken turn — bookkeeping
+        the caller has already heard the point of.
+        """
         if name in self._tools:
             log.warning("re-registering tool %s", name)
-        self._tools[name] = _Tool(name, description, parameters, handler)
+        self._tools[name] = _Tool(name, description, parameters, handler, silent=silent)
+
+    def is_silent(self, name: str) -> bool:
+        """True when this tool's result should be submitted without asking for a response.
+
+        An unknown name is not silent: the model has to be told it called something that
+        does not exist, and that is a sentence.
+        """
+        tool = self._tools.get(name)
+        return tool is not None and tool.silent
 
     def schemas(self) -> list[dict]:
         """The OpenAI function-tool schemas for `SessionConfig.tools`."""

@@ -26,6 +26,13 @@ from jarvis.tasks.models import TaskStatus
 from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolContext, ToolRegistry
 from jarvis.tools.builtin import register_builtin_tools
+from jarvis.tools.builtin_common import (
+    CALLBACK_SET_MESSAGE,
+    PIN_INVALID_MESSAGE,
+    PIN_OK_MESSAGE,
+    REPORTED_MESSAGE,
+    STILL_RUNNING_MESSAGE,
+)
 
 WAIT = 2.0  # upper bound (seconds) for every wait in this module
 SLOW = 0.3  # a fake agent turn long enough to observe a task while it is still running
@@ -307,7 +314,10 @@ async def test_a_long_task_comes_back_running_with_a_promise(make_tools):
     assert result["task_id"] == 1
     assert result["status"] in {"queued", "running"}
     assert "summary" not in result
-    assert result["message"] == "still running; you will be told when it finishes"
+    assert result["message"] == STILL_RUNNING_MESSAGE
+    # He is told it is running and that he will hear; what the answer will *say* is not
+    # knowable yet, and a promise about it is the model inventing a result.
+    assert "still running" in result["message"]
 
 
 async def test_the_waiting_session_is_marked_so_it_is_not_told_the_result_twice(tools):
@@ -775,6 +785,48 @@ async def test_an_authorized_phone_caller_may_name_any_number(make_tools):
     assert result["status"] == "callback_requested"
 
 
+async def test_a_requested_callback_is_one_fact_the_model_states_once(make_tools):
+    """Real calls had "let me set that up" and then "all set" around a millisecond call.
+
+    Arranging a call-back and having arranged it are the same fact, so the result carries
+    the instruction to say it once and stop, and the tool's own description tells the
+    model not to announce it beforehand.
+    """
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW))
+    task = await tools.dispatch("something slow")
+
+    result = await tools.call(
+        "request_callback", {"task_id": task.id}, channel="phone", caller="+491555555555"
+    )
+
+    assert result["message"] == CALLBACK_SET_MESSAGE
+    assert "once" in CALLBACK_SET_MESSAGE
+    schema = next(s for s in tools.registry.schemas() if s["name"] == "request_callback")
+    assert "do not say you are setting it up first" in schema["description"]
+
+
+async def test_a_callback_on_a_finished_task_is_answered_not_arranged(tools):
+    """Nothing is going to land, so the model has the result and should just say it."""
+    task = await _finish(tools)
+
+    result = await tools.call(
+        "request_callback", {"task_id": task.id}, channel="phone", caller="+491555555555"
+    )
+
+    assert result["status"] == "already_finished"
+    assert "mark_reported" in result["message"]
+
+
+async def test_a_running_task_promises_nothing_about_what_the_answer_will_say(make_tools):
+    """"It'll include a short summary and where to find the deck" was invented on a call."""
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW))
+
+    result = await tools.call("dispatch_task", {"description": "read all of Wikipedia"})
+
+    assert result["message"] == STILL_RUNNING_MESSAGE
+    assert "you do not know yet" in STILL_RUNNING_MESSAGE
+
+
 # --- submit_pin / end_session ---------------------------------------------
 
 
@@ -783,8 +835,43 @@ async def test_submit_pin_hands_the_digits_to_the_session(tools):
 
     result = await tools.call("submit_pin", {"pin": "123456"})
 
-    assert result == {"status": "invalid", "attempts_left": 2}
+    assert result["status"] == "invalid"
+    assert result["attempts_left"] == 2
+    assert result["message"] == PIN_INVALID_MESSAGE
     assert tools.session.pins == ["123456"]
+
+
+async def test_an_accepted_pin_is_not_something_to_announce(tools):
+    """Four spoken turns for one PIN is what this wording exists to stop."""
+    tools.session.pin_result = {"status": "authorized"}
+
+    result = await tools.call("submit_pin", {"pin": "123456"})
+
+    assert result["status"] == "authorized"
+    assert result["message"] == PIN_OK_MESSAGE
+    assert "Say nothing about the PIN" in result["message"]
+
+
+async def test_the_pin_ask_itself_is_one_sentence_with_no_preamble(make_tools):
+    """The refusal a gated tool returns is where the asking gets long-winded."""
+    tools = make_tools(pin="123456")
+
+    result = await tools.call(
+        "dispatch_task", {"description": "anything"}, channel="phone", authorized=False
+    )
+
+    assert result["status"] == "pin_required"
+    assert "one short sentence" in result["message"]
+    assert "do not announce that you are checking it" in result["message"]
+
+
+async def test_a_message_the_session_wrote_wins_over_the_stock_wording(tools):
+    """Wording here may never talk over something the session had a reason to say."""
+    tools.session.pin_result = {"status": "invalid", "message": "session knows better"}
+
+    result = await tools.call("submit_pin", {"pin": "000000"})
+
+    assert result["message"] == "session knows better"
 
 
 async def test_end_session_asks_the_session_to_end(tools):
@@ -1277,8 +1364,32 @@ async def test_mark_reported_records_the_ids_the_model_said_out_loud(tools):
 
     result = await tools.call("mark_reported", {"task_ids": [task.id]})
 
-    assert result == {"reported": [task.id]}
+    assert result["reported"] == [task.id]
     assert (await tools.manager.get(task.id)).reported_at is not None
+
+
+async def test_mark_reported_is_silent_because_he_has_already_heard_the_result(tools):
+    """A turn generated over its answer is the result said a second time.
+
+    Session 54d90826 is the case: the model greeted him, gave the result, called
+    `mark_reported`, and the forced response made it say the whole greeting again.
+    """
+    assert tools.registry.is_silent("mark_reported")
+
+    result = await tools.call("mark_reported", {"task_ids": [(await _finish(tools)).id]})
+
+    assert result["message"] == REPORTED_MESSAGE
+
+
+async def test_end_session_is_silent_because_the_goodbye_came_first(tools):
+    """Nothing said after `end_session` is heard, so nothing should be generated."""
+    assert tools.registry.is_silent("end_session")
+
+
+async def test_the_tools_he_is_waiting_on_still_get_their_turn(tools):
+    """Silence is for bookkeeping only: an answer he asked for has to be spoken."""
+    for name in ("dispatch_task", "list_tasks", "get_task_result", "request_callback"):
+        assert not tools.registry.is_silent(name), name
 
 
 async def test_a_reported_task_stops_coming_back_in_the_briefing(tools):
@@ -1296,7 +1407,7 @@ async def test_mark_reported_shrugs_off_ids_that_do_not_exist(tools):
 
     result = await tools.call("mark_reported", {"task_ids": [task.id, 999]})
 
-    assert result == {"reported": [task.id]}
+    assert result["reported"] == [task.id]
 
 
 async def test_mark_reported_needs_at_least_one_usable_id(tools):
@@ -1308,7 +1419,8 @@ async def test_mark_reported_needs_at_least_one_usable_id(tools):
 async def test_mark_reported_accepts_a_bare_number_as_well_as_a_list(tools):
     task = await _finish(tools)
 
-    assert await tools.call("mark_reported", {"task_ids": task.id}) == {"reported": [task.id]}
+    result = await tools.call("mark_reported", {"task_ids": task.id})
+    assert result["reported"] == [task.id]
 
 
 async def test_mark_reported_needs_no_pin_because_it_starts_no_work(tools):
@@ -1318,7 +1430,7 @@ async def test_mark_reported_needs_no_pin_because_it_starts_no_work(tools):
         "mark_reported", {"task_ids": [task.id]}, channel="phone", authorized=False
     )
 
-    assert result == {"reported": [task.id]}
+    assert result["reported"] == [task.id]
 
 
 # --- recall ----------------------------------------------------------------

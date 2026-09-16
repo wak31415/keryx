@@ -232,3 +232,65 @@ def test_the_memory_prompt_is_packaged_and_fully_placeholdered():
     assert "{transcript_path}" in text
     assert "{memory_path}" in text
     assert "Never record a PIN" in text
+
+
+# --- saying it once --------------------------------------------------------
+#
+# A call on 2026-09-16 spent four spoken turns on one PIN and two more on a call-back that
+# takes milliseconds to arrange: "let me set that up for you", then "all set". He noticed,
+# on the phone, and asked for it to stop. None of these rules can live anywhere but the
+# prompt, and all of them are a sentence somebody could tidy away while editing the prose
+# around them.
+
+
+def test_the_prompt_forbids_announcing_and_then_confirming(unwrapped):
+    """One action, one sentence — the rule the call-back kept breaking."""
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "Say a thing once" in text
+    assert "never both" in text
+
+
+def test_the_prompt_names_the_tools_that_are_too_fast_to_announce(unwrapped):
+    """"One moment" before a millisecond call is latency he pays for nothing."""
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert 'Say "one moment" only before something that will really keep him waiting' in text
+    for name in ("request_callback", "mark_reported", "submit_pin", "end_session"):
+        assert name in text
+
+
+def test_the_prompt_does_not_have_him_justify_what_he_already_agreed_to(unwrapped):
+    """"so you don't have to wait on the line" was said back to him three calls running."""
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "Do not justify what he has just agreed to" in text
+
+
+def test_the_prompt_never_predicts_the_pin(unwrapped):
+    """"That'll need your PIN" spends a turn on something the tool will say itself."""
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "Never predict it" in text
+    assert "Do not tell him in advance that something will need the PIN" in text
+
+
+def test_the_prompt_treats_an_accepted_pin_as_nothing_to_say(unwrapped):
+    """The task number is the proof it worked; "you're authorized now" is a spare turn."""
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "When it is accepted, say nothing about it" in text
+
+
+def test_the_prompt_asks_for_the_callback_to_be_confirmed_once(unwrapped):
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert 'not "let me set that up" and then "all set"' in text
+
+
+def test_the_prompt_does_not_let_it_promise_what_a_result_will_contain(unwrapped):
+    """"It'll include a short summary and where to find the deck" was invented whole."""
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "because you do not know yet" in text
+    assert "Never invent facts, results or progress" in text

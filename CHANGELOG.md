@@ -22,6 +22,15 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Changed
 
+- **Calls say a thing once.** Reviewing a week of transcripts turned up the same shape
+  everywhere: "let me set that up for you" followed by "all set", four spoken turns for
+  one PIN, a call-back that delivered its greeting twice. The voice prompt now forbids
+  announcing an action and then confirming it, names the tools too fast to be worth
+  announcing at all, and stops the model predicting the PIN or claiming to know what a
+  running task will come back with. `mark_reported` and `end_session` are registered
+  `silent=True`: their results no longer buy a spoken turn, which is what made a call-back
+  repeat its own greeting.
+
 - **The repository is now `jarvis-voice-agent`** (was `garmin-voice-agent`; GitHub
   redirects the old URL). The package, the CLI and `~/.jarvis` are unchanged.
 - **`JARVIS_PIN` must be 6 to 8 digits.** `jarvis serve` refuses to start on anything else.

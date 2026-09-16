@@ -61,16 +61,18 @@ FAILED_TEXT = "Task {task_id} failed: {detail}"
 DONE_CONTEXT = (
     "You are calling the user back about task {task_id}, which he asked you for earlier "
     "on the phone and which has now finished. What he asked for: {request}. "
-    "Result: {detail}.{history} Greet him, remind him in a few words what this is about, "
-    "tell him the result briefly, then ask if he needs anything else. This is a new call: "
-    "he may have to give the PIN again before you can start more work."
+    "Result: {detail}.{history} Greet him, say in a sentence or two what this is about and "
+    "what came of it, then ask if he needs anything else. Say it once: no second greeting, "
+    "and do not put the same result again in other words. This is a new call: he may have "
+    "to give the PIN again before you can start more work."
 )
 FAILED_CONTEXT = (
     "You are calling the user back about task {task_id}, which he asked you for earlier "
     "on the phone and which has failed. What he asked for: {request}. "
-    "Error: {detail}.{history} Greet him, remind him in a few words what this is about, "
-    "tell him what went wrong briefly, then ask if he needs anything else. This is a new "
-    "call: he may have to give the PIN again before you can start more work."
+    "Error: {detail}.{history} Greet him, say in a sentence or two what this is about and "
+    "what went wrong, then ask if he needs anything else. Say it once: no second greeting, "
+    "and do not put the same explanation again in other words. This is a new call: he may "
+    "have to give the PIN again before you can start more work."
 )
 #: The note the earlier session left for this call, if it left one.
 NOTE_PREAMBLE = " Where you left off: {note}."

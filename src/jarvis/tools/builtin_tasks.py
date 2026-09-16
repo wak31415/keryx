@@ -28,11 +28,14 @@ from jarvis.tools.builtin_common import (
     _STATUS_FILTERS,
     _TASK_ID_PROPERTY,
     _TASK_ID_SCHEMA,
+    CALLBACK_ALREADY_DONE_MESSAGE,
     CALLBACK_NUMBER_MESSAGE,
+    CALLBACK_SET_MESSAGE,
     DEFAULT_TASK_LIMIT,
     MAX_TASK_LIMIT,
     MODEL_DESCRIPTION,
     RECALL_EMPTY_MESSAGE,
+    REPORTED_MESSAGE,
     STILL_RUNNING_MESSAGE,
     WAIT_DESCRIPTION,
     _brief,
@@ -242,7 +245,7 @@ def register_task_tools(
         # Ids that were already reported (or never existed) come back missing rather than
         # as an error: the model is working from a spoken conversation, and there is
         # nothing useful it could say to him about either case.
-        return {"reported": reported}
+        return {"reported": reported, "message": REPORTED_MESSAGE}
 
     registry.register(
         "mark_reported",
@@ -250,7 +253,9 @@ def register_task_tools(
         "after you say a result out loud — whether it came from the list of things he had "
         "not heard, from a '[system]' note during the call, or inline from dispatch_task. "
         "Until you call it, those tasks are still waiting to be told and he will hear them "
-        "again at the start of the next call. Only pass ids you actually mentioned to him.",
+        "again at the start of the next call. Only pass ids you actually mentioned to him. "
+        "It is bookkeeping and says nothing back: once you have called it, stay quiet and "
+        "let him speak.",
         {
             "type": "object",
             "properties": {
@@ -263,6 +268,9 @@ def register_task_tools(
             "required": ["task_ids"],
         },
         mark_reported,
+        # Silent: it is called *after* the result has been spoken, and a turn generated
+        # over its answer is a turn spent saying that result a second time (spec §3.3).
+        silent=True,
     )
 
     # --- recall ------------------------------------------------------------
@@ -392,6 +400,7 @@ def register_task_tools(
                 "task_id": task.id,
                 "status": "already_finished",
                 "summary": task.summary,
+                "message": CALLBACK_ALREADY_DONE_MESSAGE,
             }
 
         number = _text(arguments, "number") or ctx.caller or settings.owner_number or ""
@@ -408,15 +417,20 @@ def register_task_tools(
                 return {"status": "refused", "message": CALLBACK_NUMBER_MESSAGE}
 
         await manager.request_callback(task.id, number, _text(arguments, "note") or None)
-        return {"task_id": task.id, "status": "callback_requested"}
+        return {
+            "task_id": task.id,
+            "status": "callback_requested",
+            "message": CALLBACK_SET_MESSAGE,
+        }
 
     registry.register(
         "request_callback",
         "Arrange for Jarvis to phone the user back when a task finishes, instead of them "
         "waiting on the line. Offer this yourself whenever a task is still running and the "
-        "conversation is winding down — do not wait to be asked. Without a number it uses "
-        "the number they are calling from, which is the only number an unauthorized caller "
-        "may name.",
+        "conversation is winding down — do not wait to be asked. It returns at once, so do "
+        "not say you are setting it up first: once he says yes, call it and then tell him "
+        "in one clause that you will ring him. Without a number it uses the number they are "
+        "calling from, which is the only number an unauthorized caller may name.",
         {
             "type": "object",
             "properties": {

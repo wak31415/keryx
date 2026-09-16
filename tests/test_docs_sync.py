@@ -85,3 +85,52 @@ def test_the_readme_documents_exactly_the_tools_that_are_registered():
 
     assert documented - registered == set(), "the README lists a tool that no longer exists"
     assert registered - documented == set(), "a registered tool is missing from the README"
+
+
+#: Snake-case words in the prompt's "Your tools" section that are not tool names: two
+#: tool *arguments* the model has to pass by name, and the status a gated tool returns.
+NOT_TOOLS = frozenset({"wait_seconds", "task_id", "pin_required"})
+
+
+def prompt_tool_names() -> set[str]:
+    """Every snake-case name the voice prompt uses from "Your tools" onwards.
+
+    Read from that heading down because the sections above it are prose about the call,
+    where a word like `recall` is English rather than a tool.
+    """
+    text = (ROOT / "src" / "jarvis" / "prompts" / "voice_system.md").read_text()
+    body = text[text.index("## Your tools") :]
+    return set(re.findall(r"\b([a-z]+_[a-z_]+)\b", body)) - NOT_TOOLS
+
+
+def test_every_tool_the_voice_prompt_names_is_one_that_exists():
+    """A renamed or dropped tool leaves prose telling the model to call something gone.
+
+    Nothing at runtime notices: the model calls a name the registry does not have and has
+    to apologize out loud, mid-call, for a rename nobody finished.
+    """
+    unknown = prompt_tool_names() - registered_tool_names()
+
+    assert not unknown, f"the prompt names tools that do not exist: {sorted(unknown)}"
+
+
+def test_the_voice_prompt_still_describes_the_tools_the_model_is_given():
+    """The other direction: a tool nobody told the model about is a tool it will not use.
+
+    Only the two-word names, because `prompt_tool_names` has to read snake_case to tell a
+    tool from ordinary prose — `recall` is a real tool and also a real English word.
+    """
+    two_word = {name for name in registered_tool_names() if "_" in name}
+    undocumented = two_word - prompt_tool_names()
+
+    assert not undocumented, f"the prompt does not mention: {sorted(undocumented)}"
+
+
+def test_the_prompt_tells_the_model_not_to_announce_the_instant_tools():
+    """The list of tools too fast to be worth announcing has to stay a list of real ones."""
+    text = (ROOT / "src" / "jarvis" / "prompts" / "voice_system.md").read_text()
+    sentence = text[text.index("all answer in\n  milliseconds") - 400 :][:500]
+
+    instant = set(re.findall(r"\b([a-z]+_[a-z_]+)\b", sentence)) - NOT_TOOLS
+    assert instant, "the instant-tool list is gone from the prompt"
+    assert instant <= registered_tool_names(), sorted(instant - registered_tool_names())
