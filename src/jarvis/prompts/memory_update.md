@@ -23,7 +23,7 @@ that "the thing we talked about yesterday" resolves to something.
 Keep this exact structure:
 
 ```
-# What Jarvis knows about William
+# What Jarvis knows about {owner}
 
 ## Standing facts
 ## Ongoing threads

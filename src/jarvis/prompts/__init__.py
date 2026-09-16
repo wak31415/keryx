@@ -144,6 +144,7 @@ def render_voice_prompt(
     }
     return render_prompt(
         VOICE_SYSTEM_PROMPT,
+        owner=settings.owner_label,
         now=datetime.now().strftime(_TIME_FORMAT),
         channel=channel,
         caller=caller or "unknown",

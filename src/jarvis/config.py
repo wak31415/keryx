@@ -19,6 +19,11 @@ log = logging.getLogger("jarvis.config")
 #: machine. `doctor` recognises it and reports the key as unset.
 PLACEHOLDER_KEY = "unset"
 
+#: What Jarvis calls its owner when `OWNER_NAME` is blank. It reads as a role rather than a
+#: name on purpose: a prompt that says "you are the owner's assistant" is still true, where
+#: a made-up name would have the model greet a stranger by it.
+OWNER_FALLBACK = "the owner"
+
 #: Every optional string setting. `.env.example` ships them blank (`JARVIS_PIN=`), and a
 #: blank one means *not configured*, never the empty string — an empty PIN would otherwise
 #: be a PIN that `submit_pin("")` matches (spec §3.3).
@@ -29,6 +34,7 @@ OPTIONAL_STR_FIELDS = (
     "twilio_auth_token",
     "twilio_number",
     "owner_number_explicit",
+    "owner_name",
     "pin",
     "public_host",
     "report_secret",
@@ -168,6 +174,11 @@ class Settings(BaseSettings):
     #: the restart watchdog's alert is a call, and it is the only thing that still works
     #: when Jarvis itself is down.
     sms_enabled: bool = False
+
+    # The owner
+    #: What Jarvis calls the person it works for, in the prompts it is handed. Blank is
+    #: `OWNER_FALLBACK`. Only a name: everything else Jarvis knows about them is the memory.
+    owner_name: str | None = None
 
     # Access control
     allowed_callers: Annotated[list[str], NoDecode] = Field(default_factory=list)
@@ -405,6 +416,11 @@ class Settings(BaseSettings):
             log.warning("%s has no client_id/client_secret pair", path)
             return None
         return client_id, client_secret
+
+    @property
+    def owner_label(self) -> str:
+        """`OWNER_NAME` as the prompts say it, else `OWNER_FALLBACK`."""
+        return self.owner_name.strip() if self.owner_name else OWNER_FALLBACK
 
     @property
     def owner_number(self) -> str | None:

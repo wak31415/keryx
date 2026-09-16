@@ -47,10 +47,10 @@ def register_comms_tools(
     if slack is not None:
         registry.register(
             "send_to_slack",
-            "Send William a message on Slack, in the direct-message channel he already "
-            "uses for this. Only call it when he has explicitly asked for something in "
-            'writing — "send me that", "put it on Slack", "text me the link". Never '
-            "call it unasked, however awkward the content is to say out loud, and never "
+            f"Send {settings.owner_label} a message on Slack, in the direct-message channel "
+            "he already uses for this. Only call it when he has explicitly asked for "
+            'something in writing — "send me that", "put it on Slack", "text me the link". '
+            "Never call it unasked, however awkward the content is to say out loud, and never "
             "to repeat in writing something you have already said; if it truly will not "
             "survive being spoken, offer to send it and call this only once he accepts. "
             "For anything a subagent produced (a file, a plot, a report), dispatch the "

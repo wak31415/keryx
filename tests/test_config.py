@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from jarvis.config import (
     OPTIONAL_STR_FIELDS,
+    OWNER_FALLBACK,
     Settings,
     load_settings,
     secure_file,
@@ -472,3 +473,21 @@ def test_an_explicit_noise_reduction_profile_wins_on_every_channel():
 
     assert settings.noise_reduction_for("phone") == "far_field"
     assert settings.noise_reduction_for("local") == "far_field"
+
+
+# --- whom Jarvis works for -------------------------------------------------
+
+
+def test_the_owner_is_called_by_name_when_one_is_set():
+    settings = Settings(_env_file=None, openai_api_key="test", owner_name="  Ada  ")
+
+    assert settings.owner_label == "Ada"
+
+
+def test_a_blank_owner_name_is_the_owner():
+    """`.env.example` ships `OWNER_NAME=` blank, and a blank name is no name."""
+    for blank in (None, "", "   "):
+        settings = Settings(_env_file=None, openai_api_key="test", owner_name=blank)
+
+        assert settings.owner_name is None
+        assert settings.owner_label == OWNER_FALLBACK == "the owner"

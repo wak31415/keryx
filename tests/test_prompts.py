@@ -1,5 +1,9 @@
 """Tests for the packaged prompt templates and their rendering."""
 
+import re
+import tomllib
+from pathlib import Path
+
 import pytest
 
 from jarvis.prompts import load_prompt, render_voice_prompt
@@ -335,3 +339,50 @@ def test_the_prompt_does_not_let_it_promise_what_a_result_will_contain(unwrapped
 
     assert "because you do not know yet" in text
     assert "Never invent facts, results or progress" in text
+
+
+# --- nobody's name is built in ---------------------------------------------
+#
+# Jarvis was written for one person, and his name was in the first line of the voice prompt,
+# the subagent suffix, the memory's title and a tool description. Anyone else who installed
+# it got an assistant that believed it worked for him. The name is `OWNER_NAME` now, and
+# these keep it from coming back by the easy route of an edit to the prose.
+
+ROOT = Path(__file__).resolve().parents[1]
+PACKAGE = ROOT / "src" / "jarvis"
+
+
+def _author_first_name() -> str:
+    """The first name of the package's author: the name most likely to creep back in."""
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    return project["authors"][0]["name"].split()[0]
+
+
+def test_the_voice_prompt_says_whom_jarvis_works_for(settings):
+    settings.owner_name = "Ada"
+
+    rendered = _rendered(settings)
+
+    assert "You are Jarvis, Ada's personal assistant." in rendered
+
+
+def test_without_a_name_the_voice_prompt_works_for_the_owner(settings):
+    rendered = _rendered(settings)
+
+    assert "You are Jarvis, the owner's personal assistant." in rendered
+    assert "{" not in rendered and "}" not in rendered
+
+
+def test_no_packaged_prompt_or_source_names_the_author():
+    """Not in a prompt, a string constant, a docstring or a comment under `src/jarvis`."""
+    name = re.compile(rf"\b{re.escape(_author_first_name())}\b", re.IGNORECASE)
+    files = sorted([*PACKAGE.rglob("*.py"), *PACKAGE.rglob("*.md")])
+
+    offenders = [
+        f"{path.relative_to(ROOT)}:{number}"
+        for path in files
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if name.search(line)
+    ]
+
+    assert files and not offenders, offenders

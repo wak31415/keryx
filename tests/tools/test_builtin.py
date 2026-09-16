@@ -1390,6 +1390,15 @@ async def test_the_slack_tool_tells_the_model_to_wait_to_be_asked(make_tools):
     assert "Never call it unasked" in description
 
 
+async def test_the_slack_tool_names_whom_it_sends_to(make_tools):
+    assert _slack_description(make_tools(slack=FakeSlack())).startswith(
+        "Send the owner a message on Slack"
+    )
+    assert _slack_description(make_tools(slack=FakeSlack(), owner_name="Ada")).startswith(
+        "Send Ada a message on Slack"
+    )
+
+
 async def test_the_slack_tool_does_not_invite_a_written_copy_of_the_answer(make_tools):
     """Repeating in writing what was just said out loud is the commonest unasked send."""
     description = _slack_description(make_tools(slack=FakeSlack()))

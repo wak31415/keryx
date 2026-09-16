@@ -162,6 +162,16 @@ async def test_the_update_names_the_transcript_and_the_memory_file(settings, wri
     assert str(memory_path(settings.data_dir)) in description
 
 
+async def test_the_update_is_titled_with_the_owners_name(settings, writer):
+    settings.owner_name = "Ada"
+    _, bus, _, store = writer
+    write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
+
+    await bus.publish(ended())
+
+    assert "# What Jarvis knows about Ada" in (await internal_tasks(store))[0].description
+
+
 async def test_the_update_runs_in_the_data_directory_not_a_repo(settings, writer):
     _, bus, _, store = writer
     write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])

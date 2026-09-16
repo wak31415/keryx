@@ -32,7 +32,7 @@ from typing import Any, Protocol
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
-from jarvis.config import Settings
+from jarvis.config import OWNER_FALLBACK, Settings
 from jarvis.prompts import render_prompt
 from jarvis.tasks.models import Task
 
@@ -243,12 +243,15 @@ def resolve_model(name: str | None, settings: Settings) -> str:
     return MODEL_ALIASES.get(alias.lower(), alias)
 
 
-def render_subagent_suffix(task: Task, *, slack_mcp_server: str | None = None) -> str:
+def render_subagent_suffix(
+    task: Task, *, slack_mcp_server: str | None = None, owner: str | None = None
+) -> str:
     """The subagent system-prompt suffix, with this task's project, request and number.
 
     The number is in there for the commit trailer: it is what ties a change in a repo back
     to the sentence he said out loud, which is the one thing `git log` cannot recover. The
-    Slack paragraph is there only when `slack_mcp_server` names a route to use.
+    Slack paragraph is there only when `slack_mcp_server` names a route to use. `owner` is
+    whom the work is for (`Settings.owner_label`); `OWNER_FALLBACK` when it is not given.
     """
     slack = (
         render_prompt(SUBAGENT_SLACK_PROMPT, server=slack_mcp_server).strip()
@@ -257,6 +260,7 @@ def render_subagent_suffix(task: Task, *, slack_mcp_server: str | None = None) -
     )
     return render_prompt(
         SUBAGENT_SUFFIX_PROMPT,
+        owner=owner or OWNER_FALLBACK,
         project=task.project or "none",
         description=task.description,
         task_id=str(task.id) if task.id is not None else "unknown",
@@ -304,7 +308,9 @@ def build_options(
         "system_prompt": {
             "type": "preset",
             "preset": "claude_code",
-            "append": render_subagent_suffix(task, slack_mcp_server=settings.slack_mcp_server),
+            "append": render_subagent_suffix(
+                task, slack_mcp_server=settings.slack_mcp_server, owner=settings.owner_label
+            ),
         },
         "model": resolve_model(task.model, settings),
         "max_turns": settings.subagent_max_turns,

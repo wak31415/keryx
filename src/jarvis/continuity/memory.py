@@ -192,6 +192,7 @@ class MemoryWriter:
         dispatched = await self._manager.tasks_for_session(event.session_id)
         prompt = render_prompt(
             MEMORY_PROMPT,
+            owner=self._settings.owner_label,
             transcript_path=str(path),
             memory_path=str(memory_path(self._settings.data_dir)),
             max_chars=str(MAX_MEMORY_CHARS),

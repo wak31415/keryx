@@ -710,3 +710,18 @@ def test_the_subagent_suffix_tells_it_not_to_restart_jarvis_itself(settings):
 
     assert "RESTART_REQUIRED:" in suffix
     assert "Do not restart it yourself" in suffix
+
+
+def test_the_subagent_suffix_says_whom_the_work_is_for():
+    task = Task(id=1, kind=TaskKind.AGENT, description="x")
+
+    assert "dispatched on Ada's behalf" in render_subagent_suffix(task, owner="Ada")
+    assert "dispatched on the owner's behalf" in render_subagent_suffix(task)
+
+
+def test_build_options_hands_the_subagent_the_owners_name(settings):
+    settings.owner_name = "Ada"
+
+    options = build_options(make_task(), settings)
+
+    assert "dispatched on Ada's behalf" in options.system_prompt["append"]
