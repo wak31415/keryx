@@ -220,6 +220,7 @@ def test_defaults_match_spec_table(settings):
     assert settings.local_silence_timeout == 30
     assert settings.max_call_seconds == 1800
     assert settings.daily_task_cap == 50
+    assert settings.max_phone_sessions == 2
     assert settings.wakeword_model == "hey_jarvis"
     assert settings.wakeword_threshold == 0.5
     assert settings.log_level == "INFO"
@@ -238,6 +239,35 @@ def test_debug_skip_twilio_validation_env(monkeypatch, tmp_path):
     settings = Settings(_env_file=None)
 
     assert settings.debug_skip_twilio_validation is True
+
+
+def test_the_phone_server_may_start_with_signatures_checked(tmp_path):
+    settings = Settings(_env_file=None, openai_api_key="test", public_host="jarvis.example")
+
+    assert settings.phone_refusal() is None
+
+
+def test_skipping_signatures_is_allowed_where_no_tunnel_is_named(tmp_path):
+    """Local development: nothing tells Twilio, or anyone else, where this machine is."""
+    settings = Settings(_env_file=None, openai_api_key="test", debug_skip_twilio_validation=True)
+
+    assert settings.phone_refusal() is None
+
+
+def test_skipping_signatures_behind_a_public_host_is_refused(tmp_path):
+    """With the check off, anyone who can reach the tunnel can pose as Twilio."""
+    settings = Settings(
+        _env_file=None,
+        openai_api_key="test",
+        debug_skip_twilio_validation=True,
+        public_host="jarvis.example",
+    )
+
+    refusal = settings.phone_refusal()
+    assert refusal is not None
+    assert "DEBUG_SKIP_TWILIO_VALIDATION" in refusal
+    assert "PUBLIC_HOST" in refusal
+    assert "\n" not in refusal
 
 
 def test_fake_agents_env(monkeypatch, tmp_path):

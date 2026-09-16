@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from jarvis.config import DATA_DIR_MODE, PLACEHOLDER_KEY, Settings, env_var_name
+from jarvis.logging_util import mask_number
 from jarvis.restart.service import resolve_target
 
 Severity = Literal["hard", "soft"]
@@ -79,6 +80,7 @@ def run_doctor_checks(
         _subagent_auth_check(settings),
         _claude_cli_check(),
         _twilio_check(settings),
+        _signature_check(settings),
         _secret_check(
             "PUBLIC_HOST",
             settings.public_host,
@@ -176,14 +178,34 @@ def _twilio_check(settings: Settings) -> Check:
         return Check(
             "Twilio credentials", False, f"missing {', '.join(missing)} — no phone channel"
         )
-    return Check("Twilio credentials", True, str(settings.twilio_number))
+    return Check("Twilio credentials", True, mask_number(settings.twilio_number))
+
+
+def _signature_check(settings: Settings) -> Check:
+    """Is every Twilio webhook signature-checked? Off behind a tunnel, `serve` refuses.
+
+    Hard when `PUBLIC_HOST` is set, because that is exactly the configuration `jarvis serve`
+    will not start in; a warning without one, where it is the local-development switch it
+    was meant to be.
+    """
+    if not settings.debug_skip_twilio_validation:
+        return Check("Twilio signatures", True, "validated")
+    refusal = settings.phone_refusal()
+    if refusal is not None:
+        return Check("Twilio signatures", False, refusal)
+    return Check(
+        "Twilio signatures",
+        False,
+        "DEBUG_SKIP_TWILIO_VALIDATION is on — for a machine nothing outside can reach",
+        severity="soft",
+    )
 
 
 def _allowed_callers_check(settings: Settings) -> Check:
     """Without an allowlist every inbound call is refused."""
     if not settings.allowed_callers:
         return Check("allowed callers", False, "ALLOWED_CALLERS is empty — every call is refused")
-    return Check("allowed callers", True, ", ".join(settings.allowed_callers))
+    return Check("allowed callers", True, ", ".join(map(mask_number, settings.allowed_callers)))
 
 
 def _pin_check(settings: Settings, problem: str | None = None) -> Check:

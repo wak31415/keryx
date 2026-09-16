@@ -44,8 +44,9 @@ from typing import Protocol
 from jarvis.audio.util import ms_for_bytes
 from jarvis.config import Settings, secure_dir, secure_file
 from jarvis.continuity.briefing import Briefing, BriefingSource
-from jarvis.events import EventBus, SessionEnded, SessionStarted
+from jarvis.events import EventBus, PinLockedOut, SessionEnded, SessionStarted
 from jarvis.logging_util import mask_number
+from jarvis.pin_guard import PinGuard
 from jarvis.prompts import render_voice_prompt
 from jarvis.realtime.base import (
     AudioDelta,
@@ -74,6 +75,13 @@ ANNOUNCE_INSTRUCTIONS = "Briefly tell the user about this in one or two sentence
 # What the model is told about a PIN typed on the keypad. Never the digits themselves.
 PIN_LOCKOUT_MESSAGE = (
     "[system] Too many failed PIN attempts. Say a brief goodbye; the call will end."
+)
+#: The lockout that is not this call's doing: wrong PINs across calls (`jarvis.pin_guard`).
+PIN_PAUSED_MESSAGE = (
+    "[system] PIN entry is locked for now after too many wrong PINs, so no PIN can be "
+    "accepted on this call, not even the right one. Tell the caller that and say goodbye, in "
+    "one sentence; do not ask for the PIN again and do not say how many attempts there were. "
+    "The call will end."
 )
 PIN_ACCEPTED_MESSAGE = (
     "[system] The caller entered the correct PIN on the keypad and is now authorized for "
@@ -138,6 +146,7 @@ class VoiceSession:
         registry: "SessionRegistry | None" = None,
         briefer: BriefingSource | None = None,
         keypad: Keypad | None = None,
+        pin_guard: PinGuard | None = None,
     ) -> None:
         self._transport = transport
         self._provider = provider
@@ -148,6 +157,8 @@ class VoiceSession:
         self._opening_context = opening_context
         self._briefer = briefer
         self._keypad = keypad
+        #: The count of wrong PINs across every call; None counts this call alone.
+        self._pin_guard = pin_guard
         #: Filled in by `run()` before the prompt is built; an empty one until then, so a
         #: session that never ran still renders a prompt.
         self._briefing = Briefing()
@@ -170,6 +181,7 @@ class VoiceSession:
         self._last_audio_ts_ms: int | None = None
 
         self._pin_attempts = 0
+        self._pin_locked = False  # this call takes no more PINs, whichever lock said so
         self._dtmf_buffer = ""
         self._dtmf_last = 0.0
 
@@ -285,6 +297,10 @@ class VoiceSession:
         wrong ones the model is asked for a goodbye and the call ends — a locked session
         stays locked even if the right PIN turns up afterwards.
 
+        Every wrong PIN is also counted by the `PinGuard`, across calls. While that has PIN
+        entry locked, a PIN is refused before it is compared — the right one too — and the
+        call ends the same way; the lock that set it is published once for the owner.
+
         A blank configured PIN is *no* PIN, and a blank candidate answers nothing: both
         are refused rather than compared, so `submit_pin("")` can never authorize.
         """
@@ -293,7 +309,11 @@ class VoiceSession:
             return {"status": "not_configured"}
         if self.authorized:
             return {"status": "authorized"}
-        if self._pin_attempts >= PIN_MAX_ATTEMPTS:
+        if self._pin_locked:
+            return {"status": "locked"}
+        if self._pin_guard is not None and self._pin_guard.locked_until() is not None:
+            log.warning("session %s: PIN entry is locked; not checking this PIN", self.session_id)
+            await self._lock_out(PIN_PAUSED_MESSAGE)
             return {"status": "locked"}
 
         candidate = (pin or "").strip()
@@ -308,12 +328,20 @@ class VoiceSession:
             self._pin_attempts,
             PIN_MAX_ATTEMPTS,
         )
+        lockout = self._pin_guard.record_failure() if self._pin_guard is not None else None
+        if lockout is not None:
+            await self._lock_out(PIN_PAUSED_MESSAGE)
+            if lockout.alert:
+                await self._bus.publish(
+                    PinLockedOut(self.session_id, self.caller, lockout.until, lockout.failures)
+                )
+            return {"status": "locked"}
         if self._pin_attempts >= PIN_MAX_ATTEMPTS:
             await self._lock_out()
             return {"status": "locked"}
         return {"status": "invalid", "attempts_left": PIN_MAX_ATTEMPTS - self._pin_attempts}
 
-    async def _lock_out(self) -> None:
+    async def _lock_out(self, message: str = PIN_LOCKOUT_MESSAGE) -> None:
         """Ask for a goodbye, then end the call once it has been spoken (spec §3.3).
 
         `request_end()` on the spot would hang up mid-word: the injected `response.create`
@@ -323,10 +351,9 @@ class VoiceSession:
         already speaking (a keypad entry typed over a sentence) the flag fires on *that*
         response's done, which cuts the goodbye short but never cuts it off mid-word.
         """
+        self._pin_locked = True  # before the first await, so no PIN slips in behind it
         self._end_after_response = "pin_lockout"
-        if not await self._safe_call(
-            self._provider.inject_message, PIN_LOCKOUT_MESSAGE, respond=True
-        ):
+        if not await self._safe_call(self._provider.inject_message, message, respond=True):
             self.request_end("pin_lockout")  # no goodbye is coming; end now
             return
         self._spawn_task(self._lockout_backstop(), name="lockout")
@@ -422,7 +449,7 @@ class VoiceSession:
             # on a confirmation, today. Still never logged and never sent to the model.
             self._spawn_task(self._offer_digit(digit), name="keypad")
             return
-        if not expected or self.authorized or self._pin_attempts >= PIN_MAX_ATTEMPTS:
+        if not expected or self.authorized or self._pin_locked:
             return
 
         now = time.monotonic()

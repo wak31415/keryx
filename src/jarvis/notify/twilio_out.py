@@ -4,20 +4,40 @@ The Twilio helper library is synchronous, so every REST call goes through
 `asyncio.to_thread` — a text or a call-back must never stall the event loop that is
 also pumping somebody's audio.
 
-Errors are deliberately not caught here: this is the thin edge, and the Notifier above
-it is the one that decides a failed text must not cost the call-back.
+Errors are deliberately not swallowed here: this is the thin edge, and the Notifier above
+it is the one that decides a failed text must not cost the call-back. They are *reworded*,
+though, into a `TwilioError` with every phone number masked: Twilio's own error text quotes
+the number back ("The 'To' number … is not a valid phone number"), and every caller up the
+stack logs a failure with its traceback.
 """
 
 import asyncio
 import logging
+import re
+from collections.abc import Callable
 from typing import Any
 
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse
 
 from jarvis.config import Settings
+from jarvis.logging_util import mask_number
 
 log = logging.getLogger("jarvis.notify.twilio_out")
+
+#: A number in the E.164 shape Twilio writes them in, wherever it turns up in its errors.
+E164_NUMBER = re.compile(r"\+\d{7,15}")
+
+
+class TwilioError(RuntimeError):
+    """A Twilio REST call that failed, in words that carry no phone number."""
+
+
+def _without_numbers(text: str, number: str) -> str:
+    """`text` with `number`, and anything else shaped like one, masked."""
+    if number:
+        text = text.replace(number, mask_number(number))
+    return E164_NUMBER.sub(lambda match: mask_number(match.group()), text)
 
 
 def stream_twiml(public_host: str, params: dict[str, str]) -> str:
@@ -82,21 +102,28 @@ class TwilioOut:
 
     async def send_sms(self, to: str, body: str) -> str:
         """Text `body` to `to` from the configured number; returns the message sid."""
-        message = await asyncio.to_thread(
-            self.client.messages.create, from_=self._settings.twilio_number, to=to, body=body
+        message = await self._create(
+            self.client.messages.create, to, from_=self._settings.twilio_number, body=body
         )
-        log.info("texted %s (message %s)", to, message.sid)
+        log.info("texted %s (message %s)", mask_number(to), message.sid)
         return message.sid
 
     async def place_call(self, to: str, *, twiml: str, status_callback: str | None = None) -> str:
         """Call `to` and answer it with `twiml`; returns the call sid."""
-        kwargs: dict[str, Any] = {
-            "to": to,
-            "from_": self._settings.twilio_number,
-            "twiml": twiml,
-        }
+        kwargs: dict[str, Any] = {"from_": self._settings.twilio_number, "twiml": twiml}
         if status_callback:
             kwargs["status_callback"] = status_callback
-        call = await asyncio.to_thread(self.client.calls.create, **kwargs)
-        log.info("calling %s (call %s)", to, call.sid)
+        call = await self._create(self.client.calls.create, to, **kwargs)
+        log.info("calling %s (call %s)", mask_number(to), call.sid)
         return call.sid
+
+    async def _create(self, create: Callable[..., Any], to: str, **kwargs: Any) -> Any:
+        """One REST `create` off the event loop; a failure comes back as a `TwilioError`.
+
+        `from None`, because a chained traceback would print the original message — number
+        and all — right above the reworded one.
+        """
+        try:
+            return await asyncio.to_thread(create, to=to, **kwargs)
+        except Exception as error:
+            raise TwilioError(_without_numbers(str(error), to)) from None

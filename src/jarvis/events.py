@@ -47,6 +47,20 @@ class SessionEnded:
     reason: str
 
 
+@dataclass
+class PinLockedOut:
+    """Wrong PINs across calls have locked PIN entry, and the owner has not been told.
+
+    Published by the session whose wrong PIN set the lock (`jarvis.pin_guard`); `until` is in
+    seconds since the epoch, and `caller` is only what that call's caller ID claimed.
+    """
+
+    session_id: str
+    caller: str | None
+    until: float
+    failures: int
+
+
 # A handler may be a plain sync callable or an async callable; both take the event
 # and return None (async handlers return an awaitable that resolves to None).
 Handler = Callable[[object], None] | Callable[[object], Awaitable[None]]

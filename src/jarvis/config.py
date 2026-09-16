@@ -176,6 +176,18 @@ class Settings(BaseSettings):
     #: every dispatch is refused from the phone.
     pin: str | None = Field(default=None, validation_alias="JARVIS_PIN", repr=False)
 
+    #: Wrong PINs, counted across every call, before PIN entry locks (jarvis/pin_guard.py).
+    #: The per-call limit of three ends a call; this is what ends a guessing campaign. Ten is
+    #: three failed calls and then some — more than he mistypes in a day — and one guess in
+    #: a hundred thousand of a 6-digit PIN.
+    pin_failure_limit: int = Field(default=10, ge=1)
+    #: How long a wrong PIN is remembered. Past the limit, every further wrong PIN inside
+    #: this window locks entry again, so a campaign gets one guess per lockout from then on.
+    pin_failure_window_hours: float = Field(default=24, gt=0)
+    #: How long PIN entry stays locked, for everyone and even for the right PIN. An hour is
+    #: the longest his own fumbling can cost him, and holds a campaign to ~24 guesses a day.
+    pin_lockout_minutes: float = Field(default=60, gt=0)
+
     # Networking
     public_host: str | None = None
     host: str = "127.0.0.1"
@@ -204,6 +216,10 @@ class Settings(BaseSettings):
     dispatch_wait_max_seconds: int = 25
     local_silence_timeout: float = 30  # seconds; 0 disables the local silence timeout
     max_call_seconds: float = 1800  # seconds; 0 disables the phone call-duration limit
+    #: Phone sessions open at once, each of them a realtime session being paid for. Two, so
+    #: a dropped call can be redialled while the old session is still saying its goodbye;
+    #: a call past it is told the line is busy and never reaches the model.
+    max_phone_sessions: int = Field(default=2, ge=1)
     daily_task_cap: int = 50
 
     # Turn detection: how long Jarvis waits before deciding you have finished speaking.
@@ -395,6 +411,21 @@ class Settings(BaseSettings):
             return self.owner_number_explicit
         if self.allowed_callers:
             return self.allowed_callers[0]
+        return None
+
+    def phone_refusal(self) -> str | None:
+        """Why the phone server must not start as configured, in one line; None if it may.
+
+        `DEBUG_SKIP_TWILIO_VALIDATION` is for a machine nothing outside can reach. With a
+        `PUBLIC_HOST` set there is a tunnel pointing at it, and with the signature check off
+        anyone who can reach that tunnel can pose as Twilio — mint stream tokens, open media
+        sockets and key PINs in at machine speed.
+        """
+        if self.debug_skip_twilio_validation and self.public_host:
+            return (
+                "DEBUG_SKIP_TWILIO_VALIDATION is on while PUBLIC_HOST is set, so anyone who "
+                "can reach the tunnel could pose as Twilio — turn it off, or serve --no-phone"
+            )
         return None
 
     def noise_reduction_for(self, channel: str) -> Literal["near_field", "far_field"] | None:

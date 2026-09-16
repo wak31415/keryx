@@ -3,11 +3,12 @@
 One inbound call touches three of these routes:
 
 1. `POST /twilio/voice` — Twilio's webhook. The request must carry a valid
-   `X-Twilio-Signature` and come `From` an allowed caller; then it mints a one-time
-   stream token and answers with TwiML that opens a media stream back to us.
+   `X-Twilio-Signature` and come `From` an allowed caller, and a phone line
+   (`MAX_PHONE_SESSIONS`) has to be free; then it mints a one-time stream token and
+   answers with TwiML that opens a media stream back to us.
 2. `WS /twilio/media` — the audio socket. It has no signature of its own, so the token
    from step 1 (single-use, 60 s, and only valid for the call it was minted for) is what
-   authorizes it; a `VoiceSession` runs on top.
+   authorizes it, and the line is counted again; a `VoiceSession` runs on top.
 3. `POST /twilio/status` — call-progress callbacks, logged and acknowledged.
 
 `GET /reports/{id}?t=…` is the fourth public route: the link the Notifier texts, guarded
@@ -20,6 +21,7 @@ route bodies stay thin enough to read in one go — the checks live in helpers b
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
@@ -34,14 +36,36 @@ from jarvis.logging_util import mask_number
 from jarvis.notify.reports import verify_report_token
 from jarvis.notify.twilio_out import stream_twiml
 from jarvis.session import VoiceSession
+from jarvis.stream_tokens import TokenInfo
 from jarvis.transports.twilio_ws import TransportError, TwilioTransport
 
 log = logging.getLogger("jarvis.server")
 
 PRIVATE_NUMBER_MESSAGE = "Sorry, this number is private."
+#: What an allowed caller hears when every phone line (`MAX_PHONE_SESSIONS`) is taken.
+LINE_BUSY_MESSAGE = "Sorry, this line is busy. Please try again in a few minutes."
 # Websocket close code for a policy violation (an unknown or expired stream token).
 POLICY_VIOLATION = 1008
+# Websocket close code for "try again later": a valid stream past the line limit.
+TRY_AGAIN_LATER = 1013
 REPORT_MEDIA_TYPE = "text/markdown; charset=utf-8"
+
+
+@dataclass
+class PhoneLines:
+    """Phone sessions let in and not yet over, against `MAX_PHONE_SESSIONS`.
+
+    Counted here rather than read off `SessionRegistry`, which lists a session only once its
+    provider has connected and drops it while its goodbye is still playing — the two gaps a
+    burst of calls would slip through.
+    """
+
+    limit: int
+    open: int = 0
+
+    def full(self, *, pending: int = 0) -> bool:
+        """True when `pending` more sessions (answered, not yet streaming) would not fit."""
+        return self.open + pending >= self.limit
 
 
 def create_app(state: AppState) -> FastAPI:
@@ -53,6 +77,7 @@ def create_app(state: AppState) -> FastAPI:
     app = FastAPI(title="Jarvis", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.jarvis = state  # so later routes (and tests) can reach the shared wiring
     settings = state.settings
+    lines = PhoneLines(settings.max_phone_sessions)
 
     @app.post("/twilio/voice")
     async def twilio_voice(request: Request) -> Response:
@@ -67,6 +92,15 @@ def create_app(state: AppState) -> FastAPI:
                 "refused a call from %s: not in ALLOWED_CALLERS", mask_number(caller)
             )
             return _twiml(_private_number_twiml())
+        # Every outstanding token is a session a moment away — this webhook's own earlier
+        # answers, and any call-back already dialling out — so they count against the lines.
+        if lines.full(pending=len(state.stream_tokens)):
+            log.warning(
+                "refused a call from %s: all %d phone lines are in use",
+                mask_number(caller),
+                lines.limit,
+            )
+            return _twiml(_say_and_hang_up(LINE_BUSY_MESSAGE))
 
         token = state.stream_tokens.issue(
             caller=caller, extra={"call_sid": str(form.get("CallSid") or "")}
@@ -91,7 +125,7 @@ def create_app(state: AppState) -> FastAPI:
         await websocket.accept()
         transport = TwilioTransport(websocket)
         try:
-            await _run_media_session(state, transport)
+            await _run_media_session(state, transport, lines)
         except TransportError as error:
             log.warning("a media stream never started: %s", error)
         except Exception:
@@ -122,8 +156,10 @@ def create_app(state: AppState) -> FastAPI:
     return app
 
 
-async def _run_media_session(state: AppState, transport: TwilioTransport) -> None:
-    """Redeem the stream token, then run the session until the call ends."""
+async def _run_media_session(
+    state: AppState, transport: TwilioTransport, lines: PhoneLines
+) -> None:
+    """Redeem the stream token, take a line, then run the session until the call ends."""
     info = await transport.start()
     token_info = state.stream_tokens.redeem(info.custom_parameters.get("token", ""))
     if token_info is None:
@@ -138,9 +174,29 @@ async def _run_media_session(state: AppState, transport: TwilioTransport) -> Non
         await transport.hangup(POLICY_VIOLATION)
         return
 
+    if lines.full():
+        # A call-back's stream never passed the webhook's count, so this is the check that
+        # holds: past it, no realtime session is opened at all.
+        log.warning(
+            "closing media stream %s: all %d phone lines are in use", info.stream_sid, lines.limit
+        )
+        await transport.hangup(TRY_AGAIN_LATER)
+        return
+
     # The caller from the token was signature-validated at `/twilio/voice`; the one in
     # `customParameters` merely came back over an unauthenticated socket.
     transport.caller = token_info.caller
+    lines.open += 1
+    try:
+        await _open_session(state, transport, token_info)
+    finally:
+        lines.open -= 1
+
+
+async def _open_session(
+    state: AppState, transport: TwilioTransport, token_info: TokenInfo
+) -> None:
+    """One phone `VoiceSession`, unauthorized until the PIN, run until the call ends."""
     session = VoiceSession(
         transport,
         state.provider_factory(),
@@ -154,6 +210,8 @@ async def _run_media_session(state: AppState, transport: TwilioTransport) -> Non
         # Post-PIN keypad digits: how an approval is confirmed, and the only route by
         # which one ever can be (`jarvis.approvals`).
         keypad=state.approvals,
+        # One count of wrong PINs for every call, so hanging up buys no fresh guesses.
+        pin_guard=state.pin_guard,
     )
     await session.run()
 
@@ -180,11 +238,16 @@ def verify_twilio_request(request: Request, form: FormData, settings: Settings) 
     that reaches us: ngrok terminates TLS and forwards to localhost, so the public scheme
     and host come from `x-forwarded-proto` / `x-forwarded-host` when present.
 
-    Validation is skipped only when `DEBUG_SKIP_TWILIO_VALIDATION` is set. Without an
-    auth token there is nothing to verify, so every request is refused instead.
+    Validation is skipped only when `DEBUG_SKIP_TWILIO_VALIDATION` is set — loudly, every
+    time, and `jarvis serve` will not start with it behind a `PUBLIC_HOST` at all
+    (`Settings.phone_refusal`). Without an auth token there is nothing to verify, so every
+    request is refused instead.
     """
     if settings.debug_skip_twilio_validation:
-        log.debug("skipping Twilio signature validation (DEBUG_SKIP_TWILIO_VALIDATION)")
+        log.warning(
+            "skipping Twilio signature validation on %s (DEBUG_SKIP_TWILIO_VALIDATION)",
+            request.url.path,
+        )
         return True
     if not settings.twilio_auth_token:
         log.warning("refusing %s: TWILIO_AUTH_TOKEN is not configured", request.url.path)
@@ -219,8 +282,12 @@ def external_host(request: Request) -> str:
 
 
 def _private_number_twiml() -> VoiceResponse:
+    return _say_and_hang_up(PRIVATE_NUMBER_MESSAGE)
+
+
+def _say_and_hang_up(text: str) -> VoiceResponse:
     response = VoiceResponse()
-    response.say(PRIVATE_NUMBER_MESSAGE)
+    response.say(text)
     response.hangup()
     return response
 

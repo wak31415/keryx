@@ -1,15 +1,17 @@
 """Tests for the shared application state the server and the CLI are built on."""
 
 import pytest
-from fakes import FakeVoiceSession
+from fakes import FakeVoiceSession, eventually
 
 from jarvis.app import AppState, build_app_state, shutdown_app_state
 from jarvis.continuity.briefing import Briefer
 from jarvis.continuity.memory import MemoryWriter, memory_path
 from jarvis.continuity.transcripts import transcript_path
-from jarvis.events import SessionEnded, TaskCompleted
+from jarvis.events import PinLockedOut, SessionEnded, TaskCompleted
 from jarvis.notify.notifier import Notifier
+from jarvis.notify.pin_alert import PinLockoutAlerter
 from jarvis.notify.twilio_out import TwilioOut
+from jarvis.pin_guard import STATE_NAME, PinGuard
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.restart.coordinator import RestartCoordinator
 from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
@@ -61,6 +63,28 @@ async def test_build_app_state_wires_the_restart_coordinator(state):
     assert isinstance(state.restart, RestartCoordinator)
     assert "restart_service" in {schema["name"] for schema in state.registry.schemas()}
     assert state.restart._sessions is state.sessions
+
+
+async def test_build_app_state_counts_wrong_pins_in_the_data_dir(state, settings):
+    assert isinstance(state.pin_guard, PinGuard)
+    for _ in range(settings.pin_failure_limit):
+        state.pin_guard.record_failure()
+
+    assert (settings.data_dir / STATE_NAME).exists()
+    assert PinGuard.for_settings(settings).locked_until() is not None
+
+
+async def test_a_pin_lockout_is_told_to_the_owner_on_a_call_that_gave_the_pin(state):
+    assert isinstance(state.pin_alerts, PinLockoutAlerter)
+    owner, stranger = FakeVoiceSession(session_id="a"), FakeVoiceSession(session_id="b")
+    owner.authorized, stranger.authorized = True, False
+    state.sessions.add(owner)
+    state.sessions.add(stranger)
+
+    await state.bus.publish(PinLockedOut("sess-9", "+15551234567", 1_800_000_000.0, 10))
+
+    await eventually(lambda: owner.announced)
+    assert stranger.announced == []
 
 
 async def test_a_finished_task_is_spoken_into_every_live_session(state):

@@ -205,6 +205,9 @@ def serve(
     if port is not None:
         overrides["port"] = port
     settings = _configure(**overrides)
+    if not no_phone and (refusal := settings.phone_refusal()):
+        typer.echo(f"jarvis cannot start: {refusal}", err=True)
+        raise typer.Exit(2)
     _add_file_logging(settings)
     if no_phone and no_wakeword:
         typer.echo("nothing to run: both the phone server and the wake word are disabled")

@@ -28,8 +28,10 @@ from jarvis.transports.base import DRAIN_TIMEOUT_SECONDS, AudioIn, Dtmf, Hangup,
 
 log = logging.getLogger("jarvis.transports.twilio_ws")
 
-# How long `start()` waits for Twilio's `start` frame before giving up.
-START_TIMEOUT_SECONDS = 10.0
+# How long `start()` waits for Twilio's `start` frame before giving up. Short on purpose:
+# until that frame and its token arrive the socket is unauthenticated, anyone can open one,
+# and Twilio itself sends `start` straight after `connected`.
+START_TIMEOUT_SECONDS = 5.0
 
 
 class WebSocketLike(Protocol):

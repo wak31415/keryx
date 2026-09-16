@@ -282,6 +282,12 @@ scope, so the test suite can run on a machine with no mic.
 - `data_dir` is 0700 and the files under it 0600 (`config.secure_dir` / `secure_file`).
   Anything new that writes there goes through them.
 - A configured `JARVIS_PIN` is 6-8 digits and `jarvis serve` refuses to start otherwise.
+  Wrong PINs also count across calls (`jarvis/pin_guard.py`): while that has PIN entry locked
+  the right PIN is refused before it is compared, and nothing resets the count early — not
+  the lock lifting, not a right PIN. That a spoofed caller can keep his PIN locked is the
+  accepted price (SECURITY.md); do not buy it back with a reset-on-success or a per-caller
+  count, both of which hand a guesser a fresh budget. `serve` also refuses the phone channel
+  with `DEBUG_SKIP_TWILIO_VALIDATION` on behind a `PUBLIC_HOST`.
 
 ## Reference docs
 
