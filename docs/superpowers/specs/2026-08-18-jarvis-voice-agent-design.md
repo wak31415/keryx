@@ -775,7 +775,17 @@ and five minutes later Jarvis rings him. Four rulings, none of them a preference
   returning `allow` appears to skip the CLI's own `permissions.deny` re-check (measured
   2026-08-26), so whatever `classify` calls eligible is what a keypad digit can run. It is an
   allowlist, it starts small, the denylist wins over it, and widening it is a change that says
-  why in the commit message.
+  why in the commit message. *Amended 2026-09-16:* it decides on exactly what will run, or
+  not at all — control characters and metacharacters are checked on the raw command; the
+  command is parsed to the argv bash and zsh would build, and anything that expands is
+  refused; `APPROVAL_BASH_ALLOW` entries match that argv word for word, with narrow
+  argument rules only for `git push` (a remote name, plain refs, no force, delete or
+  mirror) and `git commit` (`-m`/`-a`/`-q`, no `-F`/`-t`/`--no-verify`); a request the hook
+  had to trim is never eligible; an approval whose read-back would be cut is never
+  eligible; and no phone-approved write lands in `.git`, `.claude` or `.mcp.json`. *Was:*
+  whole-word prefixes of a whitespace-normalised command, a read-back cut at 180
+  characters, and a default list that included `pytest` and `uv run pytest` — a test run
+  executes whatever the session last wrote into the working tree.
 - **The keypad decides, never the transcription.** `answer_approval` cannot answer anything;
   the most it does is put a menu in the model's mouth. `ApprovalBroker.digit` is the only
   thing that can approve a tool call, it is reachable only after the PIN

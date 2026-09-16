@@ -111,7 +111,10 @@ without the PIN is very much in scope.
   `permission_mode="bypassPermissions"` by design; that is documented, not a vulnerability.
   A way to *reach* that access without the PIN is very much in scope.
 - **Anything that requires the host account already.** Someone who can read
-  `~/.jarvis` or write `~/.claude/settings.json` is already you.
+  `~/.jarvis` or write `~/.claude/settings.json` is already you. Text that reaches a
+  Claude Code session on the host — an issue, a pull request, a web page it reads — is
+  not that: a way for it to get the approval bridge to ring you about one command and
+  run another, or to run something the policy should never have offered, is in scope.
 - **Vulnerabilities in dependencies**, unless this project's use of one makes an otherwise
   harmless bug exploitable. Report those upstream; Dependabot watches the versions here.
 - **Missing rate limits or hardening on `/health`**, which returns `ok` and a session

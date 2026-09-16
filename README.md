@@ -496,15 +496,21 @@ uv run jarvis approvals                     # the audit trail
 uv run jarvis approvals --disable           # kill switch, effective on the next prompt
 ```
 
-It is optional, and it is off on any machine that never installs the hook. Four rulings
-hold it up, and none of them is a preference:
+It is optional, and it is off on any machine that never installs the hook. The installer
+copies the hook rather than linking it, so re-run it after pulling a change to
+`scripts/claude_hooks/`: Jarvis refuses a request from a copy too old to say whether it
+trimmed the request, and the prompt just waits on screen. Four rulings hold it up, and
+none of them is a preference:
 
 - **A Unix socket, never an HTTP route.** `cloudflared` puts the whole of port 8080 on the
   internet. `~/.jarvis/approvals.sock` at mode 0600 is unreachable through it by
   construction.
 - **`policy.py` is an allowlist, and it is the *primary* control.** Nothing downstream
   re-checks it, so whatever it calls eligible is exactly what a keypad digit can run.
-  Widening it widens that.
+  Widening it widens that. It decides on the command the shell will actually run — never
+  a trimmed or normalised copy — and reads it back whole or not at all. By default that
+  is `git push` to a named remote and `git commit -m`: nothing that force-pushes, reads a
+  file from elsewhere, or runs a test suite.
 - **The keypad decides, never the transcription.** `answer_approval` cannot answer
   anything; the most it does is put a menu in the model's mouth. A television in the
   background cannot press a key.

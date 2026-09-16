@@ -288,10 +288,12 @@ class Settings(BaseSettings):
     #: `HH:MM-HH:MM` in which it never rings (may cross midnight); blank is never. Local
     #: time as the *host* sees it — see the note in `approvals/broker.py::_quiet_now`.
     approval_quiet_hours: str | None = None
-    #: The only shell commands a keypad digit may ever run, matched as whole-word prefixes
-    #: of a command with no chaining or redirection in it (jarvis/approvals/policy.py).
+    #: The only shell commands a keypad digit may ever run, each matched word for word;
+    #: only `git push` and `git commit` may carry arguments, and only the few their rules
+    #: in jarvis/approvals/policy.py name. No test runner: a test run executes whatever the
+    #: session last wrote into the working tree, and the read-back cannot say so.
     approval_bash_allow: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["git push", "git commit", "pytest", "uv run pytest"]
+        default_factory=lambda: ["git push", "git commit"]
     )
     #: Where a file may be written by phone approval; blank means the projects root plus
     #: every explicitly configured project.

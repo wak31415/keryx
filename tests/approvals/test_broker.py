@@ -128,6 +128,7 @@ def permission_event(tool="Bash", tool_input=None, session_id="claude1", cwd=Non
         "permission_mode": "default",
         "tool_name": tool,
         "tool_input": tool_input if tool_input is not None else {"command": "git push"},
+        "truncated": False,  # what the hook says when it sent the input whole
     }
     event.update(over)
     return event
@@ -316,7 +317,7 @@ async def test_the_hourly_cap_stops_it_ringing_again(broker, twilio, clock, tmp_
         await until(lambda expected=index + 1: len(twilio.calls) == expected)
         clock.value += 300  # past the "a call is already going out" window
     await hooks.raise_request(
-        permission_event(cwd=cwd, session_id="last", tool_input={"command": "pytest"})
+        permission_event(cwd=cwd, session_id="last", tool_input={"command": "git commit -m last"})
     )
     await asyncio.sleep(0.2)
     assert len(twilio.calls) == broker._settings.approval_max_per_hour

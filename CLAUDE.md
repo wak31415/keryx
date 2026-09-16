@@ -155,6 +155,8 @@ Four rulings hold it up, and none of them is a preference:
   returning `allow` appears to skip the CLI's own `permissions.deny` re-check, so whatever
   `classify` calls eligible is what a keypad digit can run. It is an allowlist, it starts
   small, and the denylist wins over it. Do not widen it without saying why in the commit.
+  It decides on exactly what runs: the raw command's argv (never a normalised copy, never
+  a request the hook had to trim), read back whole or not at all.
 - **The keypad decides, never the transcription.** `answer_approval` cannot answer
   anything; the most it does is put a menu in the model's mouth. `ApprovalBroker.digit` is
   the only thing in Jarvis that can approve a tool call, it is reachable only after the PIN

@@ -10,20 +10,32 @@ So it is an allowlist, it starts small, and the denylist wins over it. Everythin
 explicitly named comes back ineligible, which means the hook says nothing and the prompt
 waits on his screen exactly as it does today.
 
+And it decides on exactly what will run, or not at all. The command as the shell will get
+it, never a normalised copy; the argv the shell will build from it, never a guess about
+an expansion; the whole request, never the part the hook had to trim; and a read-back
+said whole, never cut. Each of those was once a way to approve one thing by hearing
+another.
+
 Nothing here reads a file or touches the network: it is pure, so the tests are the spec.
 """
 
 import logging
 import re
+import string
+import unicodedata
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis.approvals.models import Kind, input_digest
 
 log = logging.getLogger("jarvis.approvals.policy")
 
-#: How much of a request may be said out loud in one go.
+#: How much of a request may be said out loud in one go. An approval that does not fit is
+#: not shortened, it is refused: what he hears has to be the whole of what runs.
 MAX_SUMMARY_CHARS = 180
-#: How much of a question's option label survives into the keypad menu.
+#: How long a question's option label may be. The label is the answer Claude is sent, so
+#: one that does not fit is refused rather than cut.
 MAX_OPTION_CHARS = 40
 #: How many options a question may have and still be answerable on a keypad (1-9).
 MAX_OPTIONS = 9
@@ -33,6 +45,19 @@ MAX_OPTIONS = 9
 QUESTION_TOOLS = frozenset({"AskUserQuestion", "ExitPlanMode"})
 #: Tools that write to a file, eligible only when the file is inside a known project.
 EDIT_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+#: Path components (compared lowercased, for case-insensitive filesystems) that no phone
+#: approval may write into, because what lands there is *executed* rather than read.
+#: `.git` holds the hooks and the config (`core.fsmonitor`, `core.hooksPath`, a remote's
+#: URL) that the allowlisted `git commit` and `git push` run or obey, and in a worktree it
+#: is a file that says where all of that lives. `.claude` and `.mcp.json` hold the hooks,
+#: permissions and servers the Claude CLI runs by itself on the next tool call or session.
+EXECUTED_NAMES = frozenset({".git", ".claude", ".mcp.json"})
+#: The fields a `Bash` request may carry and still be escalated. Anything else may change
+#: how the command runs in a way the read-back never says, so an unknown field is refused;
+#: `dangerouslyDisableSandbox` is allowed only when it is not set.
+BASH_FIELDS = frozenset(
+    {"command", "description", "timeout", "run_in_background", "dangerouslyDisableSandbox"}
+)
 
 #: The permission modes in which nobody is really being asked. `PermissionRequest` does
 #: not fire under `claude -p` at all, so this is belt and braces for the interactive case.
@@ -87,9 +112,14 @@ DENY_COMMAND_SUBSTRINGS = (
     "printenv",
     "env |",
 )
-#: Shell metacharacters. A prefix allowlist means nothing if the command can chain, so a
-#: command carrying any of these is refused outright rather than parsed.
+#: Shell metacharacters. An allowlist means nothing if the command can chain, so a command
+#: carrying any of these — quoted or not — is refused outright rather than parsed.
 SHELL_METACHARACTERS = ("&", "|", ";", "`", "$(", ">", "<", "\n", "\r")
+#: What a word may carry outside quotes and still mean exactly itself to bash and zsh:
+#: nothing that expands (`$ ~ * ? [ { !`), quotes or escapes (`' " \`), or ends a command.
+_BARE = frozenset(string.ascii_letters + string.digits + "_@%+=:,./-")
+#: What double quotes do not stop the shell expanding.
+_EXPANDS_IN_DOUBLE_QUOTES = frozenset("$`\\!")
 
 #: The default `approve`/`reject` menu of an ordinary tool call. `0` (leave it) is added
 #: by `ApprovalRequest.menu`, and it is always available.
@@ -180,20 +210,46 @@ def classify(event: dict, settings) -> dict | None:
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict):
         return None
+    if "truncated" not in event:
+        log.warning(
+            "not escalating a %s prompt: the approval hook that sent it does not say whether "
+            "it trimmed the request — re-run scripts/install-claude-hook.sh",
+            tool or "?",
+        )
+        return None
+    if event["truncated"] is not False:
+        # The CLI runs the original, not the part of it the hook sent: nothing to decide on.
+        log.info("not escalating a %s prompt: the hook had to trim it", tool or "?")
+        return None
 
     try:
         _refuse_denied(tool, tool_input)
         kind, summary, options = _describe(tool, tool_input, event, settings)
+        summary = _read_back(kind, summary)
     except Ineligible as reason:
         log.info("not escalating a %s prompt: %s", tool or "?", reason)
         return None
 
     return {
         "kind": kind,
-        "summary": _shorten(summary, MAX_SUMMARY_CHARS),
+        "summary": summary,
         "options": options,
         "input_sha": input_digest(tool_input),
     }
+
+
+def _read_back(kind: Kind, summary: str) -> str:
+    """The sentence he hears, or `Ineligible` when an approval would have to be cut.
+
+    A question may be shortened: answering one runs nothing, and the answer is a label he
+    picked. An approval may not. A cut read-back is a command whose tail runs unheard, and
+    a long command is exactly where something gets hidden; nor does a keypad "yes" to a
+    sentence nobody can hold in their head mean anything. So it is whole or not at all.
+    """
+    flat = _WHITESPACE.sub(" ", summary).strip()
+    if kind is Kind.APPROVAL and len(flat) > MAX_SUMMARY_CHARS:
+        raise Ineligible(f"the read-back is {len(flat)} characters and cannot be said whole")
+    return _shorten(flat, MAX_SUMMARY_CHARS)
 
 
 def _refuse_denied(tool: str, tool_input: dict) -> None:
@@ -239,12 +295,14 @@ def _describe_question(tool_input: dict) -> tuple[Kind, str, list[str]]:
     if not text:
         raise Ineligible("the question was empty")
     labels = [
-        _shorten(option.get("label") or "", MAX_OPTION_CHARS)
+        _WHITESPACE.sub(" ", str(option.get("label"))).strip()
         for option in first.get("options") or []
         if isinstance(option, dict) and option.get("label")
     ]
     if not 1 <= len(labels) <= MAX_OPTIONS:
         raise Ineligible(f"it has {len(labels)} options, which does not fit a keypad")
+    if any(len(label) > MAX_OPTION_CHARS for label in labels):
+        raise Ineligible("an option is too long to read out as the answer it would send")
     return Kind.QUESTION, f"Claude is asking: {text}", labels
 
 
@@ -256,21 +314,53 @@ def _describe_edit(tool: str, tool_input: dict, settings) -> tuple[Kind, str, li
     root = _inside(path, approval_roots(settings))
     if root is None:
         raise Ineligible("the file is outside every project root")
+    target = path.expanduser().resolve()
+    relative = target.relative_to(root)
+    _refuse_executed(relative)
     verb = "create" if tool == "Write" else "edit"
-    where = _project_name(path.expanduser().resolve(), root)
-    summary = f"Claude wants to {verb} the file {path.name}, in {where}"
+    where = _project_name(target, root)
+    # Where in the project, not just the name: the resolved path, so a symlink is read out
+    # as the file it actually writes.
+    inside = Path(*relative.parts[1:]).as_posix() if len(relative.parts) > 1 else target.name
+    summary = f"Claude wants to {verb} the file {inside}, in {where}"
     return Kind.APPROVAL, summary, list(APPROVAL_OPTIONS)
 
 
+def _refuse_executed(relative: Path) -> None:
+    """Raise `Ineligible` if a path inside a project passes through an `EXECUTED_NAMES` entry.
+
+    One exception: `.claude/worktrees/<name>/…` is a checkout Claude Code made, as ordinary
+    as the one around it, so the walk carries on into it and judges its own `.git` and
+    `.claude` in turn.
+    """
+    parts = [part.lower() for part in relative.parts]
+    for index, part in enumerate(parts):
+        if part not in EXECUTED_NAMES:
+            continue
+        if part == ".claude" and parts[index + 1 : index + 2] == ["worktrees"]:
+            if len(parts) > index + 3:
+                continue
+        raise Ineligible(f"it writes into {relative.parts[index]}, which git or the CLI acts on")
+
+
 def _describe_bash(tool_input: dict, event: dict, settings) -> tuple[Kind, str, list[str]]:
-    command = _WHITESPACE.sub(" ", str(tool_input.get("command") or "")).strip()
-    if not command:
-        raise Ineligible("there is no command in the request")
+    unknown = set(tool_input) - BASH_FIELDS
+    if unknown:
+        raise Ineligible(f"it carries {', '.join(sorted(unknown))} as well as a command")
+    if tool_input.get("dangerouslyDisableSandbox"):
+        raise Ineligible("it asks to run outside the sandbox, which the read-back does not say")
+    raw = str(tool_input.get("command") or "")
+    # Both checks run on the command exactly as the shell will get it. Normalising first is
+    # how a newline once became a space: eligible, read out as one line, and run as two.
+    _refuse_unprintable(raw)
     for character in SHELL_METACHARACTERS:
-        if character in command:
-            raise Ineligible("the command chains or redirects, so a prefix means nothing")
-    if not any(_matches_prefix(command, prefix) for prefix in settings.approval_bash_allow):
-        raise Ineligible("the command is not on the shell allowlist")
+        if character in raw:
+            raise Ineligible("the command chains or redirects, so an allowlist means nothing")
+    argv = shell_words(raw)
+    if not argv:
+        raise Ineligible("there is no command in the request")
+    _refuse_unlisted(argv, settings)
+    command = _WHITESPACE.sub(" ", raw).strip()
     cwd = Path(str(event.get("cwd") or "."))
     root = _inside(cwd, approval_roots(settings))
     if root is None:
@@ -279,13 +369,189 @@ def _describe_bash(tool_input: dict, event: dict, settings) -> tuple[Kind, str, 
     return Kind.APPROVAL, f"Claude wants to run: {command}, in {where}", list(APPROVAL_OPTIONS)
 
 
-def _matches_prefix(command: str, prefix: str) -> bool:
-    """True when `command` *is* `prefix` or starts with it followed by a word boundary.
+def _refuse_unprintable(command: str) -> None:
+    """Raise `Ineligible` for any character that is neither printable nor a plain space.
 
-    `git commit` must not match `git committer-is-not-a-thing`, and it must not match
-    `git commitfoo`; only `git commit` and `git commit -m …`.
+    Unicode categories `C*` (NUL and the other C0 and C1 controls, DEL, zero-width and
+    bidirectional formatting) and `Z*` other than U+0020 (tabs are `Cc`; line and paragraph
+    separators, no-break spaces). A shell may split on some of them and a read-back hides all
+    of them, and a command that needs one is not a command to approve by ear.
     """
-    prefix = _WHITESPACE.sub(" ", prefix).strip()
-    if not prefix:
-        return False
-    return command == prefix or command.startswith(prefix + " ")
+    for character in command:
+        if character != " " and unicodedata.category(character)[0] in "CZ":
+            raise Ineligible(f"the command carries U+{ord(character):04X}, which is not printable")
+
+
+def shell_words(command: str) -> list[str]:
+    """The argv a shell will build from `command`, or `Ineligible` if that is in any doubt.
+
+    A deliberately small subset of shell syntax that bash and zsh agree on: words split on
+    plain spaces, made of characters that expand to nothing, `'single-quoted'` text, and
+    `"double-quoted"` text with nothing in it the shell still expands. A variable, a glob, a
+    tilde, a brace, an escape or a comment is refused rather than interpreted, because a
+    guess about what the shell will make of it is a guess about what runs.
+    """
+    if "''" in command:
+        # POSIX reads '' inside a word as two strings run together; zsh's RC_QUOTES reads
+        # it as one literal quote. Two different argvs, so neither is assumed.
+        raise Ineligible("it has '' in it, which bash and zsh read differently")
+    words: list[str] = []
+    word: list[str] | None = None
+    index = 0
+    while index < len(command):
+        character = command[index]
+        if character == " ":
+            if word is not None:
+                words.append("".join(word))
+                word = None
+            index += 1
+            continue
+        if character in "'\"":
+            end = command.find(character, index + 1)
+            if end < 0:
+                raise Ineligible("it has an unterminated quote")
+            quoted = command[index + 1 : end]
+            if character == '"' and any(item in _EXPANDS_IN_DOUBLE_QUOTES for item in quoted):
+                raise Ineligible("a double-quoted word holds something the shell expands")
+            word = [*(word or []), quoted]
+            index = end + 1
+            continue
+        if character not in _BARE or (character == "=" and not word):
+            # A leading `=` is zsh's path expansion (`=ls` is `/bin/ls`).
+            raise Ineligible(f"{character!r} means something to the shell")
+        word = [*(word or []), character]
+        index += 1
+    if word is not None:
+        words.append("".join(word))
+    return words
+
+
+def _refuse_unlisted(argv: list[str], settings) -> None:
+    """Raise `Ineligible` unless an `APPROVAL_BASH_ALLOW` entry allows exactly `argv`.
+
+    An entry matches a command that is word for word the same. Only an entry with a rule in
+    `ARGUMENTS` may be followed by anything, and then only by what that rule accepts: a
+    prefix on its own says nothing about `--mirror`, `-F /etc/passwd` or `-p evilmodule`.
+    """
+    reason = "the command is not on the shell allowlist"
+    for entry in settings.approval_bash_allow:
+        try:
+            allowed = shell_words(entry)
+        except Ineligible:
+            log.warning("ignoring APPROVAL_BASH_ALLOW entry %r: it is not a plain command", entry)
+            continue
+        if not allowed or argv[: len(allowed)] != allowed:
+            continue
+        if argv == allowed:
+            return
+        rule = ARGUMENTS.get(tuple(allowed))
+        if rule is None:
+            reason = f"only {entry!r} itself is allowed, with nothing after it"
+            continue
+        try:
+            rule.check(argv[len(allowed) :])
+        except Ineligible as refused:
+            reason = str(refused)
+            continue
+        return
+    raise Ineligible(reason)
+
+
+@dataclass(frozen=True)
+class Arguments:
+    """What may follow an allowlisted command: named options and a check on the rest.
+
+    Options are matched by their exact spelling. git reads any unambiguous abbreviation of a
+    long option as the whole of it (`--mirr` is `--mirror`), so a set of full names is the
+    only kind of list an abbreviation cannot slip past. Options may appear anywhere before a
+    `--`, as git's own parser allows, and short ones may be clustered (`-am wip`).
+    """
+
+    #: Options that take no value.
+    flags: frozenset[str]
+    #: Options that take exactly one (`-m wip`, `-mwip`, `--message=wip`, `--message wip`).
+    valued: frozenset[str]
+    #: Raises `Ineligible` for positional arguments this command may not be given.
+    positionals: Callable[[list[str]], None]
+
+    def check(self, words: list[str]) -> None:
+        positionals: list[str] = []
+        index = 0
+        while index < len(words):
+            word = words[index]
+            index += 1
+            if word == "--":
+                positionals.extend(words[index:])
+                break
+            if word == "-" or not word.startswith("-"):
+                positionals.append(word)
+            elif word.startswith("--"):
+                name, has_value, _ = word.partition("=")
+                if name in self.valued:
+                    if not has_value:
+                        index = _take_value(words, index, name)
+                elif name not in self.flags or has_value:
+                    raise Ineligible(f"{name} is not an option a keypad may approve")
+            else:
+                for position, letter in enumerate(word[1:], start=2):
+                    option = f"-{letter}"
+                    if option in self.valued:
+                        if position == len(word):
+                            index = _take_value(words, index, option)
+                        break
+                    if option not in self.flags:
+                        raise Ineligible(f"{option} is not an option a keypad may approve")
+        self.positionals(positionals)
+
+
+def _take_value(words: list[str], index: int, option: str) -> int:
+    if index >= len(words):
+        raise Ineligible(f"{option} is missing its value")
+    return index + 1
+
+
+def _any_pathspecs(words: list[str]) -> None:
+    """`git commit` pathspecs only choose which changes go in, and never leave the repo."""
+
+
+def _push_destination(words: list[str]) -> None:
+    """A remote *name* and plain branch or tag names: somewhere already configured, and
+    nothing that force-pushes (`+`), deletes (`:main`), renames (`HEAD:main`) or globs."""
+    if not words:
+        return
+    remote, *refspecs = words
+    if not _REMOTE_NAME.fullmatch(remote):
+        raise Ineligible(f"{remote!r} is not the name of a remote")
+    for refspec in refspecs:
+        if not _REF_NAME.fullmatch(refspec):
+            raise Ineligible(f"{refspec!r} is not a plain branch or tag name")
+
+
+#: A remote's name: no `/` (a path), no `:` (a URL or `host:path`), no leading `.` or `-`.
+#: A name that is not a configured remote is read by git as a directory beside the
+#: repository, which keeps the push on this machine.
+_REMOTE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
+#: A branch or tag name, spelled out: no `+`, `:`, `*`, `^`, `~` or `@{`.
+_REF_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*")
+
+#: The allowlisted commands that may be given arguments at all, and which. Any other entry
+#: in `APPROVAL_BASH_ALLOW` matches only itself, word for word.
+ARGUMENTS: dict[tuple[str, ...], Arguments] = {
+    # No -F/--file or -t/--template (a file from anywhere, into a commit `git push` sends
+    # away), no -n/--no-verify (the hooks that check a commit), no --amend, -C/-c, --author,
+    # --pathspec-from-file or anything else nobody needs to approve from a phone.
+    ("git", "commit"): Arguments(
+        flags=frozenset({"-a", "--all", "-q", "--quiet"}),
+        valued=frozenset({"-m", "--message"}),
+        positionals=_any_pathspecs,
+    ),
+    # No --force*, -f, --delete/-d, --mirror, --all/--branches, --tags, --prune, --repo,
+    # --receive-pack/--exec, -o/--push-option or --no-verify; the destination is checked too.
+    ("git", "push"): Arguments(
+        flags=frozenset(
+            {"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "-n", "--dry-run"}
+        ),
+        valued=frozenset(),
+        positionals=_push_destination,
+    ),
+}

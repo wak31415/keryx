@@ -44,7 +44,11 @@ KEEP_FIELDS = (
 )
 #: `Write` carries whole file contents. The hash Jarvis matches a resolution on is taken
 #: *after* this trim, and the trim is the same on both events, so the two still agree.
+#: Anything the trim shortens is reported as `truncated`: the CLI runs the original, not
+#: what Jarvis was shown, so Jarvis refuses to escalate a request it has only seen part of.
 MAX_STRING = 4096
+MAX_LIST = 50
+MAX_DEPTH = 6
 MAX_STDIN = 4 * 1024 * 1024
 MAX_REPLY = 64 * 1024
 CONNECT_TIMEOUT_S = 2.0
@@ -57,25 +61,36 @@ def _data_dir():
     return os.path.expanduser(os.environ.get("JARVIS_DATA_DIR") or "~/.jarvis")
 
 
-def _trim(value, depth=0):
-    """`value` with every string bounded, so no file's contents ride the socket."""
-    if depth > 6:
+def _trim(value, cuts, depth=0):
+    """`value` with every string bounded, so no file's contents ride the socket.
+
+    Every shortening — a string, a list, a nest too deep — is appended to `cuts`.
+    """
+    if depth > MAX_DEPTH:
+        cuts.append("depth")
         return "…"
     if isinstance(value, str):
-        return value if len(value) <= MAX_STRING else value[:MAX_STRING] + "…"
+        if len(value) <= MAX_STRING:
+            return value
+        cuts.append("string")
+        return value[:MAX_STRING] + "…"
     if isinstance(value, dict):
-        return {str(key): _trim(item, depth + 1) for key, item in value.items()}
+        return {str(key): _trim(item, cuts, depth + 1) for key, item in value.items()}
     if isinstance(value, list):
-        return [_trim(item, depth + 1) for item in value[:50]]
+        if len(value) > MAX_LIST:
+            cuts.append("list")
+        return [_trim(item, cuts, depth + 1) for item in value[:MAX_LIST]]
     return value
 
 
 def _slim(event):
-    """The subset of the hook payload Jarvis is given."""
+    """The subset of the hook payload Jarvis is given, and whether it had to be cut."""
     slim = {field: event.get(field) for field in KEEP_FIELDS if event.get(field) is not None}
     tool_input = event.get("tool_input")
     if isinstance(tool_input, dict):
-        slim["tool_input"] = _trim(tool_input)
+        cuts = []
+        slim["tool_input"] = _trim(tool_input, cuts)
+        slim["truncated"] = bool(cuts)
     return slim
 
 
