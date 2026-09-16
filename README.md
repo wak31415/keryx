@@ -402,8 +402,10 @@ until you have hung up, because a restart drops every call in progress. Nothing 
 you are already talking to Jarvis: a confirmation that lands during a call is spoken into
 that call instead.
 
-Nothing supervising the process — a `jarvis serve` you started in a terminal — means
-`restart` refuses, because stopping would leave nothing to start it again. How it knows
+Nothing supervising the process — a `jarvis serve` you started in a terminal, even on a
+machine where the service is installed too — means `restart` refuses in one sentence,
+because stopping would leave nothing to start it again. `jarvis doctor` says which case
+you are in. How it knows
 whether the change actually *loaded*, what happens when the service never comes back at
 all, and why a `-15` exit code is the restart working:
 [Restarting Jarvis](https://github.com/wak31415/jarvis-voice-agent/wiki/Restarting-Jarvis).

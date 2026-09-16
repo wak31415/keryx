@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from jarvis.config import DATA_DIR_MODE, PLACEHOLDER_KEY, Settings, env_var_name
-from jarvis.restart.service import resolve_target
+from jarvis.restart.service import INSTALLERS, candidate_target, resolve_target
 
 Severity = Literal["hard", "soft"]
 
@@ -299,21 +299,32 @@ def _microphone_check() -> Check:
 
 
 def _service_manager_check(settings: Settings) -> Check:
-    """What supervises this process, and what is unavailable when nothing does.
+    """Whether a service is installed to supervise Jarvis, and what is lost when none is.
 
-    Warn-only: `SERVICE_MANAGER=none` — which is also what `auto` resolves to when neither
-    `systemctl` nor `launchctl` is on PATH — is a supported way to run Jarvis, just a
-    narrower one. It is worth saying out loud because the consequence is silent: `jarvis
-    restart` and the voice model's `restart_service` both refuse, so a subagent that
-    changes Jarvis's own code has no way to make the change take effect.
+    Warn-only: running without one — `SERVICE_MANAGER=none`, no `systemctl`/`launchctl`,
+    or simply no unit installed — is a supported way to run Jarvis, just a narrower one.
+    It is worth saying out loud because the consequence is silent: `jarvis restart` and the
+    voice model's `restart_service` both refuse, so a subagent that changes Jarvis's own
+    code has no way to make the change take effect.
+
+    Asked from outside, like `jarvis restart`: `doctor` runs in a terminal, never inside
+    the unit, so the question is whether the unit is installed — not merely whether its
+    manager's command is on PATH, which on Linux it nearly always is.
     """
-    target = resolve_target(settings)
+    candidate = candidate_target(settings)
+    target = resolve_target(settings, from_outside=True) if candidate is not None else None
     if target is None:
+        if settings.service_manager == "none":
+            why = "SERVICE_MANAGER=none"
+        elif candidate is None:
+            why = "no service manager on this machine"
+        else:
+            why = f"{candidate.unit} is not installed ({INSTALLERS[candidate.manager]})"
         return Check(
             "service manager",
             False,
-            "nothing supervises this process — `jarvis restart` and the voice's "
-            "restart_service refuse, and nothing restarts Jarvis if it dies",
+            f"{why} — `jarvis restart` and the voice's restart_service refuse, and nothing "
+            "restarts Jarvis if it dies",
             severity="soft",
         )
     detail = target.describe()

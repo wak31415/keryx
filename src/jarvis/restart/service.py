@@ -6,14 +6,22 @@ the service manager a restart, the other hands it a watchdog — and both are th
 
 Nothing supervising this process means `resolve_target` returns `None`, and a restart is
 then refused rather than attempted: stopping would leave nothing to start it again.
+
+"Supervising" is a fact about this process, not about the machine. `systemctl` is on PATH
+on every Linux desktop, and that alone once resolved a `jarvis serve` started in a terminal
+to `systemctl --user restart jarvis.service`: a unit that did not exist (the failure went
+nowhere anyone would hear it), or worse, the installed copy — restarted in place of the one
+that was asked. So `auto` asks whether this process runs *as* the unit: its cgroup under
+systemd, the job label launchd hands it on macOS.
 """
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +33,17 @@ log = logging.getLogger("jarvis.restart")
 #: `ops/launchd/dev.jarvis.agent.plist`.
 SYSTEMD_UNIT = "jarvis.service"
 LAUNCHD_LABEL = "dev.jarvis.agent"
+#: What puts each one there, for the messages that say it is missing.
+INSTALLERS = {"systemd": "scripts/install-systemd.sh", "launchd": "scripts/install-launchd.sh"}
+
+#: Where Linux says which cgroup this process is in. Under systemd the cgroup is the unit.
+PROC_SELF_CGROUP = Path("/proc/self/cgroup")
+#: The user manager's own cgroup; `systemctl --user` reaches only the units beneath it.
+USER_MANAGER_CGROUP = re.compile(r"user@\d+\.service")
+#: The environment variable launchd sets to the label of the job it started.
+LAUNCHD_JOB_VAR = "XPC_SERVICE_NAME"
+#: How long a question to the service manager may take before the answer is "no".
+PROBE_TIMEOUT_S = 5.0
 
 #: The transient unit the watchdog runs as, suffixed with the pid that armed it so a
 #: second restart during a crash loop does not collide with the watch still running.
@@ -33,7 +52,7 @@ WATCH_UNIT_PREFIX = "jarvis-restart-watch"
 WATCH_LOG_NAME = "restart-watch.log"
 
 #: What `jarvis restart` prints when there is no service manager to ask.
-UNSUPPORTED_HINT = """no service manager to restart through on this machine.
+UNSUPPORTED_HINT = """no installed Jarvis service to restart on this machine.
 
 Install the service first (it is what starts Jarvis again after it stops):
 
@@ -71,13 +90,44 @@ def resolve_target(
     *,
     platform: str = sys.platform,
     which: Callable[[str], str | None] | None = None,
+    from_outside: bool = False,
+    supervising: Callable[[ServiceTarget], bool] | None = None,
+    installed: Callable[[ServiceTarget], bool] | None = None,
 ) -> ServiceTarget | None:
     """The service manager to restart through, or None when nothing supervises us.
 
     `SERVICE_MANAGER=auto` (the default) picks systemd on Linux and launchd on macOS, and
-    only when the tool is actually on PATH — a Jarvis started by hand from a terminal has
-    nothing that would bring it back, and must refuse to stop rather than take itself off
-    the air. `none` refuses outright.
+    only when this process actually runs as the unit (`runs_under`). A Jarvis started by
+    hand from a terminal has nothing that would bring it back, and must refuse to stop
+    rather than take itself off the air — or restart an installed copy it is not.
+
+    `from_outside` is for the commands a person runs in a terminal (`jarvis restart`,
+    `jarvis doctor`), which are never inside the unit: for them an installed unit
+    (`is_installed`) is the answer. `systemd`/`launchd` are taken at their word, and `none`
+    refuses outright.
+    """
+    target = candidate_target(settings, platform=platform, which=which)
+    if target is None or settings.service_manager != "auto":
+        return target
+    # Late-bound, like `which` below, so a test can reach the real probes' replacements.
+    if (supervising or runs_under)(target):
+        return target
+    if from_outside and (installed or is_installed)(target):
+        return target
+    return None
+
+
+def candidate_target(
+    settings: Settings,
+    *,
+    platform: str = sys.platform,
+    which: Callable[[str], str | None] | None = None,
+) -> ServiceTarget | None:
+    """The unit Jarvis would run as on this machine, whether or not it does.
+
+    The manager `SERVICE_MANAGER` names (this platform's, for `auto`) and the unit
+    `SERVICE_UNIT` names (the installers' default otherwise); None when there is no such
+    manager, or its command is not on PATH.
     """
     # Resolved here rather than as a default argument: a default is bound once, at import,
     # so `monkeypatch.setattr(shutil, "which", ...)` could never reach it — which is how a
@@ -85,19 +135,77 @@ def resolve_target(
     which = which or shutil.which
     manager = settings.service_manager
     if manager == "auto":
-        if platform.startswith("linux") and which("systemctl"):
+        if platform.startswith("linux"):
             manager = "systemd"
-        elif platform == "darwin" and which("launchctl"):
+        elif platform == "darwin":
             manager = "launchd"
         else:
             manager = "none"
     if manager == "none":
         return None
     if not which("systemctl" if manager == "systemd" else "launchctl"):
-        log.warning("SERVICE_MANAGER=%s but its command is not on PATH", manager)
+        if settings.service_manager != "auto":
+            log.warning("SERVICE_MANAGER=%s but its command is not on PATH", manager)
         return None
     default = SYSTEMD_UNIT if manager == "systemd" else LAUNCHD_LABEL
     return ServiceTarget(manager, settings.service_unit or default)
+
+
+def runs_under(
+    target: ServiceTarget,
+    *,
+    cgroup: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    """True when this process is the service `target` names (or a child of it).
+
+    systemd: the unit is a directory in this process's cgroup path, beneath the user
+    manager — a terminal's shell is in a `.scope`, and a system unit of the same name is
+    out of `systemctl --user`'s reach. launchd: the job label it sets in the environment.
+    """
+    if target.manager == "systemd":
+        text = read_cgroup() if cgroup is None else cgroup
+        return any(target.unit in _user_units(line) for line in text.splitlines())
+    env = os.environ if environ is None else environ
+    return env.get(LAUNCHD_JOB_VAR) == target.unit
+
+
+def _user_units(line: str) -> list[str]:
+    """The cgroup path components beneath the user manager, from one `/proc/*/cgroup` line."""
+    parts = line.split(":", 2)[-1].strip().split("/")
+    for index, part in enumerate(parts):
+        if USER_MANAGER_CGROUP.fullmatch(part):
+            return parts[index + 1 :]
+    return []
+
+
+def read_cgroup(path: Path = PROC_SELF_CGROUP) -> str:
+    """This process's cgroup membership; empty where there is none to read (macOS)."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def is_installed(
+    target: ServiceTarget, *, run: Callable[..., object] = subprocess.run
+) -> bool:
+    """Whether the service manager knows the unit at all. Asks; never changes anything.
+
+    A probe that cannot answer — no user bus over ssh, a hung manager — is a "no": this
+    decides whether a restart is attempted, and one that is not attempted is announced.
+    """
+    if target.manager == "systemd":
+        command = ["systemctl", "--user", "show", "--property=LoadState", "--value", target.unit]
+    else:
+        command = ["launchctl", "print", f"gui/{os.getuid()}/{target.unit}"]
+    try:
+        result = run(command, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode != 0:
+        return False
+    return target.manager != "systemd" or result.stdout.strip() == "loaded"
 
 
 # --- the watchdog that outlives the restart ---------------------------------

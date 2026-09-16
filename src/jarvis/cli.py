@@ -417,7 +417,8 @@ def restart(
         _echo_restart_status(store)
         return
 
-    target = resolve_target(settings)
+    # From a terminal, never from inside the unit: the installed service is the target.
+    target = resolve_target(settings, from_outside=True)
     if target is None:
         typer.echo(UNSUPPORTED_HINT)
         raise typer.Exit(1)

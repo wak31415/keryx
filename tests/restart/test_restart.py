@@ -34,7 +34,10 @@ from jarvis.restart.service import (
     WATCH_UNIT_PREFIX,
     ServiceTarget,
     WatchPlan,
+    is_installed,
+    read_cgroup,
     resolve_target,
+    runs_under,
     spawn_watchdog,
     watch_command,
     watch_log_path,
@@ -279,20 +282,32 @@ def pending(**fields) -> RestartRecord:
 # --- the service manager ---------------------------------------------------
 
 
-def test_auto_picks_systemd_on_linux(tmp_path):
+def yes(_target) -> bool:
+    return True
+
+
+def no(_target) -> bool:
+    return False
+
+
+def test_auto_picks_systemd_when_this_process_runs_under_the_unit(tmp_path):
     settings = make_settings(tmp_path, service_manager="auto")
 
-    target = resolve_target(settings, platform="linux", which=lambda name: f"/usr/bin/{name}")
+    target = resolve_target(
+        settings, platform="linux", which=lambda name: f"/usr/bin/{name}", supervising=yes
+    )
 
     assert target is not None
     assert (target.manager, target.unit) == ("systemd", SYSTEMD_UNIT)
     assert target.command() == ["systemctl", "--user", "restart", SYSTEMD_UNIT]
 
 
-def test_auto_picks_launchd_on_macos(tmp_path):
+def test_auto_picks_launchd_when_this_process_runs_as_the_agent(tmp_path):
     settings = make_settings(tmp_path, service_manager="auto")
 
-    target = resolve_target(settings, platform="darwin", which=lambda name: f"/bin/{name}")
+    target = resolve_target(
+        settings, platform="darwin", which=lambda name: f"/bin/{name}", supervising=yes
+    )
 
     assert target is not None
     assert (target.manager, target.unit) == ("launchd", LAUNCHD_LABEL)
@@ -311,10 +326,81 @@ def test_nothing_supervising_us_is_no_target(tmp_path):
     assert resolve_target(settings, platform="linux", which=lambda name: None) is None
 
 
+def test_systemctl_on_path_is_not_the_same_as_being_supervised(tmp_path):
+    """Every Linux desktop has systemctl. A `jarvis serve` in a terminal is still unsupervised.
+
+    It used to resolve to `systemctl --user restart jarvis.service` regardless — which
+    failed "unit not found" where the service was not installed, telling nobody, and where
+    it was, restarted the *installed* copy instead of the one that was asked.
+    """
+    settings = make_settings(tmp_path, service_manager="auto")
+
+    target = resolve_target(
+        settings,
+        platform="linux",
+        which=lambda name: f"/usr/bin/{name}",
+        supervising=no,
+        installed=yes,
+    )
+
+    assert target is None
+
+
+def test_from_outside_an_installed_unit_is_the_target(tmp_path):
+    """`jarvis restart` in a terminal is never under the unit; restarting it is its job."""
+    settings = make_settings(tmp_path, service_manager="auto")
+
+    target = resolve_target(
+        settings,
+        platform="linux",
+        which=lambda name: f"/usr/bin/{name}",
+        from_outside=True,
+        supervising=no,
+        installed=yes,
+    )
+
+    assert target == ServiceTarget("systemd", SYSTEMD_UNIT)
+
+
+def test_from_outside_nothing_installed_is_no_target(tmp_path):
+    settings = make_settings(tmp_path, service_manager="auto")
+
+    target = resolve_target(
+        settings,
+        platform="linux",
+        which=lambda name: f"/usr/bin/{name}",
+        from_outside=True,
+        supervising=no,
+        installed=no,
+    )
+
+    assert target is None
+
+
+def test_auto_checks_supervision_against_the_configured_unit(tmp_path):
+    settings = make_settings(tmp_path, service_manager="auto", service_unit="jarvis-dev.service")
+    asked: list[ServiceTarget] = []
+
+    def supervising(target):
+        asked.append(target)
+        return True
+
+    target = resolve_target(
+        settings, platform="linux", which=lambda name: "/usr/bin/x", supervising=supervising
+    )
+
+    assert asked == [ServiceTarget("systemd", "jarvis-dev.service")]
+    assert target == asked[0]
+
+
 def test_service_manager_none_refuses(tmp_path):
     settings = make_settings(tmp_path, service_manager="none")
 
-    assert resolve_target(settings, platform="linux", which=lambda name: "/usr/bin/x") is None
+    target = resolve_target(
+        settings, platform="linux", which=lambda name: "/usr/bin/x", supervising=yes
+    )
+
+    assert target is None
 
 
 def test_a_configured_manager_without_its_command_is_no_target(tmp_path):
@@ -323,12 +409,126 @@ def test_a_configured_manager_without_its_command_is_no_target(tmp_path):
     assert resolve_target(settings, platform="linux", which=lambda name: None) is None
 
 
+def test_a_configured_manager_is_taken_at_its_word(tmp_path):
+    """`SERVICE_MANAGER=systemd` is somebody saying so; only `auto` goes looking."""
+    settings = make_settings(tmp_path, service_manager="systemd")
+
+    target = resolve_target(
+        settings,
+        platform="linux",
+        which=lambda name: "/usr/bin/systemctl",
+        supervising=no,
+        installed=no,
+    )
+
+    assert target == ServiceTarget("systemd", SYSTEMD_UNIT)
+
+
 def test_the_unit_can_be_overridden(tmp_path):
     settings = make_settings(tmp_path, service_manager="systemd", service_unit="jarvis-dev.service")
 
     target = resolve_target(settings, platform="linux", which=lambda name: "/usr/bin/systemctl")
 
     assert target.unit == "jarvis-dev.service"
+
+
+# --- is this process the unit? ----------------------------------------------
+
+USER_MANAGER = "/user.slice/user-1000.slice/user@1000.service"
+
+
+@pytest.mark.parametrize(
+    ("cgroup", "expected"),
+    [
+        (f"0::{USER_MANAGER}/app.slice/jarvis.service\n", True),
+        # cgroup v1 (or hybrid): the systemd hierarchy is the named one.
+        (f"12:cpu:/\n1:name=systemd:{USER_MANAGER}/app.slice/jarvis.service\n", True),
+        # A terminal, a tmux pane, an ssh login: a scope, not the unit.
+        (f"0::{USER_MANAGER}/tmux-spawn-0f1e.scope\n", False),
+        ("0::/user.slice/user-1000.slice/session-3.scope\n", False),
+        # Some other user service that happens to have started us, like a tmux server.
+        (f"0::{USER_MANAGER}/app.slice/tmux.service\n", False),
+        # A system unit of that name: `systemctl --user` cannot restart it.
+        ("0::/system.slice/jarvis.service\n", False),
+        ("", False),
+    ],
+)
+def test_systemd_supervision_is_read_from_this_process_cgroup(cgroup, expected):
+    target = ServiceTarget("systemd", "jarvis.service")
+
+    assert runs_under(target, cgroup=cgroup) is expected
+
+
+def test_launchd_supervision_is_the_job_label_launchd_sets():
+    target = ServiceTarget("launchd", LAUNCHD_LABEL)
+
+    assert runs_under(target, environ={"XPC_SERVICE_NAME": LAUNCHD_LABEL}) is True
+    # What Terminal.app hands a shell.
+    assert runs_under(target, environ={"XPC_SERVICE_NAME": "0"}) is False
+    assert runs_under(target, environ={}) is False
+
+
+def test_no_cgroup_file_reads_as_no_cgroup(tmp_path):
+    assert read_cgroup(tmp_path / "missing") == ""
+
+
+# --- is the unit installed? --------------------------------------------------
+
+
+def recording_run(result=None, error=None):
+    """A `subprocess.run` double that records the command and never starts anything."""
+    calls: list[list[str]] = []
+
+    def run(command, **kwargs):
+        calls.append(list(command))
+        assert kwargs.get("timeout"), "a probe of the service manager must not hang"
+        if error is not None:
+            raise error
+        return result
+
+    return run, calls
+
+
+def test_a_loaded_systemd_unit_is_installed():
+    run, calls = recording_run(SimpleNamespace(returncode=0, stdout="loaded\n"))
+
+    assert is_installed(ServiceTarget("systemd", "jarvis.service"), run=run) is True
+    # A read-only query, and nothing else.
+    assert calls == [
+        ["systemctl", "--user", "show", "--property=LoadState", "--value", "jarvis.service"]
+    ]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        SimpleNamespace(returncode=0, stdout="not-found\n"),
+        SimpleNamespace(returncode=1, stdout=""),  # no user bus: ssh without linger
+    ],
+)
+def test_an_unknown_systemd_unit_is_not_installed(result):
+    run, _ = recording_run(result)
+
+    assert is_installed(ServiceTarget("systemd", "jarvis.service"), run=run) is False
+
+
+@pytest.mark.parametrize(
+    "error", [OSError("no systemctl"), subprocess.TimeoutExpired("systemctl", 5)]
+)
+def test_a_probe_that_fails_reads_as_not_installed(error):
+    run, _ = recording_run(error=error)
+
+    assert is_installed(ServiceTarget("systemd", "jarvis.service"), run=run) is False
+
+
+def test_a_loaded_launch_agent_is_installed():
+    run, calls = recording_run(SimpleNamespace(returncode=0, stdout="..."))
+
+    assert is_installed(ServiceTarget("launchd", LAUNCHD_LABEL), run=run) is True
+    assert calls == [["launchctl", "print", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"]]
+
+    run, _ = recording_run(SimpleNamespace(returncode=113, stdout=""))
+    assert is_installed(ServiceTarget("launchd", LAUNCHD_LABEL), run=run) is False
 
 
 def test_current_version_never_raises(tmp_path):
@@ -477,6 +677,23 @@ async def test_no_service_manager_refuses_and_writes_nothing(tmp_path):
 
     assert result["status"] == "unsupported"
     assert "cannot restart yourself" in result["message"]
+    assert harness.record() is None
+    assert harness.spawn.commands == []
+
+
+async def test_a_copy_started_by_hand_refuses_rather_than_restart_the_installed_one(
+    tmp_path, monkeypatch
+):
+    """`auto` with systemctl on PATH, the unit installed, and this process not under it."""
+    monkeypatch.setattr("jarvis.restart.service.runs_under", no)
+    monkeypatch.setattr("jarvis.restart.service.is_installed", yes)
+    harness = Harness(make_settings(tmp_path, service_manager="auto"))
+
+    result = await harness.coordinator.request()
+    await harness.settle()
+
+    assert result["status"] == "unsupported"
+    assert result["message"].rstrip(".").count(". ") == 0  # one sentence to say
     assert harness.record() is None
     assert harness.spawn.commands == []
 

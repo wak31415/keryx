@@ -592,7 +592,8 @@ def restart_settings(monkeypatch, tmp_path):
     monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
     monkeypatch.setattr("jarvis.cli.loaded_version", lambda data_dir, repo=None: "v-test")
     monkeypatch.setattr(
-        "jarvis.cli.resolve_target", lambda _settings: ServiceTarget("systemd", "jarvis.service")
+        "jarvis.cli.resolve_target",
+        lambda _settings, **_kwargs: ServiceTarget("systemd", "jarvis.service"),
     )
     monkeypatch.setattr("jarvis.cli.health_probe", lambda _settings: 0)
     # `resolve_target` is stubbed above, but `watch_command` still looks for `systemd-run`
@@ -683,13 +684,29 @@ def test_restart_without_a_service_manager_says_how_to_install_one(
     restart_settings, ran, monkeypatch
 ):
     calls, _ = ran
-    monkeypatch.setattr("jarvis.cli.resolve_target", lambda _settings: None)
+    monkeypatch.setattr("jarvis.cli.resolve_target", lambda _settings, **_kwargs: None)
 
     result = runner.invoke(app, ["restart"])
 
     assert result.exit_code == 1
     assert "install-systemd.sh" in result.output
     assert calls == []
+
+
+def test_restart_from_a_terminal_restarts_the_installed_service(
+    restart_settings, ran, monkeypatch
+):
+    """The command is never run *inside* the unit, so it asks for an installed one."""
+    asked: list[dict] = []
+
+    def resolve(_settings, **kwargs):
+        asked.append(kwargs)
+        return ServiceTarget("systemd", "jarvis.service")
+
+    monkeypatch.setattr("jarvis.cli.resolve_target", resolve)
+
+    assert runner.invoke(app, ["restart"]).exit_code == 0
+    assert asked == [{"from_outside": True}]
 
 
 def test_restart_no_callback_leaves_no_number(restart_settings, ran):

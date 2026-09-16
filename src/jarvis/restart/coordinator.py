@@ -130,9 +130,8 @@ NO_CALLBACK_MESSAGE = (
     "you cannot ring him back afterwards, so he should call in to check."
 )
 UNSUPPORTED_MESSAGE = (
-    "Tell him you cannot restart yourself: nothing on this machine is supervising the "
-    "service, so stopping would leave nothing to start it again. He can restart it by "
-    "hand with `jarvis restart` once the service is installed."
+    "Tell him, in one sentence, that you cannot restart yourself because this copy of "
+    "Jarvis was not started by a service manager, so nothing would start it again."
 )
 ALREADY_PENDING_MESSAGE = "Tell him a restart is already scheduled for when this call ends."
 
@@ -200,7 +199,7 @@ class RestartCoordinator:
         """
         target = resolve_target(self._settings)
         if target is None:
-            log.warning("refusing a restart: no service manager on this machine")
+            log.warning("refusing a restart: this process is not running under a service")
             return {"status": "unsupported", "message": UNSUPPORTED_MESSAGE}
         if self._deferred is not None and not self._deferred.done():
             return {"status": "already_pending", "message": ALREADY_PENDING_MESSAGE}
