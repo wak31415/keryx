@@ -15,7 +15,10 @@ Nothing here reads a file or touches the network: it is pure, so the tests are t
 
 import logging
 import re
+import string
 import unicodedata
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis.approvals.models import Kind, input_digest
@@ -90,9 +93,14 @@ DENY_COMMAND_SUBSTRINGS = (
     "printenv",
     "env |",
 )
-#: Shell metacharacters. A prefix allowlist means nothing if the command can chain, so a
-#: command carrying any of these is refused outright rather than parsed.
+#: Shell metacharacters. An allowlist means nothing if the command can chain, so a command
+#: carrying any of these — quoted or not — is refused outright rather than parsed.
 SHELL_METACHARACTERS = ("&", "|", ";", "`", "$(", ">", "<", "\n", "\r")
+#: What a word may carry outside quotes and still mean exactly itself to bash and zsh:
+#: nothing that expands (`$ ~ * ? [ { !`), quotes or escapes (`' " \`), or ends a command.
+_BARE = frozenset(string.ascii_letters + string.digits + "_@%+=:,./-")
+#: What double quotes do not stop the shell expanding.
+_EXPANDS_IN_DOUBLE_QUOTES = frozenset("$`\\!")
 
 #: The default `approve`/`reject` menu of an ordinary tool call. `0` (leave it) is added
 #: by `ApprovalRequest.menu`, and it is always available.
@@ -301,11 +309,11 @@ def _describe_bash(tool_input: dict, event: dict, settings) -> tuple[Kind, str, 
     for character in SHELL_METACHARACTERS:
         if character in raw:
             raise Ineligible("the command chains or redirects, so a prefix means nothing")
-    command = _WHITESPACE.sub(" ", raw).strip()
-    if not command:
+    argv = shell_words(raw)
+    if not argv:
         raise Ineligible("there is no command in the request")
-    if not any(_matches_prefix(command, prefix) for prefix in settings.approval_bash_allow):
-        raise Ineligible("the command is not on the shell allowlist")
+    _refuse_unlisted(argv, settings)
+    command = _WHITESPACE.sub(" ", raw).strip()
     cwd = Path(str(event.get("cwd") or "."))
     root = _inside(cwd, approval_roots(settings))
     if root is None:
@@ -327,13 +335,176 @@ def _refuse_unprintable(command: str) -> None:
             raise Ineligible(f"the command carries U+{ord(character):04X}, which is not printable")
 
 
-def _matches_prefix(command: str, prefix: str) -> bool:
-    """True when `command` *is* `prefix` or starts with it followed by a word boundary.
+def shell_words(command: str) -> list[str]:
+    """The argv a shell will build from `command`, or `Ineligible` if that is in any doubt.
 
-    `git commit` must not match `git committer-is-not-a-thing`, and it must not match
-    `git commitfoo`; only `git commit` and `git commit -m …`.
+    A deliberately small subset of shell syntax that bash and zsh agree on: words split on
+    plain spaces, made of characters that expand to nothing, `'single-quoted'` text, and
+    `"double-quoted"` text with nothing in it the shell still expands. A variable, a glob, a
+    tilde, a brace, an escape or a comment is refused rather than interpreted, because a
+    guess about what the shell will make of it is a guess about what runs.
     """
-    prefix = _WHITESPACE.sub(" ", prefix).strip()
-    if not prefix:
-        return False
-    return command == prefix or command.startswith(prefix + " ")
+    if "''" in command:
+        # POSIX reads '' inside a word as two strings run together; zsh's RC_QUOTES reads
+        # it as one literal quote. Two different argvs, so neither is assumed.
+        raise Ineligible("it has '' in it, which bash and zsh read differently")
+    words: list[str] = []
+    word: list[str] | None = None
+    index = 0
+    while index < len(command):
+        character = command[index]
+        if character == " ":
+            if word is not None:
+                words.append("".join(word))
+                word = None
+            index += 1
+            continue
+        if character in "'\"":
+            end = command.find(character, index + 1)
+            if end < 0:
+                raise Ineligible("it has an unterminated quote")
+            quoted = command[index + 1 : end]
+            if character == '"' and any(item in _EXPANDS_IN_DOUBLE_QUOTES for item in quoted):
+                raise Ineligible("a double-quoted word holds something the shell expands")
+            word = [*(word or []), quoted]
+            index = end + 1
+            continue
+        if character not in _BARE or (character == "=" and not word):
+            # A leading `=` is zsh's path expansion (`=ls` is `/bin/ls`).
+            raise Ineligible(f"{character!r} means something to the shell")
+        word = [*(word or []), character]
+        index += 1
+    if word is not None:
+        words.append("".join(word))
+    return words
+
+
+def _refuse_unlisted(argv: list[str], settings) -> None:
+    """Raise `Ineligible` unless an `APPROVAL_BASH_ALLOW` entry allows exactly `argv`.
+
+    An entry matches a command that is word for word the same. Only an entry with a rule in
+    `ARGUMENTS` may be followed by anything, and then only by what that rule accepts: a
+    prefix on its own says nothing about `--mirror`, `-F /etc/passwd` or `-p evilmodule`.
+    """
+    reason = "the command is not on the shell allowlist"
+    for entry in settings.approval_bash_allow:
+        try:
+            allowed = shell_words(entry)
+        except Ineligible:
+            log.warning("ignoring APPROVAL_BASH_ALLOW entry %r: it is not a plain command", entry)
+            continue
+        if not allowed or argv[: len(allowed)] != allowed:
+            continue
+        if argv == allowed:
+            return
+        rule = ARGUMENTS.get(tuple(allowed))
+        if rule is None:
+            reason = f"only {entry!r} itself is allowed, with nothing after it"
+            continue
+        try:
+            rule.check(argv[len(allowed) :])
+        except Ineligible as refused:
+            reason = str(refused)
+            continue
+        return
+    raise Ineligible(reason)
+
+
+@dataclass(frozen=True)
+class Arguments:
+    """What may follow an allowlisted command: named options and a check on the rest.
+
+    Options are matched by their exact spelling. git reads any unambiguous abbreviation of a
+    long option as the whole of it (`--mirr` is `--mirror`), so a set of full names is the
+    only kind of list an abbreviation cannot slip past. Options may appear anywhere before a
+    `--`, as git's own parser allows, and short ones may be clustered (`-am wip`).
+    """
+
+    #: Options that take no value.
+    flags: frozenset[str]
+    #: Options that take exactly one (`-m wip`, `-mwip`, `--message=wip`, `--message wip`).
+    valued: frozenset[str]
+    #: Raises `Ineligible` for positional arguments this command may not be given.
+    positionals: Callable[[list[str]], None]
+
+    def check(self, words: list[str]) -> None:
+        positionals: list[str] = []
+        index = 0
+        while index < len(words):
+            word = words[index]
+            index += 1
+            if word == "--":
+                positionals.extend(words[index:])
+                break
+            if word == "-" or not word.startswith("-"):
+                positionals.append(word)
+            elif word.startswith("--"):
+                name, has_value, _ = word.partition("=")
+                if name in self.valued:
+                    if not has_value:
+                        index = _take_value(words, index, name)
+                elif name not in self.flags or has_value:
+                    raise Ineligible(f"{name} is not an option a keypad may approve")
+            else:
+                for position, letter in enumerate(word[1:], start=2):
+                    option = f"-{letter}"
+                    if option in self.valued:
+                        if position == len(word):
+                            index = _take_value(words, index, option)
+                        break
+                    if option not in self.flags:
+                        raise Ineligible(f"{option} is not an option a keypad may approve")
+        self.positionals(positionals)
+
+
+def _take_value(words: list[str], index: int, option: str) -> int:
+    if index >= len(words):
+        raise Ineligible(f"{option} is missing its value")
+    return index + 1
+
+
+def _any_pathspecs(words: list[str]) -> None:
+    """`git commit` pathspecs only choose which changes go in, and never leave the repo."""
+
+
+def _push_destination(words: list[str]) -> None:
+    """A remote *name* and plain branch or tag names: somewhere already configured, and
+    nothing that force-pushes (`+`), deletes (`:main`), renames (`HEAD:main`) or globs."""
+    if not words:
+        return
+    remote, *refspecs = words
+    if not _REMOTE_NAME.fullmatch(remote):
+        raise Ineligible(f"{remote!r} is not the name of a remote")
+    for refspec in refspecs:
+        if not _REF_NAME.fullmatch(refspec):
+            raise Ineligible(f"{refspec!r} is not a plain branch or tag name")
+
+
+#: A remote's name: no `/` (a path), no `:` (a URL or `host:path`), no leading `.` or `-`.
+#: A name that is not a configured remote is read by git as a directory beside the
+#: repository, which keeps the push on this machine.
+_REMOTE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
+#: A branch or tag name, spelled out: no `+`, `:`, `*`, `^`, `~` or `@{`.
+_REF_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*")
+
+#: The allowlisted commands that may be given arguments at all, and which. Any other entry
+#: in `APPROVAL_BASH_ALLOW` matches only itself, word for word.
+ARGUMENTS: dict[tuple[str, ...], Arguments] = {
+    # No -F/--file or -t/--template (a file from anywhere, into a commit `git push` sends
+    # away), no -n/--no-verify (the hooks that check a commit), no --amend, -C/-c, --author,
+    # --pathspec-from-file or anything else nobody needs to approve from a phone.
+    ("git", "commit"): Arguments(
+        flags=frozenset({"-a", "--all", "-q", "--quiet"}),
+        valued=frozenset({"-m", "--message"}),
+        positionals=_any_pathspecs,
+    ),
+    # No --force*, -f, --delete/-d, --mirror, --all/--branches, --tags, --prune, --repo,
+    # --receive-pack/--exec, -o/--push-option or --no-verify; the destination is checked too.
+    ("git", "push"): Arguments(
+        flags=frozenset(
+            {"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "-n", "--dry-run"}
+        ),
+        valued=frozenset(),
+        positionals=_push_destination,
+    ),
+}
