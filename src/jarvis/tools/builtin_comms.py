@@ -1,9 +1,9 @@
 """The two tools that reach outside the call without dispatching anything.
 
-`send_to_slack` is the written channel he actually asks for (Jarvis does not text — see
+`send_to_slack` is the written channel they actually ask for (Jarvis does not text — see
 `SMS_ENABLED`), and registering it only makes it *available*: whether it may be called is
 the model's decision, and both its description and the system prompt confine that to the
-turns where he explicitly asked for something in writing.
+turns where they explicitly asked for something in writing.
 
 `web_search` is the whole of the "answer it myself" half of the one routing decision Jarvis
 makes. It goes through the Responses API because a Realtime session has no hosted search
@@ -33,7 +33,7 @@ def register_comms_tools(
     # --- send_to_slack -----------------------------------------------------
 
     async def send_to_slack(ctx: ToolContext, arguments: dict) -> dict:
-        # Not before the PIN: it posts as his own bot, into the channel he trusts.
+        # Not before the PIN: it posts as their own bot, into the channel they trust.
         if (refusal := pin_gate(ctx, settings)) is not None:
             return refusal
         message = _text(arguments, "message")
@@ -48,11 +48,11 @@ def register_comms_tools(
         registry.register(
             "send_to_slack",
             f"Send {settings.owner_label} a message on Slack, in the direct-message channel "
-            "he already uses for this. Only call it when he has explicitly asked for "
+            "they already use for this. Only call it when they have explicitly asked for "
             'something in writing — "send me that", "put it on Slack", "text me the link". '
             "Never call it unasked, however awkward the content is to say out loud, and never "
             "to repeat in writing something you have already said; if it truly will not "
-            "survive being spoken, offer to send it and call this only once he accepts. "
+            "survive being spoken, offer to send it and call this only once they accept. "
             "For anything a subagent produced (a file, a plot, a report), dispatch the "
             "sending to Claude instead: it can attach the file itself.",
             {
@@ -86,8 +86,8 @@ def register_comms_tools(
             "web_search",
             "Look something up on the web and get a short spoken answer. Use it yourself "
             "for small, factual questions — a price, a date, a score, what a company "
-            "announced — instead of dispatching a task. Anything that needs his files, "
-            "his repositories, his mail, or more than a couple of sentences of work goes "
+            "announced — instead of dispatching a task. Anything that needs their files, "
+            "their repositories, their mail, or more than a couple of sentences of work goes "
             "to dispatch_task instead.",
             {
                 "type": "object",

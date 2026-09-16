@@ -39,18 +39,18 @@ def register_restart_tools(
 
         registry.register(
             "restart_service",
-            "Restart Jarvis itself — the service behind this call — when he asks for one, "
-            "or when work he asked for has changed Jarvis's own code and only a restart "
+            "Restart Jarvis itself — the service behind this call — when they ask for one, "
+            "or when work they asked for has changed Jarvis's own code and only a restart "
             "loads it. The restart drops this call, so it waits until the call has ended "
-            "and then rings him back by itself to say whether it worked; the answer tells "
+            "and then rings them back by itself to say whether it worked; the answer tells "
             "you what to say. Never reach for it to fix something you were not asked to fix.",
             {
                 "type": "object",
                 "properties": {
                     "reason": {
                         "type": "string",
-                        "description": "Why it is being restarted, in a few words — he "
-                        "hears this back on the confirmation call.",
+                        "description": "Why it is being restarted, in a few words — they "
+                        "hear this back on the confirmation call.",
                     },
                     "task_id": {
                         "type": "integer",

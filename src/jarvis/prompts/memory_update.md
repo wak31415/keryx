@@ -1,7 +1,7 @@
 # Update Jarvis's memory
 
 A call just ended. Fold what happened in it into the memory document Jarvis reads at the
-start of every future call, so the next conversation opens knowing him rather than
+start of every future call, so the next conversation opens knowing them rather than
 starting from nothing.
 
 ## The two files
@@ -26,12 +26,12 @@ Keep this exact structure:
 {structure}
 ```
 
-- **Standing facts** — things that stay true: how he works, what he cares about, people
-  and places and tools that keep coming up, preferences he has stated. Merge new facts
+- **Standing facts** — things that stay true: how they work, what they care about, people
+  and places and tools that keep coming up, preferences they have stated. Merge new facts
   into the existing lines rather than repeating them. Delete one when the call shows it
   is no longer true.
-- **Ongoing threads** — open loops. What he is in the middle of, what he is waiting on,
-  what he said he would come back to. Each line dated. Remove a thread the moment a call
+- **Ongoing threads** — open loops. What they are in the middle of, what they are waiting on,
+  what they said they would come back to. Each line dated. Remove a thread the moment a call
   shows it closed; a stale open loop is worse than no note at all.
 - **Recent calls** — one short paragraph per call, newest first, dated, saying what it
   was about and what came of it. Keep at most the last fifteen; drop the oldest, but
@@ -44,7 +44,7 @@ Keep this exact structure:
   truncate the file.
 - Write plain sentences. No markdown beyond the headings and simple bullets: it is read
   by a model that speaks out loud, and it must not be tempted to read punctuation.
-- Record what he said and what happened. Never record a PIN, a token, a password, or the
+- Record what they said and what happened. Never record a PIN, a token, a password, or the
   contents of the env file, even if one appears in the transcript.
 - Do not invent. A call that was two seconds of silence gets no entry, and a call whose
   transcript you cannot read means you leave the memory exactly as you found it.

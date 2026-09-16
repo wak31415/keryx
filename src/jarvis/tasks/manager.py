@@ -75,7 +75,7 @@ LIVE_FOLLOWUP_PREAMBLE = "Follow-up from the user:"
 #: classified in advance.
 _PROMPT = (
     "Complete this request end to end. You are working on the user's own machine, with "
-    "his repositories, his Gmail and Calendar (through the google MCP tools), the skills "
+    "their repositories, their Gmail and Calendar (through the google MCP tools), the skills "
     "installed for the Claude CLI, and subagents of your own. Use whatever the work "
     "actually needs.\n\n"
     "Working directory: {cwd}{project_clause}\n\n"
@@ -173,7 +173,7 @@ class TaskManager:
         except Exception:
             log.exception("could not look for tasks to pick back up")
             return []
-        # Oldest first: he asked for them in that order, so they run in it.
+        # Oldest first: the owner asked for them in that order, so they run in it.
         found = sorted(
             (task for task in waiting if task.id is not None and task.id not in self._tasks),
             key=lambda task: task.created_at,
@@ -377,7 +377,7 @@ class TaskManager:
         if result.ok and result.restart_reason is not None and not task.internal:
             # The subagent says it changed Jarvis's own code. Recorded, not acted on: the
             # Notifier decides when a restart is safe, because it is the thing that knows
-            # whether he is mid-call. An internal task never asks — nothing Jarvis
+            # whether they are mid-call. An internal task never asks — nothing Jarvis
             # dispatches to itself has any business taking Jarvis off the air.
             log.info("task %s asks for a restart: %s", task.id, result.restart_reason or "no why")
             fields["needs_restart"] = True
@@ -476,7 +476,7 @@ class TaskManager:
         return await self._store.get(task_id)
 
     async def unreported(self, *, limit: int = MAX_UNREPORTED) -> list[Task]:
-        """Finished tasks Jarvis still owes him a word about, oldest first (spec §3.3)."""
+        """Finished tasks Jarvis still owes them a word about, oldest first (spec §3.3)."""
         return await self._store.list_unreported(limit=limit)
 
     async def count_unreported(self) -> int:
@@ -484,7 +484,7 @@ class TaskManager:
         return await self._store.count_unreported()
 
     async def mark_reported(self, task_ids: Iterable[int]) -> list[int]:
-        """Record that Jarvis has now told him about these tasks. Returns the ids stamped.
+        """Record that Jarvis has now told them about these tasks. Returns the ids stamped.
 
         Ids that do not exist, or that were already stamped, are simply not returned — the
         voice model is guessing at ids from a spoken conversation, and a wrong one must be
@@ -514,7 +514,7 @@ class TaskManager:
     async def request_callback(self, task_id: int, number: str, note: str | None = None) -> Task:
         """Ask for an outbound call to `number` when `task_id` finishes.
 
-        `note` is what the call-back should remind him of — the call it was arranged on is
+        `note` is what the call-back should remind them of — the call it was arranged on is
         long over by then. Only records the wish; the notifier places the call (spec §3.3).
         Raises `KeyError` if the task does not exist.
         """

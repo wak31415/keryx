@@ -673,7 +673,7 @@ def test_restart_asks_the_service_manager_and_records_the_call_back(restart_sett
     assert record.origin_channel == "cli"
     assert "…0001" in result.output  # the number is masked where it is printed
     # Armed before the hand-over, and on the record, because this command has just
-    # promised him a call and nothing else would notice if it never came.
+    # promised them a call and nothing else would notice if it never came.
     assert "4321" in record.watchdog
     assert "watchdog:" in result.output
 
@@ -1102,14 +1102,14 @@ def test_download_models_where_the_wake_word_cannot_run_says_so_in_one_line(
 def test_tasks_list_hides_jarvis_own_housekeeping(settings_stub):
     seed_tasks(
         settings_stub,
-        make_task("his work", status=TaskStatus.DONE),
+        make_task("their work", status=TaskStatus.DONE),
         make_task("update the memory after call abc123", status=TaskStatus.DONE, internal=True),
     )
 
     result = runner.invoke(app, ["tasks", "list"])
 
     assert result.exit_code == 0, result.output
-    assert "his work" in result.output
+    assert "their work" in result.output
     assert "update the memory" not in result.output
 
 
@@ -1125,7 +1125,7 @@ def test_tasks_list_shows_housekeeping_when_asked(settings_stub):
     assert "update the memory" in result.output
 
 
-def test_tasks_list_says_whether_he_has_been_told(settings_stub):
+def test_tasks_list_says_whether_they_have_been_told(settings_stub):
     seed_tasks(
         settings_stub,
         make_task("not yet said", status=TaskStatus.DONE),
@@ -1153,12 +1153,12 @@ def test_memory_says_so_when_there_is_nothing_remembered_yet(settings_stub):
 
 def test_memory_prints_what_is_remembered(settings_stub):
     settings_stub.ensure_dirs()
-    memory_path(settings_stub.data_dir).write_text("# What Jarvis knows\n\nHe hates jargon.\n")
+    memory_path(settings_stub.data_dir).write_text("# What Jarvis knows\n\nThey hate jargon.\n")
 
     result = runner.invoke(app, ["memory"])
 
     assert result.exit_code == 0, result.output
-    assert "He hates jargon." in result.output
+    assert "They hate jargon." in result.output
 
 
 def test_memory_path_prints_only_the_path(settings_stub):

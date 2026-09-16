@@ -367,7 +367,7 @@ async def test_a_silent_tool_result_does_not_buy_another_spoken_turn(
 ):
     """`mark_reported` is called *after* the result was spoken (spec §3.3).
 
-    Asking for a response over its answer is what made a call-back greet him, say the
+    Asking for a response over its answer is what made a call-back greet them, say the
     result, and then say the whole greeting over again.
     """
 
@@ -882,8 +882,8 @@ async def test_a_session_with_no_briefer_opens_exactly_as_it_always_did(
 async def test_the_briefing_reaches_the_system_prompt(make_session, phone, provider):
     briefer = FakeBriefer(
         Briefing(
-            memory="He is mid-way through the orchard sync.",
-            pending="- task 41 (finished) — he asked for: the ingest script",
+            memory="They are mid-way through the orchard sync.",
+            pending="- task 41 (finished) — they asked for: the ingest script",
             pending_count=1,
         )
     )
@@ -958,12 +958,12 @@ async def test_a_call_back_keeps_its_own_opening_context_and_gains_the_nudge(
 ):
     briefer = FakeBriefer(Briefing(pending="- task 41 (finished)", pending_count=2))
     session = make_session(
-        phone, provider, briefer=briefer, opening_context="You are calling him back about task 41."
+        phone, provider, briefer=briefer, opening_context="You are calling them back about task 41."
     )
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
 
     opening = provider.injected[0][0]
-    assert opening.startswith("You are calling him back about task 41.")
+    assert opening.startswith("You are calling them back about task 41.")
     assert "2 tasks finished" in opening

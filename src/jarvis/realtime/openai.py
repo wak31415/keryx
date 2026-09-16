@@ -130,7 +130,7 @@ def audio_format_block(audio_format: str) -> dict:
 
 
 def turn_detection_block(config: SessionConfig) -> dict:
-    """How the server decides he has stopped talking.
+    """How the server decides they have stopped talking.
 
     Semantic detection waits on the *shape of the sentence*, so a pause for thought does
     not end the turn; it takes an `eagerness` instead of a silence timer, and the API

@@ -1,11 +1,11 @@
 """The half of the approval bridge that lives inside Jarvis.
 
 A Claude Code hook runs on the owner's machine whenever the CLI is about to put a prompt on
-his screen. It connects to the Unix socket this module listens on and *blocks*. Nothing
-else happens: the prompt is drawn as it always was, and if he answers at the keyboard the
+their screen. It connects to the Unix socket this module listens on and *blocks*. Nothing
+else happens: the prompt is drawn as it always was, and if they answer at the keyboard the
 hook's answer is thrown away (measured — the keyboard always wins). Only when the prompt
 has sat unanswered for `APPROVAL_ESCALATE_SECONDS` does the broker do anything at all, and
-what it does is ring him.
+what it does is ring them.
 
 Four rules hold the whole design up:
 
@@ -13,7 +13,7 @@ Four rules hold the whole design up:
   the public internet, so a `/approvals` endpoint would be reachable by anyone. A socket at
   `data_dir/approvals.sock`, mode 0600, is unreachable through the tunnel by construction,
   and filesystem permissions are the right authorization for a thing whose only legitimate
-  client is a process already running as him.
+  client is a process already running as them.
 - **Failure is always "do nothing".** Every path that is not an explicit, PIN-gated,
   keypad-confirmed answer ends with the waiting hook being told nothing — which leaves the
   ordinary on-screen prompt exactly as it is today. Broker down, socket missing, Twilio
@@ -21,9 +21,9 @@ Four rules hold the whole design up:
 - **The keypad decides, never the transcription.** `arm()` only offers the menu; `digit()`
   is the one thing in this file that can approve anything. A television in the background
   cannot press a key, and neither can a mis-heard "yeah, sure".
-- **Pending is a fact to be re-checked, never assumed.** The hook is *not* killed when he
-  answers at the keyboard, so without the `resolve` path the broker would ring him about
-  prompts he dealt with five minutes ago. Pending is re-checked before dialling and again
+- **Pending is a fact to be re-checked, never assumed.** The hook is *not* killed when they
+  answer at the keyboard, so without the `resolve` path the broker would ring them about
+  prompts they dealt with five minutes ago. Pending is re-checked before dialling and again
   before any verdict is applied.
 """
 
@@ -69,7 +69,7 @@ CLIENT_READ_TIMEOUT_S = 10.0
 #: Twilio has to ring and be answered inside this, same as the Notifier's call-back.
 CALL_TOKEN_TTL_S = 120.0
 #: How long an armed keypad confirmation stays armed. Long enough to read a menu out and
-#: have him find the key; short enough that a digit pressed later cannot land on it.
+#: have them find the key; short enough that a digit pressed later cannot land on it.
 ARM_TTL_S = 90.0
 
 #: Hook events that mean "that prompt is not waiting any more".
@@ -78,53 +78,53 @@ RESOLVING_EVENTS = frozenset({"PostToolUse", "PermissionDenied", "Stop", "Sessio
 PRECISE_EVENTS = frozenset({"PostToolUse", "PermissionDenied"})
 
 APPROVED_MESSAGE = (
-    "Approved by the user by phone: Jarvis called him, he gave the PIN and confirmed on the "
+    "Approved by the user by phone: Jarvis called them, they gave the PIN and confirmed on the "
     "keypad. This approval covers this one tool call and nothing else."
 )
 REJECTED_MESSAGE = (
     "Rejected by the user by phone (Jarvis, PIN-verified keypad confirmation). Do not retry "
-    "it; ask him for another approach."
+    "it; ask them for another approach."
 )
 ANSWERED_MESSAGE = (
     "Answered by the user over the phone (Jarvis, PIN-verified keypad confirmation): {answer}."
 )
 
-#: Read to him at the top of the escalation call. It has to carry the whole protocol: the
+#: Read to them at the top of the escalation call. It has to carry the whole protocol: the
 #: session it opens is brand new and knows nothing about why it was opened.
 CALL_CONTEXT = (
-    "You are calling him because Claude Code has been waiting about {waited} for an answer on "
-    "his screen and has not had one. That is the only reason for this call.\n\n"
+    "You are calling them because Claude Code has been waiting about {waited} for an answer on "
+    "their screen and has not had one. That is the only reason for this call.\n\n"
     "{requests}\n\n"
-    "Greet him in a few words, say Claude is waiting on him, and read the request back once, "
-    "as it is written above — do not paraphrase it and do not embellish it. He has to give the "
-    "PIN before you can answer anything for him. Then call answer_approval with the request "
-    "number: it hands you back a keypad menu, which you read out. He decides with the keypad "
-    "and only with the keypad — if he says yes out loud, thank him and still ask him to press "
-    "the digit. Never guess which option he means, never press one on his behalf, and if he "
-    "would rather leave it, say so and end the call: it stays on his screen either way."
+    "Greet them in a few words, say Claude is waiting on them, and read the request back once, "
+    "as it is written above — do not paraphrase it and do not embellish it. They have to give the "
+    "PIN before you can answer anything for them. Then call answer_approval with the request "
+    "number: it hands you back a keypad menu, which you read out. They decide with the keypad "
+    "and only with the keypad — if they say yes out loud, thank them and still ask them to press "
+    "the digit. Never guess which option they mean, never press one on their behalf, and if they "
+    "would rather leave it, say so and end the call: it stays on their screen either way."
 )
 REQUEST_LINE = "Request {id}: {summary}. The options are: {menu}."
 ANNOUNCE_TEXT = (
-    "Claude Code has been waiting about {waited} for an answer on his screen. {line} Tell him "
-    "that, read the request back once as written, and if he wants to deal with it now call "
+    "Claude Code has been waiting about {waited} for an answer on their screen. {line} Tell them "
+    "that, read the request back once as written, and if they want to deal with it now call "
     "answer_approval with the request number and read out the keypad menu it gives you."
 )
 
 DIGIT_LEFT = (
-    "[system] He pressed zero: request {id} is being left alone. It is still on his screen. "
+    "[system] They pressed zero: request {id} is being left alone. It is still on their screen. "
     "Say so in a few words and move on."
 )
 DIGIT_APPLIED = (
-    "[system] He pressed a key: request {id} is {outcome} and Claude has been told. Say so in "
-    "a few words. Do not read the option back as if he had said it."
+    "[system] They pressed a key: request {id} is {outcome} and Claude has been told. Say so in "
+    "a few words. Do not read the option back as if they had said it."
 )
 DIGIT_UNKNOWN = (
     "[system] That was not one of the options for request {id}. Read the menu out again: "
-    "{menu}. Do not decide for him."
+    "{menu}. Do not decide for them."
 )
 DIGIT_GONE = (
     "[system] Request {id} is not waiting any more — it was dealt with at the keyboard or the "
-    "session ended. Tell him there is nothing to answer and move on."
+    "session ended. Tell them there is nothing to answer and move on."
 )
 
 
@@ -181,7 +181,7 @@ class ApprovalBroker:
 
         A socket file left behind by a process that died is unlinked and replaced; one that
         something is *still listening on* is left alone and this broker simply does not run,
-        because two brokers answering the same hook would both try to ring him.
+        because two brokers answering the same hook would both try to ring the owner.
         """
         if not self._settings.approvals_enabled:
             log.info("the approval bridge is off (APPROVALS_ENABLED)")
@@ -337,7 +337,7 @@ class ApprovalBroker:
         `PostToolUse` and `PermissionDenied` name a single tool call, so they resolve only
         the request whose tool and input hash match. `Stop` and `SessionEnd` name no tool at
         all, so they clear everything that session had waiting — the safe direction, because
-        the cost of clearing one too many is a prompt he is not rung about.
+        the cost of clearing one too many is a prompt they are not rung about.
         """
         name = str(event.get("hook_event_name") or "")
         session_id = str(event.get("session_id") or "")
@@ -358,7 +358,7 @@ class ApprovalBroker:
     # --- escalation --------------------------------------------------------
 
     async def _escalate_later(self, request: ApprovalRequest) -> None:
-        """Wait out the grace period, then tell him — if it is still worth telling him."""
+        """Wait out the grace period, then tell them — if it is still worth telling them."""
         try:
             await asyncio.sleep(self._settings.approval_escalate_seconds)
         except asyncio.CancelledError:  # pragma: no cover - shutdown
@@ -376,7 +376,7 @@ class ApprovalBroker:
             self._audit("escalation_failed", request)
 
     def _blocked(self) -> str | None:
-        """Why he must not be told about this right now, or None."""
+        """Why they must not be told about this right now, or None."""
         if self.disabled:
             return "the kill switch is on"
         if self._quiet_now():
@@ -396,8 +396,8 @@ class ApprovalBroker:
             self._sessions, ANNOUNCE_TEXT.format(waited=waited, line=line)
         )
         if announced.heard:
-            # He is already on the phone. A second call about the same thing is the exact
-            # duplicate this feature has to avoid, so it goes into the call he is on. Only a
+            # They are already on the phone. A second call about the same thing is the exact
+            # duplicate this feature has to avoid, so it goes into the call they are on. Only a
             # call that took it counts: one that has not given the PIN refuses it.
             request.escalated_at = self._now()
             request.escalated_via = "announce"
@@ -459,8 +459,8 @@ class ApprovalBroker:
             return False
         # Naive local time, deliberately: `HH:MM` in a window called "quiet hours" means
         # the clock on the wall next to whoever set it, and this is a single-owner service
-        # running on his own machine. The assumption is therefore that the *host's*
-        # timezone is his — which is true of a laptop and of a server at home, and not
+        # running on their own machine. The assumption is therefore that the *host's*
+        # timezone is theirs — which is true of a laptop and of a server at home, and not
         # true of a VPS in another region. There is no timezone setting because there is
         # no second user to have a different one; if that ever changes, this is the line.
         current = datetime.now().hour * 60 + datetime.now().minute
@@ -500,7 +500,7 @@ class ApprovalBroker:
         """Apply a keypad digit to whatever this call armed. None means "not for us".
 
         Anything that is not a digit on the menu leaves the request exactly where it was and
-        asks him again — an unrecognised key must never be read as agreement.
+        asks them again — an unrecognised key must never be read as agreement.
         """
         armed = self._armed.get(session_id)
         if armed is None:

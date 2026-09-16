@@ -1,5 +1,5 @@
 - cluster_stats is what the Slurm clusters in its description are doing right now: GPUs
-  free, busy and down, how many of his jobs are running or queued, and how long the first
+  free, busy and down, how many of the owner's jobs are running or queued, and how long the first
   one has left. Answer "what's free on the cluster", "am I still running", "how busy is the
   cluster" with it rather than dispatching. It only reads Slurm; submitting, cancelling or
   debugging a job is Claude's work. Leave the cluster out and you get all of them. Say the

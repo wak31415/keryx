@@ -85,14 +85,14 @@ RESTART_ANNOUNCEMENT = "The restart is done and Jarvis is back up: {status}."
 #: The opening context of the call-back itself: a confirmation, not a report.
 RESTART_CONTEXT = (
     "You are calling the user back because the Jarvis service — you — has just restarted "
-    "and is running again. He asked for the restart {when}{reason}{change}, and this call "
-    "is the confirmation. Status: {status}. Greet him and tell him in one or two sentences "
+    "and is running again. They asked for the restart {when}{reason}{change}, and this call "
+    "is the confirmation. Status: {status}. Greet them and tell them in one or two sentences "
     "whether it worked. If the status mentions errors in the log, or says the checkout did "
     "not change, that is the headline: say plainly that the update may not have taken, say "
     "what the error was, and offer to put Claude on it. Otherwise say it went through, "
-    "mention anything else in the status he would want to know, and ask if he needs "
-    "anything else. Keep it short: he asked for a restart, not a report. This is a new "
-    "call: he may have to give the PIN again before you can start more work."
+    "mention anything else in the status they would want to know, and ask if they need "
+    "anything else. Keep it short: they asked for a restart, not a report. This is a new "
+    "call: they may have to give the PIN again before you can start more work."
 )
 #: The clause that names the work a restart was loading, for the context above.
 LOADING_TASK = ", to load the work from task {task_id}"
@@ -100,15 +100,15 @@ LOADING_TASK = ", to load the work from task {task_id}"
 #: both "here is what came of it" and "and here is whether it is running". Two calls a
 #: minute apart about the same piece of work is what this exists to avoid.
 RESTART_WITH_TASK_CONTEXT = (
-    "You are calling the user back about task {task_id}, which he asked you for earlier and "
+    "You are calling the user back about task {task_id}, which they asked you for earlier and "
     "which has now finished — and about the restart it needed, because the work changed "
-    "Jarvis's own code and Jarvis has just restarted to load it. What he asked for: "
-    "{request}. Result: {detail}. Restart: {status}.{history} Greet him, remind him in a few "
-    "words what this is about, tell him what came of the work, and then say whether the "
+    "Jarvis's own code and Jarvis has just restarted to load it. What they asked for: "
+    "{request}. Result: {detail}. Restart: {status}.{history} Greet them, remind them in a few "
+    "words what this is about, tell them what came of the work, and then say whether the "
     "change is actually running. If the restart line mentions errors in the log, or says the "
     "checkout did not change, that is the headline: say plainly that the update may not have "
     "taken, say what the error was, and offer to put Claude on it. Call mark_reported for "
-    "task {task_id} once you have told him. Keep it short. This is a new call: he may have "
+    "task {task_id} once you have told them. Keep it short. This is a new call: they may have "
     "to give the PIN again before you can start more work."
 )
 #: The same confirmation as a text, when no call can be placed.
@@ -117,23 +117,23 @@ FAILED_SMS = "Jarvis tried to restart and it did not go through: {error}"
 
 #: What the model is told to say when a restart has to wait for the call to end.
 DEFERRED_MESSAGE = (
-    "Tell him you will restart as soon as this call ends and anything already running has "
+    "Tell them you will restart as soon as this call ends and anything already running has "
     "finished — a restart drops the call and kills every task with it — and that you will "
-    "ring him straight back when you are up again."
+    "ring them straight back when you are up again."
 )
 RESTARTING_MESSAGE = (
-    "Tell him you are restarting now, that this call is about to drop, and that you will "
-    "ring him back when you are up again."
+    "Tell them you are restarting now, that this call is about to drop, and that you will "
+    "ring them back when you are up again."
 )
 NO_CALLBACK_MESSAGE = (
-    "Tell him you are restarting now and that this call is about to drop. Warn him that "
-    "you cannot ring him back afterwards, so he should call in to check."
+    "Tell them you are restarting now and that this call is about to drop. Warn them that "
+    "you cannot ring them back afterwards, so they should call in to check."
 )
 UNSUPPORTED_MESSAGE = (
-    "Tell him, in one sentence, that you cannot restart yourself because this copy of "
+    "Tell them, in one sentence, that you cannot restart yourself because this copy of "
     "Jarvis was not started by a service manager, so nothing would start it again."
 )
-ALREADY_PENDING_MESSAGE = "Tell him a restart is already scheduled for when this call ends."
+ALREADY_PENDING_MESSAGE = "Tell them a restart is already scheduled for when this call ends."
 
 # --- the coordinator --------------------------------------------------------
 
@@ -219,7 +219,7 @@ class RestartCoordinator:
         if not self._store.save(record):
             # Without the record the new process has no idea it should call anyone, and a
             # restart that goes quiet is worse than one that does not happen.
-            return {"status": "failed", "message": "Tell him the restart could not be set up."}
+            return {"status": "failed", "message": "Tell them the restart could not be set up."}
 
         message = RESTARTING_MESSAGE if self._can_call_back(record) else NO_CALLBACK_MESSAGE
         if await self._blocker() is not None and not force:
@@ -250,7 +250,7 @@ class RestartCoordinator:
         """Poll until no call is live *and* no task is running; False if `timeout` passes.
 
         Both, because a restart kills every subagent it finds and nothing resumes them: the
-        task that is running is work he asked for minutes ago, and the restart would end it
+        task that is running is work they asked for minutes ago, and the restart would end it
         somewhere in the middle with no report. Waiting for only the line to clear made the
         moment a call ends — which is exactly when the memory update is dispatched — the
         most dangerous moment to restart in.
@@ -288,7 +288,7 @@ class RestartCoordinator:
         """Poll until no session is live; False if `timeout` passes first.
 
         The *call-back*'s idea of quiet, which is only about the line: a confirmation that
-        waited for the task queue to drain would be a confirmation he never got.
+        waited for the task queue to drain would be a confirmation they never got.
         """
         waited = 0.0
         while self._sessions.live():
@@ -327,7 +327,7 @@ class RestartCoordinator:
         """Start the process that notices a restart which never comes back. Never raises.
 
         Every other part of this file runs on one side of the death or the other. This is
-        the only thing that runs *through* it, and so the only thing that can tell him the
+        the only thing that runs *through* it, and so the only thing that can tell them the
         service is gone rather than merely late — `resume()` cannot report a process that
         never got far enough to run it.
 

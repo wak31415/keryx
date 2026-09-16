@@ -220,9 +220,10 @@ async def test_a_phone_session_that_refuses_the_announcement_still_gets_the_sms(
     assert harness.twilio.sms[0][0] == OWNER
 
 
-async def test_a_call_that_has_not_given_the_pin_does_not_cost_him_the_call_back(harness):
+async def test_a_call_that_has_not_given_the_pin_does_not_cost_them_the_call_back(harness):
     """An unauthorized phone session refuses the announcement, and so it is no delivery:
-    he still gets the call-back he asked for, rather than the caller getting his result."""
+    they still get the call-back they asked for, rather than the caller getting the owner's
+    result."""
     unauthorized = harness.session(channel="phone", accepts=False)
     task = await harness.task(callback_requested=True, callback_number=CALLER)
 
@@ -545,7 +546,7 @@ async def test_the_call_back_carries_the_previous_call(harness):
         callback_requested=True,
         callback_number=CALLER,
         origin_session_id="sess-42",
-        callback_note="he wants the tests run on the branch",
+        callback_note="they want the tests run on the branch",
     )
     calls = harness.settings.data_dir / "calls"
     calls.mkdir(parents=True, exist_ok=True)
@@ -560,9 +561,9 @@ async def test_the_call_back_carries_the_previous_call(harness):
 
     info = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
     context = info.extra["opening_context"]
-    assert "he wants the tests run on the branch" in context
+    assert "they want the tests run on the branch" in context
     assert "user: look at the retry logic" in context
-    assert "do not read it back to him" in context
+    assert "do not read it back to them" in context
 
 
 async def test_a_call_back_without_a_previous_session_still_goes_out(harness):
@@ -579,7 +580,7 @@ async def test_a_call_back_without_a_previous_session_still_goes_out(harness):
 
 
 async def test_an_internal_task_is_never_announced_texted_or_called_about(harness):
-    """The per-call memory update is Jarvis talking to itself; he never asked for it."""
+    """The per-call memory update is Jarvis talking to itself; they never asked for it."""
     session = harness.session(channel="phone")
     task = await harness.task(
         description="update the memory after call abc123",
@@ -709,7 +710,7 @@ def test_a_summary_that_ends_in_a_stop_does_not_get_a_second_one():
 
 
 async def test_with_texting_off_no_text_goes_out(harness):
-    """The result still reaches him: the call-back, or the digest at the top of his next
+    """The result still reaches them: the call-back, or the digest at the top of their next
     call, which is exactly what `reported_at` exists to keep honest."""
     harness.twilio.sms_enabled = False
     task = await harness.task(origin_channel="phone", origin_caller=CALLER)
@@ -720,7 +721,7 @@ async def test_with_texting_off_no_text_goes_out(harness):
     assert (await harness.row(task)).sms_sent is False
 
 
-async def test_texting_off_does_not_cost_him_the_call_back(harness):
+async def test_texting_off_does_not_cost_them_the_call_back(harness):
     """Calling and texting are separate capabilities, and only one of them is off."""
     harness.twilio.sms_enabled = False
     task = await harness.task(

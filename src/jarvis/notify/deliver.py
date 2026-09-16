@@ -1,4 +1,4 @@
-"""The two ways a result reaches him, in one place each.
+"""The two ways a result reaches them, in one place each.
 
 Three modules independently grew the same pair of loops — `Notifier`, the
 `RestartCoordinator` and the standalone `restart.watchdog` — each iterating `sessions.live()`,

@@ -6,13 +6,13 @@ had no `DELETE` anywhere in the codebase, and `memory.md` was bounded on *read* 
 memory subagent's own discipline on write, which is not a bound.
 
 Retention is **off by default**, and that is deliberate rather than an oversight: deleting
-a man's own transcripts because a default said so is not a decision this code gets to make.
+someone's own transcripts because a default said so is not a decision this code gets to make.
 `TRANSCRIPT_RETENTION_DAYS` and `TASK_RETENTION_DAYS` are `0` — keep everything — until
 somebody sets them.
 
 One rule survives everything here: **a task the caller has not been told about is never
 deleted.** `Task.reported_at` is the only record that Jarvis *said* a result out loud, and
-a result deleted before it was reported is one he will never hear. So the prune skips
+a result deleted before it was reported is one they will never hear. So the prune skips
 exactly what `TaskStore.list_unreported` would return, however old it is. Internal
 housekeeping tasks and cancelled ones are not owed to anybody and go on schedule.
 """
@@ -55,7 +55,7 @@ class PruneReport:
         summary = " and ".join(parts) if parts else "nothing"
         if self.kept_unreported:
             summary += (
-                f" (kept {self.kept_unreported} he has not been told about)"
+                f" (kept {self.kept_unreported} the owner has not been told about)"
             )
         return summary
 

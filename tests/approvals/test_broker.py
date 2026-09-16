@@ -231,7 +231,7 @@ async def test_an_unknown_protocol_is_told_nothing(broker):
 
 
 async def test_a_second_broker_does_not_take_the_socket(broker, settings, sessions, twilio):
-    """Two brokers answering the same hook would both try to ring him."""
+    """Two brokers answering the same hook would both try to ring them."""
     other = ApprovalBroker(settings, sessions, twilio, StreamTokenStore())
     assert await other.start() is False
 
@@ -266,7 +266,7 @@ async def test_an_eligible_prompt_pends_and_marks(broker, tmp_path, hooks):
 # --- escalation ------------------------------------------------------------
 
 
-async def test_it_rings_him_when_nobody_answers(broker, twilio, tmp_path, hooks):
+async def test_it_rings_them_when_nobody_answers(broker, twilio, tmp_path, hooks):
     await hooks.raise_request(permission_event(cwd=str(tmp_path / "roots" / "myproject")))
     await until(lambda: twilio.calls)
     assert twilio.calls[0]["to"] == "+15557000000"
@@ -287,7 +287,7 @@ async def test_the_call_carries_the_request_and_the_menu(broker, twilio, tmp_pat
 async def test_a_live_call_is_told_instead_of_a_second_one_being_placed(
     broker, hooks, sessions, twilio, tmp_path
 ):
-    """The duplicate this feature exists to avoid: ringing a phone he is already on."""
+    """The duplicate this feature exists to avoid: ringing a phone they are already on."""
     session = FakeSession()
     sessions.sessions.append(session)
     await hooks.raise_request(permission_event(cwd=str(tmp_path / "roots" / "myproject")))
@@ -296,11 +296,11 @@ async def test_a_live_call_is_told_instead_of_a_second_one_being_placed(
     assert "Request 1" in session.announcements[0]
 
 
-async def test_a_call_that_has_not_given_the_pin_is_not_told_and_he_is_rung_instead(
+async def test_a_call_that_has_not_given_the_pin_is_not_told_and_they_are_rung_instead(
     broker, hooks, sessions, twilio, tmp_path
 ):
     """Caller id is spoofable: a live call proves nothing until the PIN, so the command
-    waiting on his screen is not read into it, and it does not count as telling him."""
+    waiting on their screen is not read into it, and it does not count as telling them."""
     unauthorized = FakeSession(accepts=False)
     sessions.sessions.append(unauthorized)
     await hooks.raise_request(permission_event(cwd=str(tmp_path / "roots" / "myproject")))
@@ -357,7 +357,7 @@ async def test_a_twilio_failure_leaves_the_prompt_where_it_was(broker, twilio, t
 
 
 async def test_answering_at_the_keyboard_releases_the_hook(broker, tmp_path, hooks):
-    """The sharp edge: the hook is not killed when he answers, so it has to be told."""
+    """The sharp edge: the hook is not killed when they answer, so it has to be told."""
     cwd = str(tmp_path / "roots" / "myproject")
     event = permission_event(cwd=cwd)
     hook = await hooks.raise_request(event)
@@ -448,7 +448,7 @@ async def test_two_on_the_keypad_rejects(broker, tmp_path, hooks):
     assert answer["decision"]["behavior"] == "deny"
 
 
-async def test_zero_leaves_it_on_his_screen(broker, tmp_path, hooks):
+async def test_zero_leaves_it_on_their_screen(broker, tmp_path, hooks):
     hook = await hooks.pending_one(tmp_path)
     broker.arm(1, "call1")
     assert "left alone" in broker.digit("call1", "0")

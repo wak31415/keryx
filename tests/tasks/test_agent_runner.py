@@ -633,8 +633,8 @@ def test_the_subagent_suffix_makes_slack_opt_in(settings, unwrapped):
     options = build_options(make_task(description="review the diff"), settings)
     append = unwrapped(options.system_prompt["append"])
 
-    assert "Do not send him anything on Slack unless he asked for Slack" in append
-    assert "If he did not ask, do not send" in append
+    assert "Do not send them anything on Slack unless they asked for Slack" in append
+    assert "If they did not ask, do not send" in append
     assert "`team-slack` MCP server" in append
     assert "offers to send it" in append
     assert "{" not in append and "}" not in append
@@ -652,7 +652,7 @@ def test_without_a_slack_server_the_suffix_says_nothing_about_slack(settings, un
 
 
 def test_the_subagent_suffix_routes_unasked_output_to_the_report(settings, unwrapped):
-    """What he may not be sent still has to land somewhere he can find it, Slack or not."""
+    """What they may not be sent still has to land somewhere they can find it, Slack or not."""
     options = build_options(make_task(description="plot the losses"), settings)
     append = unwrapped(options.system_prompt["append"])
 
@@ -699,7 +699,7 @@ def test_the_reason_is_trimmed_to_something_sayable():
 
 
 def test_the_subagent_suffix_carries_the_task_number_for_the_commit_trailer(settings):
-    """`git log` cannot recover which edits he asked for out loud; the trailer can."""
+    """`git log` cannot recover which edits they asked for out loud; the trailer can."""
     task = Task(id=31, kind=TaskKind.AGENT, description="add a recall tool")
 
     suffix = render_subagent_suffix(task)

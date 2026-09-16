@@ -2,7 +2,7 @@
 
 The rule with a consequence behind it is that a finished task the caller has not been told
 about survives any prune, however old. `Task.reported_at` is the only record that Jarvis
-said a result out loud, so deleting an unreported row is deleting a result he will never
+said a result out loud, so deleting an unreported row is deleting a result they will never
 hear — and unlike hearing something twice, that is not recoverable.
 """
 
@@ -149,7 +149,7 @@ async def test_an_old_reported_task_and_its_files_go(tmp_path):
 
 
 async def test_an_unreported_task_survives_however_old_it_is(tmp_path):
-    """The whole point. `reported_at` is the only record that he was told."""
+    """The whole point. `reported_at` is the only record that they were told."""
     settings = make_settings(tmp_path, task_retention_days=1)
     store = await store_for(settings)
     task = await add_task(store, age_days=4000, reported_at=None)
@@ -176,7 +176,7 @@ async def test_an_unreported_internal_task_is_pruned(tmp_path):
 
 
 async def test_a_cancelled_task_is_pruned_without_ever_being_reported(tmp_path):
-    """He stopped the work; there was never a result to tell him about."""
+    """They stopped the work; there was never a result to tell them about."""
     settings = make_settings(tmp_path, task_retention_days=1)
     store = await store_for(settings)
     task = await add_task(store, age_days=40, status=TaskStatus.CANCELLED, reported_at=None)
@@ -266,7 +266,7 @@ def test_the_memory_is_bounded_on_disk(tmp_path):
 
 def test_a_memory_within_budget_is_left_exactly_alone(tmp_path):
     settings = make_settings(tmp_path)
-    text = "## Standing facts\n\nHe drinks tea.\n"
+    text = "## Standing facts\n\nThey drink tea.\n"
     memory_path(settings.data_dir).write_text(text, encoding="utf-8")
 
     assert trim_memory(settings.data_dir) is False
@@ -275,7 +275,7 @@ def test_a_memory_within_budget_is_left_exactly_alone(tmp_path):
 
 def test_trimming_keeps_the_beginning_where_the_standing_facts_are(tmp_path):
     settings = make_settings(tmp_path)
-    head = "## Standing facts\n\nHe drinks tea.\n"
+    head = "## Standing facts\n\nThey drink tea.\n"
     memory_path(settings.data_dir).write_text(head + "y" * MAX_MEMORY_FILE_CHARS, encoding="utf-8")
 
     trim_memory(settings.data_dir)

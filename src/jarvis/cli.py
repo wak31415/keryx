@@ -654,7 +654,7 @@ def tasks_list(
 
 
 def _reported_flag(task: Task) -> str:
-    """Whether Jarvis has told him about this one: only meaningful once it has finished."""
+    """Whether Jarvis has told them about this one: only meaningful once it has finished."""
     if task.internal:
         return "-"
     if task.status not in {TaskStatus.DONE, TaskStatus.FAILED}:

@@ -56,12 +56,12 @@ def register_billing_tools(
         registry.register(
             "check_billing",
             "What the API bill is so far this month, and what it is on track to be. Call "
-            "it when he asks what he is spending, what the bill looks like, or how much a "
+            "it when they ask what they are spending, what the bill looks like, or how much a "
             "provider has cost. It reads the provider's billing API and changes nothing. "
             "Say the figure to the nearest sensible amount rather than every decimal, and "
             "call the month-end number an estimate, because it is a straight-line "
             "projection from the month so far. Default is OpenAI — the account this call "
-            "itself runs on; ask for anthropic when he means what Claude has cost.",
+            "itself runs on; ask for anthropic when they mean what Claude has cost.",
             {
                 "type": "object",
                 "properties": {
@@ -84,7 +84,7 @@ def register_billing_tools(
 
         Un-PIN-gated for the same reason as `check_billing`: it is three read-only Slurm
         commands behind the ssh guard, it cannot start, stop or change anything, and the
-        numbers it carries are counts and his own job ids — never a job name or a path.
+        numbers it carries are counts and their own job ids — never a job name or a path.
         Every cluster is asked at once, and one being unreachable never costs the others:
         a failure comes back beside the report that worked, as a `status` with a sentence
         to say. See `jarvis/integrations/cluster.py` for why nothing here ever retries an
@@ -134,7 +134,7 @@ def register_billing_tools(
         registry.register(
             "cluster_stats",
             f"What {subject} doing right now: free, busy and down "
-            "GPUs, how many jobs of his are running or queued, and how busy the queue is. "
+            "GPUs, how many jobs of theirs are running or queued, and how busy the queue is. "
             'Call it for "what\'s free on the cluster", "am I still running", "how '
             'busy is the cluster", "how long until my job finishes". It only reads Slurm '
             "and changes nothing — submitting, cancelling or debugging a job is "
@@ -150,7 +150,7 @@ def register_billing_tools(
                         "type": "string",
                         "enum": [*names, "all"],
                         "description": "Which cluster. Leave it out for all of them, which "
-                        "is the right answer when he just says \"the cluster\".",
+                        "is the right answer when they just say \"the cluster\".",
                     }
                 },
                 "required": [],

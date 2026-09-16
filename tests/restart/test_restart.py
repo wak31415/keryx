@@ -714,7 +714,7 @@ async def test_the_model_is_warned_when_it_cannot_ring_back(tmp_path):
     result = await harness.coordinator.request()
 
     assert result["status"] == "restarting"
-    assert "cannot ring him back" in result["message"]
+    assert "cannot ring them back" in result["message"]
 
 
 async def test_a_restart_command_that_fails_is_recorded_and_texted(tmp_path):
@@ -830,7 +830,7 @@ async def test_the_call_carries_a_redeemable_token_and_the_status(harness):
     assert info is not None and info.caller == OWNER
     context = info.extra["opening_context"]
     assert "restarted" in context
-    assert "picked up new code" in context  # the reason he gave, read back to him
+    assert "picked up new code" in context  # the reason they gave, read back to them
     assert "back up after" in context
     assert "phone listening" in context
 
@@ -895,7 +895,7 @@ async def test_a_restart_that_loaded_nothing_says_so(tmp_path):
 
 
 async def test_an_unchanged_checkout_is_only_worth_saying_when_a_task_was_loading(tmp_path):
-    """He restarts to clear a wedged process too, and that one is meant to change nothing."""
+    """They restart to clear a wedged process too, and that one is meant to change nothing."""
     harness = Harness(make_settings(tmp_path))
 
     summary = await harness.coordinator.status_summary(pending(version=VERSION), phone_up=True)
@@ -1276,7 +1276,7 @@ async def test_the_record_says_how_the_watch_was_armed(tmp_path):
 
 
 async def test_a_watchdog_that_will_not_start_is_recorded_and_the_restart_goes_on(tmp_path):
-    """A restart he asked for must not be held hostage by the thing that watches it."""
+    """A restart they asked for must not be held hostage by the thing that watches it."""
     harness = Harness(
         make_settings(tmp_path), watch=FakeWatchSpawn(error=OSError("no fork for you"))
     )
@@ -1374,7 +1374,7 @@ async def test_force_still_restarts_over_a_running_task(tmp_path):
 
 
 async def test_a_task_store_that_will_not_answer_does_not_wedge_the_restart(tmp_path):
-    """A failing query must not be the thing that keeps him off the air."""
+    """A failing query must not be the thing that keeps them off the air."""
 
     class BrokenStore:
         async def list(self, **kwargs):
@@ -1422,7 +1422,7 @@ async def test_the_call_back_leads_with_the_work_that_asked_for_the_restart(tmp_
 
     parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
     context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
-    assert "add a recall tool" in context  # what he asked for
+    assert "add a recall tool" in context  # what they asked for
     assert "I added the recall tool" in context  # what came back
     assert "back up after" in context  # and whether it is running
     assert f"mark_reported for task {task.id}" in context
@@ -1430,7 +1430,7 @@ async def test_the_call_back_leads_with_the_work_that_asked_for_the_restart(tmp_
 
 
 async def test_a_restart_naming_a_task_that_is_gone_still_confirms_itself(tmp_path):
-    """A missing row must not cost him the confirmation the restart owes him."""
+    """A missing row must not cost them the confirmation the restart owes them."""
     store = TaskStore(":memory:")
     harness = Harness(make_settings(tmp_path), tasks=store)
     harness.store.save(pending(task_id=999))

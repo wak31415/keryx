@@ -141,7 +141,7 @@ async def test_a_keypad_digit_becomes_an_allow_on_stdout(broker, tmp_path, data_
     """The end-to-end path: prompt, no answer, call, PIN-gated keypad, tool runs."""
     hook = asyncio.create_task(run_hook(data_dir, permission_event(tmp_path)))
     await until(lambda: broker.pending_requests())
-    await until(lambda: twilio.calls)  # he was rung, because he did not answer on screen
+    await until(lambda: twilio.calls)  # they were rung, because they did not answer on screen
 
     broker.arm(1, "call-session")
     broker.digit("call-session", "1")
@@ -163,7 +163,7 @@ async def test_rejecting_becomes_a_deny_on_stdout(broker, tmp_path, data_dir):
 
 
 async def test_answering_at_the_keyboard_releases_the_hook(broker, tmp_path, data_dir):
-    """`PostToolUse` cancels the escalation — the hook is not killed when he answers."""
+    """`PostToolUse` cancels the escalation — the hook is not killed when they answer."""
     event = permission_event(tmp_path)
     hook = asyncio.create_task(run_hook(data_dir, permission_event(tmp_path)))
     await until(lambda: broker.pending_requests())

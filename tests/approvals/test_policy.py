@@ -1,4 +1,4 @@
-"""What may ever become a phone call, and what he is told about it.
+"""What may ever become a phone call, and what they are told about it.
 
 This module is the security boundary of the whole bridge written down: a
 `PermissionRequest` hook that returns `allow` appears to skip the CLI's own
@@ -325,7 +325,7 @@ def test_the_ordinary_bash_fields_do_not_stop_a_command_ringing(settings, tmp_pa
 )
 def test_a_command_that_asks_for_more_than_running_is_not_eligible(settings, tmp_path, extra):
     """Leaving the sandbox is on the screen's prompt and not in the read-back, so a digit
-    pressed on "run git push" would be a digit on something he was never told. A field
+    pressed on "run git push" would be a digit on something they were never told. A field
     nobody has seen before is refused for the same reason."""
     event = request(
         "Bash", {"command": "git push", **extra}, cwd=str(tmp_path / "roots" / "myproject")
@@ -504,7 +504,7 @@ def test_the_summary_is_bounded(settings):
     assert len(classify(event, settings)["summary"]) <= 200
 
 
-# --- what he hears is what runs ----------------------------------------------
+# --- what they hear is what runs ----------------------------------------------
 
 
 def test_a_command_is_read_out_whole(settings, tmp_path):
@@ -528,7 +528,7 @@ def test_a_file_name_too_long_to_read_out_whole_is_not_eligible(settings, tmp_pa
 
 
 def test_an_option_too_long_for_the_menu_is_not_eligible(settings):
-    """The label he picks is the answer Claude is sent; a cut one is not what he chose."""
+    """The label they pick is the answer Claude is sent; a cut one is not what they chose."""
     options = [{"label": "Yes, and delete the old branches on the remote too"}, {"label": "No"}]
     event = request("AskUserQuestion", {"questions": [{"question": "a?", "options": options}]})
     assert classify(event, settings) is None

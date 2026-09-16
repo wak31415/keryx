@@ -2,14 +2,14 @@
 
 Ten tools, and on the phone every one of them needs the PIN. `dispatch_task`,
 `send_followup` and `cancel_task` because reaching into a task opens the very same
-`bypassPermissions` subagent that dispatching one would; the rest because they read his
-tasks and his past calls, or leave something behind that outlives the call — and caller id
+`bypassPermissions` subagent that dispatching one would; the rest because they read the
+owner's tasks and past calls, or leave something behind that outlives the call — and caller id
 is spoofable, so an allowed number proves nothing.
 
 `mark_reported` is the load-bearing one and the easiest to mistake for bookkeeping. It is
 the *only* thing that stamps `Task.reported_at`, and `reported_at` is the only record that
 Jarvis actually said a result out loud: `announced` and `sms_sent` say a delivery was
-attempted, and neither survives a call he missed. Until it is stamped, the task rides the
+attempted, and neither survives a call they missed. Until it is stamped, the task rides the
 top of the next call. Nothing but the voice model, having spoken, may stamp it.
 """
 
@@ -108,7 +108,7 @@ def register_task_tools(
         "Hand a piece of work to Claude and get back a task number. Use it for anything you "
         "cannot answer yourself in a sentence or two, and for anything to do with code the "
         "moment you recognise it — do not ask the caller to confirm the request first, and "
-        "do not interview him about details Claude can work out for itself. On the phone, "
+        "do not interview them about details Claude can work out for itself. On the phone, "
         "every dispatch comes back as pin_required until the caller has given the PIN.",
         {
             "type": "object",
@@ -121,9 +121,9 @@ def register_task_tools(
                 "project": {
                     "type": "string",
                     "description": "The name of the project to work in. Optional: leave it "
-                    "out when he did not name one and the task starts in his projects "
+                    "out when they did not name one and the task starts in their projects "
                     "folder, where the subagent finds the repo itself. Use list_projects "
-                    "only when he asks what exists.",
+                    "only when they ask what exists.",
                 },
                 "model": {
                     "type": "string",
@@ -244,7 +244,7 @@ def register_task_tools(
 
     async def mark_reported(ctx: ToolContext, arguments: dict) -> dict:
         ids = _task_ids(arguments.get("task_ids"))
-        # Stamping a task takes it out of his next call's digest, so not before the PIN —
+        # Stamping a task takes it out of their next call's digest, so not before the PIN —
         # except the task a call Jarvis placed was about, whose result opened the call.
         if (refusal := pin_gate(ctx, settings)) is not None:
             ids = [task_id for task_id in ids if task_id == ctx.session.opening_task_id]
@@ -255,25 +255,25 @@ def register_task_tools(
         reported = await manager.mark_reported(ids)
         # Ids that were already reported (or never existed) come back missing rather than
         # as an error: the model is working from a spoken conversation, and there is
-        # nothing useful it could say to him about either case.
+        # nothing useful it could say to them about either case.
         return {"reported": reported, "message": REPORTED_MESSAGE}
 
     registry.register(
         "mark_reported",
-        "Record that you have now told him about tasks that finished. Call it immediately "
-        "after you say a result out loud — whether it came from the list of things he had "
+        "Record that you have now told them about tasks that finished. Call it immediately "
+        "after you say a result out loud — whether it came from the list of things they had "
         "not heard, from a '[system]' note during the call, or inline from dispatch_task. "
-        "Until you call it, those tasks are still waiting to be told and he will hear them "
-        "again at the start of the next call. Only pass ids you actually mentioned to him. "
+        "Until you call it, those tasks are still waiting to be told and the owner will hear them "
+        "again at the start of the next call. Only pass ids you actually mentioned to them. "
         "It is bookkeeping and says nothing back: once you have called it, stay quiet and "
-        "let him speak.",
+        "let them speak.",
         {
             "type": "object",
             "properties": {
                 "task_ids": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "The task numbers you just told him about.",
+                    "description": "The task numbers you just told them about.",
                 }
             },
             "required": ["task_ids"],
@@ -302,7 +302,7 @@ def register_task_tools(
         registry.register(
             "recall",
             "Search what was said in earlier calls and what past tasks returned. Use it "
-            "whenever he refers to something that already happened — 'what did we decide "
+            "whenever they refer to something that already happened — 'what did we decide "
             "about', 'what did I ask you to do with', 'remind me what came of' — before "
             "you either guess or dispatch a task. It searches records, so it finds only "
             "words that were actually said or written: if it comes back with nothing, say "
@@ -405,8 +405,8 @@ def register_task_tools(
     # --- request_callback --------------------------------------------------
 
     async def request_callback(ctx: ToolContext, arguments: dict) -> dict:
-        # Not before the PIN: its note opens his real call-back, and the call goes out on
-        # his account.
+        # Not before the PIN: its note opens their real call-back, and the call goes out on
+        # their account.
         if (refusal := pin_gate(ctx, settings)) is not None:
             return refusal
         task = await get_task(manager, arguments)
@@ -438,8 +438,8 @@ def register_task_tools(
         "Arrange for Jarvis to phone the user back when a task finishes, instead of them "
         "waiting on the line. Offer this yourself whenever a task is still running and the "
         "conversation is winding down — do not wait to be asked. It returns at once, so do "
-        "not say you are setting it up first: once he says yes, call it and then tell him "
-        "in one clause that you will ring him. Without a number it uses the number they are "
+        "not say you are setting it up first: once they say yes, call it and then tell them "
+        "in one clause that you will ring them. Without a number it uses the number they are "
         "calling from. On the phone, this needs the PIN too.",
         {
             "type": "object",
@@ -453,8 +453,8 @@ def register_task_tools(
                 "note": {
                     "type": "string",
                     "description": "One line of where you left off, for the you that makes "
-                    "that call: what he asked for in his own words, anything he decided or "
-                    "ruled out, and what he said he wanted next. The call-back is a new "
+                    "that call: what they asked for in their own words, anything they decided or "
+                    "ruled out, and what they said they wanted next. The call-back is a new "
                     "call and remembers nothing else of this one.",
                 },
             },

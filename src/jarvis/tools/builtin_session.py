@@ -54,7 +54,7 @@ def register_session_tools(
 
     async def list_pending_approvals(ctx: ToolContext, arguments: dict) -> dict:
         assert approvals is not None  # only registered when there is one
-        # What his screen is waiting on names his projects and his commands.
+        # What their screen is waiting on names their projects and their commands.
         if (refusal := pin_gate(ctx, settings)) is not None:
             return refusal
         waiting = approvals.pending_requests()
@@ -86,7 +86,7 @@ def register_session_tools(
     if approvals is not None:
         registry.register(
             "list_pending_approvals",
-            "The prompts Claude Code is waiting on, on his screen. Call it when he asks "
+            "The prompts Claude Code is waiting on, on the owner's screen. Call it when they ask "
             "what is waiting, or when a call opened because something was.",
             {"type": "object", "properties": {}},
             list_pending_approvals,
@@ -95,9 +95,9 @@ def register_session_tools(
             "answer_approval",
             "Start answering one prompt Claude Code is waiting on. It does not answer "
             "anything: it hands you back the keypad menu for that request, which you read "
-            "out, and he decides by pressing a key. Never tell him it is done until the "
+            "out, and they decide by pressing a key. Never tell them it is done until the "
             "machine says so — a spoken yes is not an answer, and you must never choose "
-            "for him. Needs the PIN and a phone call.",
+            "for them. Needs the PIN and a phone call.",
             {
                 "type": "object",
                 "properties": {
@@ -132,7 +132,7 @@ def register_session_tools(
         "Pass the digits exactly as you heard them, with nothing else. Never say them back "
         "out loud, and do not announce that you are checking — it answers at once. The "
         "answer is authorized, invalid (with the attempts left) or locked; when it is "
-        "authorized, say nothing about the PIN and carry straight on with his request.",
+        "authorized, say nothing about the PIN and carry straight on with their request.",
         {
             "type": "object",
             "properties": {

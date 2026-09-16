@@ -216,7 +216,7 @@ def test_a_multi_node_job_holds_gpus_per_node():
     assert jobs.gpus == 8
 
 
-def test_an_array_job_is_the_number_he_can_repeat_down_the_phone():
+def test_an_array_job_is_the_number_they_can_repeat_down_the_phone():
     jobs, _ = parse_my_jobs("991_[0-3]|PENDING|shared|gres/gpu:1|1:00:00|1|Priority\n")
 
     assert jobs.ids == [991]
@@ -319,7 +319,7 @@ async def test_a_cluster_it_does_not_know_never_reaches_the_runner():
     assert runner.calls == []
 
 
-async def test_a_name_is_matched_however_he_said_it():
+async def test_a_name_is_matched_however_they_said_it():
     runner = FakeRunner(sections(nodes=ALPHA_NODES))
 
     report = await SlurmClusterStats(runner, SPECS).stats("  Alpha ")
@@ -363,7 +363,7 @@ def fake_run(monkeypatch, *, returncode=0, stdout="", stderr="", raises=None):
 
 
 async def test_the_guard_is_called_with_the_host_and_told_not_to_slack(monkeypatch, guard):
-    """A login expiry belongs in the sentence he is listening to, not in an unasked-for DM."""
+    """A login expiry belongs in the sentence they are listening to, not in an unasked-for DM."""
     calls = fake_run(monkeypatch, stdout="out")
 
     assert await GuardedSsh(guard).run("beta", "sinfo") == "out"

@@ -86,8 +86,8 @@ PIN_PAUSED_MESSAGE = (
 )
 PIN_ACCEPTED_MESSAGE = (
     "[system] The caller entered the correct PIN on the keypad and is now authorized for "
-    "all tasks. Say nothing about the PIN — not that it worked, not that he is authorized "
-    "— and carry straight on with what he asked for."
+    "all tasks. Say nothing about the PIN — not that it worked, not that they are authorized "
+    "— and carry straight on with what they asked for."
 )
 PIN_REJECTED_MESSAGE = (
     "[system] The caller entered an incorrect PIN on the keypad. Ask them to try again, in "
@@ -102,7 +102,7 @@ class Keypad(Protocol):
     """Whatever wants the keypad digits the PIN did not take (`jarvis.approvals`).
 
     The PIN comes first and always: digits only reach here once the session is authorized,
-    so "he keyed something in" can never be mistaken for "he keyed the PIN in". `digit`
+    so "they keyed something in" can never be mistaken for "they keyed the PIN in". `digit`
     returns the `[system]` note to put to the model, or None when the key meant nothing to
     it — an unclaimed digit is silently dropped, exactly as it is today.
     """
@@ -281,8 +281,8 @@ class VoiceSession:
         """Speak an out-of-band message (a finished task, say). False if not live or trusted.
 
         An untrusted session is a phone call that has not given the PIN. What is announced
-        is private — a task's result, a command waiting on his screen — and the False is
-        what stops that call counting as having told him, so the call-back or the ring
+        is private — a task's result, a command waiting on their screen — and the False is
+        what stops that call counting as having told them, so the call-back or the ring
         that would otherwise have been skipped still goes out.
         """
         if not self.is_live or not self.trusted:

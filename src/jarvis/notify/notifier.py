@@ -14,7 +14,7 @@ Three stages, in order, on every `TaskCompleted` / `TaskFailed`:
 
 There is a fourth route, for the one task that cannot be delivered by the first three: a
 task that changed Jarvis's own code. Loading it means restarting, restarting means dropping
-whatever call would have carried the result, and confirming the restart means ringing him
+whatever call would have carried the result, and confirming the restart means ringing them
 anyway. So a task whose subagent asked for a restart hands its call-back over to the
 restart's own confirmation, which then carries both — what the work came to, and whether it
 is actually running (`jarvis.restart`). The announcement and the text still go out first:
@@ -56,22 +56,22 @@ SMS_BODY_LIMIT = 1200  # characters of summary; the report link is appended afte
 DONE_TEXT = "Task {task_id} finished: {detail}"
 FAILED_TEXT = "Task {task_id} failed: {detail}"
 #: The call-back opens a fresh session — a phone call cannot resume the one that asked for
-#: it — so the context has to carry what he asked for as well as what came of it, or he
-#: answers the phone to an answer with no question attached.
+#: it — so the context has to carry what they asked for as well as what came of it, or they
+#: answer the phone to an answer with no question attached.
 DONE_CONTEXT = (
-    "You are calling the user back about task {task_id}, which he asked you for earlier "
-    "on the phone and which has now finished. What he asked for: {request}. "
-    "Result: {detail}.{history} Greet him, say in a sentence or two what this is about and "
-    "what came of it, then ask if he needs anything else. Say it once: no second greeting, "
-    "and do not put the same result again in other words. This is a new call: he may have "
+    "You are calling the user back about task {task_id}, which they asked you for earlier "
+    "on the phone and which has now finished. What they asked for: {request}. "
+    "Result: {detail}.{history} Greet them, say in a sentence or two what this is about and "
+    "what came of it, then ask if they need anything else. Say it once: no second greeting, "
+    "and do not put the same result again in other words. This is a new call: they may have "
     "to give the PIN again before you can start more work."
 )
 FAILED_CONTEXT = (
-    "You are calling the user back about task {task_id}, which he asked you for earlier "
-    "on the phone and which has failed. What he asked for: {request}. "
-    "Error: {detail}.{history} Greet him, say in a sentence or two what this is about and "
-    "what went wrong, then ask if he needs anything else. Say it once: no second greeting, "
-    "and do not put the same explanation again in other words. This is a new call: he may "
+    "You are calling the user back about task {task_id}, which they asked you for earlier "
+    "on the phone and which has failed. What they asked for: {request}. "
+    "Error: {detail}.{history} Greet them, say in a sentence or two what this is about and "
+    "what went wrong, then ask if they need anything else. Say it once: no second greeting, "
+    "and do not put the same explanation again in other words. This is a new call: they may "
     "have to give the PIN again before you can start more work."
 )
 #: The note the earlier session left for this call, if it left one.
@@ -79,7 +79,7 @@ NOTE_PREAMBLE = " Where you left off: {note}."
 #: Why the restart a finished task asks for is happening, read back on the confirmation.
 RESTART_REASON = "to load what task {task_id} changed"
 #: The `request()` outcomes that mean a restart really is coming, and that its confirmation
-#: is therefore going to ring him. Anything else (`unsupported`, `failed`) is not a
+#: is therefore going to ring them. Anything else (`unsupported`, `failed`) is not a
 #: call-back, so the ordinary one still has to go out.
 RESTART_ARMED = frozenset({"restarting", "deferred", "already_pending"})
 
@@ -146,9 +146,9 @@ class Notifier:
             log.warning("no task %s to notify about", event.task_id)
             return
         if task.internal:
-            # Housekeeping Jarvis asked for itself (the per-call memory update). He never
-            # requested it, so announcing it into a live call, texting it, or ringing him
-            # about it would all be Jarvis interrupting him to talk about Jarvis.
+            # Housekeeping Jarvis asked for itself (the per-call memory update). They never
+            # requested it, so announcing it into a live call, texting it, or ringing them
+            # about it would all be Jarvis interrupting them to talk about Jarvis.
             log.debug("task %s is internal; nothing to notify about", task.id)
             return
 
@@ -159,7 +159,7 @@ class Notifier:
         await self._send_sms(task, text, delivered=delivered)
         if not failed and await self._arm_restart(task):
             # The restart's confirmation call is this task's call-back, and it is a better
-            # one: it can say whether the change he asked for is actually running. Two
+            # one: it can say whether the change they asked for is actually running. Two
             # calls a minute apart about the same piece of work would be the alternative.
             return
         await self._call_back(task, detail, failed=failed, delivered=delivered)
@@ -194,9 +194,9 @@ class Notifier:
     async def _send_sms(self, task: Task, text: str, *, delivered: bool) -> None:
         """Text the summary and the report link, unless they have just heard it.
 
-        With texting off this stage simply does not happen, and the result reaches him by
-        one of the routes that do: spoken into a live session, the call-back, or — if he
-        was not there for either — the digest at the top of his next call, which is what
+        With texting off this stage simply does not happen, and the result reaches them by
+        one of the routes that do: spoken into a live session, the call-back, or — if they
+        were not there for either — the digest at the top of their next call, which is what
         `reported_at` exists to keep honest.
         """
         if delivered:
@@ -233,7 +233,7 @@ class Notifier:
 
         False for every ordinary task, and for one that asked on a machine where nothing
         supervises the service — there the restart is refused, and refusing to restart must
-        not also swallow the result he was waiting for.
+        not also swallow the result they were waiting for.
         """
         if not task.needs_restart or self._restart is None:
             return False

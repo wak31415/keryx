@@ -249,7 +249,7 @@ def render_subagent_suffix(
     """The subagent system-prompt suffix, with this task's project, request and number.
 
     The number is in there for the commit trailer: it is what ties a change in a repo back
-    to the sentence he said out loud, which is the one thing `git log` cannot recover. The
+    to the sentence they said out loud, which is the one thing `git log` cannot recover. The
     Slack paragraph is there only when `slack_mcp_server` names a route to use. `owner` is
     whom the work is for (`Settings.owner_label`); `OWNER_FALLBACK` when it is not given.
     """

@@ -2,7 +2,7 @@
 
 A finished task's full write-up is served from `/reports/{task_id}`, which is a public
 route behind `cloudflared` and therefore reachable by anyone who knows the path. What
-keeps it his is the `?t=` query parameter: an HMAC-SHA256 of the task id under
+keeps it theirs is the `?t=` query parameter: an HMAC-SHA256 of the task id under
 `report_secret`, so the ids are not enumerable and a link cannot be edited into another
 task's report.
 

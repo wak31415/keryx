@@ -16,10 +16,10 @@ The rule, with all three numbers in `Settings`:
   wrong PIN inside the window locks it again: an attacker who keeps going gets one guess per
   cooldown, about 24 a day, where the per-call limit alone allowed thousands an hour.
 - `Lockout.alert` says when to tell the owner: the first time it locks, and again only if it
-  is still locking a whole window after he was last told. One message a day, not one an hour.
+  is still locking a whole window after they were last told. One message a day, not one an hour.
 
 The price is that whoever can make those calls can also keep the owner's own PIN locked out;
-SECURITY.md says why that trade is the right one and what he can do about it.
+SECURITY.md says why that trade is the right one and what they can do about it.
 
 A missing file is a fresh start. An unreadable one is the one state in which "nobody has
 guessed" and "someone has nearly used the budget up" look the same, so it counts as a lock

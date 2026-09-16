@@ -129,7 +129,7 @@ def test_render_says_so_when_no_project_wrote_a_brief(settings, tmp_path):
     assert "nothing written down yet" in rendered
 
 
-def test_a_withheld_prompt_carries_nothing_of_his(settings, tmp_path):
+def test_a_withheld_prompt_carries_nothing_of_theirs(settings, tmp_path):
     """A phone call before the PIN: no project, brief, skill, memory or unheard result."""
     root = tmp_path / "projects"
     (root / "vidmem").mkdir(parents=True)
@@ -146,8 +146,8 @@ def test_a_withheld_prompt_carries_nothing_of_his(settings, tmp_path):
         channel="phone",
         caller="+15550001111",
         authorized=False,
-        pending="- task 41 (finished) — his bank balance",
-        memory="He is waiting on the letter from the lawyer.",
+        pending="- task 41 (finished) — their bank balance",
+        memory="They are waiting on the letter from the lawyer.",
         withheld=True,
     )
 
@@ -162,13 +162,13 @@ def test_a_withheld_prompt_carries_nothing_of_his(settings, tmp_path):
 # Whether a Slack message goes out is the voice model's decision, taken turn by turn, so
 # the rule can only live in the prompt. That makes it easy to drop by accident while
 # editing the prose around it, and the failure is silent — no test breaks, Jarvis just
-# quietly starts messaging him again. These pin the rule to the prompt text instead.
+# quietly starts messaging them again. These pin the rule to the prompt text instead.
 
 
-def test_voice_prompt_makes_slack_something_he_has_to_ask_for(unwrapped):
+def test_voice_prompt_makes_slack_something_they_have_to_ask_for(unwrapped):
     text = unwrapped(load_prompt("voice_system.md"))
 
-    assert "he has to ask for it first" in text
+    assert "they have to ask for it first" in text
     assert "Never send unasked" in text
 
 
@@ -177,14 +177,14 @@ def test_voice_prompt_does_not_send_search_results_unasked(unwrapped):
     text = unwrapped(load_prompt("voice_system.md"))
 
     assert "send_to_slack it as well" not in text
-    assert "do not put it on Slack unless he asked for it in writing" in text
+    assert "do not put it on Slack unless they asked for it in writing" in text
 
 
 def test_voice_prompt_offers_slack_rather_than_sending_it(unwrapped):
     """The escape hatch for something unspeakable is an offer, not a send."""
     text = unwrapped(load_prompt("voice_system.md"))
 
-    assert "send it only once he says yes" in text
+    assert "send it only once they say yes" in text
     assert "never send a written copy of something you have already said" in text
 
 
@@ -222,7 +222,7 @@ def test_a_first_call_has_no_digest_and_says_it_remembers_nothing(settings, unwr
     """
     rendered = _rendered(settings)
 
-    assert "What he has not heard yet" not in rendered
+    assert "What the owner has not heard yet" not in rendered
     assert "## What you remember" in rendered
     assert "You know nothing about the owner beyond what this call tells you" in unwrapped(
         rendered
@@ -241,24 +241,26 @@ def test_an_empty_memory_is_only_admitted_to_a_trusted_session(settings):
 
 
 def test_the_unreported_digest_reaches_the_prompt_under_its_own_heading(settings):
-    rendered = _rendered(settings, pending="- task 41 (finished) — he asked for: the ingest script")
+    rendered = _rendered(
+        settings, pending="- task 41 (finished) — they asked for: the ingest script"
+    )
 
-    assert "## What he has not heard yet" in rendered
+    assert "## What the owner has not heard yet" in rendered
     assert "task 41" in rendered
 
 
 def test_the_memory_reaches_the_prompt_as_background_not_as_news(settings, unwrapped):
-    rendered = _rendered(settings, memory="He is mid-way through the orchard sync.")
+    rendered = _rendered(settings, memory="They are mid-way through the orchard sync.")
 
     assert "## What you remember" in rendered
-    assert "He is mid-way through the orchard sync." in rendered
+    assert "They are mid-way through the orchard sync." in rendered
     assert "Do not read it out" in unwrapped(rendered)
 
 
 def test_the_prompt_tells_the_model_to_close_the_loop_on_what_it_reported(unwrapped):
     flat = unwrapped(load_prompt("voice_system.md"))
 
-    assert "mark_reported records that you have told him a task finished" in flat
+    assert "mark_reported records that you have told them a task finished" in flat
     assert "Call it every time you say a result out loud" in flat
 
 
@@ -284,7 +286,7 @@ def test_the_cluster_paragraph_is_only_there_when_the_tool_is(settings):
 
 def test_the_memorys_own_headings_are_nested_under_the_section(settings):
     """Otherwise "Standing facts" reads as an instruction to Jarvis, not as what it knows."""
-    rendered = _rendered(settings, memory="## Standing facts\n\nHe hates jargon.")
+    rendered = _rendered(settings, memory="## Standing facts\n\nThey hate jargon.")
 
     assert "### Standing facts" in rendered
     assert "\n## Standing facts" not in rendered
@@ -303,7 +305,7 @@ def test_the_memory_prompt_is_packaged_and_fully_placeholdered():
 # --- saying it once --------------------------------------------------------
 #
 # A call on 2026-09-16 spent four spoken turns on one PIN and two more on a call-back that
-# takes milliseconds to arrange: "let me set that up for you", then "all set". He noticed,
+# takes milliseconds to arrange: "let me set that up for you", then "all set". They noticed,
 # on the phone, and asked for it to stop. None of these rules can live anywhere but the
 # prompt, and all of them are a sentence somebody could tidy away while editing the prose
 # around them.
@@ -318,19 +320,19 @@ def test_the_prompt_forbids_announcing_and_then_confirming(unwrapped):
 
 
 def test_the_prompt_names_the_tools_that_are_too_fast_to_announce(unwrapped):
-    """"One moment" before a millisecond call is latency he pays for nothing."""
+    """"One moment" before a millisecond call is latency they pay for nothing."""
     text = unwrapped(load_prompt("voice_system.md"))
 
-    assert 'Say "one moment" only before something that will really keep him waiting' in text
+    assert 'Say "one moment" only before something that will really keep them waiting' in text
     for name in ("request_callback", "mark_reported", "submit_pin", "end_session"):
         assert name in text
 
 
-def test_the_prompt_does_not_have_him_justify_what_he_already_agreed_to(unwrapped):
-    """"so you don't have to wait on the line" was said back to him three calls running."""
+def test_the_prompt_does_not_have_them_justify_what_they_already_agreed_to(unwrapped):
+    """"so you don't have to wait on the line" was said back to them three calls running."""
     text = unwrapped(load_prompt("voice_system.md"))
 
-    assert "Do not justify what he has just agreed to" in text
+    assert "Do not justify what they have just agreed to" in text
 
 
 def test_the_prompt_never_predicts_the_pin(unwrapped):
@@ -338,7 +340,7 @@ def test_the_prompt_never_predicts_the_pin(unwrapped):
     text = unwrapped(load_prompt("voice_system.md"))
 
     assert "Never predict it" in text
-    assert "Do not tell him in advance that something will need the PIN" in text
+    assert "Do not tell them in advance that something will need the PIN" in text
 
 
 def test_the_prompt_treats_an_accepted_pin_as_nothing_to_say(unwrapped):
@@ -364,9 +366,9 @@ def test_the_prompt_does_not_let_it_promise_what_a_result_will_contain(unwrapped
 
 # --- nobody's name is built in ---------------------------------------------
 #
-# Jarvis was written for one person, and his name was in the first line of the voice prompt,
+# Jarvis was written for one person, and their name was in the first line of the voice prompt,
 # the subagent suffix, the memory's title and a tool description. Anyone else who installed
-# it got an assistant that believed it worked for him. The name is `OWNER_NAME` now, and
+# it got an assistant that believed it worked for them. The name is `OWNER_NAME` now, and
 # these keep it from coming back by the easy route of an edit to the prose.
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -440,7 +442,7 @@ def test_without_texting_the_prompt_promises_no_text(settings, unwrapped):
     rendered = unwrapped(_rendered(settings))
 
     assert "a text" not in rendered
-    assert "gets a call saying so instead" in rendered
+    assert "get a call saying so instead" in rendered
     assert "will turn up instead — at the top of the next call —" in rendered
 
 
@@ -450,5 +452,5 @@ def test_with_texting_on_the_prompt_says_a_text(settings, unwrapped):
 
     rendered = unwrapped(_rendered(settings))
 
-    assert "gets a text saying so instead" in rendered
+    assert "get a text saying so instead" in rendered
     assert "will turn up instead — a text —" in rendered

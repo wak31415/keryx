@@ -12,11 +12,11 @@ command, in a transient unit of its own so the cgroup kill cannot take it with t
 (see `restart.watch_command`), and it does one thing: watch `restart.json` until the
 restart resolves itself, and speak up when it does not.
 
-* **The record disappears** — Jarvis came back and told him. Nothing to do.
+* **The record disappears** — Jarvis came back and told them. Nothing to do.
 * **The record says `failed`** — Jarvis came back far enough to know it went wrong, and
   has already said so on its own. Also nothing to do; a second text says nothing new.
 * **The record is still `pending` when the deadline passes** — nobody is coming. This is
-  the case that exists for: text him the detail, then ring him with a short spoken alert.
+  the case that exists for: text them the detail, then ring them with a short spoken alert.
 
 The call is plain `<Say>` TwiML on purpose. Every other call Jarvis places is answered by
 its own media stream, and the media stream is served by the process that is not running.
@@ -44,7 +44,7 @@ log = logging.getLogger("jarvis.restart_watch")
 
 #: How long the service is given to come back and confirm itself. Generous on purpose:
 #: systemd's `RestartSec`, a slow start, the wait for the phone server to listen and a
-#: deferred call-back all happen inside it, and a false alarm is a phone call he did not
+#: deferred call-back all happen inside it, and a false alarm is a phone call they did not
 #: need about a service that is fine.
 DEADLINE_S = 300.0
 #: How often the record is looked at. It is one small file on local disk.
@@ -56,8 +56,8 @@ MAX_SMS_CHARS = 900
 NOTHING = "nothing"  # there was no pending restart to watch
 CONFIRMED = "confirmed"  # Jarvis came back and delivered the confirmation itself
 REPORTED = "reported"  # Jarvis came back, knows it failed, and has already said so
-ALERTED = "alerted"  # nobody came back; we told him
-MUTE = "mute"  # nobody came back, and we had no way to tell him
+ALERTED = "alerted"  # nobody came back; we told them
+MUTE = "mute"  # nobody came back, and we had no way to tell them
 
 DOWN_SMS = (
     "Jarvis did not come back after the restart{reason}. It has been {age} and nothing is "
@@ -69,7 +69,7 @@ STUCK_SMS = (
     "no text went out.{task}{errors} Check with: jarvis restart --status"
 )
 #: The spoken alert. Short, and it carries no traceback: a text message holds the detail,
-#: and a phone call exists to make him look at it.
+#: and a phone call exists to make them look at it.
 DOWN_SPOKEN = "Jarvis did not come back after the restart, and nothing is answering."
 STUCK_SPOKEN = "Jarvis restarted but never confirmed it."
 SPOKEN_ALERT = "This is a Jarvis alert. {headline} I have sent you the details by text."
@@ -131,7 +131,7 @@ async def _watch(
             return CONFIRMED
         if record.state != "pending":
             # Jarvis got far enough to know it went wrong, which means it got far enough
-            # to say so. Repeating it from here would tell him nothing he does not have.
+            # to say so. Repeating it from here would tell them nothing they do not have.
             log.info("the restart is already recorded as %s; leaving it be", record.state)
             return REPORTED
         if clock() >= deadline:
@@ -150,7 +150,7 @@ async def _alert(
     twilio: Any,
     probe: Callable[[Settings], int | None],
 ) -> str:
-    """Tell him the restart never landed, by text and then by phone."""
+    """Tell them the restart never landed, by text and then by phone."""
     if store.load() is None:
         # It confirmed itself in the moment between the last poll and this one.
         return CONFIRMED
@@ -162,8 +162,8 @@ async def _alert(
     log.error("%s", body)
 
     # Recorded before anything is sent, and before the service can come up late: a record
-    # left `pending` would have a Jarvis that starts an hour from now ring him about a
-    # restart he has already been told died.
+    # left `pending` would have a Jarvis that starts an hour from now ring them about a
+    # restart they have already been told died.
     record.state = "failed"
     record.error = "restarted but never confirmed it" if up else "never came back"
     store.save(record)
@@ -194,7 +194,7 @@ def _recipient(record: RestartRecord, settings: Settings) -> str | None:
 
 
 async def _text(twilio: Any, settings: Settings, record: RestartRecord, body: str) -> bool:
-    """Text him the detail. False when there was nothing to text it with."""
+    """Text them the detail. False when there was nothing to text it with."""
     to = _recipient(record, settings)
     if not await safe_send_sms(twilio, to, body):
         log.info("not texting about the restart; the call below is the whole alert")
@@ -204,7 +204,7 @@ async def _text(twilio: Any, settings: Settings, record: RestartRecord, body: st
 
 
 async def _call(twilio: Any, settings: Settings, record: RestartRecord, spoken: str) -> bool:
-    """Ring him with the spoken alert. False when no call could be placed."""
+    """Ring them with the spoken alert. False when no call could be placed."""
     to = _recipient(record, settings)
     if not to or twilio is None or not twilio.configured:
         return False

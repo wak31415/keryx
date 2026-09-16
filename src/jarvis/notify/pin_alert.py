@@ -1,13 +1,13 @@
-"""Telling the owner that somebody has been guessing his PIN.
+"""Telling the owner that somebody has been guessing their PIN.
 
 `PinGuard` locks PIN entry on every call once wrong PINs pile up across calls, and the
 session whose wrong PIN set the lock publishes `PinLockedOut` — once, not once per lock (see
-`Lockout.alert`). This is who hears about it, over every path there is, because a lockout he
-never hears about is a PIN being guessed that he cannot change:
+`Lockout.alert`). This is who hears about it, over every path there is, because a lockout they
+never hear about is a PIN being guessed that they cannot change:
 
-- **spoken** into a live session that is already *authorized* — him, on the phone past the
-  PIN or at his own microphone. Never into one that is not: that is where the guessing is.
-- **Slack**, when there is a Slack app, which is his written channel.
+- **spoken** into a live session that is already *authorized* — them, on the phone past the
+  PIN or at their own microphone. Never into one that is not: that is where the guessing is.
+- **Slack**, when there is a Slack app, which is their written channel.
 - **a text**, only through `safe_send_sms` and so only when `TwilioOut.can_text`.
 
 Delivery runs beside the publisher rather than inside it: the publisher is the call being

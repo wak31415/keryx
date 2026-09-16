@@ -163,7 +163,7 @@ async def test_a_silent_tool_is_marked_as_one(registry):
 
 
 def test_an_unknown_tool_is_never_silent(registry):
-    """"You called something that does not exist" is a sentence, and he should hear it."""
+    """"You called something that does not exist" is a sentence, and they should hear it."""
     assert registry.is_silent("no-such-tool") is False
 
 

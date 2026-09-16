@@ -144,7 +144,7 @@ class Settings(BaseSettings):
     openai_billing_api_key_id: str | None = None
     anthropic_admin_key: str | None = Field(default=None, repr=False)
     anthropic_billing_workspace_id: str | None = None
-    #: What he considers a month's budget, in the provider's currency. Neither provider
+    #: What they consider a month's budget, in the provider's currency. Neither provider
     #: serves a spend limit over the API, so the percentage is only as real as this number.
     billing_monthly_budget: float | None = None
 
@@ -189,14 +189,14 @@ class Settings(BaseSettings):
 
     #: Wrong PINs, counted across every call, before PIN entry locks (jarvis/pin_guard.py).
     #: The per-call limit of three ends a call; this is what ends a guessing campaign. Ten is
-    #: three failed calls and then some — more than he mistypes in a day — and one guess in
+    #: three failed calls and then some — more than they mistype in a day — and one guess in
     #: a hundred thousand of a 6-digit PIN.
     pin_failure_limit: int = Field(default=10, ge=1)
     #: How long a wrong PIN is remembered. Past the limit, every further wrong PIN inside
     #: this window locks entry again, so a campaign gets one guess per lockout from then on.
     pin_failure_window_hours: float = Field(default=24, gt=0)
     #: How long PIN entry stays locked, for everyone and even for the right PIN. An hour is
-    #: the longest his own fumbling can cost him, and holds a campaign to ~24 guesses a day.
+    #: the longest their own fumbling can cost them, and holds a campaign to ~24 guesses a day.
     pin_lockout_minutes: float = Field(default=60, gt=0)
 
     # Networking
@@ -285,11 +285,11 @@ class Settings(BaseSettings):
     #: about Slack.
     slack_mcp_server: str | None = None
 
-    # The approval bridge (jarvis/approvals): a Claude Code prompt he never answered
+    # The approval bridge (jarvis/approvals): a Claude Code prompt they never answered
     # becomes a phone call. Off makes the socket never bind, which is exactly what the
     # hook finds on a machine that has not opted in — it exits and the prompt stays put.
     approvals_enabled: bool = True
-    #: How long a prompt has to sit on his screen unanswered before Jarvis rings about it.
+    #: How long a prompt has to sit on their screen unanswered before Jarvis rings about it.
     approval_escalate_seconds: float = 300
     #: How long after that the hook keeps waiting for an answer from the call. The two
     #: added together are the longest the hook can block, so the `timeout` on the hook
@@ -314,9 +314,9 @@ class Settings(BaseSettings):
     approval_roots: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # Retention (jarvis/continuity/retention.py). Both are **off** at 0, which is what Jarvis has
-    # always done: nothing is deleted, ever. A default that deleted a man's own call
+    # always done: nothing is deleted, ever. A default that deleted someone's own call
     # transcripts because nobody changed a number is not a default worth having, so the
-    # feature exists and the policy is his. See also `jarvis forget`.
+    # feature exists and the policy is theirs. See also `jarvis forget`.
     transcript_retention_days: int = 0
     task_retention_days: int = 0
 

@@ -208,11 +208,11 @@ async def test_housekeeping_never_surfaces_in_a_recall(settings, recaller):
     assert await recall.recall("orchard") == []
 
 
-# --- a call that never gave the PIN is not his history ---------------------
+# --- a call that never gave the PIN is not their history ---------------------
 
 
 def test_a_call_that_never_gave_the_pin_is_never_searched(settings):
-    """What a caller who proved nothing said must not come back later as if he had said it."""
+    """What a caller who proved nothing said must not come back later as if they had said it."""
     path = settings.data_dir / "calls" / "spoofed.log"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -232,7 +232,7 @@ def test_a_call_that_never_gave_the_pin_is_never_searched(settings):
 
 
 def test_a_pin_still_on_disk_never_comes_back_in_a_hit(settings):
-    """Transcripts written before redaction hold the PIN he said; recall must not read it
+    """Transcripts written before redaction hold the PIN they said; recall must not read it
     out, and must not confirm a guess by finding it."""
     write_call(settings, "old", ["assistant: What's your PIN?", "user: 1 2 3 4 5 6."])
 
@@ -249,7 +249,9 @@ async def test_a_pin_in_a_task_never_comes_back_either(settings):
 
     hits = await Recaller(settings.data_dir, manager, pin="123456").recall("bank")
 
-    assert [hit.text for hit in hits] == ["he asked: log in to the bank with [PIN] — result: done"]
+    assert [hit.text for hit in hits] == [
+        "they asked: log in to the bank with [PIN] — result: done"
+    ]
     await manager.shutdown()
     await store.close()
 

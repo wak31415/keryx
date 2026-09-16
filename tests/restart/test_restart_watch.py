@@ -206,8 +206,8 @@ async def test_a_service_that_never_comes_back_is_texted_and_rung(harness):
     to, body = harness.twilio.sms[0]
     assert to == OWNER
     assert "did not come back" in body
-    assert "picked up new code" in body  # the reason he gave
-    assert "v1-abc1234" in body  # what it was running, so he can put it back
+    assert "picked up new code" in body  # the reason they gave
+    assert "v1-abc1234" in body  # what it was running, so they can put it back
     assert harness.twilio.calls[0]["to"] == OWNER
 
 
@@ -293,7 +293,7 @@ async def test_a_failed_text_still_gets_the_call_placed(harness):
     assert await harness.run() == ALERTED
 
     words = spoken(harness.twilio.calls[0]["twiml"])
-    assert "by text" not in words  # nothing to point him at, so it does not promise one
+    assert "by text" not in words  # nothing to point them at, so it does not promise one
     assert "Check the machine" in words
 
 
@@ -335,5 +335,5 @@ async def test_with_texting_off_the_alert_is_the_call(tmp_path):
 
     assert harness.twilio.sms == []
     words = spoken(harness.twilio.calls[0]["twiml"])
-    assert "by text" not in words  # it must not point him at a message he will never get
+    assert "by text" not in words  # it must not point them at a message they will never get
     assert "Check the machine" in words

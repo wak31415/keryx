@@ -58,9 +58,9 @@ def test_no_memory_file_is_an_empty_memory_not_an_error(settings):
 
 def test_the_memory_is_read_back_whole_when_it_fits(settings):
     settings.ensure_dirs()
-    memory_path(settings.data_dir).write_text("# What Jarvis knows\n\nHe hates jargon.\n")
+    memory_path(settings.data_dir).write_text("# What Jarvis knows\n\nThey hate jargon.\n")
 
-    assert "He hates jargon." in read_memory(settings.data_dir)
+    assert "They hate jargon." in read_memory(settings.data_dir)
 
 
 def test_an_oversized_memory_keeps_its_head_and_says_it_was_trimmed(settings):
@@ -124,13 +124,13 @@ def test_nothing_pending_means_no_nudge_after_the_pin_either():
     assert Briefing(memory="something").after_pin_nudge() == ""
 
 
-def test_the_nudge_after_the_pin_does_not_greet_him_a_second_time():
-    """He has been talking for a while by the time the PIN goes in."""
+def test_the_nudge_after_the_pin_does_not_greet_them_a_second_time():
+    """They have been talking for a while by the time the PIN goes in."""
     nudge = Briefing(pending="…", pending_count=2).after_pin_nudge()
 
     assert nudge.startswith("[system] 2 tasks finished")
-    assert "What he has not heard yet" in nudge
-    assert "greeting" not in nudge and "not greet him again" in nudge
+    assert "What the owner has not heard yet" in nudge
+    assert "greeting" not in nudge and "not greet them again" in nudge
 
 
 def test_several_pending_tasks_are_plural():
@@ -148,7 +148,7 @@ async def test_a_fresh_machine_briefs_with_nothing_and_that_is_fine(settings, ta
 
 async def test_the_briefer_finds_the_memory_and_the_unreported_work(settings, tasks):
     settings.ensure_dirs()
-    memory_path(settings.data_dir).write_text("He is mid-way through the orchard sync.")
+    memory_path(settings.data_dir).write_text("They are mid-way through the orchard sync.")
     task = await tasks.store.create(_finished(description="wire up the poller"))
 
     briefing = await Briefer(settings, tasks.manager).build()

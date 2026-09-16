@@ -1,7 +1,7 @@
 """What a pending approval is, and what answering one comes to.
 
 One `ApprovalRequest` is one prompt sitting on the owner's screen that nobody has answered.
-It is created by the hook the Claude CLI runs when it is *about* to ask him something, it
+It is created by the hook the Claude CLI runs when it is *about* to ask them something, it
 lives only in memory (a pending prompt cannot outlive the process that is blocked on it),
 and it ends in exactly one `Outcome`.
 
@@ -30,15 +30,15 @@ class Outcome(StrEnum):
     """How a request ended. `PENDING` is the only one that is not final."""
 
     PENDING = "pending"
-    #: A verdict was applied: he answered it on the phone.
+    #: A verdict was applied: they answered it on the phone.
     ANSWERED = "answered"
-    #: He answered at the keyboard, or the session went away, before we ever applied one.
+    #: They answered at the keyboard, or the session went away, before we ever applied one.
     RESOLVED_ELSEWHERE = "resolved_elsewhere"
     #: The hook's process disappeared: the prompt is not there to answer any more.
     ABANDONED = "abandoned"
     #: Nobody answered inside the window; the prompt is left exactly as it was.
     EXPIRED = "expired"
-    #: He heard it and chose to leave it on screen.
+    #: They heard it and chose to leave it on screen.
     LEFT = "left"
 
 
@@ -76,10 +76,10 @@ class ApprovalRequest:
     raised_at: float
     outcome: Outcome = Outcome.PENDING
     escalated_at: float | None = None
-    #: How he was told: "call", "announce", or "riding" (a call was already going out).
+    #: How they were told: "call", "announce", or "riding" (a call was already going out).
     escalated_via: str | None = None
     answered_at: float | None = None
-    #: The option he chose, for the audit line — never the digit he pressed.
+    #: The option they chose, for the audit line — never the digit they pressed.
     answer: str | None = None
     extra: dict = field(default_factory=dict)
 

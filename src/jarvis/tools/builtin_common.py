@@ -16,7 +16,7 @@ an argument into something a task store can take, without ever raising.
 is on every tool but five. Caller id is spoofable, so before the PIN nothing private is
 read out and nothing the caller says or does outlives the call: that gates what opens a
 subagent (`dispatch_task`, `send_followup`, `cancel_task`), what can take the phone off the
-air or run a command (`restart_service`, `answer_approval`), what reads his tasks, calls,
+air or run a command (`restart_service`, `answer_approval`), what reads the owner's tasks, calls,
 projects or screen (`list_tasks`, `get_task_status`, `get_task_result`, `recall`,
 `list_projects`, `list_pending_approvals`), and what leaves something behind
 (`mark_reported`, `request_callback`, `send_to_slack`). Only `check_billing`,
@@ -48,7 +48,7 @@ log = logging.getLogger("jarvis.tools.builtin")
 #: A factory rather than a reader, because the model may name either provider per call.
 BillingFactory = Callable[[str | None], BillingReader]
 
-#: What `cluster_stats` answers for when he does not name one: everything it knows.
+#: What `cluster_stats` answers for when they do not name one: everything it knows.
 ALL_CLUSTERS = ("both", "all", "everything")
 
 #: How much of a task description a spoken list may carry.
@@ -66,54 +66,54 @@ MAX_TASK_LIMIT = 20
 PIN_REQUIRED_MESSAGE = (
     "Ask for the PIN in one short sentence and wait. Do not explain why it is needed, do "
     "not say what you are about to do with it, and do not announce that you are checking "
-    "it. Call this same tool again once he has given it, spoken or keyed in."
+    "it. Call this same tool again once they have given it, spoken or keyed in."
 )
 PIN_OK_MESSAGE = (
-    "Correct, and he is authorized for the rest of this call. Say nothing about the PIN — "
+    "Correct, and they are authorized for the rest of this call. Say nothing about the PIN — "
     "not that it worked, not that you are verifying it, not that you are unlocking "
-    "anything — and go straight on with what he asked for."
+    "anything — and go straight on with what they asked for."
 )
 PIN_INVALID_MESSAGE = (
-    "Not the PIN. One sentence: that it was not right, that he should try again, and how "
+    "Not the PIN. One sentence: that it was not right, that they should try again, and how "
     "many attempts are left. Never repeat a digit back, and do not explain why a phone "
-    "line mishears digits — he knows."
+    "line mishears digits — they know."
 )
 PIN_LOCKED_MESSAGE = (
     "Too many wrong attempts and the call is ending. Say one short goodbye and nothing "
     "else; you have already been told this, so do not say it twice."
 )
 PIN_MISSING_MESSAGE = (
-    "This needs a PIN on the phone, but none is configured. Tell him that in one sentence."
+    "This needs a PIN on the phone, but none is configured. Tell them that in one sentence."
 )
 PIN_NOT_CONFIGURED_MESSAGE = (
-    "There is no PIN set on this machine, so there is nothing to check. Tell him that in "
+    "There is no PIN set on this machine, so there is nothing to check. Tell them that in "
     "one sentence rather than asking again."
 )
 #: What `request_callback` hands back. The one thing it exists to prevent is the pair
 #: "let me set that up for you" / "all set, I'll call you" around a tool that takes
 #: milliseconds: arranging it and having arranged it are one fact, not two.
 CALLBACK_SET_MESSAGE = (
-    "Arranged. Tell him once, in a short clause — \"I'll ring you when it lands\" — and "
+    "Arranged. Tell them once, in a short clause — \"I'll ring you when it lands\" — and "
     "stop there. Not the task number again, not what that call will contain, and not a "
     "second confirmation if you already said you were setting it up."
 )
 CALLBACK_ALREADY_DONE_MESSAGE = (
-    "That task has already finished, so there is nothing to call back about. Tell him what "
+    "That task has already finished, so there is nothing to call back about. Tell them what "
     "came of it now instead, and then call mark_reported."
 )
 #: What `mark_reported` hands back. It is also registered `silent=True`, so in the normal
 #: case nothing is generated over this at all; the wording is here for the model that goes
 #: looking at the result anyway.
 REPORTED_MESSAGE = (
-    "Recorded. This is bookkeeping and he has already heard the result, so say nothing "
-    "about it and do not repeat what you just told him."
+    "Recorded. This is bookkeeping and they have already heard the result, so say nothing "
+    "about it and do not repeat what you just told them."
 )
 STILL_RUNNING_MESSAGE = (
-    "still running. Say the task number once and that you will tell him when it lands. "
+    "still running. Say the task number once and that you will tell them when it lands. "
     "Nothing about what the answer will contain — you do not know yet."
 )
 SEARCH_FAILED_MESSAGE = "the search came back empty; say so, or offer to put Claude on it"
-SLACK_FAILED_MESSAGE = "Slack would not take the message; tell him it did not go through"
+SLACK_FAILED_MESSAGE = "Slack would not take the message; tell them it did not go through"
 RECALL_EMPTY_MESSAGE = (
     "nothing on record about that; say so plainly and offer to put Claude on it"
 )
@@ -121,15 +121,15 @@ ENDING_MESSAGE = "The session is ending now; do not say anything else."
 #: What `answer_approval` hands back. It never answers anything itself: the most it can do
 #: is put the menu in the model's mouth, and the keypad does the rest (jarvis/approvals).
 APPROVAL_KEYPAD_MESSAGE = (
-    "Read the request back to him once, as written, then read these options out and wait. "
-    "He answers with the keypad and only with the keypad — if he says yes out loud, ask him "
-    "to press the key anyway. Do not call this tool again unless he asks for the menu again."
+    "Read the request back to them once, as written, then read these options out and wait. "
+    "The owner answers with the keypad and only with the keypad — if they say yes out loud, ask "
+    "them to press the key anyway. Do not call this tool again unless they ask for the menu again."
 )
 APPROVAL_PHONE_ONLY_MESSAGE = (
-    "Approvals are answered on the phone keypad, and this is not a phone call. Tell him it "
-    "is still waiting on his screen."
+    "Approvals are answered on the phone keypad, and this is not a phone call. Tell them it "
+    "is still waiting on their screen."
 )
-APPROVAL_NONE_MESSAGE = "Nothing is waiting for an answer; tell him so."
+APPROVAL_NONE_MESSAGE = "Nothing is waiting for an answer; tell them so."
 
 #: A phone number we are willing to call back: E.164, `+` and 7–15 digits.
 _E164_RE = re.compile(r"^\+\d{7,15}$")

@@ -613,11 +613,11 @@ async def test_update_instructions_sends_only_the_instructions(connect):
     `session.update` that carries one is refused whole, instructions and all."""
     harness = await connect()
 
-    await harness.client.update_instructions("You are Jarvis, now with his briefing.")
+    await harness.client.update_instructions("You are Jarvis, now with their briefing.")
 
     assert harness.ws.sent[-1] == {
         "type": "session.update",
-        "session": {"type": "realtime", "instructions": "You are Jarvis, now with his briefing."},
+        "session": {"type": "realtime", "instructions": "You are Jarvis, now with their briefing."},
     }
     assert harness.ws.sent_types == ["session.update", "session.update"]
 

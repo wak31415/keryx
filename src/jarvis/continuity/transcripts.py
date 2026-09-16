@@ -90,8 +90,8 @@ def was_authorized(raw: str) -> bool:
 
     False only for a call that opened `authorized=no` and never wrote `AUTHORIZED_MARKER`:
     a phone call that did not give the PIN, whose words are nobody's history — reading them
-    back later would let a caller who proved nothing speak as him. A transcript from before
-    the header carried the flag is his own, and counts as authorized.
+    back later would let a caller who proved nothing speak as them. A transcript from before
+    the header carried the flag is their own, and counts as authorized.
     """
     lines = [line.split("] ", 1)[-1].strip() for line in raw.splitlines()]
     header = next((line for line in lines if line.startswith("--- session ")), "")

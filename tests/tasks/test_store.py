@@ -311,21 +311,21 @@ async def test_mark_reported_with_no_ids_is_a_no_op(store):
 
 
 async def test_internal_tasks_stay_out_of_the_digest_the_lists_and_the_cap(store):
-    await _finished(store, "his work")
+    await _finished(store, "their work")
     await _finished(store, "jarvis's own memory update", internal=True)
 
-    assert [task.description for task in await store.list_unreported()] == ["his work"]
-    assert [task.description for task in await store.list()] == ["his work"]
+    assert [task.description for task in await store.list_unreported()] == ["their work"]
+    assert [task.description for task in await store.list()] == ["their work"]
     assert await store.count_created_since(datetime(2026, 1, 1, tzinfo=UTC)) == 1
 
 
 async def test_internal_tasks_are_visible_when_asked_for(store):
-    await _finished(store, "his work")
+    await _finished(store, "their work")
     await _finished(store, "housekeeping", internal=True)
 
     listed = await store.list(include_internal=True)
 
-    assert {task.description for task in listed} == {"his work", "housekeeping"}
+    assert {task.description for task in listed} == {"their work", "housekeeping"}
 
 
 # --- search / by session ---------------------------------------------------

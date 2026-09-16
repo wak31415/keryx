@@ -23,7 +23,7 @@ PIN = "424242"
 @dataclass
 class SpyKeypad:
     digits: list[tuple[str, str]] = field(default_factory=list)
-    message: str | None = "[system] He pressed a key."
+    message: str | None = "[system] They pressed a key."
     error: Exception | None = None
 
     def digit(self, session_id: str, key: str) -> str | None:
@@ -83,7 +83,7 @@ async def test_what_the_keypad_decided_is_put_to_the_model(phone, provider, keyp
     async with running(session):
         phone.feed(Dtmf("1"))
         def pressed():
-            return any("He pressed" in text for text, _, _ in provider.injected)
+            return any("They pressed" in text for text, _, _ in provider.injected)
 
         await eventually(pressed)
 
@@ -99,7 +99,7 @@ async def test_a_digit_nobody_wanted_is_dropped(phone, provider, keypad, tmp_pat
 
 async def test_the_digit_is_never_spoken_to_the_model(phone, provider, keypad, tmp_path):
     """The model is told what the key *decided*, never which key it was."""
-    keypad.message = "[system] He pressed a key: request 1 is approved."
+    keypad.message = "[system] They pressed a key: request 1 is approved."
     session = build(phone, provider, keypad, authorized=True, tmp_path=tmp_path)
     async with running(session):
         phone.feed(Dtmf("7"))

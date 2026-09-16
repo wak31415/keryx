@@ -24,8 +24,8 @@ PIN = "123456"
 CALLER = "+15550001111"
 
 
-MEMORY = "He is waiting on the letter from the lawyer."
-DIGEST = "- task 41 (finished) — he asked for: his bank balance\n  Result: 1,234 pounds"
+MEMORY = "They are waiting on the letter from the lawyer."
+DIGEST = "- task 41 (finished) — they asked for: their bank balance\n  Result: 1,234 pounds"
 
 
 class FakeBriefer:
@@ -144,7 +144,7 @@ async def test_an_unauthorized_call_opens_knowing_nothing_private(make_session, 
         await eventually(lambda: provider.injected != [])
 
         assert not private(provider.config.instructions)
-        assert "orchard" not in provider.config.instructions  # nor what he is working on
+        assert "orchard" not in provider.config.instructions  # nor what they are working on
         assert provider.injected[0][0] == OPENING_MESSAGE  # no "lead with it" nudge either
         assert briefer.builds == 0  # not even read
 
@@ -153,7 +153,7 @@ async def test_a_spoken_pin_delivers_the_briefing_before_the_turn_that_answers_i
     make_session, phone
 ):
     """One turn is all a PIN may cost: the nudge rides in silently, ahead of the tool result
-    whose response is the next thing he hears."""
+    whose response is the next thing they hear."""
     provider = OrderedProvider()
     session = make_session(phone, provider, briefer=FakeBriefer())
 
@@ -249,7 +249,7 @@ async def test_a_briefing_that_cannot_be_sent_does_not_cost_the_pin(make_session
         provider.send_error = None
 
 
-# --- the transcript says whether he ever gave the PIN ----------------------
+# --- the transcript says whether they ever gave the PIN ----------------------
 
 
 async def test_the_transcript_marks_a_call_unauthorized_until_the_pin(
@@ -302,7 +302,7 @@ async def test_a_spoken_pin_reaches_neither_the_transcript_nor_the_log(
 
 
 async def test_nothing_is_announced_into_a_call_before_the_pin(make_session, phone, provider):
-    """And False, so the notifier and the broker do not count it as having told him."""
+    """And False, so the notifier and the broker do not count it as having told them."""
     session = make_session(phone, provider)
 
     async with running(session):

@@ -23,7 +23,7 @@ log = logging.getLogger("jarvis.tasks.store")
 
 _SCHEMA_VERSION = 4
 
-#: How many unreported tasks a call opens with. He is on a phone: past a handful, the
+#: How many unreported tasks a call opens with. The owner is on a phone: past a handful, the
 #: digest stops being a briefing and becomes a recital, and the rest keep until next time.
 MAX_UNREPORTED = 5
 
@@ -32,7 +32,7 @@ def _escape_like(term: str) -> str:
     """`term` with the `LIKE` wildcards neutralised, for use with `ESCAPE '\\'`.
 
     Search terms come off a speech transcript, so an underscore or a percent sign in one
-    is a literal character he said, never a pattern.
+    is a literal character they said, never a pattern.
     """
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -82,10 +82,10 @@ _CREATE_UNREPORTED_INDEX_SQL = (
 )
 
 #: v1 -> v2 (2026-08-24): a task remembers the call it came from, and what the call-back
-#: should remind him of. Both are nullable, so old rows need nothing but the columns.
+#: should remind them of. Both are nullable, so old rows need nothing but the columns.
 _V2_COLUMNS = ("origin_session_id TEXT", "callback_note TEXT")
 
-#: v2 -> v3 (2026-08-25): a task remembers whether Jarvis has actually told him about it,
+#: v2 -> v3 (2026-08-25): a task remembers whether Jarvis has actually told them about it,
 #: and whether Jarvis asked for it of its own accord. Rows written before this are treated
 #: as already reported — see `_migrate`.
 _V3_COLUMNS = ("reported_at TEXT", "internal INTEGER NOT NULL DEFAULT 0")
@@ -162,7 +162,7 @@ class TaskStore:
                     conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
                 conn.execute(_CREATE_UNREPORTED_INDEX_SQL)
                 # Everything that had already finished before this column existed counts as
-                # told: he has lived through those calls, and the alternative is a first
+                # told: they have lived through those calls, and the alternative is a first
                 # call after the upgrade that opens by reading out months of history.
                 conn.execute(
                     "UPDATE tasks SET reported_at = COALESCE(finished_at, created_at) "
@@ -235,11 +235,11 @@ class TaskStore:
         return updated
 
     async def list_unreported(self, *, limit: int = MAX_UNREPORTED) -> list[Task]:
-        """Finished tasks Jarvis has not told him about yet, oldest first.
+        """Finished tasks Jarvis has not told them about yet, oldest first.
 
         Oldest first because this is read out as "since we last spoke": the order things
         happened in is the order they make sense in. Internal (housekeeping) tasks and
-        cancelled ones are excluded — he asked for neither an announcement nor, in the
+        cancelled ones are excluded — they asked for neither an announcement nor, in the
         cancelled case, the work.
         """
         return await asyncio.to_thread(self._list_unreported_sync, limit)
@@ -258,9 +258,9 @@ class TaskStore:
 
         **Never deletes a task the caller has not been told about.** `reported_at` is the
         only record that Jarvis said a result out loud, so a `done`/`failed` row still
-        waiting to be reported is kept however old it is — the alternative is a result he
+        waiting to be reported is kept however old it is — the alternative is a result they
         will never hear, and hearing something late beats not hearing it. `internal` rows
-        (housekeeping he never asked about) and `cancelled` ones (work he stopped) are owed
+        (housekeeping they never asked about) and `cancelled` ones (work they stopped) are owed
         to nobody and go on schedule.
 
         `finished_at` can be NULL on a row cancelled before it ever ran, so the age of a
@@ -392,14 +392,14 @@ class TaskStore:
         """Tasks newest-first (`id DESC`), optionally filtered to one status.
 
         Housekeeping tasks are left out unless `include_internal` asks for them: the voice
-        model reads this list out, and "what's running" must mean his work.
+        model reads this list out, and "what's running" must mean their work.
         """
         return await asyncio.to_thread(self._list_sync, status, limit, include_internal)
 
     async def count_created_since(self, since: datetime) -> int:
         """Number of tasks with `created_at >= since` (UTC ISO-8601 string comparison).
 
-        Internal tasks do not count: the daily cap is there to bound what he can spend on
+        Internal tasks do not count: the daily cap is there to bound what they can spend on
         a runaway conversation, and Jarvis's own memory upkeep is not that.
         """
         return await asyncio.to_thread(self._count_created_since_sync, since)

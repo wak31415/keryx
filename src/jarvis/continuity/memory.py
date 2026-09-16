@@ -9,7 +9,7 @@ any call has happened; `memory_skeleton` is the structure the two share.
 
 It is a real subagent rather than a summarising API call because the memory is worth more
 when whoever writes it can go and look: open the report of the task that call dispatched,
-check whether the thing he was waiting on has landed, read the repo he was asking about.
+check whether the thing they were waiting on has landed, read the repo they were asking about.
 The cost is that it is a task like any other, so it is dispatched `internal=True` — see
 `Task.internal` — which keeps it out of the spoken task lists, out of the daily cap and
 out of the notifier. It restricts nothing about what that subagent may do.

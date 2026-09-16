@@ -8,8 +8,8 @@ construction logic and gives tests one seam to swap a fake provider (or a fake s
 runner) in.
 
 It also builds the `ApprovalBroker`, which is the other direction entirely: not Jarvis
-telling him what a subagent did, but a Claude Code session on his own screen that has been
-waiting on him and has given up expecting an answer at the keyboard. It is built here so
+telling them what a subagent did, but a Claude Code session on their own screen that has been
+waiting on them and has given up expecting an answer at the keyboard. It is built here so
 the voice tools can bind to it and started only by `jarvis serve`, because starting it
 binds a Unix socket and two processes cannot both own that.
 

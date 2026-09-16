@@ -36,7 +36,7 @@ MAX_LIMIT = 8
 MAX_SNIPPET_CHARS = 320
 CONTEXT_LINES = 1
 #: How many call logs are searched, newest first. A year of calls is not worth a scan on
-#: the event loop's thread pool while he waits on the line.
+#: the event loop's thread pool while they wait on the line.
 MAX_CALL_FILES = 200
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
@@ -145,7 +145,7 @@ def search_calls(
     """Hits from the call transcripts, newest call first. Blocking: run it in a thread.
 
     `pin` is redacted from every line *before* it is matched, not just from what comes
-    back: logs written before redaction still hold the PIN he said aloud, and a search
+    back: logs written before redaction still hold the PIN they said aloud, and a search
     that found it would confirm a guess even with the digits blanked out.
     """
     if not wanted:
@@ -217,8 +217,8 @@ class Recaller:
 
 
 def _task_text(task) -> str:
-    """What a task hit says: what he asked for, and what came back."""
-    text = f"he asked: {task.description}"
+    """What a task hit says: what they asked for, and what came back."""
+    text = f"they asked: {task.description}"
     if task.summary:
         text += f" — result: {task.summary}"
     collapsed = " ".join(text.split())

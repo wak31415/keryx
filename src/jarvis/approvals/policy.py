@@ -1,14 +1,14 @@
-"""Which prompts may ever be escalated to a phone call, and what he is told about them.
+"""Which prompts may ever be escalated to a phone call, and what the owner is told about them.
 
 This is the *primary* control on the whole bridge, not a second layer on top of one. A
 `PermissionRequest` hook that returns `allow` appears to skip the CLI's own re-check of
 `permissions.deny` (measured 2026-08-26; see the report in
-`reports/jarvis-approval-bridge/`), so nothing behind this module is protecting him:
+`reports/jarvis-approval-bridge/`), so nothing behind this module is protecting them:
 whatever `classify` calls eligible is what a keypad digit can run.
 
 So it is an allowlist, it starts small, and the denylist wins over it. Everything not
 explicitly named comes back ineligible, which means the hook says nothing and the prompt
-waits on his screen exactly as it does today.
+waits on their screen exactly as it does today.
 
 And it decides on exactly what will run, or not at all. The command as the shell will get
 it, never a normalised copy; the argv the shell will build from it, never a guess about
@@ -32,7 +32,7 @@ from jarvis.approvals.models import Kind, input_digest
 log = logging.getLogger("jarvis.approvals.policy")
 
 #: How much of a request may be said out loud in one go. An approval that does not fit is
-#: not shortened, it is refused: what he hears has to be the whole of what runs.
+#: not shortened, it is refused: what they hear has to be the whole of what runs.
 MAX_SUMMARY_CHARS = 180
 #: How long a question's option label may be. The label is the answer Claude is sent, so
 #: one that does not fit is refused rather than cut.
@@ -64,8 +64,8 @@ BASH_FIELDS = frozenset(
 SILENT_MODES = frozenset({"bypassPermissions"})
 
 #: Substrings that make a request permanently ineligible, matched case-insensitively
-#: against every value in the tool input. Deliberately blunt: a false positive costs him
-#: nothing (the prompt waits on screen), a false negative costs him a key.
+#: against every value in the tool input. Deliberately blunt: a false positive costs them
+#: nothing (the prompt waits on screen), a false negative costs them a key.
 DENY_SUBSTRINGS = (
     ".env",
     ".pem",
@@ -189,7 +189,7 @@ def _inside(path: Path, roots: list[Path]) -> Path | None:
 
 
 def _project_name(path: Path, root: Path) -> str:
-    """What to call the place this is happening, for a sentence he has to hear."""
+    """What to call the place this is happening, for a sentence they have to hear."""
     relative = path.relative_to(root) if path != root else Path()
     return relative.parts[0] if relative.parts else root.name
 
@@ -239,9 +239,9 @@ def classify(event: dict, settings) -> dict | None:
 
 
 def _read_back(kind: Kind, summary: str) -> str:
-    """The sentence he hears, or `Ineligible` when an approval would have to be cut.
+    """The sentence they hear, or `Ineligible` when an approval would have to be cut.
 
-    A question may be shortened: answering one runs nothing, and the answer is a label he
+    A question may be shortened: answering one runs nothing, and the answer is a label they
     picked. An approval may not. A cut read-back is a command whose tail runs unheard, and
     a long command is exactly where something gets hidden; nor does a keypad "yes" to a
     sentence nobody can hold in their head mean anything. So it is whole or not at all.
@@ -286,7 +286,7 @@ def _describe_question(tool_input: dict) -> tuple[Kind, str, list[str]]:
     if not isinstance(questions, list) or not questions:
         raise Ineligible("the question payload had no questions in it")
     if len(questions) > 1:
-        # More than one question in one prompt has no keypad shape; he answers on screen.
+        # More than one question in one prompt has no keypad shape; they answer on screen.
         raise Ineligible("it asks more than one question at once")
     first = questions[0]
     if not isinstance(first, dict):

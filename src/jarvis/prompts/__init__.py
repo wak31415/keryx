@@ -45,11 +45,12 @@ _OPENING_HEADING = "## Why this session opened"
 #: Both of these sections carry their own heading so that an empty one disappears from the
 #: prompt entirely, rather than leaving a heading with nothing under it for the model to
 #: wonder about.
-_PENDING_HEADING = "## What he has not heard yet"
+_PENDING_HEADING = "## What the owner has not heard yet"
 _MEMORY_HEADING = (
     "## What you remember\n\n"
     "Written down after earlier calls, because you keep no memory of them yourself. It is "
-    "background: use it to understand what he means and what he is in the middle of. Do "
+    "background: use it to understand what the owner means and what they are in the middle of. "
+    "Do "
     "not read it out, and do not treat it as today's news — check before you assert "
     "anything from it as still true."
 )
@@ -63,7 +64,7 @@ _NO_MEMORY = (
 )
 _NO_SKILLS = "none installed"
 _NO_BRIEFS = "nothing written down yet"
-#: What a withheld prompt says in place of anything discovered from his machine.
+#: What a withheld prompt says in place of anything discovered from their machine.
 _WITHHELD = "held back until the PIN"
 
 
@@ -148,7 +149,7 @@ def render_voice_prompt(
     An authorized session with no memory is told it knows nothing about the owner yet.
 
     `withheld` is a phone call that has not given the PIN. Caller id is spoofable, so its
-    prompt carries nothing of his: the project names, their briefs and the skill catalog
+    prompt carries nothing of the owner's: the project names, their briefs and the skill catalog
     say `_WITHHELD` instead of being discovered at all, and `pending` and `memory` are
     dropped whatever was passed. The session re-renders without it once the PIN is in.
     """

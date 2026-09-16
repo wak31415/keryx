@@ -73,5 +73,5 @@ def test_the_minutes_are_not_ignored(monkeypatch, tmp_path, minute, quiet):
 
 @pytest.mark.parametrize("window", ["23:00", "not a window", "25:00-26:00", "23:00-", "-07:00"])
 def test_an_unparseable_window_never_silences_the_phone(monkeypatch, tmp_path, window):
-    """Failing open is the right way round: a typo must not quietly stop him being told."""
+    """Failing open is the right way round: a typo must not quietly stop them being told."""
     assert broker_at(monkeypatch, tmp_path, window=window, hour=3)._quiet_now() is False

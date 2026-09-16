@@ -23,9 +23,9 @@ Three rulings hold it up, and the first is not a preference:
   attempt — and exits 42 rather than dialling out. Exit 42 means stop, not try again:
   nothing here retries it, and nothing here opens a connection of its own.
 - **It speaks, it does not write.** A guard may have its own way of telling the user the
-  login has expired. He is on the phone — that is where the sentence belongs — so
+  login has expired. They are on the phone — that is where the sentence belongs — so
   `CLUSTER_SSH_NO_NOTIFY=1` is set and the expiry comes back as a spoken status instead.
-- **Numbers, not work.** A report carries GPU counts, queue counts and his own job ids. It
+- **Numbers, not work.** A report carries GPU counts, queue counts and their own job ids. It
   never carries a job *name*, a path, or another user's name, so the most anyone who got
   past the caller allowlist learns is how busy a machine is. That is also why the tool is
   not PIN-gated: like `check_billing`, it cannot change anything, and asking what a number
@@ -106,7 +106,7 @@ QUERY_TIMEOUT_S = 20.0
 ErrorCode = Literal["not_configured", "unknown_cluster", "auth_expired", "timeout", "unavailable"]
 
 #: What the model is told to say, per failure. Written to be spoken, and never naming a
-#: path or a host beyond the cluster he already asked about.
+#: path or a host beyond the cluster they already asked about.
 MESSAGES: dict[ErrorCode, str] = {
     "not_configured": (
         "cluster access is not set up on this machine; say so plainly and offer to have "
@@ -114,11 +114,11 @@ MESSAGES: dict[ErrorCode, str] = {
     ),
     "unknown_cluster": (
         "that is not one of the clusters you can check; say which ones you can and ask "
-        "which he meant"
+        "which the owner meant"
     ),
     "auth_expired": (
-        "the cluster login has timed out — he needs to log in to it again at his desk "
-        "before you can look; say that and offer to try again once he has"
+        "the cluster login has timed out — they need to log in to it again at their desk "
+        "before you can look; say that and offer to try again once they have"
     ),
     "timeout": "the cluster did not answer in time; offer to try again in a moment",
     "unavailable": (
@@ -189,7 +189,7 @@ NON_COMPETING_REASONS = frozenset(
 
 _PARENS = re.compile(r"\([^)]*\)")
 #: `%i` is `12345` or `12345_[0-3]`; only the leading digits are kept, so an array job
-#: comes back as the one number he can repeat down the phone.
+#: comes back as the one number they can repeat down the phone.
 _JOB_ID = re.compile(r"^(\d+)")
 
 
@@ -340,7 +340,7 @@ def parse_nodes(text: str) -> tuple[GpuCounts, list[str]]:
 
 @dataclass
 class MyJobs:
-    """His own jobs on one cluster. Ids, never names — see the module docstring."""
+    """Their own jobs on one cluster. Ids, never names — see the module docstring."""
 
     running: int = 0
     pending: int = 0
@@ -351,7 +351,7 @@ class MyJobs:
 
 
 def parse_my_jobs(text: str) -> tuple[MyJobs, list[str]]:
-    """`squeue -h -u $USER -o "%i|%T|%P|%b|%L|%D|%r"` into his side of the report."""
+    """`squeue -h -u $USER -o "%i|%T|%P|%b|%L|%D|%r"` into their side of the report."""
     jobs = MyJobs()
     bad: list[str] = []
     for line in text.splitlines():
@@ -389,7 +389,7 @@ def parse_pending(text: str) -> tuple[int, int]:
     """`squeue -t PD -h -o "%i|%r"` as `(competing, total)` pending jobs.
 
     Competing means "waiting for hardware". A `Dependency` or `JobArrayTaskLimit` job is
-    not in the running for his GPUs, and counting it as if it were turns a quiet queue
+    not in the running for the owner's GPUs, and counting it as if it were turns a quiet queue
     into a crowded one.
     """
     total = competing = 0
@@ -501,8 +501,8 @@ def build_script(partition: str) -> str:
     if not _SHELL_SAFE.match(partition):
         raise ClusterError("unknown_cluster", f"unsafe partition {partition!r}")
     commands = [
-        # His jobs across the whole cluster, not just this partition: he asks "am I still
-        # running", and a job he put on some other partition is still a job.
+        # Their jobs across the whole cluster, not just this partition: they ask "am I still
+        # running", and a job they put on some other partition is still a job.
         ("jobs", 'squeue -h -u "$USER" -o "%i|%T|%P|%b|%L|%D|%r"'),
         # `-N` is mandatory; see `parse_nodes`.
         ("nodes", f'sinfo -p {partition} -N -h -O "NodeList:40,Gres:64,GresUsed:80,StateLong:24"'),
@@ -568,7 +568,7 @@ class GuardedSsh:
             raise ClusterError("not_configured", f"no guard at {self.guard}")
         # No shell: the script is one argv element, so nothing local expands it.
         argv = [str(self.guard), "--host", host, script]
-        # A guard may notify him some other way on expiry; he is on the phone, so we say
+        # A guard may notify them some other way on expiry; they are on the phone, so we say
         # it instead.
         env = {**os.environ, "CLUSTER_SSH_NO_NOTIFY": "1"}
         try:

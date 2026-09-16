@@ -5,10 +5,10 @@ without help every call opens as if it were the first one ever. Two things fix t
 both are assembled here, once, at session start:
 
 1. **The digest.** Tasks that finished while nobody was talking to Jarvis. `announced`
-   and `sms_sent` record that a *delivery* was attempted; neither survives a call he
-   missed or a text he never read. `reported_at` records that Jarvis actually said it,
+   and `sms_sent` record that a *delivery* was attempted; neither survives a call they
+   missed or a text they never read. `reported_at` records that Jarvis actually said it,
    and until it is stamped the task comes back at the top of the next call. The voice
-   model stamps it with `mark_reported` once it has told him (spec §3.3 ruling).
+   model stamps it with `mark_reported` once it has told them (spec §3.3 ruling).
 2. **The memory.** `data_dir/memory.md`, rewritten after every call by the subagent
    `jarvis.continuity.memory` dispatches, and read back through its `read_memory`.
    Standing facts and what recent calls were about, so "the thing we talked about
@@ -40,27 +40,27 @@ log = logging.getLogger("jarvis.briefing")
 
 #: How much of one task's summary the digest carries. Enough to say a sentence about it.
 MAX_DIGEST_SUMMARY_CHARS = 200
-#: How much of one task's description the digest carries, to remind him what he asked for.
+#: How much of one task's description the digest carries, to remind them what they asked for.
 MAX_DIGEST_REQUEST_CHARS = 100
 
 _DIGEST_HEADING = (
-    "These finished while you were not talking to him, and he has not heard about them "
-    "yet. Lead with them: say what landed in a sentence or two — not a recital — and then "
+    "These finished while you were not talking to the owner, and the owner has not heard about "
+    "them yet. Lead with them: say what landed in a sentence or two — not a recital — and then "
     "call mark_reported with the ids you actually mentioned."
 )
 _DIGEST_MORE = "\n\n(and {count} more waiting; these are the oldest.)"
 #: Appended to the message that opens the session, because a realtime model leads with
 #: what it was just told far more reliably than with a section of its system prompt.
 OPENING_NUDGE = (
-    " [system] {count} finished while you were away and he has not heard yet — see "
-    '"What he has not heard yet" and lead with it, briefly, after your greeting.'
+    " [system] {count} finished while you were away and the owner has not heard yet — see "
+    '"What the owner has not heard yet" and lead with it, briefly, after your greeting.'
 )
 #: The same nudge for a phone call, which is briefed only once the PIN is accepted — by
-#: which time he has been greeted and has usually asked for something.
+#: which time they have been greeted and have usually asked for something.
 AFTER_PIN_NUDGE = (
-    "[system] {count} finished while you were away and he has not heard yet — see "
-    '"What he has not heard yet". Tell him briefly, once what he just asked for is in hand '
-    "(straight away if he asked for nothing), and do not greet him again."
+    "[system] {count} finished while you were away and the owner has not heard yet — see "
+    '"What the owner has not heard yet". Tell them briefly, once what they just asked for is in '
+    "hand (straight away if they asked for nothing), and do not greet them again."
 )
 
 
@@ -99,7 +99,7 @@ def _digest_line(task: Task) -> str:
     verb = "failed" if task.status is TaskStatus.FAILED else "finished"
     detail = task.error if task.status is TaskStatus.FAILED else task.summary
     request = _shorten(task.description, MAX_DIGEST_REQUEST_CHARS)
-    line = f"- task {task.id} ({verb}) — he asked for: {request}"
+    line = f"- task {task.id} ({verb}) — they asked for: {request}"
     if detail:
         line += f"\n  Result: {_shorten(detail, MAX_DIGEST_SUMMARY_CHARS)}"
     return line

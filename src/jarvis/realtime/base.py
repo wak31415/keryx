@@ -19,7 +19,7 @@ class SessionConfig:
     `audio/pcmu` end to end (no transcoding), the local path `audio/pcm`.
     `interrupt_response` is False on the half-duplex local path, where the mic is gated
     while the assistant speaks and barge-in is therefore impossible.
-    `vad_mode` decides what counts as "he has stopped talking" — see the field below.
+    `vad_mode` decides what counts as "they have stopped talking" — see the field below.
     """
 
     instructions: str

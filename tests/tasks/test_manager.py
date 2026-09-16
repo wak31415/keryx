@@ -804,7 +804,7 @@ async def test_a_running_row_is_left_alone(make_harness):
     assert await harness.manager.resume_queued() == []
 
 
-async def test_the_oldest_thing_he_asked_for_runs_first(make_harness):
+async def test_the_oldest_thing_they_asked_for_runs_first(make_harness):
     harness = make_harness()
     ids = []
     for minute in (30, 10, 20):

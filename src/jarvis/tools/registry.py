@@ -13,7 +13,7 @@ new response, which is why every call the model makes costs a spoken turn — an
 bookkeeping (`mark_reported`) used to make it say the thing it had just said all over
 again. `silent=True` says "this result has nothing to speak about": the session submits
 the output without asking for a response, and the model's next turn is the caller's.
-Only for tools the model calls *after* it has spoken, never for one whose answer he is
+Only for tools the model calls *after* it has spoken, never for one whose answer they are
 waiting to hear.
 """
 
