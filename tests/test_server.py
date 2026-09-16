@@ -21,6 +21,7 @@ from jarvis.app import build_app_state
 from jarvis.config import Settings
 from jarvis.realtime.base import AudioDelta
 from jarvis.server import LINE_BUSY_MESSAGE, create_app
+from jarvis.session import PIN_PAUSED_MESSAGE
 
 AUTH_TOKEN = "an-auth-token"
 CALLER = "+15551234567"
@@ -394,6 +395,31 @@ def test_a_finished_call_gives_its_line_back(tmp_path):
                     ws.receive_text()
                 assert excinfo.value.code != 1013
             eventually(lambda: client.get("/health").json()["live_sessions"] == 0)
+
+
+def test_a_call_while_pin_entry_is_locked_is_refused_even_the_right_pin(tmp_path):
+    """The media route hands every phone session the one guard, so the count spans calls."""
+    state = build_app_state(make_settings(tmp_path, pin="424242"))
+    for _ in range(state.settings.pin_failure_limit):
+        state.pin_guard.record_failure()
+    provider = FakeProvider()
+    state.provider_factory = lambda: provider
+    token = state.stream_tokens.issue(CALLER, {"call_sid": CALL_SID})
+
+    with TestClient(create_app(state)) as client:
+        with client.websocket_connect("/twilio/media") as ws:
+            ws.send_text(start_frame(token))
+            eventually(lambda: client.get("/health").json()["live_sessions"] == 1)
+            for digit in "424242":
+                ws.send_text(
+                    json.dumps({"event": "dtmf", "streamSid": STREAM_SID, "dtmf": {"digit": digit}})
+                )
+            eventually(lambda: PIN_PAUSED_MESSAGE in [text for text, *_ in provider.injected])
+
+            assert state.sessions.live()[0].authorized is False
+            ws.send_text(json.dumps({"event": "stop", "streamSid": STREAM_SID}))
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_text()
 
 
 def test_the_session_opens_with_the_context_carried_by_the_token(client, state):

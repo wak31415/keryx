@@ -22,6 +22,9 @@ It starts the `MemoryWriter` on the same bus, which is the other half of continu
 Notifier carries a result *outwards* while somebody is listening, and the MemoryWriter
 writes down what happened so the *next* call opens knowing it. What neither route
 delivered is what `Briefer` puts at the top of the next call.
+
+And it builds the `PinGuard`, the count of wrong PINs that every phone session shares, with
+the `PinLockoutAlerter` that tells the owner when that count locks PIN entry.
 """
 
 from dataclasses import dataclass, field
@@ -38,7 +41,9 @@ from jarvis.integrations.cluster import build_cluster_stats
 from jarvis.integrations.slack import SlackWebApi, slack_credentials
 from jarvis.integrations.web_search import OpenAIWebSearch
 from jarvis.notify.notifier import Notifier
+from jarvis.notify.pin_alert import PinLockoutAlerter
 from jarvis.notify.twilio_out import TwilioOut
+from jarvis.pin_guard import PinGuard
 from jarvis.realtime.base import ProviderFactory
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.restart.coordinator import RestartCoordinator
@@ -80,6 +85,9 @@ class AppState:
     #: Built here so the tools can bind to it, but it binds no socket until `start()` —
     #: which only `jarvis serve` calls, so a CLI command never takes the bridge over.
     approvals: ApprovalBroker | None = None
+    #: Wrong PINs across every call; one per process, so every phone session counts into it.
+    pin_guard: PinGuard | None = None
+    pin_alerts: PinLockoutAlerter | None = None
 
 
 def build_app_state(settings: Settings) -> AppState:
@@ -153,6 +161,9 @@ def build_app_state(settings: Settings) -> AppState:
         restart,
     )
     state.notifier.start()
+    state.pin_guard = PinGuard.for_settings(settings)
+    state.pin_alerts = PinLockoutAlerter(bus, sessions, twilio_out, settings, slack=slack)
+    state.pin_alerts.start()
     return state
 
 
@@ -162,6 +173,8 @@ async def shutdown_app_state(state: AppState) -> None:
         state.notifier.stop()
     if state.memory is not None:
         state.memory.stop()
+    if state.pin_alerts is not None:
+        state.pin_alerts.stop()
     if state.approvals is not None:
         await state.approvals.stop()
     if state.restart is not None:

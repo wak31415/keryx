@@ -12,7 +12,8 @@ import pytest
 from fakes import TIMEOUT, FakeProvider, FakeTransport, eventually
 from test_session import make_settings, running
 
-from jarvis.events import EventBus, SessionEnded
+from jarvis.events import EventBus, PinLockedOut, SessionEnded
+from jarvis.pin_guard import PinGuard
 from jarvis.realtime.base import (
     FunctionCall,
     ResponseDone,
@@ -24,6 +25,7 @@ from jarvis.session import (
     PIN_ACCEPTED_MESSAGE,
     PIN_LOCKOUT_MESSAGE,
     PIN_MAX_ATTEMPTS,
+    PIN_PAUSED_MESSAGE,
     PIN_REJECTED_MESSAGE,
     VoiceSession,
 )
@@ -77,9 +79,13 @@ def tools():
 
 @pytest.fixture
 def make_session(tmp_path, bus, tools):
-    def build(transport, prov, *, pin: str | None = PIN, authorized=False, **overrides):
+    def build(
+        transport, prov, *, pin: str | None = PIN, authorized=False, pin_guard=None, **overrides
+    ):
         settings = make_settings(tmp_path, pin=pin, **overrides)
-        return VoiceSession(transport, prov, settings, tools, bus, authorized=authorized)
+        return VoiceSession(
+            transport, prov, settings, tools, bus, authorized=authorized, pin_guard=pin_guard
+        )
 
     return build
 
@@ -402,3 +408,140 @@ async def test_keypad_digits_never_reach_the_log(make_session, phone, provider, 
             await eventually(lambda: session.authorized)
 
     assert PIN not in caplog.text
+
+
+# --- across calls ----------------------------------------------------------
+
+GUARD_LIMIT = 4
+COOLDOWN = 3600.0
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1_800_000_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def clock():
+    return Clock()
+
+
+@pytest.fixture
+def guard(tmp_path, clock):
+    return PinGuard(
+        tmp_path / "pin-failures.json",
+        limit=GUARD_LIMIT,
+        window_seconds=24 * 3600,
+        lockout_seconds=COOLDOWN,
+        clock=clock,
+    )
+
+
+@pytest.fixture
+def lockouts(bus):
+    events: list[PinLockedOut] = []
+    bus.subscribe(PinLockedOut, events.append)
+    return events
+
+
+def another_phone() -> FakeTransport:
+    return FakeTransport(channel="phone", caller="+491555555555", audio_format="audio/pcmu")
+
+
+async def test_wrong_pins_are_counted_across_calls(make_session, phone, provider, guard, ended):
+    """The per-call limit ends a call; a new call used to start the count from nothing."""
+    first = make_session(phone, provider, pin_guard=guard)
+    async with running(first):
+        for _ in range(PIN_MAX_ATTEMPTS):
+            await first.submit_pin(WRONG)
+
+    second_provider = FakeProvider()
+    second = make_session(another_phone(), second_provider, pin_guard=guard)
+    task = asyncio.create_task(second.run())
+    await eventually(lambda: second.is_live)
+
+    assert await second.submit_pin(WRONG) == {"status": "locked"}  # the fourth, on any call
+    assert PIN_PAUSED_MESSAGE in texts(second_provider)
+    assert PIN_LOCKOUT_MESSAGE not in texts(second_provider)
+    await speak_a_goodbye(second_provider, second)
+    await asyncio.wait_for(task, TIMEOUT)
+    assert ended[-1].reason == "pin_lockout"
+
+
+async def test_while_pin_entry_is_locked_the_right_pin_is_refused_too(
+    make_session, phone, provider, guard, ended
+):
+    for _ in range(GUARD_LIMIT):
+        guard.record_failure()
+    session = make_session(phone, provider, pin_guard=guard)
+
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+    assert await session.submit_pin(PIN) == {"status": "locked"}
+    assert session.authorized is False
+    assert texts(provider).count(PIN_PAUSED_MESSAGE) == 1
+    assert session.is_live is True  # still saying so
+
+    await speak_a_goodbye(provider, session)
+    await asyncio.wait_for(task, TIMEOUT)
+    assert [event.reason for event in ended] == ["pin_lockout"]
+    # Refused without being compared, so it was not counted either way.
+    assert guard.record_failure().failures == GUARD_LIMIT + 1
+
+
+async def test_while_pin_entry_is_locked_a_keyed_pin_is_refused_once(
+    make_session, phone, provider, guard
+):
+    for _ in range(GUARD_LIMIT):
+        guard.record_failure()
+    session = make_session(phone, provider, pin_guard=guard)
+
+    async with running(session):
+        await press(phone, PIN)
+        await eventually(lambda: PIN_PAUSED_MESSAGE in texts(provider))
+        await press(phone, PIN)  # the call is already ending: nothing more is said
+        await asyncio.sleep(0.05)
+
+    assert session.authorized is False
+    assert texts(provider).count(PIN_PAUSED_MESSAGE) == 1
+    assert_nothing_spoken_had_digits(provider)
+
+
+async def test_a_right_pin_outside_a_lock_works_and_forgives_nothing(
+    make_session, phone, provider, guard
+):
+    for _ in range(GUARD_LIMIT - 1):
+        guard.record_failure()
+    session = make_session(phone, provider, pin_guard=guard)
+
+    async with running(session):
+        assert await session.submit_pin(PIN) == {"status": "authorized"}
+
+    assert guard.record_failure() is not None  # the three before it still count
+
+
+async def test_the_lockout_the_owner_has_not_heard_about_is_published_once(
+    make_session, phone, provider, guard, clock, lockouts
+):
+    for _ in range(GUARD_LIMIT - 1):
+        guard.record_failure()
+    first = make_session(phone, provider, pin_guard=guard)
+    async with running(first):
+        await first.submit_pin(WRONG)
+
+    assert len(lockouts) == 1
+    event = lockouts[0]
+    assert (event.session_id, event.caller) == (first.session_id, phone.caller)
+    assert (event.until, event.failures) == (clock.now + COOLDOWN, GUARD_LIMIT)
+
+    clock.now += COOLDOWN  # the lock lifts, and the next wrong PIN locks it again
+    second_provider = FakeProvider()
+    second = make_session(another_phone(), second_provider, pin_guard=guard)
+    async with running(second):
+        assert await second.submit_pin(WRONG) == {"status": "locked"}
+
+    assert len(lockouts) == 1  # already told
+    assert PIN_PAUSED_MESSAGE in texts(second_provider)

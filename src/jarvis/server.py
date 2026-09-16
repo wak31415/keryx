@@ -210,6 +210,8 @@ async def _open_session(
         # Post-PIN keypad digits: how an approval is confirmed, and the only route by
         # which one ever can be (`jarvis.approvals`).
         keypad=state.approvals,
+        # One count of wrong PINs for every call, so hanging up buys no fresh guesses.
+        pin_guard=state.pin_guard,
     )
     await session.run()
 
