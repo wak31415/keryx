@@ -201,7 +201,8 @@ def test_load_settings_returns_settings_instance(tmp_path):
     assert isinstance(settings, Settings)
 
 
-def test_defaults_match_spec_table(settings):
+def test_defaults_match_spec_table():
+    settings = Settings(_env_file=None, openai_api_key="test")
     assert settings.openai_realtime_model == "gpt-realtime-2.1"
     assert settings.openai_voice == "cedar"
     assert settings.openai_transcription_model == "gpt-4o-mini-transcribe"
@@ -211,7 +212,7 @@ def test_defaults_match_spec_table(settings):
     assert settings.subagent_max_budget_usd == 10.0
     assert settings.host == "127.0.0.1"
     assert settings.port == 8080
-    assert settings.projects_root == (Path.home() / "Local" / "coding_projects")
+    assert settings.projects_root == Path.home() / "projects"
     assert settings.max_concurrent_tasks == 3
     assert settings.dispatch_wait_max_seconds == 25
     assert settings.vad_mode == "semantic"

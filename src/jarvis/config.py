@@ -214,7 +214,10 @@ class Settings(BaseSettings):
 
     # Projects
     projects: dict[str, str] = Field(default_factory=dict)
-    projects_root: Path = Path("~/Local/coding_projects")
+    #: Where a task with no project starts, and whose subdirectories are the projects a
+    #: task can be pointed at by name. Never created: when it is not a directory, such a
+    #: task starts in `data_dir/workspace` instead.
+    projects_root: Path = Path("~/projects")
     #: Where the Claude CLI keeps its skills; listed in the voice prompt so the model
     #: knows what the subagents are good at without being told.
     skills_dir: Path = Path("~/.claude/skills")

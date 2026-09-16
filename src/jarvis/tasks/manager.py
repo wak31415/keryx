@@ -216,6 +216,9 @@ class TaskManager:
         starts in `projects_root`, and the subagent finds its way from there; an explicit
         `cwd` overrides both, for work that is not in a project at all.
 
+        A `projects_root` that is not a directory is not a place to start: the task gets no
+        `cwd` at all, and the runner starts it in its own workspace under `data_dir`.
+
         `internal` marks work Jarvis asked for itself (the per-call memory update): it is
         exempt from the daily cap, hidden from the spoken task lists, and never announced.
         It restricts nothing about the subagent — see `Task.internal`.
@@ -227,7 +230,7 @@ class TaskManager:
         if project:
             project_name, path = self.resolve_project(project)
             cwd = cwd or str(path)
-        elif cwd is None:
+        elif cwd is None and self._settings.projects_root.is_dir():
             # Work is handed over the moment it is recognised, so the project is often
             # still unsaid. Start in the projects root and let the subagent find its way —
             # asking first only pushes the question back onto the voice.

@@ -361,7 +361,9 @@ class SessionRegistry:
 - **Handing over beats interviewing (amended 2026-08-24).** The voice model dispatches code work
   the moment it recognises it — no repeat-back-and-confirm, no scoping questions — because the
   subagent is better placed to work out what the work needs. `coding` with no project no longer
-  raises: the task starts in `projects_root` and the subagent finds the repo itself. The voice
+  raises: the task starts in `projects_root` and the subagent finds the repo itself. *Amended
+  2026-09-16: only when `projects_root` is a directory — nothing creates it — and otherwise in
+  `data_dir/workspace`, owner-only.* The voice
   prompt lists every project `discover_projects` can resolve (not just the configured ones) and
   every installed skill, so neither has to be named out loud.
 - **Written delivery goes over Slack (added 2026-08-24).** A phone call cannot carry a file,
@@ -646,7 +648,7 @@ class SessionRegistry:
 | `SERVICE_MANAGER` | `service_manager` (`auto`/`systemd`/`launchd`/`none`; what `jarvis restart` asks) | `auto` → systemd on Linux / launchd on macOS when this process runs as the unit (for `jarvis restart` and `doctor`: when it is installed), otherwise none; `systemd`/`launchd` are taken at their word |
 | `SERVICE_UNIT` | `service_unit` (the unit/label to restart) | `None` → `jarvis.service` / `dev.jarvis.agent` (renamed from `com.william.jarvis` 2026-09-02) |
 | `PROJECTS` | `projects: dict[str,str]` (JSON) | `{}` |
-| `PROJECTS_ROOT` | `projects_root` | `~/Local/coding_projects` |
+| `PROJECTS_ROOT` | `projects_root` (where a task with no project starts; never created) | `~/projects` (was one machine's `~/Local/coding_projects` until 2026-09-16); not a directory → such a task starts in `data_dir/workspace` |
 | `SKILLS_DIR` | `skills_dir` (Claude skills listed in the voice prompt) | `~/.claude/skills` |
 | `DATA_DIR` | `data_dir` | `~/.jarvis` |
 | `MAX_CONCURRENT_TASKS` | `max_concurrent_tasks` | `3` |

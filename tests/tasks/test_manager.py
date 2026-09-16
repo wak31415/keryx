@@ -253,6 +253,17 @@ async def test_dispatch_without_a_project_starts_in_the_projects_root(make_harne
     assert task.cwd == str(root)
 
 
+async def test_without_a_projects_root_an_unscoped_task_has_no_directory(make_harness, tmp_path):
+    """The runner starts it in `data_dir/workspace`; nothing creates the missing root."""
+    root = tmp_path / "projects"
+    harness = make_harness(projects_root=root)
+
+    task = await dispatch(harness.manager, "add a README")
+
+    assert task.cwd is None
+    assert not root.exists()
+
+
 async def test_dispatch_sets_cwd_from_the_project(make_harness, tmp_path):
     root = make_projects(tmp_path, "orchard-sensor-net")
     harness = make_harness(projects_root=root)

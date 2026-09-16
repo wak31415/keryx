@@ -170,7 +170,12 @@ def setup_report(settings: Settings) -> list[str]:
     brief_chars = sum(len(brief.text) for brief in briefs)
     skills = discover_skills(settings.skills_dir)
 
-    where = "" if root.is_dir() else f" does not exist (set {env_var_name('projects_root')})"
+    where = (
+        ""
+        if root.is_dir()
+        else f" does not exist, so a task with no project starts in "
+        f"{settings.data_dir / 'workspace'} (set {env_var_name('projects_root')})"
+    )
     return [
         f"projects root: {root}{where}",
         f"projects: {len(projects)}, and {len(briefs)} with a {BRIEF_FILE}"

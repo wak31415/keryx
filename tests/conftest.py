@@ -71,13 +71,16 @@ def settings(tmp_path):
 
     `google_client_secrets_file` defaults to a path relative to the working directory, so
     it is pinned into `tmp_path` here: a developer's real client file must never take part
-    in a test.
+    in a test. `projects_root` and `skills_dir` default into the home directory, and are
+    pinned for the same reason — to places that do not exist, which is a fresh install.
     """
     return Settings(
         _env_file=None,
         openai_api_key="test",
         data_dir=tmp_path / "jarvis",
         google_client_secrets_file=tmp_path / "no-client-secrets.json",
+        projects_root=tmp_path / "no-projects",
+        skills_dir=tmp_path / "no-skills",
     )
 
 

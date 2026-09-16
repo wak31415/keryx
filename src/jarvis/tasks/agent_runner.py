@@ -32,7 +32,7 @@ from typing import Any, Protocol
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
-from jarvis.config import OWNER_FALLBACK, Settings
+from jarvis.config import OWNER_FALLBACK, Settings, secure_dir
 from jarvis.prompts import render_prompt
 from jarvis.tasks.models import Task
 
@@ -291,10 +291,19 @@ def google_mcp_server_config(settings: Settings) -> dict[str, Any]:
 
 
 def _workspace_dir(task: Task, settings: Settings) -> Path:
-    """Where the subagent runs: the task's project checkout, else a shared workspace."""
-    cwd = Path(task.cwd) if task.cwd else settings.data_dir / "workspace"
-    cwd.mkdir(parents=True, exist_ok=True)
-    return cwd
+    """Where the subagent runs: the task's own directory, else a shared workspace.
+
+    The task's directory is never created. It is a project checkout or the projects root,
+    both of which are somebody's folders to make, and one that is not there — a root this
+    machine never had, a checkout deleted since the task was queued — means the workspace
+    under `data_dir`, owner-only like everything else there.
+    """
+    if task.cwd:
+        cwd = Path(task.cwd)
+        if cwd.is_dir():
+            return cwd
+        log.warning("task %s: %s is not a directory; starting in the workspace", task.id, cwd)
+    return secure_dir(settings.data_dir / "workspace")
 
 
 def build_options(

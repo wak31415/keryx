@@ -6,6 +6,7 @@ exercised against the actual shapes the SDK emits.
 """
 
 import asyncio
+import stat
 
 import pytest
 from claude_agent_sdk.types import (
@@ -241,6 +242,18 @@ def test_build_options_defaults_cwd_to_a_created_workspace(settings):
     expected = settings.data_dir / "workspace"
     assert options.cwd == str(expected)
     assert expected.is_dir()
+    assert stat.S_IMODE(expected.stat().st_mode) == 0o700  # it is under data_dir
+
+
+def test_a_task_directory_that_is_gone_is_never_created(settings, tmp_path):
+    """A projects root that was never there, or a checkout since deleted: Jarvis does not
+    invent a folder in somebody's home directory, it starts in its own workspace."""
+    gone = tmp_path / "projects"
+
+    options = build_options(make_task(cwd=str(gone)), settings)
+
+    assert options.cwd == str(settings.data_dir / "workspace")
+    assert not gone.exists()
 
 
 def test_build_options_uses_the_task_cwd_when_set(settings, tmp_path):
