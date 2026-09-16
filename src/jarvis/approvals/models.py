@@ -1,6 +1,6 @@
 """What a pending approval is, and what answering one comes to.
 
-One `ApprovalRequest` is one prompt sitting on William's screen that nobody has answered.
+One `ApprovalRequest` is one prompt sitting on the owner's screen that nobody has answered.
 It is created by the hook the Claude CLI runs when it is *about* to ask him something, it
 lives only in memory (a pending prompt cannot outlive the process that is blocked on it),
 and it ends in exactly one `Outcome`.

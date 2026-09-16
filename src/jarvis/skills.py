@@ -2,7 +2,7 @@
 
 A skill is a directory with a `SKILL.md` whose front matter carries a name and a
 one-line description. The subagent finds and runs them by itself; this module exists
-only so the voice prompt can list what the back office is good at, and William never
+only so the voice prompt can list what the back office is good at, and the owner never
 has to name a skill out loud.
 
 Front matter is parsed by hand rather than with a YAML dependency: the two fields we

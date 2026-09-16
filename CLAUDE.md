@@ -272,7 +272,7 @@ scope, so the test suite can run on a machine with no mic.
   docs commit when one changes.
 - Conventional commits (`feat:`/`fix:`/`chore:`/`docs:`) with the Co-Authored-By
   Claude trailer. A subagent Jarvis dispatched adds `Jarvis-Task: <id>` as well, so
-  `git log --grep '^Jarvis-Task:'` is everything William asked for out loud rather than
+  `git log --grep '^Jarvis-Task:'` is everything the owner asked for out loud rather than
   typed — the one thing `git log` cannot otherwise recover.
 - Clean and minimal over clever; TDD, with `uv run pytest -q` and
   `uv run ruff check src tests` pristine before a commit. Coverage has a floor (94%) and it

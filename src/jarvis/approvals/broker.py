@@ -1,6 +1,6 @@
 """The half of the approval bridge that lives inside Jarvis.
 
-A Claude Code hook runs on William's machine whenever the CLI is about to put a prompt on
+A Claude Code hook runs on the owner's machine whenever the CLI is about to put a prompt on
 his screen. It connects to the Unix socket this module listens on and *blocks*. Nothing
 else happens: the prompt is drawn as it always was, and if he answers at the keyboard the
 hook's answer is thrown away (measured — the keyboard always wins). Only when the prompt

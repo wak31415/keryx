@@ -2,7 +2,7 @@
 
 The Realtime API has no hosted search tool — a realtime session accepts only `function`
 and `mcp` tools (verified 2026-08-24) — so search is a function tool we answer ourselves,
-by asking the Responses API, which does have one. That keeps the two-way split William
+by asking the Responses API, which does have one. That keeps the two-way split the owner
 wants: the voice answers what it can, and hands everything else to Claude.
 
 `WebSearcher` is the seam the tests use: no test ever reaches the network.

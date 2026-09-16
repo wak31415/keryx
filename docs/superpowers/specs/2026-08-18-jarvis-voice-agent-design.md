@@ -5,7 +5,7 @@ Design spec, 2026-08-18. This is the binding authority for the implementation pl
 
 ## 1. Goal
 
-A personal voice agent William can reach two ways:
+A personal voice agent its owner can reach two ways:
 
 1. **By phone** (originally a Garmin watch, hence the repository's first name; any phone
    → Twilio number). The call opens a realtime voice
@@ -43,7 +43,7 @@ PIN gating, and the local wake-word transport.
 | Language / tooling | Python 3.12, `uv`, FastAPI + uvicorn, typer, pytest (+ pytest-asyncio), ruff |
 | Repo | this folder; GitHub repo `jarvis-voice-agent` — renamed from `garmin-voice-agent` and made public 2026-09-02; package, CLI and data dir stay `jarvis`, and nothing is published to an index |
 
-Prerequisites William supplies (in `.env`): `OPENAI_API_KEY`, subagent auth (the Claude
+Prerequisites the owner supplies (in `.env`): `OPENAI_API_KEY`, subagent auth (the Claude
 CLI subscription login by default; `ANTHROPIC_API_KEY` is the pay-per-token override —
 amended 2026-08-24, was: the Agent SDK cannot use the subscription login), Twilio account
 SID / auth token / number, a Cloudflare-routed hostname for the tunnel, Google Cloud
@@ -739,7 +739,7 @@ agent talks to models with, and both endpoints are `GET` only.
 
 ## 5. Security model
 
-`bypassPermissions` = the subagents have William's full user access, and since the kinds
+`bypassPermissions` = the subagents have the owner's full user access, and since the kinds
 collapsed (2026-08-24) that includes Gmail and Calendar on every task — which is why the phone
 PIN now gates every dispatch rather than two of four kinds. Exposure surface: the
 Cloudflare tunnel to `/twilio/*` (signature-validated + allowlist + one-time stream token) and
@@ -749,7 +749,7 @@ out, because there is one kind and it reaches everything. A configured PIN is 6-
 (§3.3); no PIN at all means dispatching is simply refused from the phone.
 
 **The approval bridge (`jarvis/approvals/`, 2026-08-26).** This one runs *inwards*: a
-Claude Code session on William's own screen has stopped and is asking him something, a hook
+Claude Code session on the owner's own screen has stopped and is asking him something, a hook
 in `~/.claude/hooks/` hands the pending prompt to the broker over a Unix socket and blocks,
 and five minutes later Jarvis rings him. Four rulings, none of them a preference:
 

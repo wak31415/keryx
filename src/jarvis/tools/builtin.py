@@ -64,7 +64,7 @@ def register_builtin_tools(
     so a process without one simply does not offer that tool. Registering
     `send_to_slack` only makes it *available*: whether it may be called is the voice
     model's decision, and both its description and the system prompt confine that to the
-    turns where William explicitly asked for something on Slack.
+    turns where the owner explicitly asked for something on Slack.
     """
     register_comms_tools(registry, slack=slack, searcher=searcher)
     register_billing_tools(registry, billing=billing, cluster=cluster)
