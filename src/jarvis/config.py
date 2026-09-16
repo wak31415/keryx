@@ -363,6 +363,21 @@ class Settings(BaseSettings):
             return self.allowed_callers[0]
         return None
 
+    def phone_refusal(self) -> str | None:
+        """Why the phone server must not start as configured, in one line; None if it may.
+
+        `DEBUG_SKIP_TWILIO_VALIDATION` is for a machine nothing outside can reach. With a
+        `PUBLIC_HOST` set there is a tunnel pointing at it, and with the signature check off
+        anyone who can reach that tunnel can pose as Twilio — mint stream tokens, open media
+        sockets and key PINs in at machine speed.
+        """
+        if self.debug_skip_twilio_validation and self.public_host:
+            return (
+                "DEBUG_SKIP_TWILIO_VALIDATION is on while PUBLIC_HOST is set, so anyone who "
+                "can reach the tunnel could pose as Twilio — turn it off, or serve --no-phone"
+            )
+        return None
+
     def noise_reduction_for(self, channel: str) -> Literal["near_field", "far_field"] | None:
         """The noise-reduction profile for `channel`, or None to leave it off."""
         if self.noise_reduction == "off":

@@ -180,11 +180,16 @@ def verify_twilio_request(request: Request, form: FormData, settings: Settings) 
     that reaches us: ngrok terminates TLS and forwards to localhost, so the public scheme
     and host come from `x-forwarded-proto` / `x-forwarded-host` when present.
 
-    Validation is skipped only when `DEBUG_SKIP_TWILIO_VALIDATION` is set. Without an
-    auth token there is nothing to verify, so every request is refused instead.
+    Validation is skipped only when `DEBUG_SKIP_TWILIO_VALIDATION` is set — loudly, every
+    time, and `jarvis serve` will not start with it behind a `PUBLIC_HOST` at all
+    (`Settings.phone_refusal`). Without an auth token there is nothing to verify, so every
+    request is refused instead.
     """
     if settings.debug_skip_twilio_validation:
-        log.debug("skipping Twilio signature validation (DEBUG_SKIP_TWILIO_VALIDATION)")
+        log.warning(
+            "skipping Twilio signature validation on %s (DEBUG_SKIP_TWILIO_VALIDATION)",
+            request.url.path,
+        )
         return True
     if not settings.twilio_auth_token:
         log.warning("refusing %s: TWILIO_AUTH_TOKEN is not configured", request.url.path)

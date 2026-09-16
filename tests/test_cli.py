@@ -98,6 +98,36 @@ def test_serve_with_nothing_to_run_says_so(settings_stub):
     assert "nothing to run" in result.output.lower()
 
 
+def test_serve_refuses_to_answer_the_phone_without_signature_checks_behind_a_tunnel(
+    settings_stub, monkeypatch
+):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    monkeypatch.setattr(settings_stub, "debug_skip_twilio_validation", True)
+    monkeypatch.setattr(settings_stub, "public_host", "jarvis.example")
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 2, result.output
+    assert "DEBUG_SKIP_TWILIO_VALIDATION" in result.output
+    assert len(result.output.strip().splitlines()) == 1
+    assert "config" not in built  # no server was ever built
+
+
+def test_serve_without_the_phone_does_not_care_about_signature_checks(
+    settings_stub, monkeypatch
+):
+    built: dict = {}
+    stub_local_runner(monkeypatch, built)
+    monkeypatch.setattr(settings_stub, "debug_skip_twilio_validation", True)
+    monkeypatch.setattr(settings_stub, "public_host", "jarvis.example")
+
+    result = runner.invoke(app, ["serve", "--no-phone"])
+
+    assert result.exit_code == 0, result.output
+    assert built["ran"] is True
+
+
 def stub_local_runner(monkeypatch, built: dict, *, run=None) -> None:
     """Replace the mic, the wake-word model and the runner with recording stubs."""
 

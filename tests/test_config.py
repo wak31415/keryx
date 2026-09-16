@@ -204,6 +204,35 @@ def test_debug_skip_twilio_validation_env(monkeypatch, tmp_path):
     assert settings.debug_skip_twilio_validation is True
 
 
+def test_the_phone_server_may_start_with_signatures_checked(tmp_path):
+    settings = Settings(_env_file=None, openai_api_key="test", public_host="jarvis.example")
+
+    assert settings.phone_refusal() is None
+
+
+def test_skipping_signatures_is_allowed_where_no_tunnel_is_named(tmp_path):
+    """Local development: nothing tells Twilio, or anyone else, where this machine is."""
+    settings = Settings(_env_file=None, openai_api_key="test", debug_skip_twilio_validation=True)
+
+    assert settings.phone_refusal() is None
+
+
+def test_skipping_signatures_behind_a_public_host_is_refused(tmp_path):
+    """With the check off, anyone who can reach the tunnel can pose as Twilio."""
+    settings = Settings(
+        _env_file=None,
+        openai_api_key="test",
+        debug_skip_twilio_validation=True,
+        public_host="jarvis.example",
+    )
+
+    refusal = settings.phone_refusal()
+    assert refusal is not None
+    assert "DEBUG_SKIP_TWILIO_VALIDATION" in refusal
+    assert "PUBLIC_HOST" in refusal
+    assert "\n" not in refusal
+
+
 def test_fake_agents_env(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("FAKE_AGENTS", "true")

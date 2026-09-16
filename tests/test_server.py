@@ -202,6 +202,16 @@ def test_validation_can_be_skipped_for_local_development(tmp_path):
     assert stream_element(response).get("url") == "wss://jarvis.example/twilio/media"
 
 
+def test_every_skipped_signature_check_is_a_warning(tmp_path, caplog):
+    settings = make_settings(tmp_path, twilio_auth_token=None, debug_skip_twilio_validation=True)
+    state = build_app_state(settings)
+    with caplog.at_level(logging.WARNING, logger="jarvis.server"):
+        with TestClient(create_app(state)) as client:
+            client.post("/twilio/voice", data={"From": CALLER, "CallSid": CALL_SID})
+
+    assert "DEBUG_SKIP_TWILIO_VALIDATION" in caplog.text
+
+
 # --- POST /twilio/status ---------------------------------------------------
 
 
