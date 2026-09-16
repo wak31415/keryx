@@ -493,14 +493,14 @@ class SessionRegistry:
   so the ordinary one still goes out: refusing to restart must not also swallow the result.
 - **A finished task is not delivered until Jarvis has said it (added 2026-08-25).**
   `announced` and `sms_sent` record that a *delivery was attempted*; neither survives a call
-  he missed or a text he never read. `Task.reported_at` records that the voice model actually
-  told him, and it is stamped by exactly one thing: the `mark_reported` tool, which the model
+  the owner missed or a text they never read. `Task.reported_at` records that the voice model
+  actually told them, and it is stamped by exactly one thing: the `mark_reported` tool, which the model
   calls after speaking the result. Until then the task is in `TaskStore.list_unreported()`
   (done/failed only, oldest first, capped at `MAX_UNREPORTED`) and `Briefer` puts it at the
-  top of the next call — in the system prompt under "What he has not heard yet", and as a
+  top of the next call — in the system prompt under "What the owner has not heard yet", and as a
   one-line nudge appended to the opening message, because a realtime model leads with what it
   was just handed. Ruling: no other code path stamps `reported_at`. A model that forgets the
-  tool costs him hearing something twice; a delivery flag that stamps it costs him never
+  tool costs them hearing something twice; a delivery flag that stamps it costs them never
   hearing it at all, and only one of those is recoverable. Rows that were already terminal
   when the v3 migration ran are back-filled as reported, so the first call after an upgrade
   is not a recital of the whole history.

@@ -49,7 +49,7 @@ remember:
   table, or `tests/test_docs_sync.py` fails. A tool may also be registered `silent=True`
   (`mark_reported`, `end_session`): its result is submitted without asking for a response,
   because both are called *after* the thing worth saying has been said and the turn would
-  only be spent saying it again. Only for those; anything he is waiting to hear keeps
+  only be spent saying it again. Only for those; anything the owner is waiting to hear keeps
   its turn.
 - **notify** — `notify/deliver.py` holds `announce_to_live_sessions` and `safe_send_sms`.
   The `can_text` gate is asserted there and nowhere else.
@@ -97,8 +97,8 @@ A realtime session starts blank — the provider keeps nothing across sockets �
 Jarvis knows at the top of a call is assembled every time by
 `jarvis/continuity/briefing.py`:
 
-- **The digest.** `Task.reported_at` is the only record that Jarvis *told him*; `announced`
-  and `sms_sent` only say a delivery was attempted, and neither survives a call he missed.
+- **The digest.** `Task.reported_at` is the only record that Jarvis *told the owner*; `announced`
+  and `sms_sent` only say a delivery was attempted, and neither survives a call they missed.
   Until `reported_at` is stamped, the task rides at the top of the next call (on the phone,
   from the moment the PIN is accepted). Exactly one thing stamps it: the voice model's
   `mark_reported` tool, after it has spoken the result.
@@ -166,12 +166,12 @@ is killed handing over and returns `-15`. And "back up" is not "working" —
 
 ## The approval bridge runs the other way
 
-Everything else in Jarvis carries a result *outwards* from work he asked for.
-`jarvis/approvals/` is the opposite: a Claude Code session on his own screen has stopped
-and asked *him* something, and he is not at the keyboard. A hook in `~/.claude/hooks/`
+Everything else in Jarvis carries a result *outwards* from work the owner asked for.
+`jarvis/approvals/` is the opposite: a Claude Code session on their own screen has stopped
+and asked *them* something, and they are not at the keyboard. A hook in `~/.claude/hooks/`
 (canonical copy: `scripts/claude_hooks/jarvis_approval.py`, installed by
 `scripts/install-claude-hook.sh`) hands the pending prompt to the broker over a Unix socket
-and blocks; five minutes later, if he still has not answered, Jarvis rings him.
+and blocks; five minutes later, if they still have not answered, Jarvis rings them.
 
 Four rulings hold it up, and none of them is a preference:
 
@@ -193,11 +193,11 @@ Four rulings hold it up, and none of them is a preference:
   leaves the ordinary on-screen prompt exactly as it is. There is no path where an error
   approves something.
 
-Pending is a fact to be re-checked, never assumed: the hook is *not* killed when he answers
+Pending is a fact to be re-checked, never assumed: the hook is *not* killed when they answer
 at the keyboard, so `PostToolUse`/`PermissionDenied`/`Stop`/`SessionEnd` cancel the
 escalation, and pending is re-read before dialling and again before any verdict is applied.
-A prompt that arrives while he is already on the phone, past the PIN, is announced into that
-call rather than ringing him a second time. `uv run jarvis approvals` is the audit trail and
+A prompt that arrives while they are already on the phone, past the PIN, is announced into that
+call rather than ringing them a second time. `uv run jarvis approvals` is the audit trail and
 `--disable` is the kill switch, which is a file so it works without a restart.
 
 ## Billing reads, and only reads
@@ -242,15 +242,15 @@ rulings, and the first is the one with a scar behind it:
   by the login nodes. Everything goes through the guard, which probes the local control
   socket — no network, no auth attempt — and exits `42`. That `42` is terminal: nothing
   retries it, and a guard gone missing is `not_configured`, never a fallback that dials out
-  by itself. `CLUSTER_SSH_NO_NOTIFY=1` is set because a guard may notify him some other way,
-  and he is on the phone, which is where the sentence belongs.
+  by itself. `CLUSTER_SSH_NO_NOTIFY=1` is set because a guard may notify the owner some other way,
+  and they are on the phone, which is where the sentence belongs.
 - **Read-only by construction.** `build_script` assembles the remote command from module
   constants and refuses any command whose first word is not in `READ_ONLY` (`squeue`,
   `sinfo`); there is a test named after it. The only thing the model chooses is a cluster
   *name*, looked up in the configured set and refused when it is not there — no string
   from the model reaches a shell, and `Settings` refuses a name or partition that is not a
   bare word. Un-PIN-gated for the same reason as `check_billing`, and the payload is counts
-  plus his own job ids: no job name, no path, no other user.
+  plus the owner's own job ids: no job name, no path, no other user.
 - **Idle, planned and down are three numbers, not one.** `sinfo` without `-N` aggregates by
   state line and its totals are silently wrong; a `planned` node is backfill holding
   hardware for a queued job, not a free one; and most pending jobs are blocked on a
@@ -313,7 +313,7 @@ scope, so the test suite can run on a machine with no mic.
 - A configured `JARVIS_PIN` is 6-8 digits and `jarvis serve` refuses to start otherwise.
   Wrong PINs also count across calls (`jarvis/pin_guard.py`): while that has PIN entry locked
   the right PIN is refused before it is compared, and nothing resets the count early — not
-  the lock lifting, not a right PIN. That a spoofed caller can keep his PIN locked is the
+  the lock lifting, not a right PIN. That a spoofed caller can keep the owner's PIN locked is the
   accepted price (SECURITY.md); do not buy it back with a reset-on-success or a per-caller
   count, both of which hand a guesser a fresh budget. `serve` also refuses the phone channel
   with `DEBUG_SKIP_TWILIO_VALIDATION` on behind a `PUBLIC_HOST`.
