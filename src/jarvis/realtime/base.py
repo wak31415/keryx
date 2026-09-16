@@ -170,6 +170,14 @@ class RealtimeProvider(Protocol):
         """One attempt to re-open the socket and re-send the session config."""
         ...
 
+    async def update_instructions(self, instructions: str) -> None:
+        """Replace the system prompt of the open session; the rest of the config stands.
+
+        Remembered, so a `reconnect()` re-sends the new prompt. How a phone call gets its
+        briefing once the PIN is accepted, having opened without it.
+        """
+        ...
+
 
 #: Makes one fresh (unconnected) provider per session.
 ProviderFactory = Callable[[], RealtimeProvider]

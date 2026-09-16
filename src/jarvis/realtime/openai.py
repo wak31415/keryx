@@ -14,6 +14,7 @@ import json
 import logging
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import replace
 from typing import Protocol, cast
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -544,6 +545,24 @@ class OpenAIRealtimeClient:
         )
         if respond:
             await self._request_response(response_instructions)
+
+    async def update_instructions(self, instructions: str) -> None:
+        """Send a `session.update` carrying only the new instructions, and keep them.
+
+        Only the instructions, never the whole config: the API refuses to change the voice
+        once the model has produced audio, and a `session.update` that tries is rejected
+        whole — the new instructions with it. Partial updates leave the other fields as
+        they are.
+        """
+        if self._config is None:
+            raise RuntimeError("connect() must be called before updating the instructions")
+        self._config = replace(self._config, instructions=instructions)
+        await self._send(
+            {
+                "type": "session.update",
+                "session": {"type": "realtime", "instructions": instructions},
+            }
+        )
 
     async def truncate(self, item_id: str, audio_end_ms: int) -> None:
         await self._send(

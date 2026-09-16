@@ -63,6 +63,8 @@ class FakeProvider:
         self.tool_responses: list[bool] = []
         self.injected: list[tuple[str, bool, str | None]] = []
         self.truncations: list[tuple[str, int]] = []
+        #: Every `update_instructions` call, in order; `config` stays what `connect` got.
+        self.instruction_updates: list[str] = []
         self.cancels = 0
         self.closed = False
         self.reconnects = 0
@@ -110,6 +112,10 @@ class FakeProvider:
     ) -> None:
         self._guard()
         self.injected.append((text, respond, response_instructions))
+
+    async def update_instructions(self, instructions: str) -> None:
+        self._guard()
+        self.instruction_updates.append(instructions)
 
     async def truncate(self, item_id: str, audio_end_ms: int) -> None:
         self._guard()

@@ -605,6 +605,44 @@ async def test_other_error_on_our_own_response_create_unblocks_the_queue(connect
     assert len(response_creates(harness.ws)) == 2
 
 
+# --- replacing the instructions mid-session ----------------------------------
+
+
+async def test_update_instructions_sends_only_the_instructions(connect):
+    """Only what changed: the voice cannot change once the model has spoken, and a
+    `session.update` that carries one is refused whole, instructions and all."""
+    harness = await connect()
+
+    await harness.client.update_instructions("You are Jarvis, now with his briefing.")
+
+    assert harness.ws.sent[-1] == {
+        "type": "session.update",
+        "session": {"type": "realtime", "instructions": "You are Jarvis, now with his briefing."},
+    }
+    assert harness.ws.sent_types == ["session.update", "session.update"]
+
+
+async def test_updated_instructions_survive_a_reconnect(connect):
+    config = phone_config()
+    harness = await connect(config)
+    await harness.client.update_instructions("After the PIN.")
+    harness.ws.close_from_server()
+    assert isinstance(await harness.next_event(), Disconnected)
+
+    assert await harness.client.reconnect() is True
+
+    resent = harness.ws.sent[0]["session"]
+    assert resent["instructions"] == "After the PIN."
+    assert resent["audio"]["output"]["voice"] == config.voice  # the rest of the config stands
+
+
+async def test_update_instructions_before_connect_raises():
+    client = OpenAIRealtimeClient(API_KEY, MODEL, ws_connect=FakeConnector())
+
+    with pytest.raises(RuntimeError):
+        await client.update_instructions("too early")
+
+
 # --- disconnect / reconnect / close ------------------------------------------
 
 
@@ -758,6 +796,7 @@ def test_client_matches_the_realtime_provider_protocol():
         "truncate",
         "cancel_response",
         "reconnect",
+        "update_instructions",
     }
     for name in method_names:
         expected = list(inspect.signature(getattr(RealtimeProvider, name)).parameters)[1:]
