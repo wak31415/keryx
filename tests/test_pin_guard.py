@@ -162,6 +162,18 @@ def test_nothing_is_written_until_there_is_something_to_count(path, clock):
     assert not path.exists()
 
 
+def test_starting_up_does_not_rewrite_a_count_that_has_not_changed(path, clock, monkeypatch):
+    """A write-back of what was just read could only ever undo somebody else's newer write."""
+    fail(make_guard(path, clock), 1)
+
+    def no_writes(*args):
+        raise AssertionError("the unchanged count was written back")
+
+    monkeypatch.setattr("jarvis.pin_guard.os.replace", no_writes)
+
+    assert make_guard(path, clock).locked_until() is None
+
+
 @pytest.mark.parametrize(
     "content",
     [

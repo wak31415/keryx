@@ -86,11 +86,12 @@ class PinGuard:
         self._window = window_seconds
         self._lockout = lockout_seconds
         self._clock = clock
-        self._state, found = self._load()
-        if found:
+        self._state, unreadable = self._load()
+        loaded = asdict(self._state)
+        self._settle(clock())
+        if unreadable or asdict(self._state) != loaded:
             # Straight back to disk: a lock pulled back here, or one set because the file was
             # unreadable, must not be found afresh (and extended) by the next restart.
-            self._settle(clock())
             self._save()
 
     @classmethod
@@ -150,7 +151,7 @@ class PinGuard:
             state.alerted_at = min(state.alerted_at, now)
 
     def _load(self) -> tuple[_State, bool]:
-        """The state on disk, and whether there was a file at all."""
+        """The state on disk (fresh when there is none), and whether it was unreadable."""
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
             return (
@@ -159,7 +160,7 @@ class PinGuard:
                     locked_until=_optional_stamp(data.get("locked_until")),
                     alerted_at=_optional_stamp(data.get("alerted_at")),
                 ),
-                True,
+                False,
             )
         except FileNotFoundError:
             return _State(), False
