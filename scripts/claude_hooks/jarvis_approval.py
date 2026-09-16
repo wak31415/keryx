@@ -7,13 +7,13 @@ at once, and a hook read straight out of it would change under a live session mi
 
 What it does, in one sentence per event:
 
-- **`PermissionRequest`** — a prompt is about to go on his screen. Hand it to Jarvis and
-  block. Jarvis draws nothing, changes nothing and, if he answers at the keyboard within
-  five minutes, says nothing back; the prompt behaves exactly as it does today. Only if he
-  does not does Jarvis ring him, and only a PIN-verified keypad digit ever produces a
+- **`PermissionRequest`** — a prompt is about to go on the owner's screen. Hand it to Jarvis and
+  block. Jarvis draws nothing, changes nothing and, if they answer at the keyboard within
+  five minutes, says nothing back; the prompt behaves exactly as it does today. Only if they
+  do not does Jarvis ring them, and only a PIN-verified keypad digit ever produces a
   decision here.
 - **`PostToolUse` / `PermissionDenied` / `Stop` / `SessionEnd`** — that prompt is not
-  waiting any more. Tell Jarvis so it does not ring him about something he has dealt with.
+  waiting any more. Tell Jarvis so it does not ring them about something they have dealt with.
   This runs on *every* tool call, so its first act is one `stat`: no pending marker, no
   work, no socket.
 
@@ -172,7 +172,7 @@ def main():
         )
     )
     if decision is None:
-        return  # nobody answered: the prompt is still on his screen, untouched
+        return  # nobody answered: the prompt is still on their screen, untouched
     print(
         json.dumps(
             {
