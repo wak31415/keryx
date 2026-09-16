@@ -225,6 +225,9 @@ def test_defaults_match_spec_table(settings):
     assert settings.log_level == "INFO"
     assert settings.debug_skip_twilio_validation is False
     assert settings.fake_agents is False
+    assert settings.slack_mcp_server is None
+    assert settings.clusters == {}
+    assert settings.cluster_ssh_guard is None
 
 
 def test_debug_skip_twilio_validation_env(monkeypatch, tmp_path):

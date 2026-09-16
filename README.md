@@ -173,7 +173,7 @@ anything. Everything that can is.
 
 Slack is opt-in: nothing goes to it unless you asked for it. When you do ask, the voice
 sends text with `send_to_slack` and subagents send files, plots and reports through the
-same Slack app, which they already have from the `auto-research` skill. Unasked, a file
+same Slack app, as the Slack MCP server you name in `SLACK_MCP_SERVER`. Unasked, a file
 stays in the written report — Jarvis tells you it is there and offers to send it, rather
 than reading a path down the phone.
 

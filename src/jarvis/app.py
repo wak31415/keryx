@@ -102,7 +102,9 @@ def build_app_state(settings: Settings) -> AppState:
     approvals = ApprovalBroker(settings, sessions, twilio_out, stream_tokens)
 
     # No Slack app configured anywhere is not an error: the tool is simply not offered.
-    credentials = slack_credentials(settings.slack_bot_token, settings.slack_channel_id)
+    credentials = slack_credentials(
+        settings.slack_bot_token, settings.slack_channel_id, server=settings.slack_mcp_server
+    )
     slack = SlackWebApi(*credentials) if credentials else None
     register_builtin_tools(
         registry,

@@ -37,6 +37,7 @@ OPTIONAL_STR_FIELDS = (
     "user_google_email",
     "slack_bot_token",
     "slack_channel_id",
+    "slack_mcp_server",
     "service_unit",
     "approval_quiet_hours",
     "openai_admin_key",
@@ -244,10 +245,15 @@ class Settings(BaseSettings):
     #: where those connectors do not exist.
     google_workspace_mcp: bool = False
 
-    # Slack (the same app the auto-research skill's MCP server uses; left unset, the
-    # token and DM channel are read from that server's config in ~/.claude.json)
+    # Slack. The voice model's `send_to_slack` needs a bot token and a DM channel; the
+    # subagents need a Slack MCP server of their own in the Claude CLI.
     slack_bot_token: str | None = Field(default=None, repr=False)
     slack_channel_id: str | None = None
+    #: The user-scope MCP server in `~/.claude.json` that gives subagents Slack. Named, the
+    #: subagent prompt tells them to use it when asked, and the token and channel above
+    #: fall back to that server's config. Blank: no fallback, and subagents are told nothing
+    #: about Slack.
+    slack_mcp_server: str | None = None
 
     # The approval bridge (jarvis/approvals): a Claude Code prompt he never answered
     # becomes a phone call. Off makes the socket never bind, which is exactly what the

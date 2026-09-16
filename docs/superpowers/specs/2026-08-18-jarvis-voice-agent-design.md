@@ -81,7 +81,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `integrations/web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool. Grouped with the three below under `integrations/` 2026-09-08 — one module per outside service, each behind exactly one voice tool, sharing no code with each other. Not `services/`: `service` already means the systemd unit here |
 | `integrations/billing.py` | `BillingReader` protocol + `OpenAIBilling` (Admin API `/v1/organization/costs` and `/usage/completions`) and `AnthropicBilling` (`/v1/organizations/cost_report` and `/usage_report/messages`), behind the voice model's `check_billing`; `build_billing_reader` picks one from `BILLING_PROVIDER`. Read-only: every request is a `GET` |
 | `integrations/cluster.py` | A worked example. `ClusterQuerier`/`RemoteRunner` protocols + `SlurmClusterStats` and `GuardedSsh` (an ssh guard script the owner supplies, never a connection of its own), behind the voice model's `cluster_stats`; `build_cluster_stats` wires one from settings and returns `None` — no tool, no prompt paragraph — unless `CLUSTERS` is set and `CLUSTER_SSH_GUARD` is on disk. Read-only: `build_script` refuses any command outside `READ_ONLY` (`squeue`, `sinfo`) and the cluster name is resolved through the configured set, never interpolated |
-| `integrations/slack.py` | `SlackSender` protocol + `SlackWebApi` (`chat.postMessage`), behind the voice model's `send_to_slack`; credentials resolve from the `auto-research` skill's MCP server config |
+| `integrations/slack.py` | `SlackSender` protocol + `SlackWebApi` (`chat.postMessage`), behind the voice model's `send_to_slack`; credentials are the env pair, else the config of the MCP server `SLACK_MCP_SERVER` names |
 | `restart/coordinator.py` | `RestartCoordinator`: restart this service through systemd/launchd, and call back once it is up. Split 2026-09-02 — the modules below were its other concerns; made a package 2026-09-08 |
 | `restart/health.py` | `health_probe` (one localhost `GET /health`: how many calls are live, or `None` if it is not answering) and `wait_until_serving`. Both are asked from *outside* the process, so neither may cost an import of the application |
 | `restart/service.py` | Talking to the service manager: `ServiceTarget`/`resolve_target` (what to restart, or `None` when nothing supervises us) and `WatchPlan`/`watch_command`/`spawn_watchdog` (what to leave watching). `_arm` stays with the coordinator — it is orchestration |
@@ -362,11 +362,13 @@ class SessionRegistry:
   every installed skill, so neither has to be named out loud.
 - **Written delivery goes over Slack (added 2026-08-24).** A phone call cannot carry a file,
   a link or a long list. The voice model has `send_to_slack` for text; subagents use the
-  `slack-research` MCP server (the `auto-research` skill's, inherited user-scope by every CLI
-  the runner spawns — verified, along with `google` and the claude.ai connectors) and its
-  `slack_upload_file` for anything with a file in it. Both ends use one Slack app: the token
+  Slack MCP server named by `SLACK_MCP_SERVER` (a user-scope server is inherited by every CLI
+  the runner spawns — verified, along with `google` and the claude.ai connectors), including
+  its upload tool for anything with a file in it. Both ends use one Slack app: the token
   and DM channel come from `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` if set, else from that MCP
-  server's own config in `~/.claude.json`.
+  server's own config in `~/.claude.json`. *Amended: no server name is built in. With
+  `SLACK_MCP_SERVER` blank there is no fallback, and the subagent prompt's Slack paragraph
+  is not rendered at all.*
 - **Questions come back from the subagent.** The subagent stays autonomous by default, but where
   a decision is genuinely the user's it does the independent part first and ends its
   `SPOKEN_SUMMARY:` with one spoken question. The voice model asks it and returns the answer via
@@ -620,7 +622,8 @@ class SessionRegistry:
 | `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` / `USER_GOOGLE_EMAIL` | same names lowercased | `None` |
 | `GOOGLE_CLIENT_SECRETS_FILE` | `google_client_secrets_file` (used when the id/secret pair is unset) | `.secrets/client_secret.json` |
 | `GOOGLE_WORKSPACE_MCP` | `google_workspace_mcp` (attach the `workspace-mcp` server to subagents) | `false` |
-| `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` | `slack_bot_token` / `slack_channel_id` | `None` → the `slack-research` MCP server's config |
+| `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` | `slack_bot_token` / `slack_channel_id` | `None` → the `SLACK_MCP_SERVER` server's config |
+| `SLACK_MCP_SERVER` | `slack_mcp_server` (the user-scope MCP server in `~/.claude.json` that gives subagents Slack) | `None` → no fallback, and subagents are told nothing about Slack |
 | `SMS_ENABLED` | `sms_enabled` (may Jarvis text at all; outbound *calls* are separate) | `false` (added 2026-08-26) |
 | `LOG_LEVEL` | `log_level` | `INFO` |
 

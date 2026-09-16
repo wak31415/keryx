@@ -39,6 +39,8 @@ from jarvis.tasks.models import Task
 log = logging.getLogger("jarvis.tasks.agent_runner")
 
 SUBAGENT_SUFFIX_PROMPT = "subagent_suffix.md"
+#: Spliced into the suffix only when a Slack MCP server is configured.
+SUBAGENT_SLACK_PROMPT = "subagent_slack.md"
 
 SPOKEN_SUMMARY_MARKER = "SPOKEN_SUMMARY:"
 #: How a subagent says "I changed Jarvis's own code, and only a restart loads it". The
@@ -241,17 +243,24 @@ def resolve_model(name: str | None, settings: Settings) -> str:
     return MODEL_ALIASES.get(alias.lower(), alias)
 
 
-def render_subagent_suffix(task: Task) -> str:
+def render_subagent_suffix(task: Task, *, slack_mcp_server: str | None = None) -> str:
     """The subagent system-prompt suffix, with this task's project, request and number.
 
     The number is in there for the commit trailer: it is what ties a change in a repo back
-    to the sentence he said out loud, which is the one thing `git log` cannot recover.
+    to the sentence he said out loud, which is the one thing `git log` cannot recover. The
+    Slack paragraph is there only when `slack_mcp_server` names a route to use.
     """
+    slack = (
+        render_prompt(SUBAGENT_SLACK_PROMPT, server=slack_mcp_server).strip()
+        if slack_mcp_server
+        else ""
+    )
     return render_prompt(
         SUBAGENT_SUFFIX_PROMPT,
         project=task.project or "none",
         description=task.description,
         task_id=str(task.id) if task.id is not None else "unknown",
+        slack=slack,
     )
 
 
@@ -295,7 +304,7 @@ def build_options(
         "system_prompt": {
             "type": "preset",
             "preset": "claude_code",
-            "append": render_subagent_suffix(task),
+            "append": render_subagent_suffix(task, slack_mcp_server=settings.slack_mcp_server),
         },
         "model": resolve_model(task.model, settings),
         "max_turns": settings.subagent_max_turns,

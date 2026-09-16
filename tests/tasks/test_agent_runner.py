@@ -615,21 +615,35 @@ async def test_fake_session_run_is_cancellable_mid_delay():
 
 
 def test_the_subagent_suffix_makes_slack_opt_in(settings, unwrapped):
-    """Subagents have Slack from the `auto-research` MCP server; the suffix is the leash."""
+    """Subagents reach Slack through the MCP server the owner names; the suffix is the leash."""
+    settings.slack_mcp_server = "team-slack"
     options = build_options(make_task(description="review the diff"), settings)
     append = unwrapped(options.system_prompt["append"])
 
     assert "Do not send him anything on Slack unless he asked for Slack" in append
     assert "If he did not ask, do not send" in append
+    assert "`team-slack` MCP server" in append
+    assert "offers to send it" in append
+    assert "{" not in append and "}" not in append
+
+
+def test_without_a_slack_server_the_suffix_says_nothing_about_slack(settings, unwrapped):
+    """No route configured is no route described: nothing to use, and nothing to offer."""
+    options = build_options(make_task(description="review the diff"), settings)
+    append = unwrapped(options.system_prompt["append"])
+
+    assert settings.slack_mcp_server is None
+    assert "Slack" not in append
+    assert "offers to send it" not in append
+    assert "{" not in append and "}" not in append
 
 
 def test_the_subagent_suffix_routes_unasked_output_to_the_report(settings, unwrapped):
-    """What he may not be sent still has to land somewhere he can find it."""
+    """What he may not be sent still has to land somewhere he can find it, Slack or not."""
     options = build_options(make_task(description="plot the losses"), settings)
     append = unwrapped(options.system_prompt["append"])
 
     assert "goes in the written report" in append
-    assert "offers to send it" in append
 
 
 # --- RESTART_REQUIRED ------------------------------------------------------
