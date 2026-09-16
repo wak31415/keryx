@@ -107,7 +107,13 @@ def tools():
 @pytest.fixture
 def make_session(tmp_path, bus, tools):
     def build(transport, prov, *, authorized=False, **kwargs) -> VoiceSession:
-        settings = make_settings(tmp_path, pin=PIN)
+        settings = make_settings(
+            tmp_path,
+            pin=PIN,
+            projects={"orchard": str(tmp_path)},
+            projects_root=tmp_path / "no-projects",
+            skills_dir=tmp_path / "no-skills",
+        )
         return VoiceSession(
             transport, prov, settings, tools, bus, authorized=authorized, **kwargs
         )
@@ -135,6 +141,7 @@ async def test_an_unauthorized_call_opens_knowing_nothing_private(make_session, 
         await eventually(lambda: provider.injected != [])
 
         assert not private(provider.config.instructions)
+        assert "orchard" not in provider.config.instructions  # nor what he is working on
         assert provider.injected[0][0] == OPENING_MESSAGE  # no "lead with it" nudge either
         assert briefer.builds == 0  # not even read
 
@@ -156,6 +163,7 @@ async def test_a_spoken_pin_delivers_the_briefing_before_the_turn_that_answers_i
     assert kinds[1:4] == ["instructions", "message", "tool_result"]
     instructions, (nudge, nudge_responds), responds = (value for _, value in provider.order[1:4])
     assert private(instructions)
+    assert "orchard" in instructions
     assert "Authorized for destructive work: yes" in instructions
     assert nudge.startswith("[system] 1 task finished") and nudge_responds is False
     assert responds is True

@@ -410,6 +410,7 @@ class VoiceSession:
                 opening_context=self._opening_context,
                 pending=self._briefing.pending,
                 memory=self._briefing.memory,
+                withheld=not self.trusted,
             ),
             tools=self._tools.schemas(),
             voice=self._settings.openai_voice,

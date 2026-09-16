@@ -35,6 +35,8 @@ _MEMORY_HEADING = (
 )
 _NO_SKILLS = "none installed"
 _NO_BRIEFS = "nothing written down yet"
+#: What a withheld prompt says in place of anything discovered from his machine.
+_WITHHELD = "held back until the PIN"
 
 
 def load_prompt(name: str) -> str:
@@ -97,6 +99,7 @@ def render_voice_prompt(
     opening_context: str | None = None,
     pending: str | None = None,
     memory: str | None = None,
+    withheld: bool = False,
 ) -> str:
     """Render the voice system prompt for one session.
 
@@ -109,20 +112,32 @@ def render_voice_prompt(
     say) and is dropped from the prompt when there is none. `pending` and `memory` come
     from a `Briefing` (see `jarvis.continuity.briefing`) and are dropped the same way: a
     first call on a fresh machine renders neither section, rather than an empty heading.
+
+    `withheld` is a phone call that has not given the PIN. Caller id is spoofable, so its
+    prompt carries nothing of his: the project names, their briefs and the skill catalog
+    say `_WITHHELD` instead of being discovered at all, and `pending` and `memory` are
+    dropped whatever was passed. The session re-renders without it once the PIN is in.
     """
-    known = discover_projects(settings)
-    names = list(known) if projects is None else projects
-    catalog = discover_skills(settings.skills_dir) if skills is None else skills
-    written = discover_briefs(known) if briefs is None else briefs
+    if withheld:
+        project_names = skill_lines = brief_blocks = _WITHHELD
+        pending = memory = None
+    else:
+        known = discover_projects(settings)
+        names = list(known) if projects is None else projects
+        catalog = discover_skills(settings.skills_dir) if skills is None else skills
+        written = discover_briefs(known) if briefs is None else briefs
+        project_names = ", ".join(names) if names else "none configured"
+        skill_lines = _format_skills(catalog)
+        brief_blocks = _format_briefs(written)
     return render_prompt(
         VOICE_SYSTEM_PROMPT,
         now=datetime.now().strftime(_TIME_FORMAT),
         channel=channel,
         caller=caller or "unknown",
         authorized="yes" if authorized else "no",
-        projects=", ".join(names) if names else "none configured",
-        skills=_format_skills(catalog),
-        project_briefs=_format_briefs(written),
+        projects=project_names,
+        skills=skill_lines,
+        project_briefs=brief_blocks,
         opening_context=f"{_OPENING_HEADING}\n\n{opening_context}" if opening_context else "",
         pending_tasks=f"{_PENDING_HEADING}\n\n{pending}" if pending else "",
         memory=f"{_MEMORY_HEADING}\n\n{_nest_headings(memory)}" if memory else "",
