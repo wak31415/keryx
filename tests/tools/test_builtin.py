@@ -64,6 +64,7 @@ class StubSession:
     channel: str = "local"
     caller: str | None = None
     session_id: str = "sess1234"
+    opening_task_id: int | None = None
     pin_result: dict = field(default_factory=lambda: {"status": "authorized"})
     pins: list[str] = field(default_factory=list)
     ends: list[str] = field(default_factory=list)
@@ -1564,6 +1565,28 @@ async def test_mark_reported_before_the_pin_hides_nothing_from_the_digest(make_t
 
     assert result["status"] == "pin_required"
     assert (await tools.manager.get(task.id)).reported_at is None
+
+
+async def test_a_call_back_may_stamp_the_task_it_was_placed_about_before_the_pin(make_tools):
+    """The call opened with that result, so it has been said; the digest must not repeat it.
+
+    Only that one: the id comes from the stream token Jarvis minted for its own outbound
+    call, never from anything a caller can say.
+    """
+    tools = make_tools(pin="123456")
+    told = await _finish(tools)
+    other = await _finish(tools, "something he has not heard")
+
+    result = await tools.call(
+        "mark_reported",
+        {"task_ids": [told.id, other.id]},
+        channel="phone",
+        authorized=False,
+        opening_task_id=told.id,
+    )
+
+    assert result["reported"] == [told.id]
+    assert (await tools.manager.get(other.id)).reported_at is None
 
 
 # --- recall ----------------------------------------------------------------

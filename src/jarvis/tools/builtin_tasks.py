@@ -243,11 +243,13 @@ def register_task_tools(
     # --- mark_reported -----------------------------------------------------
 
     async def mark_reported(ctx: ToolContext, arguments: dict) -> dict:
-        # Stamping a task takes it out of his next call's digest: not before the PIN.
+        ids = _task_ids(arguments.get("task_ids"))
+        # Stamping a task takes it out of his next call's digest, so not before the PIN —
+        # except the task a call Jarvis placed was about, whose result opened the call.
         if (refusal := pin_gate(ctx, settings)) is not None:
-            return refusal
-        raw = arguments.get("task_ids")
-        ids = _task_ids(raw)
+            ids = [task_id for task_id in ids if task_id == ctx.session.opening_task_id]
+            if not ids:
+                return refusal
         if not ids:
             return {"error": "task_ids must be a list of task numbers, for example [3, 4]"}
         reported = await manager.mark_reported(ids)

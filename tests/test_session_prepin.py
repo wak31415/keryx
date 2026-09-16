@@ -56,6 +56,14 @@ def make_session(tmp_path, bus):
     return build
 
 
+# --- a call Jarvis placed itself --------------------------------------------
+
+
+def test_a_session_knows_which_task_its_opening_context_is_about(make_session, phone, provider):
+    assert make_session(phone, provider, opening_task_id=41).opening_task_id == 41
+    assert make_session(FakeTransport(), FakeProvider()).opening_task_id is None
+
+
 # --- what outlives the call ------------------------------------------------
 
 

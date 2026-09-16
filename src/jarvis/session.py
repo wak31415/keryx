@@ -138,6 +138,7 @@ class VoiceSession:
         registry: "SessionRegistry | None" = None,
         briefer: BriefingSource | None = None,
         keypad: Keypad | None = None,
+        opening_task_id: int | None = None,
     ) -> None:
         self._transport = transport
         self._provider = provider
@@ -156,6 +157,10 @@ class VoiceSession:
         self.channel: str = transport.channel
         self.caller: str | None = transport.caller
         self.authorized = authorized
+        #: The task whose result `opening_context` carries, on a call Jarvis placed about it
+        #: (a call-back, a restart's confirmation). Set only from a token Jarvis minted, and
+        #: the one task `mark_reported` may stamp before the PIN: the call opened by saying it.
+        self.opening_task_id = opening_task_id
 
         self._state = SessionState.NEW
         self._finish_now = asyncio.Event()

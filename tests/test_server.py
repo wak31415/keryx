@@ -310,6 +310,24 @@ def test_a_valid_token_runs_a_session_that_speaks_back_to_the_caller(client, sta
     eventually(lambda: provider.closed)
 
 
+def test_a_call_back_session_knows_the_task_it_was_placed_about(client, state):
+    """From the token Jarvis minted, never from the socket's own parameters."""
+    provider = FakeProvider()
+    provider.feed(AudioDelta(item_id="item_1", audio=b"\x00"))
+    state.provider_factory = lambda: provider
+    token = state.stream_tokens.issue(CALLER, {"opening_context": "task 3 is done", "task_id": 3})
+
+    with client.websocket_connect("/twilio/media") as ws:
+        ws.send_text(start_frame(token))
+        ws.receive_text()
+
+        assert [session.opening_task_id for session in state.sessions.live()] == [3]
+
+        ws.send_text(json.dumps({"event": "stop", "streamSid": STREAM_SID}))
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_text()
+
+
 def test_the_session_opens_with_the_context_carried_by_the_token(client, state):
     provider = FakeProvider()
     provider.feed(AudioDelta(item_id="item_1", audio=b"\x00"))
