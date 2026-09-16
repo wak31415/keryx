@@ -20,6 +20,8 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+from jarvis.logging_util import mask_number
+
 log = logging.getLogger("jarvis.transcripts")
 
 #: How much of the previous call the context carries.
@@ -74,9 +76,13 @@ def redact_pin(text: str, pin: str | None) -> str:
 
 
 def session_header(session_id: str, channel: str, caller: str | None, *, authorized: bool) -> str:
-    """The line a transcript opens with, saying whether the call started authorized."""
+    """The line a transcript opens with, saying whether the call started authorized.
+
+    The caller is masked like every other record Jarvis keeps of a number.
+    """
     flag = "yes" if authorized else "no"
-    return f"--- session {session_id} channel={channel} caller={caller or 'none'} authorized={flag}"
+    who = mask_number(caller) if caller else "none"
+    return f"--- session {session_id} channel={channel} caller={who} authorized={flag}"
 
 
 def was_authorized(raw: str) -> bool:

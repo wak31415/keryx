@@ -152,3 +152,14 @@ def test_a_local_call_was_authorized_from_its_first_line():
 def test_a_transcript_from_before_the_flag_existed_is_taken_as_his():
     """Every call log written before this change is the owner's own history."""
     assert was_authorized("[17:59:34] --- session abc123 channel=phone caller=+15550000000\n")
+
+
+def test_a_transcript_header_carries_the_caller_masked_like_every_other_record():
+    header = session_header("abc123", "phone", "+15550001111", authorized=False)
+
+    assert "+15550001111" not in header
+    assert "caller=…1111" in header
+
+
+def test_a_session_with_no_caller_still_says_so():
+    assert "caller=none" in session_header("abc123", "local", None, authorized=True)
