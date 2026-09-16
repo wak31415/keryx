@@ -54,6 +54,9 @@ def register_session_tools(
 
     async def list_pending_approvals(ctx: ToolContext, arguments: dict) -> dict:
         assert approvals is not None  # only registered when there is one
+        # What his screen is waiting on names his projects and his commands.
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            return refusal
         waiting = approvals.pending_requests()
         if not waiting:
             return {"status": "none", "message": APPROVAL_NONE_MESSAGE}

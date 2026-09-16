@@ -12,9 +12,15 @@ that gets read down a phone is worth reviewing in one place.
 **The parsing.** `_task_id`, `_clamp_limit` and friends turn whatever a speech model put in
 an argument into something a task store can take, without ever raising.
 
-**The two gates.** `pin_gate` is the refusal returned before anything opens a subagent —
-`dispatch_task`, `send_followup`, `cancel_task`, and also `restart_service` (it can take
-the phone channel off the air) and `answer_approval` (it can run a command on his machine).
+**The two gates.** `pin_gate` is the refusal a phone caller gets before the PIN, and it
+is on every tool but five. Caller id is spoofable, so before the PIN nothing private is
+read out and nothing the caller says or does outlives the call: that gates what opens a
+subagent (`dispatch_task`, `send_followup`, `cancel_task`), what can take the phone off the
+air or run a command (`restart_service`, `answer_approval`), what reads his tasks, calls,
+projects or screen (`list_tasks`, `get_task_status`, `get_task_result`, `recall`,
+`list_projects`, `list_pending_approvals`), and what leaves something behind
+(`mark_reported`, `request_callback`, `send_to_slack`). Only `check_billing`,
+`cluster_stats`, `web_search`, `submit_pin` and `end_session` answer without it.
 It reads `ctx.authorized` live, so a PIN keyed while the model was thinking is honoured on
 the very next call, and the digits themselves never pass through here: `submit_pin` hands
 what the caller said straight to the session, which is the only thing that compares it.
@@ -76,14 +82,12 @@ PIN_LOCKED_MESSAGE = (
     "Too many wrong attempts and the call is ending. Say one short goodbye and nothing "
     "else; you have already been told this, so do not say it twice."
 )
-PIN_MISSING_MESSAGE = "A PIN is required to dispatch work but none is configured."
+PIN_MISSING_MESSAGE = (
+    "This needs a PIN on the phone, but none is configured. Tell him that in one sentence."
+)
 PIN_NOT_CONFIGURED_MESSAGE = (
     "There is no PIN set on this machine, so there is nothing to check. Tell him that in "
     "one sentence rather than asking again."
-)
-CALLBACK_NUMBER_MESSAGE = (
-    "Without the PIN I can only call back on the number of this call or a number I "
-    "already know. Offer that instead."
 )
 #: What `request_callback` hands back. The one thing it exists to prevent is the pair
 #: "let me set that up for you" / "all set, I'll call you" around a tool that takes
@@ -259,18 +263,19 @@ async def _report_excerpt(task: Task) -> str | None:
 
 
 def pin_gate(ctx: ToolContext, settings: Settings) -> dict | None:
-    """The refusal to return before putting a subagent to work, if any (spec §3.3).
+    """The refusal a phone caller gets before the PIN, if any (spec §3.3, §5).
 
-    Applies to `dispatch_task`, `send_followup` and `cancel_task` alike: reaching into
-    a task that is already running opens the very same bypassPermissions subagent that
-    dispatching one would. `restart_service` and `answer_approval` go through it too —
-    one stops the service, the other can run a command on his machine.
+    Called first, before a task number is even looked up, so a refusal says nothing about
+    what exists. Reaching into a running task opens the same bypassPermissions subagent
+    that dispatching one would; reading a task, a past call or a waiting prompt reads
+    something private; and a note, a stamp or a Slack message outlives the call. See the
+    module docstring for the five tools that skip it, and why.
     """
     if ctx.channel != "phone" or ctx.authorized:
         return None
     if not settings.pin:
         return {"status": "refused", "message": PIN_MISSING_MESSAGE}
-    log.info("session %s needs a PIN before dispatching", ctx.session.session_id)
+    log.info("session %s needs a PIN first", ctx.session.session_id)
     return {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}
 
 
