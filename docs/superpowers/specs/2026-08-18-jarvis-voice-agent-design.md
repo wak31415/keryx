@@ -404,7 +404,12 @@ class SessionRegistry:
   counted on the record before the dial, so a crash loop rings once, not once per crash; a call
   that cannot be placed falls back to SMS; and a confirmation that fails outright leaves the
   record behind as `failed`, for `jarvis restart --status`. A process nothing supervises refuses
-  to restart at all — stopping would take it off the air for good.
+  to restart at all — stopping would take it off the air for good. "Supervises" is a fact about
+  the process, not the machine (amended 2026-09-16): under `auto` it is this process's own
+  cgroup naming the unit beneath the user manager (systemd) or `XPC_SERVICE_NAME` equal to the
+  label (launchd). `systemctl` merely being on PATH once sent a hand-started copy's restart to a
+  unit that did not exist, or to the installed copy instead of itself. `jarvis restart` and
+  `doctor`, which run in a terminal and never inside the unit, ask whether it is installed.
 - **A restart says whether the *update* worked, not whether the process came back (added
   2026-08-26).** Restarting is mostly asked for to load a change Jarvis has just made to its
   own code, and "back up" answers the wrong question: an import that throws, a tool that fails
@@ -599,7 +604,7 @@ class SessionRegistry:
 | `JARVIS_PIN` | `pin` (**6-8 digits** when set; refused otherwise) | `None` (every dispatch refused on phone if unset) |
 | `PUBLIC_HOST` | `public_host` (the tunnel's hostname, e.g. `jarvis.example.com`) | `None` |
 | `HOST` / `PORT` | `host` / `port` | `127.0.0.1` / `8080` |
-| `SERVICE_MANAGER` | `service_manager` (`auto`/`systemd`/`launchd`/`none`; what `jarvis restart` asks) | `auto` → systemd on Linux, launchd on macOS, none if neither is on PATH |
+| `SERVICE_MANAGER` | `service_manager` (`auto`/`systemd`/`launchd`/`none`; what `jarvis restart` asks) | `auto` → systemd on Linux / launchd on macOS when this process runs as the unit (for `jarvis restart` and `doctor`: when it is installed), otherwise none; `systemd`/`launchd` are taken at their word |
 | `SERVICE_UNIT` | `service_unit` (the unit/label to restart) | `None` → `jarvis.service` / `dev.jarvis.agent` (renamed from `com.william.jarvis` 2026-09-02) |
 | `PROJECTS` | `projects: dict[str,str]` (JSON) | `{}` |
 | `PROJECTS_ROOT` | `projects_root` | `~/Local/coding_projects` |
