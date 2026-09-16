@@ -255,3 +255,33 @@ def test_exit_plan_mode_is_a_question(settings):
 def test_the_summary_is_bounded(settings):
     event = request("ExitPlanMode", {"plan": "x" * 5000})
     assert len(classify(event, settings)["summary"]) <= 200
+
+
+# --- what he hears is what runs ----------------------------------------------
+
+
+def test_a_command_is_read_out_whole(settings, tmp_path):
+    command = "git commit -m 'fix the thing that broke on Tuesday'"
+    event = request("Bash", {"command": command}, cwd=str(tmp_path / "roots" / "myproject"))
+    assert classify(event, settings)["summary"] == f"Claude wants to run: {command}, in myproject"
+
+
+def test_a_command_too_long_to_read_out_whole_is_not_eligible(settings, tmp_path):
+    """The read-back used to be cut at 180 characters with an ellipsis, so whatever came
+    after the cut ran without ever being heard. An approval is read out whole or not at
+    all; a question may still be shortened, because answering one runs nothing."""
+    command = "git commit -m '" + "a" * 150 + "' --no-verify"
+    event = request("Bash", {"command": command}, cwd=str(tmp_path / "roots" / "myproject"))
+    assert classify(event, settings) is None
+
+
+def test_a_file_name_too_long_to_read_out_whole_is_not_eligible(settings, tmp_path):
+    target = tmp_path / "roots" / "myproject" / ("n" * 180 + ".py")
+    assert classify(request("Write", {"file_path": str(target), "content": ""}), settings) is None
+
+
+def test_an_option_too_long_for_the_menu_is_not_eligible(settings):
+    """The label he picks is the answer Claude is sent; a cut one is not what he chose."""
+    options = [{"label": "Yes, and delete the old branches on the remote too"}, {"label": "No"}]
+    event = request("AskUserQuestion", {"questions": [{"question": "a?", "options": options}]})
+    assert classify(event, settings) is None

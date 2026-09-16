@@ -22,9 +22,11 @@ from jarvis.approvals.models import Kind, input_digest
 
 log = logging.getLogger("jarvis.approvals.policy")
 
-#: How much of a request may be said out loud in one go.
+#: How much of a request may be said out loud in one go. An approval that does not fit is
+#: not shortened, it is refused: what he hears has to be the whole of what runs.
 MAX_SUMMARY_CHARS = 180
-#: How much of a question's option label survives into the keypad menu.
+#: How long a question's option label may be. The label is the answer Claude is sent, so
+#: one that does not fit is refused rather than cut.
 MAX_OPTION_CHARS = 40
 #: How many options a question may have and still be answerable on a keypad (1-9).
 MAX_OPTIONS = 9
@@ -196,16 +198,31 @@ def classify(event: dict, settings) -> dict | None:
     try:
         _refuse_denied(tool, tool_input)
         kind, summary, options = _describe(tool, tool_input, event, settings)
+        summary = _read_back(kind, summary)
     except Ineligible as reason:
         log.info("not escalating a %s prompt: %s", tool or "?", reason)
         return None
 
     return {
         "kind": kind,
-        "summary": _shorten(summary, MAX_SUMMARY_CHARS),
+        "summary": summary,
         "options": options,
         "input_sha": input_digest(tool_input),
     }
+
+
+def _read_back(kind: Kind, summary: str) -> str:
+    """The sentence he hears, or `Ineligible` when an approval would have to be cut.
+
+    A question may be shortened: answering one runs nothing, and the answer is a label he
+    picked. An approval may not. A cut read-back is a command whose tail runs unheard, and
+    a long command is exactly where something gets hidden; nor does a keypad "yes" to a
+    sentence nobody can hold in their head mean anything. So it is whole or not at all.
+    """
+    flat = _WHITESPACE.sub(" ", summary).strip()
+    if kind is Kind.APPROVAL and len(flat) > MAX_SUMMARY_CHARS:
+        raise Ineligible(f"the read-back is {len(flat)} characters and cannot be said whole")
+    return _shorten(flat, MAX_SUMMARY_CHARS)
 
 
 def _refuse_denied(tool: str, tool_input: dict) -> None:
@@ -251,12 +268,14 @@ def _describe_question(tool_input: dict) -> tuple[Kind, str, list[str]]:
     if not text:
         raise Ineligible("the question was empty")
     labels = [
-        _shorten(option.get("label") or "", MAX_OPTION_CHARS)
+        _WHITESPACE.sub(" ", str(option.get("label"))).strip()
         for option in first.get("options") or []
         if isinstance(option, dict) and option.get("label")
     ]
     if not 1 <= len(labels) <= MAX_OPTIONS:
         raise Ineligible(f"it has {len(labels)} options, which does not fit a keypad")
+    if any(len(label) > MAX_OPTION_CHARS for label in labels):
+        raise Ineligible("an option is too long to read out as the answer it would send")
     return Kind.QUESTION, f"Claude is asking: {text}", labels
 
 
