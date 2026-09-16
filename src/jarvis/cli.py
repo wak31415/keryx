@@ -77,6 +77,7 @@ def main(
 ) -> None:
     """Jarvis voice agent."""
 
+
 LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 LOG_MAX_BYTES = 10 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
