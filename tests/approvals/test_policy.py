@@ -357,6 +357,16 @@ def test_a_write_inside_a_project_is_eligible(settings, tmp_path):
     assert "myproject" in described["summary"]
 
 
+def test_a_write_is_read_out_with_where_in_the_project_it_goes(settings, tmp_path):
+    """`deploy.yml` alone does not say it is a CI workflow that runs with the repo's
+    secrets; `.github/workflows/deploy.yml` does."""
+    target = tmp_path / "roots" / "myproject" / ".github" / "workflows" / "deploy.yml"
+    described = classify(request("Write", {"file_path": str(target), "content": "x"}), settings)
+    assert described["summary"] == (
+        "Claude wants to create the file .github/workflows/deploy.yml, in myproject"
+    )
+
+
 def test_a_write_outside_every_project_is_not_eligible(settings, tmp_path):
     target = tmp_path / "elsewhere" / "notes.md"
     assert classify(request("Write", {"file_path": str(target)}), settings) is None

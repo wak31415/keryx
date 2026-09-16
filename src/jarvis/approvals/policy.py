@@ -302,10 +302,15 @@ def _describe_edit(tool: str, tool_input: dict, settings) -> tuple[Kind, str, li
     root = _inside(path, approval_roots(settings))
     if root is None:
         raise Ineligible("the file is outside every project root")
-    _refuse_executed(path.expanduser().resolve().relative_to(root))
+    target = path.expanduser().resolve()
+    relative = target.relative_to(root)
+    _refuse_executed(relative)
     verb = "create" if tool == "Write" else "edit"
-    where = _project_name(path.expanduser().resolve(), root)
-    summary = f"Claude wants to {verb} the file {path.name}, in {where}"
+    where = _project_name(target, root)
+    # Where in the project, not just the name: the resolved path, so a symlink is read out
+    # as the file it actually writes.
+    inside = Path(*relative.parts[1:]).as_posix() if len(relative.parts) > 1 else target.name
+    summary = f"Claude wants to {verb} the file {inside}, in {where}"
     return Kind.APPROVAL, summary, list(APPROVAL_OPTIONS)
 
 
