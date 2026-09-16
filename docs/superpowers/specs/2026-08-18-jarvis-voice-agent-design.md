@@ -151,6 +151,7 @@ class EventBus:
 @dataclass class TaskFailed:    task_id: int; error: str
 @dataclass class SessionStarted: session_id: str; channel: str; caller: str | None
 @dataclass class SessionEnded:   session_id: str; channel: str; caller: str | None; reason: str
+                                 authorized: bool = False   # added 2026-09-16: the memory writer skips a call that was not
 ```
 
 ```python
@@ -208,6 +209,7 @@ class RealtimeProvider(Protocol):
     async def truncate(self, item_id: str, audio_end_ms: int) -> None
     async def cancel_response(self) -> None
     async def reconnect(self) -> bool                          # one attempt: re-open WS + re-send session config
+    async def update_instructions(self, instructions: str) -> None   # added 2026-09-16: `session.update` with only the instructions; kept for reconnect
 ```
 
 Provider rule: **only one active response at a time.** `submit_tool_result` and
@@ -319,10 +321,12 @@ class VoiceSession:
     def __init__(self, transport, provider, settings, tools: ToolRegistry, bus: EventBus, *,
                  authorized: bool, opening_context: str | None = None, session_id: str | None = None,
                  registry: SessionRegistry | None = None, briefer: BriefingSource | None = None,
-                 keypad: Keypad | None = None)
+                 keypad: Keypad | None = None, opening_task_id: int | None = None)
     session_id: str; channel: str; caller: str | None; authorized: bool
+    opening_task_id: int | None                         # the task a call Jarvis placed opened with; from its own token only
+    trusted: bool                                       # property: local, or the phone after the PIN (added 2026-09-16)
     async def run(self) -> None                       # returns when session ends
-    async def announce(self, text: str) -> bool       # inject + speak; False if session not live
+    async def announce(self, text: str) -> bool       # inject + speak; False if session not live or not trusted
     async def submit_pin(self, pin: str) -> dict      # the one place a PIN is compared (spec §3.3)
     def request_end(self, reason: str = "user") -> None
     def authorize(self) -> None
@@ -380,6 +384,7 @@ class SessionRegistry:
   has nothing more to add, the voice model offers `request_callback` itself rather than waiting
   to be asked — holding the line for a long job is the worst use of a call from a watch.
 - **Task completion**: `TaskCompleted` → Notifier: (1) `announce()` on every live session
+  (a phone call before the PIN refuses it, and so is never a delivery — 2026-09-16)
   except the one currently inline-waiting on that task inside `dispatch_task` (it gets the
   result as the tool output instead) (marks `announced`), (2) SMS summary (with report link) unless a live *phone* session
   announced it, (3) if `callback_requested` and no live phone session announced → outbound
@@ -554,7 +559,25 @@ class SessionRegistry:
   digits (collected in the session, never shown to the model) flip it; `dispatch_task`
   returns `{"status":"pin_required"}` until authorized — every task, since 2026-08-24, because
   every task can reach the files and the mailbox. Constant-time
-  compare; 3 failures → say goodbye and hang up.
+  compare; 3 failures → say goodbye and hang up. **Amended 2026-09-16:** the gate is on every
+  tool but five, not only on dispatch — see the next ruling.
+- **Before the PIN, the phone gets nothing (added 2026-09-16).** Caller id is spoofable, so an
+  allowed number proves nothing. Ruling: on the phone, before the PIN, nothing private is read
+  out, nothing is announced into the call, and nothing the caller says or does outlives it.
+  `VoiceSession.trusted` is the predicate. An untrusted call's prompt is rendered `withheld`
+  (no memory, digest, project names, briefs or skills) and its opening carries no nudge; an
+  accepted PIN builds the briefing, sends the re-rendered prompt with `update_instructions`,
+  and injects `Briefing.after_pin_nudge()` with `respond=False`, so the tool result or keypad
+  note that answers the PIN is still its only turn. `announce()` refuses an untrusted session.
+  `pin_gate` runs first in every tool except `check_billing`, `cluster_stats`, `web_search`,
+  `submit_pin` and `end_session`; `mark_reported` may still stamp `opening_task_id`, the task a
+  call-back or restart confirmation opened by saying (from the stream token Jarvis minted, never
+  from the caller). `SessionEnded.authorized` is False for such a call, so `MemoryWriter`
+  dispatches nothing; its transcript header ends `authorized=no` (a `--- authorized` line follows
+  a PIN given part-way), and `recall` skips a transcript that never authorized. A spoken PIN is
+  redacted to `[PIN]` in every transcript line as it is written, and again by `recall` (before
+  matching) and `read_tail`, because logs from before this hold it. Calls Jarvis places itself
+  still open with their reason. The subagents' tools are not narrowed: the PIN is the control.
 - **Follow-ups**: `send_followup(task_id, text)` → finished task: new run with
   `resume=claude_session_id`; running task: the text is queued and, when the current run
   finishes, the task is immediately re-run with `resume` and the queued follow-ups as the
@@ -743,6 +766,13 @@ Cloudflare tunnel to `/twilio/*` (signature-validated + allowlist + one-time str
 what it gates is **every dispatch**, not a subset: there are no destructive kinds to single
 out, because there is one kind and it reaches everything. A configured PIN is 6-8 digits
 (§3.3); no PIN at all means dispatching is simply refused from the phone.
+
+**Before the PIN (2026-09-16).** The PIN is not only the gate on dispatch. A caller who has
+faked an allowed number, and not given the PIN, is told nothing private, has nothing announced
+to them, and leaves nothing that outlives the call — including the memory writer's subagent,
+which reads the call's transcript with a shell and so runs only for authorized calls (§3.3,
+"Before the PIN, the phone gets nothing"). Out of scope by design: whoever has the PIN, or any
+content a subagent reads, effectively has a shell as the owner. `SECURITY.md` is the public copy.
 
 **The approval bridge (`jarvis/approvals/`, 2026-08-26).** This one runs *inwards*: a
 Claude Code session on William's own screen has stopped and is asking him something, a hook

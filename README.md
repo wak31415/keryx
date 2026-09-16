@@ -53,7 +53,7 @@ sequenceDiagram
     C->>S: the cluster-compute skill's ssh guard, then sbatch
     S-->>C: job 4831 running on two GPUs
     C-->>J: SPOKEN_SUMMARY: it is training
-    alt you are on the phone again
+    alt you are on the phone again, past the PIN
         J->>U: announced into that call
     else you asked to be rung back
         J->>T: outbound call, the result in its opening context
@@ -168,7 +168,8 @@ on the same machine. Read them for the pattern, then delete them and write your 
 <!-- tools:end -->
 
 `check_billing` and `cluster_stats` are deliberately not PIN-gated: they cannot change
-anything. Everything that can is.
+anything and read nothing of yours. With `web_search`, `submit_pin` and `end_session` they
+are the only tools a phone caller reaches before the PIN; everything else waits for it.
 
 Slack is opt-in: nothing goes to it unless you asked for it. When you do ask, the voice
 sends text with `send_to_slack` and subagents send files, plots and reports through the
@@ -218,10 +219,12 @@ What it will do, and what to check if you are writing it by hand:
    the tools are offered to the model.*
 3. **A row in the table above.** `tests/test_docs_sync.py` compares the registrations
    against this README and fails if they disagree, in either direction.
-4. **`pin_gate(ctx, settings)` if the tool can change anything.** Read-only tools skip it
-   on purpose — asking what a number is should not need a PIN — but anything that acts
-   goes through the gate, and a tool that can run a command needs a better reason than
-   convenience.
+4. **`pin_gate(ctx, settings)` first, unless the tool can neither change anything nor read
+   anything of yours.** Caller ID is spoofable, so before the PIN a phone caller gets
+   nothing private and leaves nothing behind. A tool that only reads a public number may
+   skip it — asking what a number is should not need a PIN — but it has to be added to
+   `UNGATED` in `tests/tools/test_builtin.py` on purpose, or the test that walks every tool
+   fails, and a tool that can run a command needs a better reason than convenience.
 5. **A fake behind a `Protocol`**, never the real service. Nothing in the test suite
    touches the network or hardware; see `jarvis/integrations/billing.py` for a small
    example of the protocol-plus-fake shape and `tests/tools/test_builtin.py` for how it
@@ -455,7 +458,13 @@ live, an SMS with a link to the written report, and a call back if you asked for
 
 **The PIN.** On the phone, dispatching anything is refused until you authorize: say the
 PIN or key it in on the keypad. Keyed digits are collected in the session and never enter
-the model transcript. Local sessions are pre-authorized — you are already at the machine.
+the model transcript, and a spoken PIN is written into the call log as `[PIN]`. Local
+sessions are pre-authorized — you are already at the machine.
+
+Before the PIN a phone call also knows nothing of yours: not what Jarvis remembers, not
+the results you have not heard, not your tasks, past calls or projects. They arrive the
+moment the PIN is accepted, so key it in at the top of the call to hear what landed while
+you were away. Calls Jarvis places itself still open with their reason.
 
 `JARVIS_PIN` must be **6 to 8 digits and nothing else**, and that is enforced rather than
 advised: `jarvis serve` refuses to start on anything else, and `jarvis doctor` says which
@@ -535,6 +544,12 @@ reasoning behind each of those four:
   signing secret is either `REPORT_SECRET` or a random one persisted at
   `~/.jarvis/report_secret` with mode 600. Caller phone numbers are masked to their last
   four digits everywhere they are written down.
+- **Before the PIN, the phone gets nothing and keeps nothing.** No memory, unheard result,
+  task, past call or project reaches a caller who has not given it, nothing is announced
+  into that call (and it never counts as having told you), and nothing they say outlives
+  it: no memory update, and `recall` never searches that transcript. `SECURITY.md` has the
+  threat model, including what is out of scope: anyone with the PIN, or any content a
+  subagent reads, effectively has a shell as you.
 
 Three things this summary leaves out are in the wiki: the PIN rules in full, on
 [Security model](https://github.com/wak31415/jarvis-voice-agent/wiki/Security-Model);
