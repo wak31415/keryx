@@ -45,6 +45,11 @@ class SessionEnded:
     channel: str
     caller: str | None
     reason: str
+    #: Whether the caller was authorized when the call ended: a local session always is, a
+    #: phone call only once the PIN was accepted. False unless the publisher says otherwise,
+    #: because what reads it (the memory writer) must keep nothing from a caller who
+    #: proved nothing.
+    authorized: bool = False
 
 
 # A handler may be a plain sync callable or an async callable; both take the event

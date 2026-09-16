@@ -138,7 +138,9 @@ async def test_a_call_that_ends_leaves_a_memory_update_behind(state, settings):
         "[2026-08-25T14:00:05] assistant: it landed this morning\n"
     )
 
-    await state.bus.publish(SessionEnded("abc123", "phone", "+15550001111", "user"))
+    await state.bus.publish(
+        SessionEnded("abc123", "phone", "+15550001111", "user", authorized=True)
+    )
 
     internal = [task for task in await state.store.list(include_internal=True) if task.internal]
     assert len(internal) == 1

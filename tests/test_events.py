@@ -52,6 +52,12 @@ def test_session_ended_fields():
     assert event.channel == "local"
     assert event.caller is None
     assert event.reason == "user"
+    assert event.authorized is False  # unless the publisher says so: nothing is kept
+
+
+def test_session_ended_carries_whether_the_caller_was_authorized():
+    event = SessionEnded("abc", "phone", "+15550001111", "user", authorized=True)
+    assert event.authorized is True
 
 
 # --- EventBus ------------------------------------------------------------

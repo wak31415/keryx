@@ -675,7 +675,11 @@ class VoiceSession:
         await self._safe_call(self._provider.close)
         if self._registry is not None:
             self._registry.remove(self)
-        await self._bus.publish(SessionEnded(self.session_id, self.channel, self.caller, reason))
+        await self._bus.publish(
+            SessionEnded(
+                self.session_id, self.channel, self.caller, reason, authorized=self.authorized
+            )
+        )
         self._append_transcript(f"--- session ended ({reason})")
         log.info("session %s ended (%s)", self.session_id, reason)
 
