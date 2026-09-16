@@ -1,5 +1,8 @@
 # Jarvis voice agent — implementation plan
 
+> **Historical record.** This is the plan the first build followed, kept as it was;
+> it is superseded wherever the spec or the code says otherwise.
+
 Spec (binding authority): `docs/superpowers/specs/2026-08-18-jarvis-voice-agent-design.md`.
 Read §3.2 "Binding interfaces" and §4 "Verified API notes" of the spec for every task —
 the interfaces there are shared between tasks and must be matched exactly.

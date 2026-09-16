@@ -266,7 +266,9 @@ scope, so the test suite can run on a machine with no mic.
   the `*_MESSAGE` constants in `builtin_common`, the call-back contexts, the voice prompt —
   says what *not* to say as firmly as what to say, because the failure mode is never
   silence, it is a second turn restating the first. Transcripts of real calls are in
-  `~/.jarvis/calls/`; read a few before editing any of it.
+  `~/.jarvis/calls/`; read a few before editing any of it. They may contain a spoken PIN and
+  other personal details, so nothing from them is ever copied into code, tests, docs or
+  commit messages — describe the pattern, never quote the call.
 - Spec §3.2 interface names and signatures stay stable (extra optional keyword
   arguments are fine). §3.3/§4 hold rulings: follow them, and amend the spec in a
   docs commit when one changes.

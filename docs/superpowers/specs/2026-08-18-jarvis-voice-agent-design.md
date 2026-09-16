@@ -31,7 +31,7 @@ PIN gating, and the local wake-word transport.
 |---|---|
 | Realtime voice layer | **OpenAI Realtime API** (`gpt-realtime-2.1`, speech-to-speech, server VAD, function calling) |
 | Subagent runtime | **Claude Agent SDK (Python)**, `permission_mode="bypassPermissions"`, in-process |
-| Mail + calendar access | The Claude CLI's own **claude.ai connectors** (Gmail, Calendar, Drive), which every spawned CLI already carries authorized. *Amended 2026-08-24, was: a `workspace-mcp` stdio server — kept behind `GOOGLE_WORKSPACE_MCP` (default off) for a machine whose subagents authenticate with an API key and so have no connectors. Measured: the connectors answered (20 threads, 13 calendars) while workspace-mcp returned "Google Authentication Needed".* |
+| Mail + calendar access | The Claude CLI's own **claude.ai connectors** (Gmail, Calendar, Drive), which every spawned CLI already carries authorized. *Amended 2026-08-24, was: a `workspace-mcp` stdio server — kept behind `GOOGLE_WORKSPACE_MCP` (default off) for a machine whose subagents authenticate with an API key and so have no connectors. Measured: the connectors answered while workspace-mcp returned "Google Authentication Needed".* |
 | Task kinds | **One** (`agent`): full tools, the machine, Gmail/Calendar, skills and subagents of its own. *Amended 2026-08-24, was: chat/research/coding/cowork with per-kind tool restrictions — classifying a request is a decision the voice model is badly placed to make, and it walled mail off from code.* |
 | Voice-side answers | The voice model answers small factual questions itself via a `web_search` function tool backed by the **Responses API** (a Realtime session accepts only `function` and `mcp` tools — there is no hosted search there). Everything else is dispatched. |
 | Results | Announce in live session → SMS summary → persist tasks (SQLite) → outbound call-back only when requested |
@@ -41,7 +41,7 @@ PIN gating, and the local wake-word transport.
 | Subagent model | `claude-opus-5` default; `dispatch_task.model` accepts `opus`/`sonnet`/`fable`/`haiku` or a full model id |
 | Inbound SMS | Out of scope (SMS is outbound summaries only) |
 | Language / tooling | Python 3.12, `uv`, FastAPI + uvicorn, typer, pytest (+ pytest-asyncio), ruff |
-| Repo | this folder; GitHub repo `jarvis-voice-agent` — renamed from `garmin-voice-agent` and made public 2026-09-02; package, CLI and data dir stay `jarvis`, and nothing is published to an index |
+| Repo | this folder; GitHub repo `jarvis-voice-agent` — renamed from `garmin-voice-agent` 2026-09-02; package, CLI and data dir stay `jarvis`, and nothing is published to an index |
 
 Prerequisites the owner supplies (in `.env`): `OPENAI_API_KEY`, subagent auth (the Claude
 CLI subscription login by default; `ANTHROPIC_API_KEY` is the pay-per-token override —
@@ -496,7 +496,7 @@ class SessionRegistry:
   asks for a `response.create`, so every tool the model calls costs a spoken turn. For
   `mark_reported` and `end_session` that turn is pure repetition: both are called *after*
   the thing worth saying has been said, and the model, handed a turn it has nothing new to
-  fill, re-says it. One real call-back (session 54d90826) greeted him, gave the result,
+  fill, re-says it. One real call-back greeted him, gave the result,
   called `mark_reported`, and then delivered the entire greeting a second time in slightly
   different words. So `ToolRegistry.register(..., silent=True)` marks a tool whose output
   is submitted with `respond=False`: the `function_call_output` item still reaches the

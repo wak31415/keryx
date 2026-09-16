@@ -368,7 +368,7 @@ async def test_a_silent_tool_result_does_not_buy_another_spoken_turn(
     """`mark_reported` is called *after* the result was spoken (spec §3.3).
 
     Asking for a response over its answer is what made a call-back greet him, say the
-    result, and then say the whole greeting over again (session 54d90826).
+    result, and then say the whole greeting over again.
     """
 
     async def handler(ctx: ToolContext, args: dict) -> dict:

@@ -1388,7 +1388,7 @@ async def test_mark_reported_records_the_ids_the_model_said_out_loud(tools):
 async def test_mark_reported_is_silent_because_he_has_already_heard_the_result(tools):
     """A turn generated over its answer is the result said a second time.
 
-    Session 54d90826 is the case: the model greeted him, gave the result, called
+    A real call-back was the case: the model greeted him, gave the result, called
     `mark_reported`, and the forced response made it say the whole greeting again.
     """
     assert tools.registry.is_silent("mark_reported")
