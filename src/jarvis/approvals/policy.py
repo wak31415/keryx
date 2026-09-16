@@ -10,6 +10,12 @@ So it is an allowlist, it starts small, and the denylist wins over it. Everythin
 explicitly named comes back ineligible, which means the hook says nothing and the prompt
 waits on his screen exactly as it does today.
 
+And it decides on exactly what will run, or not at all. The command as the shell will get
+it, never a normalised copy; the argv the shell will build from it, never a guess about
+an expansion; the whole request, never the part the hook had to trim; and a read-back
+said whole, never cut. Each of those was once a way to approve one thing by hearing
+another.
+
 Nothing here reads a file or touches the network: it is pure, so the tests are the spec.
 """
 
@@ -349,7 +355,7 @@ def _describe_bash(tool_input: dict, event: dict, settings) -> tuple[Kind, str, 
     _refuse_unprintable(raw)
     for character in SHELL_METACHARACTERS:
         if character in raw:
-            raise Ineligible("the command chains or redirects, so a prefix means nothing")
+            raise Ineligible("the command chains or redirects, so an allowlist means nothing")
     argv = shell_words(raw)
     if not argv:
         raise Ineligible("there is no command in the request")
