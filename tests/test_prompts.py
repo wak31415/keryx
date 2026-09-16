@@ -218,6 +218,19 @@ def test_the_prompt_sends_questions_about_the_past_to_recall(unwrapped):
     assert "if it comes back empty, say you have nothing on it rather than guessing" in flat
 
 
+def test_the_cluster_paragraph_is_only_there_when_the_tool_is(settings):
+    """A machine with no clusters configured has no `cluster_stats`; describing one anyway is
+    an invitation to call a tool that does not exist."""
+    without = _rendered(settings)
+    other_tools = _rendered(settings, tool_names=["web_search", "dispatch_task"])
+    with_it = _rendered(settings, tool_names=["web_search", "cluster_stats"])
+
+    assert "cluster_stats" not in without
+    assert "cluster_stats" not in other_tools
+    assert "- cluster_stats is what" in with_it
+    assert "{" not in with_it and "}" not in with_it
+
+
 def test_the_memorys_own_headings_are_nested_under_the_section(settings):
     """Otherwise "Standing facts" reads as an instruction to Jarvis, not as what it knows."""
     rendered = _rendered(settings, memory="## Standing facts\n\nHe hates jargon.")

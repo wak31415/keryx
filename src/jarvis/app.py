@@ -115,8 +115,8 @@ def build_app_state(settings: Settings) -> AppState:
         # "no admin key for that one" is a `BillingError` the tool speaks rather than a
         # missing tool. Nothing is built or contacted until it is actually asked for.
         billing=lambda provider: build_billing_reader(settings, provider),
-        # Built unconditionally, and contacts nothing until it is asked: a missing ssh
-        # guard is a sentence the tool speaks, not a tool that silently is not there.
+        # None, and so no tool, until clusters are configured and the ssh guard is on
+        # disk: which clusters exist is one machine's setup, never a default.
         cluster=build_cluster_stats(settings),
         restarter=restart,
         recaller=Recaller(settings.data_dir, manager),

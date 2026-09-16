@@ -1,41 +1,48 @@
-"""What the clusters are doing right now, read back to the voice model (spec §3.2).
+"""What the Slurm clusters are doing right now, read back to the voice model (spec §3.2).
 
-"What's free on alpha?" and "am I still running on beta?" are one-sentence questions
-that were costing a whole subagent and thirty seconds of silence. This answers them from
-the voice model directly: three Slurm reads per cluster, in one round trip each, over the
-connection he already holds open.
+**A worked example, not a feature.** It is one person's answer to "what's free on the
+cluster?" and "am I still running?" — one-sentence questions that were costing a whole
+subagent and thirty seconds of silence — kept because it shows how a voice tool reaches
+outside the machine safely. Nothing here knows any cluster: `CLUSTERS` names them and
+`CLUSTER_SSH_GUARD` names the guard, both are empty out of the box, and until both are set
+(and the guard is on disk) `build_cluster_stats` builds nothing and the tool is not offered.
 
 Read-only *by construction*, not by intention. `build_script` assembles the remote command
 out of module constants and refuses anything whose first word is not in `READ_ONLY`. The
-only thing the model chooses is a cluster *name*, which is looked up in `CLUSTERS` and
-refused when it is not there — no string from the model ever reaches a shell. There is no
-code path here that can submit a job, cancel one, or write a file.
+only thing the model chooses is a cluster *name*, which is looked up in the configured set
+and refused when it is not there — no string from the model ever reaches a shell. There is
+no code path here that can submit a job, cancel one, or write a file.
 
 Three rulings hold it up, and the first is not a preference:
 
-- **Never our own connection.** Cluster auth is Duo 2FA behind an ssh ControlMaster that
-  lasts about twelve hours, and a non-interactive process cannot answer a Duo push: a
-  plain connection attempt against a dead master *hangs*, and a storm of those retries is
-  what got this machine's IP banned by fail2ban once already. So every command goes
-  through the cluster-compute skill's guard (`cluster_ssh.sh`), which probes the *local*
-  control socket first — no network, no auth attempt — and exits 42 rather than dialling
-  out. Exit 42 means stop, not try again: nothing here retries it, and nothing here opens
-  a connection of its own. Without the guard on disk the tool says so and does nothing.
-- **It speaks, it does not write.** The guard Slacks him when the Duo session has expired.
-  He is on the phone — that is where the sentence belongs — so `CLUSTER_SSH_NO_NOTIFY=1`
-  is set and the expiry comes back as a spoken status instead of an unasked-for DM.
+- **Never our own connection.** Where cluster auth is 2FA (a Duo push, say) behind an ssh
+  ControlMaster that lasts some hours, a non-interactive process cannot answer the second
+  factor: a plain connection attempt against a dead master *hangs*, and a storm of those
+  retries is how an address gets banned by the login nodes. So every command goes through
+  a guard script, which probes the *local* control socket first — no network, no auth
+  attempt — and exits 42 rather than dialling out. Exit 42 means stop, not try again:
+  nothing here retries it, and nothing here opens a connection of its own.
+- **It speaks, it does not write.** A guard may have its own way of telling the user the
+  login has expired. He is on the phone — that is where the sentence belongs — so
+  `CLUSTER_SSH_NO_NOTIFY=1` is set and the expiry comes back as a spoken status instead.
 - **Numbers, not work.** A report carries GPU counts, queue counts and his own job ids. It
   never carries a job *name*, a path, or another user's name, so the most anyone who got
   past the caller allowlist learns is how busy a machine is. That is also why the tool is
   not PIN-gated: like `check_billing`, it cannot change anything, and asking what a number
   is should not need a PIN.
 
-The arithmetic follows the cluster-compute skill's hard-won rules, because the obvious
-version of it is wrong: `sinfo` without `-N` aggregates by state line rather than by node
-(it once reported 20 GPUs on a 48-GPU partition), a `planned` node is reserved for a
-queued job rather than free, and most pending jobs are usually blocked on a dependency
-rather than competing for hardware. So idle / reserved / down are counted separately and
-never collapsed into one "free" number, and pending is classified by reason.
+The guard's contract, for anyone writing one: it is run as `GUARD --host HOST SCRIPT` with
+no shell, where `HOST` is a configured cluster name used as an ssh alias; it runs `SCRIPT`
+on that host over the existing ControlMaster and prints its output; and when there is no
+live master it exits 42 (or writes `CONTROL_MASTER_EXPIRED` to stderr) *without* trying to
+authenticate.
+
+The arithmetic follows rules learned the hard way, because the obvious version of it is
+wrong: `sinfo` without `-N` aggregates by state line rather than by node (it has reported
+fewer than half of a partition's GPUs that way), a `planned` node is reserved for a queued
+job rather than free, and most pending jobs are usually blocked on a dependency rather than
+competing for hardware. So idle / reserved / down are counted separately and never
+collapsed into one "free" number, and pending is classified by reason.
 
 `RemoteRunner` is the seam the tests use: no test ever opens a connection.
 """
@@ -62,33 +69,38 @@ class ClusterSpec:
     spoken_name: str
 
 
-#: The clusters this tool knows. Frozen and closed on purpose: it is the *whole* of the
-#: model's influence over what runs, and an alias that is not in here is refused rather
-#: than handed to the guard. Delta is deliberately absent — he does not ask about it,
-#: and a third Duo master nobody keeps alive would answer every question with "expired".
-CLUSTERS: dict[str, ClusterSpec] = {
-    "beta": ClusterSpec("beta", "beta", "pci", "Beta"),
-    "alpha": ClusterSpec("alpha", "alpha", "gpu", "Alpha"),
-}
+def cluster_specs(clusters: dict[str, str]) -> dict[str, ClusterSpec]:
+    """The configured `{name: partition}` as specs: the name doubles as the ssh alias.
+
+    Closed on purpose: this mapping is the *whole* of the model's influence over what
+    runs, and a name that is not in it is refused rather than handed to the guard. List
+    only the clusters somebody keeps a login open to — one nobody does answers every
+    question with "expired".
+    """
+    return {
+        name: ClusterSpec(name, name, partition, name.capitalize())
+        for name, partition in clusters.items()
+    }
+
 
 #: The only remote commands that may appear in a batched script. Both are Slurm *readers*
 #: with no write mode; `build_script` enforces the list, so a future edit that slips
 #: `scancel` into the batch fails a test rather than shipping.
 READ_ONLY = frozenset({"squeue", "sinfo"})
 
-#: Only ever a host or a partition out of `CLUSTERS`, but validated anyway: these are the
-#: two values that get as far as a remote shell, and the check costs nothing.
+#: Only ever a host or a partition out of the configuration, but validated anyway: these
+#: are the two values that get as far as a remote shell, and the check costs nothing.
 _SHELL_SAFE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
-#: Section marker for the batched script (the skill's `_cluster.py` uses the same trick):
-#: several commands, one round trip, output split back apart on this line.
+#: Section marker for the batched script: several commands, one round trip, output split
+#: back apart on this line.
 MARK = "@@JARVIS-CLUSTER@@"
 
-#: `cluster_ssh.sh` exits with this when the Duo ControlMaster is dead.
+#: The guard exits with this when the ControlMaster is dead.
 EXIT_MASTER_EXPIRED = 42
 
 #: How long one cluster's round trip may take. This runs inside a phone call, and the
-#: clusters are queried concurrently, so it is the whole wait rather than the sum of two.
+#: clusters are queried concurrently, so it is the whole wait rather than a sum.
 QUERY_TIMEOUT_S = 20.0
 
 ErrorCode = Literal["not_configured", "unknown_cluster", "auth_expired", "timeout", "unavailable"]
@@ -101,11 +113,11 @@ MESSAGES: dict[ErrorCode, str] = {
         "Claude wire it up"
     ),
     "unknown_cluster": (
-        "you only know about Beta and Alpha; say which two you can check and ask which "
-        "he meant"
+        "that is not one of the clusters you can check; say which ones you can and ask "
+        "which he meant"
     ),
     "auth_expired": (
-        "the cluster login has timed out — he needs to approve a Duo push on his desktop "
+        "the cluster login has timed out — he needs to log in to it again at his desk "
         "before you can look; say that and offer to try again once he has"
     ),
     "timeout": "the cluster did not answer in time; offer to try again in a moment",
@@ -151,7 +163,7 @@ STATE_FLAGS = {
 
 #: Pending reasons that are *not* competing for GPUs — the job is blocked on something
 #: other than free hardware, so counting it as contention overstates the queue several
-#: times over (36 pending on alpha once, of which exactly 1 was waiting on Resources).
+#: times over (36 pending on one real queue, of which exactly 1 was waiting on Resources).
 NON_COMPETING_REASONS = frozenset(
     {
         "dependency",
@@ -200,10 +212,10 @@ class ClusterError(Exception):
 
 
 def gpu_count(field_text: str) -> int:
-    """GPUs in a GRES-ish string, for either cluster's spelling.
+    """GPUs in a GRES-ish string, however the cluster spells it.
 
-    Handles `gpu:10` and `gres/gpu:2` (beta), `gpu:h100:4(S:0-1)` and
-    `gpu:a6000:2(IDX:2-3)` (alpha), `(null)` and `N/A`. No GPU model is hardcoded: the
+    Handles `gpu:10` and `gres/gpu:2`, `gpu:h100:4(S:0-1)` and `gpu:a6000:2(IDX:2-3)`,
+    `(null)` and `N/A`. No GPU model is hardcoded: the
     `(…)` suffix is stripped *first* — IDX lists contain commas — and then the last
     numeric colon-field wins. An entry that names GPUs but carries no number raises, rather
     than counting zero: a silent zero here reads out loud as "nothing running".
@@ -490,7 +502,7 @@ def build_script(partition: str) -> str:
         raise ClusterError("unknown_cluster", f"unsafe partition {partition!r}")
     commands = [
         # His jobs across the whole cluster, not just this partition: he asks "am I still
-        # running", and a job he put on `allcs` is still a job.
+        # running", and a job he put on some other partition is still a job.
         ("jobs", 'squeue -h -u "$USER" -o "%i|%T|%P|%b|%L|%D|%r"'),
         # `-N` is mandatory; see `parse_nodes`.
         ("nodes", f'sinfo -p {partition} -N -h -O "NodeList:40,Gres:64,GresUsed:80,StateLong:24"'),
@@ -536,13 +548,13 @@ class RemoteRunner(Protocol):
 
 
 class GuardedSsh:
-    """`cluster_ssh.sh` as a `RemoteRunner`: the only sanctioned way to reach a cluster.
+    """The guard script as a `RemoteRunner`: the only sanctioned way to reach a cluster.
 
     The guard is not an implementation detail that could be swapped for a direct
     connection. It checks the *local* control socket before it opens anything, which is
-    what makes a dead Duo session a fast `42` instead of a hang — and a retry storm of
-    those hangs is what got this machine's IP banned once. A missing guard is
-    `not_configured`; there is no fallback that dials out by itself.
+    what makes a dead 2FA session a fast `42` instead of a hang — and a retry storm of
+    those hangs is what gets an address banned. A guard that has gone missing since
+    startup is `not_configured`; there is no fallback that dials out by itself.
     """
 
     def __init__(self, guard: Path, *, timeout_s: float = QUERY_TIMEOUT_S) -> None:
@@ -556,7 +568,8 @@ class GuardedSsh:
             raise ClusterError("not_configured", f"no guard at {self.guard}")
         # No shell: the script is one argv element, so nothing local expands it.
         argv = [str(self.guard), "--host", host, script]
-        # The guard Slacks him on expiry; he is on the phone, so we say it instead.
+        # A guard may notify him some other way on expiry; he is on the phone, so we say
+        # it instead.
         env = {**os.environ, "CLUSTER_SSH_NO_NOTIFY": "1"}
         try:
             proc = await asyncio.to_thread(
@@ -577,9 +590,9 @@ class GuardedSsh:
             ) from exc
         stderr = proc.stderr or ""
         if proc.returncode == EXIT_MASTER_EXPIRED or "CONTROL_MASTER_EXPIRED" in stderr:
-            # Deliberately terminal: a retry cannot answer a Duo push, and a storm of them
-            # is exactly what fail2ban counts.
-            raise ClusterError("auth_expired", f"Duo/ControlMaster expired on {host}")
+            # Deliberately terminal: a retry cannot answer a second factor, and a storm of
+            # them is exactly what gets an address banned.
+            raise ClusterError("auth_expired", f"ControlMaster expired on {host}")
         if proc.returncode != 0:
             raise ClusterError("unavailable", f"{host} guard exit {proc.returncode}")
         return proc.stdout or ""
@@ -600,11 +613,9 @@ class ClusterQuerier(Protocol):
 class SlurmClusterStats:
     """`ClusterQuerier` over Slurm's read-only commands, one round trip per cluster."""
 
-    def __init__(
-        self, runner: RemoteRunner, clusters: dict[str, ClusterSpec] | None = None
-    ) -> None:
+    def __init__(self, runner: RemoteRunner, clusters: dict[str, ClusterSpec]) -> None:
         self.runner = runner
-        self.clusters = clusters if clusters is not None else CLUSTERS
+        self.clusters = clusters
 
     def known(self) -> list[str]:
         return list(self.clusters)
@@ -651,8 +662,16 @@ class SlurmClusterStats:
         )
 
 
-def build_cluster_stats(settings) -> SlurmClusterStats:
-    """The production querier: the guard named in settings, and the clusters above."""
+def build_cluster_stats(settings) -> SlurmClusterStats | None:
+    """The production querier, or None when there is nothing it could answer for.
+
+    None unless clusters are configured *and* the guard named in settings is on disk: a
+    tool that could only ever say "not set up" is a tool the model should not be offered.
+    """
+    guard = settings.cluster_ssh_guard
+    if not settings.clusters or guard is None or not Path(guard).expanduser().is_file():
+        return None
     return SlurmClusterStats(
-        GuardedSsh(settings.cluster_ssh_guard, timeout_s=settings.cluster_query_timeout_s)
+        GuardedSsh(guard, timeout_s=settings.cluster_query_timeout_s),
+        cluster_specs(settings.clusters),
     )

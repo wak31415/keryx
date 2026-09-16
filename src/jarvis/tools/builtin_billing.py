@@ -1,11 +1,11 @@
 """The two tools that read a number and cannot change anything.
 
 `check_billing` reads the provider's own billing API; `cluster_stats` reads Slurm through
-the cluster-compute skill's ssh guard. Neither is PIN-gated, and that is the point: asking
-what a number is should not need a PIN, and neither of these can do anything but ask. The
-read-only guarantees themselves live in `jarvis/integrations/billing.py` (`_get` takes no
-method and no body) and `jarvis/integrations/cluster.py` (`build_script` refuses any command
-outside `READ_ONLY`).
+an ssh guard script. Neither is PIN-gated, and that is the point: asking what a number is
+should not need a PIN, and neither of these can do anything but ask. The read-only
+guarantees themselves live in `jarvis/integrations/billing.py` (`_get` takes no method and
+no body) and `jarvis/integrations/cluster.py` (`build_script` refuses any command outside
+`READ_ONLY`).
 """
 
 import asyncio
@@ -80,12 +80,12 @@ def register_billing_tools(
     # --- cluster_stats -----------------------------------------------------
 
     async def cluster_stats(ctx: ToolContext, arguments: dict) -> dict:
-        """What Beta and Alpha are doing right now, straight off Slurm.
+        """What the configured clusters are doing right now, straight off Slurm.
 
         Un-PIN-gated for the same reason as `check_billing`: it is three read-only Slurm
         commands behind the ssh guard, it cannot start, stop or change anything, and the
         numbers it carries are counts and his own job ids — never a job name or a path.
-        Both clusters are asked at once, and one being unreachable never costs the other:
+        Every cluster is asked at once, and one being unreachable never costs the others:
         a failure comes back beside the report that worked, as a `status` with a sentence
         to say. See `jarvis/integrations/cluster.py` for why nothing here ever retries an
         expired login.
@@ -124,27 +124,33 @@ def register_billing_tools(
             payload["unavailable"] = failures
         return payload
 
-    if cluster is not None:
+    # Only with a cluster to ask about: which ones exist is configuration, never built in.
+    names = cluster.known() if cluster is not None else []
+    if cluster is not None and names:
+        if len(names) == 1:
+            subject = f"the Slurm cluster {names[0]} is"
+        else:
+            subject = f"the Slurm clusters {', '.join(names[:-1])} and {names[-1]} are"
         registry.register(
             "cluster_stats",
-            "What the Beta and Alpha clusters are doing right now: free, busy and down "
+            f"What {subject} doing right now: free, busy and down "
             "GPUs, how many jobs of his are running or queued, and how busy the queue is. "
-            'Call it for "what\'s free on alpha", "am I still running on beta", "how '
+            'Call it for "what\'s free on the cluster", "am I still running", "how '
             'busy is the cluster", "how long until my job finishes". It only reads Slurm '
             "and changes nothing — submitting, cancelling or debugging a job is "
             "dispatch_task instead. Say the numbers roughly and say which cluster each "
             "one is; the free count already leaves out GPUs that are down or held for a "
             "queued job, so do not add them back. If a cluster comes back with a status "
             "other than ok, say the one thing it tells you to say for that cluster and "
-            "still report the other.",
+            "still report the others.",
             {
                 "type": "object",
                 "properties": {
                     "cluster": {
                         "type": "string",
-                        "enum": ["beta", "alpha", "both"],
-                        "description": "Which cluster. Leave it out for both, which is "
-                        "the right answer when he just says \"the cluster\".",
+                        "enum": [*names, "all"],
+                        "description": "Which cluster. Leave it out for all of them, which "
+                        "is the right answer when he just says \"the cluster\".",
                     }
                 },
                 "required": [],

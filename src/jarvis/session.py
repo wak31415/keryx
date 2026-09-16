@@ -373,6 +373,7 @@ class VoiceSession:
                 opening_context=self._opening_context,
                 pending=self._briefing.pending,
                 memory=self._briefing.memory,
+                tool_names={schema["name"] for schema in self._tools.schemas()},
             ),
             tools=self._tools.schemas(),
             voice=self._settings.openai_voice,

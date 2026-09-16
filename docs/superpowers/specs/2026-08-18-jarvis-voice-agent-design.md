@@ -80,7 +80,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `skills.py` | `discover_skills`: the Claude skills installed on the machine (name + description from each `SKILL.md`), listed in the voice prompt |
 | `integrations/web_search.py` | `WebSearcher` protocol + `OpenAIWebSearch` (Responses API, hosted `web_search` tool), behind the voice model's own `web_search` tool. Grouped with the three below under `integrations/` 2026-09-08 — one module per outside service, each behind exactly one voice tool, sharing no code with each other. Not `services/`: `service` already means the systemd unit here |
 | `integrations/billing.py` | `BillingReader` protocol + `OpenAIBilling` (Admin API `/v1/organization/costs` and `/usage/completions`) and `AnthropicBilling` (`/v1/organizations/cost_report` and `/usage_report/messages`), behind the voice model's `check_billing`; `build_billing_reader` picks one from `BILLING_PROVIDER`. Read-only: every request is a `GET` |
-| `integrations/cluster.py` | `ClusterQuerier`/`RemoteRunner` protocols + `SlurmClusterStats` and `GuardedSsh` (the cluster-compute skill's `cluster_ssh.sh`, never a connection of its own), behind the voice model's `cluster_stats`; `build_cluster_stats` wires one from settings. Read-only: `build_script` refuses any command outside `READ_ONLY` (`squeue`, `sinfo`) and the cluster name is resolved through `CLUSTERS`, never interpolated |
+| `integrations/cluster.py` | A worked example. `ClusterQuerier`/`RemoteRunner` protocols + `SlurmClusterStats` and `GuardedSsh` (an ssh guard script the owner supplies, never a connection of its own), behind the voice model's `cluster_stats`; `build_cluster_stats` wires one from settings and returns `None` — no tool, no prompt paragraph — unless `CLUSTERS` is set and `CLUSTER_SSH_GUARD` is on disk. Read-only: `build_script` refuses any command outside `READ_ONLY` (`squeue`, `sinfo`) and the cluster name is resolved through the configured set, never interpolated |
 | `integrations/slack.py` | `SlackSender` protocol + `SlackWebApi` (`chat.postMessage`), behind the voice model's `send_to_slack`; credentials resolve from the `auto-research` skill's MCP server config |
 | `restart/coordinator.py` | `RestartCoordinator`: restart this service through systemd/launchd, and call back once it is up. Split 2026-09-02 — the modules below were its other concerns; made a package 2026-09-08 |
 | `restart/health.py` | `health_probe` (one localhost `GET /health`: how many calls are live, or `None` if it is not answering) and `wait_until_serving`. Both are asked from *outside* the process, so neither may cost an import of the application |
@@ -587,8 +587,9 @@ class SessionRegistry:
 | `OPENAI_BILLING_API_KEY_ID` | `openai_billing_api_key_id` (narrows *usage* only; costs have no per-key filter) | `None` |
 | `ANTHROPIC_ADMIN_KEY` | `anthropic_admin_key` (`sk-ant-admin…`) | `None` → falls back to `ANTHROPIC_API_KEY` |
 | `ANTHROPIC_BILLING_WORKSPACE_ID` | `anthropic_billing_workspace_id` | `None` → the whole organization |
-| `CLUSTER_SSH_GUARD` | `cluster_ssh_guard` (the Duo/ControlMaster guard `cluster_stats` runs every command through) | `~/.claude/skills/cluster-compute/scripts/cluster_ssh.sh` |
-| `CLUSTER_QUERY_TIMEOUT_S` | `cluster_query_timeout_s` (per cluster; both are queried at once, so it is the whole wait) | `20.0` |
+| `CLUSTERS` | `clusters` (JSON `{"name": "partition"}`; the name is the ssh alias and the word the model says; both halves must be bare words) | `{}` → no `cluster_stats` |
+| `CLUSTER_SSH_GUARD` | `cluster_ssh_guard` (the 2FA/ControlMaster guard `cluster_stats` runs every command through; its contract is in `integrations/cluster.py`) | `None` → no `cluster_stats` |
+| `CLUSTER_QUERY_TIMEOUT_S` | `cluster_query_timeout_s` (per cluster; all are queried at once, so it is the whole wait) | `20.0` |
 | `BILLING_MONTHLY_BUDGET` | `billing_monthly_budget` (what he calls a month's budget; neither provider serves one) | `None` → no percentage is spoken |
 | `SUBAGENT_MODEL` | `subagent_model` | `claude-opus-5` |
 | `SUBAGENT_MAX_TURNS` | `subagent_max_turns` | `200` |

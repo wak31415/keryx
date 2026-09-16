@@ -29,6 +29,39 @@ def test_allowed_callers_defaults_to_empty_list(settings):
     assert settings.allowed_callers == []
 
 
+def test_clusters_parse_from_json_env(monkeypatch, tmp_path):
+    """Names are what the model says, so they are matched lower-case."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    monkeypatch.setenv("CLUSTERS", '{"Alpha": "shared", "beta": "gpu"}')
+    monkeypatch.setenv("CLUSTER_SSH_GUARD", "~/bin/guard.sh")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
+
+    settings = Settings(_env_file=None)
+
+    assert settings.clusters == {"alpha": "shared", "beta": "gpu"}
+    assert settings.cluster_ssh_guard == Path.home() / "bin" / "guard.sh"
+
+
+@pytest.mark.parametrize(
+    "clusters",
+    [{"alpha; rm -rf ~": "gpu"}, {"alpha": "gpu && reboot"}, {"": "gpu"}, {"alpha": " "}],
+)
+def test_a_cluster_that_is_not_a_bare_word_is_refused_at_startup(tmp_path, clusters):
+    """Both halves reach a remote shell, so a bad one fails loudly rather than per call."""
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", clusters=clusters
+        )
+
+
+def test_a_blank_cluster_guard_is_no_guard(tmp_path):
+    settings = Settings(
+        _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", cluster_ssh_guard=""
+    )
+
+    assert settings.cluster_ssh_guard is None
+
+
 def test_projects_parses_json_env(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("PROJECTS", '{"jarvis": "/home/me/jarvis", "other": "/home/me/other"}')

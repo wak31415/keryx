@@ -96,10 +96,14 @@ def prompt_tool_names() -> set[str]:
     """Every snake-case name the voice prompt uses from "Your tools" onwards.
 
     Read from that heading down because the sections above it are prose about the call,
-    where a word like `recall` is English rather than a tool.
+    where a word like `recall` is English rather than a tool. The `voice_tool_*.md`
+    paragraphs count too: they describe the tools only some machines offer, and are spliced
+    into that section, in place of a `{placeholder}`, when the tool is registered.
     """
-    text = (ROOT / "src" / "jarvis" / "prompts" / "voice_system.md").read_text()
-    body = text[text.index("## Your tools") :]
+    prompts = ROOT / "src" / "jarvis" / "prompts"
+    text = (prompts / "voice_system.md").read_text()
+    body = re.sub(r"\{[a-z_]+\}", "", text[text.index("## Your tools") :])
+    body += "".join(path.read_text() for path in sorted(prompts.glob("voice_tool_*.md")))
     return set(re.findall(r"\b([a-z]+_[a-z_]+)\b", body)) - NOT_TOOLS
 
 

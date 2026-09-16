@@ -55,6 +55,10 @@ OPTIONAL_STR_FIELDS = (
 PIN_PATTERN = re.compile(r"\d{6,8}")
 PIN_RULE = "must be 6 to 8 digits, and nothing but digits"
 
+#: What a cluster name or partition has to be. Both are handed to a remote shell, so
+#: anything but a bare word is refused when the settings load rather than on a call.
+CLUSTER_WORD = re.compile(r"[A-Za-z0-9_.-]+")
+
 
 #: Modes for everything under `data_dir`. Owner-only, both of them, because of what is
 #: actually in there: `calls/*.log` is every word of every call, `tasks.db` and
@@ -138,14 +142,18 @@ class Settings(BaseSettings):
     billing_monthly_budget: float | None = None
 
     # Cluster stats (jarvis/integrations/cluster.py, behind the voice model's `cluster_stats`).
-    # Read-only Slurm reads on the owner's clusters, routed through the cluster-compute
-    # skill's ssh guard. The guard is the whole point: cluster auth is Duo 2FA behind an
-    # ssh ControlMaster, and a direct connection against a dead one hangs rather than
-    # failing, which is how a retry storm once got this machine's IP fail2ban-banned.
-    #: The guard script. Missing, the tool says cluster access is not set up rather than
-    #: reaching for a connection of its own.
-    cluster_ssh_guard: Path = Path("~/.claude/skills/cluster-compute/scripts/cluster_ssh.sh")
-    #: How long one cluster may take to answer. Both are queried at once, so this is the
+    # A worked example, off until both settings below are set and the guard is on disk:
+    # read-only Slurm reads, routed through an ssh guard script you supply. The guard is the
+    # whole point: where cluster auth is 2FA behind an ssh ControlMaster, a direct
+    # connection against a dead master hangs rather than failing, and a retry storm of those
+    # is how an address gets banned by the login nodes.
+    #: The guard script (its contract is in `jarvis/integrations/cluster.py`). Blank: no tool.
+    cluster_ssh_guard: Path | None = None
+    #: The clusters it may ask about, as `{"name": "partition"}`: the name is the ssh host
+    #: alias the guard is handed and the word the model says, the partition is where the
+    #: GPUs are. Empty: no tool. Nothing else the model says ever reaches the guard.
+    clusters: dict[str, str] = Field(default_factory=dict)
+    #: How long one cluster may take to answer. They are all queried at once, so this is the
     #: whole wait — and it is a wait inside a phone call.
     cluster_query_timeout_s: float = 20.0
 
@@ -317,6 +325,26 @@ class Settings(BaseSettings):
             return value
         raise ValueError(PIN_RULE)
 
+    @field_validator("cluster_ssh_guard", mode="before")
+    @classmethod
+    def _blank_guard_is_unset(cls, value: object) -> object:
+        """A blank path is no guard, not the current directory."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("clusters", mode="after")
+    @classmethod
+    def _clusters_are_bare_words(cls, value: dict[str, str]) -> dict[str, str]:
+        """Names lower-cased (they are matched against speech), and both halves bare words."""
+        clusters: dict[str, str] = {}
+        for name, partition in value.items():
+            name, partition = name.strip().lower(), partition.strip()
+            if not (CLUSTER_WORD.fullmatch(name) and CLUSTER_WORD.fullmatch(partition)):
+                raise ValueError("each cluster name and partition must be a bare word")
+            clusters[name] = partition
+        return clusters
+
     @field_validator(
         "data_dir",
         "projects_root",
@@ -326,8 +354,8 @@ class Settings(BaseSettings):
         mode="after",
     )
     @classmethod
-    def _expand_path(cls, value: Path) -> Path:
-        return value.expanduser()
+    def _expand_path(cls, value: Path | None) -> Path | None:
+        return value.expanduser() if value is not None else None
 
     def google_oauth_client(self) -> tuple[str, str] | None:
         """The OAuth client as `(id, secret)`: the env pair if set, else the JSON file.

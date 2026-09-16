@@ -3,7 +3,7 @@
 Four modules of the same shape: a `Protocol` naming what Jarvis needs, one implementation
 that talks to exactly one third party over HTTP or ssh, and sometimes a `build_*` factory
 that picks one from settings. `billing` reads the providers' own books, `cluster` reads
-Slurm through the cluster-compute skill's guard, `slack` posts a message, and
+Slurm through an ssh guard script, `slack` posts a message, and
 `web_search` asks the Responses API. Each sits behind exactly one of the voice model's
 tools, whose *registration* is in `tools/builtin_<domain>.py`; this package is where the
 thing being registered lives.

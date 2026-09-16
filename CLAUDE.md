@@ -200,25 +200,29 @@ sentence written to be spoken, never a raised exception.
 
 ## Cluster stats read, and only read
 
-`jarvis/integrations/cluster.py` answers "what's free on alpha" and "am I still running on beta" from
-Slurm, behind the voice model's `cluster_stats`. Three rulings, and the first is the one
-with a scar behind it:
+`jarvis/integrations/cluster.py` answers "what's free on the cluster" and "am I still running"
+from Slurm, behind the voice model's `cluster_stats`. It is a worked example, not a default:
+the clusters (`CLUSTERS`, `{"name": "partition"}`) and the guard (`CLUSTER_SSH_GUARD`) are
+both empty out of the box, and until both are set and the guard is on disk
+`build_cluster_stats` returns None, the tool is not registered, and the voice prompt's
+`voice_tool_cluster_stats.md` paragraph is not rendered. Never hardcode a cluster. Three
+rulings, and the first is the one with a scar behind it:
 
-- **Never our own connection to the cluster.** Auth is Duo 2FA behind an ssh ControlMaster
-  that lasts about twelve hours, and no non-interactive process can answer a Duo push: a
-  direct attempt against a dead master *hangs*, and a storm of those retries is what got
-  this machine's IP fail2ban-banned. Everything goes through the cluster-compute skill's
-  guard (`CLUSTER_SSH_GUARD`, default `~/.claude/skills/…/cluster_ssh.sh`), which probes
-  the local control socket — no network, no auth attempt — and exits `42`. That `42` is
-  terminal: nothing retries it, and a missing guard is `not_configured`, never a fallback
-  that dials out by itself. `CLUSTER_SSH_NO_NOTIFY=1` is set because the guard would
-  otherwise Slack him unasked, and he is on the phone, which is where the sentence belongs.
+- **Never our own connection to the cluster.** Where auth is 2FA behind an ssh
+  ControlMaster, no non-interactive process can answer the second factor: a direct attempt
+  against a dead master *hangs*, and a storm of those retries is how an address gets banned
+  by the login nodes. Everything goes through the guard, which probes the local control
+  socket — no network, no auth attempt — and exits `42`. That `42` is terminal: nothing
+  retries it, and a guard gone missing is `not_configured`, never a fallback that dials out
+  by itself. `CLUSTER_SSH_NO_NOTIFY=1` is set because a guard may notify him some other way,
+  and he is on the phone, which is where the sentence belongs.
 - **Read-only by construction.** `build_script` assembles the remote command from module
   constants and refuses any command whose first word is not in `READ_ONLY` (`squeue`,
   `sinfo`); there is a test named after it. The only thing the model chooses is a cluster
-  *name*, looked up in `CLUSTERS` and refused when it is not there — no string from the
-  model reaches a shell. Un-PIN-gated for the same reason as `check_billing`, and the
-  payload is counts plus his own job ids: no job name, no path, no other user.
+  *name*, looked up in the configured set and refused when it is not there — no string
+  from the model reaches a shell, and `Settings` refuses a name or partition that is not a
+  bare word. Un-PIN-gated for the same reason as `check_billing`, and the payload is counts
+  plus his own job ids: no job name, no path, no other user.
 - **Idle, planned and down are three numbers, not one.** `sinfo` without `-N` aggregates by
   state line and its totals are silently wrong; a `planned` node is backfill holding
   hardware for a queued job, not a free one; and most pending jobs are blocked on a

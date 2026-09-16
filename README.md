@@ -38,7 +38,7 @@ sequenceDiagram
     participant T as Twilio
     participant J as Jarvis
     participant C as Claude subagent
-    participant S as Alpha, over Slurm
+    participant S as a Slurm cluster
 
     U->>T: dial the number
     T->>J: POST /twilio/voice
@@ -50,7 +50,7 @@ sequenceDiagram
     J-->>U: "that's task 12 — I'll ring you"<br/>(request_callback)
     U->>T: hangs up
     Note over U,C: the call is over — the work is not
-    C->>S: the cluster-compute skill's ssh guard, then sbatch
+    C->>S: over ssh, then sbatch
     S-->>C: job 4831 running on two GPUs
     C-->>J: SPOKEN_SUMMARY: it is training
     alt you are on the phone again
@@ -154,7 +154,8 @@ the digest at the top of your next call depends on it.
 
 **The rest are examples.** They are the tools one person actually wanted, kept here
 because they are worked examples of the shape rather than because you need them.
-`cluster_stats` reads a Slurm cluster at a university and will mean nothing to you;
+`cluster_stats` reads Slurm clusters through an ssh guard you write yourself, and is not
+offered at all until `CLUSTERS` and `CLUSTER_SSH_GUARD` are set;
 `check_billing` reads an API bill; the approval pair is for someone who uses Claude Code
 on the same machine. Read them for the pattern, then delete them and write your own.
 
@@ -433,7 +434,7 @@ examples of what one looks like — see [Writing your own](#writing-your-own):
 - *"What am I spending this month?"* — read straight off the provider's billing API with
   `check_billing`; the tool end to end is
   [a worked example](https://github.com/wak31415/jarvis-voice-agent/wiki/Worked-Example-check_billing).
-- *"What's free on Alpha?"* / *"Am I still running on Beta?"* — read straight off Slurm
+- *"What's free on the cluster?"* / *"Am I still running?"* — read straight off Slurm
   with `cluster_stats`; likewise
   [a worked example](https://github.com/wak31415/jarvis-voice-agent/wiki/Worked-Example-cluster_stats).
 

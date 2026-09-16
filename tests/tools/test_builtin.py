@@ -1177,13 +1177,30 @@ async def test_there_is_no_cluster_stats_tool_without_a_querier(tools):
     assert "cluster_stats" not in {schema["name"] for schema in tools.registry.schemas()}
 
 
-async def test_the_cluster_schema_offers_exactly_the_two_clusters(make_tools):
+async def test_the_cluster_schema_offers_exactly_the_configured_clusters(make_tools):
+    """The names come from the querier, which got them from settings — none are built in."""
     tools = make_tools(cluster=both_clusters())
 
     schema = next(s for s in tools.registry.schemas() if s["name"] == "cluster_stats")
 
-    assert schema["parameters"]["properties"]["cluster"]["enum"] == ["beta", "alpha", "both"]
+    assert schema["parameters"]["properties"]["cluster"]["enum"] == ["alpha", "beta", "all"]
     assert schema["parameters"]["required"] == []
+    assert "alpha and beta" in schema["description"]
+
+
+async def test_one_configured_cluster_is_described_as_one(make_tools):
+    tools = make_tools(cluster=FakeClusters({"alpha": a_cluster_report("alpha")}))
+
+    schema = next(s for s in tools.registry.schemas() if s["name"] == "cluster_stats")
+
+    assert "the Slurm cluster alpha is doing" in schema["description"]
+    assert schema["parameters"]["properties"]["cluster"]["enum"] == ["alpha", "all"]
+
+
+async def test_a_querier_that_knows_no_cluster_offers_no_tool(make_tools):
+    tools = make_tools(cluster=FakeClusters({}))
+
+    assert "cluster_stats" not in {schema["name"] for schema in tools.registry.schemas()}
 
 
 # --- send_to_slack ---------------------------------------------------------

@@ -45,6 +45,11 @@ async def test_build_app_state_registers_the_voice_tools(state):
     assert {"dispatch_task", "list_tasks", "submit_pin", "end_session"} <= names
 
 
+async def test_a_machine_with_no_clusters_configured_is_not_offered_cluster_stats(state):
+    """The cluster tool is a worked example; out of the box there is nothing for it to ask."""
+    assert "cluster_stats" not in {schema["name"] for schema in state.registry.schemas()}
+
+
 async def test_build_app_state_wires_the_notifier(state):
     assert isinstance(state.twilio_out, TwilioOut)
     assert isinstance(state.notifier, Notifier)

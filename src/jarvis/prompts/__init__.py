@@ -6,6 +6,7 @@ they work the same from a wheel, an editable install or a zip. Templates use pla
 """
 
 import logging
+from collections.abc import Collection
 from datetime import datetime
 from importlib import resources
 from typing import TYPE_CHECKING
@@ -19,6 +20,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 log = logging.getLogger("jarvis.prompts")
 
 VOICE_SYSTEM_PROMPT = "voice_system.md"
+#: The "Your tools" paragraphs for tools only some machines offer, by tool name, and the
+#: placeholder each fills. A paragraph is spliced in only when the session actually has the
+#: tool: describing one it was not given is an invitation to call something that is not
+#: there.
+OPTIONAL_TOOL_PROMPTS = {"cluster_stats": ("cluster_stats_tool", "voice_tool_cluster_stats.md")}
 
 _TIME_FORMAT = "%A %d %B %Y, %H:%M"
 _OPENING_HEADING = "## Why this session opened"
@@ -97,6 +103,7 @@ def render_voice_prompt(
     opening_context: str | None = None,
     pending: str | None = None,
     memory: str | None = None,
+    tool_names: Collection[str] = (),
 ) -> str:
     """Render the voice system prompt for one session.
 
@@ -109,11 +116,17 @@ def render_voice_prompt(
     say) and is dropped from the prompt when there is none. `pending` and `memory` come
     from a `Briefing` (see `jarvis.continuity.briefing`) and are dropped the same way: a
     first call on a fresh machine renders neither section, rather than an empty heading.
+    `tool_names` is what the session was actually given, and decides which of the
+    `OPTIONAL_TOOL_PROMPTS` paragraphs appear.
     """
     known = discover_projects(settings)
     names = list(known) if projects is None else projects
     catalog = discover_skills(settings.skills_dir) if skills is None else skills
     written = discover_briefs(known) if briefs is None else briefs
+    optional = {
+        placeholder: load_prompt(template).strip() if tool in tool_names else ""
+        for tool, (placeholder, template) in OPTIONAL_TOOL_PROMPTS.items()
+    }
     return render_prompt(
         VOICE_SYSTEM_PROMPT,
         now=datetime.now().strftime(_TIME_FORMAT),
@@ -126,4 +139,5 @@ def render_voice_prompt(
         opening_context=f"{_OPENING_HEADING}\n\n{opening_context}" if opening_context else "",
         pending_tasks=f"{_PENDING_HEADING}\n\n{pending}" if pending else "",
         memory=f"{_MEMORY_HEADING}\n\n{_nest_headings(memory)}" if memory else "",
+        **optional,
     )

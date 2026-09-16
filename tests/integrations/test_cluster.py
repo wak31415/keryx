@@ -15,6 +15,7 @@ import subprocess
 
 import pytest
 
+from jarvis.config import Settings
 from jarvis.integrations.cluster import (
     MARK,
     READ_ONLY,
@@ -22,6 +23,7 @@ from jarvis.integrations.cluster import (
     ClusterSpec,
     GuardedSsh,
     SlurmClusterStats,
+    build_cluster_stats,
     build_script,
     gpu_count,
     parse_duration,
@@ -433,3 +435,56 @@ async def test_a_host_that_is_not_a_bare_word_is_refused_before_the_guard(monkey
 def test_every_failure_has_a_sentence_to_say():
     for code in ("not_configured", "unknown_cluster", "auth_expired", "timeout", "unavailable"):
         assert ClusterError(code).spoken
+
+
+# --- configuration ----------------------------------------------------------
+#
+# Which clusters exist is one person's setup, so it is configuration with an empty default,
+# and a tool that could only ever answer "not set up" is not offered at all.
+
+
+def cluster_settings(tmp_path, **overrides) -> Settings:
+    return Settings(
+        _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", **overrides
+    )
+
+
+def test_nothing_is_configured_out_of_the_box(tmp_path):
+    """A fresh clone knows no clusters and no guard, and so builds no querier."""
+    settings = cluster_settings(tmp_path)
+
+    assert settings.clusters == {}
+    assert settings.cluster_ssh_guard is None
+    assert build_cluster_stats(settings) is None
+
+
+def test_clusters_without_a_guard_build_nothing(tmp_path):
+    settings = cluster_settings(tmp_path, clusters={"alpha": "shared"})
+
+    assert build_cluster_stats(settings) is None
+
+
+def test_a_guard_that_is_not_on_disk_builds_nothing(tmp_path):
+    settings = cluster_settings(
+        tmp_path, clusters={"alpha": "shared"}, cluster_ssh_guard=tmp_path / "missing.sh"
+    )
+
+    assert build_cluster_stats(settings) is None
+
+
+def test_a_guard_with_no_clusters_builds_nothing(tmp_path, guard):
+    settings = cluster_settings(tmp_path, cluster_ssh_guard=guard)
+
+    assert build_cluster_stats(settings) is None
+
+
+def test_a_guard_and_clusters_build_a_querier_for_exactly_those(tmp_path, guard):
+    settings = cluster_settings(
+        tmp_path, clusters={"alpha": "shared", "beta": "gpu"}, cluster_ssh_guard=guard
+    )
+
+    querier = build_cluster_stats(settings)
+
+    assert querier is not None
+    assert querier.known() == ["alpha", "beta"]
+    assert querier.resolve("Beta") == ClusterSpec("beta", "beta", "gpu", "Beta")
