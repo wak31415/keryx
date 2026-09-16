@@ -45,16 +45,18 @@ def test_a_missing_root_is_not_an_error(settings, tmp_path):
 
 def test_a_project_with_a_brief_describes_itself(settings, tmp_path):
     root = tmp_path / "projects"
-    (root / "vidmem").mkdir(parents=True)
-    (root / "vidmem" / ".jarvis-brief.md").write_text(
-        "A video model with a memory.\n", encoding="utf-8"
+    (root / "orchard-sensor-net").mkdir(parents=True)
+    (root / "orchard-sensor-net" / ".jarvis-brief.md").write_text(
+        "Soil sensors in an orchard.\n", encoding="utf-8"
     )
     (root / "quiet").mkdir()
     settings.projects_root = root
 
     briefs = discover_briefs(discover_projects(settings))
 
-    assert [(b.name, b.text) for b in briefs] == [("vidmem", "A video model with a memory.")]
+    assert [(b.name, b.text) for b in briefs] == [
+        ("orchard-sensor-net", "Soil sensors in an orchard.")
+    ]
 
 
 def test_a_very_long_brief_is_capped(settings, tmp_path):

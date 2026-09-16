@@ -44,7 +44,7 @@ sequenceDiagram
     T->>J: POST /twilio/voice
     J-->>T: signature and caller checked:<br/>TwiML with a one-time stream token
     T->>J: the media stream opens (µ-law 8 kHz)
-    U->>J: "train a model on the microscopy<br/>images and tell me when it's running"
+    U->>J: "train a model on the orchard<br/>sensor data and tell me when it's running"
     Note over U,J: the PIN comes first, spoken or keyed —<br/>every dispatch, and keyed digits never reach the model
     J->>C: dispatch_task(…)
     J-->>U: "that's task 12 — I'll ring you"<br/>(request_callback)
@@ -442,7 +442,7 @@ examples of what one looks like — see [Writing your own](#writing-your-own):
 for a yes, ask which file you mean, or argue about the approach — it dispatches and tells
 you it has. If you did not name a project the task starts in `PROJECTS_ROOT` and the
 subagent finds the repo itself; the voice prompt already knows every project name there,
-so "in the splatting repo" is enough. It also knows every skill installed under
+so "in the orchard repo" is enough. It also knows every skill installed under
 `SKILLS_DIR`, so work a skill covers — a sweep, a profile, a cluster job — is recognised
 without you naming the skill.
 

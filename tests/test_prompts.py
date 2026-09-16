@@ -62,7 +62,7 @@ def test_render_defaults_projects_to_everything_the_manager_can_resolve(settings
     """Anything under projects_root dispatches, so the model has to know its name."""
     settings.projects = {"jarvis": "/tmp/jarvis"}
     root = tmp_path / "projects"
-    (root / "dinov3rse").mkdir(parents=True)
+    (root / "weather-station").mkdir(parents=True)
     settings.projects_root = root
 
     rendered = render_voice_prompt(
@@ -70,7 +70,7 @@ def test_render_defaults_projects_to_everything_the_manager_can_resolve(settings
     )
 
     assert "jarvis" in rendered
-    assert "dinov3rse" in rendered
+    assert "weather-station" in rendered
 
 
 def test_render_lists_the_installed_skills(settings, tmp_path):
@@ -100,9 +100,9 @@ def test_render_says_so_when_no_skills_are_installed(settings, tmp_path):
 
 def test_render_includes_a_project_brief(settings, tmp_path):
     root = tmp_path / "projects"
-    (root / "vidmem").mkdir(parents=True)
-    (root / "vidmem" / ".jarvis-brief.md").write_text(
-        "A video model with a memory.", encoding="utf-8"
+    (root / "orchard-sensor-net").mkdir(parents=True)
+    (root / "orchard-sensor-net" / ".jarvis-brief.md").write_text(
+        "Soil sensors in an orchard.", encoding="utf-8"
     )
     settings.projects_root = root
 
@@ -110,8 +110,8 @@ def test_render_includes_a_project_brief(settings, tmp_path):
         settings, channel="local", caller=None, authorized=True, opening_context=None
     )
 
-    assert "### vidmem" in rendered
-    assert "A video model with a memory." in rendered
+    assert "### orchard-sensor-net" in rendered
+    assert "Soil sensors in an orchard." in rendered
 
 
 def test_render_says_so_when_no_project_wrote_a_brief(settings, tmp_path):
