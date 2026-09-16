@@ -8,7 +8,10 @@ scope.
 
 Severity: a `hard` failure means Jarvis will not work and `doctor` exits non-zero; a
 `soft` one is a warning (no mic on this machine, no PIN, no Google credentials) that
-merely narrows what Jarvis can do.
+merely narrows what Jarvis can do. The last few checks are about what Jarvis knows and
+offers rather than whether it runs — the owner's name, the memory, the projects root, and
+whether `cluster_stats` and `send_to_slack` are offered — so somebody who did not write it
+can find out why a tool is missing without reading the source.
 """
 
 import shutil
@@ -19,7 +22,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from jarvis.config import DATA_DIR_MODE, PLACEHOLDER_KEY, Settings, env_var_name
+from jarvis.config import (
+    DATA_DIR_MODE,
+    OWNER_FALLBACK,
+    PLACEHOLDER_KEY,
+    Settings,
+    env_var_name,
+)
+from jarvis.continuity.memory import memory_path, read_memory
+from jarvis.integrations import slack
 from jarvis.logging_util import mask_number
 from jarvis.restart.service import INSTALLERS, candidate_target, resolve_target
 
@@ -98,6 +109,11 @@ def run_doctor_checks(
     checks.append(_data_dir_check(settings))
     checks.append(_data_dir_privacy_check(settings))
     checks.append(_google_check(settings))
+    checks.append(_owner_name_check(settings))
+    checks.append(_memory_check(settings))
+    checks.append(_projects_root_check(settings))
+    checks.append(_cluster_check(settings))
+    checks.append(_slack_check(settings))
     return checks
 
 
@@ -429,3 +445,130 @@ def _google_check(settings: Settings) -> Check:
             severity="soft",
         )
     return Check("Google credentials", True, str(credentials_dir), severity="soft")
+
+
+# --- what Jarvis knows, and what it offers ---------------------------------
+
+
+def _owner_name_check(settings: Settings) -> Check:
+    """Warn-only: without a name the prompts say `OWNER_FALLBACK`, which still works."""
+    if not settings.owner_name:
+        return Check(
+            "owner name",
+            False,
+            f'{env_var_name("owner_name")} is not set — the prompts call you "{OWNER_FALLBACK}"',
+            severity="soft",
+        )
+    return Check("owner name", True, settings.owner_label, severity="soft")
+
+
+def _memory_check(settings: Settings) -> Check:
+    """Warn-only: a Jarvis with no memory opens every call knowing nothing about its owner.
+
+    Read, never created: `doctor` reports what is there.
+    """
+    memory = read_memory(settings.data_dir)
+    if not memory:
+        return Check(
+            "memory",
+            False,
+            "nothing remembered yet — `jarvis init` writes a first memory, and every "
+            "authorized call adds to it",
+            severity="soft",
+        )
+    path = memory_path(settings.data_dir)
+    return Check(
+        "memory", True, f"{len(memory)} characters in {path}, sent on every call", severity="soft"
+    )
+
+
+def _projects_root_check(settings: Settings) -> Check:
+    """Warn-only, and never created: a missing root sends unscoped tasks to the workspace."""
+    root = settings.projects_root
+    if not root.is_dir():
+        return Check(
+            "projects root",
+            False,
+            f"{root} does not exist — a task with no project starts in "
+            f"{settings.data_dir / 'workspace'}; set {env_var_name('projects_root')}",
+            severity="soft",
+        )
+    return Check("projects root", True, str(root), severity="soft")
+
+
+def _cluster_check(settings: Settings) -> Check:
+    """Is `cluster_stats` offered, and if half of it is configured, which half is missing.
+
+    The same condition as `integrations.cluster.build_cluster_stats`. Nothing configured is
+    a tick, not a warning: the tool is a worked example most machines have no use for.
+    """
+    clusters = env_var_name("clusters")
+    guard_name = env_var_name("cluster_ssh_guard")
+    guard = settings.cluster_ssh_guard
+    if not settings.clusters and guard is None:
+        return Check(
+            "cluster stats",
+            True,
+            f"not configured — cluster_stats is not offered ({clusters}, {guard_name})",
+            severity="soft",
+        )
+    if not settings.clusters:
+        return Check(
+            "cluster stats",
+            False,
+            f"{guard_name} is set but {clusters} is empty — cluster_stats is not offered",
+            severity="soft",
+        )
+    if guard is None or not guard.is_file():
+        where = "is not set" if guard is None else f"is not a file at {guard}"
+        return Check(
+            "cluster stats",
+            False,
+            f"{clusters} is set but {guard_name} {where} — cluster_stats is not offered",
+            severity="soft",
+        )
+    return Check(
+        "cluster stats",
+        True,
+        f"cluster_stats is offered for {', '.join(settings.clusters)}",
+        severity="soft",
+    )
+
+
+def _slack_check(settings: Settings) -> Check:
+    """Is `send_to_slack` offered, and are subagents told about a Slack server.
+
+    The same resolution the application uses (`integrations.slack.slack_credentials`), so
+    a route that only exists in the named MCP server's own config counts. Nothing configured
+    is a tick, not a warning; half a route is a warning, because somebody meant to set it.
+    """
+    token, channel = env_var_name("slack_bot_token"), env_var_name("slack_channel_id")
+    server = settings.slack_mcp_server
+    if not (settings.slack_bot_token or settings.slack_channel_id or server):
+        return Check(
+            "Slack",
+            True,
+            f"not configured — send_to_slack is not offered ({token}, {channel} or "
+            f"{env_var_name('slack_mcp_server')})",
+            severity="soft",
+        )
+    route = slack.slack_credentials(
+        settings.slack_bot_token,
+        settings.slack_channel_id,
+        server=server,
+        config_path=slack.CLAUDE_CONFIG,
+    )
+    subagents = f"; subagents use the {server} MCP server" if server else ""
+    if route is None:
+        missing = (
+            f"{server} has no bot token and channel in {slack.CLAUDE_CONFIG}"
+            if server
+            else f"{token} and {channel} are both needed"
+        )
+        return Check(
+            "Slack",
+            False,
+            f"{missing} — send_to_slack is not offered{subagents}",
+            severity="soft",
+        )
+    return Check("Slack", True, f"send_to_slack is offered{subagents}", severity="soft")

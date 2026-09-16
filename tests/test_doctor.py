@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.config import Settings
+from jarvis.continuity.memory import memory_path, seed_memory
 from jarvis.doctor import (
     Check,
     _data_dir_privacy_check,
@@ -46,10 +47,14 @@ def healthy(tmp_path, monkeypatch):
         data_dir=tmp_path / "jarvis",
         google_oauth_client_id="client-id",
         google_oauth_client_secret="client-secret",
+        owner_name="Sam",
+        projects_root=tmp_path / "projects",
     )
     # As every entry point does before running anything — it is what makes `data_dir`
     # owner-only, which the privacy check then looks at.
     settings.ensure_dirs()
+    settings.projects_root.mkdir()
+    seed_memory(settings.data_dir, owner="Sam", facts=["Works nights."])
     return settings
 
 
@@ -418,6 +423,142 @@ def test_google_is_reported_as_not_configured_without_an_oauth_client(healthy):
     check = by_name(run_doctor_checks(settings, probe_mic=False))["Google credentials"]
     assert (check.ok, check.severity) == (True, "soft")
     assert "not configured" in check.detail
+
+
+# --- what a stranger needs to know about their own install -----------------
+#
+# Every one of these is a warning at most. A Jarvis with no name for its owner, no memory,
+# no projects root, no cluster and no Slack still works — it just knows less and offers less,
+# and this is where somebody who did not write it finds out why.
+
+
+def test_no_owner_name_only_warns(healthy):
+    settings = healthy.model_copy(update={"owner_name": None})
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["owner name"]
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "OWNER_NAME" in check.detail and "the owner" in check.detail
+
+
+def test_an_owner_name_is_reported(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["owner name"]
+    assert (check.ok, check.detail) == (True, "Sam")
+
+
+def test_an_empty_memory_points_at_init(healthy):
+    memory_path(healthy.data_dir).unlink()
+
+    checks = run_doctor_checks(healthy, probe_mic=False)
+    check = by_name(checks)["memory"]
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "jarvis init" in check.detail
+    assert has_hard_failure(checks) is False
+
+
+def test_a_seeded_memory_says_how_much_every_call_carries(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["memory"]
+    assert check.ok is True
+    assert "characters" in check.detail
+
+
+def test_a_missing_projects_root_only_warns_and_says_where_tasks_go(healthy):
+    healthy.projects_root.rmdir()
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["projects root"]
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "PROJECTS_ROOT" in check.detail
+    assert "workspace" in check.detail
+    assert not healthy.projects_root.exists()  # reported, never created
+
+
+def test_no_cluster_configured_says_why_the_tool_is_missing_without_warning(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["cluster stats"]
+    assert (check.ok, check.severity) == (True, "soft")
+    assert "cluster_stats is not offered" in check.detail
+
+
+def test_clusters_without_their_guard_warn(healthy, tmp_path):
+    settings = healthy.model_copy(
+        update={"clusters": {"alpha": "gpu"}, "cluster_ssh_guard": tmp_path / "missing.sh"}
+    )
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["cluster stats"]
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "CLUSTER_SSH_GUARD" in check.detail
+
+
+def test_a_guard_without_clusters_warns(healthy, tmp_path):
+    guard = tmp_path / "guard.sh"
+    guard.write_text("#!/bin/sh\n")
+    settings = healthy.model_copy(update={"cluster_ssh_guard": guard})
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["cluster stats"]
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "CLUSTERS" in check.detail
+
+
+def test_configured_clusters_are_named(healthy, tmp_path):
+    guard = tmp_path / "guard.sh"
+    guard.write_text("#!/bin/sh\n")
+    settings = healthy.model_copy(
+        update={"clusters": {"alpha": "gpu", "beta": "gpu"}, "cluster_ssh_guard": guard}
+    )
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["cluster stats"]
+    assert check.ok is True
+    assert "alpha, beta" in check.detail
+
+
+def test_no_slack_says_why_the_tool_is_missing_without_warning(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["Slack"]
+    assert (check.ok, check.severity) == (True, "soft")
+    assert "send_to_slack is not offered" in check.detail
+
+
+def test_a_slack_token_and_channel_offer_the_tool(healthy):
+    settings = healthy.model_copy(
+        update={"slack_bot_token": "xoxb-test", "slack_channel_id": "D123"}
+    )
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["Slack"]
+    assert check.ok is True
+    assert "send_to_slack is offered" in check.detail
+    assert "xoxb-test" not in check.detail
+
+
+def test_half_a_slack_route_warns(healthy):
+    settings = healthy.model_copy(update={"slack_bot_token": "xoxb-test"})
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["Slack"]
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "SLACK_CHANNEL_ID" in check.detail
+
+
+def test_a_slack_mcp_server_counts_when_its_config_carries_the_route(
+    healthy, tmp_path, monkeypatch
+):
+    config = tmp_path / "claude.json"
+    config.write_text(
+        '{"mcpServers": {"chat": {"env": {"SLACK_BOT_TOKEN": "x", "SLACK_CHANNEL_ID": "D1"}}}}'
+    )
+    monkeypatch.setattr("jarvis.integrations.slack.CLAUDE_CONFIG", config)
+    settings = healthy.model_copy(update={"slack_mcp_server": "chat"})
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["Slack"]
+    assert check.ok is True
+    assert "chat" in check.detail
+
+
+def test_a_slack_mcp_server_without_a_route_still_reaches_subagents(
+    healthy, tmp_path, monkeypatch
+):
+    monkeypatch.setattr("jarvis.integrations.slack.CLAUDE_CONFIG", tmp_path / "missing.json")
+    settings = healthy.model_copy(update={"slack_mcp_server": "chat"})
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["Slack"]
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "send_to_slack is not offered" in check.detail
+    assert "subagents" in check.detail
 
 
 # --- formatting ------------------------------------------------------------
