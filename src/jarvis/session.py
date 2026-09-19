@@ -64,6 +64,7 @@ from jarvis.realtime.base import (
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
 from jarvis.transports.base import DRAIN_TIMEOUT_SECONDS, AudioIn, Dtmf, Hangup, Transport
+from jarvis.trust import TrustLevel
 
 log = logging.getLogger("jarvis.session")
 
@@ -142,6 +143,7 @@ class VoiceSession:
         bus: EventBus,
         *,
         authorized: bool,
+        possession: bool = False,
         opening_context: str | None = None,
         session_id: str | None = None,
         registry: "SessionRegistry | None" = None,
@@ -169,6 +171,9 @@ class VoiceSession:
         self.channel: str = transport.channel
         self.caller: str | None = transport.caller
         self.authorized = authorized
+        #: True when this call is one Jarvis placed to the owner's own number, proved by
+        #: the stream token Jarvis minted for it and by nothing else (`jarvis.trust`).
+        self.possession = possession
         #: The task whose result `opening_context` carries, on a call Jarvis placed about it
         #: (a call-back, a restart's confirmation). Set only from a token Jarvis minted, and
         #: the one task `mark_reported` may stamp before the PIN: the call opened by saying it.
@@ -207,14 +212,26 @@ class VoiceSession:
         return self._state is SessionState.RUNNING
 
     @property
-    def trusted(self) -> bool:
-        """True when what is private may reach this session: always locally, after the PIN
-        on the phone.
+    def trust(self) -> TrustLevel:
+        """How much this call has proved (`jarvis.trust`). Read live, never snapshotted.
 
-        Caller id is spoofable, so an allowed number proves nothing. Until this is true a
-        call is not briefed (memory, unheard results) and is announced nothing.
+        The PIN, or the local microphone, is `FULL`. A call Jarvis placed to the owner's
+        own number is `POSSESSION`: nobody spoofs their way into answering a phone Jarvis
+        dialled. Everything else is a stranger on a number that can be faked.
         """
-        return self.channel != "phone" or self.authorized
+        if self.channel != "phone" or self.authorized:
+            return TrustLevel.FULL
+        return TrustLevel.POSSESSION if self.possession else TrustLevel.NONE
+
+    @property
+    def trusted(self) -> bool:
+        """True when what is the owner's may reach this session: `FULL` and nothing less.
+
+        The old spelling, and it still means what it always meant — the memory, the
+        project briefs, the skills, `recall`, and anything that writes as the owner. A
+        call-back is `POSSESSION`, which is not this.
+        """
+        return self.trust is TrustLevel.FULL
 
     @property
     def response_active(self) -> bool:
