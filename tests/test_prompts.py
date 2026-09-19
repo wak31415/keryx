@@ -9,6 +9,7 @@ import pytest
 
 from jarvis.prompts import load_prompt, render_voice_prompt
 from jarvis.skills import Skill
+from jarvis.trust import TrustLevel
 
 
 def test_voice_prompt_is_packaged_and_loadable():
@@ -28,7 +29,7 @@ def test_render_fills_every_placeholder(settings):
         settings,
         channel="phone",
         caller="+15555555555",
-        authorized=False,
+        trust=TrustLevel.FULL,
         projects=["jarvis", "orchard"],
         skills=[Skill(name="mermaid", description="Author Mermaid diagrams.")],
         opening_context=None,
@@ -43,7 +44,12 @@ def test_render_fills_every_placeholder(settings):
 
 def test_render_uses_placeholders_for_an_unknown_caller(settings):
     rendered = render_voice_prompt(
-        settings, channel="local", caller=None, authorized=True, projects=[], opening_context=None
+        settings,
+        channel="local",
+        caller=None,
+        trust=TrustLevel.FULL,
+        projects=[],
+        opening_context=None,
     )
 
     assert "unknown" in rendered
@@ -55,7 +61,7 @@ def test_render_includes_the_opening_context(settings):
         settings,
         channel="phone",
         caller=None,
-        authorized=True,
+        trust=TrustLevel.FULL,
         projects=[],
         opening_context="Task 7 finished: the report is ready.",
     )
@@ -71,7 +77,7 @@ def test_render_defaults_projects_to_everything_the_manager_can_resolve(settings
     settings.projects_root = root
 
     rendered = render_voice_prompt(
-        settings, channel="local", caller=None, authorized=True, opening_context=None
+        settings, channel="local", caller=None, trust=TrustLevel.FULL, opening_context=None
     )
 
     assert "jarvis" in rendered
@@ -87,7 +93,7 @@ def test_render_lists_the_installed_skills(settings, tmp_path):
     settings.skills_dir = skills
 
     rendered = render_voice_prompt(
-        settings, channel="local", caller=None, authorized=True, opening_context=None
+        settings, channel="local", caller=None, trust=TrustLevel.FULL, opening_context=None
     )
 
     assert "wandb-query: Query W&B runs." in rendered
@@ -97,7 +103,7 @@ def test_render_says_so_when_no_skills_are_installed(settings, tmp_path):
     settings.skills_dir = tmp_path / "nothing-here"
 
     rendered = render_voice_prompt(
-        settings, channel="phone", caller=None, authorized=False, opening_context=None
+        settings, channel="phone", caller=None, trust=TrustLevel.FULL, opening_context=None
     )
 
     assert "none installed" in rendered
@@ -112,7 +118,7 @@ def test_render_includes_a_project_brief(settings, tmp_path):
     settings.projects_root = root
 
     rendered = render_voice_prompt(
-        settings, channel="local", caller=None, authorized=True, opening_context=None
+        settings, channel="local", caller=None, trust=TrustLevel.FULL, opening_context=None
     )
 
     assert "### orchard-sensor-net" in rendered
@@ -123,14 +129,15 @@ def test_render_says_so_when_no_project_wrote_a_brief(settings, tmp_path):
     settings.projects_root = tmp_path / "empty"
 
     rendered = render_voice_prompt(
-        settings, channel="local", caller=None, authorized=True, opening_context=None
+        settings, channel="local", caller=None, trust=TrustLevel.FULL, opening_context=None
     )
 
     assert "nothing written down yet" in rendered
 
 
-def test_a_withheld_prompt_carries_nothing_of_theirs(settings, tmp_path):
-    """A phone call before the PIN: no project, brief, skill, memory or unheard result."""
+@pytest.fixture
+def owners_world(settings, tmp_path):
+    """A machine with projects, briefs and skills on it — the map of the owner's world."""
     root = tmp_path / "projects"
     (root / "weather-station").mkdir(parents=True)
     (root / "weather-station" / ".jarvis-brief.md").write_text("A rain gauge on the roof.")
@@ -140,21 +147,40 @@ def test_a_withheld_prompt_carries_nothing_of_theirs(settings, tmp_path):
         "---\nname: wandb-query\ndescription: Query W&B runs.\n---\n", encoding="utf-8"
     )
     settings.projects, settings.projects_root, settings.skills_dir = {"orchard": "/x"}, root, skills
+    return settings
 
+
+@pytest.mark.parametrize("trust", [TrustLevel.NONE, TrustLevel.POSSESSION])
+def test_below_full_the_prompt_carries_no_map_of_their_world(owners_world, trust):
+    """The projects, the briefs, the skills and the memory are what the PIN still buys."""
     rendered = render_voice_prompt(
-        settings,
+        owners_world,
         channel="phone",
         caller="+15550001111",
-        authorized=False,
+        trust=trust,
         pending="- task 41 (finished) — their bank balance",
         memory="They are waiting on the letter from the lawyer.",
-        withheld=True,
     )
 
-    for secret in ("weather-station", "rain gauge", "orchard", "wandb-query", "task 41", "lawyer"):
+    for secret in ("weather-station", "rain gauge", "orchard", "wandb-query", "lawyer"):
         assert secret not in rendered, secret
     assert "held back until the PIN" in rendered
     assert "{" not in rendered and "}" not in rendered
+
+
+@pytest.mark.parametrize("trust", [TrustLevel.NONE, TrustLevel.POSSESSION])
+def test_the_digest_is_not_part_of_what_is_held_back(owners_world, trust):
+    """News they have not heard is not the map of their world; it is what they asked for."""
+    rendered = render_voice_prompt(
+        owners_world,
+        channel="phone",
+        caller="+15550001111",
+        trust=trust,
+        pending="- task 41 (finished) — their bank balance",
+    )
+
+    assert "## What the owner has not heard yet" in rendered
+    assert "task 41" in rendered
 
 
 # --- Slack is opt-in -------------------------------------------------------
@@ -195,7 +221,7 @@ def test_voice_prompt_does_not_promise_slack_as_a_delivery_route(settings, unwra
             settings,
             channel="phone",
             caller=None,
-            authorized=True,
+            trust=TrustLevel.FULL,
             projects=[],
             opening_context=None,
         )
@@ -208,7 +234,9 @@ def test_voice_prompt_does_not_promise_slack_as_a_delivery_route(settings, unwra
 
 
 def _rendered(settings, **kwargs) -> str:
-    values = dict(channel="phone", caller=None, authorized=True, projects=[], opening_context=None)
+    values = dict(
+        channel="phone", caller=None, trust=TrustLevel.FULL, projects=[], opening_context=None
+    )
     values.update(kwargs)
     return render_voice_prompt(settings, **values)
 
@@ -232,11 +260,11 @@ def test_a_first_call_has_no_digest_and_says_it_remembers_nothing(settings, unwr
 
 def test_an_empty_memory_is_only_admitted_to_a_trusted_session(settings):
     """Before the PIN, "nothing remembered" would be a claim about the owner's memory."""
-    withheld = _rendered(settings, authorized=False, withheld=True)
-    unauthorized = _rendered(settings, authorized=False)
+    none = _rendered(settings, trust=TrustLevel.NONE)
+    possession = _rendered(settings, trust=TrustLevel.POSSESSION)
     remembered = _rendered(settings, memory="Works nights.")
 
-    for rendered in (withheld, unauthorized, remembered):
+    for rendered in (none, possession, remembered):
         assert "You know nothing about" not in rendered
 
 

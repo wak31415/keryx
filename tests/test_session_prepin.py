@@ -109,13 +109,16 @@ def tools():
 
 @pytest.fixture
 def make_session(tmp_path, bus, tools):
-    def build(transport, prov, *, authorized=False, **kwargs) -> VoiceSession:
+    def build(
+        transport, prov, *, authorized=False, digest_before_pin=True, **kwargs
+    ) -> VoiceSession:
         settings = make_settings(
             tmp_path,
             pin=PIN,
             projects={"orchard": str(tmp_path)},
             projects_root=tmp_path / "no-projects",
             skills_dir=tmp_path / "no-skills",
+            digest_before_pin=digest_before_pin,
         )
         return VoiceSession(
             transport, prov, settings, tools, bus, authorized=authorized, **kwargs
@@ -129,24 +132,65 @@ def make_session(tmp_path, bus, tools):
 
 def test_a_phone_call_is_trusted_only_once_authorized(make_session, phone, local, provider):
     assert make_session(phone, provider).trusted is False
+    assert make_session(phone, provider, possession=True).trusted is False
     assert make_session(phone, provider, authorized=True).trusted is True
     assert make_session(local, provider, authorized=False).trusted is True
 
 
-# --- the briefing waits for the PIN ----------------------------------------
+# --- the memory waits for the PIN; the digest does not ----------------------
 
 
-async def test_an_unauthorized_call_opens_knowing_nothing_private(make_session, phone, provider):
-    briefer = FakeBriefer()
+async def test_an_unauthorized_call_opens_knowing_nothing_of_theirs(make_session, phone, provider):
+    """The memory and the map of their world. The digest is the exception below it."""
+    briefer = FakeBriefer(Briefing(memory=MEMORY))
     session = make_session(phone, provider, briefer=briefer)
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
 
-        assert not private(provider.config.instructions)
+        assert MEMORY not in provider.config.instructions
         assert "orchard" not in provider.config.instructions  # nor what they are working on
-        assert provider.injected[0][0] == OPENING_MESSAGE  # no "lead with it" nudge either
+        assert provider.injected[0][0] == OPENING_MESSAGE  # nothing unheard, so no nudge
+
+
+async def test_an_unauthorized_call_hears_the_digest_before_the_pin(make_session, phone, provider):
+    """The owner's ruling: unheard news is not gated by the PIN, spoofers and all."""
+    session = make_session(phone, provider, briefer=FakeBriefer())
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert DIGEST in provider.config.instructions
+        assert MEMORY not in provider.config.instructions
+        assert provider.injected[0][0].startswith(OPENING_MESSAGE)
+        assert "1 task finished" in provider.injected[0][0]
+
+
+async def test_digest_before_pin_off_restores_the_old_silence(make_session, phone, provider):
+    briefer = FakeBriefer()
+    session = make_session(phone, provider, briefer=briefer, digest_before_pin=False)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert DIGEST not in provider.config.instructions
+        assert provider.injected[0][0] == OPENING_MESSAGE
         assert briefer.builds == 0  # not even read
+
+
+async def test_a_call_jarvis_placed_hears_the_digest_whatever_the_setting(
+    make_session, phone, provider
+):
+    """Possession is proof the owner is holding the phone; the setting is about strangers."""
+    session = make_session(
+        phone, provider, possession=True, briefer=FakeBriefer(), digest_before_pin=False
+    )
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert DIGEST in provider.config.instructions
+        assert MEMORY not in provider.config.instructions
 
 
 async def test_a_spoken_pin_delivers_the_briefing_before_the_turn_that_answers_it(
@@ -155,7 +199,7 @@ async def test_a_spoken_pin_delivers_the_briefing_before_the_turn_that_answers_i
     """One turn is all a PIN may cost: the nudge rides in silently, ahead of the tool result
     whose response is the next thing they hear."""
     provider = OrderedProvider()
-    session = make_session(phone, provider, briefer=FakeBriefer())
+    session = make_session(phone, provider, briefer=FakeBriefer(), digest_before_pin=False)
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
@@ -174,7 +218,7 @@ async def test_a_spoken_pin_delivers_the_briefing_before_the_turn_that_answers_i
 
 async def test_a_keyed_pin_delivers_it_ahead_of_the_accepted_note(make_session, phone):
     provider = OrderedProvider()
-    session = make_session(phone, provider, briefer=FakeBriefer())
+    session = make_session(phone, provider, briefer=FakeBriefer(), digest_before_pin=False)
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
@@ -201,15 +245,32 @@ async def test_with_nothing_unheard_the_pin_only_updates_the_instructions(
         assert [text for text, *_ in provider.injected] == [OPENING_MESSAGE]
 
 
+async def test_the_pin_does_not_re_announce_a_digest_the_call_already_had(make_session, phone):
+    """It was spoken at the greeting. The PIN buys the memory, not the news a second time."""
+    provider = OrderedProvider()
+    session = make_session(phone, provider, briefer=FakeBriefer())
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+        await session.submit_pin(PIN)
+
+    nudges = [value[0] for kind, value in provider.order if kind == "message"]
+    assert not any("has not heard yet" in text for text in nudges[1:])
+    assert private(provider.instruction_updates[-1])  # but the memory did arrive
+
+
 async def test_a_wrong_pin_delivers_nothing(make_session, phone, provider):
     briefer = FakeBriefer()
     session = make_session(phone, provider, briefer=briefer)
 
     async with running(session):
+        await eventually(lambda: provider.injected != [])
+        read_for_the_digest = briefer.builds
         await session.submit_pin("999999")
 
         assert provider.instruction_updates == []
-        assert briefer.builds == 0
+        assert briefer.builds == read_for_the_digest  # nothing re-read, nothing re-sent
+        assert MEMORY not in provider.config.instructions
 
 
 async def test_a_pin_accepted_before_the_call_is_connected_is_briefed_at_the_opening(

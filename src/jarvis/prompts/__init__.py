@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.projects import ProjectBrief, discover_briefs, discover_projects
 from jarvis.skills import Skill, discover_skills
+from jarvis.trust import TrustLevel
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from jarvis.config import Settings
@@ -121,7 +122,7 @@ def render_voice_prompt(
     *,
     channel: str,
     caller: str | None,
-    authorized: bool,
+    trust: TrustLevel = TrustLevel.FULL,
     projects: list[str] | None = None,
     skills: list[Skill] | None = None,
     briefs: list[ProjectBrief] | None = None,
@@ -129,7 +130,6 @@ def render_voice_prompt(
     pending: str | None = None,
     memory: str | None = None,
     tool_names: Collection[str] = (),
-    withheld: bool = False,
     can_text: bool | None = None,
 ) -> str:
     """Render the voice system prompt for one session.
@@ -146,16 +146,18 @@ def render_voice_prompt(
     `tool_names` is what the session was actually given, and decides which of the
     `OPTIONAL_TOOL_PROMPTS` paragraphs and `OPTIONAL_TOOL_PHRASES` appear. `can_text`
     defaults to `TwilioOut.can_text`, and decides whether the prompt may promise a text.
-    An authorized session with no memory is told it knows nothing about the owner yet.
+    A `FULL` session with no memory is told it knows nothing about the owner yet.
 
-    `withheld` is a phone call that has not given the PIN. Caller id is spoofable, so its
-    prompt carries nothing of the owner's: the project names, their briefs and the skill catalog
-    say `_WITHHELD` instead of being discovered at all, and `pending` and `memory` are
-    dropped whatever was passed. The session re-renders without it once the PIN is in.
+    `trust` is what this call has proved (`jarvis.trust`). Below `FULL` the prompt carries
+    no map of the owner's world: the project names, their briefs and the skill catalog say
+    `_WITHHELD` instead of being discovered at all, and `memory` is dropped whatever was
+    passed. `pending` is *not* withheld — the digest is news the owner asked for rather
+    than a map of their world, and whether a call below `FULL` has any is decided by the
+    session (`DIGEST_BEFORE_PIN`), not here. The session re-renders once the PIN is in.
     """
-    if withheld:
+    if trust is not TrustLevel.FULL:
         project_names = skill_lines = brief_blocks = _WITHHELD
-        pending = memory = None
+        memory = None
     else:
         known = discover_projects(settings)
         names = list(known) if projects is None else projects
@@ -175,7 +177,7 @@ def render_voice_prompt(
     texting = TwilioOut(settings).can_text if can_text is None else can_text
     if memory:
         remembered = f"{_MEMORY_HEADING}\n\n{_nest_headings(memory)}"
-    elif authorized and not withheld:
+    elif trust is TrustLevel.FULL:
         remembered = _NO_MEMORY.format(owner=settings.owner_label)
     else:
         remembered = ""
@@ -185,7 +187,7 @@ def render_voice_prompt(
         now=datetime.now().astimezone().strftime(_TIME_FORMAT),
         channel=channel,
         caller=caller or "unknown",
-        authorized="yes" if authorized else "no",
+        authorized="yes" if trust is TrustLevel.FULL else "no",
         projects=project_names,
         skills=skill_lines,
         project_briefs=brief_blocks,

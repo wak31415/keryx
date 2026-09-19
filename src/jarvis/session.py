@@ -410,19 +410,27 @@ class VoiceSession:
     # --- startup -----------------------------------------------------------
 
     async def _load_briefing(self) -> Briefing:
-        """What this session opens knowing: the unreported tasks and the memory.
+        """What this session opens knowing: the unreported tasks, and the memory at `FULL`.
 
-        Nothing, for a phone call that has not given the PIN — `_brief_after_pin` fetches it
-        then. A briefing that cannot be built is not a reason to drop a call — `Briefer`
-        already swallows its own failures, and this catches anything a substitute raises.
+        The two are gated apart (`jarvis.continuity.briefing`). The memory needs `FULL`;
+        the digest needs only that this is not a stranger the owner has told us to keep it
+        from — `POSSESSION`, or `DIGEST_BEFORE_PIN` on an inbound call. `_brief_after_pin`
+        fetches whatever the PIN then adds. A briefing that cannot be built is not a reason
+        to drop a call — `Briefer` already swallows its own failures, and this catches
+        anything a substitute raises.
         """
-        if self._briefer is None or not self.trusted:
+        if self._briefer is None or not self._may_hear_digest():
             return Briefing()
         try:
-            return await self._briefer.build()
+            briefing = await self._briefer.build()
         except Exception:
             log.exception("session %s could not build its briefing", self.session_id)
             return Briefing()
+        return briefing if self.trusted else briefing.without_memory()
+
+    def _may_hear_digest(self) -> bool:
+        """Whether this call may be told what it has not heard about yet."""
+        return self.trust >= TrustLevel.POSSESSION or self._settings.digest_before_pin
 
     async def _brief_after_pin(self) -> None:
         """Hand a call what the PIN was holding back: the full prompt, and a nudge if due.
@@ -433,14 +441,19 @@ class VoiceSession:
         connected there is nothing to update: `run()` builds the briefing itself, and the
         session is trusted by then. A send that fails is swallowed like any other; the PIN
         still counts.
+
+        No nudge when the call already had its digest (`DIGEST_BEFORE_PIN`, or a call
+        Jarvis placed). It was spoken at the greeting; nudging again is Jarvis telling them
+        the same news twice, which is the one thing the wording everywhere else forbids.
         """
         if self._state is not SessionState.RUNNING:
             return
+        already_told = self._briefing.pending_count > 0
         self._briefing = await self._load_briefing()
         await self._safe_call(
             self._provider.update_instructions, self._build_config().instructions
         )
-        nudge = self._briefing.after_pin_nudge()
+        nudge = "" if already_told else self._briefing.after_pin_nudge()
         if nudge:
             await self._safe_call(self._provider.inject_message, nudge, respond=False)
 
@@ -460,12 +473,11 @@ class VoiceSession:
                 self._settings,
                 channel=self.channel,
                 caller=self.caller,
-                authorized=self.authorized,
+                trust=self.trust,
                 opening_context=self._opening_context,
                 pending=self._briefing.pending,
                 memory=self._briefing.memory,
                 tool_names={schema["name"] for schema in self._tools.schemas()},
-                withheld=not self.trusted,
             ),
             tools=self._tools.schemas(),
             voice=self._settings.openai_voice,

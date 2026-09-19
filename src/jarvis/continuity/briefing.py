@@ -14,11 +14,19 @@ both are assembled here, once, at session start:
    Standing facts and what recent calls were about, so "the thing we talked about
    yesterday" resolves to something.
 
-Both are private, so a phone call is not briefed until the PIN is accepted: caller id is
-spoofable, and an allowed number proves nothing. `VoiceSession` asks for a briefing at
-session start only when it is already trusted (the local channel, or a call authorized
-before it connected), and otherwise the moment the PIN goes in — updating the prompt and
-handing over `after_pin_nudge()` in place of the opening nudge.
+The two are not equally private, and since 2026-09-19 they are not gated alike. The
+**memory** waits for `FULL` (`jarvis.trust`) along with the project briefs and the skills:
+it is the map of the owner's whole world and the injection surface, and none of it is
+news. The **digest** does not. The owner's ruling is that unheard results are what they
+ring in for, and a digest that waits for the PIN is one they often never get; the price,
+accepted, is that a caller who has spoofed an allowed number hears those summaries.
+`DIGEST_BEFORE_PIN` (default on) is the switch, and off restores the older silence. A call
+Jarvis placed to the owner's own number hears the digest whatever the setting — the
+setting is about strangers, and possession is not one.
+
+`VoiceSession` asks for a briefing at session start whenever the digest is allowed, drops
+the memory from it below `FULL`, and asks again the moment the PIN goes in — updating the
+prompt, and handing over `after_pin_nudge()` unless the digest has already been given.
 
 Nothing here may fail a call. Every read is guarded and the worst case is a briefing with
 empty parts, which renders as a prompt with those sections left out entirely.
@@ -26,7 +34,7 @@ empty parts, which renders as a prompt with those sections left out entirely.
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
 from jarvis.config import Settings
@@ -72,6 +80,19 @@ class Briefing:
     pending: str = ""
     #: How many finished tasks are waiting, in total — not just the ones in `pending`.
     pending_count: int = 0
+    #: The tasks `pending` actually names, which is what `mark_reported` may stamp on a
+    #: call that has not given the PIN: the digest named them, so saying them is what the
+    #: call is for. Never the `pending_count` remainder — those were not read out.
+    task_ids: tuple[int, ...] = ()
+
+    def without_memory(self) -> "Briefing":
+        """The same briefing with the memory dropped: the digest is news, the memory is not.
+
+        A call below `FULL` may hear what it has not been told about (`DIGEST_BEFORE_PIN`)
+        and may not hear what Jarvis knows about the owner — the second is the map of their
+        whole world and the injection surface, and no part of it is today's news.
+        """
+        return replace(self, memory="")
 
     def opening_nudge(self) -> str:
         """The clause to append to the message that opens the session, if any."""
@@ -137,17 +158,22 @@ class Briefer:
 
     async def build(self) -> Briefing:
         """The digest and the memory for a session about to open. Never raises."""
-        pending, total = await self._pending()
-        return Briefing(memory=await self._memory(), pending=pending, pending_count=total)
+        pending, total, task_ids = await self._pending()
+        return Briefing(
+            memory=await self._memory(),
+            pending=pending,
+            pending_count=total,
+            task_ids=task_ids,
+        )
 
-    async def _pending(self) -> tuple[str, int]:
+    async def _pending(self) -> tuple[str, int, tuple[int, ...]]:
         try:
             tasks = await self._manager.unreported()
             total = await self._manager.count_unreported()
         except Exception:
             log.exception("could not read the unreported tasks; opening without a digest")
-            return "", 0
-        return format_digest(tasks, total), total
+            return "", 0, ()
+        return format_digest(tasks, total), total, tuple(task.id for task in tasks)
 
     async def _memory(self) -> str:
         try:
