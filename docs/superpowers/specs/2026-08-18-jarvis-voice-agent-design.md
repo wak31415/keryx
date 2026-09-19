@@ -698,13 +698,16 @@ class SessionRegistry:
      machine, where the keypress is about not *acting* on one.
 - **Before the PIN, the phone gets nothing (added 2026-09-16; amended 2026-09-19 — the digest
   and the three tools above moved, the rest stands).** Caller id is spoofable, so an
-  allowed number proves nothing. Ruling: on the phone, before the PIN, nothing private is read
-  out, nothing is announced into the call, and nothing the caller says or does outlives it.
+  allowed number proves nothing. Ruling: on the phone, before the PIN, nothing of the owner's
+  is read out but the digest of results they have not been told about, nothing else is
+  announced into the call, and nothing the caller says or does outlives it.
   `VoiceSession.trusted` is the predicate. An untrusted call's prompt is rendered `withheld`
-  (no memory, digest, project names, briefs or skills) and its opening carries no nudge; an
+  (no memory, project names, briefs or skills; the digest under `DIGEST_BEFORE_PIN`) and its
+  opening carries no nudge; an
   accepted PIN builds the briefing, sends the re-rendered prompt with `update_instructions`,
   and injects `Briefing.after_pin_nudge()` with `respond=False`, so the tool result or keypad
-  note that answers the PIN is still its only turn. `announce()` refuses an untrusted session.
+  note that answers the PIN is still its only turn. `announce()` takes what the announcement
+  needs: news under the same rule as the digest, anything else `POSSESSION` or better.
   `pin_gate` runs first in every tool except `check_billing`, `cluster_stats`, `web_search`,
   `submit_pin` and `end_session`; `mark_reported` may still stamp `opening_task_id`, the task a
   call-back or restart confirmation opened by saying (from the stream token Jarvis minted, never
