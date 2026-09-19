@@ -124,9 +124,10 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `server.py` | FastAPI app: `/twilio/voice`, `/twilio/media`, `/twilio/status`, `/health`, `/reports/{id}` |
 | `app.py` | `AppState` composition root (settings → store, bus, manager, registry, notifier, session registry) |
 | `prompts/voice_system.md` | receptionist persona + tool-use guidance |
+| `prompts/first_call.md` | the memory's stand-in on a trusted session that has none: a short get-to-know-you introduction, dropped the moment work or a refusal arrives (added 2026-09-19) |
 | `prompts/subagent_suffix.md` | appended to Agent SDK system prompt: autonomous, ends with `SPOKEN_SUMMARY:` block |
 | `prompts/memory_update.md` | the internal memory subagent's prompt: merge this call's transcript into `memory.md`, keep the structure (rendered from `memory_skeleton` into `{structure}`), stay under budget |
-| `onboarding.py` | `run_init` and `setup_report`, behind `jarvis init`: a name and a first `memory.md` through `seed_memory`, and a report of what every call will carry (added 2026-09-16) |
+| `onboarding.py` | `run_init` and `setup_report`, behind `jarvis init`: a name and a first `memory.md` through `seed_memory`, and a report of what every call will carry (added 2026-09-16; `setup_summary` and the `--json` report, 2026-09-19) |
 | `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory`, `init`, `forget`, `approvals`, `setup-google`, `doctor`, `restart`, `restart-watch` (hidden; armed by a restart, not run by hand) |
 
 ### 3.2 Binding interfaces
@@ -366,7 +367,11 @@ class SessionRegistry:
   2026-09-16: only when `projects_root` is a directory — nothing creates it — and otherwise in
   `data_dir/workspace`, owner-only.* The voice
   prompt lists every project `discover_projects` can resolve (not just the configured ones) and
-  every installed skill, so neither has to be named out loud.
+  every installed skill, so neither has to be named out loud. *Amended 2026-09-19: a high
+  threshold, not a ban. A follow-up is worth its turn when the answer changes what actually
+  happens and the subagent could not work it out from the machine itself — roughly one
+  dispatch in ten — and two prompt tests hold both halves, so dispatch-first stays the
+  default. The one call this does not govern is the first (below).*
 - **Written delivery goes over Slack (added 2026-08-24).** A phone call cannot carry a file,
   a link or a long list. The voice model has `send_to_slack` for text; subagents use the
   Slack MCP server named by `SLACK_MCP_SERVER` (a user-scope server is inherited by every CLI
@@ -548,7 +553,15 @@ class SessionRegistry:
 - **A first memory can be typed, and the structure has one owner (added 2026-09-16).** Until
   an authorized call has ended, `memory.md` does not exist, and a trusted session with no
   memory is told in one line that it knows nothing about the owner yet and must not act
-  familiar. `jarvis init` (`onboarding.py`) closes that gap from the keyboard: a name, a few
+  familiar. *Amended 2026-09-19: that line is now `prompts/first_call.md`, and it also asks.
+  A trusted session with no memory opens as a short introduction — what Jarvis is, what to
+  call them, what they work on, which projects matter, how they want to be answered, what is
+  worth ringing them about — one question a turn, the shape of it said back once, work first
+  every time, and dropped for the rest of the call the moment they decline. The absence of
+  the memory is the only marker; there is no second record of "has been onboarded", and the
+  session never writes `memory.md` — the closing turn puts the facts in the transcript and
+  `MemoryWriter` folds them in as it does for every call.* `jarvis init` (`onboarding.py`)
+  closes the same gap from the keyboard: a name, a few
   facts, the document shown back, and `seed_memory`, which writes through `secure_dir` /
   `secure_file`, refuses more than `MAX_MEMORY_CHARS`, and never overwrites a memory with
   anything in it unless forced. It never writes `.env`; a new name is printed as the
@@ -558,7 +571,14 @@ class SessionRegistry:
   "the owner" when blank) in every prompt and tool description, and a test keeps the package
   author's name out of `src/jarvis`. The memory and the project briefs are sent to the
   realtime provider on every trusted call, which is why both are bounded and why `init` says
-  how many characters they come to.
+  how many characters they come to. *Amended 2026-09-19: `setup_summary` is that same report
+  as one JSON document, behind `init --json`, which requires `--yes` because a
+  machine-readable run that stops to ask is a hang; the exit code is the contract (1 only
+  when a memory was wanted and not written, 2 for a wrong command line). `skills/jarvis-onboard`
+  is the keyboard session that drives it for an owner whose own agent is doing the setup: it
+  drafts a `.jarvis-brief.md` for the projects they pick **after seeing the list**, proposes
+  `~/.claude/CLAUDE.md` lines, and pipes the agreed facts into `jarvis init --from - --yes` —
+  writing neither `memory.md` nor `.env` itself.*
 - **The voice prompt only promises what this machine does (added 2026-09-16).** Its clock
   carries the time zone. Words naming a tool only some machines offer are spliced in with
   `OPTIONAL_TOOL_PHRASES`, as whole paragraphs are with `OPTIONAL_TOOL_PROMPTS` ("the cluster"
