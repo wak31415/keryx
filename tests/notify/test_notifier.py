@@ -21,7 +21,7 @@ from jarvis.inline_waits import InlineWaits
 from jarvis.notify.notifier import SMS_BODY_LIMIT, Notifier
 from jarvis.notify.reports import report_token
 from jarvis.session import SessionRegistry
-from jarvis.stream_tokens import StreamTokenStore
+from jarvis.stream_tokens import StreamTokenStore, confers_possession
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
 
@@ -432,6 +432,9 @@ async def test_a_requested_call_back_dials_out_with_a_redeemable_stream_token(ha
     assert f"task {task.id}" in context
     # A call-back is a new call, so it has to say what this was about, not just the answer.
     assert "look something up" in context
+
+    # And that Jarvis placed it, so the session it opens knows it is not a stranger.
+    assert confers_possession(info, CALLER) is True
     assert "Result: I found the answer." in context
     assert "PIN" in context
 

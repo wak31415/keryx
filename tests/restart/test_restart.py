@@ -52,7 +52,7 @@ from jarvis.restart.version import (
     startup_log_marks,
 )
 from jarvis.session import SessionRegistry
-from jarvis.stream_tokens import StreamTokenStore
+from jarvis.stream_tokens import StreamTokenStore, confers_possession
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
 
@@ -833,6 +833,7 @@ async def test_the_call_carries_a_redeemable_token_and_the_status(harness):
     assert "picked up new code" in context  # the reason they gave, read back to them
     assert "back up after" in context
     assert "phone listening" in context
+    assert confers_possession(info, OWNER) is True  # Jarvis dialled it; it is not a stranger
 
 
 async def test_the_summary_says_what_changed(tmp_path):

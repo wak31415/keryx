@@ -59,7 +59,7 @@ from jarvis.restart.version import (
     startup_log_marks,
 )
 from jarvis.session import SessionRegistry
-from jarvis.stream_tokens import StreamTokenStore
+from jarvis.stream_tokens import StreamTokenStore, outbound_extra
 from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tasks.store import TaskStore
 
@@ -529,8 +529,11 @@ class RestartCoordinator:
         token = self._stream_tokens.issue(
             caller=record.number,
             # `task_id` lets the call stamp that task reported before the PIN: it opens by
-            # saying the result.
-            extra={"opening_context": context, "restart": True, "task_id": record.task_id},
+            # saying the result. `outbound_extra` says Jarvis dialled it and what it
+            # dialled, which opens the session at `POSSESSION` on the owner's own number.
+            extra=outbound_extra(
+                record.number, opening_context=context, restart=True, task_id=record.task_id
+            ),
             ttl_s=CALLBACK_TOKEN_TTL_S,
         )
         twiml = stream_twiml(host, {"token": token, "caller": record.number})

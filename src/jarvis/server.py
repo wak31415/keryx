@@ -36,7 +36,7 @@ from jarvis.logging_util import mask_number
 from jarvis.notify.reports import verify_report_token
 from jarvis.notify.twilio_out import stream_twiml
 from jarvis.session import VoiceSession
-from jarvis.stream_tokens import TokenInfo
+from jarvis.stream_tokens import TokenInfo, confers_possession
 from jarvis.transports.twilio_ws import TransportError, TwilioTransport
 
 log = logging.getLogger("jarvis.server")
@@ -196,7 +196,20 @@ async def _run_media_session(
 async def _open_session(
     state: AppState, transport: TwilioTransport, token_info: TokenInfo
 ) -> None:
-    """One phone `VoiceSession`, unauthorized until the PIN, run until the call ends."""
+    """One phone `VoiceSession`, unauthorized until the PIN, run until the call ends.
+
+    Unless Jarvis dialled it. A token that says Jarvis placed this call, to the number in
+    `OWNER_NUMBER`, opens the session at `POSSESSION` (`jarvis.trust`): reaching that phone
+    is a fact about who answered, where an inbound `From` is only a claim. The token is the
+    only thing that may say so — never the form fields, never the allowlist — and the PIN
+    is still what takes the call the rest of the way.
+    """
+    possession = confers_possession(token_info, state.settings.owner_number)
+    if possession:
+        log.info(
+            "a call Jarvis placed to %s opens at possession",
+            mask_number(state.settings.owner_number),
+        )
     session = VoiceSession(
         transport,
         state.provider_factory(),
@@ -204,6 +217,7 @@ async def _open_session(
         state.registry,
         state.bus,
         authorized=False,  # the phone channel earns authorization with the PIN (spec §5)
+        possession=possession,
         opening_context=token_info.extra.get("opening_context"),
         opening_task_id=token_info.extra.get("task_id"),
         registry=state.sessions,

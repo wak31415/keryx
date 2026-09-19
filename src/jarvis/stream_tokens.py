@@ -8,6 +8,15 @@ Twilio as a `<Parameter>`, and the websocket must present it back exactly once (
 
 The store is in-memory on purpose: a token outliving the process it was minted by would
 be a liability, not a feature.
+
+A token minted for a call *Jarvis placed* carries one more fact, and it is the only thing
+in Jarvis allowed to carry it. Caller id on the way in is spoofable, which is why the PIN
+exists; a number Jarvis dialled on the way out is not, because reaching it means holding
+that phone. `outbound_extra()` records both halves — that Jarvis placed the call, and the
+number it dialled — and `confers_possession()` is the one place the rule is applied: the
+dialled number has to equal `Settings.owner_number`, never merely a member of
+`allowed_callers`, and never Twilio's own `From`/`To` form fields, which the caller's
+carrier supplies (spec §5, `jarvis.trust`).
 """
 
 import logging
@@ -21,6 +30,10 @@ log = logging.getLogger("jarvis.stream_tokens")
 TOKEN_TTL_SECONDS = 60.0
 TOKEN_BYTES = 24
 
+#: `extra` keys on a token for a call Jarvis placed itself. Spelled once, here.
+PLACED_BY_JARVIS = "jarvis_placed"
+DIALLED_NUMBER = "dialled"
+
 
 @dataclass(frozen=True)
 class TokenInfo:
@@ -28,6 +41,28 @@ class TokenInfo:
 
     caller: str | None
     extra: dict = field(default_factory=dict)
+
+
+def outbound_extra(number: str, **extra: object) -> dict:
+    """The `extra` for a token on a call Jarvis is placing itself, plus whatever else.
+
+    Every outbound `<Connect><Stream>` goes through this, so there is one spelling of "we
+    dialled this" and one place to look for who mints it.
+    """
+    return {PLACED_BY_JARVIS: True, DIALLED_NUMBER: number, **extra}
+
+
+def confers_possession(info: TokenInfo, owner_number: str | None) -> bool:
+    """True when this redeemed token proves the call reached the owner's own phone.
+
+    Both halves have to be there: Jarvis placed the call, *and* the number it dialled is
+    the configured owner's. A token that merely names a number — an inbound one, whose
+    `caller` is the spoofable `From` — proves nothing, and with no `owner_number`
+    configured there is nothing to compare against, which is not a match.
+    """
+    if not owner_number or not info.extra.get(PLACED_BY_JARVIS):
+        return False
+    return info.extra.get(DIALLED_NUMBER) == owner_number
 
 
 @dataclass(frozen=True)

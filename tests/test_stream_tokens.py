@@ -1,6 +1,11 @@
 """Tests for the one-time media-stream tokens that guard `WS /twilio/media` (spec §3.3)."""
 
-from jarvis.stream_tokens import StreamTokenStore
+from jarvis.stream_tokens import (
+    StreamTokenStore,
+    TokenInfo,
+    confers_possession,
+    outbound_extra,
+)
 
 
 class FakeClock:
@@ -87,3 +92,45 @@ def test_a_token_can_carry_no_caller_and_no_extras():
     assert info is not None
     assert info.caller is None
     assert info.extra == {}
+
+
+# --- what a token says about who placed the call ---------------------------
+
+OWNER = "+15555555555"
+OTHER = "+15550009999"
+
+
+def test_an_outbound_token_records_that_jarvis_placed_it_and_what_it_dialled():
+    extra = outbound_extra(OWNER, opening_context="task 3 is done", task_id=3)
+
+    assert extra == {
+        "jarvis_placed": True,
+        "dialled": OWNER,
+        "opening_context": "task 3 is done",
+        "task_id": 3,
+    }
+
+
+def test_a_call_jarvis_placed_to_the_owner_confers_possession():
+    info = TokenInfo(caller=OWNER, extra=outbound_extra(OWNER))
+
+    assert confers_possession(info, OWNER) is True
+
+
+def test_another_number_jarvis_dialled_confers_nothing():
+    """An allowed caller is not the owner, and a call-back may go to a number they gave."""
+    info = TokenInfo(caller=OTHER, extra=outbound_extra(OTHER))
+
+    assert confers_possession(info, OWNER) is False
+
+
+def test_an_inbound_token_confers_nothing_however_it_is_dressed():
+    """The caller is `From`, which is spoofable: only the placing flag may be believed."""
+    assert confers_possession(TokenInfo(caller=OWNER, extra={"call_sid": "CA1"}), OWNER) is False
+    assert confers_possession(TokenInfo(caller=OWNER, extra={"dialled": OWNER}), OWNER) is False
+
+
+def test_with_no_owner_number_nothing_confers_possession():
+    """Nothing to compare against is not a match; it is the absence of the rule."""
+    assert confers_possession(TokenInfo(caller=OWNER, extra=outbound_extra(OWNER)), None) is False
+    assert confers_possession(TokenInfo(caller=None, extra=outbound_extra("")), "") is False

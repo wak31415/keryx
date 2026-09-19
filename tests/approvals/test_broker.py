@@ -18,7 +18,7 @@ import pytest
 
 from jarvis.approvals.broker import ApprovalBroker
 from jarvis.config import Settings
-from jarvis.stream_tokens import StreamTokenStore
+from jarvis.stream_tokens import StreamTokenStore, confers_possession
 
 TIMEOUT = 3.0
 
@@ -282,6 +282,8 @@ async def test_the_call_carries_the_request_and_the_menu(broker, twilio, tmp_pat
     assert "git push" in context
     assert "press 1 for approve" in context
     assert "keypad" in context
+    info = next(iter(token.values())).info
+    assert confers_possession(info, "+15557000000") is True
 
 
 async def test_a_live_call_is_told_instead_of_a_second_one_being_placed(

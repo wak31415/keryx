@@ -42,7 +42,7 @@ from jarvis.notify.deliver import announce_to_live_sessions, safe_send_sms
 from jarvis.notify.reports import report_token
 from jarvis.notify.twilio_out import TwilioOut, stream_twiml
 from jarvis.session import SessionRegistry
-from jarvis.stream_tokens import StreamTokenStore
+from jarvis.stream_tokens import StreamTokenStore, outbound_extra
 from jarvis.tasks.models import Task
 from jarvis.tasks.store import TaskStore
 
@@ -297,7 +297,12 @@ class Notifier:
             )
             token = self._stream_tokens.issue(
                 caller=task.callback_number,
-                extra={"task_id": task.id, "opening_context": context},
+                # Jarvis is dialling: the token says so, and says what it dialled, so the
+                # session that answers opens at `POSSESSION` when that is the owner's own
+                # number (`jarvis.trust`). A number they named out loud is not.
+                extra=outbound_extra(
+                    task.callback_number, task_id=task.id, opening_context=context
+                ),
                 ttl_s=CALLBACK_TOKEN_TTL_S,
             )
             twiml = stream_twiml(
