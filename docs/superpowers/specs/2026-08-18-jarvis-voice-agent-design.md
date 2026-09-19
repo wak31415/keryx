@@ -669,7 +669,8 @@ class SessionRegistry:
      reaches the keypad only while a menu is actually waiting on one, and otherwise goes to
      the PIN buffer as it always did. No Twilio answering-machine detection: `machine_detection`
      would let a call-back hang up and fall back instead of reading a result to a machine, and
-     that is filed as an issue rather than built.
+     that is filed as issue #50 rather than built — detection is about not *talking* to a
+     machine, where the keypress is about not *acting* on one.
 - **Before the PIN, the phone gets nothing (added 2026-09-16; amended 2026-09-19 — the digest
   and the three tools above moved, the rest stands).** Caller id is spoofable, so an
   allowed number proves nothing. Ruling: on the phone, before the PIN, nothing private is read

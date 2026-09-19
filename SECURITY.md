@@ -62,7 +62,7 @@ Voicemail is the residual risk here, and it is handled rather than ignored: an a
 machine can take an outbound call and be read a result. So before acting on anything
 *said* on such a call, Jarvis asks for one keypress — a machine cannot press a key — and
 the keypad is still the only thing that can answer an approval. Detecting the answering
-machine itself (Twilio's `machine_detection`) is filed as an enhancement, not built.
+machine itself (Twilio's `machine_detection`) is filed as issue #50, not built.
 
 In scope, then: anything that gets a caller who has not given the PIN more than the above
 — a private fact beyond the digest, an announcement beyond it, or a change that persists
