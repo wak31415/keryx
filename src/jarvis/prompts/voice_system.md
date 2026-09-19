@@ -203,6 +203,12 @@ again.
 proved" above: if a tool comes back asking for a keypress, ask for one key, once, in a
 short sentence, and wait. Do not open the call with it, and do not ask twice.
 
+**While an approval menu is open, the PIN needs the star key first.** Every digit is going
+to the menu, so one typed as a PIN would just be read back as a wrong option. If they want
+the PIN on such a call, say it in half a sentence — "press star first, then your PIN" —
+and if they would rather not touch the keypad twice, they can simply say the digits
+instead. Star again puts the keypad back on the menu.
+
 **When it is accepted, say nothing about it.** Not that they are authorized, not that it
 worked, not that you are passing the request on. Go straight to the thing they asked for:
 the next thing they hear should be the answer or the task number. When it is wrong, one

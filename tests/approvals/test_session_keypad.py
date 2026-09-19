@@ -13,9 +13,14 @@ from fakes import FakeProvider, FakeTransport, eventually
 from test_session import make_settings, running
 
 from jarvis.events import EventBus
-from jarvis.session import VoiceSession
+from jarvis.session import (
+    PIN_ENTRY_CANCELLED_MESSAGE,
+    PIN_ENTRY_MESSAGE,
+    VoiceSession,
+)
 from jarvis.tools import ToolRegistry
 from jarvis.transports.base import Dtmf
+from jarvis.trust import TrustLevel
 
 PIN = "424242"
 
@@ -220,3 +225,112 @@ async def test_any_key_at_all_counts(phone, provider, keypad, tmp_path):
         await eventually(lambda: session.keypressed)
 
     assert session.keypressed is True
+
+
+# --- the way back to the PIN while a menu is armed --------------------------
+#
+# The dead end this closes: on an escalation call the owner may want FULL — to dispatch
+# work, or to ask for something else while they have Jarvis on the line — and every digit
+# they type goes to the armed menu, which reads each one back as an unrecognised key. `*`
+# is never part of a PIN and never an answer to a menu, so it is free to mean "the keypad
+# is for the PIN now", and free to mean it again in reverse.
+
+
+async def test_star_while_a_menu_is_armed_hands_the_keypad_to_the_pin(
+    phone, provider, keypad, tmp_path
+):
+    keypad.waiting = True
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("*"))
+        for digit in PIN:
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: session.authorized)
+
+    assert keypad.digits == []  # not one digit of the PIN reached the menu
+    assert session.trust is TrustLevel.FULL
+
+
+async def test_star_again_hands_it_back_to_the_menu(phone, provider, keypad, tmp_path):
+    """A mis-hit must not be a trap of its own, so the switch goes both ways."""
+    keypad.waiting = True
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("*"))
+        phone.feed(Dtmf("*"))
+        phone.feed(Dtmf("1"))
+        await eventually(lambda: keypad.digits)
+
+    assert keypad.digits == [(session.session_id, "1")]
+    assert session.authorized is False
+
+
+async def test_a_wrong_pin_does_not_hand_the_keypad_back(phone, provider, keypad, tmp_path):
+    """The model is told to ask them to try again, and trying again has to work."""
+    keypad.waiting = True
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("*"))
+        for digit in "999999":
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: any("incorrect" in text for text, *_ in provider.injected))
+        for digit in PIN:
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: session.authorized)
+
+    assert keypad.digits == []
+
+
+async def test_the_right_pin_hands_the_keypad_back_by_itself(phone, provider, keypad, tmp_path):
+    """Past the PIN the call is FULL, where every digit is the keypad's again."""
+    keypad.waiting = True
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("*"))
+        for digit in PIN:
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: session.authorized)
+        phone.feed(Dtmf("1"))
+        await eventually(lambda: keypad.digits)
+
+    assert keypad.digits == [(session.session_id, "1")]
+
+
+async def test_star_is_the_keypad_s_own_once_the_pin_is_in(phone, provider, keypad, tmp_path):
+    """At FULL nothing is being typed *in*, so `*` is just another key for the listener."""
+    session = build(phone, provider, keypad, authorized=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("*"))
+        await eventually(lambda: keypad.digits)
+
+    assert keypad.digits == [(session.session_id, "*")]
+
+
+async def test_star_with_no_menu_armed_changes_nothing(phone, provider, keypad, tmp_path):
+    """There is nothing to switch away from, and `*` was never part of a PIN."""
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("*"))
+        for digit in PIN:
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: session.authorized)
+
+    assert keypad.digits == []
+
+
+async def test_the_model_is_told_the_keypad_changed_hands_and_asked_for_nothing(
+    phone, provider, keypad, tmp_path
+):
+    """They are typing. A sentence over the top of that is one nobody is listening to."""
+    keypad.waiting = True
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("*"))
+        await eventually(lambda: len(provider.injected) > 1)
+        switched = provider.injected[-1]
+        phone.feed(Dtmf("*"))
+        await eventually(lambda: len(provider.injected) > 2)
+        back = provider.injected[-1]
+
+    assert switched[0] == PIN_ENTRY_MESSAGE and switched[1] is False
+    assert back[0] == PIN_ENTRY_CANCELLED_MESSAGE and back[1] is False

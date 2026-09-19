@@ -665,9 +665,14 @@ class SessionRegistry:
      whatever picks up — but at `POSSESSION` an action driven by *speech* requires one DTMF
      press earlier in the same call (`VoiceSession.keypressed`): the keypad is the thing
      voicemail cannot produce. A keypad approval is already a press and needs nothing extra.
-     `Keypad.armed` is what keeps the PIN enterable on such a call: below `FULL` a digit
-     reaches the keypad only while a menu is actually waiting on one, and otherwise goes to
-     the PIN buffer as it always did. No Twilio answering-machine detection: `machine_detection`
+     Keeping the PIN enterable on such a call takes two things, because an armed menu and
+     the PIN both want the same keypad: below `FULL` a digit reaches the keypad only while
+     `Keypad.armed` says a menu is waiting on one, and `PIN_ENTRY_KEY` (`*` — never part of
+     a PIN, never an option on a menu, so it can be spared) toggles the keypad back to the
+     PIN while one is. `_keying_pin` is derived rather than cleared, so the right PIN and a
+     lockout end it by themselves and a *wrong* PIN does not — the model has just been told
+     to ask them to try again. Saying the digits is the third way and always was:
+     `submit_pin` answers at every level. No Twilio answering-machine detection: `machine_detection`
      would let a call-back hang up and fall back instead of reading a result to a machine, and
      that is filed as issue #50 rather than built — detection is about not *talking* to a
      machine, where the keypress is about not *acting* on one.

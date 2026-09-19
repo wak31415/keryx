@@ -40,7 +40,9 @@ surface — a removed or renamed setting or command is a major bump.
   number, mark a result as told, and answer a waiting approval on the keypad — without the
   PIN. Starting work, `recall`, restarting and the memory still need it. Nothing else
   confers this: not an allowed caller, not the `From` on an inbound call. Because voicemail
-  can answer a call, acting on anything you *say* takes one keypress first.
+  can answer a call, acting on anything you *say* takes one keypress first. If an approval
+  menu is open on such a call and you want the PIN, press `*` to give the keypad to the PIN
+  (`*` again gives it back to the menu); saying the digits works at any time.
 - **`DIGEST_BEFORE_PIN`** (default `true`): results you have not been told about are read
   out at the start of an inbound call, before the PIN. The trade-off is that a caller who
   spoofs one of your `ALLOWED_CALLERS` hears those summaries; `false` restores the old

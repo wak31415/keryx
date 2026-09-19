@@ -97,6 +97,17 @@ PIN_REJECTED_MESSAGE = (
 #: What the model is told after a keypad entry, per `submit_pin` status. A lockout is
 #: absent because `submit_pin` has already said its piece.
 KEYPAD_PIN_MESSAGES = {"authorized": PIN_ACCEPTED_MESSAGE, "invalid": PIN_REJECTED_MESSAGE}
+#: What the model is told when the caller moves the keypad between the two things it can
+#: be for on a call Jarvis placed (see `PIN_ENTRY_KEY`). Neither asks for a response: the
+#: caller is typing, and a sentence over the top of that is one nobody is listening to.
+PIN_ENTRY_MESSAGE = (
+    "[system] The caller pressed star: they are keying the PIN in now, not answering the "
+    "menu. Say nothing and wait for them to finish."
+)
+PIN_ENTRY_CANCELLED_MESSAGE = (
+    "[system] The caller pressed star again: the keypad is back to the menu and they are "
+    "not keying a PIN in. Say nothing and wait."
+)
 
 
 class Keypad(Protocol):
@@ -124,6 +135,10 @@ PIN_MAX_ATTEMPTS = 3
 DTMF_RESET_SECONDS = 5.0
 # Keys that are not part of a PIN: `#` submits what has been typed, `*` is ignored.
 DTMF_NON_DIGITS = ("#", "*")
+#: The key that moves the keypad between the menu and the PIN on a call below `FULL`.
+#: `*` can be spared for it because it is the one key that means nothing to either: never
+#: part of a PIN (`DTMF_NON_DIGITS`), never an option on an approval menu, which is `0`-`9`.
+PIN_ENTRY_KEY = "*"
 
 # How long a requested end waits for the speaking response to finish before hanging up.
 END_GRACE_SECONDS = 10.0
@@ -205,6 +220,9 @@ class VoiceSession:
         #: Whether anybody has pressed a key on this call. An answering machine answers a
         #: call, plays a greeting and records; it cannot press one (`keypressed`).
         self._keypressed = False
+        #: Whether the caller has asked for the keypad back for the PIN (`PIN_ENTRY_KEY`).
+        #: Only ever consulted below `FULL` and with a menu armed — see `_keying_pin`.
+        self._pin_entry = False
 
         self._tool_tasks: set[asyncio.Task] = set()
         self._silence_task: asyncio.Task | None = None
@@ -562,14 +580,32 @@ class VoiceSession:
         `DTMF_RESET_SECONDS` is a different attempt and is thrown away, so a mis-hit does
         not poison the next entry. `#` submits what has been typed; a buffer as long as
         the PIN submits itself, which is what makes `#` optional.
+
+        Below `FULL` the keypad can be wanted by two things at once — an armed approval
+        menu, and the PIN that would take the call to `FULL` — and a digit cannot be read
+        as both. `PIN_ENTRY_KEY` is how the caller says which, deterministically, rather
+        than Jarvis guessing from a digit that might have been either.
         """
         log.debug("session %s received a keypad digit", self.session_id)
         self._keypressed = True  # whatever it meant, voicemail could not have done it
         expected = self._settings.pin
-        if self._keypad is not None and (self.authorized or self._keypad_armed()):
-            # The PIN is behind us — or a menu has been read out on a call Jarvis placed —
-            # so this digit is somebody else's: an approval waiting on a confirmation,
-            # today. Still never logged and never sent to the model.
+        if self._asks_for_the_pin(digit):
+            self._pin_entry = not self._pin_entry
+            log.info(
+                "session %s: the keypad is now for %s",
+                self.session_id,
+                "the PIN" if self._pin_entry else "the menu",
+            )
+            note = PIN_ENTRY_MESSAGE if self._pin_entry else PIN_ENTRY_CANCELLED_MESSAGE
+            self._spawn_task(self._tell_model(note), name="pin-entry")
+            return
+        if self._keypad is not None and (
+            self.authorized or (self._keypad_armed() and not self._keying_pin())
+        ):
+            # The PIN is behind us — or a menu has been read out on a call Jarvis placed
+            # and the caller has not asked for the keypad back — so this digit is somebody
+            # else's: an approval waiting on a confirmation, today. Still never logged and
+            # never sent to the model.
             self._spawn_task(self._offer_digit(digit), name="keypad")
             return
         if not expected or self.authorized or self._pin_locked:
@@ -590,6 +626,32 @@ class VoiceSession:
         # `_on_dtmf` is called from the transport pump, which cannot await: the check and
         # the note to the model are scheduled, and tracked so teardown cleans them up.
         self._spawn_task(self._check_keypad_pin(entered), name="pin")
+
+    def _asks_for_the_pin(self, digit: str) -> bool:
+        """Whether `digit` is the caller moving the keypad between the menu and the PIN.
+
+        Only below `FULL`, and only where there is something to move it away from: with no
+        menu armed a `*` is what it always was — nothing, dropped by `DTMF_NON_DIGITS` —
+        and past the PIN it is an ordinary key for the listener. It toggles, so a mis-hit
+        is not a trap of its own, which is the whole complaint against the state it sets.
+        """
+        if digit != PIN_ENTRY_KEY or self.authorized:
+            return False
+        return self._pin_entry or self._keypad_armed()
+
+    def _keying_pin(self) -> bool:
+        """True while this call has the keypad for its PIN rather than for a menu.
+
+        Derived rather than cleared: the two things that end PIN entry — the right PIN,
+        and a lockout — are exactly the two that make the flag meaningless, so neither
+        needs its own unwinding. A *wrong* PIN is not one of them, because the model has
+        just been told to ask them to try again and trying again has to work.
+        """
+        return self._pin_entry and not self.authorized and not self._pin_locked
+
+    async def _tell_model(self, text: str) -> None:
+        """Put a `[system]` note to the model without asking for a turn over it."""
+        await self._safe_call(self._provider.inject_message, text, respond=False)
 
     def _keypad_armed(self) -> bool:
         """Whether the keypad is waiting on a digit from this call. Never raises.

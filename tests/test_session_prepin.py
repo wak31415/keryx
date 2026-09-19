@@ -275,6 +275,24 @@ async def test_a_wrong_pin_delivers_nothing(make_session, phone, provider):
         assert MEMORY not in provider.config.instructions
 
 
+async def test_a_spoken_pin_takes_a_call_jarvis_placed_to_full(make_session, phone, provider):
+    """The escape hatch that was always there, and does not depend on the keypad at all.
+
+    `submit_pin` is one of the five tools ungated at every level, so a call-back whose
+    keypad is busy with an approval menu can still reach FULL by saying the digits.
+    """
+    session = make_session(phone, provider, possession=True, briefer=FakeBriefer())
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+        assert session.trust is POSSESSION
+        provider.feed(FunctionCall(call_id="c1", name="submit_pin", arguments={"pin": PIN}))
+        await eventually(lambda: session.authorized)
+
+        assert session.trust is TrustLevel.FULL
+        assert private(provider.instruction_updates[-1])
+
+
 async def test_a_pin_accepted_before_the_call_is_connected_is_briefed_at_the_opening(
     make_session, phone, provider
 ):

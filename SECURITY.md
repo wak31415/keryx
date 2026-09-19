@@ -64,6 +64,14 @@ machine can take an outbound call and be read a result. So before acting on anyt
 the keypad is still the only thing that can answer an approval. Detecting the answering
 machine itself (Twilio's `machine_detection`) is filed as issue #50, not built.
 
+**Getting to the PIN on such a call.** Two things can want the keypad at once there: an
+approval menu that has been read out, and the PIN that would take the call the rest of the
+way. Press **`*`** to give the keypad to the PIN — `*` is never part of a PIN and never an
+option on a menu, so it cannot be mistaken for either — then key the PIN in as usual;
+press `*` again to put the keypad back on the menu. A wrong PIN leaves the keypad where it
+is, so you can simply try again. Saying the digits out loud works too and always did:
+`submit_pin` is one of the handful of tools that answer at any level.
+
 In scope, then: anything that gets a caller who has not given the PIN more than the above
 — a private fact beyond the digest, an announcement beyond it, or a change that persists
 past the call. That **includes the memory writer**, a `bypassPermissions` subagent whose

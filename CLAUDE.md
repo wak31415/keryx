@@ -107,9 +107,12 @@ Four rulings, and `SECURITY.md` is the threat model:
 - **Voicemail must not be able to act.** An outbound call can be answered by an answering
   machine, which will listen to a result and say something machine-shaped back. Listening is
   unchanged; *acting* on speech at `POSSESSION` wants one DTMF press earlier in the same call
-  (`VoiceSession.keypressed`). A keypad approval is already a press and asks for nothing more,
-  and `Keypad.armed` keeps the PIN enterable on a call-back by handing the keypad a digit only
-  while a menu is waiting on one.
+  (`VoiceSession.keypressed`). A keypad approval is already a press and asks for nothing more.
+  Two things can want that keypad, so `Keypad.armed` hands it a digit only while a menu is
+  actually waiting on one, and `PIN_ENTRY_KEY` (`*`, which is neither part of a PIN nor a menu
+  option) toggles it back to the PIN when one is. Both halves are needed: the first for the
+  call with no menu up, the second for the call with one. A spoken PIN was always the third
+  way through — `submit_pin` is ungated at every level.
 
 What has not moved: `mark_reported` below `POSSESSION` may stamp only `reportable_task_ids` —
 the tasks this call's own digest named, plus `opening_task_id` — because stamping decides what
