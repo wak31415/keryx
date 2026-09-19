@@ -104,9 +104,10 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `realtime/base.py` | `RealtimeProvider` protocol, `SessionConfig`, typed provider events |
 | `realtime/openai.py` | OpenAI Realtime WS client (GA schema) |
 | `session.py` | `VoiceSession` (wires transport⇄provider, barge-in, tool dispatch, PIN gate, announcements, lifecycle, transcript log) + `SessionRegistry` |
+| `trust.py` | `TrustLevel`: how much one call has proved — `NONE` / `POSSESSION` / `FULL` (added 2026-09-19). One tiny module because `session`, `server`, `prompts`, `tools` and `notify` all compare against it, and any of their homes would be an import cycle |
 | `tools/registry.py` | `ToolRegistry`, `ToolContext` |
 | `tools/builtin.py` | `register_builtin_tools`: the composition root. Split 2026-09-02 — the order it calls the five modules below in *is* the order the tools are offered to the model |
-| `tools/builtin_common.py` | What they share: the spoken wording, the argument parsing, and the two gates (`pin_gate`, `get_task`) |
+| `tools/builtin_common.py` | What they share: the spoken wording, the argument parsing, and the gates (`pin_gate`, `possession_gate`, `get_task`) |
 | `tools/builtin_comms.py` | `send_to_slack`, `web_search` — reaching outside the call without dispatching |
 | `tools/builtin_billing.py` | `check_billing`, `cluster_stats` — read-only, and un-PIN-gated for that reason |
 | `tools/builtin_tasks.py` | `dispatch_task`, `list_tasks`, `get_task_status`, `get_task_result`, `mark_reported`, `recall`, `send_followup`, `cancel_task`, `list_projects`, `request_callback` |
@@ -221,6 +222,20 @@ immediately, and `submit_tool_result(respond=False)` sends one without asking fo
 response at all.
 
 ```python
+# trust.py  (added 2026-09-19)
+class TrustLevel(IntEnum):        # ordered: callers compare with >=, never against a set
+    NONE = 0                      # an inbound phone call before the PIN
+    POSSESSION = 1                # a call Jarvis placed to Settings.owner_number
+    FULL = 2                      # the PIN was given on this call, or the local microphone
+```
+
+```python
+# stream_tokens.py  (added 2026-09-19)
+def outbound_extra(number: str, **extra) -> dict          # token `extra` for a call Jarvis places
+def confers_possession(info: TokenInfo, owner_number: str | None) -> bool
+```
+
+```python
 # tools/registry.py
 @dataclass class ToolContext:
     session: "VoiceSession"           # duck-typed: needs .authorized, .channel, .caller, .session_id, .request_end(), .authorize()
@@ -320,14 +335,18 @@ class TaskManager:
 # session.py
 class VoiceSession:
     def __init__(self, transport, provider, settings, tools: ToolRegistry, bus: EventBus, *,
-                 authorized: bool, opening_context: str | None = None, session_id: str | None = None,
+                 authorized: bool, possession: bool = False, opening_context: str | None = None,
+                 session_id: str | None = None,
                  registry: SessionRegistry | None = None, briefer: BriefingSource | None = None,
                  keypad: Keypad | None = None, opening_task_id: int | None = None)
-    session_id: str; channel: str; caller: str | None; authorized: bool
+    session_id: str; channel: str; caller: str | None; authorized: bool; possession: bool
     opening_task_id: int | None                         # the task a call Jarvis placed opened with; from its own token only
-    trusted: bool                                       # property: local, or the phone after the PIN (added 2026-09-16)
+    trust: TrustLevel                                   # property: NONE / POSSESSION / FULL (added 2026-09-19)
+    trusted: bool                                       # property: `trust is FULL` — the old spelling, unchanged in meaning
+    keypressed: bool                                    # property: a key has been pressed on this call (voicemail cannot)
+    reportable_task_ids: frozenset[int]                 # property: what this call may mark_reported below POSSESSION
     async def run(self) -> None                       # returns when session ends
-    async def announce(self, text: str) -> bool       # inject + speak; False if session not live or not trusted
+    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool  # False if not live or below `needs`
     async def submit_pin(self, pin: str) -> dict      # the one place a PIN is compared (spec §3.3)
     def request_end(self, reason: str = "user") -> None
     def authorize(self) -> None
@@ -603,7 +622,56 @@ class SessionRegistry:
   busy `<Say>`, and the media socket counts again after the token. `jarvis serve` refuses
   the phone channel with `DEBUG_SKIP_TWILIO_VALIDATION` on and `PUBLIC_HOST` set.
   *Amended 2026-09-16:* the gate is on every tool but five, not only on dispatch — see the next ruling.
-- **Before the PIN, the phone gets nothing (added 2026-09-16).** Caller id is spoofable, so an
+- **Trust has three levels (added 2026-09-19).** One bit — `authorized`, earned only by the
+  PIN — was both too coarse and wrong about direction, and this ruling amends the one below
+  it rather than replacing it. `jarvis/trust.py` has `TrustLevel.NONE` (an inbound call
+  before the PIN), `POSSESSION` (a call Jarvis placed to `OWNER_NUMBER`) and `FULL` (the PIN
+  on this call, or the local microphone). `VoiceSession.trusted` is `FULL` and keeps every
+  meaning it had. Four parts:
+  1. **A token is the only thing that may confer possession.** Caller id inbound is a claim;
+     a number Jarvis *dialled* is a fact, because reaching it means holding that phone. The
+     call-back's `<Connect><Stream>` already carries a single-use token Jarvis minted, so it
+     carries the fact too: `stream_tokens.outbound_extra()` records that Jarvis placed the
+     call and what it dialled, and `confers_possession()` — applied once, in
+     `server._open_session` — requires the dialled number to equal `Settings.owner_number`.
+     Never a member of `ALLOWED_CALLERS`, never Twilio's `From`/`To` form fields, which the
+     caller's carrier supplies. All three outbound `<Connect><Stream>` calls mint it: the
+     Notifier's call-back, the restart's confirmation, and the approval bridge's own
+     escalation — the last because that call exists to have an approval answered, which is a
+     `POSSESSION` capability.
+  2. **The digest is not behind the PIN.** The owner's ruling, and the spoofing it exposes is
+     accepted: unheard results are what a call is rung in for, and a digest that waits for
+     the PIN is one they often never get. `DIGEST_BEFORE_PIN` (default true) is the switch;
+     false restores the behaviour below. The memory, the project briefs and the skill catalog
+     do **not** move — they are the map of the owner's whole world and the injection surface,
+     and none of it is news. `announce(text, needs=…)` carries the same split: a finished task
+     needs `NONE`, a prompt waiting on their screen needs a call that could answer it.
+     `Announced.delivered` (was `on_phone`) requires `POSSESSION`, because a stranger hearing
+     the news is not the owner having been told, so the text and the call-back still go out.
+     `mark_reported` at `NONE` is generalised from `opening_task_id` to
+     `VoiceSession.reportable_task_ids` — the tasks this call's own digest actually named,
+     and no further — or the digest repeats for ever.
+  3. **Possession is who is holding the phone, not that they meant to spend the machine.** It
+     buys `send_followup` and `request_callback` (the answer to the question Claude came back
+     with, which is the point of the tier; the call-back may only ring the number Jarvis
+     already dialled), `mark_reported` on any task, and the two approval tools —
+     `approvals/policy.py`'s allowlist is already the "routine and reversible" filter on what
+     a keypad may ever run, the denylist still wins over it, and `--disable` wins over
+     everything. Dispatch, `recall`, `restart_service`, `send_to_slack` and the prompt's map
+     of their world still need the PIN. `possession_gate` is the gate; `pin_gate` is
+     unchanged and still means `FULL`.
+  4. **Voicemail must not be able to act.** An outbound call can be answered by an answering
+     machine. Listening is unchanged — a call-back already speaks its opening context to
+     whatever picks up — but at `POSSESSION` an action driven by *speech* requires one DTMF
+     press earlier in the same call (`VoiceSession.keypressed`): the keypad is the thing
+     voicemail cannot produce. A keypad approval is already a press and needs nothing extra.
+     `Keypad.armed` is what keeps the PIN enterable on such a call: below `FULL` a digit
+     reaches the keypad only while a menu is actually waiting on one, and otherwise goes to
+     the PIN buffer as it always did. No Twilio answering-machine detection: `machine_detection`
+     would let a call-back hang up and fall back instead of reading a result to a machine, and
+     that is filed as an issue rather than built.
+- **Before the PIN, the phone gets nothing (added 2026-09-16; amended 2026-09-19 — the digest
+  and the three tools above moved, the rest stands).** Caller id is spoofable, so an
   allowed number proves nothing. Ruling: on the phone, before the PIN, nothing private is read
   out, nothing is announced into the call, and nothing the caller says or does outlives it.
   `VoiceSession.trusted` is the predicate. An untrusted call's prompt is rendered `withheld`
@@ -664,6 +732,7 @@ class SessionRegistry:
 | `OWNER_NUMBER` | `owner_number` | first of `allowed_callers` |
 | `OWNER_NAME` | `owner_name` (what the prompts call the owner; read through `owner_label`) | `None` → "the owner" (added 2026-09-16) |
 | `JARVIS_PIN` | `pin` (**6-8 digits** when set; refused otherwise) | `None` (every dispatch refused on phone if unset) |
+| `DIGEST_BEFORE_PIN` | `digest_before_pin` (does an inbound call hear the results it has not been told about before the PIN; the memory, briefs and skills never do) | `true` (added 2026-09-19) |
 | `PIN_FAILURE_LIMIT` / `PIN_FAILURE_WINDOW_HOURS` / `PIN_LOCKOUT_MINUTES` | `pin_failure_limit` / `pin_failure_window_hours` / `pin_lockout_minutes` (wrong PINs across calls before PIN entry locks, how long each counts, how long it locks) | `10` / `24` / `60` (added 2026-09-16) |
 | `PUBLIC_HOST` | `public_host` (the tunnel's hostname, e.g. `jarvis.example.com`) | `None` |
 | `HOST` / `PORT` | `host` / `port` | `127.0.0.1` / `8080` |
@@ -815,12 +884,26 @@ what it gates is **every dispatch**, not a subset: there are no destructive kind
 out, because there is one kind and it reaches everything. A configured PIN is 6-8 digits
 (§3.3); no PIN at all means dispatching is simply refused from the phone.
 
-**Before the PIN (2026-09-16).** The PIN is not only the gate on dispatch. A caller who has
-faked an allowed number, and not given the PIN, is told nothing private, has nothing announced
-to them, and leaves nothing that outlives the call — including the memory writer's subagent,
+**Before the PIN (2026-09-16, amended 2026-09-19).** The PIN is not only the gate on dispatch.
+A caller who has faked an allowed number, and not given the PIN, is told nothing of the
+owner's, and leaves nothing that outlives the call — including the memory writer's subagent,
 which reads the call's transcript with a shell and so runs only for authorized calls (§3.3,
 "Before the PIN, the phone gets nothing"). Out of scope by design: whoever has the PIN, or any
 content a subagent reads, effectively has a shell as the owner. `SECURITY.md` is the public copy.
+
+**Three levels of trust (2026-09-19).** Two changes to the paragraph above, both the owner's
+ruling (§3.3, "Trust has three levels"). A call *Jarvis placed* to `OWNER_NUMBER` is
+`POSSESSION` — proved by the single-use stream token Jarvis minted for it, and by nothing
+else — which is enough to answer Claude's question, arrange a call back on that same number,
+and answer a pending approval on the keypad, but not to dispatch, to `recall`, to restart, or
+to be handed the memory. And the digest of unheard results is spoken **before** the PIN
+(`DIGEST_BEFORE_PIN`, default true): the owner's accepted trade is that a caller who has
+spoofed an allowed number hears those task summaries, against a digest they otherwise often
+never get. What that caller still cannot reach is the memory, the project names, the briefs
+and the skills — the map of the owner's world, and the injection surface — nor anything that
+acts. The residual risks, written down: a spoofer hears task summaries; and an answering
+machine on an outbound call hears one, which is why acting on speech at `POSSESSION` takes a
+keypress a machine cannot produce.
 
 **The approval bridge (`jarvis/approvals/`, 2026-08-26).** This one runs *inwards*: a
 Claude Code session on the owner's own screen has stopped and is asking him something, a hook

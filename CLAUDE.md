@@ -47,8 +47,8 @@ remember:
   `version`, `watchdog` and `logscan`. The directory listing is the index now.
 - **tools** — `tools/builtin.py` is a composition root; the registrations are in
   `builtin_comms`, `builtin_billing`, `builtin_tasks`, `builtin_restart` and
-  `builtin_session`, with the wording, the parsing and the two gates (`pin_gate`,
-  `get_task`) in `builtin_common`. **The order `builtin.py` calls them in is the order
+  `builtin_session`, with the wording, the parsing and the gates (`pin_gate`,
+  `possession_gate`, `get_task`) in `builtin_common`. **The order `builtin.py` calls them in is the order
   the tools are offered to the model.** A new tool goes in a domain module and the README
   table, or `tests/test_docs_sync.py` fails. A tool may also be registered `silent=True`
   (`mark_reported`, `end_session`): its result is submitted without asking for a response,
@@ -75,25 +75,48 @@ decision is answer-it-myself (small facts go through its `web_search` tool, back
 Responses API) versus dispatch. Do not reintroduce kinds to express "this one is
 read-only" — the phone PIN gates every dispatch instead.
 
-## Before the PIN, the phone gets nothing
+## Trust has three levels
 
-Caller ID is spoofable, so an allowed number proves nothing. **On the phone, before the PIN,
-nothing private is read out, nothing is announced into the call, and nothing the caller says
-or does outlives it.** `VoiceSession.trusted` (local always, the phone once authorized) is the
-one predicate, and `SECURITY.md` is the threat model:
+Caller ID is spoofable, so an inbound number proves nothing — but a call *Jarvis placed* is
+different in kind, and one bit of trust could not say so. `jarvis/trust.py` has the three,
+ordered so everything asks for "at least this much":
 
-- An untrusted call renders `withheld` — no memory, digest, projects, briefs or skills — and an
-  accepted PIN sends the full prompt with `update_instructions` plus a nudge that asks for no
-  response of its own, so the PIN still costs one turn.
-- `announce` refuses it and answers False, so it never counts as delivery.
-- `pin_gate` runs first in every tool but `check_billing`, `cluster_stats`, `web_search`,
-  `submit_pin` and `end_session` (`UNGATED` in `tests/tools/test_builtin.py`). The one carve-out:
-  `mark_reported` may stamp `opening_task_id`, the task a call Jarvis placed opened by saying,
-  which is set only from Jarvis's own stream token.
-- `SessionEnded.authorized` is False, so no memory update; the transcript header says
-  `authorized=no`, so `recall` never reads it. Do not narrow the subagent's tools instead.
-- A spoken PIN is `[PIN]` in every transcript line (`continuity.transcripts.redact_pin`), and
-  everything that hands a transcript to a model redacts again, for logs written before.
+- **`NONE`** — an inbound call before the PIN.
+- **`POSSESSION`** — a call Jarvis placed to `Settings.owner_number`. Reaching that phone
+  means holding it.
+- **`FULL`** — the PIN was given on this call, or the channel is the local microphone.
+  `VoiceSession.trusted` is the old spelling of exactly this, and still means it.
+
+Four rulings, and `SECURITY.md` is the threat model:
+
+- **A token is the only thing that may confer possession.** `stream_tokens.outbound_extra`
+  records that Jarvis placed the call and the number it dialled; `confers_possession` applies
+  the rule in `_open_session`, and takes `owner_number` alone — never a member of
+  `allowed_callers`, never Twilio's `From`/`To`, which are the caller's carrier talking.
+- **The digest is not behind the PIN; the memory is.** The owner's ruling, spoofers and all
+  (`DIGEST_BEFORE_PIN`, default on). What is withheld below `FULL` is the map of their world —
+  memory, project names, briefs, skills — and `announce(text, needs=…)` says which kind each
+  announcement is: news needs nothing, an approval needs a call that could answer it.
+  `Announced.delivered` still takes `POSSESSION`, because a stranger hearing the news is not
+  the owner having been told, so the text and the call-back still go out.
+- **Possession is who is holding the phone, not that they meant to spend the machine.** It
+  buys `send_followup` and `request_callback` (the answer to the question Claude came back
+  with — the point of the tier), the two approval tools, and `mark_reported` on anything.
+  Dispatch, `recall`, `restart_service` and the prompt's map of their world still need the PIN.
+  `possession_gate` is the gate; `pin_gate` is unchanged and still means `FULL`.
+- **Voicemail must not be able to act.** An outbound call can be answered by an answering
+  machine, which will listen to a result and say something machine-shaped back. Listening is
+  unchanged; *acting* on speech at `POSSESSION` wants one DTMF press earlier in the same call
+  (`VoiceSession.keypressed`). A keypad approval is already a press and asks for nothing more,
+  and `Keypad.armed` keeps the PIN enterable on a call-back by handing the keypad a digit only
+  while a menu is waiting on one.
+
+What has not moved: `mark_reported` below `POSSESSION` may stamp only `reportable_task_ids` —
+the tasks this call's own digest named, plus `opening_task_id` — because stamping decides what
+the owner never hears. `SessionEnded.authorized` is still `FULL` only, so no memory update and
+no `recall` over that transcript. A spoken PIN is `[PIN]` in every transcript line
+(`continuity.transcripts.redact_pin`), and everything that hands a transcript to a model
+redacts again, for logs written before. Do not narrow the subagent's tools instead.
 
 ## Continuity is three pieces
 
@@ -103,9 +126,9 @@ Jarvis knows at the top of a call is assembled every time by
 
 - **The digest.** `Task.reported_at` is the only record that Jarvis *told the owner*; `announced`
   and `sms_sent` only say a delivery was attempted, and neither survives a call they missed.
-  Until `reported_at` is stamped, the task rides at the top of the next call (on the phone,
-  from the moment the PIN is accepted). Exactly one thing stamps it: the voice model's
-  `mark_reported` tool, after it has spoken the result.
+  Until `reported_at` is stamped, the task rides at the top of the next call — from the
+  greeting, PIN or no PIN (`DIGEST_BEFORE_PIN`; see "Trust has three levels"). Exactly one
+  thing stamps it: the voice model's `mark_reported` tool, after it has spoken the result.
   Do not stamp it from a delivery path — hearing something twice is recoverable, never
   hearing it is not.
 - **The memory.** `jarvis/continuity/memory.py` owns `data_dir/memory.md` outright — the
@@ -191,9 +214,12 @@ Four rulings hold it up, and none of them is a preference:
   a request the hook had to trim), read back whole or not at all.
 - **The keypad decides, never the transcription.** `answer_approval` cannot answer
   anything; the most it does is put a menu in the model's mouth. `ApprovalBroker.digit` is
-  the only thing in Jarvis that can approve a tool call, it is reachable only after the PIN
-  (`VoiceSession._on_dtmf` routes to it only once `authorized`), and an unrecognised key
-  re-asks rather than agreeing.
+  the only thing in Jarvis that can approve a tool call, it is reachable only from a call
+  that has proved something — `FULL`, or the `POSSESSION` of a call Jarvis placed to the
+  owner's own number, which is what the escalation call itself is (`VoiceSession._on_dtmf`
+  routes there once `authorized`, or while `Keypad.armed`) — and an unrecognised key re-asks
+  rather than agreeing. `policy.py`'s allowlist is already the "routine and reversible"
+  filter, which is what licenses the second half.
 - **Failure is always "do nothing".** Broker down, socket missing, Twilio broken, call
   unanswered, malformed reply, hook crash: all end with the hook printing nothing, which
   leaves the ordinary on-screen prompt exactly as it is. There is no path where an error
@@ -202,8 +228,8 @@ Four rulings hold it up, and none of them is a preference:
 Pending is a fact to be re-checked, never assumed: the hook is *not* killed when they answer
 at the keyboard, so `PostToolUse`/`PermissionDenied`/`Stop`/`SessionEnd` cancel the
 escalation, and pending is re-read before dialling and again before any verdict is applied.
-A prompt that arrives while they are already on the phone, past the PIN, is announced into that
-call rather than ringing them a second time. `uv run jarvis approvals` is the audit trail and
+A prompt that arrives while they are already on a call that could answer it is announced into
+that call rather than ringing them a second time. `uv run jarvis approvals` is the audit trail and
 `--disable` is the kill switch, which is a file so it works without a restart.
 
 ## Billing reads, and only reads

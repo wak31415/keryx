@@ -33,6 +33,19 @@ surface — a removed or renamed setting or command is a major bump.
 - Retention: `TRANSCRIPT_RETENTION_DAYS` and `TASK_RETENTION_DAYS` (both off by default)
   prune at the top of `jarvis serve`, and `jarvis forget` does it on demand. A finished
   task you have not been told about is never deleted.
+- **A call Jarvis placed to your own number now counts for something.** Reaching
+  `OWNER_NUMBER` means holding that phone, and the outbound call's media stream already
+  carries a single-use token Jarvis minted, so such a call opens able to answer the
+  question Claude came back with (`send_followup`), arrange a call back on that same
+  number, mark a result as told, and answer a waiting approval on the keypad — without the
+  PIN. Starting work, `recall`, restarting and the memory still need it. Nothing else
+  confers this: not an allowed caller, not the `From` on an inbound call. Because voicemail
+  can answer a call, acting on anything you *say* takes one keypress first.
+- **`DIGEST_BEFORE_PIN`** (default `true`): results you have not been told about are read
+  out at the start of an inbound call, before the PIN. The trade-off is that a caller who
+  spoofs one of your `ALLOWED_CALLERS` hears those summaries; `false` restores the old
+  silence. The memory, your project names, their briefs and the skills always wait for the
+  PIN either way.
 
 ### Changed
 
@@ -81,6 +94,11 @@ surface — a removed or renamed setting or command is a major bump.
 - `~/.jarvis` and its subdirectories are created mode 0700, and transcripts, `tasks.db`,
   task logs and reports mode 0600. An existing tree is tightened in place on the next start.
 - Every dependency now carries a version range instead of being unbounded.
+- **Trust on a call is three levels, not one bit.** `jarvis/trust.py` names them — nothing
+  proved, a phone Jarvis dialled, and the PIN — and the voice prompt says which one this
+  call is at and how to reach the next. Hearing a result announced mid-call no longer
+  counts as having told *you* unless the call proved at least that much, so the text and
+  the call-back still go out to a call that has not.
 
 ### Fixed
 

@@ -170,7 +170,10 @@ on the same machine. Read them for the pattern, then delete them and write your 
 
 `check_billing` and `cluster_stats` are deliberately not PIN-gated: they cannot change
 anything and read nothing of yours. With `web_search`, `submit_pin` and `end_session` they
-are the only tools a phone caller reaches before the PIN; everything else waits for it.
+are the only tools an inbound caller reaches before the PIN; everything else waits for it.
+On a call *Jarvis placed to your own number*, five more open up without it —
+`send_followup`, `request_callback`, `mark_reported` and the two approval tools — because
+reaching that phone proves something an inbound number cannot. See the security model below.
 
 Slack is opt-in: nothing goes to it unless you asked for it. When you do ask, the voice
 sends text with `send_to_slack` and subagents send files, plots and reports through the
@@ -602,16 +605,30 @@ reasoning behind each of those four:
   24 hours lock PIN entry for an hour, no more than two calls run at once, and it is compared
   with `hmac.compare_digest`. Keep `ALLOWED_CALLERS` tight and leave `JARVIS_PIN` set — with
   no PIN configured, every dispatch is simply refused over the phone.
+- **A call Jarvis placed is not a call you made.** Reaching the number in `OWNER_NUMBER`
+  means holding that phone, and the media stream of an outbound call carries a single-use
+  token Jarvis minted itself, so that call opens with something proved: it can tell you what
+  landed, answer the question Claude came back with, arrange a call back *on that same
+  number*, and let you answer a waiting approval on the keypad. It cannot start new work,
+  search your past calls, restart Jarvis, or be handed the memory — those are still the PIN.
+  Nothing else confers it: not an allowed caller, not the `From` on an inbound call.
+  Voicemail can answer an outbound call, so before acting on anything you *say*, Jarvis asks
+  you to press one key — an answering machine cannot.
 - Secrets are never logged, the PIN is compared with `hmac.compare_digest`, and the report
   signing secret is either `REPORT_SECRET` or a random one persisted at
   `~/.jarvis/report_secret` with mode 600. Caller phone numbers are masked to their last
   four digits everywhere they are written down.
-- **Before the PIN, the phone gets nothing and keeps nothing.** No memory, unheard result,
-  task, past call or project reaches a caller who has not given it, nothing is announced
-  into that call (and it never counts as having told you), and nothing they say outlives
-  it: no memory update, and `recall` never searches that transcript. `SECURITY.md` has the
-  threat model, including what is out of scope: anyone with the PIN, or any content a
-  subagent reads, effectively has a shell as you.
+- **Before the PIN, the phone gets almost nothing and keeps nothing.** No memory, task,
+  past call, project name or project brief reaches a caller who has not given it, and
+  nothing they say outlives the call: no memory update, and `recall` never searches that
+  transcript. The exception is deliberate: **results you have not been told about are read
+  out before the PIN** (`DIGEST_BEFORE_PIN`, on by default), because hearing what landed is
+  what you ring in for and a digest that waits for the PIN is one you often never get. The
+  trade is that somebody who spoofs one of your `ALLOWED_CALLERS` hears those summaries;
+  set `DIGEST_BEFORE_PIN=false` if you would rather they did not. Hearing it never counts
+  as having told *you*, so the call-back still goes out. `SECURITY.md` has the threat model,
+  including what is out of scope: anyone with the PIN, or any content a subagent reads,
+  effectively has a shell as you.
 
 Three things this summary leaves out are in the wiki: the PIN rules in full, on
 [Security model](https://github.com/wak31415/jarvis-voice-agent/wiki/Security-Model);
