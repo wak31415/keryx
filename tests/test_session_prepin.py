@@ -19,8 +19,10 @@ from jarvis.realtime.base import FunctionCall, Transcript
 from jarvis.session import OPENING_MESSAGE, PIN_ACCEPTED_MESSAGE, VoiceSession
 from jarvis.tools import ToolRegistry
 from jarvis.transports.base import Dtmf
+from jarvis.trust import TrustLevel
 
 PIN = "123456"
+NONE, POSSESSION = TrustLevel.NONE, TrustLevel.POSSESSION
 CALLER = "+15550001111"
 
 
@@ -362,18 +364,53 @@ async def test_a_spoken_pin_reaches_neither_the_transcript_nor_the_log(
 # --- nothing is announced into it ------------------------------------------
 
 
-async def test_nothing_is_announced_into_a_call_before_the_pin(make_session, phone, provider):
-    """And False, so the notifier and the broker do not count it as having told them."""
+async def test_news_is_announced_into_a_call_before_the_pin(make_session, phone, provider):
+    """A result that lands mid-call reaches it, for the same reason the digest does."""
     session = make_session(phone, provider)
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
 
-        assert await session.announce("Task 41 finished: 1,234 pounds") is False
+        assert await session.announce("Task 41 finished: 1,234 pounds", needs=NONE) is True
+        assert "Task 41 finished" in provider.injected[-1][0]
+
+
+async def test_with_the_digest_off_nothing_is_announced_before_the_pin(
+    make_session, phone, provider
+):
+    """And False, so the notifier and the broker do not count it as having told them."""
+    session = make_session(phone, provider, digest_before_pin=False)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert await session.announce("Task 41 finished: 1,234 pounds", needs=NONE) is False
         assert [text for text, *_ in provider.injected] == [OPENING_MESSAGE]
 
         await session.submit_pin(PIN)
-        assert await session.announce("Task 41 finished: 1,234 pounds") is True
+        assert await session.announce("Task 41 finished: 1,234 pounds", needs=NONE) is True
+
+
+async def test_an_approval_is_never_announced_into_a_call_that_could_not_answer_it(
+    make_session, phone, provider
+):
+    """What is waiting on their screen is not news; only a call that can press a key hears it."""
+    session = make_session(phone, provider)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert await session.announce("Claude wants to run: git push", needs=POSSESSION) is False
+        assert [text for text, *_ in provider.injected] == [OPENING_MESSAGE]
+
+
+async def test_a_call_jarvis_placed_hears_an_approval(make_session, phone, provider):
+    session = make_session(phone, provider, possession=True)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert await session.announce("Claude wants to run: git push", needs=POSSESSION) is True
 
 
 async def test_a_local_session_is_announced_to_as_before(make_session, local, provider):

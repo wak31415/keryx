@@ -24,6 +24,7 @@ from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore, confers_possession
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
+from jarvis.trust import TrustLevel
 
 OWNER = "+15550000001"
 CALLER = "+15551234567"
@@ -220,18 +221,30 @@ async def test_a_phone_session_that_refuses_the_announcement_still_gets_the_sms(
     assert harness.twilio.sms[0][0] == OWNER
 
 
-async def test_a_call_that_has_not_given_the_pin_does_not_cost_them_the_call_back(harness):
-    """An unauthorized phone session refuses the announcement, and so it is no delivery:
-    they still get the call-back they asked for, rather than the caller getting the owner's
-    result."""
-    unauthorized = harness.session(channel="phone", accepts=False)
+async def test_a_call_that_has_not_given_the_pin_hears_it_and_is_still_not_a_delivery(harness):
+    """News is not gated on the PIN, but whoever heard it may not be the owner — so the
+    call-back they asked for still goes out, rather than a spoofer absorbing the result."""
+    stranger = harness.session(channel="phone", trust=TrustLevel.NONE)
     task = await harness.task(callback_requested=True, callback_number=CALLER)
 
     await harness.finished(task, "the balance is 1,234 pounds")
 
-    assert unauthorized.announced == []
-    assert (await harness.row(task)).announced is False
+    assert stranger.announced == [f"Task {task.id} finished: the balance is 1,234 pounds"]
+    assert (await harness.row(task)).announced is True  # a delivery was attempted
     assert [call["to"] for call in harness.twilio.calls] == [CALLER]
+
+
+async def test_a_call_jarvis_placed_hearing_it_is_a_delivery(harness):
+    """Whoever answered is holding the owner's phone: ringing them again would be the
+    duplicate every other rule here exists to avoid."""
+    owner = harness.session(channel="phone", trust=TrustLevel.POSSESSION)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task, "the balance is 1,234 pounds")
+
+    assert owner.announced != []
+    assert harness.twilio.calls == []
+    assert harness.twilio.sms == []
 
 
 async def test_only_the_local_channel_hearing_it_does_not_replace_the_sms(harness):

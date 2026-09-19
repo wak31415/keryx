@@ -294,15 +294,23 @@ class VoiceSession:
             await self._stop_tasks([*pumps, finish], report=True)
             await self._teardown()
 
-    async def announce(self, text: str) -> bool:
-        """Speak an out-of-band message (a finished task, say). False if not live or trusted.
+    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
+        """Speak an out-of-band message. False when this call has not earned it.
 
-        An untrusted session is a phone call that has not given the PIN. What is announced
-        is private — a task's result, a command waiting on their screen — and the False is
-        what stops that call counting as having told them, so the call-back or the ring
-        that would otherwise have been skipped still goes out.
+        `needs` is what the announcement itself requires, because they are not alike. A
+        finished task is news the owner asked for and needs nothing — subject to
+        `DIGEST_BEFORE_PIN`, the one thing that can still hold it back from a stranger. A
+        prompt waiting on their screen needs a call that could answer it (`POSSESSION`),
+        and anything else keeps the old bar of `FULL`.
+
+        The False matters as much as the True: it is what stops a call counting as having
+        told them, so the call-back or the text that would otherwise be skipped still goes
+        out (`jarvis.notify.deliver`).
         """
-        if not self.is_live or not self.trusted:
+        if not self.is_live or self.trust < needs:
+            return False
+        if self.trust is TrustLevel.NONE and not self._settings.digest_before_pin:
+            # Only news gets this far, and the owner has said a stranger may not hear it.
             return False
         log.info("session %s announcing: %s", self.session_id, text)
         return await self._safe_call(

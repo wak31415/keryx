@@ -62,6 +62,7 @@ from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore, outbound_extra
 from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tasks.store import TaskStore
+from jarvis.trust import TrustLevel
 
 log = logging.getLogger("jarvis.restart")
 
@@ -590,8 +591,15 @@ class RestartCoordinator:
     # --- outbound plumbing --------------------------------------------------
 
     async def _announce(self, text: str) -> bool:
-        """Speak `text` into every live session; True if one of them took it."""
-        return (await announce_to_live_sessions(self._sessions, text)).heard
+        """Speak `text` into every live session that could be the owner; True if one took it.
+
+        `POSSESSION`, not `FULL`: the confirmation names the checkout and what broke, which
+        is not for a stranger, but a call Jarvis placed to the owner's own number is not one
+        — and the alternative to saying it there is ringing a phone they are already on.
+        """
+        return (
+            await announce_to_live_sessions(self._sessions, text, needs=TrustLevel.POSSESSION)
+        ).heard
 
     async def _send_sms(self, number: str | None, body: str) -> bool:
         """Text `body`, if there is anything to text it with. Never raises."""

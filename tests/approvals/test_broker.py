@@ -19,6 +19,7 @@ import pytest
 from jarvis.approvals.broker import ApprovalBroker
 from jarvis.config import Settings
 from jarvis.stream_tokens import StreamTokenStore, confers_possession
+from jarvis.trust import TrustLevel
 
 TIMEOUT = 3.0
 
@@ -46,10 +47,15 @@ class FakeSession:
     #: What `announce` answers. False is what a phone call that has not given the PIN says.
     accepts: bool = True
 
-    async def announce(self, text: str) -> bool:
-        if self.accepts:
-            self.announcements.append(text)
-        return self.accepts
+    #: What this call has proved. An approval may only be announced into one that can
+    #: answer it, which is POSSESSION or better (`jarvis.trust`).
+    trust: TrustLevel = TrustLevel.FULL
+
+    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
+        if not self.accepts or self.trust < needs:
+            return False
+        self.announcements.append(text)
+        return True
 
 
 @dataclass

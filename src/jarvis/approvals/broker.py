@@ -44,6 +44,7 @@ from jarvis.notify.deliver import announce_to_live_sessions
 from jarvis.notify.twilio_out import TwilioOut, stream_twiml
 from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore, outbound_extra
+from jarvis.trust import TrustLevel
 
 log = logging.getLogger("jarvis.approvals.broker")
 
@@ -393,12 +394,16 @@ class ApprovalBroker:
         waited = self._waited(request)
         line = REQUEST_LINE.format(id=request.id, summary=request.summary, menu=request.menu())
         announced = await announce_to_live_sessions(
-            self._sessions, ANNOUNCE_TEXT.format(waited=waited, line=line)
+            self._sessions,
+            ANNOUNCE_TEXT.format(waited=waited, line=line),
+            # What is waiting on their screen names their projects and their commands, and
+            # only a call that could answer it has any business hearing it.
+            needs=TrustLevel.POSSESSION,
         )
         if announced.heard:
             # They are already on the phone. A second call about the same thing is the exact
             # duplicate this feature has to avoid, so it goes into the call they are on. Only a
-            # call that took it counts: one that has not given the PIN refuses it.
+            # call that took it counts: one that has proved nothing refuses it.
             request.escalated_at = self._now()
             request.escalated_via = "announce"
             self._audit("escalated", request, via="announce")
