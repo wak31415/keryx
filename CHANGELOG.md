@@ -51,17 +51,32 @@ surface — a removed or renamed setting or command is a major bump.
   `.jarvis-brief.md` for the projects **you pick after seeing the list**, proposes additions
   to `~/.claude/CLAUDE.md`, and pipes the agreed facts into `jarvis init --from - --yes`.
   Nothing is scanned, written or sent without you seeing it first.
+- **A call Jarvis placed to your own number now counts for something.** Reaching
+  `OWNER_NUMBER` means holding that phone, and the outbound call's media stream already
+  carries a single-use token Jarvis minted, so such a call opens able to answer the
+  question Claude came back with (`send_followup`), arrange a call back on that same
+  number, mark a result as told, and answer a waiting approval on the keypad — without the
+  PIN. Starting work, `recall`, restarting and the memory still need it. Nothing else
+  confers this: not an allowed caller, not the `From` on an inbound call. Because voicemail
+  can answer a call, acting on anything you *say* takes one keypress first. If an approval
+  menu is open on such a call and you want the PIN, press `*` to give the keypad to the PIN
+  (`*` again gives it back to the menu); saying the digits works at any time.
+- **`DIGEST_BEFORE_PIN`** (default `true`): results you have not been told about are read
+  out at the start of an inbound call, before the PIN. The trade-off is that a caller who
+  spoofs one of your `ALLOWED_CALLERS` hears those summaries; `false` restores the old
+  silence. The memory, your project names, their briefs and the skills always wait for the
+  PIN either way.
 
 ### Changed
 
-- **Before the PIN, the phone gets nothing and keeps nothing.** Caller ID is spoofable, so
-  an allowed number no longer earns anything private. On the phone, the memory, the unheard
-  results, project names, past calls and pending approvals wait for the PIN; nothing is
-  announced into a call that has not given it (and such a call never counts as having told
-  you); every tool but `check_billing`, `cluster_stats`, `web_search`, `submit_pin` and
-  `end_session` asks for the PIN first; no memory update runs after it; and `recall` never
-  searches its transcript. Keying the PIN at the top of a call delivers the news straight
-  away.
+- **Before the PIN, the phone keeps nothing and gets nothing but the news.** Caller ID is
+  spoofable, so an allowed number no longer earns anything private. On the phone, the
+  memory, project names, their briefs, past calls and pending approvals wait for the PIN;
+  every tool but `check_billing`, `cluster_stats`, `web_search`, `submit_pin` and
+  `end_session` asks for it first; no memory update runs after such a call; and `recall`
+  never searches its transcript. The one exception is the digest of results you have not
+  been told about, which is read out at the greeting (`DIGEST_BEFORE_PIN`, above), and a
+  call that has proved nothing still never counts as having told you.
 - **The approval bridge decides on exactly what will run.** The policy checks the raw
   command before normalising it, refuses anything the hook had to trim or cannot read back
   whole, matches `APPROVAL_BASH_ALLOW` word for word on the parsed argv (prefix entries
@@ -104,6 +119,11 @@ surface — a removed or renamed setting or command is a major bump.
   ones Claude works out". Dispatch-first is still the default, but the rule is a threshold:
   ask when the answer changes what actually happens and Claude could not work it out from
   the machine itself, roughly one dispatch in ten.
+- **Trust on a call is three levels, not one bit.** `jarvis/trust.py` names them — nothing
+  proved, a phone Jarvis dialled, and the PIN — and the voice prompt says which one this
+  call is at and how to reach the next. Hearing a result announced mid-call no longer
+  counts as having told *you* unless the call proved at least that much, so the text and
+  the call-back still go out to a call that has not.
 
 ### Fixed
 

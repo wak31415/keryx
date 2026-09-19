@@ -59,9 +59,10 @@ from jarvis.restart.version import (
     startup_log_marks,
 )
 from jarvis.session import SessionRegistry
-from jarvis.stream_tokens import StreamTokenStore
+from jarvis.stream_tokens import StreamTokenStore, outbound_extra
 from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tasks.store import TaskStore
+from jarvis.trust import TrustLevel
 
 log = logging.getLogger("jarvis.restart")
 
@@ -529,8 +530,11 @@ class RestartCoordinator:
         token = self._stream_tokens.issue(
             caller=record.number,
             # `task_id` lets the call stamp that task reported before the PIN: it opens by
-            # saying the result.
-            extra={"opening_context": context, "restart": True, "task_id": record.task_id},
+            # saying the result. `outbound_extra` says Jarvis dialled it and what it
+            # dialled, which opens the session at `POSSESSION` on the owner's own number.
+            extra=outbound_extra(
+                record.number, opening_context=context, restart=True, task_id=record.task_id
+            ),
             ttl_s=CALLBACK_TOKEN_TTL_S,
         )
         twiml = stream_twiml(host, {"token": token, "caller": record.number})
@@ -587,8 +591,15 @@ class RestartCoordinator:
     # --- outbound plumbing --------------------------------------------------
 
     async def _announce(self, text: str) -> bool:
-        """Speak `text` into every live session; True if one of them took it."""
-        return (await announce_to_live_sessions(self._sessions, text)).heard
+        """Speak `text` into every live session that could be the owner; True if one took it.
+
+        `POSSESSION`, not `FULL`: the confirmation names the checkout and what broke, which
+        is not for a stranger, but a call Jarvis placed to the owner's own number is not one
+        — and the alternative to saying it there is ringing a phone they are already on.
+        """
+        return (
+            await announce_to_live_sessions(self._sessions, text, needs=TrustLevel.POSSESSION)
+        ).heard
 
     async def _send_sms(self, number: str | None, body: str) -> bool:
         """Text `body`, if there is anything to text it with. Never raises."""

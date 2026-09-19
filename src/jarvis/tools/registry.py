@@ -22,6 +22,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from jarvis.trust import TrustLevel
+
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids a circular import
     from jarvis.session import VoiceSession
 
@@ -32,10 +34,10 @@ log = logging.getLogger("jarvis.tools.registry")
 class ToolContext:
     """What a handler gets to know about the session it was called from.
 
-    `session` is duck-typed (`.authorized`, `.channel`, `.caller`, `.session_id`,
-    `.opening_task_id`, `.request_end()`, `.authorize()`) so tools can be tested with a
-    stub. `authorized` is a property rather than a snapshot: a PIN entered *during* a
-    long-running tool call must be visible to the next check.
+    `session` is duck-typed (`.authorized`, `.trust`, `.channel`, `.caller`,
+    `.session_id`, `.opening_task_id`, `.request_end()`, `.authorize()`) so tools can be
+    tested with a stub. `authorized` and `trust` are properties rather than snapshots: a
+    PIN entered *during* a long-running tool call must be visible to the next check.
     """
 
     session: "VoiceSession"
@@ -45,6 +47,11 @@ class ToolContext:
     @property
     def authorized(self) -> bool:
         return self.session.authorized
+
+    @property
+    def trust(self) -> TrustLevel:
+        """What this call has proved, right now (`jarvis.trust`)."""
+        return self.session.trust
 
 
 ToolHandler = Callable[[ToolContext, dict], Awaitable[dict]]

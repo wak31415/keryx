@@ -199,6 +199,15 @@ class Settings(BaseSettings):
     #: the longest their own fumbling can cost them, and holds a campaign to ~24 guesses a day.
     pin_lockout_minutes: float = Field(default=60, gt=0)
 
+    #: Whether an inbound call hears the results it has not been told about before the PIN.
+    #: On by design: the owner rings in from wherever they are to hear what landed, and a
+    #: digest that waits for the PIN is a digest they often never get. The price is that a
+    #: caller who has spoofed an allowed number hears those task summaries too — which is
+    #: why it is only the digest: the memory, the project briefs and the skills still wait
+    #: for the PIN (`jarvis.trust`). Off restores the older behaviour, where a call before
+    #: the PIN hears nothing at all.
+    digest_before_pin: bool = True
+
     # Networking
     public_host: str | None = None
     host: str = "127.0.0.1"

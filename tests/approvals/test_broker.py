@@ -18,7 +18,8 @@ import pytest
 
 from jarvis.approvals.broker import ApprovalBroker
 from jarvis.config import Settings
-from jarvis.stream_tokens import StreamTokenStore
+from jarvis.stream_tokens import StreamTokenStore, confers_possession
+from jarvis.trust import TrustLevel
 
 TIMEOUT = 3.0
 
@@ -46,10 +47,15 @@ class FakeSession:
     #: What `announce` answers. False is what a phone call that has not given the PIN says.
     accepts: bool = True
 
-    async def announce(self, text: str) -> bool:
-        if self.accepts:
-            self.announcements.append(text)
-        return self.accepts
+    #: What this call has proved. An approval may only be announced into one that can
+    #: answer it, which is POSSESSION or better (`jarvis.trust`).
+    trust: TrustLevel = TrustLevel.FULL
+
+    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
+        if not self.accepts or self.trust < needs:
+            return False
+        self.announcements.append(text)
+        return True
 
 
 @dataclass
@@ -282,6 +288,8 @@ async def test_the_call_carries_the_request_and_the_menu(broker, twilio, tmp_pat
     assert "git push" in context
     assert "press 1 for approve" in context
     assert "keypad" in context
+    info = next(iter(token.values())).info
+    assert confers_possession(info, "+15557000000") is True
 
 
 async def test_a_live_call_is_told_instead_of_a_second_one_being_placed(

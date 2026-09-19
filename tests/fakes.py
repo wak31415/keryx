@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Callable
 
 from jarvis.realtime.base import ProviderEvent, SessionConfig
 from jarvis.transports.base import AudioFormat, Hangup, TransportEvent
+from jarvis.trust import TrustLevel
 
 _END = object()
 
@@ -272,18 +273,21 @@ class FakeVoiceSession:
         session_id: str = "sess-1",
         is_live: bool = True,
         accepts: bool = True,
+        trust: TrustLevel = TrustLevel.FULL,
         error: Exception | None = None,
     ) -> None:
         self.channel = channel
         self.session_id = session_id
         self.is_live = is_live
         self.accepts = accepts
+        self.trust = trust
         self.error = error
         self.announced: list[str] = []
 
-    async def announce(self, text: str) -> bool:
+    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
         if self.error is not None:
             raise self.error
-        if self.accepts:
-            self.announced.append(text)
-        return self.accepts
+        if not self.accepts or self.trust < needs:
+            return False
+        self.announced.append(text)
+        return True

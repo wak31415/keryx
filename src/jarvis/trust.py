@@ -1,0 +1,35 @@
+"""How much one call has proved about who is on it (spec §3.3, §5).
+
+There used to be one bit — `VoiceSession.authorized`, earned only by the PIN — and it was
+both too coarse and wrong about direction. Too coarse, because "may hear a result that is
+already waiting" and "may spend the owner's machine" are not the same permission. Wrong
+about direction, because it treated every phone call the same way when an *outbound* call
+is different in kind: Jarvis dialled a number the owner configured, so whoever answered is
+holding that phone. Caller id on the way in proves nothing; a number Jarvis chose on the
+way out is not something a caller can forge.
+
+Three levels, ordered, so everything downstream asks for "at least this much" rather than
+listing the levels it will take:
+
+- `NONE` — an inbound phone call before the PIN. It is talking to a stranger until proved
+  otherwise, and the ruling in `briefing.py` is the only thing it hears of the owner's.
+- `POSSESSION` — a call Jarvis placed to `Settings.owner_number`, proved by the single-use
+  stream token Jarvis minted for it (`jarvis.stream_tokens.confers_possession`), and by
+  nothing else: never Twilio's `From`/`To`, never a member of `allowed_callers`.
+- `FULL` — the PIN was given on this call, or the channel is the machine's own microphone.
+
+`VoiceSession.trusted` is the old spelling of `FULL` and still means exactly that.
+"""
+
+from enum import IntEnum
+
+
+class TrustLevel(IntEnum):
+    """What a call has proved. Ordered: compare with `>=`, never with a set of members."""
+
+    #: An inbound phone call before the PIN. Caller id is spoofable, so this is a stranger.
+    NONE = 0
+    #: A call Jarvis placed to the owner's own number: whoever answered is holding it.
+    POSSESSION = 1
+    #: The PIN was given on this call, or it is the local microphone.
+    FULL = 2

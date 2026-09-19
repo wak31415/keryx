@@ -22,6 +22,8 @@ from jarvis.config import Settings
 from jarvis.realtime.base import AudioDelta
 from jarvis.server import LINE_BUSY_MESSAGE, create_app
 from jarvis.session import PIN_PAUSED_MESSAGE
+from jarvis.stream_tokens import outbound_extra
+from jarvis.trust import TrustLevel
 
 AUTH_TOKEN = "an-auth-token"
 CALLER = "+15551234567"
@@ -455,3 +457,60 @@ def test_the_session_opens_with_the_context_carried_by_the_token(client, state):
         ws.send_text(json.dumps({"event": "stop", "streamSid": STREAM_SID}))
         with pytest.raises(WebSocketDisconnect):
             ws.receive_text()
+
+
+# --- what a call Jarvis placed opens at ------------------------------------
+
+
+def live_session(state):
+    live = state.sessions.live()
+    assert live, "no session opened"
+    return live[0]
+
+
+def run_media_session(client, state, token: str):
+    """Open the media socket on `token`, hand back the session, and close it cleanly."""
+    provider = FakeProvider()
+    provider.feed(AudioDelta(item_id="item_1", audio=b"\x00"))
+    state.provider_factory = lambda: provider
+    with client.websocket_connect("/twilio/media") as ws:
+        ws.send_text(start_frame(token))
+        ws.receive_text()  # the audio delta: the session is open by now
+        session = live_session(state)
+        trust = session.trust
+        ws.send_text(json.dumps({"event": "stop", "streamSid": STREAM_SID}))
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_text()
+    return trust
+
+
+def test_a_call_jarvis_placed_to_the_owner_opens_at_possession(client, state):
+    """The token Jarvis minted is the proof, and it is the only thing that may be."""
+    token = state.stream_tokens.issue(CALLER, outbound_extra(CALLER, opening_context="hello"))
+
+    assert run_media_session(client, state, token) is TrustLevel.POSSESSION
+
+
+def test_a_call_jarvis_placed_to_another_number_opens_at_nothing(tmp_path):
+    """A call-back may go to a number the owner gave out loud; that is not their phone."""
+    state = build_app_state(make_settings(tmp_path, allowed_callers=[CALLER, STRANGER]))
+    token = state.stream_tokens.issue(STRANGER, outbound_extra(STRANGER))
+
+    with TestClient(create_app(state)) as client:
+        assert run_media_session(client, state, token) is TrustLevel.NONE
+
+
+def test_an_inbound_call_from_the_owners_own_number_opens_at_nothing(client, state):
+    """`From` is the caller's carrier talking, and the whole reason the PIN exists."""
+    response = post_signed(client, "/twilio/voice", {"From": CALLER, "CallSid": CALL_SID})
+    token = stream_parameters(response)["token"]
+
+    assert run_media_session(client, state, token) is TrustLevel.NONE
+
+
+def test_a_token_claiming_possession_with_no_owner_number_opens_at_nothing(tmp_path):
+    state = build_app_state(make_settings(tmp_path, allowed_callers=[]))
+    token = state.stream_tokens.issue(CALLER, outbound_extra(CALLER))
+
+    with TestClient(create_app(state)) as client:
+        assert run_media_session(client, state, token) is TrustLevel.NONE

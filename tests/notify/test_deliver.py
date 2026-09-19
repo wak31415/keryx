@@ -12,6 +12,7 @@ import pytest
 from fakes import FakeVoiceSession
 
 from jarvis.notify.deliver import Announced, announce_to_live_sessions, safe_send_sms
+from jarvis.trust import TrustLevel
 
 
 class FakeSessions:
@@ -47,7 +48,7 @@ async def test_a_local_session_hears_it_but_is_not_a_phone():
 
     result = await announce_to_live_sessions(FakeSessions(local), "hello")
 
-    assert (result.heard, result.on_phone) == (True, False)
+    assert (result.heard, result.delivered) == (True, False)
     assert local.announced == ["hello"]
 
 
@@ -56,7 +57,39 @@ async def test_a_phone_session_is_a_delivery():
         FakeSessions(FakeVoiceSession(channel="phone")), "hello"
     )
 
-    assert (result.heard, result.on_phone) == (True, True)
+    assert (result.heard, result.delivered) == (True, True)
+
+
+async def test_a_call_that_has_proved_nothing_hears_the_news_but_is_not_a_delivery():
+    """It may be a spoofer. They heard it; the owner may not have, so the text still goes."""
+    stranger = FakeVoiceSession(channel="phone", trust=TrustLevel.NONE)
+
+    result = await announce_to_live_sessions(
+        FakeSessions(stranger), "hello", needs=TrustLevel.NONE
+    )
+
+    assert (result.heard, result.delivered) == (True, False)
+    assert stranger.announced == ["hello"]
+
+
+async def test_a_call_jarvis_placed_is_a_delivery():
+    owner = FakeVoiceSession(channel="phone", trust=TrustLevel.POSSESSION)
+
+    result = await announce_to_live_sessions(FakeSessions(owner), "hello", needs=TrustLevel.NONE)
+
+    assert (result.heard, result.delivered) == (True, True)
+
+
+async def test_an_announcement_that_needs_more_than_the_call_has_is_refused():
+    """The level is the announcement's, not the session's: news and an approval differ."""
+    stranger = FakeVoiceSession(channel="phone", trust=TrustLevel.NONE)
+
+    result = await announce_to_live_sessions(
+        FakeSessions(stranger), "something waiting on your screen", needs=TrustLevel.POSSESSION
+    )
+
+    assert (result.heard, result.delivered) == (False, False)
+    assert stranger.announced == []
 
 
 async def test_a_session_that_refuses_did_not_hear_it():
@@ -65,7 +98,7 @@ async def test_a_session_that_refuses_did_not_hear_it():
         FakeSessions(FakeVoiceSession(channel="phone", accepts=False)), "hello"
     )
 
-    assert (result.heard, result.on_phone) == (False, False)
+    assert (result.heard, result.delivered) == (False, False)
 
 
 async def test_a_raising_session_is_reported_not_raised():
@@ -85,7 +118,7 @@ async def test_a_skipped_session_counts_as_having_heard_it():
         FakeSessions(skipped), "hello", skip=lambda session: session.session_id == "holding"
     )
 
-    assert (result.heard, result.on_phone) == (True, True)
+    assert (result.heard, result.delivered) == (True, True)
     assert skipped.announced == []
 
 

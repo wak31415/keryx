@@ -28,12 +28,14 @@ from jarvis.tools import ToolContext, ToolRegistry
 from jarvis.tools.builtin import register_builtin_tools
 from jarvis.tools.builtin_common import (
     CALLBACK_SET_MESSAGE,
+    KEYPRESS_REQUIRED_MESSAGE,
     PIN_INVALID_MESSAGE,
     PIN_OK_MESSAGE,
     PIN_REQUIRED_MESSAGE,
     REPORTED_MESSAGE,
     STILL_RUNNING_MESSAGE,
 )
+from jarvis.trust import TrustLevel
 
 WAIT = 2.0  # upper bound (seconds) for every wait in this module
 SLOW = 0.3  # a fake agent turn long enough to observe a task while it is still running
@@ -61,13 +63,32 @@ class StubSession:
     """The duck-typed slice of `VoiceSession` the tools actually touch."""
 
     authorized: bool = True
+    #: A call Jarvis placed to the owner's own number (`jarvis.trust`).
+    possession: bool = False
+    #: Whether a key has been pressed on this call — the proof it is not voicemail.
+    keypressed: bool = False
     channel: str = "local"
     caller: str | None = None
     session_id: str = "sess1234"
     opening_task_id: int | None = None
+    #: The tasks this call's digest named, which `mark_reported` may stamp below the PIN.
+    digest_task_ids: tuple[int, ...] = ()
     pin_result: dict = field(default_factory=lambda: {"status": "authorized"})
     pins: list[str] = field(default_factory=list)
     ends: list[str] = field(default_factory=list)
+
+    @property
+    def trust(self) -> TrustLevel:
+        if self.channel != "phone" or self.authorized:
+            return TrustLevel.FULL
+        return TrustLevel.POSSESSION if self.possession else TrustLevel.NONE
+
+    @property
+    def reportable_task_ids(self) -> frozenset[int]:
+        named = set(self.digest_task_ids)
+        if self.opening_task_id is not None:
+            named.add(self.opening_task_id)
+        return frozenset(named)
 
     async def submit_pin(self, pin: str) -> dict:
         self.pins.append(pin)
@@ -362,6 +383,102 @@ async def test_before_the_pin_every_tool_but_five_asks_for_it(make_tools):
     assert task.status is not TaskStatus.CANCELLED
     assert [one.id for one in await tools.manager.list()] == [1]
     assert (slack.sent, restarter.requests, recaller.queries, approvals.armed) == ([], [], [], [])
+
+
+#: What a call Jarvis placed to the owner's own number may reach without the PIN, on top
+#: of `UNGATED`. Two are how the owner answers the question Claude came back with, two are
+#: the approval it usually rang about, and `mark_reported` is the news it opened by saying.
+#: Everything else still waits for the PIN: possession says who is holding the phone, not
+#: that they meant to spend the machine.
+POSSESSION_TOOLS = UNGATED | {
+    "send_followup",
+    "request_callback",
+    "mark_reported",
+    "answer_approval",
+    "list_pending_approvals",
+}
+
+OWNER = "+15555555555"
+
+
+async def test_a_call_jarvis_placed_reaches_five_more_and_no_others(make_tools):
+    tools = make_tools(
+        FakeAgentRunner(delay_s=SLOW),
+        searcher=FakeSearcher(),
+        slack=FakeSlack(),
+        restarter=FakeRestarter(),
+        recaller=FakeRecaller([Hit("call", "", "user: hello")]),
+        billing=billing_factory(a_report()),
+        cluster=both_clusters(),
+        approvals=StubApprovals(),
+        pin="123456",
+        allowed_callers=[OWNER],
+    )
+    await tools.dispatch("check their bank statement")
+    names = {schema["name"] for schema in tools.registry.schemas()}
+
+    for name in sorted(names):
+        result = await tools.call(
+            name,
+            dict(EVERY_ARGUMENT),
+            channel="phone",
+            caller=OWNER,
+            authorized=False,
+            possession=True,
+            keypressed=True,  # they have proved they are not an answering machine
+        )
+        if name in POSSESSION_TOOLS:
+            assert result.get("status") != "pin_required", name
+        else:
+            assert result == {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}, name
+
+
+@pytest.mark.parametrize("tool", ["send_followup", "request_callback"])
+async def test_a_call_jarvis_placed_asks_for_one_key_before_it_acts(make_tools, tool):
+    """An answering machine takes the call and can be talked at. It cannot press a key."""
+    tools = make_tools(pin="123456", allowed_callers=[OWNER])
+    task = await tools.dispatch("rewrite the ingest script")
+
+    refused = await tools.call(
+        tool,
+        {"task_id": task.id, "message": "yes, go ahead"},
+        channel="phone",
+        caller=OWNER,
+        authorized=False,
+        possession=True,
+        keypressed=False,
+    )
+    assert refused["status"] == "keypress_required"
+    assert KEYPRESS_REQUIRED_MESSAGE in refused["message"]
+
+    answered = await tools.call(
+        tool,
+        {"task_id": task.id, "message": "yes, go ahead"},
+        keypressed=True,
+    )
+    assert answered.get("status") != "keypress_required"
+
+
+async def test_a_call_jarvis_placed_rings_back_only_the_number_it_rang(make_tools):
+    """Possession is a fact about this number; another one is a decision, and needs the PIN."""
+    tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="123456", allowed_callers=[OWNER])
+    task = await tools.dispatch("rewrite the ingest script")
+
+    elsewhere = await tools.call(
+        "request_callback",
+        {"task_id": task.id, "number": "+15550009999"},
+        channel="phone",
+        caller=OWNER,
+        authorized=False,
+        possession=True,
+        keypressed=True,
+    )
+    assert elsewhere["status"] == "refused"
+    assert (await tools.manager.get(task.id)).callback_number is None
+
+    here = await tools.call("request_callback", {"task_id": task.id})
+    assert here["status"] == "callback_requested"
+    assert (await tools.manager.get(task.id)).callback_number == OWNER
 
 
 @pytest.mark.parametrize("tool", ["list_tasks", "get_task_status", "get_task_result"])
@@ -1591,6 +1708,44 @@ async def test_mark_reported_before_the_pin_hides_nothing_from_the_digest(make_t
 
     assert result["status"] == "pin_required"
     assert (await tools.manager.get(task.id)).reported_at is None
+
+
+async def test_a_call_may_stamp_what_its_own_digest_named_before_the_pin(make_tools):
+    """Otherwise the digest it just read out comes back at the top of every call for ever.
+
+    The set is what this call actually said, and no wider: the ids come from the briefing
+    Jarvis built, never from anything a caller can put in an argument.
+    """
+    tools = make_tools(pin="123456")
+    named = await _finish(tools)
+    unnamed = await _finish(tools, "something the digest left out")
+
+    result = await tools.call(
+        "mark_reported",
+        {"task_ids": [named.id, unnamed.id]},
+        channel="phone",
+        authorized=False,
+        digest_task_ids=(named.id,),
+    )
+
+    assert result["reported"] == [named.id]
+    assert (await tools.manager.get(unnamed.id)).reported_at is None
+
+
+async def test_a_call_jarvis_placed_may_stamp_anything(make_tools):
+    """Whoever answered is holding the owner's own phone, and heard whatever was said."""
+    tools = make_tools(pin="123456")
+    task = await _finish(tools)
+
+    result = await tools.call(
+        "mark_reported",
+        {"task_ids": [task.id]},
+        channel="phone",
+        authorized=False,
+        possession=True,
+    )
+
+    assert result["reported"] == [task.id]
 
 
 async def test_a_call_back_may_stamp_the_task_it_was_placed_about_before_the_pin(make_tools):

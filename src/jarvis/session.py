@@ -64,6 +64,7 @@ from jarvis.realtime.base import (
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
 from jarvis.transports.base import DRAIN_TIMEOUT_SECONDS, AudioIn, Dtmf, Hangup, Transport
+from jarvis.trust import TrustLevel
 
 log = logging.getLogger("jarvis.session")
 
@@ -96,18 +97,36 @@ PIN_REJECTED_MESSAGE = (
 #: What the model is told after a keypad entry, per `submit_pin` status. A lockout is
 #: absent because `submit_pin` has already said its piece.
 KEYPAD_PIN_MESSAGES = {"authorized": PIN_ACCEPTED_MESSAGE, "invalid": PIN_REJECTED_MESSAGE}
+#: What the model is told when the caller moves the keypad between the two things it can
+#: be for on a call Jarvis placed (see `PIN_ENTRY_KEY`). Neither asks for a response: the
+#: caller is typing, and a sentence over the top of that is one nobody is listening to.
+PIN_ENTRY_MESSAGE = (
+    "[system] The caller pressed star: they are keying the PIN in now, not answering the "
+    "menu. Say nothing and wait for them to finish."
+)
+PIN_ENTRY_CANCELLED_MESSAGE = (
+    "[system] The caller pressed star again: the keypad is back to the menu and they are "
+    "not keying a PIN in. Say nothing and wait."
+)
 
 
 class Keypad(Protocol):
     """Whatever wants the keypad digits the PIN did not take (`jarvis.approvals`).
 
-    The PIN comes first and always: digits only reach here once the session is authorized,
-    so "they keyed something in" can never be mistaken for "they keyed the PIN in". `digit`
-    returns the `[system]` note to put to the model, or None when the key meant nothing to
-    it — an unclaimed digit is silently dropped, exactly as it is today.
+    The PIN comes first: on an ordinary call digits only reach here once the session is
+    authorized, so "they keyed something in" can never be mistaken for "they keyed the PIN
+    in". `digit` returns the `[system]` note to put to the model, or None when the key
+    meant nothing to it — an unclaimed digit is silently dropped, exactly as it is today.
+
+    `armed` is the exception, and it exists for the call Jarvis placed. Such a call may
+    answer an approval without the PIN, but the owner may also want to key the PIN *in* on
+    it, and a keypad that swallowed every digit would make that impossible. So below
+    `FULL` a digit goes to the keypad only while it says it is waiting for one.
     """
 
     def digit(self, session_id: str, key: str) -> str | None: ...  # pragma: no cover
+
+    def armed(self, session_id: str) -> bool: ...  # pragma: no cover
 
 
 # How many PINs a caller may get wrong before the call ends (spec §3.3).
@@ -116,6 +135,10 @@ PIN_MAX_ATTEMPTS = 3
 DTMF_RESET_SECONDS = 5.0
 # Keys that are not part of a PIN: `#` submits what has been typed, `*` is ignored.
 DTMF_NON_DIGITS = ("#", "*")
+#: The key that moves the keypad between the menu and the PIN on a call below `FULL`.
+#: `*` can be spared for it because it is the one key that means nothing to either: never
+#: part of a PIN (`DTMF_NON_DIGITS`), never an option on an approval menu, which is `0`-`9`.
+PIN_ENTRY_KEY = "*"
 
 # How long a requested end waits for the speaking response to finish before hanging up.
 END_GRACE_SECONDS = 10.0
@@ -142,6 +165,7 @@ class VoiceSession:
         bus: EventBus,
         *,
         authorized: bool,
+        possession: bool = False,
         opening_context: str | None = None,
         session_id: str | None = None,
         registry: "SessionRegistry | None" = None,
@@ -169,6 +193,9 @@ class VoiceSession:
         self.channel: str = transport.channel
         self.caller: str | None = transport.caller
         self.authorized = authorized
+        #: True when this call is one Jarvis placed to the owner's own number, proved by
+        #: the stream token Jarvis minted for it and by nothing else (`jarvis.trust`).
+        self.possession = possession
         #: The task whose result `opening_context` carries, on a call Jarvis placed about it
         #: (a call-back, a restart's confirmation). Set only from a token Jarvis minted, and
         #: the one task `mark_reported` may stamp before the PIN: the call opened by saying it.
@@ -190,6 +217,12 @@ class VoiceSession:
         self._pin_locked = False  # this call takes no more PINs, whichever lock said so
         self._dtmf_buffer = ""
         self._dtmf_last = 0.0
+        #: Whether anybody has pressed a key on this call. An answering machine answers a
+        #: call, plays a greeting and records; it cannot press one (`keypressed`).
+        self._keypressed = False
+        #: Whether the caller has asked for the keypad back for the PIN (`PIN_ENTRY_KEY`).
+        #: Only ever consulted below `FULL` and with a menu armed — see `_keying_pin`.
+        self._pin_entry = False
 
         self._tool_tasks: set[asyncio.Task] = set()
         self._silence_task: asyncio.Task | None = None
@@ -207,14 +240,52 @@ class VoiceSession:
         return self._state is SessionState.RUNNING
 
     @property
-    def trusted(self) -> bool:
-        """True when what is private may reach this session: always locally, after the PIN
-        on the phone.
+    def trust(self) -> TrustLevel:
+        """How much this call has proved (`jarvis.trust`). Read live, never snapshotted.
 
-        Caller id is spoofable, so an allowed number proves nothing. Until this is true a
-        call is not briefed (memory, unheard results) and is announced nothing.
+        The PIN, or the local microphone, is `FULL`. A call Jarvis placed to the owner's
+        own number is `POSSESSION`: nobody spoofs their way into answering a phone Jarvis
+        dialled. Everything else is a stranger on a number that can be faked.
         """
-        return self.channel != "phone" or self.authorized
+        if self.channel != "phone" or self.authorized:
+            return TrustLevel.FULL
+        return TrustLevel.POSSESSION if self.possession else TrustLevel.NONE
+
+    @property
+    def trusted(self) -> bool:
+        """True when what is the owner's may reach this session: `FULL` and nothing less.
+
+        The old spelling, and it still means what it always meant — the memory, the
+        project briefs, the skills, `recall`, and anything that writes as the owner. A
+        call-back is `POSSESSION`, which is not this.
+        """
+        return self.trust is TrustLevel.FULL
+
+    @property
+    def keypressed(self) -> bool:
+        """True once a key has been pressed on this call — the proof it is not voicemail.
+
+        A call Jarvis placed can be answered by an answering machine, which will happily
+        listen to a task result and say something machine-shaped back. Listening is fine;
+        *acting* on what is said is not, so at `POSSESSION` a tool that does anything asks
+        for one keypress first (`jarvis.tools.builtin_common.possession_gate`). A keypad
+        approval is already a keypress and needs nothing extra.
+        """
+        return self._keypressed
+
+    @property
+    def reportable_task_ids(self) -> frozenset[int]:
+        """The tasks this call may stamp reported without the PIN: the ones it named.
+
+        The digest it opened by reading out, plus `opening_task_id` — the task a call
+        Jarvis placed opened by saying. Nothing wider: stamping a task takes it out of the
+        next call's digest, and a caller who is not the owner must not be able to silence
+        one they were never told.
+        """
+        named = set(self._briefing.task_ids)
+        if self.opening_task_id is not None:
+            named.add(self.opening_task_id)
+        return frozenset(named)
 
     @property
     def response_active(self) -> bool:
@@ -277,15 +348,23 @@ class VoiceSession:
             await self._stop_tasks([*pumps, finish], report=True)
             await self._teardown()
 
-    async def announce(self, text: str) -> bool:
-        """Speak an out-of-band message (a finished task, say). False if not live or trusted.
+    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
+        """Speak an out-of-band message. False when this call has not earned it.
 
-        An untrusted session is a phone call that has not given the PIN. What is announced
-        is private — a task's result, a command waiting on their screen — and the False is
-        what stops that call counting as having told them, so the call-back or the ring
-        that would otherwise have been skipped still goes out.
+        `needs` is what the announcement itself requires, because they are not alike. A
+        finished task is news the owner asked for and needs nothing — subject to
+        `DIGEST_BEFORE_PIN`, the one thing that can still hold it back from a stranger. A
+        prompt waiting on their screen needs a call that could answer it (`POSSESSION`),
+        and anything else keeps the old bar of `FULL`.
+
+        The False matters as much as the True: it is what stops a call counting as having
+        told them, so the call-back or the text that would otherwise be skipped still goes
+        out (`jarvis.notify.deliver`).
         """
-        if not self.is_live or not self.trusted:
+        if not self.is_live or self.trust < needs:
+            return False
+        if self.trust is TrustLevel.NONE and not self._settings.digest_before_pin:
+            # Only news gets this far, and the owner has said a stranger may not hear it.
             return False
         log.info("session %s announcing: %s", self.session_id, text)
         return await self._safe_call(
@@ -393,19 +472,27 @@ class VoiceSession:
     # --- startup -----------------------------------------------------------
 
     async def _load_briefing(self) -> Briefing:
-        """What this session opens knowing: the unreported tasks and the memory.
+        """What this session opens knowing: the unreported tasks, and the memory at `FULL`.
 
-        Nothing, for a phone call that has not given the PIN — `_brief_after_pin` fetches it
-        then. A briefing that cannot be built is not a reason to drop a call — `Briefer`
-        already swallows its own failures, and this catches anything a substitute raises.
+        The two are gated apart (`jarvis.continuity.briefing`). The memory needs `FULL`;
+        the digest needs only that this is not a stranger the owner has told us to keep it
+        from — `POSSESSION`, or `DIGEST_BEFORE_PIN` on an inbound call. `_brief_after_pin`
+        fetches whatever the PIN then adds. A briefing that cannot be built is not a reason
+        to drop a call — `Briefer` already swallows its own failures, and this catches
+        anything a substitute raises.
         """
-        if self._briefer is None or not self.trusted:
+        if self._briefer is None or not self._may_hear_digest():
             return Briefing()
         try:
-            return await self._briefer.build()
+            briefing = await self._briefer.build()
         except Exception:
             log.exception("session %s could not build its briefing", self.session_id)
             return Briefing()
+        return briefing if self.trusted else briefing.without_memory()
+
+    def _may_hear_digest(self) -> bool:
+        """Whether this call may be told what it has not heard about yet."""
+        return self.trust >= TrustLevel.POSSESSION or self._settings.digest_before_pin
 
     async def _brief_after_pin(self) -> None:
         """Hand a call what the PIN was holding back: the full prompt, and a nudge if due.
@@ -416,14 +503,19 @@ class VoiceSession:
         connected there is nothing to update: `run()` builds the briefing itself, and the
         session is trusted by then. A send that fails is swallowed like any other; the PIN
         still counts.
+
+        No nudge when the call already had its digest (`DIGEST_BEFORE_PIN`, or a call
+        Jarvis placed). It was spoken at the greeting; nudging again is Jarvis telling them
+        the same news twice, which is the one thing the wording everywhere else forbids.
         """
         if self._state is not SessionState.RUNNING:
             return
+        already_told = self._briefing.pending_count > 0
         self._briefing = await self._load_briefing()
         await self._safe_call(
             self._provider.update_instructions, self._build_config().instructions
         )
-        nudge = self._briefing.after_pin_nudge()
+        nudge = "" if already_told else self._briefing.after_pin_nudge()
         if nudge:
             await self._safe_call(self._provider.inject_message, nudge, respond=False)
 
@@ -443,12 +535,11 @@ class VoiceSession:
                 self._settings,
                 channel=self.channel,
                 caller=self.caller,
-                authorized=self.authorized,
+                trust=self.trust,
                 opening_context=self._opening_context,
                 pending=self._briefing.pending,
                 memory=self._briefing.memory,
                 tool_names={schema["name"] for schema in self._tools.schemas()},
-                withheld=not self.trusted,
             ),
             tools=self._tools.schemas(),
             voice=self._settings.openai_voice,
@@ -489,12 +580,32 @@ class VoiceSession:
         `DTMF_RESET_SECONDS` is a different attempt and is thrown away, so a mis-hit does
         not poison the next entry. `#` submits what has been typed; a buffer as long as
         the PIN submits itself, which is what makes `#` optional.
+
+        Below `FULL` the keypad can be wanted by two things at once — an armed approval
+        menu, and the PIN that would take the call to `FULL` — and a digit cannot be read
+        as both. `PIN_ENTRY_KEY` is how the caller says which, deterministically, rather
+        than Jarvis guessing from a digit that might have been either.
         """
         log.debug("session %s received a keypad digit", self.session_id)
+        self._keypressed = True  # whatever it meant, voicemail could not have done it
         expected = self._settings.pin
-        if self.authorized and self._keypad is not None:
-            # The PIN is behind us, so this digit is somebody else's: an approval waiting
-            # on a confirmation, today. Still never logged and never sent to the model.
+        if self._asks_for_the_pin(digit):
+            self._pin_entry = not self._pin_entry
+            log.info(
+                "session %s: the keypad is now for %s",
+                self.session_id,
+                "the PIN" if self._pin_entry else "the menu",
+            )
+            note = PIN_ENTRY_MESSAGE if self._pin_entry else PIN_ENTRY_CANCELLED_MESSAGE
+            self._spawn_task(self._tell_model(note), name="pin-entry")
+            return
+        if self._keypad is not None and (
+            self.authorized or (self._keypad_armed() and not self._keying_pin())
+        ):
+            # The PIN is behind us — or a menu has been read out on a call Jarvis placed
+            # and the caller has not asked for the keypad back — so this digit is somebody
+            # else's: an approval waiting on a confirmation, today. Still never logged and
+            # never sent to the model.
             self._spawn_task(self._offer_digit(digit), name="keypad")
             return
         if not expected or self.authorized or self._pin_locked:
@@ -515,6 +626,48 @@ class VoiceSession:
         # `_on_dtmf` is called from the transport pump, which cannot await: the check and
         # the note to the model are scheduled, and tracked so teardown cleans them up.
         self._spawn_task(self._check_keypad_pin(entered), name="pin")
+
+    def _asks_for_the_pin(self, digit: str) -> bool:
+        """Whether `digit` is the caller moving the keypad between the menu and the PIN.
+
+        Only below `FULL`, and only where there is something to move it away from: with no
+        menu armed a `*` is what it always was — nothing, dropped by `DTMF_NON_DIGITS` —
+        and past the PIN it is an ordinary key for the listener. It toggles, so a mis-hit
+        is not a trap of its own, which is the whole complaint against the state it sets.
+        """
+        if digit != PIN_ENTRY_KEY or self.authorized:
+            return False
+        return self._pin_entry or self._keypad_armed()
+
+    def _keying_pin(self) -> bool:
+        """True while this call has the keypad for its PIN rather than for a menu.
+
+        Derived rather than cleared: the two things that end PIN entry — the right PIN,
+        and a lockout — are exactly the two that make the flag meaningless, so neither
+        needs its own unwinding. A *wrong* PIN is not one of them, because the model has
+        just been told to ask them to try again and trying again has to work.
+        """
+        return self._pin_entry and not self.authorized and not self._pin_locked
+
+    async def _tell_model(self, text: str) -> None:
+        """Put a `[system]` note to the model without asking for a turn over it."""
+        await self._safe_call(self._provider.inject_message, text, respond=False)
+
+    def _keypad_armed(self) -> bool:
+        """Whether the keypad is waiting on a digit from this call. Never raises.
+
+        Only then does a digit skip the PIN buffer before the PIN: see `Keypad`. A
+        listener that cannot answer the question is treated as not waiting, which leaves
+        the digit where it has always gone.
+        """
+        asking = getattr(self._keypad, "armed", None)
+        if asking is None:
+            return False
+        try:
+            return bool(asking(self.session_id))
+        except Exception:
+            log.exception("session %s: the keypad listener failed", self.session_id)
+            return False
 
     async def _check_keypad_pin(self, pin: str) -> None:
         """Check a keyed-in PIN and tell the model how it went — never what was typed."""

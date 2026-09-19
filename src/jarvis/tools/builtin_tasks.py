@@ -31,6 +31,7 @@ from jarvis.tools.builtin_common import (
     _TASK_ID_PROPERTY,
     _TASK_ID_SCHEMA,
     CALLBACK_ALREADY_DONE_MESSAGE,
+    CALLBACK_OWNER_ONLY_MESSAGE,
     CALLBACK_SET_MESSAGE,
     DEFAULT_TASK_LIMIT,
     MAX_TASK_LIMIT,
@@ -48,8 +49,10 @@ from jarvis.tools.builtin_common import (
     _text,
     get_task,
     pin_gate,
+    possession_gate,
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
+from jarvis.trust import TrustLevel
 
 
 def register_task_tools(
@@ -244,10 +247,13 @@ def register_task_tools(
 
     async def mark_reported(ctx: ToolContext, arguments: dict) -> dict:
         ids = _task_ids(arguments.get("task_ids"))
-        # Stamping a task takes it out of their next call's digest, so not before the PIN —
-        # except the task a call Jarvis placed was about, whose result opened the call.
-        if (refusal := pin_gate(ctx, settings)) is not None:
-            ids = [task_id for task_id in ids if task_id == ctx.session.opening_task_id]
+        # Stamping a task takes it out of the next call's digest, so a call that has proved
+        # nothing may stamp only what it actually said out loud: the digest it opened with,
+        # or the result a call Jarvis placed opened by saying. At POSSESSION, anything —
+        # whoever answered is holding the owner's own phone.
+        refusal = pin_gate(ctx, settings)
+        if refusal is not None and ctx.trust < TrustLevel.POSSESSION:
+            ids = [task_id for task_id in ids if task_id in ctx.session.reportable_task_ids]
             if not ids:
                 return refusal
         if not ids:
@@ -331,7 +337,10 @@ def register_task_tools(
     # --- send_followup / cancel_task ---------------------------------------
 
     async def send_followup(ctx: ToolContext, arguments: dict) -> dict:
-        if (refusal := pin_gate(ctx, settings)) is not None:
+        # The one tool a call Jarvis placed exists for: Claude came back with a question,
+        # this is the answer going the other way. One keypress stands in for the PIN, and
+        # rules out the answering machine that picked up (`possession_gate`).
+        if (refusal := possession_gate(ctx, settings)) is not None:
             return refusal
         task = await get_task(manager, arguments)
         if isinstance(task, dict):
@@ -405,9 +414,10 @@ def register_task_tools(
     # --- request_callback --------------------------------------------------
 
     async def request_callback(ctx: ToolContext, arguments: dict) -> dict:
-        # Not before the PIN: its note opens their real call-back, and the call goes out on
-        # their account.
-        if (refusal := pin_gate(ctx, settings)) is not None:
+        # Its note opens their real call-back and the call goes out on their account, so
+        # below FULL it takes possession plus a keypress — and may only ever ring the
+        # number Jarvis already dialled.
+        if (refusal := possession_gate(ctx, settings)) is not None:
             return refusal
         task = await get_task(manager, arguments)
         if isinstance(task, dict):
@@ -425,6 +435,11 @@ def register_task_tools(
             return {"error": "no number to call back on; ask the user for one"}
         if not _E164_RE.match(number):
             return {"error": f"{number!r} is not a phone number I can call back"}
+        if ctx.trust is not TrustLevel.FULL and number != (settings.owner_number or ""):
+            # Possession is a fact about *this* number: Jarvis dialled it because the owner
+            # configured it. A number chosen on the call is a new decision, and the PIN is
+            # what makes one.
+            return {"status": "refused", "message": CALLBACK_OWNER_ONLY_MESSAGE}
 
         await manager.request_callback(task.id, number, _text(arguments, "note") or None)
         return {

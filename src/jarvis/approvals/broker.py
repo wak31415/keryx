@@ -43,7 +43,8 @@ from jarvis.config import Settings
 from jarvis.notify.deliver import announce_to_live_sessions
 from jarvis.notify.twilio_out import TwilioOut, stream_twiml
 from jarvis.session import SessionRegistry
-from jarvis.stream_tokens import StreamTokenStore
+from jarvis.stream_tokens import StreamTokenStore, outbound_extra
+from jarvis.trust import TrustLevel
 
 log = logging.getLogger("jarvis.approvals.broker")
 
@@ -393,12 +394,16 @@ class ApprovalBroker:
         waited = self._waited(request)
         line = REQUEST_LINE.format(id=request.id, summary=request.summary, menu=request.menu())
         announced = await announce_to_live_sessions(
-            self._sessions, ANNOUNCE_TEXT.format(waited=waited, line=line)
+            self._sessions,
+            ANNOUNCE_TEXT.format(waited=waited, line=line),
+            # What is waiting on their screen names their projects and their commands, and
+            # only a call that could answer it has any business hearing it.
+            needs=TrustLevel.POSSESSION,
         )
         if announced.heard:
             # They are already on the phone. A second call about the same thing is the exact
             # duplicate this feature has to avoid, so it goes into the call they are on. Only a
-            # call that took it counts: one that has not given the PIN refuses it.
+            # call that took it counts: one that has proved nothing refuses it.
             request.escalated_at = self._now()
             request.escalated_via = "announce"
             self._audit("escalated", request, via="announce")
@@ -427,7 +432,12 @@ class ApprovalBroker:
         )
         token = self._stream_tokens.issue(
             caller=number,
-            extra={"opening_context": CALL_CONTEXT.format(waited=waited, requests=lines)},
+            # Jarvis is dialling `OWNER_NUMBER` itself, so the session that answers opens
+            # at `POSSESSION` — which is the level that may answer an approval on the
+            # keypad, and this call exists to have one answered (`jarvis.trust`).
+            extra=outbound_extra(
+                number, opening_context=CALL_CONTEXT.format(waited=waited, requests=lines)
+            ),
             ttl_s=CALL_TOKEN_TTL_S,
         )
         sid = await self._twilio.place_call(
@@ -495,6 +505,16 @@ class ApprovalBroker:
             "summary": request.summary,
             "options": request.menu(),
         }
+
+    def armed(self, session_id: str) -> bool:
+        """True while this call has a menu read out and is waiting for the key.
+
+        The session asks before routing a digit away from the PIN buffer on a call that
+        has not given the PIN (`VoiceSession._keypad_armed`): a call Jarvis placed may
+        answer an approval, and must still be able to key the PIN in for anything else.
+        """
+        armed = self._armed.get(session_id)
+        return armed is not None and self._now() < armed[1]
 
     def digit(self, session_id: str, key: str) -> str | None:
         """Apply a keypad digit to whatever this call armed. None means "not for us".

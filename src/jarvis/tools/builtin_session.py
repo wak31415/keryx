@@ -27,7 +27,7 @@ from jarvis.tools.builtin_common import (
     PIN_NOT_CONFIGURED_MESSAGE,
     PIN_OK_MESSAGE,
     _small_int,
-    pin_gate,
+    possession_gate,
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
 
@@ -54,8 +54,10 @@ def register_session_tools(
 
     async def list_pending_approvals(ctx: ToolContext, arguments: dict) -> dict:
         assert approvals is not None  # only registered when there is one
-        # What their screen is waiting on names their projects and their commands.
-        if (refusal := pin_gate(ctx, settings)) is not None:
+        # What their screen is waiting on names their projects and their commands, so a
+        # call that has proved nothing does not hear it. A call Jarvis placed does: it is
+        # usually the call the broker placed *about* one.
+        if (refusal := possession_gate(ctx, settings, keypress=False)) is not None:
             return refusal
         waiting = approvals.pending_requests()
         if not waiting:
@@ -65,12 +67,16 @@ def register_session_tools(
     async def answer_approval(ctx: ToolContext, arguments: dict) -> dict:
         """Offer the keypad menu for one pending prompt. It answers nothing by itself.
 
-        Two gates before the menu is even read out: the PIN, exactly as for dispatching
-        work — this is a strictly larger capability, so it gets at least the same gate —
-        and the phone, because the keypad is where the answer has to come from.
+        Two gates before the menu is even read out. Possession, because a call Jarvis
+        placed to the owner's own number is the call this feature exists to make, and
+        `approvals/policy.py`'s allowlist is already the "routine and reversible" filter
+        on what a keypad may ever run — the denylist still wins over it, and `--disable`
+        wins over everything. And the phone, because the keypad is where the answer has
+        to come from. No keypress ack: the answer *is* a keypress, and an answering
+        machine that cannot press one cannot approve anything either.
         """
         assert approvals is not None  # only registered when there is one
-        refusal = pin_gate(ctx, settings)
+        refusal = possession_gate(ctx, settings, keypress=False)
         if refusal is not None:
             return refusal
         if ctx.channel != "phone":
@@ -97,7 +103,7 @@ def register_session_tools(
             "anything: it hands you back the keypad menu for that request, which you read "
             "out, and they decide by pressing a key. Never tell them it is done until the "
             "machine says so — a spoken yes is not an answer, and you must never choose "
-            "for them. Needs the PIN and a phone call.",
+            "for them. Needs a phone call, and the PIN unless Jarvis rang them.",
             {
                 "type": "object",
                 "properties": {

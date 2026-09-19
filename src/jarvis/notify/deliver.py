@@ -18,6 +18,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from jarvis.trust import TrustLevel
+
 log = logging.getLogger("jarvis.notify.deliver")
 
 
@@ -29,14 +31,18 @@ class _Sessions(Protocol):
 
 @dataclass(frozen=True)
 class Announced:
-    """What an announcement got to: any live session, and a phone one specifically.
+    """What an announcement got to: any live session, and one that counts as delivery.
 
-    `on_phone` is the one that decides whether a text still needs to go out — hearing it
-    down the line is the delivery a text would otherwise be duplicating.
+    `delivered` is the one that decides whether a text still needs to go out — hearing it
+    down the line is the delivery a text would otherwise be duplicating. It takes a phone
+    session at `POSSESSION` or better (`jarvis.trust`) and nothing less: a call that has
+    proved nothing may still *hear* the news, because caller id is spoofable and the
+    digest is not gated on it, but whoever heard it may not be the owner, so the text and
+    the call-back still have to go.
     """
 
     heard: bool = False
-    on_phone: bool = False
+    delivered: bool = False
 
     def __bool__(self) -> bool:
         return self.heard
@@ -46,13 +52,19 @@ async def announce_to_live_sessions(
     sessions: _Sessions,
     text: str,
     *,
+    needs: TrustLevel = TrustLevel.FULL,
     skip: Any = None,
 ) -> Announced:
-    """Speak `text` into every live session. Never raises.
+    """Speak `text` into every live session that is trusted enough for it. Never raises.
 
-    A session that answers False did not hear it — one already on its way out, or a phone
-    call that has not given the PIN (`VoiceSession.announce` refuses those, because what is
-    announced is private) — and it counts for nothing, so the caller's fallback still runs.
+    `needs` is what *this* announcement requires, because they are not alike: a finished
+    task is news and needs nothing (`TrustLevel.NONE`, subject to `DIGEST_BEFORE_PIN`); a
+    prompt waiting on the owner's screen needs a call that could answer it. The default is
+    `FULL`, so an announcement that has not thought about it gets the old behaviour.
+
+    A session that answers False did not hear it — one already on its way out, or one that
+    has not proved enough for this (`VoiceSession.announce` decides) — and it counts for
+    nothing, so the caller's fallback still runs.
 
     `skip(session)` marks a session that must not be spoken to but counts as having
     heard — today that is a session holding the line for the very task being announced,
@@ -64,18 +76,29 @@ async def announce_to_live_sessions(
     the first `announce` is likely to break the rest, and the caller's fallback is a text.
     """
     heard = False
-    on_phone = False
+    delivered = False
     try:
         for session in sessions.live():
             if skip is not None and skip(session):
-                heard = on_phone = True
+                heard = delivered = True
                 continue
-            spoken = await session.announce(text)
+            spoken = await session.announce(text, needs=needs)
             heard = heard or spoken
-            on_phone = on_phone or (spoken and session.channel == "phone")
+            delivered = delivered or (spoken and _counts_as_delivery(session))
     except Exception:
         log.exception("could not announce into the live sessions")
-    return Announced(heard, on_phone)
+    return Announced(heard, delivered)
+
+
+def _counts_as_delivery(session: Any) -> bool:
+    """True when hearing it down this line means the owner has been told.
+
+    A session with no `trust` at all is one of the small stand-ins other modules pass in
+    (`pin_alert` hands over its own filtered view), and those have already decided.
+    """
+    if session.channel != "phone":
+        return False  # they may have walked away from the microphone
+    return getattr(session, "trust", TrustLevel.FULL) >= TrustLevel.POSSESSION
 
 
 async def safe_send_sms(twilio: Any, to: str | None, body: str) -> bool:

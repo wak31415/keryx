@@ -42,9 +42,10 @@ from jarvis.notify.deliver import announce_to_live_sessions, safe_send_sms
 from jarvis.notify.reports import report_token
 from jarvis.notify.twilio_out import TwilioOut, stream_twiml
 from jarvis.session import SessionRegistry
-from jarvis.stream_tokens import StreamTokenStore
+from jarvis.stream_tokens import StreamTokenStore, outbound_extra
 from jarvis.tasks.models import Task
 from jarvis.tasks.store import TaskStore
+from jarvis.trust import TrustLevel
 
 if TYPE_CHECKING:  # pragma: no cover - `restart` imports this module for its own reasons
     from jarvis.restart.coordinator import RestartCoordinator
@@ -167,7 +168,7 @@ class Notifier:
     # --- (1) live sessions -------------------------------------------------
 
     async def _announce(self, task: Task, text: str) -> bool:
-        """Speak `text` into every live session; True if the user has it either way.
+        """Speak `text` into every live session; True if the owner has it either way.
 
         A session holding the line for this task is skipped and counts as delivered: the
         `dispatch_task` tool result is about to say the same thing, and hearing it twice
@@ -180,14 +181,20 @@ class Notifier:
             return True
 
         announced = await announce_to_live_sessions(
-            self._sessions, text, skip=holding_the_line
+            # News: a result the owner is waiting on, which is not gated on the PIN
+            # (`DIGEST_BEFORE_PIN`). A call that has proved nothing may hear it and still
+            # does not count as delivery, so the text and the call-back still go out.
+            self._sessions,
+            text,
+            needs=TrustLevel.NONE,
+            skip=holding_the_line,
         )
         if announced.heard:
             try:
                 await self._store.update(task.id, announced=True)
             except Exception:
                 log.exception("could not record that task %s was announced", task.id)
-        return announced.on_phone
+        return announced.delivered
 
     # --- (2) the text ------------------------------------------------------
 
@@ -297,7 +304,12 @@ class Notifier:
             )
             token = self._stream_tokens.issue(
                 caller=task.callback_number,
-                extra={"task_id": task.id, "opening_context": context},
+                # Jarvis is dialling: the token says so, and says what it dialled, so the
+                # session that answers opens at `POSSESSION` when that is the owner's own
+                # number (`jarvis.trust`). A number they named out loud is not.
+                extra=outbound_extra(
+                    task.callback_number, task_id=task.id, opening_context=context
+                ),
                 ttl_s=CALLBACK_TOKEN_TTL_S,
             )
             twiml = stream_twiml(
