@@ -170,6 +170,26 @@ async def test_an_armed_menu_takes_the_digit_before_the_pin(phone, provider, key
     assert session.authorized is False
 
 
+async def test_a_keypad_that_cannot_be_asked_is_never_armed(phone, provider, tmp_path):
+    """A listener with no `armed` at all — the digit goes where it always did."""
+
+    class OldKeypad:
+        def __init__(self):
+            self.digits = []
+
+        def digit(self, session_id: str, key: str) -> str | None:
+            self.digits.append(key)
+            return None
+
+    keypad = OldKeypad()
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        for digit in PIN:
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: session.authorized)
+    assert keypad.digits == []
+
+
 async def test_a_keypad_that_cannot_say_whether_it_is_armed_gets_nothing(
     phone, provider, keypad, tmp_path
 ):
