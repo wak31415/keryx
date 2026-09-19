@@ -484,3 +484,86 @@ def test_the_prompt_makes_a_follow_up_rare_rather_than_forbidden(unwrapped):
     assert "only when the answer changes what actually happens" in text
     assert "roughly one dispatch in ten, not one in two" in text
     assert "If you cannot say what you would do differently with each answer" in text
+
+
+# --- the first call --------------------------------------------------------
+#
+# A machine with nothing in `memory.md` has never had a call worth remembering, so the
+# first authorized one opens as an introduction instead: what Jarvis is, and a handful of
+# questions about them. The absence of the memory is the whole marker — there is no second
+# record of "has been onboarded" — so these check both edges of it.
+
+
+def test_a_first_call_opens_as_an_introduction(settings, unwrapped):
+    flat = unwrapped(_rendered(settings))
+
+    assert "## This is the first call" in _rendered(settings)
+    assert "Open by saying what you are and what you can do" in flat
+    assert "What to call them" in flat
+    assert "Which projects matter" in flat
+    assert "How they like to be answered" in flat
+    assert "What is worth ringing them about" in flat
+
+
+def test_the_first_call_ends_by_saying_the_shape_of_it_once(unwrapped):
+    """The last turn is also the record: what is said out loud is what the memory gets."""
+    flat = unwrapped(load_prompt("first_call.md"))
+
+    assert "Say back the shape of it at the end, in one turn" in flat
+    assert "Not the list item by item" in flat
+    assert "what is said out loud in this call is all that survives it" in flat
+
+
+def test_the_first_call_spells_nothing_and_confirms_a_name_it_is_unsure_of(unwrapped):
+    """Transcription mangles names; a wrong one recorded silently rides every later call."""
+    flat = unwrapped(load_prompt("first_call.md"))
+
+    assert "Spell nothing" in flat
+    assert "ask if you have it right" in flat
+
+
+def test_the_first_call_is_dropped_the_moment_it_is_not_wanted(unwrapped):
+    """Realtime minutes are paid, and an interview nobody asked for is the worst of them."""
+    flat = unwrapped(load_prompt("first_call.md"))
+
+    assert "If they say not now" in flat
+    assert "Do not come back to it later in the call" in flat
+    assert "that comes first, every time" in flat
+    assert "Never make it a condition" in flat
+
+
+def test_the_first_call_waits_for_a_call_they_made(unwrapped):
+    """A call-back about a task is not the moment to ask what they work on."""
+    flat = unwrapped(load_prompt("first_call.md"))
+
+    assert 'see "Why this session opened"' in flat
+    assert "The introduction waits for a call they made" in flat
+
+
+def test_anything_remembered_at_all_ends_the_interview(settings):
+    """The memory is the only marker: one line of it and the next call is ordinary."""
+    rendered = _rendered(settings, memory="They are mid-way through the orchard sync.")
+
+    assert "This is the first call" not in rendered
+    assert "## What you remember" in rendered
+
+
+def test_the_first_call_never_reaches_a_session_that_has_not_given_the_pin(settings):
+    """Before the PIN there is no telling whose first call it is."""
+    withheld = _rendered(settings, authorized=False, withheld=True)
+    unauthorized = _rendered(settings, authorized=False)
+
+    for rendered in (withheld, unauthorized):
+        assert "This is the first call" not in rendered
+
+
+def test_the_first_call_prompt_is_packaged_and_renders_whole(settings):
+    """It is a prompt file like the others, so editing it needs no restart."""
+    text = load_prompt("first_call.md")
+    settings.owner_name = "Ada"
+
+    rendered = _rendered(settings)
+
+    assert "{owner}" in text
+    assert "You know nothing about Ada beyond what this call tells you" in rendered
+    assert "{" not in rendered and "}" not in rendered
