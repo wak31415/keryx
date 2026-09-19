@@ -25,12 +25,19 @@ class SpyKeypad:
     digits: list[tuple[str, str]] = field(default_factory=list)
     message: str | None = "[system] They pressed a key."
     error: Exception | None = None
+    #: Whether a menu has been read out and a key is expected (`ApprovalBroker.armed`).
+    waiting: bool = False
 
     def digit(self, session_id: str, key: str) -> str | None:
         if self.error is not None:
             raise self.error
         self.digits.append((session_id, key))
         return self.message
+
+    def armed(self, session_id: str) -> bool:
+        if self.error is not None:
+            raise self.error
+        return self.waiting
 
 
 @pytest.fixture
@@ -48,7 +55,7 @@ def phone():
     return FakeTransport(channel="phone", caller="+15555555555", audio_format="audio/pcmu")
 
 
-def build(phone, provider, keypad, *, authorized, tmp_path):
+def build(phone, provider, keypad, *, authorized, tmp_path, possession=False):
     return VoiceSession(
         phone,
         provider,
@@ -56,6 +63,7 @@ def build(phone, provider, keypad, *, authorized, tmp_path):
         ToolRegistry(),
         EventBus(),
         authorized=authorized,
+        possession=possession,
         keypad=keypad,
     )
 
@@ -133,3 +141,62 @@ async def test_a_session_with_no_keypad_behaves_as_before(phone, provider, tmp_p
         phone.feed(Dtmf("1"))
         await eventually(lambda: session.is_live)
         assert [text for text, _, _ in provider.injected[1:]] == []
+
+
+# --- a call Jarvis placed ---------------------------------------------------
+
+
+async def test_a_call_jarvis_placed_can_still_key_the_pin_in(phone, provider, keypad, tmp_path):
+    """Possession may answer an approval, and the owner may still want the rest of it.
+
+    So with nothing armed, a digit on such a call is a PIN attempt exactly as before — a
+    keypad that swallowed every key would make the PIN unenterable on a call-back.
+    """
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        for digit in PIN:
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: session.authorized)
+    assert keypad.digits == []
+
+
+async def test_an_armed_menu_takes_the_digit_before_the_pin(phone, provider, keypad, tmp_path):
+    keypad.waiting = True
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("1"))
+        await eventually(lambda: keypad.digits)
+    assert keypad.digits == [(session.session_id, "1")]
+    assert session.authorized is False
+
+
+async def test_a_keypad_that_cannot_say_whether_it_is_armed_gets_nothing(
+    phone, provider, keypad, tmp_path
+):
+    """A listener that raises is treated as not waiting: the digit goes where it always did."""
+    keypad.error = RuntimeError("the broker fell over")
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        for digit in PIN:
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: session.authorized)
+    assert keypad.digits == []
+
+
+# --- the keypress that rules out an answering machine -----------------------
+
+
+async def test_no_key_pressed_is_the_starting_point(phone, provider, keypad, tmp_path):
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+
+    assert session.keypressed is False
+
+
+async def test_any_key_at_all_counts(phone, provider, keypad, tmp_path):
+    """Including `*`, which is not part of a PIN: the point is that a machine cannot."""
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("*"))
+        await eventually(lambda: session.keypressed)
+
+    assert session.keypressed is True

@@ -2,9 +2,9 @@
 
 `answer_approval` never answers anything. The most it can do is hand the model a menu to
 read out; the digit that follows is the only thing in Jarvis that can approve a tool call,
-and it does not come through here. Both gates in front of the menu — the PIN and the phone
-— are asserted below, because a spoken "yes" reaching an `allow` is the failure this whole
-design exists to make impossible.
+and it does not come through here. Both gates in front of the menu — the trust level and
+the phone — are asserted below, because a spoken "yes" reaching an `allow` is the failure
+this whole design exists to make impossible.
 """
 
 from dataclasses import dataclass, field
@@ -19,6 +19,7 @@ from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolContext, ToolRegistry
 from jarvis.tools.builtin import register_builtin_tools
+from jarvis.trust import TrustLevel
 
 PIN = "424242"
 
@@ -26,9 +27,17 @@ PIN = "424242"
 @dataclass
 class StubSession:
     authorized: bool = True
+    possession: bool = False
+    keypressed: bool = False
     channel: str = "phone"
     caller: str | None = "+15557000000"
     session_id: str = "call1"
+
+    @property
+    def trust(self) -> TrustLevel:
+        if self.channel != "phone" or self.authorized:
+            return TrustLevel.FULL
+        return TrustLevel.POSSESSION if self.possession else TrustLevel.NONE
 
 
 @dataclass
@@ -112,10 +121,30 @@ async def test_it_hands_back_the_menu_and_nothing_else(registry, broker):
     assert broker.armed == [(1, "call1")]
 
 
-async def test_an_unauthorized_caller_gets_the_pin_gate(registry, broker):
+async def test_a_caller_who_has_proved_nothing_gets_the_pin_gate(registry, broker):
     answer = await registry.call("answer_approval", {"request_id": 1}, context(authorized=False))
     assert answer["status"] == "pin_required"
     assert broker.armed == []
+
+
+async def test_a_call_jarvis_placed_may_answer_one_without_the_pin(registry, broker):
+    """The tier's point: the escalation call rings the owner's own phone, and
+    `approvals/policy.py`'s allowlist is already the filter on what a key may run."""
+    answer = await registry.call(
+        "answer_approval", {"request_id": 1}, context(authorized=False, possession=True)
+    )
+    assert answer["status"] == "awaiting_keypad"
+    assert broker.armed == [(1, "call1")]
+
+
+async def test_the_menu_needs_no_keypress_of_its_own(registry, broker):
+    """The answer is a keypress. Asking for one first would be asking twice."""
+    await registry.call(
+        "answer_approval",
+        {"request_id": 1},
+        context(authorized=False, possession=True, keypressed=False),
+    )
+    assert broker.armed == [(1, "call1")]
 
 
 async def test_the_microphone_cannot_answer_an_approval(registry, broker):
@@ -162,3 +191,12 @@ async def test_listing_needs_the_pin_because_a_waiting_command_is_private(regist
     answer = await registry.call("list_pending_approvals", {}, context(authorized=False))
     assert answer["status"] == "pin_required"
     assert "git push" not in str(answer)
+
+
+async def test_a_call_jarvis_placed_may_hear_what_is_waiting(registry, broker):
+    """It is usually the call the broker placed about one of them."""
+    broker.waiting = [{"request_id": 1, "summary": "git push", "options": "press 1"}]
+    answer = await registry.call(
+        "list_pending_approvals", {}, context(authorized=False, possession=True)
+    )
+    assert answer["requests"] == broker.waiting

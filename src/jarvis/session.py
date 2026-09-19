@@ -102,13 +102,20 @@ KEYPAD_PIN_MESSAGES = {"authorized": PIN_ACCEPTED_MESSAGE, "invalid": PIN_REJECT
 class Keypad(Protocol):
     """Whatever wants the keypad digits the PIN did not take (`jarvis.approvals`).
 
-    The PIN comes first and always: digits only reach here once the session is authorized,
-    so "they keyed something in" can never be mistaken for "they keyed the PIN in". `digit`
-    returns the `[system]` note to put to the model, or None when the key meant nothing to
-    it — an unclaimed digit is silently dropped, exactly as it is today.
+    The PIN comes first: on an ordinary call digits only reach here once the session is
+    authorized, so "they keyed something in" can never be mistaken for "they keyed the PIN
+    in". `digit` returns the `[system]` note to put to the model, or None when the key
+    meant nothing to it — an unclaimed digit is silently dropped, exactly as it is today.
+
+    `armed` is the exception, and it exists for the call Jarvis placed. Such a call may
+    answer an approval without the PIN, but the owner may also want to key the PIN *in* on
+    it, and a keypad that swallowed every digit would make that impossible. So below
+    `FULL` a digit goes to the keypad only while it says it is waiting for one.
     """
 
     def digit(self, session_id: str, key: str) -> str | None: ...  # pragma: no cover
+
+    def armed(self, session_id: str) -> bool: ...  # pragma: no cover
 
 
 # How many PINs a caller may get wrong before the call ends (spec §3.3).
@@ -195,6 +202,9 @@ class VoiceSession:
         self._pin_locked = False  # this call takes no more PINs, whichever lock said so
         self._dtmf_buffer = ""
         self._dtmf_last = 0.0
+        #: Whether anybody has pressed a key on this call. An answering machine answers a
+        #: call, plays a greeting and records; it cannot press one (`keypressed`).
+        self._keypressed = False
 
         self._tool_tasks: set[asyncio.Task] = set()
         self._silence_task: asyncio.Task | None = None
@@ -232,6 +242,32 @@ class VoiceSession:
         call-back is `POSSESSION`, which is not this.
         """
         return self.trust is TrustLevel.FULL
+
+    @property
+    def keypressed(self) -> bool:
+        """True once a key has been pressed on this call — the proof it is not voicemail.
+
+        A call Jarvis placed can be answered by an answering machine, which will happily
+        listen to a task result and say something machine-shaped back. Listening is fine;
+        *acting* on what is said is not, so at `POSSESSION` a tool that does anything asks
+        for one keypress first (`jarvis.tools.builtin_common.possession_gate`). A keypad
+        approval is already a keypress and needs nothing extra.
+        """
+        return self._keypressed
+
+    @property
+    def reportable_task_ids(self) -> frozenset[int]:
+        """The tasks this call may stamp reported without the PIN: the ones it named.
+
+        The digest it opened by reading out, plus `opening_task_id` — the task a call
+        Jarvis placed opened by saying. Nothing wider: stamping a task takes it out of the
+        next call's digest, and a caller who is not the owner must not be able to silence
+        one they were never told.
+        """
+        named = set(self._briefing.task_ids)
+        if self.opening_task_id is not None:
+            named.add(self.opening_task_id)
+        return frozenset(named)
 
     @property
     def response_active(self) -> bool:
@@ -528,10 +564,12 @@ class VoiceSession:
         the PIN submits itself, which is what makes `#` optional.
         """
         log.debug("session %s received a keypad digit", self.session_id)
+        self._keypressed = True  # whatever it meant, voicemail could not have done it
         expected = self._settings.pin
-        if self.authorized and self._keypad is not None:
-            # The PIN is behind us, so this digit is somebody else's: an approval waiting
-            # on a confirmation, today. Still never logged and never sent to the model.
+        if self._keypad is not None and (self.authorized or self._keypad_armed()):
+            # The PIN is behind us — or a menu has been read out on a call Jarvis placed —
+            # so this digit is somebody else's: an approval waiting on a confirmation,
+            # today. Still never logged and never sent to the model.
             self._spawn_task(self._offer_digit(digit), name="keypad")
             return
         if not expected or self.authorized or self._pin_locked:
@@ -552,6 +590,22 @@ class VoiceSession:
         # `_on_dtmf` is called from the transport pump, which cannot await: the check and
         # the note to the model are scheduled, and tracked so teardown cleans them up.
         self._spawn_task(self._check_keypad_pin(entered), name="pin")
+
+    def _keypad_armed(self) -> bool:
+        """Whether the keypad is waiting on a digit from this call. Never raises.
+
+        Only then does a digit skip the PIN buffer before the PIN: see `Keypad`. A
+        listener that cannot answer the question is treated as not waiting, which leaves
+        the digit where it has always gone.
+        """
+        asking = getattr(self._keypad, "armed", None)
+        if asking is None:
+            return False
+        try:
+            return bool(asking(self.session_id))
+        except Exception:
+            log.exception("session %s: the keypad listener failed", self.session_id)
+            return False
 
     async def _check_keypad_pin(self, pin: str) -> None:
         """Check a keyed-in PIN and tell the model how it went — never what was typed."""

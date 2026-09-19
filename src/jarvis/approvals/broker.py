@@ -506,6 +506,16 @@ class ApprovalBroker:
             "options": request.menu(),
         }
 
+    def armed(self, session_id: str) -> bool:
+        """True while this call has a menu read out and is waiting for the key.
+
+        The session asks before routing a digit away from the PIN buffer on a call that
+        has not given the PIN (`VoiceSession._keypad_armed`): a call Jarvis placed may
+        answer an approval, and must still be able to key the PIN in for anything else.
+        """
+        armed = self._armed.get(session_id)
+        return armed is not None and self._now() < armed[1]
+
     def digit(self, session_id: str, key: str) -> str | None:
         """Apply a keypad digit to whatever this call armed. None means "not for us".
 

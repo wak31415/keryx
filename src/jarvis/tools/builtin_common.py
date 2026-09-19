@@ -12,18 +12,25 @@ that gets read down a phone is worth reviewing in one place.
 **The parsing.** `_task_id`, `_clamp_limit` and friends turn whatever a speech model put in
 an argument into something a task store can take, without ever raising.
 
-**The two gates.** `pin_gate` is the refusal a phone caller gets before the PIN, and it
-is on every tool but five. Caller id is spoofable, so before the PIN nothing private is
-read out and nothing the caller says or does outlives the call: that gates what opens a
-subagent (`dispatch_task`, `send_followup`, `cancel_task`), what can take the phone off the
-air or run a command (`restart_service`, `answer_approval`), what reads the owner's tasks, calls,
-projects or screen (`list_tasks`, `get_task_status`, `get_task_result`, `recall`,
-`list_projects`, `list_pending_approvals`), and what leaves something behind
-(`mark_reported`, `request_callback`, `send_to_slack`). Only `check_billing`,
-`cluster_stats`, `web_search`, `submit_pin` and `end_session` answer without it.
-It reads `ctx.authorized` live, so a PIN keyed while the model was thinking is honoured on
-the very next call, and the digits themselves never pass through here: `submit_pin` hands
-what the caller said straight to the session, which is the only thing that compares it.
+**The gates.** `pin_gate` is the refusal a call gets below `FULL` (`jarvis.trust`), and it
+is on most tools. Caller id is spoofable, so what opens a subagent (`dispatch_task`,
+`cancel_task`), what takes the phone off the air or runs a command (`restart_service`),
+what reads the owner's tasks, calls, projects or world (`list_tasks`, `get_task_status`,
+`get_task_result`, `recall`, `list_projects`) and what writes as them (`send_to_slack`)
+all need the PIN. Only `check_billing`, `cluster_stats`, `web_search`, `submit_pin` and
+`end_session` answer at any level.
+
+`possession_gate` is the second, for the handful a call *Jarvis placed* may use:
+`send_followup` and `request_callback`, which are how the owner answers the question
+Claude came back with, and the two approval tools. Below `POSSESSION` it is `pin_gate`; at
+it, an action driven by speech also wants one keypress on the call, because an answering
+machine can be talked at and cannot press a key. `mark_reported` is neither — it is gated
+by *which* tasks, not by whether: below `POSSESSION` it may stamp only what this call
+actually named (`VoiceSession.reportable_task_ids`).
+
+Both read `ctx.trust` live, so a PIN keyed while the model was thinking is honoured on the
+very next call, and the digits themselves never pass through here: `submit_pin` hands what
+the caller said straight to the session, which is the only thing that compares it.
 `get_task` is the other one — a task number in, a `Task` or the error dict to hand back.
 """
 
@@ -40,6 +47,7 @@ from jarvis.integrations.billing import BillingReader
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tools.registry import ToolContext
+from jarvis.trust import TrustLevel
 
 log = logging.getLogger("jarvis.tools.builtin")
 
@@ -88,6 +96,22 @@ PIN_MISSING_MESSAGE = (
 PIN_NOT_CONFIGURED_MESSAGE = (
     "There is no PIN set on this machine, so there is nothing to check. Tell them that in "
     "one sentence rather than asking again."
+)
+#: What a call Jarvis placed is asked for before it acts on something said out loud. An
+#: answering machine can hold a conversation of sorts; it cannot press a key. Written to
+#: cost one short sentence and to be asked once, the first time it is actually needed —
+#: not as a greeting on every call-back.
+KEYPRESS_REQUIRED_MESSAGE = (
+    "Ask them to press any key on the keypad so you know it is really them — one short "
+    "sentence, then wait. Do not explain why, do not say what you are about to do with "
+    "it, and do not ask a second time. Call this same tool again once they have pressed "
+    "one."
+)
+#: What `request_callback` says to a call that has not given the PIN. Jarvis rang this
+#: number because the owner configured it; a number chosen mid-call is a new decision.
+CALLBACK_OWNER_ONLY_MESSAGE = (
+    "Tell them in one sentence that you can only ring back on this number. Do not offer "
+    "to take another one, and do not explain the rule."
 )
 #: What `request_callback` hands back. The one thing it exists to prevent is the pair
 #: "let me set that up for you" / "all set, I'll call you" around a tool that takes
@@ -271,12 +295,36 @@ def pin_gate(ctx: ToolContext, settings: Settings) -> dict | None:
     something private; and a note, a stamp or a Slack message outlives the call. See the
     module docstring for the five tools that skip it, and why.
     """
-    if ctx.channel != "phone" or ctx.authorized:
+    if ctx.trust is TrustLevel.FULL:
         return None
     if not settings.pin:
         return {"status": "refused", "message": PIN_MISSING_MESSAGE}
     log.info("session %s needs a PIN first", ctx.session.session_id)
     return {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}
+
+
+def possession_gate(
+    ctx: ToolContext, settings: Settings, *, keypress: bool = True
+) -> dict | None:
+    """The refusal for a tool a call Jarvis placed may use, if any (`jarvis.trust`).
+
+    `POSSESSION` is reaching a phone Jarvis dialled at the owner's own number, and it is
+    what answering the question Claude came back with is worth — the point of the tier.
+    Below it this is `pin_gate` and nothing more.
+
+    `keypress` is the other half, and it is about voicemail. An answering machine takes an
+    outbound call, plays a greeting and records; it cannot press a key. So an action
+    driven by *speech* at this level asks for one keypress earlier in the same call.
+    Answering an approval passes `keypress=False`: the answer is itself a key.
+    """
+    if ctx.trust is TrustLevel.FULL:
+        return None
+    if ctx.trust is not TrustLevel.POSSESSION:
+        return pin_gate(ctx, settings)
+    if not keypress or ctx.session.keypressed:
+        return None
+    log.info("session %s needs a keypress before it acts", ctx.session.session_id)
+    return {"status": "keypress_required", "message": KEYPRESS_REQUIRED_MESSAGE}
 
 
 async def get_task(manager: TaskManager, arguments: dict) -> Task | dict:
