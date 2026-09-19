@@ -454,3 +454,33 @@ def test_with_texting_on_the_prompt_says_a_text(settings, unwrapped):
 
     assert "get a text saying so instead" in rendered
     assert "will turn up instead — a text —" in rendered
+
+
+# --- a follow-up has to earn its turn --------------------------------------
+#
+# The routing bullets used to forbid a question outright ("do not confirm first", "dispatch
+# anyway", "the questions worth asking are the ones Claude works out"). That was written
+# against a model that interviewed instead of acting, and it is still right about the
+# ordinary dispatch turn — but a ban is not the same thing as a threshold, and the one
+# question that changes where the work lands is worth ten seconds. These keep it a
+# threshold in both directions: high, and not zero.
+
+
+def test_the_prompt_keeps_dispatch_as_the_default(unwrapped):
+    """The threshold below is not a licence to interview."""
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "When in doubt, dispatch" in text
+    assert "Dispatch first" in text
+    assert "They asked for the work, not a conversation about the work" in text
+    assert "If they did not name a project, dispatch anyway" in text
+
+
+def test_the_prompt_makes_a_follow_up_rare_rather_than_forbidden(unwrapped):
+    """A question that changes what happens is worth a turn; the rest are not."""
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "A follow-up has to earn its turn" in text
+    assert "only when the answer changes what actually happens" in text
+    assert "roughly one dispatch in ten, not one in two" in text
+    assert "If you cannot say what you would do differently with each answer" in text
