@@ -348,6 +348,42 @@ of them have a brief and how many skills are installed; `jarvis doctor` warns wh
 memory is empty or `PROJECTS_ROOT` does not exist, and says why `cluster_stats` or
 `send_to_slack` is not offered when one of them is not.
 
+#### Three ways to do it
+
+**By hand.** `uv run jarvis init`, above: five minutes, and you see the document before it
+is written.
+
+**With your own coding agent**, which is how most of this gets installed. The repository
+ships a Claude Code skill for it — copy or symlink it where the CLI looks:
+
+```bash
+cp -r skills/jarvis-onboard ~/.claude/skills/    # or: ln -s "$PWD/skills/jarvis-onboard" ~/.claude/skills/
+```
+
+Then, in a session at the keyboard, ask it to set Jarvis up. It interviews you briefly,
+shows you the projects it found and drafts a `.jarvis-brief.md` for **the ones you pick**,
+proposes the lines your `~/.claude/CLAUDE.md` is missing, and pipes the facts you agreed on
+into `jarvis init --from - --yes`. Nothing is scanned, written or sent without you seeing it
+first, and it never writes `memory.md` or `.env` itself. It lands in `SKILLS_DIR`, so it
+will also show up in the voice prompt's skill list until you remove it.
+
+An agent driving `init` without the skill has `--json`: the same report as one document —
+the memory's size and the briefs' total against their caps, the projects and which wrote a
+brief, the skills, whether `OWNER_NAME` is set and the `.env` line to add. It needs `--yes`,
+because a machine-readable run that stops to ask a question is a hang. Exit 0 means the
+memory was written or nothing was given to write, 1 means a memory was wanted and not
+written (one is already there without `--force`, or it is longer than a call reads), 2 means
+the command line was wrong. `uv run jarvis init --yes --json` on its own writes nothing and
+just reports.
+
+**Or skip all of it and pick up the phone.** With nothing in the memory, the first
+authorized call opens as an introduction instead of an ordinary call: Jarvis says what it
+is, asks what to call you, what you work on, which projects matter, how you like to be
+answered and what is worth ringing you about, then says the shape of it back once. It is a
+handful of questions, it never blocks anything you asked for, and "not now" ends it for the
+rest of the call. What it learns is written down when the call ends, like any other call —
+and from then on calls are ordinary.
+
 ### Cloudflare tunnel (for the phone channel)
 
 Twilio has to reach this machine, and the tunnel is the only thing exposed. With the
