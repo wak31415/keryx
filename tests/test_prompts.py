@@ -567,3 +567,19 @@ def test_the_first_call_prompt_is_packaged_and_renders_whole(settings):
     assert "{owner}" in text
     assert "You know nothing about Ada beyond what this call tells you" in rendered
     assert "{" not in rendered and "}" not in rendered
+
+
+def test_a_declined_first_call_does_not_come_back_unless_nothing_was_kept(unwrapped):
+    """Declining is written down like anything else, and that is what retires the offer."""
+    flat = unwrapped(load_prompt("first_call.md"))
+
+    assert "this will not come back" in flat
+    assert "nothing at all was written down, you may offer it once more" in flat
+
+
+def test_the_first_call_starts_where_the_conversation_already_is(unwrapped):
+    """On the phone none of this arrives until the PIN does, which is rarely turn one."""
+    flat = unwrapped(load_prompt("first_call.md"))
+
+    assert "told none of this until the PIN is in" in flat
+    assert "do not greet them again" in flat
