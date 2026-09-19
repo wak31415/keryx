@@ -213,7 +213,7 @@ async def test_a_spoken_pin_delivers_the_briefing_before_the_turn_that_answers_i
     instructions, (nudge, nudge_responds), responds = (value for _, value in provider.order[1:4])
     assert private(instructions)
     assert "orchard" in instructions
-    assert "Authorized for destructive work: yes" in instructions
+    assert "everything — the PIN is in" in instructions
     assert nudge.startswith("[system] 1 task finished") and nudge_responds is False
     assert responds is True
 

@@ -68,6 +68,37 @@ _NO_BRIEFS = "nothing written down yet"
 #: What a withheld prompt says in place of anything discovered from their machine.
 _WITHHELD = "held back until the PIN"
 
+#: The "How much this call has proved" line, per level. A label, not a sentence: the
+#: paragraph under it does the explaining.
+_TRUST_LABEL = {
+    TrustLevel.NONE: "nothing yet — they rang in, and caller id can be faked",
+    TrustLevel.POSSESSION: "you rang them, on their own number",
+    TrustLevel.FULL: "everything — the PIN is in, or this is their own microphone",
+}
+#: What the model may do at this level, and how the call gets to the next one. Two or
+#: three lines each: a longer one is a paragraph the model skims past, and the tools say
+#: the rest themselves when they refuse.
+_TRUST_NOTE = {
+    TrustLevel.NONE: (
+        "You can tell them what they have not heard yet, look something up on the web, and "
+        "say what a number is. Anything that hands work to Claude, reads something of "
+        "theirs, or leaves something behind comes back asking for the PIN — call the tool "
+        "and let it ask, rather than predicting it."
+    ),
+    TrustLevel.POSSESSION: (
+        "Whoever answered is holding their phone, so you can tell them what landed, answer "
+        "Claude's question with send_followup, arrange a call back on this number, and put "
+        "a waiting approval to them. An answering machine can be talked at and cannot press "
+        "a key, so before you act on something they *said*, ask them to press one key — "
+        "once, when a tool asks for it, not as a greeting. Starting new work, reading their "
+        "past calls, and restarting still need the PIN."
+    ),
+    TrustLevel.FULL: (
+        "Everything is open to you. Say nothing about the PIN or about being authorized: go "
+        "straight to what they asked for."
+    ),
+}
+
 
 def load_prompt(name: str) -> str:
     """Read a packaged prompt template by file name (e.g. `voice_system.md`)."""
@@ -187,7 +218,8 @@ def render_voice_prompt(
         now=datetime.now().astimezone().strftime(_TIME_FORMAT),
         channel=channel,
         caller=caller or "unknown",
-        authorized="yes" if trust is TrustLevel.FULL else "no",
+        trust=_TRUST_LABEL[trust],
+        trust_note=_TRUST_NOTE[trust],
         projects=project_names,
         skills=skill_lines,
         project_briefs=brief_blocks,

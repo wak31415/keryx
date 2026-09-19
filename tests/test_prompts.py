@@ -482,3 +482,42 @@ def test_with_texting_on_the_prompt_says_a_text(settings, unwrapped):
 
     assert "get a text saying so instead" in rendered
     assert "will turn up instead — a text —" in rendered
+
+
+# --- what the prompt says about this call's level ---------------------------
+#
+# The model cannot read `jarvis/trust.py`, so the only thing that tells it what it may do
+# is these three paragraphs. A level whose note goes missing is a model guessing, and it
+# guesses generously.
+
+
+def test_every_level_says_what_it_is_and_what_it_may_do(settings, unwrapped):
+    for trust in TrustLevel:
+        rendered = unwrapped(_rendered(settings, trust=trust))
+
+        assert "How much this call has proved:" in rendered
+        assert "{" not in rendered and "}" not in rendered
+
+
+def test_an_inbound_call_is_told_it_has_proved_nothing(settings, unwrapped):
+    rendered = unwrapped(_rendered(settings, trust=TrustLevel.NONE))
+
+    assert "caller id can be faked" in rendered
+    assert "asking for the PIN" in rendered
+
+
+def test_a_call_jarvis_placed_is_told_what_the_key_is_for(settings, unwrapped):
+    """The voicemail rule only works if the model knows to ask for the key."""
+    rendered = unwrapped(_rendered(settings, trust=TrustLevel.POSSESSION))
+
+    assert "you rang them, on their own number" in rendered
+    assert "ask them to press one key" in rendered
+    assert "not as a greeting" in rendered
+    assert "still need the PIN" in rendered
+
+
+def test_a_full_call_is_told_to_say_nothing_about_the_pin(settings, unwrapped):
+    rendered = unwrapped(_rendered(settings, trust=TrustLevel.FULL))
+
+    assert "Everything is open to you" in rendered
+    assert "Say nothing about the PIN" in rendered
