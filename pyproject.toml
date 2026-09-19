@@ -97,6 +97,7 @@ only-include = [
     "docs",
     "ops",
     "scripts",
+    "skills",
     ".env.example",
     ".python-version",
     "CHANGELOG.md",

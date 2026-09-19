@@ -17,8 +17,10 @@ Realtime API and Claude Agent SDK subagents.
   `uv run jarvis tasks show <id>` (the `TOLD` column is `NO` until Jarvis has said it)
 - Read what Jarvis remembers between calls: `uv run jarvis memory` (`--path` for the file)
 - Start that memory before any call has: `uv run jarvis init [--name NAME] [--fact TEXT]…
-  [--from FILE|-] [--force] [--yes]` (writes `memory.md` only, never `.env`; prints the
-  `OWNER_NAME=` line and what every call will carry)
+  [--from FILE|-] [--force] [--yes] [--json]` (writes `memory.md` only, never `.env`; prints
+  the `OWNER_NAME=` line and what every call will carry). `--json` is the same report for an
+  agent, needs `--yes`, and exits 1 only when a memory was wanted and not written, 2 on a
+  wrong command line; `skills/jarvis-onboard` is the keyboard session that drives it
 - Delete transcripts and finished task rows: `uv run jarvis forget [--older-than N]`
   (`--transcripts-only` / `--tasks-only` / `--yes`)
 - Restart the service: `uv run jarvis restart [--reason …] [--force] [--no-callback]`
@@ -115,6 +117,11 @@ Jarvis knows at the top of a call is assembled every time by
   embedded, so its sections cannot be mistaken for instructions. `memory_skeleton(owner)` is
   the only place its sections are written down — the update prompt renders it, and
   `seed_memory` (behind `jarvis init`) fills it; never restate the structure elsewhere.
+  Its *absence* is the marker of a first call: a trusted session with no memory renders
+  `prompts/first_call.md` in place of it and opens as a short introduction instead of an
+  ordinary call. That is the only record of "has been onboarded" — do not add a second one,
+  and do not have the session write `memory.md` itself; the interview's last turn says the
+  facts out loud, and the updater folds them in like any other call's.
 - **`recall`.** `jarvis/continuity/recall.py` searches past transcripts and past task
   summaries on demand. Matching stays literal on purpose: the query is speech that
   transcription has already mangled once, and a fuzzy hit gets read out as if it were fact.

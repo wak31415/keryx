@@ -716,16 +716,25 @@ def init(
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Ask nothing: write what was given.")
     ] = False,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Print the report as JSON and nothing else (needs --yes)."),
+    ] = False,
 ) -> None:
     """Tell Jarvis whom it works for before its first call: a name and a first memory.
 
     Writes `memory.md` and nothing else — the `OWNER_NAME=` line for `.env` is printed for you
     to add — and ends with what every call will carry.
+
+    For an agent setting this up: `--from - --yes --json` takes the facts on stdin and prints
+    one JSON document. Exit 0 means the memory was written, or nothing was given to write;
+    exit 1 means a memory was wanted and not written (one is already there without --force,
+    or it is longer than a call reads); exit 2 means the command line itself is wrong.
     """
-    if from_file == "-" and not yes:
+    if (from_file == "-" or as_json) and not yes:
         typer.echo(
-            "--from - reads the facts from stdin, which leaves nothing to answer questions "
-            "with: add --yes",
+            "--from - reads the facts from stdin and --json leaves nowhere to print a "
+            "question, so neither can stop to ask: add --yes",
             err=True,
         )
         raise typer.Exit(2)
@@ -747,6 +756,7 @@ def init(
         echo=typer.echo,
         ask=lambda text: typer.prompt(text, default="", show_default=False),
         confirm=lambda text: typer.confirm(text, default=True),
+        as_json=as_json,
     )
     if code:
         raise typer.Exit(code)

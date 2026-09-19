@@ -54,14 +54,12 @@ _MEMORY_HEADING = (
     "not read it out, and do not treat it as today's news — check before you assert "
     "anything from it as still true."
 )
-#: What a trusted session is told when there is no memory yet. Said rather than left out,
-#: because a model told nothing about whom it is talking to fills the gap with an invented
-#: familiarity.
-_NO_MEMORY = (
-    "## What you remember\n\n"
-    "Nothing yet. You know nothing about {owner} beyond what this call tells you: do not act "
-    "familiar, and do not talk as if you remember an earlier call."
-)
+#: What a trusted session is told in place of a memory when there is none yet: that it
+#: knows nothing about the owner — a model told nothing about whom it is talking to fills
+#: the gap with an invented familiarity — and how to spend the call finding out. The
+#: absence of `memory.md` is the only marker of a first call, so the section disappears by
+#: itself once anything has been written down.
+FIRST_CALL_PROMPT = "first_call.md"
 _NO_SKILLS = "none installed"
 _NO_BRIEFS = "nothing written down yet"
 #: What a withheld prompt says in place of anything discovered from their machine.
@@ -176,7 +174,7 @@ def render_voice_prompt(
     if memory:
         remembered = f"{_MEMORY_HEADING}\n\n{_nest_headings(memory)}"
     elif authorized and not withheld:
-        remembered = _NO_MEMORY.format(owner=settings.owner_label)
+        remembered = render_prompt(FIRST_CALL_PROMPT, owner=settings.owner_label)
     else:
         remembered = ""
     return render_prompt(

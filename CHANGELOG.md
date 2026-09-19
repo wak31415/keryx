@@ -33,6 +33,24 @@ surface — a removed or renamed setting or command is a major bump.
 - Retention: `TRANSCRIPT_RETENTION_DAYS` and `TASK_RETENTION_DAYS` (both off by default)
   prune at the top of `jarvis serve`, and `jarvis forget` does it on demand. A finished
   task you have not been told about is never deleted.
+- **A get-to-know-you first call.** With nothing in `memory.md` yet, the first authorized
+  call opens as an introduction rather than an ordinary call: what Jarvis is, then what to
+  call you, what you work on, which projects matter, how you like to be answered and what
+  is worth ringing you about — a handful of questions, one a turn, and the shape of it said
+  back once at the end. Work always comes first, "not now" ends it for the rest of the
+  call, and it is never a condition of anything. The absence of the memory is the only
+  marker, so the call after it is ordinary again. It lives in `prompts/first_call.md` and
+  reloads without a restart.
+- **`jarvis init --json`** prints the same report as one document, for the agent you told
+  to set this up: the memory's size and the briefs' total against their caps, the projects
+  and which of them wrote a brief, the skills, whether `OWNER_NAME` is set, and the `.env`
+  line to add. It needs `--yes`, and the exit code is a contract — 0 written or nothing to
+  write, 1 a memory was wanted and not written, 2 a wrong command line.
+- **A `jarvis-onboard` Claude Code skill** (`skills/jarvis-onboard/`, copied or symlinked
+  into `~/.claude/skills/`): run once at the keyboard, it interviews you, drafts a
+  `.jarvis-brief.md` for the projects **you pick after seeing the list**, proposes additions
+  to `~/.claude/CLAUDE.md`, and pipes the agreed facts into `jarvis init --from - --yes`.
+  Nothing is scanned, written or sent without you seeing it first.
 
 ### Changed
 
@@ -81,6 +99,11 @@ surface — a removed or renamed setting or command is a major bump.
 - `~/.jarvis` and its subdirectories are created mode 0700, and transcripts, `tasks.db`,
   task logs and reports mode 0600. An existing tree is tightened in place on the next start.
 - Every dependency now carries a version range instead of being unbounded.
+- **A follow-up question is rare now, not forbidden.** The voice prompt used to ban one
+  outright — "do not confirm first", "dispatch anyway", "the questions worth asking are the
+  ones Claude works out". Dispatch-first is still the default, but the rule is a threshold:
+  ask when the answer changes what actually happens and Claude could not work it out from
+  the machine itself, roughly one dispatch in ten.
 
 ### Fixed
 
