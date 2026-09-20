@@ -13,9 +13,10 @@ listing the levels it will take:
 
 - `NONE` — an inbound phone call before the PIN. It is talking to a stranger until proved
   otherwise, and the ruling in `briefing.py` is the only thing it hears of the owner's.
-- `POSSESSION` — a call Jarvis placed to `Settings.owner_number`, proved by the single-use
-  stream token Jarvis minted for it (`jarvis.stream_tokens.confers_possession`), and by
-  nothing else: never Twilio's `From`/`To`, never a member of `allowed_callers`.
+- `POSSESSION` — a call Jarvis placed to one of `Settings.owner_numbers`, proved by the
+  single-use stream token Jarvis minted for it
+  (`jarvis.stream_tokens.confers_possession`), and by nothing else: never Twilio's
+  `From`/`To`, which is the inbound claim the PIN exists to doubt.
 - `FULL` — the PIN was given on this call, or the channel is the machine's own microphone.
 
 `VoiceSession.trusted` is the old spelling of `FULL` and still means exactly that.
@@ -29,7 +30,7 @@ class TrustLevel(IntEnum):
 
     #: An inbound phone call before the PIN. Caller id is spoofable, so this is a stranger.
     NONE = 0
-    #: A call Jarvis placed to the owner's own number: whoever answered is holding it.
+    #: A call Jarvis placed to a phone of the owner's: whoever answered is holding it.
     POSSESSION = 1
     #: The PIN was given on this call, or it is the local microphone.
     FULL = 2

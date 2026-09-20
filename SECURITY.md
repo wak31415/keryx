@@ -46,9 +46,11 @@ A call-back, a restart's confirmation and an approval escalation are outbound, a
 makes them different in kind: Jarvis dialled a number *you* configured, so reaching it
 means holding that phone. The proof is the single-use token Jarvis mints for the call's
 own media stream, which records that Jarvis placed it and what it dialled; a call whose
-token says so, and whose dialled number is `OWNER_NUMBER`, opens with that much proved.
-Nothing else confers it — not a member of `ALLOWED_CALLERS`, not Twilio's `From`/`To`,
-which your caller's carrier supplies.
+token says so, and whose dialled number is one of yours, opens with that much proved.
+"One of yours" is `ALLOWED_CALLERS` (plus `OWNER_NUMBER` if you set it to something else),
+because this is a single-owner agent and a second allowed number is your second handset.
+Nothing else confers it — not Twilio's `From`/`To`, which your caller's carrier supplies,
+and so not any inbound call however it presents itself.
 
 What it buys: hearing a result, answering the question Claude came back with
 (`send_followup`), arranging a call back **on that same number**, marking a result as

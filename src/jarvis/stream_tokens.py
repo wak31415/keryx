@@ -14,15 +14,14 @@ in Jarvis allowed to carry it. Caller id on the way in is spoofable, which is wh
 exists; a number Jarvis dialled on the way out is not, because reaching it means holding
 that phone. `outbound_extra()` records both halves — that Jarvis placed the call, and the
 number it dialled — and `confers_possession()` is the one place the rule is applied: the
-dialled number has to equal `Settings.owner_number`, never merely a member of
-`allowed_callers`, and never Twilio's own `From`/`To` form fields, which the caller's
-carrier supplies (spec §5, `jarvis.trust`).
+dialled number has to be one of `Settings.owner_numbers`, and never Twilio's own
+`From`/`To` form fields, which the caller's carrier supplies (spec §5, `jarvis.trust`).
 """
 
 import logging
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 
 log = logging.getLogger("jarvis.stream_tokens")
@@ -52,17 +51,20 @@ def outbound_extra(number: str, **extra: object) -> dict:
     return {PLACED_BY_JARVIS: True, DIALLED_NUMBER: number, **extra}
 
 
-def confers_possession(info: TokenInfo, owner_number: str | None) -> bool:
-    """True when this redeemed token proves the call reached the owner's own phone.
+def confers_possession(info: TokenInfo, owner_numbers: Collection[str]) -> bool:
+    """True when this redeemed token proves the call reached a phone of the owner's.
 
     Both halves have to be there: Jarvis placed the call, *and* the number it dialled is
-    the configured owner's. A token that merely names a number — an inbound one, whose
-    `caller` is the spoofable `From` — proves nothing, and with no `owner_number`
-    configured there is nothing to compare against, which is not a match.
+    one of theirs (`Settings.owner_numbers` — every entry in the allowlist, because this
+    is a single-owner agent and a second entry is a second handset, not a second person).
+    A token that merely names a number — an inbound one, whose `caller` is the spoofable
+    `From` — proves nothing, and with no number of theirs configured there is nothing to
+    compare against, which is not a match.
     """
-    if not owner_number or not info.extra.get(PLACED_BY_JARVIS):
+    if not info.extra.get(PLACED_BY_JARVIS):
         return False
-    return info.extra.get(DIALLED_NUMBER) == owner_number
+    dialled = info.extra.get(DIALLED_NUMBER)
+    return bool(dialled) and dialled in (owner_numbers or ())
 
 
 @dataclass(frozen=True)

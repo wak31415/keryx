@@ -435,9 +435,9 @@ def register_task_tools(
             return {"error": "no number to call back on; ask the user for one"}
         if not _E164_RE.match(number):
             return {"error": f"{number!r} is not a phone number I can call back"}
-        if ctx.trust is not TrustLevel.FULL and number != (settings.owner_number or ""):
-            # Possession is a fact about *this* number: Jarvis dialled it because the owner
-            # configured it. A number chosen on the call is a new decision, and the PIN is
+        if ctx.trust is not TrustLevel.FULL and number not in settings.owner_numbers:
+            # Possession is a fact about the owner's own phones, all of which they
+            # configured. A number chosen on the call is a new decision, and the PIN is
             # what makes one.
             return {"status": "refused", "message": CALLBACK_OWNER_ONLY_MESSAGE}
 

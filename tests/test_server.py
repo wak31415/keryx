@@ -491,9 +491,18 @@ def test_a_call_jarvis_placed_to_the_owner_opens_at_possession(client, state):
     assert run_media_session(client, state, token) is TrustLevel.POSSESSION
 
 
-def test_a_call_jarvis_placed_to_another_number_opens_at_nothing(tmp_path):
-    """A call-back may go to a number the owner gave out loud; that is not their phone."""
+def test_a_call_jarvis_placed_to_the_owners_second_phone_opens_at_possession(tmp_path):
+    """One owner, two handsets: the allowlist is their phones, not a guest list."""
     state = build_app_state(make_settings(tmp_path, allowed_callers=[CALLER, STRANGER]))
+    token = state.stream_tokens.issue(STRANGER, outbound_extra(STRANGER))
+
+    with TestClient(create_app(state)) as client:
+        assert run_media_session(client, state, token) is TrustLevel.POSSESSION
+
+
+def test_a_call_jarvis_placed_to_a_number_that_is_not_theirs_opens_at_nothing(tmp_path):
+    """A call-back may go to a number the owner gave out loud; that is not their phone."""
+    state = build_app_state(make_settings(tmp_path, allowed_callers=[CALLER]))
     token = state.stream_tokens.issue(STRANGER, outbound_extra(STRANGER))
 
     with TestClient(create_app(state)) as client:

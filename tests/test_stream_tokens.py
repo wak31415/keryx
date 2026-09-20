@@ -114,23 +114,36 @@ def test_an_outbound_token_records_that_jarvis_placed_it_and_what_it_dialled():
 def test_a_call_jarvis_placed_to_the_owner_confers_possession():
     info = TokenInfo(caller=OWNER, extra=outbound_extra(OWNER))
 
-    assert confers_possession(info, OWNER) is True
+    assert confers_possession(info, (OWNER,)) is True
 
 
-def test_another_number_jarvis_dialled_confers_nothing():
-    """An allowed caller is not the owner, and a call-back may go to a number they gave."""
+def test_any_phone_of_the_owners_confers_it_not_just_the_one_jarvis_rings_first():
+    """This is a single-owner agent: the allowlist is their handsets, not a guest list.
+
+    Ringing them back on the second one reaches the same person, so requiring the first
+    would only have made the tier fail quietly on a call that proved just as much.
+    """
+    second = "+15557000000"
+    info = TokenInfo(caller=second, extra=outbound_extra(second))
+
+    assert confers_possession(info, (OWNER, second)) is True
+
+
+def test_a_number_that_is_not_the_owners_confers_nothing():
+    """A call-back to a number named on the call is a new decision, and needs the PIN."""
     info = TokenInfo(caller=OTHER, extra=outbound_extra(OTHER))
 
-    assert confers_possession(info, OWNER) is False
+    assert confers_possession(info, (OWNER,)) is False
 
 
 def test_an_inbound_token_confers_nothing_however_it_is_dressed():
     """The caller is `From`, which is spoofable: only the placing flag may be believed."""
-    assert confers_possession(TokenInfo(caller=OWNER, extra={"call_sid": "CA1"}), OWNER) is False
-    assert confers_possession(TokenInfo(caller=OWNER, extra={"dialled": OWNER}), OWNER) is False
+    numbers = (OWNER,)
+    assert confers_possession(TokenInfo(caller=OWNER, extra={"call_sid": "CA1"}), numbers) is False
+    assert confers_possession(TokenInfo(caller=OWNER, extra={"dialled": OWNER}), numbers) is False
 
 
-def test_with_no_owner_number_nothing_confers_possession():
+def test_with_no_number_of_the_owners_nothing_confers_possession():
     """Nothing to compare against is not a match; it is the absence of the rule."""
-    assert confers_possession(TokenInfo(caller=OWNER, extra=outbound_extra(OWNER)), None) is False
-    assert confers_possession(TokenInfo(caller=None, extra=outbound_extra("")), "") is False
+    assert confers_possession(TokenInfo(caller=OWNER, extra=outbound_extra(OWNER)), ()) is False
+    assert confers_possession(TokenInfo(caller=None, extra=outbound_extra("")), ("",)) is False

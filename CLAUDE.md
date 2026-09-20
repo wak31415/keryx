@@ -93,8 +93,11 @@ Four rulings, and `SECURITY.md` is the threat model:
 
 - **A token is the only thing that may confer possession.** `stream_tokens.outbound_extra`
   records that Jarvis placed the call and the number it dialled; `confers_possession` applies
-  the rule in `_open_session`, and takes `owner_number` alone — never a member of
-  `allowed_callers`, never Twilio's `From`/`To`, which are the caller's carrier talking.
+  the rule in `_open_session`, against `Settings.owner_numbers` — never Twilio's `From`/`To`,
+  which are the caller's carrier talking. That set is the whole allowlist, because Jarvis has
+  one owner: `ALLOWED_CALLERS` is the handsets one person picks up, not a guest list, and
+  `OWNER_NUMBER` only chooses which one Jarvis rings first. Do not narrow it back to the one
+  number — that only makes the tier fail silently on the owner's other phone.
 - **The digest is not behind the PIN; the memory is.** The owner's ruling, spoofers and all
   (`DIGEST_BEFORE_PIN`, default on). What is withheld below `FULL` is the map of their world —
   memory, project names, briefs, skills — and `announce(text, needs=…)` says which kind each

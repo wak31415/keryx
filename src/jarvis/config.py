@@ -435,8 +435,24 @@ class Settings(BaseSettings):
         return self.owner_name.strip() if self.owner_name else OWNER_FALLBACK
 
     @property
+    def owner_numbers(self) -> tuple[str, ...]:
+        """Every phone that is the owner's own: the allowlist, plus an explicit `OWNER_NUMBER`.
+
+        Jarvis has one owner. `ALLOWED_CALLERS` is not a guest list — it is the set of
+        handsets one person picks up, and more than one entry means they carry more than
+        one phone. So a call Jarvis placed to any of them reached *them*, and `OWNER_NUMBER`
+        decides only which one it rings first. Possession is judged against this, never
+        against that one (`jarvis.stream_tokens.confers_possession`).
+        """
+        numbers = list(self.allowed_callers)
+        explicit = self.owner_number_explicit
+        if explicit and explicit not in numbers:
+            numbers.insert(0, explicit)
+        return tuple(numbers)
+
+    @property
     def owner_number(self) -> str | None:
-        """Explicit `OWNER_NUMBER`, else the first allowed caller, else None."""
+        """The one to ring: explicit `OWNER_NUMBER`, else the first allowed caller, else None."""
         if self.owner_number_explicit:
             return self.owner_number_explicit
         if self.allowed_callers:
