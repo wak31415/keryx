@@ -182,7 +182,7 @@ class Notifier:
 
         announced = await announce_to_live_sessions(
             # News: a result the owner is waiting on, which is not gated on the PIN
-            # (`DIGEST_BEFORE_PIN`). A call that has proved nothing may hear it and still
+            # (`BRIEFING_BEFORE_PIN`). A call that has proved nothing may hear it and still
             # does not count as delivery, so the text and the call-back still go out.
             self._sessions,
             text,

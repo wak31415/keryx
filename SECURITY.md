@@ -5,37 +5,55 @@ user access. Please treat a bug in the PIN gate, the Twilio signature check, the
 token, the approval bridge's policy allowlist, or the report links as a security issue
 rather than an ordinary one.
 
-## Threat model: the phone before the PIN
+## Threat model: what the PIN is for, and what it is not
 
-**Caller ID is spoofable.** `ALLOWED_CALLERS` keeps strangers from reaching the voice
-model at all, but anyone who fakes an allowed number does reach it, and the source being
-public makes that cheap. So the allowlist is not authentication; the PIN is. The rule the
-code holds: **on an inbound phone call, before the PIN, nothing of yours is read out but
-the results you have not been told about, nothing is announced into the call that you
-could not already hear at the greeting, and nothing the caller says or does outlives the
-call.**
+**The PIN defends against somebody on the phone, not against somebody on your machine.**
+Caller ID is spoofable: `ALLOWED_CALLERS` keeps strangers from reaching the voice model at
+all, but anyone who fakes an allowed number does reach it, and the source being public
+makes that cheap. So the allowlist is not authentication; the PIN is, and a phone-side
+spoofer is the whole of what it stands between you and.
 
-- **Nothing of yours is read out, with one deliberate exception.** A phone call opens
-  without what Jarvis remembers, your project names, your project briefs and your
-  installed skills; they reach the session only once the PIN is accepted. The exception is
-  the digest of **results you have not been told about**, which is read out at the
-  greeting (`DIGEST_BEFORE_PIN`, on by default) because that is what a call is usually
-  made for; the accepted cost is that somebody who has spoofed an allowed number hears
-  those task summaries. Set `DIGEST_BEFORE_PIN=false` to hold them back until the PIN.
-  Every voice tool answers `pin_required` until then, except five that read nothing of
-  yours or are how a call gets past the PIN: `check_billing`, `cluster_stats`,
-  `web_search`, `submit_pin` and `end_session`. A test walks every registered tool, so a
-  new one is gated unless it is added to that list on purpose.
+It is **not** a defence against a compromised machine, and it was never going to be.
+Anyone who can read your files has `.env`, and `.env` has `JARVIS_PIN` — along with the
+API keys, the Twilio token and everything else. Against that attacker the PIN is worth
+nothing, and `~/.jarvis` is already theirs to read directly.
+
+That is why **reads happen before the PIN**. Gating them bought nothing against the
+attacker who matters, and charged a keypad entry to every ordinary call you make. The
+trade is deliberate, and the line it draws is **reading versus acting**: before the PIN,
+on an inbound call, you can hear what Jarvis knows, and nothing the caller says or does
+changes anything or outlives the call.
+
+- **A call opens knowing what Jarvis knows.** The results you have not been told about,
+  what Jarvis remembers about you (`memory.md`), your project names, your project briefs
+  and your installed skills all reach the session at the greeting
+  (`BRIEFING_BEFORE_PIN`, on by default), and the four voice tools that read the same
+  material back — `list_tasks`, `get_task_status`, `get_task_result` and `list_projects` —
+  answer without the PIN too. The accepted cost is that somebody who has spoofed an
+  allowed number hears it. Set `BRIEFING_BEFORE_PIN=false` to hold all of it back until
+  the PIN, which also puts those four tools back behind it.
+- **`recall` is the read that still needs the PIN**, and the distinction is deliberate.
+  The briefing is bounded and curated: you can read it with `jarvis memory`, prune it, and
+  it is the same page whatever the caller says. `recall` is an unbounded query the *caller*
+  steers, over every raw transcript Jarvis has ever written — a different quantity of
+  exposure, and the one thing on the phone a spoofer could actually mine.
+- **Nothing that acts happens without it.** Every voice tool that hands work to Claude,
+  writes something down or changes anything answers `pin_required` first; only
+  `check_billing`, `cluster_stats`, `web_search`, `submit_pin` and `end_session` answer at
+  any level whatever the setting says. A test walks every registered tool, so a new one is
+  gated unless it is added to one of those lists on purpose.
 - **Nothing is announced that it could not hear anyway.** A result that lands mid-call is
   announced under the same rule as the digest. Restart confirmations and approval
   escalations are not: they go only to a call that has proved something. A call that has
   proved nothing never counts as having told *you* either way — the call-back is still
   placed and the approval still rings.
-- **Nothing outlives the call.** No memory update is dispatched for it, no result can be
-  marked as heard except the ones this call itself read out, no call-back or call-back
-  note can be arranged, and nothing is sent to Slack. Its transcript is kept on disk, as
-  the record of what was tried, but it is marked as never authorized and `recall` never
-  reads it back to a model.
+- **Nothing outlives the call.** **No memory update is dispatched for it** — a call that
+  read the memory out still cannot rewrite it, which is the invariant that matters most
+  here: hearing what Jarvis believes about you is recoverable, editing it is not. No result
+  can be marked as heard except the ones this call itself read out, no call-back or
+  call-back note can be arranged, and nothing is sent to Slack. Its transcript is kept on
+  disk, as the record of what was tried, but it is marked as never authorized and `recall`
+  never reads it back to a model.
 - **A spoken PIN is never written down.** Transcript lines are redacted as they are
   written, in digits or in words, and everything that reads a transcript back to a model
   redacts again, because logs from before this still hold it. No log line carries it.
@@ -52,13 +70,15 @@ because this is a single-owner agent and a second allowed number is your second 
 Nothing else confers it — not Twilio's `From`/`To`, which your caller's carrier supplies,
 and so not any inbound call however it presents itself.
 
-What it buys: hearing a result, answering the question Claude came back with
-(`send_followup`), arranging a call back **on that same number**, marking a result as
-told, and answering a waiting approval on the keypad — the last because the approval
-allowlist is already the filter on what a key may ever run, its denylist still wins, and
-`jarvis approvals --disable` still wins over everything. What it does not buy: starting
-new work, searching your past calls, sending to Slack, restarting Jarvis, calling a number
-chosen during the call, or being handed the memory. Those are the PIN.
+What it buys, over and above what any call may hear: answering the question Claude came
+back with (`send_followup`), arranging a call back **on that same number**, marking any
+result as told, and answering a waiting approval on the keypad — the last because the
+approval allowlist is already the filter on what a key may ever run, its denylist still
+wins, and `jarvis approvals --disable` still wins over everything. What it does not buy:
+starting new work, searching your past calls, sending to Slack, restarting Jarvis, or
+calling a number chosen during the call. Those are the PIN. (It also still matters with
+`BRIEFING_BEFORE_PIN` off, where it is what lets a call-back read you the result it rang
+about.)
 
 Voicemail is the residual risk here, and it is handled rather than ignored: an answering
 machine can take an outbound call and be read a result. So before acting on anything
@@ -74,12 +94,16 @@ press `*` again to put the keypad back on the menu. A wrong PIN leaves the keypa
 is, so you can simply try again. Saying the digits out loud works too and always did:
 `submit_pin` is one of the handful of tools that answer at any level.
 
-In scope, then: anything that gets a caller who has not given the PIN more than the above
-— a private fact beyond the digest, an announcement beyond it, or a change that persists
-past the call. That **includes the memory writer**, a `bypassPermissions` subagent whose
-whole input is a call's transcript, and which must run only for calls that were
-authorized. Also in scope: anything that confers possession on a call Jarvis did not
-place, or on one it placed to a number other than `OWNER_NUMBER`.
+In scope, then: anything that lets a caller who has not given the PIN **act** — change
+anything, leave anything behind, or reach a subagent. That **includes the memory writer**,
+a `bypassPermissions` subagent whose whole input is a call's transcript, and which must
+run only for calls that were authorized: reading the memory out is the design, rewriting
+it is not. Also in scope: an announcement beyond what the call could hear at the greeting;
+`recall`, or any comparable unbounded search, answering without the PIN; anything private
+that the briefing does *not* already carry being read out without it; anything that
+confers possession on a call Jarvis did not place, or on one it placed to a number other
+than `OWNER_NUMBER`; and, with `BRIEFING_BEFORE_PIN=false`, anything of yours reaching such
+a call at all.
 
 Out of scope, because it is the design rather than a flaw in it: **a caller with the PIN,
 or any content that reaches a subagent, effectively has a shell as you.** The subagents run

@@ -353,7 +353,7 @@ class VoiceSession:
 
         `needs` is what the announcement itself requires, because they are not alike. A
         finished task is news the owner asked for and needs nothing — subject to
-        `DIGEST_BEFORE_PIN`, the one thing that can still hold it back from a stranger. A
+        `BRIEFING_BEFORE_PIN`, the one thing that can still hold it back from a stranger. A
         prompt waiting on their screen needs a call that could answer it (`POSSESSION`),
         and anything else keeps the old bar of `FULL`.
 
@@ -363,7 +363,7 @@ class VoiceSession:
         """
         if not self.is_live or self.trust < needs:
             return False
-        if self.trust is TrustLevel.NONE and not self._settings.digest_before_pin:
+        if self.trust is TrustLevel.NONE and not self._settings.briefing_before_pin:
             # Only news gets this far, and the owner has said a stranger may not hear it.
             return False
         log.info("session %s announcing: %s", self.session_id, text)
@@ -472,27 +472,30 @@ class VoiceSession:
     # --- startup -----------------------------------------------------------
 
     async def _load_briefing(self) -> Briefing:
-        """What this session opens knowing: the unreported tasks, and the memory at `FULL`.
+        """What this session opens knowing: the unreported tasks, and the memory.
 
-        The two are gated apart (`jarvis.continuity.briefing`). The memory needs `FULL`;
+        With `BRIEFING_BEFORE_PIN` on — the default since 2026-09-19 — both come before
+        the PIN: reading is not what the PIN is for (`jarvis.continuity.briefing`). Off,
+        the older split stands, and the two are gated apart: the memory needs `FULL`, and
         the digest needs only that this is not a stranger the owner has told us to keep it
-        from — `POSSESSION`, or `DIGEST_BEFORE_PIN` on an inbound call. `_brief_after_pin`
-        fetches whatever the PIN then adds. A briefing that cannot be built is not a reason
-        to drop a call — `Briefer` already swallows its own failures, and this catches
-        anything a substitute raises.
+        from (`POSSESSION`). `_brief_after_pin` fetches whatever the PIN then adds. A
+        briefing that cannot be built is not a reason to drop a call — `Briefer` already
+        swallows its own failures, and this catches anything a substitute raises.
         """
-        if self._briefer is None or not self._may_hear_digest():
+        if self._briefer is None or not self._may_hear_briefing():
             return Briefing()
         try:
             briefing = await self._briefer.build()
         except Exception:
             log.exception("session %s could not build its briefing", self.session_id)
             return Briefing()
-        return briefing if self.trusted else briefing.without_memory()
+        if self.trusted or self._settings.briefing_before_pin:
+            return briefing
+        return briefing.without_memory()
 
-    def _may_hear_digest(self) -> bool:
-        """Whether this call may be told what it has not heard about yet."""
-        return self.trust >= TrustLevel.POSSESSION or self._settings.digest_before_pin
+    def _may_hear_briefing(self) -> bool:
+        """Whether this call may be told anything it has not proved a right to."""
+        return self.trust >= TrustLevel.POSSESSION or self._settings.briefing_before_pin
 
     async def _brief_after_pin(self) -> None:
         """Hand a call what the PIN was holding back: the full prompt, and a nudge if due.
@@ -504,7 +507,7 @@ class VoiceSession:
         session is trusted by then. A send that fails is swallowed like any other; the PIN
         still counts.
 
-        No nudge when the call already had its digest (`DIGEST_BEFORE_PIN`, or a call
+        No nudge when the call already had its digest (`BRIEFING_BEFORE_PIN`, or a call
         Jarvis placed). It was spoken at the greeting; nudging again is Jarvis telling them
         the same news twice, which is the one thing the wording everywhere else forbids.
         """

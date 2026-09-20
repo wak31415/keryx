@@ -58,7 +58,7 @@ async def announce_to_live_sessions(
     """Speak `text` into every live session that is trusted enough for it. Never raises.
 
     `needs` is what *this* announcement requires, because they are not alike: a finished
-    task is news and needs nothing (`TrustLevel.NONE`, subject to `DIGEST_BEFORE_PIN`); a
+    task is news and needs nothing (`TrustLevel.NONE`, subject to `BRIEFING_BEFORE_PIN`); a
     prompt waiting on the owner's screen needs a call that could answer it. The default is
     `FULL`, so an announcement that has not thought about it gets the old behaviour.
 

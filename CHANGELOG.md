@@ -61,22 +61,30 @@ surface — a removed or renamed setting or command is a major bump.
   can answer a call, acting on anything you *say* takes one keypress first. If an approval
   menu is open on such a call and you want the PIN, press `*` to give the keypad to the PIN
   (`*` again gives it back to the menu); saying the digits works at any time.
-- **`DIGEST_BEFORE_PIN`** (default `true`): results you have not been told about are read
-  out at the start of an inbound call, before the PIN. The trade-off is that a caller who
-  spoofs one of your `ALLOWED_CALLERS` hears those summaries; `false` restores the old
-  silence. The memory, your project names, their briefs and the skills always wait for the
-  PIN either way.
+- **`BRIEFING_BEFORE_PIN`** (default `true`): an inbound call is handed its whole standing
+  briefing before the PIN — the results you have not been told about, what Jarvis remembers
+  about you, your project names, their briefs and your skills — and the four voice tools
+  that read the same material back (`list_tasks`, `get_task_status`, `get_task_result`,
+  `list_projects`) answer without it too. The trade-off is that a caller who spoofs one of
+  your `ALLOWED_CALLERS` hears it; `false` restores the old silence and puts those four
+  tools back behind the PIN with it.
 
 ### Changed
 
-- **Before the PIN, the phone keeps nothing and gets nothing but the news.** Caller ID is
-  spoofable, so an allowed number no longer earns anything private. On the phone, the
-  memory, project names, their briefs, past calls and pending approvals wait for the PIN;
-  every tool but `check_billing`, `cluster_stats`, `web_search`, `submit_pin` and
-  `end_session` asks for it first; no memory update runs after such a call; and `recall`
-  never searches its transcript. The one exception is the digest of results you have not
-  been told about, which is read out at the greeting (`DIGEST_BEFORE_PIN`, above), and a
-  call that has proved nothing still never counts as having told you.
+- **Before the PIN, the phone keeps nothing and changes nothing.** Caller ID is spoofable,
+  so an allowed number no longer earns the right to *do* anything. On the phone, dispatch,
+  `recall`, Slack, cancelling, restarting, arranging a call back and answering a pending
+  approval all ask for the PIN first; no memory update runs after such a call, so a call
+  that heard the memory read out still cannot rewrite it; and `recall` never searches its
+  transcript. A call that has proved nothing still never counts as having told you.
+- **The PIN is the line between reading and acting, not between private and not.** It
+  defends against somebody spoofing one of your `ALLOWED_CALLERS`; it is not a defence
+  against a compromised machine, which has `.env` and so has the PIN itself. Gating reads
+  bought nothing against that attacker and charged a keypad entry to every ordinary call,
+  so reads now happen before the PIN (`BRIEFING_BEFORE_PIN`, above). `recall` is the one
+  read that stays behind it: the briefing is a bounded page you can read with
+  `jarvis memory` and prune, where `recall` is an unbounded search of every call ever
+  recorded, steered by whoever is on the line.
 - **The approval bridge decides on exactly what will run.** The policy checks the raw
   command before normalising it, refuses anything the hook had to trim or cannot read back
   whole, matches `APPROVAL_BASH_ALLOW` word for word on the parsed argv (prefix entries

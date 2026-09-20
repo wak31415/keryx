@@ -636,7 +636,9 @@ reasoning behind each of those four:
   `/openapi.json` schema are both switched off, so the tunnel does not hand out a list of
   the routes above.
 - **Caller ID is spoofable**, so the allowlist alone is not a gate. The PIN is what
-  actually protects dispatching on the phone. It must be 6–8 digits (enforced — see
+  actually protects dispatching on the phone — and it protects it against somebody on the
+  phone, not against somebody on your machine: anyone who can read your files has `.env`,
+  and `.env` has the PIN. It must be 6–8 digits (enforced — see
   [The PIN](#using-it)), three wrong entries end the call for good, ten across all calls in
   24 hours lock PIN entry for an hour, no more than two calls run at once, and it is compared
   with `hmac.compare_digest`. Keep `ALLOWED_CALLERS` tight and leave `JARVIS_PIN` set — with
@@ -646,7 +648,7 @@ reasoning behind each of those four:
   token Jarvis minted itself, so that call opens with something proved: it can tell you what
   landed, answer the question Claude came back with, arrange a call back *on that same
   number*, and let you answer a waiting approval on the keypad. It cannot start new work,
-  search your past calls, restart Jarvis, or be handed the memory — those are still the PIN.
+  search your past calls, or restart Jarvis — those are still the PIN.
   Nothing else confers it: not an allowed caller, not the `From` on an inbound call.
   Voicemail can answer an outbound call, so before acting on anything you *say*, Jarvis asks
   you to press one key — an answering machine cannot.
@@ -654,16 +656,20 @@ reasoning behind each of those four:
   signing secret is either `REPORT_SECRET` or a random one persisted at
   `~/.jarvis/report_secret` with mode 600. Caller phone numbers are masked to their last
   four digits everywhere they are written down.
-- **Before the PIN, the phone gets almost nothing and keeps nothing.** No memory, task,
-  past call, project name or project brief reaches a caller who has not given it, and
-  nothing they say outlives the call: no memory update, and `recall` never searches that
-  transcript. The exception is deliberate: **results you have not been told about are read
-  out before the PIN** (`DIGEST_BEFORE_PIN`, on by default), because hearing what landed is
-  what you ring in for and a digest that waits for the PIN is one you often never get. The
-  trade is that somebody who spoofs one of your `ALLOWED_CALLERS` hears those summaries;
-  set `DIGEST_BEFORE_PIN=false` if you would rather they did not. Hearing it never counts
-  as having told *you*, so the call-back still goes out. `SECURITY.md` has the threat model,
-  including what is out of scope: anyone with the PIN, or any content a subagent reads,
+- **On the phone the PIN is the line between reading and acting.** Before it, a call is
+  handed what Jarvis knows — the results you have not been told about, what it remembers
+  about you, your project names, their briefs, your skills — and the four voice tools that
+  read the same material back answer too. That is deliberate: the PIN defends against
+  somebody spoofing one of your `ALLOWED_CALLERS`, and gating reads charged a keypad entry
+  to every ordinary call to do it. The trade is that such a spoofer hears it; set
+  `BRIEFING_BEFORE_PIN=false` if you would rather they did not, and all of it waits for the
+  PIN again. What never happens without it: dispatching work, `recall` (an unbounded search
+  of every past call, unlike the bounded page the briefing carries), Slack, cancelling,
+  restarting — and **nothing the caller says outlives the call**: no memory update, so a
+  call that heard the memory still cannot rewrite it, and `recall` never searches that
+  transcript. Hearing a result never counts as having told *you*, so the call-back still
+  goes out. `SECURITY.md` has the threat model, including what is out of scope: anyone with
+  the PIN, anyone who already has your machine, or any content a subagent reads,
   effectively has a shell as you.
 
 Three things this summary leaves out are in the wiki: the PIN rules in full, on

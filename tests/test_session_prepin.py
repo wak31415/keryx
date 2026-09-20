@@ -1,9 +1,11 @@
 """What a phone caller can reach before the PIN (spec §3.3, §5; SECURITY.md).
 
-Caller id is spoofable, so a caller on an allowed number has proved nothing. The ruling
-these tests hold: on the phone, before the PIN, nothing private is read out, nothing is
-announced into the session, and nothing the caller says or does outlives the call. The
-local channel is authorized by construction and is unchanged.
+Caller id is spoofable, so a caller on an allowed number has proved nothing. The line these
+tests hold is **reading versus acting**: before the PIN a call is handed the standing
+briefing — the digest, the memory, the map of the owner's world — and nothing it says or
+does outlives the call. `BRIEFING_BEFORE_PIN=false` restores the older, stricter silence,
+and the tests that name it are the ones holding that half open. The local channel is
+authorized by construction and is unchanged.
 """
 
 import logging
@@ -112,7 +114,7 @@ def tools():
 @pytest.fixture
 def make_session(tmp_path, bus, tools):
     def build(
-        transport, prov, *, authorized=False, digest_before_pin=True, **kwargs
+        transport, prov, *, authorized=False, briefing_before_pin=True, **kwargs
     ) -> VoiceSession:
         settings = make_settings(
             tmp_path,
@@ -120,7 +122,7 @@ def make_session(tmp_path, bus, tools):
             projects={"orchard": str(tmp_path)},
             projects_root=tmp_path / "no-projects",
             skills_dir=tmp_path / "no-skills",
-            digest_before_pin=digest_before_pin,
+            briefing_before_pin=briefing_before_pin,
         )
         return VoiceSession(
             transport, prov, settings, tools, bus, authorized=authorized, **kwargs
@@ -139,53 +141,52 @@ def test_a_phone_call_is_trusted_only_once_authorized(make_session, phone, local
     assert make_session(local, provider, authorized=False).trusted is True
 
 
-# --- the memory waits for the PIN; the digest does not ----------------------
+# --- the standing briefing comes before the PIN -----------------------------
 
 
-async def test_an_unauthorized_call_opens_knowing_nothing_of_theirs(make_session, phone, provider):
-    """The memory and the map of their world. The digest is the exception below it."""
-    briefer = FakeBriefer(Briefing(memory=MEMORY))
-    session = make_session(phone, provider, briefer=briefer)
+async def test_an_unauthorized_call_hears_the_whole_standing_briefing(
+    make_session, phone, provider
+):
+    """The owner's ruling (2026-09-19): reading is not what the PIN is for.
 
-    async with running(session):
-        await eventually(lambda: provider.injected != [])
-
-        assert MEMORY not in provider.config.instructions
-        assert "orchard" not in provider.config.instructions  # nor what they are working on
-        assert provider.injected[0][0] == OPENING_MESSAGE  # nothing unheard, so no nudge
-
-
-async def test_an_unauthorized_call_hears_the_digest_before_the_pin(make_session, phone, provider):
-    """The owner's ruling: unheard news is not gated by the PIN, spoofers and all."""
+    An attacker who has the machine has `.env`, which has the PIN, so gating reads bought
+    nothing against the threat that matters and charged a keypad to every ordinary call.
+    """
     session = make_session(phone, provider, briefer=FakeBriefer())
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
 
         assert DIGEST in provider.config.instructions
-        assert MEMORY not in provider.config.instructions
+        assert MEMORY in provider.config.instructions
+        assert "orchard" in provider.config.instructions  # and what they are working on
         assert provider.injected[0][0].startswith(OPENING_MESSAGE)
         assert "1 task finished" in provider.injected[0][0]
 
 
-async def test_digest_before_pin_off_restores_the_old_silence(make_session, phone, provider):
+async def test_briefing_before_pin_off_restores_the_old_silence(make_session, phone, provider):
     briefer = FakeBriefer()
-    session = make_session(phone, provider, briefer=briefer, digest_before_pin=False)
+    session = make_session(phone, provider, briefer=briefer, briefing_before_pin=False)
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
 
         assert DIGEST not in provider.config.instructions
+        assert MEMORY not in provider.config.instructions
+        assert "orchard" not in provider.config.instructions
         assert provider.injected[0][0] == OPENING_MESSAGE
         assert briefer.builds == 0  # not even read
 
 
-async def test_a_call_jarvis_placed_hears_the_digest_whatever_the_setting(
+async def test_with_it_off_a_call_jarvis_placed_still_hears_only_the_digest(
     make_session, phone, provider
 ):
-    """Possession is proof the owner is holding the phone; the setting is about strangers."""
+    """Possession is proof the owner is holding the phone; the setting is about strangers.
+
+    Off, the older split stands: news yes, the map of their world no.
+    """
     session = make_session(
-        phone, provider, possession=True, briefer=FakeBriefer(), digest_before_pin=False
+        phone, provider, possession=True, briefer=FakeBriefer(), briefing_before_pin=False
     )
 
     async with running(session):
@@ -193,6 +194,7 @@ async def test_a_call_jarvis_placed_hears_the_digest_whatever_the_setting(
 
         assert DIGEST in provider.config.instructions
         assert MEMORY not in provider.config.instructions
+        assert "orchard" not in provider.config.instructions
 
 
 async def test_a_spoken_pin_delivers_the_briefing_before_the_turn_that_answers_it(
@@ -201,7 +203,7 @@ async def test_a_spoken_pin_delivers_the_briefing_before_the_turn_that_answers_i
     """One turn is all a PIN may cost: the nudge rides in silently, ahead of the tool result
     whose response is the next thing they hear."""
     provider = OrderedProvider()
-    session = make_session(phone, provider, briefer=FakeBriefer(), digest_before_pin=False)
+    session = make_session(phone, provider, briefer=FakeBriefer(), briefing_before_pin=False)
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
@@ -220,7 +222,7 @@ async def test_a_spoken_pin_delivers_the_briefing_before_the_turn_that_answers_i
 
 async def test_a_keyed_pin_delivers_it_ahead_of_the_accepted_note(make_session, phone):
     provider = OrderedProvider()
-    session = make_session(phone, provider, briefer=FakeBriefer(), digest_before_pin=False)
+    session = make_session(phone, provider, briefer=FakeBriefer(), briefing_before_pin=False)
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
@@ -263,7 +265,7 @@ async def test_the_pin_does_not_re_announce_a_digest_the_call_already_had(make_s
 
 async def test_a_wrong_pin_delivers_nothing(make_session, phone, provider):
     briefer = FakeBriefer()
-    session = make_session(phone, provider, briefer=briefer)
+    session = make_session(phone, provider, briefer=briefer, briefing_before_pin=False)
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
@@ -383,7 +385,11 @@ async def test_a_spoken_pin_reaches_neither_the_transcript_nor_the_log(
 
 
 async def test_news_is_announced_into_a_call_before_the_pin(make_session, phone, provider):
-    """A result that lands mid-call reaches it, for the same reason the digest does."""
+    """A result that lands mid-call reaches it, for the same reason the digest does.
+
+    Hearing it is still not the owner having been told: `Announced.delivered` takes
+    `POSSESSION` (`jarvis.notify.deliver`), so the call-back and the text still go out.
+    """
     session = make_session(phone, provider)
 
     async with running(session):
@@ -393,11 +399,11 @@ async def test_news_is_announced_into_a_call_before_the_pin(make_session, phone,
         assert "Task 41 finished" in provider.injected[-1][0]
 
 
-async def test_with_the_digest_off_nothing_is_announced_before_the_pin(
+async def test_with_the_briefing_off_nothing_is_announced_before_the_pin(
     make_session, phone, provider
 ):
     """And False, so the notifier and the broker do not count it as having told them."""
-    session = make_session(phone, provider, digest_before_pin=False)
+    session = make_session(phone, provider, briefing_before_pin=False)
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
@@ -459,6 +465,28 @@ async def test_a_call_that_never_gave_the_pin_ends_unauthorized(
         pass
 
     assert [event.authorized for event in ended] == [False]
+
+
+async def test_hearing_the_memory_never_earns_the_right_to_rewrite_it(
+    make_session, phone, provider, ended
+):
+    """The one invariant the 2026-09-19 widening must not touch.
+
+    Reading is cheap to get wrong and recoverable; *writing* what Jarvis believes is not.
+    A spoofer who hears the memory read out must still not be able to edit it, so
+    `SessionEnded.authorized` stays `FULL`-only and the memory writer never runs for such
+    a call — however much that call was handed at the greeting.
+    """
+    session = make_session(phone, provider, briefer=FakeBriefer())
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+        assert MEMORY in provider.config.instructions  # it heard the memory
+        await eventually(lambda: session.transcript_path.exists())
+        assert was_authorized(session.transcript_path.read_text()) is False
+
+    assert [event.authorized for event in ended] == [False]  # and may not rewrite it
+    assert "authorized=no" in session.transcript_path.read_text().splitlines()[0]
 
 
 async def test_a_call_that_gave_the_pin_ends_authorized(make_session, phone, provider, ended):

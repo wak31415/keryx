@@ -14,19 +14,29 @@ both are assembled here, once, at session start:
    Standing facts and what recent calls were about, so "the thing we talked about
    yesterday" resolves to something.
 
-The two are not equally private, and since 2026-09-19 they are not gated alike. The
-**memory** waits for `FULL` (`jarvis.trust`) along with the project briefs and the skills:
-it is the map of the owner's whole world and the injection surface, and none of it is
-news. The **digest** does not. The owner's ruling is that unheard results are what they
-ring in for, and a digest that waits for the PIN is one they often never get; the price,
-accepted, is that a caller who has spoofed an allowed number hears those summaries.
-`DIGEST_BEFORE_PIN` (default on) is the switch, and off restores the older silence. A call
-Jarvis placed to the owner's own number hears the digest whatever the setting — the
-setting is about strangers, and possession is not one.
+**Neither waits for the PIN** (the owner's ruling, 2026-09-19). The line is reading
+versus acting, not private versus not. Gating reads only ever defended against a
+phone-side caller-id spoofer, and it charged that defence to every ordinary call; against
+the threat the owner actually worries about — somebody who has the machine — it buys
+nothing at all, because that somebody has `.env`, and `.env` has `JARVIS_PIN`. So the
+whole standing briefing comes before the PIN, along with the rest of what the prompt is
+handed (the project names, their briefs, the skills: `jarvis.prompts`). The accepted price
+is that a caller who has spoofed an allowed number hears it too.
 
-`VoiceSession` asks for a briefing at session start whenever the digest is allowed, drops
-the memory from it below `FULL`, and asks again the moment the PIN goes in — updating the
-prompt, and handing over `after_pin_nudge()` unless the digest has already been given.
+`BRIEFING_BEFORE_PIN` (default on) is the switch, and off restores the older, narrower
+behaviour exactly: below `FULL` the memory, the briefs and the skills are withheld, the
+digest survives only for a call Jarvis placed to the owner's own number, and the read-only
+voice tools over the same material go back behind the PIN with them.
+
+What the widening does **not** touch is the writing. `SessionEnded.authorized` is still
+`FULL` only, so a call that never gave the PIN reads the memory and never rewrites it
+(`jarvis.continuity.memory`), and `recall` — an unbounded, caller-steered query over every
+raw transcript, which is a different quantity of exposure from this bounded, curated
+page — still needs the PIN and still skips such a call.
+
+`VoiceSession` asks for a briefing at session start whenever this call may hear one, drops
+the memory from it when it may not, and asks again the moment the PIN goes in — updating
+the prompt, and handing over `after_pin_nudge()` unless the digest has already been given.
 
 Nothing here may fail a call. Every read is guarded and the worst case is a briefing with
 empty parts, which renders as a prompt with those sections left out entirely.
@@ -88,9 +98,9 @@ class Briefing:
     def without_memory(self) -> "Briefing":
         """The same briefing with the memory dropped: the digest is news, the memory is not.
 
-        A call below `FULL` may hear what it has not been told about (`DIGEST_BEFORE_PIN`)
-        and may not hear what Jarvis knows about the owner — the second is the map of their
-        whole world and the injection surface, and no part of it is today's news.
+        Only reached with `BRIEFING_BEFORE_PIN` off, which is what that setting is for: it
+        restores the older split, where a call below `FULL` could hear what it had not
+        been told about and not the map of the owner's whole world.
         """
         return replace(self, memory="")
 

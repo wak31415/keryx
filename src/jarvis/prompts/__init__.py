@@ -63,7 +63,9 @@ _MEMORY_HEADING = (
 FIRST_CALL_PROMPT = "first_call.md"
 _NO_SKILLS = "none installed"
 _NO_BRIEFS = "nothing written down yet"
-#: What a withheld prompt says in place of anything discovered from their machine.
+#: What a withheld prompt says in place of anything discovered from their machine. Only
+#: reached with `BRIEFING_BEFORE_PIN` off: on, a call below `FULL` is handed the standing
+#: context like any other (`jarvis.continuity.briefing`).
 _WITHHELD = "held back until the PIN"
 
 #: The "How much this call has proved" line, per level. A label, not a sentence: the
@@ -78,10 +80,12 @@ _TRUST_LABEL = {
 #: the rest themselves when they refuse.
 _TRUST_NOTE = {
     TrustLevel.NONE: (
-        "You can tell them what they have not heard yet, look something up on the web, and "
-        "say what a number is. Anything that hands work to Claude, reads something of "
-        "theirs, or leaves something behind comes back asking for the PIN — call the tool "
-        "and let it ask, rather than predicting it."
+        "You have everything you need to talk to them: what they have not heard yet, what "
+        "you remember, what they are working on, and their tasks. Answer from it. What is "
+        "still behind the PIN is everything that *does* something — handing work to "
+        "Claude, searching their past calls, writing to Slack, cancelling, restarting — "
+        "and those come back asking for the PIN, so call the tool and let it ask rather "
+        "than predicting it."
     ),
     TrustLevel.POSSESSION: (
         "Whoever answered is holding their phone, so you can tell them what landed, answer "
@@ -96,6 +100,26 @@ _TRUST_NOTE = {
         "straight to what they asked for."
     ),
 }
+#: The `NONE` note for a prompt that really was withheld (`BRIEFING_BEFORE_PIN` off). The
+#: model must be told what it was actually handed, or it refuses things it can do and
+#: apologizes for things it has.
+_WITHHELD_TRUST_NOTE = (
+    "You can tell them what they have not heard yet, look something up on the web, and "
+    "say what a number is. Anything that hands work to Claude, reads something of "
+    "theirs, or leaves something behind comes back asking for the PIN — call the tool "
+    "and let it ask, rather than predicting it."
+)
+#: The paragraph under "The PIN" that only belongs in a withheld prompt, for the same
+#: reason: a model told its instructions are incomplete will not say "there is nothing on
+#: record" when the section is simply absent.
+_WITHHELD_PIN_NOTE = (
+    "**Until it is in, you have been told almost nothing of theirs.** What they have not "
+    "heard\nyet is the exception and is above, to be led with. Everything else — what you "
+    "remember,\ntheir projects, what the back office can do — is missing, and missing is "
+    "not empty. Never\ntell them there is nothing on record before the PIN; call the tool "
+    "and let it ask. Once the\nPIN is accepted, what was held back reaches your "
+    "instructions."
+)
 
 
 def load_prompt(name: str) -> str:
@@ -177,14 +201,22 @@ def render_voice_prompt(
     defaults to `TwilioOut.can_text`, and decides whether the prompt may promise a text.
     A `FULL` session with no memory is told it knows nothing about the owner yet.
 
-    `trust` is what this call has proved (`jarvis.trust`). Below `FULL` the prompt carries
-    no map of the owner's world: the project names, their briefs and the skill catalog say
-    `_WITHHELD` instead of being discovered at all, and `memory` is dropped whatever was
-    passed. `pending` is *not* withheld — the digest is news the owner asked for rather
-    than a map of their world, and whether a call below `FULL` has any is decided by the
-    session (`DIGEST_BEFORE_PIN`), not here. The session re-renders once the PIN is in.
+    `trust` is what this call has proved (`jarvis.trust`), and since 2026-09-19 it decides
+    this only together with `BRIEFING_BEFORE_PIN`. On (the default), a call below `FULL`
+    is handed the same standing context as any other: the PIN is the line between reading
+    and acting, not between private and not. Off, the prompt carries no map of the owner's
+    world — the project names, their briefs and the skill catalog say `_WITHHELD` instead
+    of being discovered at all, `memory` is dropped whatever was passed, and the two notes
+    that tell the model so are swapped in, because a model told it has what it has not is
+    a model that apologizes for things it is holding. `pending` is never withheld here;
+    whether a call below `FULL` has any is the session's decision, not this one. The
+    session re-renders once the PIN is in.
+
+    The first-call introduction is the one thing `FULL` still buys outright: possession
+    says whose phone answered, not that an interview is wanted.
     """
-    if trust is not TrustLevel.FULL:
+    withheld = trust is not TrustLevel.FULL and not settings.briefing_before_pin
+    if withheld:
         project_names = skill_lines = brief_blocks = _WITHHELD
         memory = None
     else:
@@ -217,7 +249,8 @@ def render_voice_prompt(
         channel=channel,
         caller=caller or "unknown",
         trust=_TRUST_LABEL[trust],
-        trust_note=_TRUST_NOTE[trust],
+        trust_note=_WITHHELD_TRUST_NOTE if withheld else _TRUST_NOTE[trust],
+        withheld_note=_WITHHELD_PIN_NOTE if withheld else "",
         projects=project_names,
         skills=skill_lines,
         project_briefs=brief_blocks,

@@ -659,12 +659,20 @@ class SessionRegistry:
      Notifier's call-back, the restart's confirmation, and the approval bridge's own
      escalation — the last because that call exists to have an approval answered, which is a
      `POSSESSION` capability.
-  2. **The digest is not behind the PIN.** The owner's ruling, and the spoofing it exposes is
-     accepted: unheard results are what a call is rung in for, and a digest that waits for
-     the PIN is one they often never get. `DIGEST_BEFORE_PIN` (default true) is the switch;
-     false restores the behaviour below. The memory, the project briefs and the skill catalog
-     do **not** move — they are the map of the owner's whole world and the injection surface,
-     and none of it is news. `announce(text, needs=…)` carries the same split: a finished task
+  2. **The PIN is the line between reading and acting** *(amended 2026-09-19, same day: the
+     digest alone became the whole standing briefing)*. The owner's ruling, and the reasoning
+     is the amendment: the threat case is somebody who has the machine, and they have `.env`,
+     which has `JARVIS_PIN`, so gating reads buys nothing against them. It only ever defended
+     against a phone-side caller-id spoofer, and charged that defence to every ordinary call.
+     So everything the prompt is handed as standing context comes before the PIN — the digest
+     of unheard results, the memory, the project names, the project briefs and the skill
+     catalog — and the spoofing it exposes is accepted. `BRIEFING_BEFORE_PIN` (default true,
+     renamed from `DIGEST_BEFORE_PIN`) is the switch; false restores the behaviour below
+     exactly, including the `withheld` rendering in `prompts/__init__.py` and both notes that
+     tell the model its instructions are incomplete — whatever the model is told has to match
+     what it was handed, in either direction. *Was:* the digest alone moved, and the memory,
+     briefs and skills stayed behind the PIN as the map of the owner's world.
+     `announce(text, needs=…)` carries the same split: a finished task
      needs `NONE`, a prompt waiting on their screen needs a call that could answer it.
      `Announced.delivered` (was `on_phone`) requires `POSSESSION`, because a stranger hearing
      the news is not the owner having been told, so the text and the call-back still go out.
@@ -677,9 +685,16 @@ class SessionRegistry:
      already dialled), `mark_reported` on any task, and the two approval tools —
      `approvals/policy.py`'s allowlist is already the "routine and reversible" filter on what
      a keypad may ever run, the denylist still wins over it, and `--disable` wins over
-     everything. Dispatch, `recall`, `restart_service`, `send_to_slack` and the prompt's map
-     of their world still need the PIN. `possession_gate` is the gate; `pin_gate` is
-     unchanged and still means `FULL`.
+     everything. Dispatch, `recall`, `restart_service` and `send_to_slack` still need the
+     PIN. `possession_gate` is the gate; `pin_gate` is unchanged and still means `FULL`.
+     *(Amended 2026-09-19: the prompt's map of their world left this list with the
+     briefing, and `read_gate` took the four read-only tools over the same material with
+     it — `list_tasks`, `get_task_status`, `get_task_result`, `list_projects`. It follows
+     `BRIEFING_BEFORE_PIN`, so the off case has no hole in it. `recall` stays at `FULL`,
+     and the reason is a comment in `builtin_tasks.py`: the briefing is a bounded, curated
+     context the owner reads with `jarvis memory` and prunes, and it is the same whatever
+     the caller says, where `recall` is an unbounded, caller-steered query over every raw
+     transcript there is.)*
   4. **Voicemail must not be able to act.** An outbound call can be answered by an answering
      machine. Listening is unchanged — a call-back already speaks its opening context to
      whatever picks up — but at `POSSESSION` an action driven by *speech* requires one DTMF
@@ -696,20 +711,24 @@ class SessionRegistry:
      would let a call-back hang up and fall back instead of reading a result to a machine, and
      that is filed as issue #50 rather than built — detection is about not *talking* to a
      machine, where the keypress is about not *acting* on one.
-- **Before the PIN, the phone gets nothing (added 2026-09-16; amended 2026-09-19 — the digest
-  and the three tools above moved, the rest stands).** Caller id is spoofable, so an
-  allowed number proves nothing. Ruling: on the phone, before the PIN, nothing of the owner's
-  is read out but the digest of results they have not been told about, nothing else is
-  announced into the call, and nothing the caller says or does outlives it.
-  `VoiceSession.trusted` is the predicate. An untrusted call's prompt is rendered `withheld`
-  (no memory, project names, briefs or skills; the digest under `DIGEST_BEFORE_PIN`) and its
+- **Before the PIN, the phone acts on nothing (added 2026-09-16 as "the phone gets
+  nothing"; amended 2026-09-19 twice — the digest moved out, and then the whole standing
+  briefing and the read-only tools over it followed; what is left of the ruling is the
+  acting half, and it stands).** Caller id is spoofable, so an allowed number proves
+  nothing. Ruling: on the phone, before the PIN, nothing is announced into the call beyond
+  what it could hear at the greeting, and nothing the caller says or does outlives it.
+  `VoiceSession.trusted` is the predicate for `FULL`. With `BRIEFING_BEFORE_PIN` off, an
+  untrusted call's prompt is rendered `withheld`
+  (no memory, project names, briefs or skills; the digest for `POSSESSION` only) and its
   opening carries no nudge; an
   accepted PIN builds the briefing, sends the re-rendered prompt with `update_instructions`,
   and injects `Briefing.after_pin_nudge()` with `respond=False`, so the tool result or keypad
   note that answers the PIN is still its only turn. `announce()` takes what the announcement
   needs: news under the same rule as the digest, anything else `POSSESSION` or better.
-  `pin_gate` runs first in every tool except `check_billing`, `cluster_stats`, `web_search`,
-  `submit_pin` and `end_session`; `mark_reported` may still stamp `opening_task_id`, the task a
+  `pin_gate` runs first in every tool that acts, and in `recall`; `read_gate` (the four
+  tools over what the briefing carries) follows the setting; `check_billing`,
+  `cluster_stats`, `web_search`,
+  `submit_pin` and `end_session` answer at every level. `mark_reported` may still stamp `opening_task_id`, the task a
   call-back or restart confirmation opened by saying (from the stream token Jarvis minted, never
   from the caller). `SessionEnded.authorized` is False for such a call, so `MemoryWriter`
   dispatches nothing; its transcript header ends `authorized=no` (a `--- authorized` line follows
@@ -761,7 +780,7 @@ class SessionRegistry:
 | `OWNER_NUMBER` | `owner_number` | first of `allowed_callers` |
 | `OWNER_NAME` | `owner_name` (what the prompts call the owner; read through `owner_label`) | `None` → "the owner" (added 2026-09-16) |
 | `JARVIS_PIN` | `pin` (**6-8 digits** when set; refused otherwise) | `None` (every dispatch refused on phone if unset) |
-| `DIGEST_BEFORE_PIN` | `digest_before_pin` (does an inbound call hear the results it has not been told about before the PIN; the memory, briefs and skills never do) | `true` (added 2026-09-19) |
+| `BRIEFING_BEFORE_PIN` | `briefing_before_pin` (is an inbound call handed its standing briefing before the PIN — the unheard results, the memory, the project names, the briefs, the skills — and with it the four read-only voice tools over the same material) | `true` (added 2026-09-19 as `DIGEST_BEFORE_PIN`, widened and renamed the same day) |
 | `PIN_FAILURE_LIMIT` / `PIN_FAILURE_WINDOW_HOURS` / `PIN_LOCKOUT_MINUTES` | `pin_failure_limit` / `pin_failure_window_hours` / `pin_lockout_minutes` (wrong PINs across calls before PIN entry locks, how long each counts, how long it locks) | `10` / `24` / `60` (added 2026-09-16) |
 | `PUBLIC_HOST` | `public_host` (the tunnel's hostname, e.g. `jarvis.example.com`) | `None` |
 | `HOST` / `PORT` | `host` / `port` | `127.0.0.1` / `8080` |
@@ -914,25 +933,33 @@ out, because there is one kind and it reaches everything. A configured PIN is 6-
 (§3.3); no PIN at all means dispatching is simply refused from the phone.
 
 **Before the PIN (2026-09-16, amended 2026-09-19).** The PIN is not only the gate on dispatch.
-A caller who has faked an allowed number, and not given the PIN, is told nothing of the
-owner's, and leaves nothing that outlives the call — including the memory writer's subagent,
+A caller who has faked an allowed number, and not given the PIN, leaves nothing that outlives
+the call — including the memory writer's subagent,
 which reads the call's transcript with a shell and so runs only for authorized calls (§3.3,
-"Before the PIN, the phone gets nothing"). Out of scope by design: whoever has the PIN, or any
+"Before the PIN, the phone acts on nothing"). Out of scope by design: whoever has the PIN, or any
 content a subagent reads, effectively has a shell as the owner. `SECURITY.md` is the public copy.
 
-**Three levels of trust (2026-09-19).** Two changes to the paragraph above, both the owner's
+**What the PIN is for (2026-09-19).** The owner's ruling, and it is the reason the paragraph
+above no longer says "is told nothing of the owner's". The PIN defends against a **phone-side
+caller-id spoofer** and against nothing else. It is not, and never was, a defence against a
+compromised machine: that attacker has `.env`, which has `JARVIS_PIN` along with every other
+credential, and `~/.jarvis` is already theirs to read. Gating *reads* therefore bought nothing
+against the attacker who matters, and charged a keypad entry to every ordinary call — so the
+line is reading versus acting, and reads happen before the PIN
+(`BRIEFING_BEFORE_PIN`, default true). The residual risk, accepted and written down: a spoofer
+hears the standing briefing. The invariant that does not move: such a call may not *write*, and
+`SessionEnded.authorized` stays `FULL`-only, so it reads the memory and never rewrites it.
+`recall` is the one read that stays at `FULL`, because it is unbounded and the caller steers it.
+
+**Three levels of trust (2026-09-19).** The other change to the paragraph above, the owner's
 ruling (§3.3, "Trust has three levels"). A call *Jarvis placed* to `OWNER_NUMBER` is
 `POSSESSION` — proved by the single-use stream token Jarvis minted for it, and by nothing
 else — which is enough to answer Claude's question, arrange a call back on that same number,
-and answer a pending approval on the keypad, but not to dispatch, to `recall`, to restart, or
-to be handed the memory. And the digest of unheard results is spoken **before** the PIN
-(`DIGEST_BEFORE_PIN`, default true): the owner's accepted trade is that a caller who has
-spoofed an allowed number hears those task summaries, against a digest they otherwise often
-never get. What that caller still cannot reach is the memory, the project names, the briefs
-and the skills — the map of the owner's world, and the injection surface — nor anything that
-acts. The residual risks, written down: a spoofer hears task summaries; and an answering
-machine on an outbound call hears one, which is why acting on speech at `POSSESSION` takes a
-keypress a machine cannot produce.
+and answer a pending approval on the keypad, but not to dispatch, to `recall`, to send to
+Slack or to restart. The residual risks, written down: a spoofer hears the standing briefing
+(above); and an answering
+machine on an outbound call hears a result read to it, which is why acting on speech at
+`POSSESSION` takes a keypress a machine cannot produce.
 
 **The approval bridge (`jarvis/approvals/`, 2026-08-26).** This one runs *inwards*: a
 Claude Code session on the owner's own screen has stopped and is asking him something, a hook

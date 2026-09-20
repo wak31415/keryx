@@ -12,7 +12,9 @@ Three levels, ordered, so everything downstream asks for "at least this much" ra
 listing the levels it will take:
 
 - `NONE` — an inbound phone call before the PIN. It is talking to a stranger until proved
-  otherwise, and the ruling in `briefing.py` is the only thing it hears of the owner's.
+  otherwise, and what such a call may *hear* is the ruling in `briefing.py`: the standing
+  briefing, because the PIN is the line between reading and acting. What it may *do* is
+  nothing that outlives the call.
 - `POSSESSION` — a call Jarvis placed to one of `Settings.owner_numbers`, proved by the
   single-use stream token Jarvis minted for it
   (`jarvis.stream_tokens.confers_possession`), and by nothing else: never Twilio's

@@ -12,13 +12,19 @@ that gets read down a phone is worth reviewing in one place.
 **The parsing.** `_task_id`, `_clamp_limit` and friends turn whatever a speech model put in
 an argument into something a task store can take, without ever raising.
 
-**The gates.** `pin_gate` is the refusal a call gets below `FULL` (`jarvis.trust`), and it
-is on most tools. Caller id is spoofable, so what opens a subagent (`dispatch_task`,
-`cancel_task`), what takes the phone off the air or runs a command (`restart_service`),
-what reads the owner's tasks, calls, projects or world (`list_tasks`, `get_task_status`,
-`get_task_result`, `recall`, `list_projects`) and what writes as them (`send_to_slack`)
-all need the PIN. Only `check_billing`, `cluster_stats`, `web_search`, `submit_pin` and
-`end_session` answer at any level.
+**The gates.** Since 2026-09-19 the line they draw is **reading versus acting**, not
+private versus not: whoever has the machine has `.env`, which has the PIN, so gating
+reads only ever defended against a phone-side caller-id spoofer, and it charged that
+defence to every ordinary call.
+
+`pin_gate` is the refusal a call gets below `FULL` (`jarvis.trust`), and it is on
+everything that *acts*: what opens a subagent (`dispatch_task`, `cancel_task`), what takes
+the phone off the air or runs a command (`restart_service`), what writes as the owner
+(`send_to_slack`) — and on `recall`, which reads far past anything the call was handed.
+`read_gate` is the second refusal, on the four tools that only read back what the standing
+briefing already carries; it follows `BRIEFING_BEFORE_PIN`. `check_billing`,
+`cluster_stats`, `web_search`, `submit_pin` and `end_session` answer at any level whatever
+that setting says.
 
 `possession_gate` is the second, for the handful a call *Jarvis placed* may use:
 `send_followup` and `request_callback`, which are how the owner answers the question
@@ -291,9 +297,9 @@ def pin_gate(ctx: ToolContext, settings: Settings) -> dict | None:
 
     Called first, before a task number is even looked up, so a refusal says nothing about
     what exists. Reaching into a running task opens the same bypassPermissions subagent
-    that dispatching one would; reading a task, a past call or a waiting prompt reads
-    something private; and a note, a stamp or a Slack message outlives the call. See the
-    module docstring for the five tools that skip it, and why.
+    that dispatching one would; a note, a stamp or a Slack message outlives the call; and
+    `recall` reads far past what this call was handed. See the module docstring for what
+    skips it, and `read_gate` for what only follows the briefing.
     """
     if ctx.trust is TrustLevel.FULL:
         return None
@@ -301,6 +307,28 @@ def pin_gate(ctx: ToolContext, settings: Settings) -> dict | None:
         return {"status": "refused", "message": PIN_MISSING_MESSAGE}
     log.info("session %s needs a PIN first", ctx.session.session_id)
     return {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}
+
+
+def read_gate(ctx: ToolContext, settings: Settings) -> dict | None:
+    """The refusal for a tool that only reads what the briefing already carries.
+
+    `list_tasks`, `get_task_status`, `get_task_result` and `list_projects` are the caller
+    asking out loud for a piece of the standing context the prompt was handed at the
+    greeting, so they follow it: with `BRIEFING_BEFORE_PIN` on (the default) they answer
+    at any level, and off they go back behind `pin_gate` along with the briefing. Gating
+    them while the prompt states the same facts would be incoherent in one direction and
+    a hole in that setting in the other.
+
+    `recall` is deliberately **not** here, and the distinction is the whole of why. The
+    briefing is bounded and curated — the owner can read it with `jarvis memory` and prune
+    it, and it is the same page whatever the caller says. `recall` is an unbounded query
+    the caller steers, over every raw transcript Jarvis has ever written: a different
+    quantity of exposure, and the one thing on the phone a caller-id spoofer could
+    actually mine. It keeps `pin_gate`.
+    """
+    if settings.briefing_before_pin:
+        return None
+    return pin_gate(ctx, settings)
 
 
 def possession_gate(

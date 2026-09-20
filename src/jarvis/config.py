@@ -199,14 +199,17 @@ class Settings(BaseSettings):
     #: the longest their own fumbling can cost them, and holds a campaign to ~24 guesses a day.
     pin_lockout_minutes: float = Field(default=60, gt=0)
 
-    #: Whether an inbound call hears the results it has not been told about before the PIN.
-    #: On by design: the owner rings in from wherever they are to hear what landed, and a
-    #: digest that waits for the PIN is a digest they often never get. The price is that a
-    #: caller who has spoofed an allowed number hears those task summaries too — which is
-    #: why it is only the digest: the memory, the project briefs and the skills still wait
-    #: for the PIN (`jarvis.trust`). Off restores the older behaviour, where a call before
-    #: the PIN hears nothing at all.
-    digest_before_pin: bool = True
+    #: Whether an inbound call is handed its standing briefing before the PIN: the results
+    #: it has not been told about, the memory, the project names, their briefs and the
+    #: skills. On by design (the owner's ruling, 2026-09-19). The PIN's job is to stop a
+    #: phone-side caller-id spoofer *acting*; against the threat the owner actually worries
+    #: about — somebody who has the machine — it buys nothing, because that somebody has
+    #: `.env` and so has the PIN. Gating reads charged a keypad to every ordinary call to
+    #: defend against the lesser of the two. The accepted price is that a spoofer hears
+    #: what a call opens knowing. Off restores the older behaviour, where a call before the
+    #: PIN is told nothing of the owner's at all, and the read-only voice tools over that
+    #: same material go back behind the PIN with it (`jarvis.tools.builtin_common`).
+    briefing_before_pin: bool = True
 
     # Networking
     public_host: str | None = None
