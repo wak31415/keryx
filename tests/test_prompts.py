@@ -151,8 +151,32 @@ def owners_world(settings, tmp_path):
 
 
 @pytest.mark.parametrize("trust", [TrustLevel.NONE, TrustLevel.POSSESSION])
-def test_below_full_the_prompt_carries_no_map_of_their_world(owners_world, trust):
-    """The projects, the briefs, the skills and the memory are what the PIN still buys."""
+def test_below_full_the_prompt_still_carries_the_map_of_their_world(owners_world, trust):
+    """The owner's ruling (2026-09-19): the PIN is the line between reading and acting.
+
+    Whoever has the machine has `.env` and so has the PIN, so gating reads defended only
+    against a phone-side spoofer — and charged a keypad to every ordinary call.
+    """
+    rendered = render_voice_prompt(
+        owners_world,
+        channel="phone",
+        caller="+15550001111",
+        trust=trust,
+        pending="- task 41 (finished) — their bank balance",
+        memory="They are waiting on the letter from the lawyer.",
+    )
+
+    for known in ("weather-station", "rain gauge", "orchard", "wandb-query", "lawyer"):
+        assert known in rendered, known
+    assert "held back until the PIN" not in rendered
+    assert "{" not in rendered and "}" not in rendered
+
+
+@pytest.mark.parametrize("trust", [TrustLevel.NONE, TrustLevel.POSSESSION])
+def test_with_the_briefing_held_back_the_prompt_carries_none_of_it(owners_world, trust):
+    """`BRIEFING_BEFORE_PIN=false` restores the older silence, and must keep working."""
+    owners_world.briefing_before_pin = False
+
     rendered = render_voice_prompt(
         owners_world,
         channel="phone",
@@ -169,8 +193,27 @@ def test_below_full_the_prompt_carries_no_map_of_their_world(owners_world, trust
 
 
 @pytest.mark.parametrize("trust", [TrustLevel.NONE, TrustLevel.POSSESSION])
+def test_a_withheld_prompt_is_told_it_is_withheld(owners_world, trust):
+    """Whatever the model is told has to match what it was handed, in both directions.
+
+    A model told its instructions are complete when they are not says "there is nothing on
+    record"; a model told they are incomplete when they are not apologizes for what it is
+    already holding.
+    """
+    owners_world.briefing_before_pin = False
+    withheld = render_voice_prompt(owners_world, channel="phone", caller=None, trust=trust)
+
+    owners_world.briefing_before_pin = True
+    handed = render_voice_prompt(owners_world, channel="phone", caller=None, trust=trust)
+
+    assert "you have been told almost nothing of theirs" in withheld
+    assert "you have been told almost nothing of theirs" not in handed
+
+
+@pytest.mark.parametrize("trust", [TrustLevel.NONE, TrustLevel.POSSESSION])
 def test_the_digest_is_not_part_of_what_is_held_back(owners_world, trust):
     """News they have not heard is not the map of their world; it is what they asked for."""
+    owners_world.briefing_before_pin = False
     rendered = render_voice_prompt(
         owners_world,
         channel="phone",
@@ -459,9 +502,9 @@ def test_the_cluster_is_only_a_slow_thing_when_there_is_a_cluster_tool(settings,
 
     assert "the cluster" not in without
     assert "a dispatch, a search, the bill" in without
-    assert "Only the bill, a web search and hanging up do not" in without
+    assert "the bill, a web search and hanging up" in without
     assert "a dispatch, a search, the cluster, the bill" in with_it
-    assert "Only the bill, the cluster, a web search and hanging up do not" in with_it
+    assert "the bill, the cluster, a web search and hanging up" in with_it
 
 
 def test_without_texting_the_prompt_promises_no_text(settings, unwrapped):
