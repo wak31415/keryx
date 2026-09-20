@@ -1,10 +1,13 @@
 """Everything about tasks: dispatching one, watching it, and reaching back into it.
 
-Ten tools, and on the phone every one of them needs the PIN. `dispatch_task`,
-`send_followup` and `cancel_task` because reaching into a task opens the very same
-`bypassPermissions` subagent that dispatching one would; the rest because they read the
-owner's tasks and past calls, or leave something behind that outlives the call — and caller id
-is spoofable, so an allowed number proves nothing.
+Ten tools, and what each needs on the phone is reading versus acting (`builtin_common`).
+`dispatch_task`, `send_followup` and `cancel_task` need the PIN because reaching into a
+task opens the very same `bypassPermissions` subagent that dispatching one would;
+`request_callback` because it leaves something behind that outlives the call; `recall`
+because it reads every raw transcript there is, which is a different thing from reading
+today's news. `list_tasks`, `get_task_status`, `get_task_result` and `list_projects` are
+the caller asking out loud for a piece of the briefing the prompt already carries, so they
+follow it (`read_gate`, `BRIEFING_BEFORE_PIN`).
 
 `mark_reported` is the load-bearing one and the easiest to mistake for bookkeeping. It is
 the *only* thing that stamps `Task.reported_at`, and `reported_at` is the only record that
@@ -50,6 +53,7 @@ from jarvis.tools.builtin_common import (
     get_task,
     pin_gate,
     possession_gate,
+    read_gate,
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
 from jarvis.trust import TrustLevel
@@ -148,7 +152,8 @@ def register_task_tools(
     # --- list_tasks --------------------------------------------------------
 
     async def list_tasks(ctx: ToolContext, arguments: dict) -> dict:
-        if (refusal := pin_gate(ctx, settings)) is not None:
+        # A read over what the briefing already named (`read_gate`).
+        if (refusal := read_gate(ctx, settings)) is not None:
             return refusal
         status = (_text(arguments, "status") or "all").lower()
         if status not in _STATUS_FILTERS:
@@ -195,7 +200,7 @@ def register_task_tools(
     # --- get_task_status / get_task_result ---------------------------------
 
     async def get_task_status(ctx: ToolContext, arguments: dict) -> dict:
-        if (refusal := pin_gate(ctx, settings)) is not None:
+        if (refusal := read_gate(ctx, settings)) is not None:
             return refusal
         task = await get_task(manager, arguments)
         if isinstance(task, dict):
@@ -219,7 +224,7 @@ def register_task_tools(
     )
 
     async def get_task_result(ctx: ToolContext, arguments: dict) -> dict:
-        if (refusal := pin_gate(ctx, settings)) is not None:
+        if (refusal := read_gate(ctx, settings)) is not None:
             return refusal
         task = await get_task(manager, arguments)
         if isinstance(task, dict):
@@ -293,6 +298,11 @@ def register_task_tools(
     # --- recall ------------------------------------------------------------
 
     async def recall(ctx: ToolContext, arguments: dict) -> dict:
+        # `pin_gate`, not `read_gate`, and the difference is the point. The briefing is a
+        # bounded, curated page the owner can read with `jarvis memory` and prune, and it
+        # is the same whatever the caller says. This is an unbounded query the *caller*
+        # steers over every raw transcript Jarvis has ever written — a different quantity
+        # of exposure, and the one thing on the phone a spoofer could actually mine.
         if (refusal := pin_gate(ctx, settings)) is not None:
             return refusal
         query = _text(arguments, "query")
@@ -399,7 +409,7 @@ def register_task_tools(
     # --- list_projects -----------------------------------------------------
 
     async def list_projects(ctx: ToolContext, arguments: dict) -> dict:
-        if (refusal := pin_gate(ctx, settings)) is not None:
+        if (refusal := read_gate(ctx, settings)) is not None:
             return refusal
         return {"projects": [name for name, _path in manager.list_projects()]}
 

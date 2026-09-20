@@ -6,13 +6,14 @@ cut down before it ever reaches a text-to-speech engine. Handlers never raise â€
 problem comes back as `{"error": ...}` (or a `status` the model is told how to relay),
 so a bad task id is a sentence the assistant can say rather than a dropped call.
 
-The PIN gate guards every tool but five on the phone: they are refused with
+The PIN gate guards everything that *acts* on the phone: it is refused with
 `{"status": "pin_required"}` until the session is authorized. Caller id is spoofable, so
-before the PIN nothing private is read out and nothing the caller says or does outlives
-the call; only `check_billing`, `cluster_stats`, `web_search`, `submit_pin` and
-`end_session` answer without it (`builtin_common` says why). The check reads
-`ctx.authorized` live, so a PIN entered on the keypad while the model was thinking is
-honoured on the very next call. The digits themselves never pass through here: the
+nothing the caller says or does outlives the call before the PIN. Reading is the other
+half and is not gated the same way â€” the four tools over what the standing briefing
+already carries follow it (`read_gate`, `BRIEFING_BEFORE_PIN`), and five more answer at
+any level at all (`builtin_common` says why, and why `recall` is in neither group). The
+check reads `ctx.trust` live, so a PIN entered on the keypad while the model was thinking
+is honoured on the very next call. The digits themselves never pass through here: the
 `submit_pin` tool hands whatever the caller said straight to the session, which is the
 only thing that ever compares it.
 

@@ -317,11 +317,20 @@ async def test_a_blank_pin_is_no_pin_at_all(make_tools):
 # --- before the PIN: nothing private, nothing left behind -------------------
 
 
-#: The only tools a phone caller may use before the PIN. Two read numbers nobody can misuse
-#: (CLAUDE.md rules on both), one reads the web, and two are how a call gets past the PIN or
-#: off the line. Caller id is spoofable: everything else reads something private or leaves
-#: something behind, and a new tool is gated unless it is added here on purpose.
+#: The tools a phone caller may use at any level at all, `BRIEFING_BEFORE_PIN` off
+#: included. Two read numbers nobody can misuse (CLAUDE.md rules on both), one reads the
+#: web, and two are how a call gets past the PIN or off the line.
 UNGATED = {"check_billing", "cluster_stats", "web_search", "submit_pin", "end_session"}
+
+#: The read-only tools over what the standing briefing already carries. They follow the
+#: briefing (`BRIEFING_BEFORE_PIN`, on by default): gating them while the prompt states
+#: the same facts out loud is incoherent. Off, they go back behind the PIN with it.
+READ_TOOLS = {"list_tasks", "get_task_status", "get_task_result", "list_projects"}
+
+#: What an inbound call reaches before the PIN as Jarvis ships. Everything else acts, or
+#: reads far past the briefing (`recall`), and a new tool is gated unless it is added here
+#: on purpose.
+BEFORE_THE_PIN = UNGATED | READ_TOOLS
 
 #: One argument set that satisfies every tool's validation, so a refusal can only be the gate.
 EVERY_ARGUMENT = {
@@ -351,7 +360,8 @@ class StubApprovals:
         return {"status": "awaiting_keypad"}
 
 
-async def test_before_the_pin_every_tool_but_five_asks_for_it(make_tools):
+def _everything(make_tools, **overrides):
+    """A registry with every optional tool wired up, and the doubles to check after."""
     slack, restarter, approvals = FakeSlack(), FakeRestarter(), StubApprovals()
     recaller = FakeRecaller([Hit("call", "", "user: 1 2 3 4 5 6")])
     tools = make_tools(
@@ -364,16 +374,29 @@ async def test_before_the_pin_every_tool_but_five_asks_for_it(make_tools):
         cluster=both_clusters(),
         approvals=approvals,
         pin="123456",
+        **overrides,
     )
+    return tools, slack, restarter, recaller, approvals
+
+
+async def test_before_the_pin_a_caller_may_read_and_may_not_act(make_tools):
+    """The line since 2026-09-19: the read-only tools follow the briefing, acting does not.
+
+    A caller who has spoofed an allowed number can ask for a piece of the briefing out
+    loud, because the prompt has already said the same facts. Everything that hands work
+    to Claude, writes something down, or searches past what the briefing carries still
+    comes back `pin_required`.
+    """
+    tools, slack, restarter, recaller, approvals = _everything(make_tools)
     await tools.dispatch("check their bank statement")
     names = {schema["name"] for schema in tools.registry.schemas()}
-    assert names >= UNGATED | {"send_to_slack", "recall", "list_pending_approvals"}
+    assert names >= BEFORE_THE_PIN | {"send_to_slack", "recall", "list_pending_approvals"}
 
     for name in sorted(names):
         result = await tools.call(
             name, dict(EVERY_ARGUMENT), channel="phone", caller="+15550001111", authorized=False
         )
-        if name in UNGATED:
+        if name in BEFORE_THE_PIN:
             assert result.get("status") != "pin_required", name
         else:
             assert result == {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}, name
@@ -385,12 +408,50 @@ async def test_before_the_pin_every_tool_but_five_asks_for_it(make_tools):
     assert (slack.sent, restarter.requests, recaller.queries, approvals.armed) == ([], [], [], [])
 
 
+async def test_with_the_briefing_held_back_every_tool_but_five_asks_for_the_pin(make_tools):
+    """`BRIEFING_BEFORE_PIN=false` takes the read-only tools back behind the PIN with it.
+
+    The prompt says nothing of the owner's on such a call, so a tool that read it out
+    would be the hole in exactly the thing that setting is for.
+    """
+    tools, *_ = _everything(make_tools, briefing_before_pin=False)
+    await tools.dispatch("check their bank statement")
+
+    for name in sorted(schema["name"] for schema in tools.registry.schemas()):
+        result = await tools.call(
+            name, dict(EVERY_ARGUMENT), channel="phone", caller="+15550001111", authorized=False
+        )
+        if name in UNGATED:
+            assert result.get("status") != "pin_required", name
+        else:
+            assert result == {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}, name
+
+
+async def test_recall_needs_the_pin_however_much_the_briefing_gives_away(make_tools):
+    """The one read that is not a piece of the briefing, and the distinction it rests on.
+
+    The briefing is bounded and curated: the owner can read it with `jarvis memory`, prune
+    it, and it is the same whatever the caller says. `recall` is an unbounded query the
+    *caller* steers, over every raw transcript Jarvis has ever written — a different
+    quantity of exposure, and the one thing on the phone a spoofer could actually mine.
+    """
+    tools, *_, recaller, _approvals = _everything(make_tools)
+
+    refused = await tools.call(
+        "recall", {"query": "bank"}, channel="phone", caller="+15550001111", authorized=False
+    )
+
+    assert refused == {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}
+    assert recaller.queries == []
+    assert (await tools.call("recall", {"query": "bank"}, authorized=True))["hits"]
+
+
 #: What a call Jarvis placed to the owner's own number may reach without the PIN, on top
-#: of `UNGATED`. Two are how the owner answers the question Claude came back with, two are
-#: the approval it usually rang about, and `mark_reported` is the news it opened by saying.
-#: Everything else still waits for the PIN: possession says who is holding the phone, not
-#: that they meant to spend the machine.
-POSSESSION_TOOLS = UNGATED | {
+#: of what any call may. Two are how the owner answers the question Claude came back with,
+#: two are the approval it usually rang about, and `mark_reported` is the news it opened by
+#: saying. Everything else still waits for the PIN: possession says who is holding the
+#: phone, not that they meant to spend the machine.
+POSSESSION_TOOLS = BEFORE_THE_PIN | {
     "send_followup",
     "request_callback",
     "mark_reported",
@@ -482,9 +543,9 @@ async def test_a_call_jarvis_placed_rings_back_only_the_number_it_rang(make_tool
 
 
 @pytest.mark.parametrize("tool", ["list_tasks", "get_task_status", "get_task_result"])
-async def test_before_the_pin_a_task_says_nothing_about_itself(make_tools, tool):
+async def test_with_the_briefing_held_back_a_task_says_nothing_about_itself(make_tools, tool):
     """Not even whether it exists: the gate comes before the task number is looked up."""
-    tools = make_tools(pin="123456")
+    tools = make_tools(pin="123456", briefing_before_pin=False)
     await _finish(tools, "read the letter from the lawyer")
 
     for task_id in (1, 99):
@@ -492,6 +553,22 @@ async def test_before_the_pin_a_task_says_nothing_about_itself(make_tools, tool)
             tool, {"task_id": task_id}, channel="phone", caller="+15550001111", authorized=False
         )
         assert result["status"] == "pin_required"
+
+
+async def test_before_the_pin_a_caller_hears_the_tasks_the_briefing_already_named(make_tools):
+    """The briefing opens with these, so refusing to say them again out loud is incoherent."""
+    tools = make_tools(pin="123456")
+    await _finish(tools, "read the letter from the lawyer")
+    phone = {"channel": "phone", "caller": "+15550001111", "authorized": False}
+
+    listed = await tools.call("list_tasks", {}, **phone)
+    status = await tools.call("get_task_status", {"task_id": 1}, **phone)
+    result = await tools.call("get_task_result", {"task_id": 1}, **phone)
+    projects = await tools.call("list_projects", {}, **phone)
+
+    assert [entry["id"] for entry in listed["tasks"]] == [1]
+    assert status["task_id"] == 1 and result["task_id"] == 1
+    assert projects["projects"] == ["jarvis"]
 
 
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
