@@ -385,7 +385,11 @@ async def test_a_spoken_pin_reaches_neither_the_transcript_nor_the_log(
 
 
 async def test_news_is_announced_into_a_call_before_the_pin(make_session, phone, provider):
-    """A result that lands mid-call reaches it, for the same reason the digest does."""
+    """A result that lands mid-call reaches it, for the same reason the digest does.
+
+    Hearing it is still not the owner having been told: `Announced.delivered` takes
+    `POSSESSION` (`jarvis.notify.deliver`), so the call-back and the text still go out.
+    """
     session = make_session(phone, provider)
 
     async with running(session):
@@ -395,7 +399,7 @@ async def test_news_is_announced_into_a_call_before_the_pin(make_session, phone,
         assert "Task 41 finished" in provider.injected[-1][0]
 
 
-async def test_with_the_digest_off_nothing_is_announced_before_the_pin(
+async def test_with_the_briefing_off_nothing_is_announced_before_the_pin(
     make_session, phone, provider
 ):
     """And False, so the notifier and the broker do not count it as having told them."""

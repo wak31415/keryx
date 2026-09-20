@@ -623,8 +623,11 @@ def test_the_first_call_never_reaches_a_session_that_has_not_given_the_pin(setti
     """Before the PIN there is no telling whose first call it is.
 
     Not even on a call Jarvis placed: possession says whose phone answered, not that the
-    interview is wanted, and the questions are about them.
+    interview is wanted, and the questions are about them. Unmoved by the 2026-09-19
+    widening, which this runs under: being handed the briefing is being told what Jarvis
+    knows, and an interview is asking the owner for more.
     """
+    assert settings.briefing_before_pin is True
     for trust in (TrustLevel.NONE, TrustLevel.POSSESSION):
         assert "This is the first call" not in _rendered(settings, trust=trust)
 
