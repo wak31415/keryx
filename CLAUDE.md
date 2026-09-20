@@ -49,7 +49,7 @@ remember:
   `version`, `watchdog` and `logscan`. The directory listing is the index now.
 - **tools** — `tools/builtin.py` is a composition root; the registrations are in
   `builtin_comms`, `builtin_billing`, `builtin_tasks`, `builtin_restart` and
-  `builtin_session`, with the wording, the parsing and the gates (`pin_gate`,
+  `builtin_session`, with the wording, the parsing and the gates (`pin_gate`, `read_gate`,
   `possession_gate`, `get_task`) in `builtin_common`. **The order `builtin.py` calls them in is the order
   the tools are offered to the model.** A new tool goes in a domain module and the README
   table, or `tests/test_docs_sync.py` fails. A tool may also be registered `silent=True`
@@ -98,16 +98,31 @@ Four rulings, and `SECURITY.md` is the threat model:
   one owner: `ALLOWED_CALLERS` is the handsets one person picks up, not a guest list, and
   `OWNER_NUMBER` only chooses which one Jarvis rings first. Do not narrow it back to the one
   number — that only makes the tier fail silently on the owner's other phone.
-- **The digest is not behind the PIN; the memory is.** The owner's ruling, spoofers and all
-  (`DIGEST_BEFORE_PIN`, default on). What is withheld below `FULL` is the map of their world —
-  memory, project names, briefs, skills — and `announce(text, needs=…)` says which kind each
-  announcement is: news needs nothing, an approval needs a call that could answer it.
-  `Announced.delivered` still takes `POSSESSION`, because a stranger hearing the news is not
-  the owner having been told, so the text and the call-back still go out.
+- **The PIN is the line between reading and acting, not between private and not.** The
+  owner's ruling, and the reasoning is why it is written down: the threat case is somebody
+  who has the machine, and they have `.env`, which has `JARVIS_PIN` — so gating reads buys
+  nothing against them. It only ever defended against a phone-side caller-id spoofer, and it
+  charged that defence to every ordinary call. So the whole standing briefing comes before
+  the PIN (`BRIEFING_BEFORE_PIN`, default on): the digest, the memory, the project names, the
+  briefs, the skills. `false` restores the older silence exactly, and the `withheld`
+  machinery in `prompts/__init__.py` exists for that — do not delete it. `announce(text,
+  needs=…)` says which kind each announcement is: news needs nothing, an approval needs a
+  call that could answer it. `Announced.delivered` still takes `POSSESSION`, because a
+  stranger hearing the news is not the owner having been told, so the text and the call-back
+  still go out.
+- **The read-only tools over that same material follow it.** `list_projects`, `list_tasks`,
+  `get_task_status` and `get_task_result` are the caller asking for a bit of the briefing out
+  loud, and gating them while the prompt states the same facts is incoherent; `read_gate` is
+  the gate, and it follows `BRIEFING_BEFORE_PIN` so that setting has no hole in it.
+  **`recall` is not one of them and stays at `FULL`** — the briefing is a bounded, curated
+  context the owner can read with `jarvis memory` and prune, and it is the same whatever the
+  caller says, where `recall` is an unbounded, caller-steered query over every raw transcript
+  Jarvis has ever written. That is a different quantity of exposure, and the one thing on the
+  phone a spoofer could actually mine.
 - **Possession is who is holding the phone, not that they meant to spend the machine.** It
   buys `send_followup` and `request_callback` (the answer to the question Claude came back
   with — the point of the tier), the two approval tools, and `mark_reported` on anything.
-  Dispatch, `recall`, `restart_service` and the prompt's map of their world still need the PIN.
+  Dispatch, `recall`, `send_to_slack` and `restart_service` still need the PIN.
   `possession_gate` is the gate; `pin_gate` is unchanged and still means `FULL`.
 - **Voicemail must not be able to act.** An outbound call can be answered by an answering
   machine, which will listen to a result and say something machine-shaped back. Listening is
@@ -119,10 +134,13 @@ Four rulings, and `SECURITY.md` is the threat model:
   call with no menu up, the second for the call with one. A spoken PIN was always the third
   way through — `submit_pin` is ungated at every level.
 
-What has not moved: `mark_reported` below `POSSESSION` may stamp only `reportable_task_ids` —
-the tasks this call's own digest named, plus `opening_task_id` — because stamping decides what
-the owner never hears. `SessionEnded.authorized` is still `FULL` only, so no memory update and
-no `recall` over that transcript. A spoken PIN is `[PIN]` in every transcript line
+What has not moved, and there is a test named after each: `mark_reported` below `POSSESSION`
+may stamp only `reportable_task_ids` — the tasks this call's own digest named, plus
+`opening_task_id` — because stamping decides what the owner never hears.
+**`SessionEnded.authorized` is still `FULL` only**, so a call that never gave the PIN reads
+the memory and never rewrites it, and no `recall` runs over its transcript. That is the
+single most important invariant here: hearing what Jarvis believes is recoverable, editing it
+is not. A spoken PIN is `[PIN]` in every transcript line
 (`continuity.transcripts.redact_pin`), and everything that hands a transcript to a model
 redacts again, for logs written before. Do not narrow the subagent's tools instead.
 
@@ -135,7 +153,8 @@ Jarvis knows at the top of a call is assembled every time by
 - **The digest.** `Task.reported_at` is the only record that Jarvis *told the owner*; `announced`
   and `sms_sent` only say a delivery was attempted, and neither survives a call they missed.
   Until `reported_at` is stamped, the task rides at the top of the next call — from the
-  greeting, PIN or no PIN (`DIGEST_BEFORE_PIN`; see "Trust has three levels"). Exactly one
+  greeting, PIN or no PIN, along with the rest of the standing briefing
+  (`BRIEFING_BEFORE_PIN`; see "Trust has three levels"). Exactly one
   thing stamps it: the voice model's `mark_reported` tool, after it has spoken the result.
   Do not stamp it from a delivery path — hearing something twice is recoverable, never
   hearing it is not.
@@ -154,7 +173,8 @@ Jarvis knows at the top of a call is assembled every time by
 - **`recall`.** `jarvis/continuity/recall.py` searches past transcripts and past task
   summaries on demand. Matching stays literal on purpose: the query is speech that
   transcription has already mangled once, and a fuzzy hit gets read out as if it were fact.
-  It needs the PIN, redacts it, and skips calls that never gave it.
+  It needs the PIN, redacts it, and skips calls that never gave it — the one read that did
+  not move when the briefing did, because it is unbounded and the caller steers it.
 
 `Task.internal` marks work Jarvis asked for itself (today: the memory update). It hides the
 task from the spoken lists, the digest, `recall`, the daily cap and the notifier — and
