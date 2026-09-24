@@ -84,3 +84,14 @@ def test_the_readme_says_how_to_install_the_skill():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     assert "skills/jarvis-onboard" in readme
+
+
+def test_the_skill_leaves_the_pin_to_them_and_never_invents_one(flat):
+    """The one setting the phone can also set, so the skill has to say both ways in.
+
+    A PIN a Claude Code session picked is a PIN in a transcript, and the file it would be
+    written to is under `~/.jarvis/`, which this skill may not read at all.
+    """
+    assert "Never choose a PIN for them" in flat
+    assert "JARVIS_PIN=" in flat
+    assert "first call" in flat

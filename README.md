@@ -279,7 +279,9 @@ uv run jarvis doctor            # tells you what is still missing
 
 `uv sync` builds a Python 3.12 environment from `uv.lock` — nothing here is installed from
 a package index. `jarvis init` writes one file, `DATA_DIR/memory.md`, and never touches
-`.env`: it prints the `OWNER_NAME=` line for you to add. `jarvis doctor` is safe to run
+`.env`: it prints the `OWNER_NAME=` line for you to add, and — if this machine has no PIN
+yet — a `JARVIS_PIN=` line with six random digits beside it, which you can paste or ignore
+([The PIN](#using-it): the first call can set one instead). `jarvis doctor` is safe to run
 before anything is configured; that is what it is for, and it never prints a secret.
 
 Optional, and only if you use Claude Code on this machine:
@@ -298,7 +300,7 @@ Every setting is an environment variable, read from `.env` in the working direct
 | `CLAUDE_CODE_OAUTH_TOKEN` | optional — subscription token from `claude setup-token` |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_NUMBER` | phone channel + outbound calls (and SMS, only with `SMS_ENABLED=true`) |
 | `ALLOWED_CALLERS` | comma-separated E.164 numbers allowed to call in — everything else is refused |
-| `JARVIS_PIN` | 6–8 digits; required before Jarvis dispatches anything over the phone |
+| `JARVIS_PIN` | 6–8 digits, asked for before Jarvis dispatches anything over the phone. Optional here — with none set, the first call can key one in ([The PIN](#using-it)) |
 | `PUBLIC_HOST` | the tunnel hostname Twilio reaches, e.g. `jarvis.example.com` |
 | `PROJECTS` | JSON map of spoken project names to repo paths, e.g. `{"jarvis": "/Users/me/code/jarvis"}` |
 
@@ -555,7 +557,22 @@ sessions are pre-authorized — you are already at the machine.
 Before the PIN a phone call also knows nothing of yours: not what Jarvis remembers, not
 the results you have not heard, not your tasks, past calls or projects. They arrive the
 moment the PIN is accepted, so key it in at the top of the call to hear what landed while
-you were away. Calls Jarvis places itself still open with their reason.
+you were away. Calls Jarvis places itself still open with their reason. On a machine that
+has never had a PIN none of it arrives at all: there is nothing to authenticate against
+yet, so `BRIEFING_BEFORE_PIN` holds everything back until a PIN exists.
+
+**Setting the first one.** `JARVIS_PIN` is set at the keyboard, and until it is the phone
+is no use: nothing of yours is read out and every dispatch is refused. That is the one
+setup step Jarvis cannot do for you — so, while there is no PIN at all, **the first call
+may key one in**: six to eight digits and hash, the same digits again to confirm, and that
+is the PIN from then on. It is written to `~/.jarvis/pin`, owner-only, and the door then
+shuts for ever: nothing in Jarvis can change an enrolled PIN, because the file is created
+with `O_EXCL` and there is no setter anywhere. Changing it means editing `.env`, which
+always wins, or deleting that file at the keyboard. The risk you are accepting is that
+whoever calls first sets it; the window is a few minutes long and closes on first use, and
+[SECURITY.md](SECURITY.md#setting-the-first-pin-on-the-first-call) is the whole of it. Set
+`JARVIS_PIN` before you start if you would rather have no window at all — `jarvis doctor`
+says which source the PIN in use came from.
 
 `JARVIS_PIN` must be **6 to 8 digits and nothing else**, and that is enforced rather than
 advised: `jarvis serve` refuses to start on anything else, and `jarvis doctor` says which
@@ -642,7 +659,9 @@ reasoning behind each of those four:
   [The PIN](#using-it)), three wrong entries end the call for good, ten across all calls in
   24 hours lock PIN entry for an hour, no more than two calls run at once, and it is compared
   with `hmac.compare_digest`. Keep `ALLOWED_CALLERS` tight and leave `JARVIS_PIN` set — with
-  no PIN configured, every dispatch is simply refused over the phone.
+  no PIN configured, nothing of yours is read out over the phone and every dispatch is
+  refused, until a call enrols one (once, and never again — see
+  [SECURITY.md](SECURITY.md#setting-the-first-pin-on-the-first-call)).
 - **A call Jarvis placed is not a call you made.** Reaching the number in `OWNER_NUMBER`
   means holding that phone, and the media stream of an outbound call carries a single-use
   token Jarvis minted itself, so that call opens with something proved: it can tell you what
