@@ -78,8 +78,10 @@ STATUSES = {
 }
 _REFUSED = frozenset({"exists", "too_long", "raced"})
 
-#: One line about the PIN per source, for the report and for `--json`. Never the digits:
-#: the owner can read their own file, and this output is pasted into terminals and logs.
+#: One line about the PIN per source, for `--json` (the human run prints the suggested
+#: line and the alternative instead). Never the digits: the owner can read their own file,
+#: and this output is pasted into terminals and logs. Each one stands on its own, because
+#: a document has no "the line above" to point at.
 #: The enrolled line says `.env` because the file is a bootstrap, not a home — a subagent
 #: runs as the owner and so could delete it, which would re-open enrolment (SECURITY.md).
 PIN_NOTES = {
@@ -89,16 +91,17 @@ PIN_NOTES = {
         "to make it permanent"
     ),
     None: (
-        "not set — add the line above, or key one in on the first call; until a PIN "
-        "exists, nothing of yours is read out on the phone and no task can be dispatched"
+        f"not set — put {env_var_name('pin')} in your .env, or key one in on the first "
+        "call; until a PIN exists, nothing of yours is read out on the phone and no task "
+        "can be dispatched"
     ),
 }
 #: The fourth state, and the one only the keyboard clears: a `data_dir/pin` that is not
 #: 6-8 digits is no PIN *and* no enrolment, because `O_EXCL` will not replace a file that
 #: is there. Sending them to the first call instead would be sending them nowhere.
 PIN_SEALED_NOTE = (
-    "not set, and no call can set one — {path} is not 6 to 8 digits; add the line above, "
-    "or delete that file"
+    "not set, and no call can set one — {path} is not 6 to 8 digits; delete that file, or "
+    f"put {env_var_name('pin')} in your .env"
 )
 #: How many digits `init` suggests. Six is the shortest a PIN may be (`config.PIN_RULE`),
 #: and the suggestion is there to be typed by a person who did not want to choose one.
