@@ -5,15 +5,16 @@ do is edit that file: it prints the `OWNER_NAME=` line and leaves the writing to
 """
 
 import json
+import re
 import stat
 
 import pytest
 from typer.testing import CliRunner
 
 from jarvis.cli import app
-from jarvis.config import Settings
+from jarvis.config import PIN_FROM_ENV, PIN_FROM_FILE, Settings
 from jarvis.continuity.memory import MAX_MEMORY_CHARS, memory_path, seed_memory
-from jarvis.onboarding import facts_from_text, setup_report, setup_summary
+from jarvis.onboarding import PIN_NOTES, facts_from_text, setup_report, setup_summary
 from jarvis.projects import MAX_BRIEFS_CHARS
 
 runner = CliRunner()
@@ -370,3 +371,110 @@ def test_the_summary_and_the_friendly_report_count_the_same_things(home):
     assert f"projects: {len(summary['projects'])}," in lines
     assert f"{summary['per_call_chars']} characters" in lines
     assert f"skills: {len(summary['skills'])}" in lines
+
+
+# --- the PIN, which init suggests and never writes ---------------------------
+
+
+def test_init_suggests_a_random_pin_line_when_the_machine_has_none(home, tmp_path):
+    """The one setup step the phone cannot do for them, offered at the keyboard first."""
+    result = runner.invoke(app, ["init", "--name", "Ada", "--fact", "One.", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    suggested = re.search(r"JARVIS_PIN=(\d+)", result.output)
+    assert suggested is not None, result.output
+    assert len(suggested.group(1)) == 6
+    assert "key one in on the first call" in result.output
+    assert env_untouched(tmp_path)
+    assert not (home.data_dir / "pin").exists()  # and nothing was set
+
+
+def test_the_suggested_pin_is_different_every_time(home):
+    """`secrets`, not `random`: it is what stands between a spoofer and a subagent."""
+    seen = {
+        re.search(r"JARVIS_PIN=(\d+)", runner.invoke(app, ["init", "--yes"]).output).group(1)
+        for _ in range(8)
+    }
+
+    assert len(seen) > 1
+
+
+def test_no_pin_is_suggested_once_the_machine_has_one(home):
+    home.pin = "123456"
+
+    result = runner.invoke(app, ["init", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "JARVIS_PIN" not in result.output
+
+
+def test_json_says_whether_a_pin_exists_and_where_it_came_from_never_the_digits(home):
+    result = runner.invoke(app, ["init", "--yes", "--json"])
+
+    summary = report(result)
+    assert summary["pin"] == {
+        "set": False,
+        "source": None,
+        "enrolment_open": True,
+        "path": str(home.data_dir / "pin"),
+        "note": PIN_NOTES[None],
+    }
+
+
+def test_json_names_the_environment_as_the_source_and_prints_no_digits(home):
+    home.pin = "123456"
+
+    result = runner.invoke(app, ["init", "--yes", "--json"])
+
+    summary = report(result)
+    assert summary["pin"] == {
+        "set": True,
+        "source": PIN_FROM_ENV,
+        "enrolment_open": False,
+        "path": str(home.data_dir / "pin"),
+        "note": PIN_NOTES[PIN_FROM_ENV],
+    }
+    assert "123456" not in result.output
+
+
+def test_json_says_an_enrolled_pin_belongs_in_the_env_to_be_permanent(home):
+    """A subagent runs as the owner and could delete the file; `.env` is the durable home."""
+    assert home.enrol_pin("987654") is True
+
+    result = runner.invoke(app, ["init", "--yes", "--json"])
+
+    summary = report(result)
+    assert summary["pin"]["source"] == PIN_FROM_FILE
+    assert summary["pin"]["set"] is True
+    assert "JARVIS_PIN" in summary["pin"]["note"]
+    assert "987654" not in result.output
+
+
+def test_a_pin_file_nothing_can_read_is_the_one_state_only_the_keyboard_clears(home, tmp_path):
+    """No PIN, and no call can set one: `O_EXCL` will not replace the file that is there.
+
+    So the suggested line is the whole of the way out, and offering the first call instead
+    would be sending them somewhere that cannot help.
+    """
+    home.ensure_dirs()
+    (home.data_dir / "pin").write_text("not-a-pin\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["init", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert re.search(r"JARVIS_PIN=\d{6}", result.output), result.output
+    assert "key one in on the first call" not in result.output
+    assert env_untouched(tmp_path)
+
+
+def test_json_says_a_pin_file_that_is_not_a_pin_is_a_dead_end(home):
+    home.ensure_dirs()
+    (home.data_dir / "pin").write_text("not-a-pin\n", encoding="utf-8")
+
+    summary = report(runner.invoke(app, ["init", "--yes", "--json"]))
+
+    assert summary["pin"]["set"] is False
+    assert summary["pin"]["source"] is None
+    assert summary["pin"]["enrolment_open"] is False
+    assert str(home.data_dir / "pin") in summary["pin"]["note"]
+    assert "no call can set one" in summary["pin"]["note"]
