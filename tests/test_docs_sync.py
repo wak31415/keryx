@@ -14,14 +14,14 @@ from jarvis.config import Settings, env_var_name
 
 #: The repository root, so the test does not depend on the working directory pytest ran in.
 ROOT = Path(__file__).resolve().parents[1]
-README = ROOT / "README.md"
+TOOLS_DOC = ROOT / "docs" / "tools.md"
 ENV_EXAMPLE = ROOT / ".env.example"
 #: Every module registrations can live in. `builtin.py` is the aggregator and the five
 #: `builtin_*.py` are the domains it calls, so a new domain module is picked up by the glob
 #: rather than by somebody remembering to add it here.
 BUILTIN_DIR = ROOT / "src" / "jarvis" / "tools"
 
-#: The README's tool table, fenced so the test has an unambiguous region to read.
+#: The tool table in `docs/tools.md`, fenced so the test has an unambiguous region to read.
 TOOL_TABLE = re.compile(r"<!-- tools:start -->(.*?)<!-- tools:end -->", re.S)
 #: An assignment line in `.env.example`, commented-out ones included.
 ENV_ASSIGNMENT = re.compile(r"^\s*#?\s*([A-Z][A-Z0-9_]*)=", re.M)
@@ -46,8 +46,8 @@ def registered_tool_names() -> set[str]:
 
 
 def documented_tool_names() -> set[str]:
-    match = TOOL_TABLE.search(README.read_text())
-    assert match is not None, "the README's <!-- tools:start --> table is gone"
+    match = TOOL_TABLE.search(TOOLS_DOC.read_text())
+    assert match is not None, "the <!-- tools:start --> table in docs/tools.md is gone"
     return set(re.findall(r"^\| `([a-z_]+)` \|", match.group(1), re.M))
 
 
@@ -80,11 +80,11 @@ def test_env_example_lists_nothing_that_is_not_read():
     assert stale == set(), f".env.example names {sorted(stale)}, which nothing reads"
 
 
-def test_the_readme_documents_exactly_the_tools_that_are_registered():
+def test_docs_tools_documents_exactly_the_tools_that_are_registered():
     documented, registered = documented_tool_names(), registered_tool_names()
 
-    assert documented - registered == set(), "the README lists a tool that no longer exists"
-    assert registered - documented == set(), "a registered tool is missing from the README"
+    assert documented - registered == set(), "docs/tools.md lists a tool that no longer exists"
+    assert registered - documented == set(), "a registered tool is missing from docs/tools.md"
 
 
 #: Snake-case words in the prompt's "Your tools" section that are not tool names: two

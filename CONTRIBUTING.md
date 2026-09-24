@@ -70,9 +70,9 @@ a tag and a set of notes, not an upload.
 3. Commit (`chore: release vX.Y.Z`), tag it `vX.Y.Z`, and push both.
 4. Cut a GitHub Release from the tag, with the `CHANGELOG.md` entry as its body.
 
-**Nothing is published to PyPI or any other index**, deliberately — see the README's
-*Names* note. `pyproject.toml` carries the `Private :: Do Not Upload` classifier so that an
-accidental `uv publish` is refused by the index rather than quietly succeeding.
+**Nothing is published to PyPI or any other index**, deliberately: this is a
+single-tenant service you run from a clone, not a library to depend on. `pyproject.toml`
+carries the `Private :: Do Not Upload` classifier so that an accidental `uv publish` is refused by the index rather than quietly succeeding.
 
 ## Coverage
 

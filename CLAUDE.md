@@ -51,8 +51,8 @@ remember:
   `builtin_comms`, `builtin_billing`, `builtin_tasks`, `builtin_restart` and
   `builtin_session`, with the wording, the parsing and the gates (`pin_gate`, `read_gate`,
   `possession_gate`, `get_task`) in `builtin_common`. **The order `builtin.py` calls them in is the order
-  the tools are offered to the model.** A new tool goes in a domain module and the README
-  table, or `tests/test_docs_sync.py` fails. A tool may also be registered `silent=True`
+  the tools are offered to the model.** A new tool goes in a domain module and the
+  `docs/tools.md` table, or `tests/test_docs_sync.py` fails. A tool may also be registered `silent=True`
   (`mark_reported`, `end_session`): its result is submitted without asking for a response,
   because both are called *after* the thing worth saying has been said and the turn would
   only be spent saying it again. Only for those; anything the owner is waiting to hear keeps
