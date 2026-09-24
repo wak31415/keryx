@@ -19,15 +19,19 @@ import stat
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from jarvis.config import (
     DATA_DIR_MODE,
     OWNER_FALLBACK,
+    PIN_FROM_ENV,
+    PIN_FROM_FILE,
     PLACEHOLDER_KEY,
     Settings,
     env_var_name,
+    pin_file,
 )
 from jarvis.continuity.memory import memory_path, read_memory
 from jarvis.integrations import slack
@@ -225,18 +229,53 @@ def _allowed_callers_check(settings: Settings) -> Check:
 
 
 def _pin_check(settings: Settings, problem: str | None = None) -> Check:
-    """No PIN is a warning; a PIN that does not conform is a machine that will not start.
+    """Where the PIN came from, or what to do about there not being one. Never the digits.
 
-    The two are different failures. Unset means every dispatch is refused from the phone —
-    limited, but safe, and a deliberate way to run. Set-but-malformed means `jarvis serve`
-    raises on load, so this has to be hard, and it has to say what is wrong: `doctor` is
-    the command whose whole job is to be runnable when nothing else is.
+    Four states, and they are four different sentences. A malformed `JARVIS_PIN` is hard:
+    `jarvis serve` raises on load, and `doctor` is the command whose whole job is to be
+    runnable when nothing else is. No PIN at all is a warning and no longer a dead end —
+    the first call can enrol one, and until then nothing of the owner's is read out on the
+    phone. A PIN from `JARVIS_PIN` is simply set. An *enrolled* PIN says where it lives
+    and how to make it permanent: it is a bootstrap, and `.env` is the durable home,
+    because a subagent runs as the owner and so could delete the file (SECURITY.md).
+    An unusable file is the one dead end left, and only the owner can clear it.
     """
     if problem is not None:
         return Check("PIN", False, f"{env_var_name('pin')} is set but unusable — {problem}")
-    if not settings.pin:
-        return Check("PIN", False, "not set — every task is refused on the phone", severity="soft")
-    return Check("PIN", True, "set", severity="soft")
+    if settings.pin_source == PIN_FROM_ENV:
+        return Check("PIN", True, "set from the environment", severity="soft")
+    path = pin_file(settings.data_dir)
+    if settings.pin_source == PIN_FROM_FILE:
+        return Check(
+            "PIN",
+            True,
+            f"set — enrolled on the phone on {_enrolled_on(path)}, and kept in {path}; "
+            f"copying it into {ENV_FILE} as {env_var_name('pin')} makes it permanent",
+            severity="soft",
+        )
+    if settings.pin_enrolment_open:
+        return Check(
+            "PIN",
+            False,
+            "no PIN yet — the first call can set one, and nothing of yours is read out "
+            "until it does",
+            severity="soft",
+        )
+    return Check(
+        "PIN",
+        False,
+        f"{path} is not 6-8 digits, so there is no PIN and no call can set one — delete "
+        f"it, or set {env_var_name('pin')}",
+        severity="soft",
+    )
+
+
+def _enrolled_on(path: Path) -> str:
+    """The day a PIN was enrolled, from the file's own timestamp. Never its contents."""
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).date().isoformat()
+    except OSError:  # pragma: no cover - it was read moments ago
+        return "an unknown date"
 
 
 # --- the machine -----------------------------------------------------------

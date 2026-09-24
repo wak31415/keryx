@@ -650,3 +650,31 @@ def test_nothing_of_the_owners_is_read_out_before_a_pin_exists(tmp_path):
     make(tmp_path).enrol_pin("123456")
 
     assert make(tmp_path).reads_before_pin is True
+
+
+def test_a_pin_copied_into_the_environment_reports_the_environment(tmp_path):
+    """`doctor`'s own advice, carried out: enrol on the phone, then paste it into `.env`.
+
+    The digits being the same in both places is exactly what following that advice looks
+    like, so reading the source off the file's contents would go on telling them to do
+    the thing they have just done — for ever.
+    """
+    make(tmp_path).enrol_pin("123456")
+
+    settings = make(tmp_path, pin="123456")
+
+    assert settings.pin == "123456"
+    assert settings.pin_source == PIN_FROM_ENV
+
+
+def test_a_pin_replaced_on_a_copy_of_the_settings_is_not_the_enrolled_one(tmp_path):
+    """`model_copy(update={"pin": ...})` is how the tests and `doctor` build their states.
+
+    A source remembered outright would survive that copy and describe a PIN the copy does
+    not have.
+    """
+    enrolled = make(tmp_path)
+    enrolled.enrol_pin("123456")
+
+    assert enrolled.model_copy(update={"pin": "654321"}).pin_source == PIN_FROM_ENV
+    assert enrolled.model_copy(update={"pin": None}).pin_source is None

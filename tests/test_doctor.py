@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.config import Settings
+from jarvis.config import Settings, pin_file
 from jarvis.continuity.memory import memory_path, seed_memory
 from jarvis.doctor import (
     Check,
@@ -249,15 +249,66 @@ def test_the_numbers_doctor_prints_are_masked(healthy):
     assert checks["Twilio credentials"].detail == mask_number("+15550000000")
 
 
-def test_a_missing_pin_only_warns(healthy):
+def test_a_missing_pin_only_warns_and_says_the_first_call_can_set_one(healthy):
+    """Unset is no longer a dead end: the phone can enrol one, and until it does the
+    machine reads nothing of theirs out loud."""
     settings = healthy.model_copy(update={"pin": None})
 
     checks = run_doctor_checks(settings, probe_mic=False)
     check = by_name(checks)["PIN"]
     assert (check.ok, check.severity) == (False, "soft")
-    # Not "coding/cowork": those kinds have not existed since 2026-08-24, and the PIN gates
-    # every dispatch now.
-    assert "every task is refused" in check.detail
+    assert "no PIN yet" in check.detail
+    assert "the first call can set one" in check.detail
+    assert "nothing of yours is read out until it does" in check.detail
+    assert has_hard_failure(checks) is False
+
+
+def test_a_pin_from_the_environment_says_so(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["PIN"]
+
+    assert (check.ok, check.detail) == (True, "set from the environment")
+    assert "123456" not in check.detail
+
+
+def test_an_enrolled_pin_says_when_and_how_to_make_it_permanent(healthy):
+    """It is a bootstrap, not a home: a subagent runs as the owner and could delete the
+    file, which re-opens enrolment for whoever calls next. `.env` is the durable place."""
+    settings = healthy.model_copy(update={"pin": None})
+    assert settings.enrol_pin("987654") is True
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["PIN"]
+
+    assert check.ok is True
+    assert "enrolled on the phone on " in check.detail
+    assert str(pin_file(settings.data_dir)) in check.detail
+    assert "JARVIS_PIN" in check.detail and "makes it permanent" in check.detail
+    assert "987654" not in check.detail
+
+
+def test_a_pin_moved_into_the_env_stops_being_something_to_do(healthy):
+    """The line above, carried out. It has to stop asking once the PIN is in `.env`.
+
+    Following the advice leaves the same digits in both places, and a source read off the
+    file's contents would tell them to do it again on every run.
+    """
+    copied = healthy.model_copy(update={"pin": None})
+    assert copied.enrol_pin("123456") is True  # the digits `healthy` has in its environment
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["PIN"]
+
+    assert check.detail == "set from the environment"
+
+
+def test_a_pin_file_that_is_not_a_pin_is_reported_as_the_dead_end_it_is(healthy):
+    settings = healthy.model_copy(update={"pin": None})
+    pin_file(settings.data_dir).write_text("not-a-pin\n", encoding="utf-8")
+
+    checks = run_doctor_checks(settings, probe_mic=False)
+    check = by_name(checks)["PIN"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert str(pin_file(settings.data_dir)) in check.detail
+    assert "no call can set one" in check.detail
     assert has_hard_failure(checks) is False
 
 

@@ -184,9 +184,11 @@ class Settings(BaseSettings):
     #: request, and the fallback lives in a file.
     _report_secret_cache: str | None = PrivateAttr(default=None)
 
-    #: Where `pin` came from, once `_resolve_pin` has run: `PIN_FROM_ENV`, `PIN_FROM_FILE`
-    #: or None. Only `jarvis doctor` and `jarvis init --json` ask, and only to say which.
-    _pin_source: str | None = PrivateAttr(default=None)
+    #: The digits this object took from `data_dir/pin`, if it took any: what `pin_source`
+    #: compares `pin` against. Never read for anything else — `pin` is the one field every
+    #: reader asks — and it is a comparison rather than a remembered label so that a copy
+    #: carrying a different PIN cannot inherit a source that was true only of the original.
+    _adopted_pin: str | None = PrivateAttr(default=None)
 
     # OpenAI Realtime
     openai_api_key: str = Field(repr=False)
@@ -496,17 +498,27 @@ class Settings(BaseSettings):
         working without knowing there are two. `JARVIS_PIN` wins: it is the owner at the
         keyboard, and it outranks anything a call enrolled.
         """
-        if self.pin:
-            self._pin_source = PIN_FROM_ENV
-        elif (enrolled := read_enrolled_pin(self.data_dir)) is not None:
-            self.pin = enrolled
-            self._pin_source = PIN_FROM_FILE
+        if not self.pin and (enrolled := read_enrolled_pin(self.data_dir)) is not None:
+            self.pin, self._adopted_pin = enrolled, enrolled
         return self
 
     @property
     def pin_source(self) -> str | None:
-        """Where the PIN came from (`PIN_FROM_ENV` / `PIN_FROM_FILE`), or None with no PIN."""
-        return self._pin_source
+        """Where the PIN in hand came from (`PIN_FROM_*`), or None when there is none.
+
+        A comparison rather than a label written down when the PIN was resolved, because
+        the PIN can be replaced on a copy of these settings — `model_copy(update={"pin":
+        …})`, which is how `doctor` and its tests build each state — and a remembered
+        source would describe a PIN the copy does not have.
+
+        And a comparison against what *this object* adopted, not against the file: the
+        remediation `doctor` prints is to copy an enrolled PIN into `.env`, which leaves
+        the same digits in both places, and reading the file back would go on asking them
+        to do the thing they have just done.
+        """
+        if not self.pin:
+            return None
+        return PIN_FROM_FILE if self.pin == self._adopted_pin else PIN_FROM_ENV
 
     @property
     def pin_enrolment_open(self) -> bool:
@@ -539,8 +551,7 @@ class Settings(BaseSettings):
         """
         if not write_enrolled_pin(self.data_dir, digits):
             return False
-        self.pin = digits
-        self._pin_source = PIN_FROM_FILE
+        self.pin = self._adopted_pin = digits
         return True
 
     def google_oauth_client(self) -> tuple[str, str] | None:
