@@ -30,6 +30,30 @@ def test_allowed_callers_defaults_to_empty_list(settings):
     assert settings.allowed_callers == []
 
 
+def test_the_default_agent_is_claude_and_alone(settings):
+    assert settings.agent_backend == "claude"
+    assert settings.enabled_agents == ("claude",)
+    assert settings.agent_refusal() is None
+
+
+def test_agents_enabled_parses_a_comma_list_in_any_case(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    monkeypatch.setenv("AGENTS_ENABLED", " Claude, ")
+    monkeypatch.setenv("AGENT_BACKEND", "CLAUDE")
+
+    settings = Settings(_env_file=None, data_dir=tmp_path)
+
+    assert settings.agents_enabled == ["claude"]
+    assert settings.agent_backend == "claude"
+
+
+def test_an_agent_jarvis_does_not_know_fails_the_load(tmp_path):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, openai_api_key="t", data_dir=tmp_path, agents_enabled="gemini")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, openai_api_key="t", data_dir=tmp_path, agent_backend="gemini")
+
+
 def test_clusters_parse_from_json_env(monkeypatch, tmp_path):
     """Names are what the model says, so they are matched lower-case."""
     monkeypatch.setenv("OPENAI_API_KEY", "test")

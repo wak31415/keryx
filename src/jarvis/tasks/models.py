@@ -131,6 +131,14 @@ class Task:
     project: str | None = None
     cwd: str | None = None
     model: str = "claude-opus-5"
+    #: The coding agent this task runs on (`jarvis.agents.registry.BACKENDS`), fixed at
+    #: dispatch. Every later run of it — a follow-up, a re-run — goes back to the same one,
+    #: because only that agent can resume its session. Rows written before there was more
+    #: than one agent read as `claude`, which is what ran them (schema v5).
+    agent: str = "claude"
+    #: The session id the task's *agent* issued, whichever agent that is: the column kept its
+    #: name when a second agent arrived, because a build still running behind a newer
+    #: database must be able to read it.
     claude_session_id: str | None = None
     summary: str | None = None
     report_path: str | None = None

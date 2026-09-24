@@ -222,7 +222,7 @@ def serve(
     ] = False,
     fake_agents: Annotated[
         bool,
-        typer.Option("--fake-agents", help="Run scripted subagents instead of the Claude SDK."),
+        typer.Option("--fake-agents", help="Run scripted subagents instead of real agents."),
     ] = False,
     host: Annotated[
         str | None, typer.Option("--host", help="Override HOST for the phone server.")
@@ -242,6 +242,9 @@ def serve(
         overrides["port"] = port
     settings = _configure(**overrides)
     if not no_phone and (refusal := settings.phone_refusal()):
+        typer.echo(f"jarvis cannot start: {refusal}", err=True)
+        raise typer.Exit(2)
+    if refusal := settings.agent_refusal():
         typer.echo(f"jarvis cannot start: {refusal}", err=True)
         raise typer.Exit(2)
     _add_file_logging(settings)
@@ -643,11 +646,14 @@ def tasks_list(
         typer.echo("no tasks" if wanted is None else f"no tasks with status {wanted}")
         return
 
-    typer.echo(f"{'ID':>4}  {'STATUS':<9}  {'CREATED':<16}  {'TOLD':<5}  DESCRIPTION")
+    typer.echo(
+        f"{'ID':>4}  {'STATUS':<9}  {'CREATED':<16}  {'AGENT':<6}  {'TOLD':<5}  DESCRIPTION"
+    )
     for task in tasks:
         typer.echo(
             f"{task.id:>4}  {task.status:<9}  "
             f"{_local_time(task.created_at):<16}  "
+            f"{task.agent:<6}  "
             f"{_reported_flag(task):<5}  "
             f"{_shorten(task.description, MAX_DESCRIPTION_CHARS)}"
         )

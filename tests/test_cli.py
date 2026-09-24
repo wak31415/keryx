@@ -306,7 +306,7 @@ def test_serve_wires_the_task_stack_into_the_shared_state(settings_stub, monkeyp
     assert result.exit_code == 0, result.output
     state = built["config"].app.state.jarvis
     assert state.manager is not None
-    assert isinstance(state.manager._runner, ClaudeAgentRunner)
+    assert isinstance(state.manager._runner.runners["claude"], ClaudeAgentRunner)
     assert "dispatch_task" in {schema["name"] for schema in state.registry.schemas()}
     assert state.store._conn is None  # the store is closed again when serve returns
 
@@ -1142,6 +1142,29 @@ def test_tasks_list_says_whether_they_have_been_told(settings_stub):
     assert "TOLD" in result.output
     assert "NO" in next(line for line in result.output.splitlines() if "not yet said" in line)
     assert "yes" in next(line for line in result.output.splitlines() if "already said" in line)
+
+
+def test_tasks_list_says_which_agent_ran_each_task(settings_stub):
+    seed_tasks(
+        settings_stub,
+        make_task("on the default", status=TaskStatus.DONE),
+        make_task("named out loud", status=TaskStatus.DONE, agent="codex"),
+    )
+
+    result = runner.invoke(app, ["tasks", "list"])
+
+    assert "AGENT" in result.output
+    lines = result.output.splitlines()
+    assert "claude" in next(line for line in lines if "on the default" in line)
+    assert "codex" in next(line for line in lines if "named out loud" in line)
+
+
+def test_tasks_show_names_the_agent(settings_stub):
+    seed_tasks(settings_stub, make_task("named out loud", agent="codex"))
+
+    result = runner.invoke(app, ["tasks", "show", "1"])
+
+    assert any(line.split() == ["agent", "codex"] for line in result.output.splitlines())
 
 
 def test_memory_says_so_when_there_is_nothing_remembered_yet(settings_stub):

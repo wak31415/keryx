@@ -18,6 +18,7 @@ from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, Tas
 from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult
 from jarvis.tasks.manager import (
     CLOSE_TIMEOUT_S,
+    AgentUnavailableError,
     TaskLimitError,
     TaskManager,
     UnknownProjectError,
@@ -240,6 +241,25 @@ async def test_dispatch_resolves_the_model_alias(make_harness):
 
     assert aliased.model == "claude-sonnet-5"
     assert default.model == harness.settings.subagent_model
+
+
+async def test_dispatch_records_the_default_agent_when_none_is_named(make_harness):
+    harness = make_harness()
+
+    task = await dispatch(harness.manager)
+
+    assert task.agent == "claude"
+    assert (await harness.manager.get(task.id)).agent == "claude"
+
+
+async def test_dispatch_refuses_an_agent_that_is_not_enabled(make_harness):
+    harness = make_harness()
+
+    with pytest.raises(AgentUnavailableError) as raised:
+        await dispatch(harness.manager, agent="codex")
+
+    assert raised.value.enabled == ["claude"]
+    assert await harness.manager.list() == []
 
 
 async def test_dispatch_without_a_project_starts_in_the_projects_root(make_harness, tmp_path):

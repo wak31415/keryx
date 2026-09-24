@@ -29,8 +29,7 @@ the `PinLockoutAlerter` that tells the owner when that count locks PIN entry.
 
 from dataclasses import dataclass, field
 
-from jarvis.agents.base import AgentRunner, FakeAgentRunner
-from jarvis.agents.claude import ClaudeAgentRunner
+from jarvis.agents.registry import build_agent_runner
 from jarvis.approvals.broker import ApprovalBroker
 from jarvis.config import Settings
 from jarvis.continuity.briefing import Briefer
@@ -96,9 +95,9 @@ def build_app_state(settings: Settings) -> AppState:
     settings.ensure_dirs()
     bus = EventBus()
     store = TaskStore(settings.data_dir / TASK_DB_NAME)
-    # The real Agent SDK runner, or the scripted one behind `--fake-agents`.
-    runner: AgentRunner = FakeAgentRunner() if settings.fake_agents else ClaudeAgentRunner(settings)
-    manager = TaskManager(store, runner, bus, settings)
+    # One runner per enabled coding agent behind a router, or the scripted one behind
+    # `--fake-agents`.
+    manager = TaskManager(store, build_agent_runner(settings), bus, settings)
 
     registry = ToolRegistry()
     inline_waits = InlineWaits()

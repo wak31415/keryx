@@ -38,7 +38,7 @@ from functools import partial
 from pathlib import Path
 
 from jarvis.agents.base import AgentRunner, AgentSession, RunResult
-from jarvis.agents.claude import resolve_model
+from jarvis.agents.registry import resolve_model
 from jarvis.config import Settings, secure_file
 from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
 from jarvis.projects import discover_projects
@@ -77,7 +77,7 @@ LIVE_FOLLOWUP_PREAMBLE = "Follow-up from the user:"
 _PROMPT = (
     "Complete this request end to end. You are working on the user's own machine, with "
     "their repositories, their Gmail and Calendar (through the google MCP tools), the skills "
-    "installed for the Claude CLI, and subagents of your own. Use whatever the work "
+    "installed for you, and subagents of your own. Use whatever the work "
     "actually needs.\n\n"
     "Working directory: {cwd}{project_clause}\n\n"
     "Where the request touches a repository, finish the job properly: make the change, "
@@ -97,6 +97,15 @@ class TaskLimitError(RuntimeError):
         super().__init__(f"daily task cap reached ({count}/{cap} tasks today)")
         self.cap = cap
         self.count = count
+
+
+class AgentUnavailableError(ValueError):
+    """Raised by `dispatch()` for an agent this process has not enabled."""
+
+    def __init__(self, agent: str, enabled: Sequence[str]) -> None:
+        self.agent = agent
+        self.enabled = list(enabled)
+        super().__init__(f"the {agent} agent is not enabled; enabled: {', '.join(enabled)}")
 
 
 class UnknownProjectError(ValueError):
@@ -209,6 +218,7 @@ class TaskManager:
         origin_session_id: str | None = None,
         cwd: str | None = None,
         internal: bool = False,
+        agent: str | None = None,
     ) -> Task:
         """Create a `queued` task and schedule it.
 
@@ -223,7 +233,13 @@ class TaskManager:
         `internal` marks work Jarvis asked for itself (the per-call memory update): it is
         exempt from the daily cap, hidden from the spoken task lists, and never announced.
         It restricts nothing about the subagent — see `Task.internal`.
+
+        `agent` is the coding agent to run it on; None is `AGENT_BACKEND`. It is fixed for
+        the life of the task, and one that is not enabled raises `AgentUnavailableError`.
         """
+        agent = agent or self._settings.agent_backend
+        if agent not in self._settings.enabled_agents:
+            raise AgentUnavailableError(agent, self._settings.enabled_agents)
         if not internal:
             await self._check_daily_cap()
 
@@ -245,7 +261,8 @@ class TaskManager:
                 status=TaskStatus.QUEUED,
                 project=project_name,
                 cwd=cwd,
-                model=resolve_model(model, self._settings),
+                model=resolve_model(agent, model, self._settings),
+                agent=agent,
                 origin_channel=origin_channel,
                 origin_caller=origin_caller,
                 origin_session_id=origin_session_id,
@@ -255,9 +272,10 @@ class TaskManager:
         self._done_events[created.id] = asyncio.Event()
         self._spawn(created.id)
         log.info(
-            "task %s dispatched (project=%s, model=%s, from=%s%s)",
+            "task %s dispatched (project=%s, agent=%s, model=%s, from=%s%s)",
             created.id,
             created.project,
+            created.agent,
             created.model,
             created.origin_channel,
             ", internal" if internal else "",
@@ -344,9 +362,10 @@ class TaskManager:
     async def _run_live_followups(self, task: Task, result: RunResult) -> RunResult:
         """Re-run `task` for the follow-ups that arrived while it was running (spec §3.3).
 
-        Each round resumes the Claude session the last run left behind, so the agent keeps
-        its context, and stays inside the semaphore slot the task already holds. Only the
-        result of the final round is returned — the ones in between are steps in the same
+        Each round resumes the session the last run left behind — on the task's own agent,
+        which is the only one that can — so the agent keeps its context, and stays inside
+        the semaphore slot the task already holds. Only the result of the final round is
+        returned — the ones in between are steps in the same
         piece of work, not outcomes to announce. A run that came back without a session id
         cannot be resumed, so its follow-ups go to a fresh run of the whole task instead.
         """
@@ -357,7 +376,7 @@ class TaskManager:
             prompt = LIVE_FOLLOWUP_PREAMBLE + "".join(f"\n- {text}" for text in followups)
             resume = result.session_id
             if not resume:
-                log.warning("task %s has no Claude session id; re-running from the top", task.id)
+                log.warning("task %s has no session id; re-running from the top", task.id)
                 prompt = f"{build_prompt(task)}\n\n{prompt}"
             log.info("task %s re-runs with %d follow-up(s)", task.id, len(followups))
             await self._close_session(task.id)
@@ -578,7 +597,7 @@ class TaskManager:
         )
 
     async def _restart(self, task: Task, text: str) -> Task:
-        """Queue a finished task for a re-run, resuming its Claude session if it has one.
+        """Queue a finished task for a re-run, resuming its agent's session if it has one.
 
         The row goes back to `queued`, not `running`: the re-run still has to wait for the
         semaphore, and a row may only claim to be running once a subagent is actually on it.
@@ -588,7 +607,7 @@ class TaskManager:
         if resume:
             prompt = text
         else:
-            log.warning("task %s has no Claude session id; starting a fresh run", task.id)
+            log.warning("task %s has no session id; starting a fresh run", task.id)
             prompt = f"{build_prompt(task)}\n\nFollow-up: {text}"
         updated = await self._store.update(
             task.id, status=TaskStatus.QUEUED, started_at=None, finished_at=None

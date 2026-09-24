@@ -46,6 +46,7 @@ async def test_create_then_get_round_trips_every_field(store):
         project="orchard-sensor-net",
         cwd="/repo",
         model="claude-opus-5",
+        agent="codex",
         claude_session_id="sess-42",
         summary="shipped",
         report_path="/data/tasks/1.md",
@@ -453,6 +454,41 @@ async def test_a_v2_database_walks_all_the_way_up_in_one_go(tmp_path):
         assert any(task.reported_at is not None for task in tasks)
         # ...and v4 this one, defaulted off: nothing written before it asked for a restart.
         assert all(task.needs_restart is False for task in tasks)
+    finally:
+        await store.close()
+
+
+async def test_every_task_from_before_there_was_a_choice_ran_on_claude(tmp_path):
+    """v5 adds `agent`; the rows already there were all Claude's, and must say so.
+
+    A follow-up resumes on the task's own agent, so a wrong default here would hand a
+    Claude session id to an agent that cannot resume it.
+    """
+    path = tmp_path / "tasks.db"
+    _v2_database(path)
+
+    store = TaskStore(path)
+    try:
+        assert {task.agent for task in await store.list()} == {"claude"}
+    finally:
+        await store.close()
+
+
+async def test_an_older_build_that_names_no_agent_still_writes_claude(tmp_path):
+    """The database runs ahead of the code: a build from before v5 inserts without it."""
+    path = tmp_path / "tasks.db"
+    await TaskStore(path).close()  # a v5 file
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.execute(
+        "INSERT INTO tasks (kind, description, status, model, origin_channel, created_at)"
+        " VALUES ('agent', 'from the old build', 'queued', 'claude-opus-5', 'phone',"
+        " '2026-09-24T09:00:00+00:00')"
+    )
+    conn.close()
+
+    store = TaskStore(path)
+    try:
+        assert [task.agent for task in await store.list()] == ["claude"]
     finally:
         await store.close()
 
