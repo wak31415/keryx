@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from fakes import FakeProvider
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from jarvis.app import TASK_DB_NAME
@@ -882,6 +883,38 @@ def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path, w
     assert "9876" not in pin_line
     # Everything else was still checked rather than lost to the exception.
     assert "allowed callers" in result.output
+
+
+def test_doctor_explains_a_malformed_pin_set_the_way_a_person_sets_one(
+    monkeypatch, tmp_path, wakeword_models
+):
+    """The same, through the real loader rather than a stub that stands in for it.
+
+    `pydantic` reports a field's *alias* when it has one, so a value refused under
+    `JARVIS_PIN` arrives as `JARVIS_PIN` and not as `pin`. A fallback that matched only the
+    field name never fired, and `doctor` died with a traceback in the one state it exists
+    to explain.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
+    (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
+    for name, value in {
+        "OPENAI_API_KEY": "sk-test",
+        "JARVIS_PIN": "1234",
+        "DATA_DIR": str(tmp_path / "jarvis"),
+        "PROJECTS_ROOT": str(tmp_path / "projects"),
+        "SKILLS_DIR": str(tmp_path / "skills"),
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    result = runner.invoke(app, ["doctor", "--no-mic"])
+
+    assert not isinstance(result.exception, ValidationError), result.exception
+    assert result.exit_code == 1, result.output
+    assert "JARVIS_PIN is set but unusable" in result.output
+    assert "6 to 8 digits" in result.output
+    assert "allowed callers" in result.output  # the rest was still checked
 
 
 def test_serve_refuses_to_start_on_a_malformed_pin(monkeypatch, tmp_path):
