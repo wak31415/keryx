@@ -9,7 +9,7 @@ import secrets
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, PrivateAttr, field_validator
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 log = logging.getLogger("jarvis.config")
@@ -62,6 +62,12 @@ OPTIONAL_STR_FIELDS = (
 PIN_PATTERN = re.compile(r"\d{6,8}")
 PIN_RULE = "must be 6 to 8 digits, and nothing but digits"
 
+#: Where a PIN came from, for `jarvis doctor` and `jarvis init --json`. Never the digits.
+PIN_FROM_ENV = "environment"
+PIN_FROM_FILE = "enrolled"
+#: The enrolled PIN's file name under `data_dir` (`read_enrolled_pin` / `write_enrolled_pin`).
+PIN_FILE_NAME = "pin"
+
 #: What a cluster name or partition has to be. Both are handed to a remote shell, so
 #: anything but a bare word is refused when the settings load rather than on a call.
 CLUSTER_WORD = re.compile(r"[A-Za-z0-9_.-]+")
@@ -93,6 +99,70 @@ def secure_file(path: Path) -> Path:
     return path
 
 
+def pin_file(data_dir: Path) -> Path:
+    """Where a PIN enrolled on the phone lives. `JARVIS_PIN` outranks it (`Settings.pin`)."""
+    return data_dir / PIN_FILE_NAME
+
+
+def read_enrolled_pin(data_dir: Path) -> str | None:
+    """The PIN enrolled on the phone, or None when there is none worth having.
+
+    **The digits, not a hash, and that is deliberate.** Six digits fall to any hash in
+    microseconds, so hashing would buy nothing and imply a protection that is not there.
+    The protection is the file mode: 0600 inside a 0700 `data_dir`, beside `memory.md` and
+    every call transcript, which are no less private. Do not "improve" this into a hash.
+
+    A file that is there and does not hold 6-8 digits is *not* the same as no file: it is
+    no PIN, and it still seals the door, because `write_enrolled_pin` cannot replace it.
+    `jarvis doctor` says so, and the way out is the owner's — delete it, or set `JARVIS_PIN`.
+    """
+    try:
+        value = pin_file(data_dir).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value if PIN_PATTERN.fullmatch(value) else None
+
+
+def write_enrolled_pin(data_dir: Path, digits: str) -> bool:
+    """Write the first PIN this machine has had. True when it was written, False when
+    one was already there.
+
+    **This is the one-way door, and the kernel is what holds it shut.** `O_CREAT | O_EXCL`
+    makes the write fail on an existing file in the syscall, so no path in this code —
+    no voice tool, no CLI command, no retry, no later refactor — can replace a PIN that
+    has been enrolled. A policy check would not be that guarantee. There is deliberately
+    no setter anywhere: changing an enrolled PIN means the owner deleting this file or
+    setting `JARVIS_PIN`, at the keyboard.
+
+    A write that fails part way leaves a file that is not a usable PIN, and it is left
+    exactly there rather than cleaned up: "delete the enrolled PIN" is the one operation
+    this module must not know how to do.
+    """
+    if not PIN_PATTERN.fullmatch(digits):
+        raise ValueError(PIN_RULE)
+    path = pin_file(data_dir)
+    try:
+        secure_dir(data_dir)
+        handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, DATA_FILE_MODE)
+    except FileExistsError:
+        log.warning("a PIN is already enrolled at %s, and an enrolled PIN is never replaced", path)
+        return False
+    except OSError:
+        log.exception("could not enrol a PIN at %s", path)
+        return False
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as file:
+            file.write(f"{digits}\n")
+    except OSError:
+        log.exception("could not write the enrolled PIN at %s", path)
+        return False
+    finally:
+        # The mode above is masked by the umask; this is the belt to that pair of braces.
+        secure_file(path)
+    log.info("a PIN was enrolled at %s", path)
+    return True
+
+
 class Settings(BaseSettings):
     """Jarvis runtime configuration. See spec §3.4 for the env-var table."""
 
@@ -110,6 +180,10 @@ class Settings(BaseSettings):
     #: Cached `report_secret_value()`: it is asked for per notification and per report
     #: request, and the fallback lives in a file.
     _report_secret_cache: str | None = PrivateAttr(default=None)
+
+    #: Where `pin` came from, once `_resolve_pin` has run: `PIN_FROM_ENV`, `PIN_FROM_FILE`
+    #: or None. Only `jarvis doctor` and `jarvis init --json` ask, and only to say which.
+    _pin_source: str | None = PrivateAttr(default=None)
 
     # OpenAI Realtime
     openai_api_key: str = Field(repr=False)
@@ -183,8 +257,11 @@ class Settings(BaseSettings):
     # Access control
     allowed_callers: Annotated[list[str], NoDecode] = Field(default_factory=list)
     owner_number_explicit: str | None = Field(default=None, validation_alias="OWNER_NUMBER")
-    #: Six to eight digits when set, enforced below. Unset stays legal and means "no PIN":
-    #: every dispatch is refused from the phone.
+    #: Six to eight digits when set, enforced below. `JARVIS_PIN` always wins; with it
+    #: unset this is filled from `data_dir/pin` — the PIN a first call enrolled — by
+    #: `_resolve_pin` below, so every reader of `settings.pin` sees one source. Unset in
+    #: both places stays legal and means "no PIN": nothing of the owner's is read out on
+    #: the phone and every dispatch is refused, until a call enrols one.
     pin: str | None = Field(default=None, validation_alias="JARVIS_PIN", repr=False)
 
     #: Wrong PINs, counted across every call, before PIN entry locks (jarvis/pin_guard.py).
@@ -406,6 +483,62 @@ class Settings(BaseSettings):
     @classmethod
     def _expand_path(cls, value: Path | None) -> Path | None:
         return value.expanduser() if value is not None else None
+
+    @model_validator(mode="after")
+    def _resolve_pin(self) -> "Settings":
+        """Fill `pin` from `data_dir/pin` when the environment set none (spec §5).
+
+        Two sources, one field, resolved once here so that every existing reader of
+        `settings.pin` — the session's compare, the gates, the transcript redaction — keeps
+        working without knowing there are two. `JARVIS_PIN` wins: it is the owner at the
+        keyboard, and it outranks anything a call enrolled.
+        """
+        if self.pin:
+            self._pin_source = PIN_FROM_ENV
+        elif (enrolled := read_enrolled_pin(self.data_dir)) is not None:
+            self.pin = enrolled
+            self._pin_source = PIN_FROM_FILE
+        return self
+
+    @property
+    def pin_source(self) -> str | None:
+        """Where the PIN came from (`PIN_FROM_ENV` / `PIN_FROM_FILE`), or None with no PIN."""
+        return self._pin_source
+
+    @property
+    def pin_enrolment_open(self) -> bool:
+        """Whether a call may still set the first PIN: none configured, and none on disk.
+
+        Both halves, because they are different facts. An unusable file is no PIN *and* no
+        enrolment: it seals the door exactly as a good one does (`write_enrolled_pin`).
+        """
+        return not self.pin and not pin_file(self.data_dir).exists()
+
+    @property
+    def reads_before_pin(self) -> bool:
+        """Whether a call below `FULL` may be handed what Jarvis knows about its owner.
+
+        `BRIEFING_BEFORE_PIN` is the setting, and its reasoning presumes a PIN exists:
+        the PIN is the line between reading and acting, so reads may come first. With no
+        PIN anywhere there is no line and no authentication at all — every allowed caller
+        would be handed the memory, the digest and the project names for ever, with no way
+        to prove anything. So until one exists, the standing briefing is withheld, and the
+        read-only tools over the same material are refused with it.
+        """
+        return self.briefing_before_pin and bool(self.pin)
+
+    def enrol_pin(self, digits: str) -> bool:
+        """Set the first PIN this machine has had, from the phone. False when one exists.
+
+        The file is the record; this also adopts the PIN in the process that wrote it, so
+        `jarvis serve` — which holds one `Settings` from startup — compares against it,
+        redacts it out of transcripts and closes the door without waiting for a restart.
+        """
+        if not write_enrolled_pin(self.data_dir, digits):
+            return False
+        self.pin = digits
+        self._pin_source = PIN_FROM_FILE
+        return True
 
     def google_oauth_client(self) -> tuple[str, str] | None:
         """The OAuth client as `(id, secret)`: the env pair if set, else the JSON file.

@@ -1,6 +1,7 @@
 """Tests for jarvis.config.Settings."""
 
 import json
+import os
 import stat
 from pathlib import Path
 
@@ -10,8 +11,12 @@ from pydantic import ValidationError
 from jarvis.config import (
     OPTIONAL_STR_FIELDS,
     OWNER_FALLBACK,
+    PIN_FROM_ENV,
+    PIN_FROM_FILE,
     Settings,
     load_settings,
+    pin_file,
+    secure_dir,
     secure_file,
 )
 
@@ -492,3 +497,156 @@ def test_a_blank_owner_name_is_the_owner():
 
         assert settings.owner_name is None
         assert settings.owner_label == OWNER_FALLBACK == "the owner"
+
+
+# --- a PIN enrolled on the phone (the one-way door) --------------------------
+
+
+def make(tmp_path, **overrides) -> Settings:
+    return Settings(
+        _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", **overrides
+    )
+
+
+def test_an_enrolled_pin_is_read_when_the_environment_has_none(tmp_path):
+    """The whole point: a machine whose owner never typed a PIN can still have one."""
+    assert make(tmp_path).enrol_pin("123456") is True
+
+    settings = make(tmp_path)
+
+    assert settings.pin == "123456"
+    assert settings.pin_source == PIN_FROM_FILE
+
+
+def test_the_environment_wins_over_an_enrolled_pin(tmp_path):
+    """`JARVIS_PIN` is the owner at the keyboard, which outranks anything the phone set."""
+    make(tmp_path).enrol_pin("123456")
+
+    settings = make(tmp_path, pin="654321")
+
+    assert settings.pin == "654321"
+    assert settings.pin_source == PIN_FROM_ENV
+
+
+def test_no_pin_anywhere_is_still_no_pin(tmp_path):
+    settings = make(tmp_path)
+
+    assert settings.pin is None
+    assert settings.pin_source is None
+
+
+def test_the_enrolment_write_is_o_excl_so_a_second_one_cannot_overwrite(tmp_path, monkeypatch):
+    """The guarantee is the syscall, not a policy check somebody can refactor away.
+
+    `O_EXCL` makes the write fail in the kernel when the file is there, so no path in this
+    code — no tool, no retry, no future caller — can replace a PIN that has been enrolled.
+    """
+    flags: list[int] = []
+    real_open = os.open
+
+    def record(path, flags_in, *args, **kwargs):
+        flags.append(flags_in)
+        return real_open(path, flags_in, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", record)
+
+    assert make(tmp_path).enrol_pin("123456") is True
+
+    assert flags and all(flag & os.O_EXCL and flag & os.O_CREAT for flag in flags)
+    assert not any(flag & os.O_TRUNC for flag in flags)
+
+
+def test_an_enrolled_pin_can_never_be_overwritten(tmp_path):
+    settings = make(tmp_path)
+    assert settings.enrol_pin("123456") is True
+
+    assert make(tmp_path).enrol_pin("654321") is False
+
+    assert pin_file(tmp_path / "jarvis").read_text(encoding="utf-8").strip() == "123456"
+    assert make(tmp_path).pin == "123456"
+
+
+def test_the_enrolled_pin_file_is_readable_by_nobody_else(tmp_path):
+    """It sits beside `memory.md` and every call transcript; the mode is the protection."""
+    make(tmp_path).enrol_pin("123456")
+
+    mode = stat.S_IMODE(pin_file(tmp_path / "jarvis").stat().st_mode)
+
+    assert mode == 0o600
+
+
+def test_the_enrolled_pin_is_stored_as_digits_and_not_as_a_hash(tmp_path):
+    """Deliberate: six digits fall to any hash in microseconds, so one buys nothing."""
+    make(tmp_path).enrol_pin("123456")
+
+    assert pin_file(tmp_path / "jarvis").read_text(encoding="utf-8").strip() == "123456"
+
+
+def test_enrolment_refuses_anything_that_is_not_a_pin(tmp_path):
+    settings = make(tmp_path)
+
+    for candidate in ("12345", "123456789", "12345a", "", "12 34 56"):
+        with pytest.raises(ValueError, match="6 to 8 digits"):
+            settings.enrol_pin(candidate)
+
+    assert not pin_file(tmp_path / "jarvis").exists()
+
+
+def test_enrolling_adopts_the_pin_in_this_process_too(tmp_path):
+    """`jarvis serve` holds one `Settings`; the PIN has to be live without a restart."""
+    settings = make(tmp_path)
+
+    assert settings.enrol_pin("123456") is True
+
+    assert settings.pin == "123456"
+    assert settings.pin_source == PIN_FROM_FILE
+    assert settings.pin_enrolment_open is False
+
+
+def test_enrolment_is_open_only_while_no_pin_exists(tmp_path):
+    assert make(tmp_path).pin_enrolment_open is True
+    assert make(tmp_path, pin="654321").pin_enrolment_open is False
+
+    make(tmp_path).enrol_pin("123456")
+
+    assert make(tmp_path).pin_enrolment_open is False
+
+
+def test_an_unusable_enrolled_pin_file_still_seals_the_door(tmp_path):
+    """A file that is there but holds nothing usable is not an invitation to enrol again.
+
+    It is no PIN (so nothing authorizes), and `O_EXCL` still refuses to replace it: the
+    owner deletes it or sets `JARVIS_PIN`, which is exactly the one-way door working.
+    """
+    secure_dir(tmp_path / "jarvis")
+    pin_file(tmp_path / "jarvis").write_text("not-a-pin\n", encoding="utf-8")
+
+    settings = make(tmp_path)
+
+    assert settings.pin is None
+    assert settings.pin_source is None
+    assert settings.pin_enrolment_open is False
+    assert settings.enrol_pin("123456") is False
+
+
+def test_a_pin_file_that_cannot_be_read_is_no_pin(tmp_path):
+    """A directory where the file should be: unreadable, and never an exception at import."""
+    secure_dir(tmp_path / "jarvis")
+    pin_file(tmp_path / "jarvis").mkdir()
+
+    assert make(tmp_path).pin is None
+
+
+def test_nothing_of_the_owners_is_read_out_before_a_pin_exists(tmp_path):
+    """`BRIEFING_BEFORE_PIN` says when the PIN stops mattering; with none there is no line.
+
+    Without a PIN a phone call cannot authenticate at all, so the setting that trades
+    reads against a keypad entry has nothing to trade against.
+    """
+    assert make(tmp_path).reads_before_pin is False
+    assert make(tmp_path, pin="654321").reads_before_pin is True
+    assert make(tmp_path, pin="654321", briefing_before_pin=False).reads_before_pin is False
+
+    make(tmp_path).enrol_pin("123456")
+
+    assert make(tmp_path).reads_before_pin is True
