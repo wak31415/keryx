@@ -161,6 +161,10 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Fixed
 
+- `jarvis doctor` died with a pydantic traceback when `JARVIS_PIN` was set to something
+  that is not 6–8 digits — the one state it exists to explain, since `jarvis serve` will
+  not load at all. The fallback it has for that matched the field name and never the
+  `JARVIS_PIN` the error actually carries.
 - `uv run jarvis serve` crashed on Linux unless given `--no-wakeword`; it now says the wake
   word needs macOS and serves the phone channel.
 - A spoken PIN was written into call transcripts, where `recall` could read it back. It is
