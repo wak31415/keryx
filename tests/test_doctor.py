@@ -1,9 +1,11 @@
 """Tests for `jarvis doctor`'s checks: pure functions, no hardware and no network."""
 
+import dataclasses
 from pathlib import Path
 
 import pytest
 
+from jarvis.agents.registry import BACKENDS
 from jarvis.config import Settings
 from jarvis.continuity.memory import memory_path, seed_memory
 from jarvis.doctor import (
@@ -110,63 +112,97 @@ def test_a_missing_openai_key_is_reported_not_raised(healthy, monkeypatch):
     assert (check.ok, check.severity) == (False, "hard")
 
 
-def test_an_api_key_satisfies_subagent_auth(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["subagent auth"]
-    assert (check.ok, "pay-per-token" in check.detail) == (True, True)
+CLAUDE = "Claude Code agent (default)"
 
 
-def test_an_oauth_token_satisfies_subagent_auth(healthy):
+def with_agent(monkeypatch, name, *, cli="/bin/agent", login=True):
+    """Pretend `name`'s CLI is at `cli` (None: missing) and its stored login is `login`."""
+    spec = BACKENDS[name]
+    monkeypatch.setitem(
+        BACKENDS,
+        name,
+        dataclasses.replace(
+            spec,
+            find_cli=lambda: cli,
+            auth=dataclasses.replace(spec.auth, stored_login=lambda: login),
+        ),
+    )
+
+
+def test_an_api_key_satisfies_the_default_agent(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))[CLAUDE]
+    assert (check.ok, "pay per token" in check.detail) == (True, True)
+
+
+def test_an_oauth_token_satisfies_the_default_agent(healthy):
     settings = healthy.model_copy(
         update={"anthropic_api_key": None, "claude_code_oauth_token": "tok"}
     )
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["subagent auth"]
+    check = by_name(run_doctor_checks(settings, probe_mic=False))[CLAUDE]
     assert (check.ok, "subscription" in check.detail) == (True, True)
 
 
-def test_a_cli_login_satisfies_subagent_auth(healthy, monkeypatch):
-    monkeypatch.setattr("jarvis.doctor._has_claude_subscription_login", lambda: True)
+def test_a_stored_login_satisfies_the_default_agent(healthy, monkeypatch):
+    with_agent(monkeypatch, "claude", login=True)
     settings = healthy.model_copy(update={"anthropic_api_key": None})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["subagent auth"]
+    check = by_name(run_doctor_checks(settings, probe_mic=False))[CLAUDE]
     assert (check.ok, "login" in check.detail) == (True, True)
 
 
-def test_no_subagent_auth_at_all_is_a_soft_failure(healthy, monkeypatch):
-    monkeypatch.setattr("jarvis.doctor._has_claude_subscription_login", lambda: False)
+def test_a_default_agent_with_no_auth_at_all_is_a_hard_failure(healthy, monkeypatch):
+    """Every task nobody named an agent for goes to it."""
+    with_agent(monkeypatch, "claude", login=False)
     settings = healthy.model_copy(update={"anthropic_api_key": None})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["subagent auth"]
+    check = by_name(run_doctor_checks(settings, probe_mic=False))[CLAUDE]
+    assert (check.ok, check.severity) == (False, "hard")
+    assert "claude setup-token" in check.detail
+
+
+def test_a_default_agent_that_is_not_installed_says_how_to_install_it(healthy, monkeypatch):
+    with_agent(monkeypatch, "claude", cli=None)
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))[CLAUDE]
+    assert (check.ok, check.severity) == (False, "hard")
+    assert "uv sync" in check.detail
+
+
+def test_the_agents_cli_is_named_when_it_is_there(healthy, monkeypatch):
+    with_agent(monkeypatch, "claude", cli="/opt/claude")
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))[CLAUDE]
+    assert check.detail.startswith("/opt/claude; ")
+
+
+def test_a_second_agent_that_is_not_ready_is_only_a_warning(healthy, monkeypatch):
+    with_agent(monkeypatch, "codex", login=False)
+    settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
+
+    checks = by_name(run_doctor_checks(settings, probe_mic=False))
+    assert (checks["Codex agent"].ok, checks["Codex agent"].severity) == (False, "soft")
+    assert "codex login" in checks["Codex agent"].detail
+    assert checks[CLAUDE].ok is True
+    assert checks["coding agents"].detail == "claude by default; enabled: claude, codex"
+
+
+def test_a_default_agent_that_is_not_enabled_is_a_hard_failure(healthy):
+    settings = healthy.model_copy(
+        update={"agents_enabled": ["claude"], "agent_backend": "codex"}
+    )
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["coding agents"]
+    assert (check.ok, check.severity) == (False, "hard")
+
+
+def test_codex_without_workspace_mcp_has_no_mailbox_and_says_so(healthy, monkeypatch):
+    with_agent(monkeypatch, "codex")
+    settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["Google credentials"]
     assert (check.ok, check.severity) == (False, "soft")
-
-
-def test_the_bundled_claude_cli_counts_even_without_one_on_path(healthy, monkeypatch, tmp_path):
-    """claude-agent-sdk 0.2 ships its own `claude`, and prefers it over PATH."""
-    bundled = tmp_path / "_bundled" / "claude"
-    bundled.parent.mkdir()
-    bundled.write_text("#!/bin/sh\n")
-    monkeypatch.setattr("jarvis.doctor._bundled_claude_cli", lambda: bundled)
-    monkeypatch.setattr("shutil.which", lambda name: None if name == "claude" else "/bin/" + name)
-
-    checks = by_name(run_doctor_checks(healthy, probe_mic=False))
-    assert checks["claude CLI"].ok is True
-    assert str(bundled) in checks["claude CLI"].detail
-    assert checks["tunnel"].ok is True
-
-
-def test_no_claude_cli_anywhere_is_a_soft_failure(healthy, monkeypatch):
-    monkeypatch.setattr("jarvis.doctor._bundled_claude_cli", lambda: None)
-    monkeypatch.setattr("shutil.which", lambda name: None if name == "claude" else "/bin/" + name)
-
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["claude CLI"]
-    assert (check.ok, check.severity) == (False, "soft")
-
-
-def test_a_claude_cli_on_path_is_enough(healthy, monkeypatch):
-    monkeypatch.setattr("jarvis.doctor._bundled_claude_cli", lambda: None)
-
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["claude CLI"]
-    assert (check.ok, check.detail) == (True, "/usr/local/bin/claude")
+    assert "jarvis setup-google" in check.detail
 
 
 def test_cloudflared_satisfies_the_tunnel_check(healthy, monkeypatch):

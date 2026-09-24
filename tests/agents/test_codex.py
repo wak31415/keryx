@@ -488,15 +488,21 @@ async def test_the_token_tier_points_every_run_at_that_home(settings, tmp_path, 
 
 
 @pytest.mark.parametrize(
-    ("code", "stdout", "expected"),
-    [(0, "Logged in using ChatGPT\n", True), (1, "Not logged in\n", False)],
+    ("code", "stdout", "stderr", "expected"),
+    [
+        # Codex 0.156 answers on stderr; stdout is checked too, in case that moves.
+        (0, "", "Logged in using ChatGPT\n", True),
+        (0, "Logged in using an API key - sk-…\n", "", True),
+        (1, "", "Not logged in\n", False),
+        (0, "", "Not logged in\n", False),
+    ],
 )
-def test_the_stored_login_is_read_from_login_status(monkeypatch, code, stdout, expected):
+def test_the_stored_login_is_read_from_login_status(monkeypatch, code, stdout, stderr, expected):
     monkeypatch.setattr(codex_module, "codex_cli", lambda: "/usr/bin/codex")
 
     def run(argv, **kwargs):
         assert argv == ["/usr/bin/codex", "login", "status"]
-        return subprocess.CompletedProcess(argv, code, stdout=stdout, stderr="")
+        return subprocess.CompletedProcess(argv, code, stdout=stdout, stderr=stderr)
 
     assert codex_stored_login(run) is expected
 

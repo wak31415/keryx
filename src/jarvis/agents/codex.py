@@ -117,6 +117,7 @@ def codex_stored_login(run: Callable[..., Any] = subprocess.run) -> bool:
     """Best effort: does `codex login status` say there is a login?
 
     It is a local file check inside the CLI — no network — and answers in milliseconds.
+    Codex 0.156 prints the answer on stderr, so both streams are read.
     """
     binary = codex_cli()
     if binary is None:
@@ -127,7 +128,8 @@ def codex_stored_login(run: Callable[..., Any] = subprocess.run) -> bool:
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return result.returncode == 0 and "logged in" in (result.stdout or "").lower()
+    said = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
+    return result.returncode == 0 and "logged in" in said and "not logged in" not in said
 
 
 CODEX_AUTH = AuthSource(

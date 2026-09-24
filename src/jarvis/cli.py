@@ -19,6 +19,7 @@ import typer
 import uvicorn
 from pydantic import ValidationError
 
+from jarvis.agent_setup import SetupError, run_setup_agent
 from jarvis.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from jarvis.config import PLACEHOLDER_KEY, Settings, env_var_name, load_settings
@@ -878,6 +879,60 @@ def doctor(
         typer.echo(f"\n{failed} check(s) failed.")
         raise typer.Exit(1)
     typer.echo("\nall good.")
+
+
+@app.command("setup-agent")
+def setup_agent(
+    default: Annotated[
+        str | None,
+        typer.Option("--default", help="The agent that does the work when none is named."),
+    ] = None,
+    enable: Annotated[
+        list[str] | None,
+        typer.Option("--enable", help="Another agent a task may be sent to; repeatable."),
+    ] = None,
+    no_smoke: Annotated[
+        bool, typer.Option("--no-smoke", help="Skip running one real task on each agent.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Ask nothing and sign nothing in: report.")
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print one JSON document instead; needs --yes.")
+    ] = False,
+) -> None:
+    """Choose the coding agent Jarvis hands work to, sign it in, and prove it runs.
+
+    Shows which agents are installed and signed in, asks which should do the work, runs
+    the login each one is missing (an API key is a line for you to add — this never reads
+    or writes .env), runs one real task through each as a smoke test, and prints the
+    AGENT_BACKEND= and AGENTS_ENABLED= lines to paste.
+
+    For an agent setting this up: `--yes --json` prints one JSON document. Exit 0 means
+    every chosen agent can run a task; exit 1 means one cannot (not installed, not signed
+    in, or failed its smoke test); exit 2 means the command line itself is wrong.
+    """
+    if as_json and not yes:
+        typer.echo("--json leaves nowhere to print a question: add --yes", err=True)
+        raise typer.Exit(2)
+    settings = _configure_readonly()
+    try:
+        code = run_setup_agent(
+            settings,
+            default=default.strip().lower() if default else None,
+            enable=[name.strip().lower() for name in enable] if enable else None,
+            smoke=not no_smoke,
+            yes=yes,
+            as_json=as_json,
+            echo=typer.echo,
+            ask=lambda text, preset: typer.prompt(text, default=preset),
+            confirm=lambda text, preset: typer.confirm(text, default=preset),
+        )
+    except SetupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    if code:
+        raise typer.Exit(code)
 
 
 @app.command("setup-google")

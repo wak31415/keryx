@@ -74,6 +74,51 @@ def test_help_lists_the_commands():
         assert command in result.output
 
 
+def test_setup_agent_is_a_command_with_its_switches():
+    assert "setup-agent" in runner.invoke(app, ["--help"]).output
+    result = runner.invoke(app, ["setup-agent", "--help"])
+
+    assert result.exit_code == 0
+    for option in ("--default", "--enable", "--no-smoke", "--yes", "--json"):
+        assert option in result.output
+
+
+def test_setup_agent_json_cannot_ask_so_it_needs_yes(settings_stub):
+    result = runner.invoke(app, ["setup-agent", "--json"])
+
+    assert result.exit_code == 2
+    assert "add --yes" in result.output
+
+
+def test_setup_agent_hands_its_flags_over_and_exits_with_the_result(settings_stub, monkeypatch):
+    seen: dict = {}
+
+    def fake(settings, **kw):
+        seen.update(kw)
+        return 1
+
+    monkeypatch.setattr("jarvis.cli.run_setup_agent", fake)
+
+    result = runner.invoke(
+        app, ["setup-agent", "--default", " Codex ", "--enable", "CLAUDE", "--no-smoke", "-y"]
+    )
+
+    assert result.exit_code == 1
+    assert (seen["default"], seen["enable"], seen["smoke"], seen["yes"]) == (
+        "codex",
+        ["claude"],
+        False,
+        True,
+    )
+
+
+def test_setup_agent_refuses_an_agent_it_does_not_know(settings_stub):
+    result = runner.invoke(app, ["setup-agent", "--default", "gemini", "--yes", "--no-smoke"])
+
+    assert result.exit_code == 2
+    assert "no agent called 'gemini'" in result.output
+
+
 def test_version_prints_the_installed_package_version():
     """The bug report template asks for it."""
     result = runner.invoke(app, ["--version"])
