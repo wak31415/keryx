@@ -16,6 +16,7 @@ from jarvis.config import (
     Settings,
     load_settings,
     pin_file,
+    read_enrolled_pin,
     secure_dir,
     secure_file,
 )
@@ -678,3 +679,44 @@ def test_a_pin_replaced_on_a_copy_of_the_settings_is_not_the_enrolled_one(tmp_pa
 
     assert enrolled.model_copy(update={"pin": "654321"}).pin_source == PIN_FROM_ENV
     assert enrolled.model_copy(update={"pin": None}).pin_source is None
+
+
+def test_an_enrolment_that_cannot_open_the_file_refuses_rather_than_raising(tmp_path, monkeypatch):
+    """A full disk or a mode nobody expected is a refusal the caller can say out loud.
+
+    Nothing here may raise into a live call, and nothing may report a PIN that was not
+    written: the caller is told it could not be saved, and the next call may still enrol.
+    """
+
+    def unopenable(*_args, **_kwargs):
+        raise OSError("no")
+
+    monkeypatch.setattr(os, "open", unopenable)
+    settings = make(tmp_path)
+
+    assert settings.enrol_pin("123456") is False
+    assert settings.pin is None
+    assert settings.pin_source is None
+
+
+def test_a_write_that_cannot_finish_leaves_no_usable_pin_and_says_so(tmp_path, monkeypatch):
+    """Half a PIN is not a PIN, and the half-written file is deliberately left alone.
+
+    "Delete the enrolled PIN" is the one operation this module must not know how to do, so
+    what is left is a machine in the sealed state — no PIN, no enrolment — which
+    `jarvis doctor` reports and only the owner clears.
+    """
+
+    def fails_midway(handle, *_args, **_kwargs):
+        os.close(handle)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "fdopen", fails_midway)
+    settings = make(tmp_path)
+
+    assert settings.enrol_pin("123456") is False
+
+    assert settings.pin is None
+    assert read_enrolled_pin(tmp_path / "jarvis") is None
+    assert pin_file(tmp_path / "jarvis").exists()  # left exactly where it fell
+    assert make(tmp_path).pin_enrolment_open is False
