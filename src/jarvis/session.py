@@ -363,7 +363,7 @@ class VoiceSession:
         """
         if not self.is_live or self.trust < needs:
             return False
-        if self.trust is TrustLevel.NONE and not self._settings.briefing_before_pin:
+        if self.trust is TrustLevel.NONE and not self._settings.reads_before_pin:
             # Only news gets this far, and the owner has said a stranger may not hear it.
             return False
         log.info("session %s announcing: %s", self.session_id, text)
@@ -489,13 +489,13 @@ class VoiceSession:
         except Exception:
             log.exception("session %s could not build its briefing", self.session_id)
             return Briefing()
-        if self.trusted or self._settings.briefing_before_pin:
+        if self.trusted or self._settings.reads_before_pin:
             return briefing
         return briefing.without_memory()
 
     def _may_hear_briefing(self) -> bool:
         """Whether this call may be told anything it has not proved a right to."""
-        return self.trust >= TrustLevel.POSSESSION or self._settings.briefing_before_pin
+        return self.trust >= TrustLevel.POSSESSION or self._settings.reads_before_pin
 
     async def _brief_after_pin(self) -> None:
         """Hand a call what the PIN was holding back: the full prompt, and a nudge if due.

@@ -63,9 +63,9 @@ _MEMORY_HEADING = (
 FIRST_CALL_PROMPT = "first_call.md"
 _NO_SKILLS = "none installed"
 _NO_BRIEFS = "nothing written down yet"
-#: What a withheld prompt says in place of anything discovered from their machine. Only
-#: reached with `BRIEFING_BEFORE_PIN` off: on, a call below `FULL` is handed the standing
-#: context like any other (`jarvis.continuity.briefing`).
+#: What a withheld prompt says in place of anything discovered from their machine.
+#: Reached two ways: `BRIEFING_BEFORE_PIN` off, and a machine with no PIN at all, where
+#: there is nothing to be held back *until* and so everything is (`Settings.reads_before_pin`).
 _WITHHELD = "held back until the PIN"
 
 #: The "How much this call has proved" line, per level. A label, not a sentence: the
@@ -215,7 +215,7 @@ def render_voice_prompt(
     The first-call introduction is the one thing `FULL` still buys outright: possession
     says whose phone answered, not that an interview is wanted.
     """
-    withheld = trust is not TrustLevel.FULL and not settings.briefing_before_pin
+    withheld = trust is not TrustLevel.FULL and not settings.reads_before_pin
     if withheld:
         project_names = skill_lines = brief_blocks = _WITHHELD
         memory = None

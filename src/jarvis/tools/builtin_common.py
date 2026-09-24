@@ -326,7 +326,7 @@ def read_gate(ctx: ToolContext, settings: Settings) -> dict | None:
     quantity of exposure, and the one thing on the phone a caller-id spoofer could
     actually mine. It keeps `pin_gate`.
     """
-    if settings.briefing_before_pin:
+    if settings.reads_before_pin:
         return None
     return pin_gate(ctx, settings)
 

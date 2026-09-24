@@ -30,6 +30,7 @@ from jarvis.tools.builtin_common import (
     CALLBACK_SET_MESSAGE,
     KEYPRESS_REQUIRED_MESSAGE,
     PIN_INVALID_MESSAGE,
+    PIN_MISSING_MESSAGE,
     PIN_OK_MESSAGE,
     PIN_REQUIRED_MESSAGE,
     REPORTED_MESSAGE,
@@ -373,8 +374,7 @@ def _everything(make_tools, **overrides):
         billing=billing_factory(a_report()),
         cluster=both_clusters(),
         approvals=approvals,
-        pin="123456",
-        **overrides,
+        **{"pin": "123456", **overrides},
     )
     return tools, slack, restarter, recaller, approvals
 
@@ -425,6 +425,28 @@ async def test_with_the_briefing_held_back_every_tool_but_five_asks_for_the_pin(
             assert result.get("status") != "pin_required", name
         else:
             assert result == {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}, name
+
+
+async def test_with_no_pin_on_the_machine_even_the_read_only_tools_are_refused(make_tools):
+    """The prompt is withheld before a PIN exists, and these read the same material back.
+
+    A tool that answered here would be the hole in exactly the thing that withholding is
+    for: until a PIN exists nothing can authenticate, so nothing of the owner's is read
+    out. `PIN_MISSING_MESSAGE` sends the model to ask them to key a new one in.
+    """
+    tools, *_ = _everything(make_tools, pin=None)
+
+    for name in sorted(READ_TOOLS):
+        result = await tools.call(
+            name, dict(EVERY_ARGUMENT), channel="phone", caller="+15550001111", authorized=False
+        )
+        assert result == {"status": "refused", "message": PIN_MISSING_MESSAGE}, name
+
+    for name in sorted(UNGATED - {"submit_pin"}):
+        result = await tools.call(
+            name, dict(EVERY_ARGUMENT), channel="phone", caller="+15550001111", authorized=False
+        )
+        assert result.get("status") not in ("refused", "pin_required"), name
 
 
 async def test_recall_needs_the_pin_however_much_the_briefing_gives_away(make_tools):

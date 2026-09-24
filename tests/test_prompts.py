@@ -11,6 +11,8 @@ from jarvis.prompts import load_prompt, render_voice_prompt
 from jarvis.skills import Skill
 from jarvis.trust import TrustLevel
 
+PIN = "123456"
+
 
 def test_voice_prompt_is_packaged_and_loadable():
     text = load_prompt("voice_system.md")
@@ -147,6 +149,7 @@ def owners_world(settings, tmp_path):
         "---\nname: wandb-query\ndescription: Query W&B runs.\n---\n", encoding="utf-8"
     )
     settings.projects, settings.projects_root, settings.skills_dir = {"orchard": "/x"}, root, skills
+    settings.pin = PIN  # a machine past its first call; the PIN-less one is its own test
     return settings
 
 
@@ -190,6 +193,44 @@ def test_with_the_briefing_held_back_the_prompt_carries_none_of_it(owners_world,
         assert secret not in rendered, secret
     assert "held back until the PIN" in rendered
     assert "{" not in rendered and "}" not in rendered
+
+
+@pytest.mark.parametrize("trust", [TrustLevel.NONE, TrustLevel.POSSESSION])
+def test_with_no_pin_on_the_machine_nothing_of_theirs_is_rendered(owners_world, trust):
+    """The hole `BRIEFING_BEFORE_PIN` leaves on a machine that has never had a PIN.
+
+    The setting trades reads for a keypad entry, which presumes there is a keypad entry to
+    make. With no PIN anywhere a call cannot authenticate at all, so a PIN-less install
+    would read the memory out to any allowed caller for ever. Withheld until one exists.
+    """
+    owners_world.pin = None
+    assert owners_world.briefing_before_pin is True
+
+    rendered = render_voice_prompt(
+        owners_world,
+        channel="phone",
+        caller="+15550001111",
+        trust=trust,
+        pending="- task 41 (finished) — their bank balance",
+        memory="They are waiting on the letter from the lawyer.",
+    )
+
+    for secret in ("weather-station", "rain gauge", "orchard", "wandb-query", "lawyer"):
+        assert secret not in rendered, secret
+    assert "held back until the PIN" in rendered
+    assert "{" not in rendered and "}" not in rendered
+
+
+def test_the_full_prompt_is_unmoved_by_there_being_no_pin_yet(owners_world):
+    """The local microphone is `FULL` by construction and reads its own machine."""
+    owners_world.pin = None
+
+    rendered = render_voice_prompt(
+        owners_world, channel="local", caller=None, trust=TrustLevel.FULL, memory="The lawyer."
+    )
+
+    for known in ("weather-station", "orchard", "wandb-query", "lawyer"):
+        assert known in rendered, known
 
 
 @pytest.mark.parametrize("trust", [TrustLevel.NONE, TrustLevel.POSSESSION])
@@ -281,6 +322,10 @@ def _rendered(settings, **kwargs) -> str:
         channel="phone", caller=None, trust=TrustLevel.FULL, projects=[], opening_context=None
     )
     values.update(kwargs)
+    # A machine with a PIN, which is every machine past its first call: with none at all
+    # the prompt is withheld whatever `BRIEFING_BEFORE_PIN` says, and the tests for that
+    # state name it (`test_with_no_pin_yet_...`).
+    settings.pin = settings.pin or PIN
     return render_voice_prompt(settings, **values)
 
 
