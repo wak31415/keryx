@@ -128,6 +128,19 @@ def test_serve_refuses_to_answer_the_phone_without_signature_checks_behind_a_tun
     assert "config" not in built  # no server was ever built
 
 
+def test_serve_refuses_a_default_agent_that_is_not_enabled(settings_stub, monkeypatch):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    monkeypatch.setattr(settings_stub, "agents_enabled", ["claude"])
+    monkeypatch.setattr(settings_stub, "agent_backend", "codex")
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 2, result.output
+    assert "AGENT_BACKEND is codex" in result.output
+    assert "config" not in built
+
+
 def test_serve_without_the_phone_does_not_care_about_signature_checks(
     settings_stub, monkeypatch
 ):

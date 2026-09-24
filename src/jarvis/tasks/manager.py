@@ -67,6 +67,8 @@ MAX_LISTED_CANDIDATES = 10
 MAX_RESUMED = 20
 
 UNKNOWN_ERROR = "unknown error"
+#: What is said about a run the wall-clock cap stopped.
+TIMEOUT_SUMMARY = "The task ran for {duration} without finishing, so I stopped it."
 FAILURE_SUMMARY = "The task failed: {error}"
 #: Heads the prompt of a re-run carrying the follow-ups that arrived mid-turn.
 LIVE_FOLLOWUP_PREAMBLE = "Follow-up from the user:"
@@ -131,6 +133,17 @@ def build_prompt(task: Task) -> str:
         cwd=task.cwd or "the current directory",
         project_clause=f" (project '{task.project}')" if task.project else "",
     )
+
+
+def _duration(seconds: float) -> str:
+    """`seconds` as a speakable length: "3 hours", "90 minutes", "45 seconds"."""
+    if seconds >= 3600 and seconds % 3600 == 0:
+        hours = int(seconds // 3600)
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+    if seconds >= 60:
+        minutes = round(seconds / 60)
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+    return f"{seconds:.0f} seconds"
 
 
 def _normalize(name: str) -> str:
@@ -347,7 +360,7 @@ class TaskManager:
         # read here, not at spawn time, so follow-ups arriving while the run was still
         # queued are all included.
         prompt = self._resume_pending.pop(task_id, None) or build_prompt(task)
-        result = await session.run(prompt, on_progress=partial(self._on_progress, task_id))
+        result = await self._run_turn(task_id, session, prompt)
         result = await self._run_live_followups(task, result)
 
         if task_id in self._cancel_requested:
@@ -382,8 +395,30 @@ class TaskManager:
             await self._close_session(task.id)
             session = await self._runner.open(task, resume=resume)
             self._live[task.id] = session
-            result = await session.run(prompt, on_progress=partial(self._on_progress, task.id))
+            result = await self._run_turn(task.id, session, prompt)
         return result
+
+    async def _run_turn(self, task_id: int, session: AgentSession, prompt: str) -> RunResult:
+        """One `session.run`, cut off at `SUBAGENT_TIMEOUT_S` whichever agent it is on.
+
+        The cap lives here rather than in a runner so that it is one rule for every agent:
+        Claude also has a turn and a dollar cap, but Codex has neither, and a run nobody
+        bounds is a run that can hold a semaphore slot for ever. The session is closed by
+        `_run` on the way out, which is what actually stops the process.
+        """
+        run = session.run(prompt, on_progress=partial(self._on_progress, task_id))
+        limit = self._settings.subagent_timeout_s
+        if not limit:
+            return await run
+        try:
+            return await asyncio.wait_for(run, limit)
+        except TimeoutError:
+            log.warning("task %s ran past its %.0fs limit and was stopped", task_id, limit)
+            return RunResult(
+                ok=False,
+                spoken_summary=TIMEOUT_SUMMARY.format(duration=_duration(limit)),
+                error=f"timed out after {limit:.0f}s (SUBAGENT_TIMEOUT_S)",
+            )
 
     async def _finish(self, task: Task, result: RunResult) -> None:
         """Write the report, close the row out as `done`/`failed` and publish the event."""

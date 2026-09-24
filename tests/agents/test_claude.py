@@ -6,6 +6,7 @@ exercised against the actual shapes the SDK emits.
 """
 
 import stat
+import subprocess
 
 import pytest
 from claude_agent_sdk.types import (
@@ -493,3 +494,49 @@ def test_build_options_hands_the_subagent_the_owners_name(settings):
     options = build_options(make_task(), settings)
 
     assert "dispatched on Ada's behalf" in options.system_prompt["append"]
+
+
+# ------------------------------------------------------------------ install and login
+
+
+def test_the_claude_cli_is_the_one_the_sdk_bundles(monkeypatch, tmp_path):
+    from jarvis.agents import claude as claude_module
+
+    bundled = tmp_path / "_bundled" / "claude"
+    bundled.parent.mkdir()
+    bundled.write_text("")
+    monkeypatch.setattr(claude_module.claude_agent_sdk, "__file__", str(tmp_path / "x.py"))
+    assert claude_module.claude_cli() == str(bundled)
+
+    bundled.unlink()
+    monkeypatch.setattr(claude_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert claude_module.claude_cli() == "/usr/bin/claude"
+
+
+def test_a_stored_login_is_the_credentials_file_or_the_keychain(monkeypatch, tmp_path):
+    from jarvis.agents import claude as claude_module
+
+    monkeypatch.setattr(claude_module.Path, "home", lambda: tmp_path)
+    calls: list[list[str]] = []
+
+    def keychain(code):
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if code is None:
+                raise OSError("no security binary")
+            return subprocess.CompletedProcess(argv, code)
+
+        return run
+
+    monkeypatch.setattr(claude_module.subprocess, "run", keychain(0))
+    assert claude_module.claude_stored_login() is True
+    monkeypatch.setattr(claude_module.subprocess, "run", keychain(44))
+    assert claude_module.claude_stored_login() is False
+    monkeypatch.setattr(claude_module.subprocess, "run", keychain(None))
+    assert claude_module.claude_stored_login() is False
+
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / ".credentials.json").write_text("{}")
+    calls.clear()
+    assert claude_module.claude_stored_login() is True
+    assert calls == []  # the file answers; the keychain is never asked

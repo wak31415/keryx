@@ -47,6 +47,36 @@ def test_agents_enabled_parses_a_comma_list_in_any_case(monkeypatch, tmp_path):
     assert settings.agent_backend == "claude"
 
 
+def test_a_default_agent_the_enabled_set_leaves_out_is_refused(settings):
+    settings.agents_enabled = ["claude"]
+    settings.agent_backend = "codex"
+
+    refusal = settings.agent_refusal()
+
+    assert "AGENT_BACKEND is codex" in refusal
+    assert "AGENTS_ENABLED (claude)" in refusal
+
+
+def test_the_enabled_agents_put_the_default_first_and_say_each_once(settings):
+    settings.agents_enabled = ["claude", "codex", "claude"]
+    settings.agent_backend = "codex"
+
+    assert settings.enabled_agents == ("codex", "claude")
+    assert settings.agent_refusal() is None
+
+
+def test_the_codex_credentials_are_never_in_the_repr(tmp_path):
+    settings = Settings(
+        _env_file=None,
+        openai_api_key="t",
+        data_dir=tmp_path,
+        codex_api_key="sk-codex-hidden",
+        codex_access_token="token-hidden",
+    )
+
+    assert "hidden" not in repr(settings)
+
+
 def test_an_agent_jarvis_does_not_know_fails_the_load(tmp_path):
     with pytest.raises(ValidationError):
         Settings(_env_file=None, openai_api_key="t", data_dir=tmp_path, agents_enabled="gemini")

@@ -18,12 +18,17 @@ gives us `max_budget_usd`, `max_turns`, the lifted message-size limit and typed 
 
 import json
 import logging
+import shutil
+import subprocess
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Protocol
 
+import claude_agent_sdk
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
+from jarvis.agents.auth import AuthSource, child_env, resolve_auth
 from jarvis.agents.base import (
     AgentRunner,
     AgentSession,
@@ -71,6 +76,42 @@ SUBAGENT_MAX_BUFFER_BYTES = 64 * 1024 * 1024
 _MAX_TOOL_INPUT_CHARS = 200
 
 
+def claude_cli() -> str | None:
+    """The `claude` binary the SDK will run: its bundled copy, else one on PATH."""
+    bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
+    if bundled.is_file():
+        return str(bundled)
+    return shutil.which("claude")
+
+
+def claude_stored_login() -> bool:
+    """Best-effort: does the Claude CLI have a stored subscription login on this machine?"""
+    if (Path.home() / ".claude" / ".credentials.json").exists():
+        return True
+    try:  # macOS stores the login in the Keychain instead of a file
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code-credentials"],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+CLAUDE_AUTH = AuthSource(
+    api_key_setting="anthropic_api_key",
+    api_key_env="ANTHROPIC_API_KEY",
+    token_setting="claude_code_oauth_token",
+    token_env="CLAUDE_CODE_OAUTH_TOKEN",
+    stored_login=claude_stored_login,
+    login_hint=(
+        "run `claude` and `/login` once, or `claude setup-token` for a headless machine,"
+        " or set ANTHROPIC_API_KEY"
+    ),
+)
+
+
 class SdkClient(Protocol):
     """The slice of `ClaudeSDKClient` this module uses (injectable for tests)."""
 
@@ -116,12 +157,10 @@ def build_options(
     if settings.google_workspace_mcp:
         options["mcp_servers"] = {"google": google_mcp_server_config(settings)}
         options["allowed_tools"] = list(GOOGLE_MCP_TOOLS)
-    if settings.anthropic_api_key:
-        options["env"] = {"ANTHROPIC_API_KEY": settings.anthropic_api_key}
-    elif settings.claude_code_oauth_token:
-        options["env"] = {"CLAUDE_CODE_OAUTH_TOKEN": settings.claude_code_oauth_token}
-    # With neither set, the spawned CLI falls back to the user's stored Claude
-    # subscription login — the default, so subagents don't bill per token.
+    # With neither key nor token set, the spawned CLI falls back to the user's stored
+    # Claude subscription login — the default, so subagents don't bill per token.
+    if env := child_env(resolve_auth(CLAUDE_AUTH, settings, probe=False)):
+        options["env"] = env
     return ClaudeAgentOptions(**options)
 
 

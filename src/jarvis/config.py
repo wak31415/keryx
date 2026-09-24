@@ -30,6 +30,9 @@ OWNER_FALLBACK = "the owner"
 OPTIONAL_STR_FIELDS = (
     "anthropic_api_key",
     "claude_code_oauth_token",
+    "codex_api_key",
+    "codex_access_token",
+    "codex_model",
     "twilio_account_sid",
     "twilio_auth_token",
     "twilio_number",
@@ -63,7 +66,7 @@ PIN_PATTERN = re.compile(r"\d{6,8}")
 PIN_RULE = "must be 6 to 8 digits, and nothing but digits"
 
 #: The coding agents a task can run on (jarvis/agents/registry.py has one entry per name).
-AgentName = Literal["claude"]
+AgentName = Literal["claude", "codex"]
 
 #: What a cluster name or partition has to be. Both are handed to a remote shell, so
 #: anything but a bare word is refused when the settings load rather than on a call.
@@ -129,6 +132,10 @@ class Settings(BaseSettings):
     agent_backend: AgentName = "claude"
     #: Blank is just `AGENT_BACKEND`. `jarvis serve` refuses a default that is not in here.
     agents_enabled: Annotated[list[AgentName], NoDecode] = Field(default_factory=list)
+    #: The longest one subagent run may take, whichever agent it is on, in seconds; 0 is no
+    #: limit. Claude also has a turn cap and a dollar cap below; Codex has neither, so this is
+    #: what bounds it. Generous, because real work — a test suite, a refactor — takes a while.
+    subagent_timeout_s: float = Field(default=3 * 60 * 60, ge=0)
 
     # Claude Agent SDK. Subagent auth, in order of precedence: ANTHROPIC_API_KEY
     # (pay-per-token) > CLAUDE_CODE_OAUTH_TOKEN (subscription, headless; from
@@ -138,6 +145,15 @@ class Settings(BaseSettings):
     subagent_model: str = "claude-opus-5"
     subagent_max_turns: int = 200
     subagent_max_budget_usd: float = 10.0
+
+    # Codex CLI. Auth, in the same order as Claude's: CODEX_API_KEY (pay per token) >
+    # CODEX_ACCESS_TOKEN (headless; logged in once into Jarvis's own CODEX_HOME) > the Codex
+    # CLI's stored login (`codex login`, the ChatGPT plan). OPENAI_API_KEY is the voice
+    # model's and is never borrowed for this: that would move a subscription onto billing.
+    codex_api_key: str | None = Field(default=None, repr=False)
+    codex_access_token: str | None = Field(default=None, repr=False)
+    #: Blank is Codex's own default model.
+    codex_model: str | None = None
 
     # Billing (jarvis/integrations/billing.py, behind the voice model's `check_billing`). Read-only,
     # and on an *admin*-scoped credential: the key the voice agent talks to the model with

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from jarvis.agents.router import RoutingAgentRunner
 from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
 from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult
@@ -22,6 +23,7 @@ from jarvis.tasks.manager import (
     TaskLimitError,
     TaskManager,
     UnknownProjectError,
+    _duration,
     build_prompt,
 )
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
@@ -479,6 +481,56 @@ async def test_followup_on_a_finished_task_resumes_the_claude_session(make_harne
     assert harness.runner.opened[1][1] == "fake-session-1"
     assert harness.runner.sessions[1].prompts == ["one more thing"]
     assert harness.events.of(TaskStarted) == [TaskStarted(task.id), TaskStarted(task.id)]
+
+
+async def test_a_followup_resumes_on_the_agent_that_ran_the_task(make_harness):
+    """Not on today's default: a session id belongs to the agent that issued it."""
+    claude, codex = FakeAgentRunner(), FakeAgentRunner()
+    router = RoutingAgentRunner({"claude": claude, "codex": codex}, default="claude")
+    harness = make_harness(router, agents_enabled=["claude", "codex"])
+
+    task = await dispatch(harness.manager, agent="codex")
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+    harness.settings.agent_backend = "claude"  # the default moves on in the meantime
+    await harness.manager.followup(task.id, "one more thing")
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert [resume for _, resume in codex.opened] == [None, "fake-session-1"]
+    assert claude.opened == []
+
+
+async def test_a_run_past_the_time_limit_is_stopped_and_says_so(make_harness):
+    harness = make_harness(FakeAgentRunner(delay_s=5), subagent_timeout_s=0.05)
+
+    task = await dispatch(harness.manager)
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert finished.status is TaskStatus.FAILED
+    assert finished.error == "timed out after 0s (SUBAGENT_TIMEOUT_S)"
+    assert finished.summary == "The task ran for 0 seconds without finishing, so I stopped it."
+    assert harness.runner.sessions[0].closed is True
+
+
+async def test_no_time_limit_means_none(make_harness):
+    harness = make_harness(FakeAgentRunner(delay_s=0.05), subagent_timeout_s=0)
+
+    task = await dispatch(harness.manager)
+
+    assert (await harness.manager.wait_for(task.id, timeout=WAIT)).status is TaskStatus.DONE
+
+
+@pytest.mark.parametrize(
+    ("seconds", "spoken"),
+    [
+        (10800, "3 hours"),
+        (3600, "1 hour"),
+        (5400, "90 minutes"),
+        (60, "1 minute"),
+        (45, "45 seconds"),
+    ],
+)
+def test_the_time_limit_is_said_the_way_a_person_would(seconds, spoken):
+    assert _duration(seconds) == spoken
 
 
 async def test_followup_without_a_session_id_starts_a_fresh_run(make_harness):

@@ -16,12 +16,12 @@ can find out why a tool is missing without reading the source.
 
 import shutil
 import stat
-import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from jarvis.agents.claude import claude_stored_login as _has_claude_subscription_login
 from jarvis.config import (
     DATA_DIR_MODE,
     OWNER_FALLBACK,
@@ -144,21 +144,6 @@ def _secret_check(name: str, value: str | None, consequence: str, *, reveal: boo
     if not value:
         return Check(name, False, f"not set — {consequence}")
     return Check(name, True, value if reveal else "set")
-
-
-def _has_claude_subscription_login() -> bool:
-    """Best-effort: does the Claude CLI have a stored subscription login on this machine?"""
-    if (Path.home() / ".claude" / ".credentials.json").exists():
-        return True
-    try:  # macOS stores the login in the Keychain instead of a file
-        result = subprocess.run(
-            ["security", "find-generic-password", "-s", "Claude Code-credentials"],
-            capture_output=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
 
 
 def _subagent_auth_check(settings: Settings) -> Check:
