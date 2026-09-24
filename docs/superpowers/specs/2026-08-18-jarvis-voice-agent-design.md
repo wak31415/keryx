@@ -642,6 +642,25 @@ class SessionRegistry:
   busy `<Say>`, and the media socket counts again after the token. `jarvis serve` refuses
   the phone channel with `DEBUG_SKIP_TWILIO_VALIDATION` on and `PUBLIC_HOST` set.
   *Amended 2026-09-16:* the gate is on every tool but five, not only on dispatch — see the next ruling.
+  *Amended 2026-09-24:* `JARVIS_PIN` is no longer the only source. With it unset,
+  `Settings.pin` resolves from `data_dir/pin` — the PIN a first call enrolled — so every
+  existing reader of `settings.pin` sees one field with two sources, and the environment
+  always wins. **Enrolment is a one-way door.** While no PIN exists anywhere
+  (`Settings.pin_enrolment_open`), the keypad *sets* a PIN rather than giving one: six to
+  eight digits, keyed twice and compared, never spoken — `submit_pin` cannot enrol, because
+  transcription mishears digits and a mis-set PIN nothing can change is the worst outcome
+  here — and never shown to the model, the transcript or a log line.
+  `config.write_enrolled_pin` creates the file with `O_CREAT | O_EXCL`, so the *kernel* and
+  not a policy check is what makes a second write impossible; there is deliberately no
+  setter in any tool or CLI command, and an enrolled PIN changes only by the owner deleting
+  the file or setting `JARVIS_PIN`. Any `data_dir/pin` shuts the door, usable or not (an
+  unusable one is no PIN *and* no enrolment, and `jarvis doctor` says so). Three unusable
+  entries drop enrolment for the rest of the call — a cap, not a lockout: nothing has been
+  set, so `PinGuard` counts nothing and the next call may still enrol. A successful one
+  authorizes the call and re-renders the prompt exactly as an accepted PIN does, so the
+  briefing it was not allowed to hear arrives on the same turn. `Settings.enrol_pin` also
+  adopts the PIN in the process that wrote it, because `jarvis serve` holds one `Settings`
+  from startup. The accepted risk is the owner's ruling and is in §5.
 - **Trust has three levels (added 2026-09-19).** One bit — `authorized`, earned only by the
   PIN — was both too coarse and wrong about direction, and this ruling amends the one below
   it rather than replacing it. `jarvis/trust.py` has `TrustLevel.NONE` (an inbound call
@@ -672,6 +691,14 @@ class SessionRegistry:
      tell the model its instructions are incomplete — whatever the model is told has to match
      what it was handed, in either direction. *Was:* the digest alone moved, and the memory,
      briefs and skills stayed behind the PIN as the map of the owner's world.
+     *Amended 2026-09-24: the ruling presumes a PIN exists.* It trades a read against a
+     keypad entry, and on a machine that has never had a PIN there is no entry to make and
+     no authentication on the phone at all, so an allowed caller would have been handed the
+     memory, the digest and the project names on every call for ever. The predicate is
+     therefore `Settings.reads_before_pin` (`briefing_before_pin and bool(pin)`), asked by
+     the prompt, the session's briefing and `read_gate` alike; the `withheld` rendering is
+     reused unchanged, with one substitution — a call that may *enrol* is told that instead
+     of being told to wait for a PIN nobody has set.
      `announce(text, needs=…)` carries the same split: a finished task
      needs `NONE`, a prompt waiting on their screen needs a call that could answer it.
      `Announced.delivered` (was `on_phone`) requires `POSSESSION`, because a stranger hearing
@@ -779,7 +806,7 @@ class SessionRegistry:
 | `ALLOWED_CALLERS` | `allowed_callers: list[str]` (comma-separated E.164) | `[]` |
 | `OWNER_NUMBER` | `owner_number` | first of `allowed_callers` |
 | `OWNER_NAME` | `owner_name` (what the prompts call the owner; read through `owner_label`) | `None` → "the owner" (added 2026-09-16) |
-| `JARVIS_PIN` | `pin` (**6-8 digits** when set; refused otherwise) | `None` (every dispatch refused on phone if unset) |
+| `JARVIS_PIN` | `pin` (**6-8 digits** when set; refused otherwise). Always wins over `data_dir/pin`, the PIN a first call enrolled (§3.3, amended 2026-09-24); `pin_source` says which, and never the digits | `None` → `data_dir/pin` if one was enrolled, else no PIN: nothing of the owner's is read out on the phone and every dispatch is refused |
 | `BRIEFING_BEFORE_PIN` | `briefing_before_pin` (is an inbound call handed its standing briefing before the PIN — the unheard results, the memory, the project names, the briefs, the skills — and with it the four read-only voice tools over the same material) | `true` (added 2026-09-19 as `DIGEST_BEFORE_PIN`, widened and renamed the same day) |
 | `PIN_FAILURE_LIMIT` / `PIN_FAILURE_WINDOW_HOURS` / `PIN_LOCKOUT_MINUTES` | `pin_failure_limit` / `pin_failure_window_hours` / `pin_lockout_minutes` (wrong PINs across calls before PIN entry locks, how long each counts, how long it locks) | `10` / `24` / `60` (added 2026-09-16) |
 | `PUBLIC_HOST` | `public_host` (the tunnel's hostname, e.g. `jarvis.example.com`) | `None` |
@@ -814,6 +841,7 @@ Data layout under `data_dir`: `tasks.db`, `tasks/<id>.log` (agent transcript),
 `tasks/<id>.md` (final report), `calls/<session_id>.log` (voice transcript),
 `report_secret`, `restart.json` (0600; the pending restart's call-back, its log marks and
 its watchdog), `pin-failures.json` (0600; wrong PINs across calls and the lock they set),
+`pin` (0600; the PIN a first call enrolled, written once and never replaced),
 `memory.md` (what Jarvis remembers between calls), `logs/jarvis.log` (our own
 rotated handler) alongside the `jarvis.out.log`/`jarvis.err.log` the service unit appends to
 and `logs/restart-watch.log` (the watchdog's own output), `google/` (MCP credentials).
@@ -950,6 +978,25 @@ line is reading versus acting, and reads happen before the PIN
 hears the standing briefing. The invariant that does not move: such a call may not *write*, and
 `SessionEnded.authorized` stays `FULL`-only, so it reads the memory and never rewrites it.
 `recall` is the one read that stays at `FULL`, because it is unbounded and the caller steers it.
+
+**Enrolling the first PIN (2026-09-24).** `JARVIS_PIN` is set at the keyboard, and until it
+is there is no authentication on the phone at all — so nothing of the owner's is read out
+(§3.3) and every dispatch is refused, which makes it the one setup step the thing being set
+up cannot do for itself. The owner's ruling: the first call may key a PIN in, accepting that
+whoever calls first sets it, "because you will be doing this within fifteen minutes of setup
+and nobody is going to spoof your number in that time" — the caller must still be on
+`ALLOWED_CALLERS` to reach the model at all. The condition on that acceptance is that Jarvis
+must never be able to *change* it afterwards, which is why the door is `O_CREAT | O_EXCL` at
+the syscall rather than a policy check, and why no tool or command sets a PIN. The residual
+risk, written down: a subagent runs as the owner with `bypassPermissions`, so it can delete
+`data_dir/pin` exactly as it can edit `.env`. It cannot rewrite an enrolled PIN, so the worst
+case is a lockout plus a fresh enrolment window for the next caller — loud, and visible in
+`jarvis doctor` — and not a silent swap. The answer is to move the PIN into `.env`, where the
+environment wins for ever after; `doctor` says so on every run that finds an enrolled one. A
+privileged "config setter" Jarvis could call is **not** the answer and is ruled out here: any
+sudoers rule that lets Jarvis run one without a password lets a subagent run it too, handing
+back exactly the ability the `O_EXCL` write exists to remove. A root-owned setter the *owner*
+runs with their own sudo password is fine; Jarvis having a privileged way to invoke it is not.
 
 **Three levels of trust (2026-09-19).** The other change to the paragraph above, the owner's
 ruling (§3.3, "Trust has three levels"). A call *Jarvis placed* to `OWNER_NUMBER` is
