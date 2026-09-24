@@ -36,8 +36,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from jarvis.agents.base import google_mcp_server_config
 from jarvis.config import Settings
-from jarvis.tasks.agent_runner import google_mcp_server_config
 
 log = logging.getLogger("jarvis.google_setup")
 

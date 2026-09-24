@@ -37,10 +37,11 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 
+from jarvis.agents.base import AgentRunner, AgentSession, RunResult
+from jarvis.agents.claude import resolve_model
 from jarvis.config import Settings, secure_file
 from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
 from jarvis.projects import discover_projects
-from jarvis.tasks.agent_runner import AgentRunner, AgentSession, RunResult, resolve_model
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import MAX_UNREPORTED, TaskStore
 
