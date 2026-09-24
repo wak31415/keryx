@@ -11,7 +11,7 @@ the digest at the top of your next call depends on it.
 <!-- tools:start -->
 | Core tool | What it does |
 |---|---|
-| `dispatch_task` | hand the work to a Claude subagent and get back a task number |
+| `dispatch_task` | hand the work to a coding agent and get back a task number; `agent` names Claude or Codex when both are ready ([agents](agents.md)) |
 | `list_tasks` | what is queued, running and recently finished |
 | `get_task_status` | how one task is getting on |
 | `get_task_result` | the spoken summary a finished task produced |
@@ -59,9 +59,10 @@ than reading a path down the phone.
 
 Small talk, task status and small factual questions the voice answers itself — `web_search`
 goes through the Responses API, because a Realtime session has no hosted search tool of its
-own. Everything else becomes a task, and a task is just "Claude, on this machine": one
-kind, every tool, the repositories, Gmail and Calendar, the installed skills, and subagents
-of its own. Nothing classifies the work in advance.
+own. Everything else becomes a task, and a task is just "a coding agent, on this machine" —
+Claude Code or Codex ([`agents.md`](agents.md)): one kind, every tool, the repositories,
+Gmail and Calendar, the installed skills, and subagents of its own. Nothing classifies the
+work in advance.
 
 That is why the example tools are short. **The default answer to "can Jarvis do X" is "ask
 Claude to do X"** — a task already has your machine, your repositories, your mailbox and

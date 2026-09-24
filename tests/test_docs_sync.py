@@ -10,6 +10,7 @@ nothing that runs looks at either file.
 import re
 from pathlib import Path
 
+from jarvis.agents.registry import BACKENDS
 from jarvis.config import Settings, env_var_name
 
 #: The repository root, so the test does not depend on the working directory pytest ran in.
@@ -105,6 +106,21 @@ def prompt_tool_names() -> set[str]:
     body = re.sub(r"\{[a-z_]+\}", "", text[text.index("## Your tools") :])
     body += "".join(path.read_text() for path in sorted(prompts.glob("voice_tool_*.md")))
     return set(re.findall(r"\b([a-z]+_[a-z_]+)\b", body)) - NOT_TOOLS
+
+
+AGENTS_DOC = ROOT / "docs" / "agents.md"
+#: The parity table in `docs/agents.md`, fenced the same way as the tool table.
+AGENT_TABLE = re.compile(r"<!-- agents:start -->(.*?)<!-- agents:end -->", re.S)
+
+
+def test_docs_agents_has_a_column_for_every_agent_jarvis_knows():
+    """A third agent added to the registry without a column is a parity nobody wrote down."""
+    match = AGENT_TABLE.search(AGENTS_DOC.read_text())
+    assert match is not None, "the <!-- agents:start --> table in docs/agents.md is gone"
+    header = match.group(1).strip().splitlines()[0]
+    columns = {cell.strip().lower() for cell in header.strip("|").split("|")}
+
+    assert set(BACKENDS) <= columns, f"docs/agents.md has no column for {set(BACKENDS) - columns}"
 
 
 def test_every_tool_the_voice_prompt_names_is_one_that_exists():

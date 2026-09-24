@@ -1,9 +1,10 @@
 ---
 name: jarvis-onboard
 description: >-
-  Onboard a new Jarvis install: interview the owner briefly, draft a .jarvis-brief.md for
-  the projects they pick, propose additions to ~/.claude/CLAUDE.md, and seed the memory
-  through `jarvis init`. Use when someone has just cloned or installed the Jarvis voice
+  Onboard a new Jarvis install: check its coding agent with `jarvis setup-agent`, interview
+  the owner briefly, draft a .jarvis-brief.md for the projects they pick, propose additions
+  to each agent's instructions file (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md), and seed the
+  memory through `jarvis init`. Use when someone has just cloned or installed the Jarvis voice
   agent, says "set up Jarvis", "onboard me", or asks what Jarvis knows about them. Run once,
   at the keyboard.
 ---
@@ -35,6 +36,24 @@ only what they approve.
   transcripts there carry the spoken PIN.
 - **Never scan a project they did not pick**, and never run `jarvis init --force` without
   asking: it replaces a memory that calls have already written.
+
+## 0. Check the coding agent
+
+Jarvis hands its work to a coding agent — Claude Code or Codex — and nothing else in this
+session matters if that cannot run. From the repository:
+
+```bash
+uv run jarvis setup-agent --yes --json
+```
+
+It asks nothing and signs nothing in: it reports which agents are installed and signed in,
+runs one real task through each chosen agent as a smoke test, and prints the
+`AGENT_BACKEND=` / `AGENTS_ENABLED=` lines in `env_lines`. Exit 0 means every chosen agent
+ran its task; exit 1 means one could not (the JSON says which, and why); exit 2 means the
+command line was wrong. On exit 1, tell them what is missing and ask them to run
+`uv run jarvis setup-agent` themselves — its logins open a browser or print a code, which is
+theirs to do, not yours. Read `enabled` from the JSON: step 4 needs it. Show them the
+`env_lines`; they add them to `.env` themselves.
 
 ## 1. See what is there
 
@@ -89,10 +108,13 @@ leave undescribed is a perfectly good answer.
 
 ## 4. Propose the subagents' own map
 
-The subagents are Claude Code sessions, so they read `~/.claude/CLAUDE.md` like any other
-session — that file, not Jarvis's memory, is where "my repositories live under ~/code" and
-"the cluster is reached with this script" belong. Draft the lines that are missing from
-their answers in step 2. Show every edit before you make it, and append rather than rewrite.
+The subagents are ordinary sessions of whichever agent runs them, so they read that agent's
+own instructions file like any other session: `~/.claude/CLAUDE.md` for Claude,
+`~/.codex/AGENTS.md` for Codex (step 0's JSON names each one as `instructions_file`). That
+file, not Jarvis's memory, is where "my repositories live under ~/code" and "the cluster is
+reached with this script" belong. Draft the lines that are missing from their answers in
+step 2, for each agent in `enabled` — the same lines in each, so the agents agree. Show
+every edit before you make it, and append rather than rewrite.
 
 ## 5. Seed the memory
 

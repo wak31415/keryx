@@ -9,6 +9,11 @@ Realtime API and Claude Agent SDK subagents.
 - Lint: `uv run ruff check src tests`
 - Run the CLI: `uv run jarvis --help`
 - Check the machine's setup: `uv run jarvis doctor` (`--no-mic` where there is none)
+- Choose and sign in the coding agent: `uv run jarvis setup-agent [--default claude|codex]
+  [--enable NAME]… [--no-smoke] [--yes] [--json]` (runs the missing login on the terminal,
+  smoke-tests each chosen agent with one real task, prints `AGENT_BACKEND=` /
+  `AGENTS_ENABLED=`; never reads or writes `.env`). `--json` needs `--yes`; exit 1 is a
+  chosen agent that cannot run a task, 2 a wrong command line
 - Run the agent: `uv run jarvis serve` (`--no-phone` / `--no-wakeword` /
   `--fake-agents` / `--host` / `--port`); `scripts/dev.sh` adds the Cloudflare tunnel
 - Approval bridge: `uv run jarvis approvals` (`--limit N`, `--disable` / `--enable` for
@@ -42,8 +47,16 @@ templates are in `ops/systemd/` (Linux) and `ops/launchd/` (macOS), rendered by 
 (argument parsing, the env-file and PATH checks, `render`), so an installer is only
 its platform-specific half.
 
-Five groups are named here because the file you want is rarely the one whose name you
+Six groups are named here because the file you want is rarely the one whose name you
 remember:
+
+- **agents** — `agents/` is one module per coding agent (`claude`, `codex`) behind the
+  `AgentRunner` in `agents/base.py`, which also holds `RunResult`, the `SPOKEN_SUMMARY:` /
+  `RESTART_REQUIRED:` parsing and the fake. `agents/registry.py::BACKENDS` is the table
+  everything else reads (a third agent is one module and one entry), `agents/auth.py` the
+  three auth tiers both share, `agents/router.py` opens each task on `task.agent`.
+  `tasks/agent_runner.py` only re-exports the spec §3.2 names. `docs/agents.md` is the parity
+  matrix, and `tests/test_docs_sync.py` wants a column in it for every backend.
 
 - **restart** — `restart/` is the whole subsystem: `coordinator`, `service`, `store`,
   `version`, `watchdog` and `logscan`. The directory listing is the index now.
@@ -76,6 +89,26 @@ its own, and decides for itself what a request needs. The voice model's only rou
 decision is answer-it-myself (small facts go through its `web_search` tool, backed by the
 Responses API) versus dispatch. Do not reintroduce kinds to express "this one is
 read-only" — the phone PIN gates every dispatch instead.
+
+## Two coding agents, one of them per task
+
+`AGENT_BACKEND` (Claude or Codex) runs what nobody named an agent for; `AGENTS_ENABLED` is
+what the voice may name. Four rulings:
+
+- **A task keeps its agent for life.** `Task.agent` is fixed at dispatch, and every resume
+  opens on it, never on today's default: a session id belongs to the agent that issued it.
+  The column `claude_session_id` holds whichever agent's id, and keeps its name for the
+  build running behind the database.
+- **A credential goes in the child's environment and nowhere else** — not argv, not a log,
+  not a spoken error (`agents/auth.redact`). `OPENAI_API_KEY` is never lent to Codex: that
+  would move a ChatGPT-plan user onto per-token billing unasked.
+- **Claude stays on the Agent SDK.** Driving it as `claude -p` like Codex would lose
+  `max_budget_usd`, `max_turns`, the lifted message-size limit and the typed messages.
+  `SUBAGENT_TIMEOUT_S` is the cap they share, applied in the task manager.
+- **Prompts say "Claude", and code names the agent.** Templates are live under whatever build
+  is running, which blanks a placeholder it does not know, so the voice prompt's own wording
+  is rewritten to the default agent's name in `prompts._name_the_agent` rather than templated.
+  The one new placeholder, `{agents}`, is a paragraph of its own that blanks cleanly.
 
 ## Trust has three levels
 
