@@ -27,10 +27,12 @@ class BackendSpec:
 
     #: The word in `AGENT_BACKEND`, `Task.agent` and the `dispatch_task` enum.
     name: str
-    #: What a person calls it.
+    #: What a person calls it on a screen, and what the voice model calls it out loud.
     label: str
-    #: Spoken aliases and the model ids they mean.
+    spoken_name: str
+    #: Spoken aliases and the model ids they mean, and how the voice tool describes them.
     models: Mapping[str, str]
+    model_hint: str
     #: The model a task runs on when nobody named one; blank is the agent's own default.
     default_model: Callable[[Settings], str]
     make_runner: Callable[[Settings], AgentRunner]
@@ -41,7 +43,7 @@ class BackendSpec:
     install_hint: str
     #: The instructions file the agent reads on every run, and its skills directory.
     instructions_file: Callable[[], Path]
-    skills_dir: Callable[[], Path]
+    skills_dir: Callable[[Settings], Path]
     #: The interactive commands that store a subscription login.
     login_commands: tuple[tuple[str, ...], ...]
     #: A headless variant, for a machine with no browser to finish the login in.
@@ -52,28 +54,33 @@ BACKENDS: dict[str, BackendSpec] = {
     "claude": BackendSpec(
         name="claude",
         label="Claude Code",
+        spoken_name="Claude",
         models=CLAUDE_MODELS,
+        model_hint="opus (strongest, the default), sonnet, fable or haiku (fastest)",
         default_model=lambda settings: settings.subagent_model,
         make_runner=ClaudeAgentRunner,
         auth=CLAUDE_AUTH,
         find_cli=claude_cli,
         install_hint="uv sync (the Claude Agent SDK bundles the claude CLI)",
         instructions_file=lambda: Path.home() / ".claude" / "CLAUDE.md",
-        skills_dir=lambda: Path.home() / ".claude" / "skills",
+        # `SKILLS_DIR`, which predates a second agent and is Claude's.
+        skills_dir=lambda settings: settings.skills_dir,
         login_commands=(("claude", "/login"),),
         headless_login_command=("claude", "setup-token"),
     ),
     "codex": BackendSpec(
         name="codex",
         label="Codex",
+        spoken_name="Codex",
         models=CODEX_MODELS,
+        model_hint="sol, terra or luna",
         default_model=lambda settings: settings.codex_model or "",
         make_runner=CodexAgentRunner,
         auth=CODEX_AUTH,
         find_cli=codex_cli,
         install_hint="npm install -g @openai/codex",
         instructions_file=lambda: codex_home() / "AGENTS.md",
-        skills_dir=lambda: codex_home() / "skills",
+        skills_dir=lambda settings: codex_home() / "skills",
         login_commands=(("codex", "login"),),
         headless_login_command=("codex", "login", "--device-auth"),
     ),
@@ -116,6 +123,28 @@ def is_ready(agent: str, settings: Settings) -> bool:
 def ready_backends(settings: Settings) -> list[str]:
     """The enabled agents that could run a task right now, the default first."""
     return [name for name in settings.enabled_agents if is_ready(name, settings)]
+
+
+def offered_agents(settings: Settings) -> list[str]:
+    """The agents the voice model may name: the default, then every other one that is ready.
+
+    The default is always there, ready or not: a task nobody named an agent for goes to it
+    either way, and its failure says why, which beats a tool that silently lost its agent.
+    Under `--fake-agents` every enabled agent is offered, since none of them is real.
+    """
+    if settings.fake_agents:
+        return list(settings.enabled_agents)
+    return [
+        name
+        for name in settings.enabled_agents
+        if name == settings.agent_backend or is_ready(name, settings)
+    ]
+
+
+def skill_dirs(settings: Settings) -> list[Path]:
+    """Where every enabled agent keeps its skills, the default's first."""
+    dirs = (BACKENDS[name].skills_dir(settings) for name in settings.enabled_agents)
+    return list(dict.fromkeys(dirs))
 
 
 def build_agent_runner(settings: Settings) -> AgentRunner:

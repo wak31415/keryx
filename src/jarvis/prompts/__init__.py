@@ -6,14 +6,16 @@ they work the same from a wheel, an editable install or a zip. Templates use pla
 """
 
 import logging
-from collections.abc import Collection
+import re
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from importlib import resources
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.projects import ProjectBrief, discover_briefs, discover_projects
-from jarvis.skills import Skill, discover_skills
+from jarvis.skills import Skill, discover_skills_in
 from jarvis.trust import TrustLevel
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -143,6 +145,42 @@ def render_prompt(name: str, /, **values: str) -> str:
     return load_prompt(name).format_map(_Defaulting(values))
 
 
+#: The paragraph that tells the voice model it has a choice of agent. Only rendered when
+#: `dispatch_task` actually offers one: a single-agent install is told nothing about it.
+_AGENTS_NOTE = (
+    "You can hand work to {names}; {default} takes it unless they name another. When they "
+    "do — \"have Codex do it\", \"ask Claude\" — pass agent on the dispatch, and say nothing "
+    "more about it. A follow-up goes back to whichever agent ran the task by itself, so "
+    "never name an agent for send_followup."
+)
+#: A whole word "Claude" that is not "Claude Code" (which is the approval bridge's, and
+#: stays Claude's whoever does the dispatched work).
+_CLAUDE_WORD = re.compile(r"\bClaude\b(?! Code)")
+
+
+def _name_the_agent(text: str, spoken: str) -> str:
+    """Our own wording with the default agent's name where it says Claude.
+
+    The templates say "Claude" rather than carrying a placeholder on purpose. Prompts are
+    re-read on every call, so a merged template is live under whatever build is running,
+    and an older build blanks a placeholder it does not know — "hand real work to , which
+    runs". Substituting here keeps every build's rendering whole. Only our wording is ever
+    passed through: the memory, the briefs and the skills are the owner's text.
+    """
+    return text if spoken == "Claude" else _CLAUDE_WORD.sub(spoken, text)
+
+
+def _agents_note(agents: Sequence[str]) -> str:
+    """The choice-of-agent paragraph, or nothing when there is no choice."""
+    if len(agents) < 2:
+        return ""
+    from jarvis.agents.registry import BACKENDS  # noqa: PLC0415 - registry imports prompts
+
+    names = [BACKENDS[name].spoken_name if name in BACKENDS else name for name in agents]
+    listed = ", ".join(names[:-1]) + f" or {names[-1]}"
+    return _AGENTS_NOTE.format(names=listed, default=names[0])
+
+
 def _format_skills(skills: list[Skill]) -> str:
     """The skill catalog as prompt lines, one per skill."""
     if not skills:
@@ -184,13 +222,14 @@ def render_voice_prompt(
     memory: str | None = None,
     tool_names: Collection[str] = (),
     can_text: bool | None = None,
+    agents: Sequence[str] = (),
 ) -> str:
     """Render the voice system prompt for one session.
 
     `projects` defaults to every project the `TaskManager` can resolve — the configured
     ones plus the subdirectories of `projects_root` — so the model offers names that
-    actually dispatch. `skills` defaults to the skills installed for the Claude CLI, so
-    it can recognise work the back office is good at without being told they exist.
+    actually dispatch. `skills` defaults to the skills installed for every enabled coding
+    agent, so it can recognise work the back office is good at without being told they exist.
     `briefs` defaults to the `.jarvis-brief.md` of every project that wrote one.
     `opening_context` is the reason the session was opened (a task summary on a call-back,
     say) and is dropped from the prompt when there is none. `pending` and `memory` come
@@ -200,6 +239,9 @@ def render_voice_prompt(
     `OPTIONAL_TOOL_PROMPTS` paragraphs and `OPTIONAL_TOOL_PHRASES` appear. `can_text`
     defaults to `TwilioOut.can_text`, and decides whether the prompt may promise a text.
     A `FULL` session with no memory is told it knows nothing about the owner yet.
+    `agents` is what `dispatch_task` offers, the default first; with more than one, the
+    prompt says there is a choice. Where our own wording says Claude, it says the default
+    agent's name instead (`_name_the_agent`).
 
     `trust` is what this call has proved (`jarvis.trust`), and since 2026-09-19 it decides
     this only together with `BRIEFING_BEFORE_PIN`. On (the default), a call below `FULL`
@@ -222,13 +264,16 @@ def render_voice_prompt(
     else:
         known = discover_projects(settings)
         names = list(known) if projects is None else projects
-        catalog = discover_skills(settings.skills_dir) if skills is None else skills
+        catalog = discover_skills_in(_skill_dirs(settings)) if skills is None else skills
         written = discover_briefs(known) if briefs is None else briefs
         project_names = ", ".join(names) if names else "none configured"
         skill_lines = _format_skills(catalog)
         brief_blocks = _format_briefs(written)
+    spoken = _spoken_name(settings.agent_backend)
     optional = {
-        placeholder: load_prompt(template).strip() if tool in tool_names else ""
+        placeholder: _name_the_agent(load_prompt(template).strip(), spoken)
+        if tool in tool_names
+        else ""
         for tool, (placeholder, template) in OPTIONAL_TOOL_PROMPTS.items()
     }
     optional |= {
@@ -239,17 +284,21 @@ def render_voice_prompt(
     if memory:
         remembered = f"{_MEMORY_HEADING}\n\n{_nest_headings(memory)}"
     elif trust is TrustLevel.FULL:
-        remembered = render_prompt(FIRST_CALL_PROMPT, owner=settings.owner_label)
+        remembered = _name_the_agent(load_prompt(FIRST_CALL_PROMPT), spoken).format_map(
+            _Defaulting(owner=settings.owner_label)
+        )
     else:
         remembered = ""
-    return render_prompt(
-        VOICE_SYSTEM_PROMPT,
+    template = _name_the_agent(load_prompt(VOICE_SYSTEM_PROMPT), spoken)
+    values = dict(
         owner=settings.owner_label,
         now=datetime.now().astimezone().strftime(_TIME_FORMAT),
         channel=channel,
         caller=caller or "unknown",
         trust=_TRUST_LABEL[trust],
-        trust_note=_WITHHELD_TRUST_NOTE if withheld else _TRUST_NOTE[trust],
+        trust_note=_name_the_agent(
+            _WITHHELD_TRUST_NOTE if withheld else _TRUST_NOTE[trust], spoken
+        ),
         withheld_note=_WITHHELD_PIN_NOTE if withheld else "",
         projects=project_names,
         skills=skill_lines,
@@ -257,6 +306,22 @@ def render_voice_prompt(
         opening_context=f"{_OPENING_HEADING}\n\n{opening_context}" if opening_context else "",
         pending_tasks=f"{_PENDING_HEADING}\n\n{pending}" if pending else "",
         memory=remembered,
+        agents=_agents_note(agents),
         **_DELIVERY[texting],
         **optional,
     )
+    return template.format_map(_Defaulting(values))
+
+
+def _spoken_name(agent: str) -> str:
+    """What the voice model calls `agent` out loud."""
+    from jarvis.agents.registry import BACKENDS  # noqa: PLC0415 - registry imports prompts
+
+    return BACKENDS[agent].spoken_name if agent in BACKENDS else agent
+
+
+def _skill_dirs(settings: "Settings") -> list[Path]:
+    """Every enabled agent's skills directory."""
+    from jarvis.agents.registry import skill_dirs  # noqa: PLC0415 - registry imports prompts
+
+    return skill_dirs(settings)

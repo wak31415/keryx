@@ -29,7 +29,7 @@ the `PinLockoutAlerter` that tells the owner when that count locks PIN entry.
 
 from dataclasses import dataclass, field
 
-from jarvis.agents.registry import build_agent_runner
+from jarvis.agents.registry import build_agent_runner, offered_agents
 from jarvis.approvals.broker import ApprovalBroker
 from jarvis.config import Settings
 from jarvis.continuity.briefing import Briefer
@@ -131,6 +131,9 @@ def build_app_state(settings: Settings) -> AppState:
         restarter=restart,
         recaller=Recaller(settings.data_dir, manager, pin=settings.pin),
         approvals=approvals,
+        # Asked once, at startup: which agents are installed and signed in does not change
+        # under a running service, and `dispatch_task` names only those.
+        agents=offered_agents(settings),
     )
 
     state = AppState(

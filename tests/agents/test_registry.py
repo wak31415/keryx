@@ -12,8 +12,10 @@ from jarvis.agents.registry import (
     agent_for_model,
     auth_status,
     build_agent_runner,
+    offered_agents,
     ready_backends,
     resolve_model,
+    skill_dirs,
 )
 from jarvis.agents.router import RoutingAgentRunner
 
@@ -116,3 +118,28 @@ def test_both_agents_enabled_means_a_runner_for_each(settings):
     assert runner.default == "codex"
     assert isinstance(runner.runners["codex"], CodexAgentRunner)
     assert isinstance(runner.runners["claude"], ClaudeAgentRunner)
+
+
+def test_the_default_is_always_offered_and_the_rest_only_when_ready(settings, monkeypatch):
+    settings.agents_enabled = ["claude", "codex"]
+    fake_backend(monkeypatch, "claude", cli=False, login=False)
+    fake_backend(monkeypatch, "codex", cli=True, login=False)
+    assert offered_agents(settings) == ["claude"]
+
+    fake_backend(monkeypatch, "codex", cli=True, login=True)
+    assert offered_agents(settings) == ["claude", "codex"]
+
+
+def test_fake_agents_offers_every_enabled_agent(settings):
+    settings.agents_enabled = ["claude", "codex"]
+    settings.fake_agents = True
+
+    assert offered_agents(settings) == ["claude", "codex"]
+
+
+def test_skills_come_from_every_enabled_agent_the_default_first(settings, monkeypatch, tmp_path):
+    monkeypatch.setattr("jarvis.agents.registry.codex_home", lambda: tmp_path / "codex")
+    settings.agents_enabled = ["claude", "codex"]
+    settings.agent_backend = "codex"
+
+    assert skill_dirs(settings) == [tmp_path / "codex" / "skills", settings.skills_dir]

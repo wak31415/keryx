@@ -533,6 +533,7 @@ class VoiceSession:
 
     def _build_config(self) -> SessionConfig:
         """The provider session: transport's audio format, our prompt, our tools."""
+        schemas = self._tools.schemas()
         return SessionConfig(
             instructions=render_voice_prompt(
                 self._settings,
@@ -542,9 +543,10 @@ class VoiceSession:
                 opening_context=self._opening_context,
                 pending=self._briefing.pending,
                 memory=self._briefing.memory,
-                tool_names={schema["name"] for schema in self._tools.schemas()},
+                tool_names={schema["name"] for schema in schemas},
+                agents=_dispatch_agents(schemas),
             ),
-            tools=self._tools.schemas(),
+            tools=schemas,
             voice=self._settings.openai_voice,
             audio_format=self._transport.audio_format,
             vad_mode=self._settings.vad_mode,
@@ -1002,3 +1004,12 @@ class SessionRegistry:
     def live(self) -> list[VoiceSession]:
         """Registered sessions that can still speak, oldest first."""
         return [session for session in self._sessions if session.is_live]
+
+
+def _dispatch_agents(schemas: list[dict]) -> list[str]:
+    """The agents `dispatch_task` offers, read off its own schema so the prompt cannot differ."""
+    for schema in schemas:
+        if schema.get("name") == "dispatch_task":
+            agent = schema.get("parameters", {}).get("properties", {}).get("agent", {})
+            return list(agent.get("enum", []))
+    return []

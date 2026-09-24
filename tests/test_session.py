@@ -967,3 +967,18 @@ async def test_a_call_back_keeps_its_own_opening_context_and_gains_the_nudge(
     opening = provider.injected[0][0]
     assert opening.startswith("You are calling them back about task 41.")
     assert "2 tasks finished" in opening
+
+
+def test_the_prompt_is_told_the_agents_the_dispatch_tool_offers():
+    """Read off the tool's own schema, so the prompt can never offer a different set."""
+    from jarvis.session import _dispatch_agents
+
+    agent = {"enum": ["claude", "codex"]}
+    schemas = [
+        {"name": "web_search", "parameters": {"properties": {}}},
+        {"name": "dispatch_task", "parameters": {"properties": {"agent": agent}}},
+    ]
+
+    assert _dispatch_agents(schemas) == ["claude", "codex"]
+    assert _dispatch_agents(schemas[:1]) == []
+    assert _dispatch_agents([{"name": "dispatch_task", "parameters": {"properties": {}}}]) == []

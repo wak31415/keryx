@@ -139,6 +139,7 @@ async def make_tools(tmp_path):
         billing=None,
         cluster=None,
         approvals=None,
+        agents=None,
         **overrides,
     ) -> Harness:
         settings = Settings(
@@ -166,6 +167,7 @@ async def make_tools(tmp_path):
             billing=billing,
             cluster=cluster,
             approvals=approvals,
+            agents=agents,
         )
         harness = Harness(
             registry, manager, settings, store, agent_runner, StubSession(), inline_waits
@@ -219,6 +221,107 @@ def test_the_dispatch_schema_asks_only_for_the_work_and_the_wait(tools):
     assert "kind" not in properties
     assert schema["parameters"]["required"] == ["description"]
     assert properties["wait_seconds"]["maximum"] == 25
+
+
+def dispatch_schema(harness: Harness) -> dict:
+    return next(s for s in harness.registry.schemas() if s["name"] == "dispatch_task")
+
+
+BOTH = {"agents": ["claude", "codex"], "agents_enabled": ["claude", "codex"]}
+
+
+def test_with_one_agent_the_dispatch_schema_has_no_agent_to_name(tools):
+    """A single-agent install sees the tool exactly as it was before there was a choice."""
+    schema = dispatch_schema(tools)
+    properties = schema["parameters"]["properties"]
+
+    assert "agent" not in properties
+    assert properties["model"]["enum"] == ["opus", "sonnet", "fable", "haiku"]
+    assert schema["description"].startswith("Hand a piece of work to Claude and get back")
+
+
+def test_with_two_agents_the_dispatch_schema_offers_both(make_tools):
+    properties = dispatch_schema(make_tools(**BOTH))["parameters"]["properties"]
+
+    assert properties["agent"]["enum"] == ["claude", "codex"]
+    assert "Leave it out and Claude does it" in properties["agent"]["description"]
+    assert "codecs" in properties["agent"]["description"]
+    assert properties["model"]["enum"] == [
+        "opus", "sonnet", "fable", "haiku", "sol", "terra", "luna",
+    ]
+    assert "sol, terra or luna run on Codex" in properties["model"]["description"]
+
+
+def test_a_codex_default_names_codex_in_the_tool(make_tools):
+    schema = dispatch_schema(make_tools(agents=["codex"], agent_backend="codex"))
+    model = schema["parameters"]["properties"]["model"]
+
+    assert schema["description"].startswith("Hand a piece of work to Codex and get back")
+    assert "details Codex can work out" in schema["description"]
+    assert model["enum"] == ["sol", "terra", "luna"]
+    assert "sol, terra or luna" in model["description"]
+
+
+async def test_naming_an_agent_dispatches_to_it(make_tools):
+    tools = make_tools(**BOTH)
+
+    arguments = {"description": "look at the repo", "agent": "codex"}
+    result = await tools.call("dispatch_task", arguments)
+
+    assert (await tools.manager.get(result["task_id"])).agent == "codex"
+
+
+async def test_no_agent_named_is_the_default(make_tools):
+    tools = make_tools(**BOTH)
+
+    result = await tools.call("dispatch_task", {"description": "look at the repo"})
+
+    assert (await tools.manager.get(result["task_id"])).agent == "claude"
+
+
+async def test_a_model_name_picks_its_own_agent(make_tools):
+    tools = make_tools(**BOTH)
+
+    result = await tools.call("dispatch_task", {"description": "x", "model": "terra"})
+
+    task = await tools.manager.get(result["task_id"])
+    assert (task.agent, task.model) == ("codex", "gpt-5.6-terra")
+
+
+async def test_a_model_the_named_agent_cannot_run_is_refused_out_loud(make_tools):
+    tools = make_tools(**BOTH)
+
+    result = await tools.call(
+        "dispatch_task", {"description": "x", "agent": "codex", "model": "opus"}
+    )
+
+    assert result["error"].startswith("opus runs on Claude, not Codex, so nothing was started.")
+    assert "do not dispatch until they answer" in result["error"]
+    assert await tools.manager.list() == []
+
+
+async def test_an_agent_that_is_not_on_offer_is_refused_out_loud(tools):
+    result = await tools.call("dispatch_task", {"description": "x", "agent": "codex"})
+
+    assert result["error"].startswith("Codex is not available on this machine")
+    assert "Claude can do it instead" in result["error"]
+    assert await tools.manager.list() == []
+
+
+async def test_an_agent_nobody_has_heard_of_is_refused_too(tools):
+    result = await tools.call("dispatch_task", {"description": "x", "agent": "gemini"})
+
+    assert result["error"].startswith("gemini is not available")
+
+
+async def test_a_conflict_with_an_unknown_agent_still_reads(make_tools):
+    tools = make_tools(**BOTH)
+
+    result = await tools.call(
+        "dispatch_task", {"description": "x", "agent": "gemini", "model": "opus"}
+    )
+
+    assert result["error"].startswith("opus runs on Claude, not gemini")
 
 
 # --- dispatch_task: the PIN gate (spec §3.3) -------------------------------

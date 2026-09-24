@@ -43,9 +43,10 @@ the caller said straight to the session, which is the only thing that compares i
 import asyncio
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from jarvis.agents.registry import BACKENDS
 from jarvis.config import Settings
 from jarvis.continuity.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
 from jarvis.continuity.recall import MAX_LIMIT as MAX_RECALL_LIMIT
@@ -185,6 +186,53 @@ MODEL_DESCRIPTION = (
     "Optional model for the subagent: opus (strongest, the default), sonnet, fable or "
     "haiku (fastest). Leave this out unless the user asks for it."
 )
+#: `model` when more than one agent is on offer: every agent's names, and the rule that a
+#: name picks its agent, so the model never has to say both.
+MULTI_AGENT_MODEL_DESCRIPTION = (
+    "Optional model, only when they name one: {hints}. A model name already says which "
+    "agent runs it, so leave agent out when you give one. Leave this out unless the user "
+    "asks for it."
+)
+#: `agent`, offered only when more than one is ready. The names come through speech, so
+#: the ways they are misheard are listed; and which agent ran it is not news to them.
+AGENT_DESCRIPTION = (
+    "Which coding agent does the work: {names}. Leave it out and {default} does it — give "
+    "it only when they name an agent (\"have Codex do it\", \"ask Claude\"); a transcript "
+    "can spell Codex as \"codecs\" or \"code x\". Do not mention which agent ran it unless "
+    "they asked."
+)
+#: A model and an agent that do not go together. One sentence to them and one question.
+MODEL_AGENT_CONFLICT_MESSAGE = (
+    "{model} runs on {model_agent}, not {agent}, so nothing was started. Say that in one "
+    "sentence and ask which they want; do not dispatch until they answer."
+)
+AGENT_UNAVAILABLE_MESSAGE = (
+    "{agent} is not available on this machine, so nothing was started. Say so in one "
+    "sentence; {default} can do it instead if they want."
+)
+
+
+def model_description(agents: Sequence[str]) -> str:
+    """The `model` parameter's description for the agents on offer."""
+    if len(agents) <= 1:
+        spec = BACKENDS[agents[0]] if agents else BACKENDS["claude"]
+        if spec.name == "claude":
+            return MODEL_DESCRIPTION
+        return (
+            f"Optional model for the subagent: {spec.model_hint}. Leave this out unless the "
+            "user asks for it."
+        )
+    hints = "; ".join(
+        f"{BACKENDS[name].model_hint} run on {BACKENDS[name].spoken_name}" for name in agents
+    )
+    return MULTI_AGENT_MODEL_DESCRIPTION.format(hints=hints)
+
+
+def agent_description(agents: Sequence[str]) -> str:
+    """The `agent` parameter's description: the names on offer, the default first."""
+    return AGENT_DESCRIPTION.format(
+        names=" or ".join(agents), default=BACKENDS[agents[0]].spoken_name
+    )
 WAIT_DESCRIPTION = (
     "How many seconds to hold the line for the answer, 0 to 25. Use about 20 for quick "
     "questions so you can answer inline; use 0 for long jobs, which are announced later."

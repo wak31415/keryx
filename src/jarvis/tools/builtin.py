@@ -25,6 +25,8 @@ offered to the model, so it is the order they were registered in before the spli
 (2026-09-02).
 """
 
+from collections.abc import Sequence
+
 from jarvis.approvals.broker import ApprovalBroker
 from jarvis.config import Settings
 from jarvis.continuity.recall import Recaller
@@ -56,8 +58,12 @@ def register_builtin_tools(
     approvals: ApprovalBroker | None = None,
     billing: BillingFactory | None = None,
     cluster: ClusterQuerier | None = None,
+    agents: Sequence[str] | None = None,
 ) -> None:
     """Register every tool the voice model has, bound to this process's task manager.
+
+    `agents` is the coding agents `dispatch_task` may name, the default first; None is the
+    default alone, which leaves the tool without an `agent` parameter.
 
     `web_search`, `send_to_slack`, `restart_service`, `recall`, `check_billing`,
     `cluster_stats` and the two approval tools are registered only when a `searcher` /
@@ -75,6 +81,7 @@ def register_builtin_tools(
         settings=settings,
         inline_waits=inline_waits,
         recaller=recaller,
+        agents=agents,
     )
     register_restart_tools(registry, settings=settings, restarter=restarter)
     register_session_tools(registry, settings=settings, approvals=approvals)
