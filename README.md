@@ -36,17 +36,18 @@ a voice agent you can use across calls:
 | Callbacks when you ask for one | — | ✅ |
 | Ask it to add a feature during a call | — | ✅ |
 
-The dash means the feature needs an application around the API. Jarvis includes it.
-
 For example:
 
-> "In the imaging project, run a learning-rate sweep on the microscopy images. Call me if
-> you need a decision, and again when training finishes with a quick summary of the results."\
-> "Find the papers my group emailed this week, compare their approaches, and send me a
-> short summary on Slack."\
-> "Add a voice command that checks whether my home server is up. Build it in the Jarvis
-> project and run the tests."\
-> "One more thing: include GPU memory use in that sweep comparison."
+> *"In the imaging project, run a learning-rate sweep on the microscopy images. Call me if
+> you need a decision, and again when training finishes with a quick summary of the results."*
+
+> *"Find the papers my group emailed this week, turn them into a reading-group presentation
+> with polished animations and some discussion questions, and send it to me on Slack."*
+
+> *"Add a voice command that checks whether my home server is up. Build it in the Jarvis
+> project and run the tests."*
+
+> *"One more thing: include GPU memory use in that sweep comparison."*
 
 ## A short call, a long task
 
@@ -134,7 +135,7 @@ subscription limits by default, or use token billing if you set `ANTHROPIC_API_K
 
 You can ask Jarvis to add a feature while you're on the phone. For example:
 
-> "In the jarvis project, add a tool that tells me when the next train leaves my station."
+> *"In the jarvis project, add a tool that tells me when the next train leaves my station."*
 
 Jarvis turns the request into a task for a coding agent, which can update the code and run
 the tests. When the change is ready, ask Jarvis to restart so the new tool becomes
