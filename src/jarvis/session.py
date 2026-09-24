@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Protocol
 
 from jarvis.audio.util import ms_for_bytes
-from jarvis.config import Settings, secure_dir, secure_file
+from jarvis.config import PIN_MAX_DIGITS, PIN_PATTERN, Settings, secure_dir, secure_file
 from jarvis.continuity.briefing import Briefing, BriefingSource
 from jarvis.continuity.transcripts import AUTHORIZED_MARKER, redact_pin, session_header
 from jarvis.events import EventBus, PinLockedOut, SessionEnded, SessionStarted
@@ -97,6 +97,38 @@ PIN_REJECTED_MESSAGE = (
 #: What the model is told after a keypad entry, per `submit_pin` status. A lockout is
 #: absent because `submit_pin` has already said its piece.
 KEYPAD_PIN_MESSAGES = {"authorized": PIN_ACCEPTED_MESSAGE, "invalid": PIN_REJECTED_MESSAGE}
+#: Enrolling the first PIN: the one state in which the keypad *sets* a PIN rather than
+#: giving one. Not one of these may carry a digit — the caller chooses the PIN, keys it in
+#: twice, and hears it named exactly once — and none of them may ask twice.
+ENROL_CONFIRM_MESSAGE = (
+    "[system] They keyed a new PIN in. Ask them in one short sentence to key the same "
+    "digits again, then hash, so it can be checked. Say no digits, and do not say what "
+    "you think they keyed."
+)
+ENROL_MISMATCH_MESSAGE = (
+    "[system] The two entries did not match, so nothing was set. Ask them in one sentence "
+    "to key a PIN of six to eight digits and hash, twice. Never say a digit and never "
+    "suggest one."
+)
+ENROL_LENGTH_MESSAGE = (
+    "[system] That was not six to eight digits, so nothing was set. Ask them in one "
+    "sentence for six to eight digits and then hash. Never say a digit and never suggest one."
+)
+ENROL_DONE_MESSAGE = (
+    "[system] That is now the PIN for this machine, and this call is authorized for "
+    "everything. Tell them in one sentence that it is their PIN from now on and that you "
+    "cannot change it later — only they can, at the keyboard. Once: no digits, no second "
+    "confirmation, and nothing about being authorized."
+)
+ENROL_GAVE_UP_MESSAGE = (
+    "[system] Leave the PIN for now. Say in one sentence that you will leave it and that "
+    "the next call can set one, then carry on with whatever they asked. Do not ask for a "
+    "PIN again on this call."
+)
+ENROL_FAILED_MESSAGE = (
+    "[system] The PIN could not be saved and nothing was changed. Say that in one sentence "
+    "and do not ask them to key it in again."
+)
 #: What the model is told when the caller moves the keypad between the two things it can
 #: be for on a call Jarvis placed (see `PIN_ENTRY_KEY`). Neither asks for a response: the
 #: caller is typing, and a sentence over the top of that is one nobody is listening to.
@@ -131,6 +163,10 @@ class Keypad(Protocol):
 
 # How many PINs a caller may get wrong before the call ends (spec §3.3).
 PIN_MAX_ATTEMPTS = 3
+#: How many times a caller may key something that is not a PIN, or a confirmation that
+#: does not match, before enrolment is dropped for the rest of the call. Not a lockout:
+#: nothing is set, so there is nothing to guess at, and the next call may still enrol.
+ENROL_MAX_ATTEMPTS = 3
 # How long a half-typed PIN survives between two keypresses.
 DTMF_RESET_SECONDS = 5.0
 # Keys that are not part of a PIN: `#` submits what has been typed, `*` is ignored.
@@ -223,6 +259,11 @@ class VoiceSession:
         #: Whether the caller has asked for the keypad back for the PIN (`PIN_ENTRY_KEY`).
         #: Only ever consulted below `FULL` and with a menu armed — see `_keying_pin`.
         self._pin_entry = False
+        #: The first of the two enrolment entries, held only until the second confirms it.
+        self._enrol_first: str | None = None
+        self._enrol_attempts = 0
+        #: Whether this call has stopped offering to enrol a PIN (`ENROL_MAX_ATTEMPTS`).
+        self._enrol_dropped = False
 
         self._tool_tasks: set[asyncio.Task] = set()
         self._silence_task: asyncio.Task | None = None
@@ -611,7 +652,8 @@ class VoiceSession:
             # never sent to the model.
             self._spawn_task(self._offer_digit(digit), name="keypad")
             return
-        if not expected or self.authorized or self._pin_locked:
+        enrolling = self._enrolling()
+        if self.authorized or self._pin_locked or not (expected or enrolling):
             return
 
         now = time.monotonic()
@@ -620,7 +662,11 @@ class VoiceSession:
         self._dtmf_last = now
         if digit not in DTMF_NON_DIGITS:
             self._dtmf_buffer += digit
-        if digit != "#" and len(self._dtmf_buffer) < len(expected):
+        # An entry as long as the PIN submits itself, which is what makes `#` optional.
+        # Enrolling there is no PIN to measure against, so it runs to the longest one a
+        # PIN may be and `#` is how anything shorter is sent.
+        length = len(expected) if expected else PIN_MAX_DIGITS
+        if digit != "#" and len(self._dtmf_buffer) < length:
             return
 
         entered, self._dtmf_buffer = self._dtmf_buffer, ""
@@ -628,7 +674,20 @@ class VoiceSession:
             return  # a bare `#`, or one trailing a finished entry: nothing to check
         # `_on_dtmf` is called from the transport pump, which cannot await: the check and
         # the note to the model are scheduled, and tracked so teardown cleans them up.
+        if enrolling:
+            self._spawn_task(self._enrol_keypad_pin(entered), name="enrol")
+            return
         self._spawn_task(self._check_keypad_pin(entered), name="pin")
+
+    def _enrolling(self) -> bool:
+        """Whether this call may still *set* the first PIN this machine has had (spec §5).
+
+        Only where there is no PIN at all — none in the environment, none enrolled by an
+        earlier call — because the door is open exactly once and closes on the first PIN
+        that exists (`Settings.pin_enrolment_open`). Giving up leaves it open for the next
+        call; nothing about that is a lockout.
+        """
+        return not self._enrol_dropped and self._settings.pin_enrolment_open
 
     def _asks_for_the_pin(self, digit: str) -> bool:
         """Whether `digit` is the caller moving the keypad between the menu and the PIN.
@@ -678,6 +737,59 @@ class VoiceSession:
         message = KEYPAD_PIN_MESSAGES.get(result["status"])
         if message is not None:
             await self._safe_call(self._provider.inject_message, message, respond=True)
+
+    async def _enrol_keypad_pin(self, entered: str) -> None:
+        """Set the first PIN this machine has had, from the keypad, and say so once.
+
+        Keyed twice and compared, because a mis-keyed PIN that nothing can change is the
+        worst outcome here. The digits go the same way an ordinary keyed PIN does — never
+        to the model, never to the transcript, never to a log line — which is why this is
+        on the DTMF path and not behind a tool the model could call.
+
+        On success the call is `FULL`, so the briefing it was not allowed to hear arrives
+        on the re-render exactly as it does after an ordinary PIN, and the sentence about
+        the enrolment is the turn that follows it.
+        """
+        if not PIN_PATTERN.fullmatch(entered):
+            await self._enrol_again(ENROL_LENGTH_MESSAGE)
+            return
+        first, self._enrol_first = self._enrol_first, entered
+        if first is None:
+            await self._safe_call(
+                self._provider.inject_message, ENROL_CONFIRM_MESSAGE, respond=True
+            )
+            return
+        self._enrol_first = None
+        if not hmac.compare_digest(first, entered):
+            await self._enrol_again(ENROL_MISMATCH_MESSAGE)
+            return
+        if not self._settings.enrol_pin(entered):
+            # Either a PIN arrived between the two entries or the write failed; both mean
+            # nothing was set here, and neither is something to ask them to try again.
+            self._enrol_dropped = True
+            log.error("session %s could not enrol a PIN", self.session_id)
+            await self._safe_call(
+                self._provider.inject_message, ENROL_FAILED_MESSAGE, respond=True
+            )
+            return
+        log.info("session %s enrolled the first PIN for this machine", self.session_id)
+        self.authorize()
+        await self._brief_after_pin()
+        await self._safe_call(self._provider.inject_message, ENROL_DONE_MESSAGE, respond=True)
+
+    async def _enrol_again(self, message: str) -> None:
+        """Ask for the PIN once more, or leave it for this call and carry on.
+
+        `ENROL_MAX_ATTEMPTS` is a small cap and nothing more: no PIN exists, so there is
+        nothing to guess at, nothing for the `PinGuard` to count and nothing to lock. The
+        call simply carries on at `NONE`, and the next call may enrol as this one could.
+        """
+        self._enrol_first = None
+        self._enrol_attempts += 1
+        if self._enrol_attempts >= ENROL_MAX_ATTEMPTS:
+            self._enrol_dropped = True
+            message = ENROL_GAVE_UP_MESSAGE
+        await self._safe_call(self._provider.inject_message, message, respond=True)
 
     async def _offer_digit(self, digit: str) -> None:
         """Hand a post-PIN digit to whoever is listening, and relay what it decided.

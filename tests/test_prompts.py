@@ -221,6 +221,28 @@ def test_with_no_pin_on_the_machine_nothing_of_theirs_is_rendered(owners_world, 
     assert "{" not in rendered and "}" not in rendered
 
 
+@pytest.mark.parametrize("trust", [TrustLevel.NONE, TrustLevel.POSSESSION])
+def test_a_call_that_can_set_the_first_pin_is_told_so_and_told_whose_digits_they_are(
+    owners_world, trust, unwrapped
+):
+    """The model has to know the state exists, or it waits for a PIN nobody has set.
+
+    And it must not fill the silence: suggesting digits, or reading back what it thought
+    it heard, would put on the transcript the one thing the keypad path exists to keep off.
+    """
+    owners_world.pin = None
+
+    rendered = unwrapped(
+        render_voice_prompt(owners_world, channel="phone", caller=None, trust=trust)
+    )
+
+    assert "There is no PIN on this machine yet, and this call can set one" in rendered
+    assert "six to eight digits then hash" in rendered
+    assert "key it a second time to confirm" in rendered
+    assert "never suggest one, never say one out loud" in rendered
+    assert "you have been told almost nothing of theirs" not in rendered
+
+
 def test_the_full_prompt_is_unmoved_by_there_being_no_pin_yet(owners_world):
     """The local microphone is `FULL` by construction and reads its own machine."""
     owners_world.pin = None

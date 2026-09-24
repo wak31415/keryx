@@ -61,6 +61,9 @@ OPTIONAL_STR_FIELDS = (
 #: `bypassPermissions`, and eight at most because it is said or keyed under time pressure.
 PIN_PATTERN = re.compile(r"\d{6,8}")
 PIN_RULE = "must be 6 to 8 digits, and nothing but digits"
+#: The longest `PIN_PATTERN` allows. A keypad entry with no configured PIN to measure
+#: itself against runs to here, since no further digit could be part of one.
+PIN_MAX_DIGITS = 8
 
 #: Where a PIN came from, for `jarvis doctor` and `jarvis init --json`. Never the digits.
 PIN_FROM_ENV = "environment"
