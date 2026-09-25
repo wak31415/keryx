@@ -26,15 +26,16 @@ Mac.
 Jarvis turns the [Realtime API](https://developers.openai.com/api/docs/guides/realtime) into
 a voice agent you can use across calls:
 
-| Feature | Realtime API | Jarvis |
-| --- | :---: | :---: |
-| Live voice conversation and tools | ✅ | ✅ Uses Realtime API |
-| Phone calls, including from calling watches | 🟡 SIP setup | ✅ |
-| **Tasks that continue after you hang up** | — | ✅ |
-| Status and follow-ups in a later call | — | ✅ |
-| SMS links to written reports | — | ✅ |
-| Callbacks when you ask for one | — | ✅ |
-| Ask it to add a feature during a call | — | ✅ |
+| Feature | Realtime API | ChatGPT Voice | Jarvis |
+| --- | :---: | :---: | :---: |
+| Live voice conversation and tools | ✅ | ✅ | ✅ Uses Realtime API |
+| Phone calls, including from calling watches | 🟡 SIP setup | 🟡 1-800-CHATGPT, US/CA | ✅ |
+| Email, calendar and Slack by voice | 🟡 via MCP | ✅ | ✅ |
+| **Tasks that continue after you hang up** | — | ✅ in Work | ✅ |
+| Status and follow-ups in a later call | — | 🟡 in the app | ✅ |
+| SMS links to written reports | — | — | ✅ |
+| Callbacks when you ask for one | — | — | ✅ |
+| Ask it to add a feature during a call | — | — | ✅ |
 
 For example:
 
