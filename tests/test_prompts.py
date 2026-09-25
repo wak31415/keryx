@@ -695,3 +695,79 @@ def test_a_full_call_is_told_to_say_nothing_about_the_pin(settings, unwrapped):
 
     assert "Everything is open to you" in rendered
     assert "Say nothing about the PIN" in rendered
+
+
+# --- the coding agents ------------------------------------------------------
+
+
+def _render(settings, trust=TrustLevel.FULL, **kw):
+    kw.setdefault("skills", [])
+    return render_voice_prompt(settings, channel="phone", caller=None, trust=trust, **kw)
+
+
+def test_one_agent_is_told_nothing_about_a_choice(settings):
+    assert "pass agent on the dispatch" not in _render(settings, agents=["claude"])
+    assert "pass agent on the dispatch" not in _render(settings)
+
+
+def test_two_agents_are_named_with_the_default_first(settings, unwrapped):
+    rendered = unwrapped(_render(settings, agents=["claude", "codex"]))
+
+    expected = "You can hand work to Claude or Codex; Claude takes it unless they name another."
+    assert expected in rendered
+    assert "never name an agent for send_followup" in rendered
+
+
+def test_a_codex_default_is_what_the_prompt_calls_the_back_office(settings, unwrapped):
+    settings.agent_backend = "codex"
+    memory = "## Standing facts\n\n- They like Claude for writing."
+
+    rendered = unwrapped(_render(settings, memory=memory))
+
+    assert "hand real work to Codex, which runs" in rendered
+    assert "Okay, let me check with Codex" in rendered
+    assert "hand real work to Claude" not in rendered
+    # The approval bridge is Claude Code's, whoever does the dispatched work...
+    assert "Sometimes Claude Code, working on their own screen" in rendered
+    # ...and what the owner wrote is theirs, never rewritten.
+    assert "They like Claude for writing." in rendered
+
+
+def test_a_codex_default_renames_the_first_call_and_the_trust_note_too(settings, unwrapped):
+    settings.agent_backend = "codex"
+
+    first_call = unwrapped(_render(settings))
+    before_the_pin = unwrapped(_render(settings, trust=TrustLevel.NONE))
+
+    assert "anything for Codex" in first_call
+    assert "handing work to Codex" in before_the_pin
+
+
+def test_an_older_build_renders_the_template_whole():
+    """Prompts are live under whatever build runs, and it blanks a placeholder it does not know.
+
+    So the only placeholder the agents feature adds is a paragraph on a line of its own, and
+    the agent's name is substituted in code rather than templated.
+    """
+    text = load_prompt("voice_system.md")
+
+    assert "{agent}" not in text and "{agent_name}" not in text
+    assert [line for line in text.splitlines() if "{agents}" in line] == ["{agents}"]
+
+
+def test_the_skills_of_every_enabled_agent_are_listed(settings, tmp_path, monkeypatch):
+    claude_skills, codex_home = tmp_path / "claude-skills", tmp_path / "codex"
+    for root, name in ((claude_skills, "mermaid"), (codex_home / "skills", "review")):
+        (root / name).mkdir(parents=True)
+        (root / name / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: Does {name}.\n---\n", encoding="utf-8"
+        )
+    settings.skills_dir = claude_skills
+    monkeypatch.setattr("jarvis.agents.registry.codex_home", lambda: codex_home)
+
+    alone = render_voice_prompt(settings, channel="phone", caller=None)
+    settings.agents_enabled = ["claude", "codex"]
+    both = render_voice_prompt(settings, channel="phone", caller=None)
+
+    assert "mermaid: Does mermaid." in alone and "review" not in alone
+    assert "mermaid: Does mermaid." in both and "review: Does review." in both

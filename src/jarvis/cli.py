@@ -19,6 +19,7 @@ import typer
 import uvicorn
 from pydantic import ValidationError
 
+from jarvis.agent_setup import SetupError, run_setup_agent
 from jarvis.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from jarvis.config import PLACEHOLDER_KEY, Settings, env_var_name, load_settings
@@ -222,7 +223,7 @@ def serve(
     ] = False,
     fake_agents: Annotated[
         bool,
-        typer.Option("--fake-agents", help="Run scripted subagents instead of the Claude SDK."),
+        typer.Option("--fake-agents", help="Run scripted subagents instead of real agents."),
     ] = False,
     host: Annotated[
         str | None, typer.Option("--host", help="Override HOST for the phone server.")
@@ -242,6 +243,9 @@ def serve(
         overrides["port"] = port
     settings = _configure(**overrides)
     if not no_phone and (refusal := settings.phone_refusal()):
+        typer.echo(f"jarvis cannot start: {refusal}", err=True)
+        raise typer.Exit(2)
+    if refusal := settings.agent_refusal():
         typer.echo(f"jarvis cannot start: {refusal}", err=True)
         raise typer.Exit(2)
     _add_file_logging(settings)
@@ -643,11 +647,14 @@ def tasks_list(
         typer.echo("no tasks" if wanted is None else f"no tasks with status {wanted}")
         return
 
-    typer.echo(f"{'ID':>4}  {'STATUS':<9}  {'CREATED':<16}  {'TOLD':<5}  DESCRIPTION")
+    typer.echo(
+        f"{'ID':>4}  {'STATUS':<9}  {'CREATED':<16}  {'AGENT':<6}  {'TOLD':<5}  DESCRIPTION"
+    )
     for task in tasks:
         typer.echo(
             f"{task.id:>4}  {task.status:<9}  "
             f"{_local_time(task.created_at):<16}  "
+            f"{task.agent:<6}  "
             f"{_reported_flag(task):<5}  "
             f"{_shorten(task.description, MAX_DESCRIPTION_CHARS)}"
         )
@@ -872,6 +879,60 @@ def doctor(
         typer.echo(f"\n{failed} check(s) failed.")
         raise typer.Exit(1)
     typer.echo("\nall good.")
+
+
+@app.command("setup-agent")
+def setup_agent(
+    default: Annotated[
+        str | None,
+        typer.Option("--default", help="The agent that does the work when none is named."),
+    ] = None,
+    enable: Annotated[
+        list[str] | None,
+        typer.Option("--enable", help="Another agent a task may be sent to; repeatable."),
+    ] = None,
+    no_smoke: Annotated[
+        bool, typer.Option("--no-smoke", help="Skip running one real task on each agent.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Ask nothing and sign nothing in: report.")
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print one JSON document instead; needs --yes.")
+    ] = False,
+) -> None:
+    """Choose the coding agent Jarvis hands work to, sign it in, and prove it runs.
+
+    Shows which agents are installed and signed in, asks which should do the work, runs
+    the login each one is missing (an API key is a line for you to add — this never reads
+    or writes .env), runs one real task through each as a smoke test, and prints the
+    AGENT_BACKEND= and AGENTS_ENABLED= lines to paste.
+
+    For an agent setting this up: `--yes --json` prints one JSON document. Exit 0 means
+    every chosen agent can run a task; exit 1 means one cannot (not installed, not signed
+    in, or failed its smoke test); exit 2 means the command line itself is wrong.
+    """
+    if as_json and not yes:
+        typer.echo("--json leaves nowhere to print a question: add --yes", err=True)
+        raise typer.Exit(2)
+    settings = _configure_readonly()
+    try:
+        code = run_setup_agent(
+            settings,
+            default=default.strip().lower() if default else None,
+            enable=[name.strip().lower() for name in enable] if enable else None,
+            smoke=not no_smoke,
+            yes=yes,
+            as_json=as_json,
+            echo=typer.echo,
+            ask=lambda text, preset: typer.prompt(text, default=preset),
+            confirm=lambda text, preset: typer.confirm(text, default=preset),
+        )
+    except SetupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+    if code:
+        raise typer.Exit(code)
 
 
 @app.command("setup-google")

@@ -1,0 +1,11 @@
+{"type":"thread.started","thread_id":"01a0d55f-0000-7000-8000-000000000001"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll look at the repository, then add the file."}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/usr/bin/zsh -lc ls","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/usr/bin/zsh -lc ls","aggregated_output":"README.md\nsrc\n","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_2","type":"file_change","changes":[{"path":"/work/orchard/NOTES.md","kind":"add"}],"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"/work/orchard/NOTES.md","kind":"add"}],"status":"completed"}}
+{"type":"item.started","item":{"id":"item_3","type":"mcp_tool_call","server":"google","tool":"search_gmail_messages","arguments":{"query":"from:landlord"},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_3","type":"mcp_tool_call","server":"google","tool":"search_gmail_messages","arguments":{"query":"from:landlord"},"result":{"content":[{"type":"text","text":"no messages"}],"structured_content":{"result":"no messages"}},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"Added `NOTES.md` with the summary.\n\nRESTART_REQUIRED: registers the new tool at startup\n\nSPOKEN_SUMMARY: I added the notes file and checked the mail; nothing from the landlord."}}
+{"type":"turn.completed","usage":{"input_tokens":55403,"cached_input_tokens":47616,"cache_write_input_tokens":0,"output_tokens":309,"reasoning_output_tokens":53}}

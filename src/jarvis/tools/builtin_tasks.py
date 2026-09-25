@@ -16,6 +16,9 @@ attempted, and neither survives a call they missed. Until it is stamped, the tas
 top of the next call. Nothing but the voice model, having spoken, may stamp it.
 """
 
+from collections.abc import Sequence
+
+from jarvis.agents.registry import agent_for_model
 from jarvis.config import Settings
 from jarvis.continuity.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
 from jarvis.continuity.recall import MAX_LIMIT as MAX_RECALL_LIMIT
@@ -33,12 +36,14 @@ from jarvis.tools.builtin_common import (
     _STATUS_FILTERS,
     _TASK_ID_PROPERTY,
     _TASK_ID_SCHEMA,
+    AGENT_UNAVAILABLE_MESSAGE,
+    BACKENDS,
     CALLBACK_ALREADY_DONE_MESSAGE,
     CALLBACK_OWNER_ONLY_MESSAGE,
     CALLBACK_SET_MESSAGE,
     DEFAULT_TASK_LIMIT,
     MAX_TASK_LIMIT,
-    MODEL_DESCRIPTION,
+    MODEL_AGENT_CONFLICT_MESSAGE,
     RECALL_EMPTY_MESSAGE,
     REPORTED_MESSAGE,
     STILL_RUNNING_MESSAGE,
@@ -50,7 +55,9 @@ from jarvis.tools.builtin_common import (
     _report_excerpt,
     _task_ids,
     _text,
+    agent_description,
     get_task,
+    model_description,
     pin_gate,
     possession_gate,
     read_gate,
@@ -66,9 +73,46 @@ def register_task_tools(
     settings: Settings,
     inline_waits: InlineWaits,
     recaller: Recaller | None = None,
+    agents: Sequence[str] | None = None,
 ) -> None:
-    """Register the task tools. `recall` needs a `Recaller`; the rest are unconditional."""
+    """Register the task tools. `recall` needs a `Recaller`; the rest are unconditional.
+
+    `agents` is what `dispatch_task` may name, the default first
+    (`jarvis.agents.registry.offered_agents`); None is the default alone. With one, the
+    tool has no `agent` parameter at all, and reads exactly as it did before there was a
+    choice.
+    """
+    offered = list(agents or [settings.agent_backend])
+    default_agent = offered[0]
+
     # --- dispatch_task -----------------------------------------------------
+
+    def choose_agent(arguments: dict) -> tuple[str | None, dict | None]:
+        """The agent to run on, or the refusal to hand back: `(agent, None)` / `(None, error)`.
+
+        A model name picks its own agent ("opus" is Claude's), so the model rarely says
+        both; when it does and they disagree, nothing is guessed.
+        """
+        named = (_text(arguments, "agent") or "").lower() or None
+        model = _text(arguments, "model")
+        implied = agent_for_model(model)
+        if named and implied and named != implied:
+            return None, {
+                "error": MODEL_AGENT_CONFLICT_MESSAGE.format(
+                    model=model,
+                    model_agent=BACKENDS[implied].spoken_name,
+                    agent=BACKENDS[named].spoken_name if named in BACKENDS else named,
+                )
+            }
+        agent = named or implied or default_agent
+        if agent not in offered:
+            label = BACKENDS[agent].spoken_name if agent in BACKENDS else agent
+            return None, {
+                "error": AGENT_UNAVAILABLE_MESSAGE.format(
+                    agent=label, default=BACKENDS[default_agent].spoken_name
+                )
+            }
+        return agent, None
 
 
     async def dispatch_task(ctx: ToolContext, arguments: dict) -> dict:
@@ -79,12 +123,16 @@ def register_task_tools(
         description = _text(arguments, "description")
         if not description:
             return {"error": "description is required: say what the subagent should do"}
+        agent, refusal = choose_agent(arguments)
+        if refusal is not None:
+            return refusal
 
         try:
             task = await manager.dispatch(
                 description,
                 project=_text(arguments, "project") or None,
                 model=_text(arguments, "model") or None,
+                agent=agent,
                 origin_channel=ctx.channel,
                 origin_caller=ctx.caller,
                 origin_session_id=ctx.session.session_id,
@@ -110,42 +158,46 @@ def register_task_tools(
             result["message"] = STILL_RUNNING_MESSAGE
         return result
 
+    worker = BACKENDS[default_agent].spoken_name
+    dispatch_properties: dict = {
+        "description": {
+            "type": "string",
+            "description": "What the subagent should do, in full sentences. It cannot "
+            "hear the conversation, so include every detail that matters.",
+        },
+        "project": {
+            "type": "string",
+            "description": "The name of the project to work in. Optional: leave it "
+            "out when they did not name one and the task starts in their projects "
+            "folder, where the subagent finds the repo itself. Use list_projects "
+            "only when they ask what exists.",
+        },
+        "model": {
+            "type": "string",
+            "enum": [alias for name in offered for alias in BACKENDS[name].models],
+            "description": model_description(offered),
+        },
+        "wait_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": settings.dispatch_wait_max_seconds,
+            "description": WAIT_DESCRIPTION,
+        },
+    }
+    if len(offered) > 1:
+        dispatch_properties["agent"] = {
+            "type": "string",
+            "enum": offered,
+            "description": agent_description(offered),
+        }
     registry.register(
         "dispatch_task",
-        "Hand a piece of work to Claude and get back a task number. Use it for anything you "
+        f"Hand a piece of work to {worker} and get back a task number. Use it for anything you "
         "cannot answer yourself in a sentence or two, and for anything to do with code the "
         "moment you recognise it — do not ask the caller to confirm the request first, and "
-        "do not interview them about details Claude can work out for itself. On the phone, "
+        f"do not interview them about details {worker} can work out for itself. On the phone, "
         "every dispatch comes back as pin_required until the caller has given the PIN.",
-        {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string",
-                    "description": "What the subagent should do, in full sentences. It cannot "
-                    "hear the conversation, so include every detail that matters.",
-                },
-                "project": {
-                    "type": "string",
-                    "description": "The name of the project to work in. Optional: leave it "
-                    "out when they did not name one and the task starts in their projects "
-                    "folder, where the subagent finds the repo itself. Use list_projects "
-                    "only when they ask what exists.",
-                },
-                "model": {
-                    "type": "string",
-                    "enum": ["opus", "sonnet", "fable", "haiku"],
-                    "description": MODEL_DESCRIPTION,
-                },
-                "wait_seconds": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": settings.dispatch_wait_max_seconds,
-                    "description": WAIT_DESCRIPTION,
-                },
-            },
-            "required": ["description"],
-        },
+        {"type": "object", "properties": dispatch_properties, "required": ["description"]},
         dispatch_task,
     )
 

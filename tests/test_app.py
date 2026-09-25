@@ -3,6 +3,7 @@
 import pytest
 from fakes import FakeVoiceSession, eventually
 
+from jarvis.agents.router import RoutingAgentRunner
 from jarvis.app import AppState, build_app_state, shutdown_app_state
 from jarvis.continuity.briefing import Briefer
 from jarvis.continuity.memory import MemoryWriter, memory_path
@@ -113,7 +114,8 @@ async def test_the_real_agent_runner_is_used_unless_fakes_are_asked_for(settings
     real = build_app_state(settings)
     fake = build_app_state(settings.model_copy(update={"fake_agents": True}))
 
-    assert isinstance(real.manager._runner, ClaudeAgentRunner)
+    assert isinstance(real.manager._runner, RoutingAgentRunner)
+    assert isinstance(real.manager._runner.runners["claude"], ClaudeAgentRunner)
     assert isinstance(fake.manager._runner, FakeAgentRunner)
 
     await shutdown_app_state(real)

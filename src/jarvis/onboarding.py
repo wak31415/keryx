@@ -11,7 +11,8 @@ It never writes `.env`. Only scripts and people touch that file, so when the nam
 It ends with what a call will carry and what it will not: the projects a task can be pointed
 at, which of them wrote a brief, how many characters the briefs and the memory add to
 *every* call — both are sent to the realtime provider each time — and the skills. The
-subagents' own map of the owner's world is `~/.claude/CLAUDE.md`, which `init` only names.
+subagents' own map of the owner's world is each enabled agent's instructions file
+(`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`), which `init` only names.
 
 A new owner is as likely to point their own coding agent at the repository and say "set
 this up", so the same facts come out as a document: `setup_summary` is `setup_report`'s
@@ -30,6 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.agents.registry import BACKENDS, skill_dirs
 from jarvis.config import OWNER_FALLBACK, Settings, env_var_name
 from jarvis.continuity.memory import (
     MAX_MEMORY_CHARS,
@@ -45,15 +47,24 @@ from jarvis.projects import (
     discover_briefs,
     discover_projects,
 )
-from jarvis.skills import Skill, discover_skills
+from jarvis.skills import Skill, discover_skills_in
 
 Echo = Callable[[str], None]
 Ask = Callable[[str], str]
 Confirm = Callable[[str], bool]
 
-#: Where a subagent learns about the owner's world: the Claude CLI's own user memory,
-#: which every subagent reads because it runs the CLI with the user's settings.
-SUBAGENT_MEMORY = "~/.claude/CLAUDE.md"
+def subagent_memories(settings: Settings) -> dict[str, str]:
+    """Where each enabled agent's subagents learn about the owner's world, the default first.
+
+    Each agent's own user-level instructions file — `~/.claude/CLAUDE.md` for Claude,
+    `~/.codex/AGENTS.md` for Codex — which every subagent reads because it runs that CLI
+    with the user's own settings.
+    """
+    home = str(Path.home())
+    return {
+        name: str(BACKENDS[name].instructions_file()).replace(home, "~", 1)
+        for name in settings.enabled_agents
+    }
 
 #: What became of the memory. It is what `--json` reports as `status`, and the exit code
 #: is a function of it: `_REFUSED` is exit 1 — a memory was wanted and not written — and
@@ -246,7 +257,7 @@ def _inventory(settings: Settings) -> _Inventory:
         projects=projects,
         briefs=discover_briefs(projects),
         memory=read_memory(settings.data_dir),
-        skills=discover_skills(settings.skills_dir),
+        skills=discover_skills_in(skill_dirs(settings)),
     )
 
 
@@ -268,8 +279,9 @@ def setup_report(settings: Settings) -> list[str]:
         + (f": {', '.join(brief.name for brief in briefs)}" if briefs else ""),
         f"sent to the realtime provider on every call: {found.per_call_chars} characters "
         f"({found.brief_chars} of briefs, {len(found.memory)} of memory)",
-        f"skills: {len(found.skills)} in {settings.skills_dir}",
-        f"subagents read {SUBAGENT_MEMORY}, so their map of your world belongs there.",
+        f"skills: {len(found.skills)} in {', '.join(map(str, skill_dirs(settings)))}",
+        f"subagents read {' and '.join(subagent_memories(settings).values())}, so their map "
+        "of your world belongs there.",
     ]
 
 
@@ -283,6 +295,7 @@ def setup_summary(
     """
     found = _inventory(settings)
     written = {brief.name: len(brief.text) for brief in found.briefs}
+    memories = subagent_memories(settings)
     return {
         "status": status,
         "owner_name": settings.owner_name or None,
@@ -311,5 +324,8 @@ def setup_summary(
             {"name": skill.name, "description": skill.description} for skill in found.skills
         ],
         "skills_dir": str(settings.skills_dir),
-        "subagent_memory": SUBAGENT_MEMORY,
+        "skills_dirs": [str(path) for path in skill_dirs(settings)],
+        # The default agent's, under the key it has always had; every agent's beside it.
+        "subagent_memory": memories[settings.agent_backend],
+        "subagent_memories": memories,
     }

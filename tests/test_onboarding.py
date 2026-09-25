@@ -236,6 +236,22 @@ def test_the_report_counts_projects_briefs_skills_and_what_every_call_carries(ho
     assert "~/.claude/CLAUDE.md" in report
 
 
+def test_every_enabled_agents_instructions_file_is_named(home, monkeypatch):
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    home.agents_enabled = ["claude", "codex"]
+
+    report = "\n".join(setup_report(home))
+    summary = setup_summary(home)
+
+    assert "subagents read ~/.claude/CLAUDE.md and ~/.codex/AGENTS.md" in report
+    assert summary["subagent_memory"] == "~/.claude/CLAUDE.md"
+    assert summary["subagent_memories"] == {
+        "claude": "~/.claude/CLAUDE.md",
+        "codex": "~/.codex/AGENTS.md",
+    }
+    assert len(summary["skills_dirs"]) == 2
+
+
 def test_facts_skip_blank_lines_and_headings():
     assert facts_from_text("# Me\n\n  one  \n\n## More\ntwo\n") == ["one", "two"]
 

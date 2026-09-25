@@ -66,6 +66,18 @@ def test_the_skill_proposes_the_subagents_own_memory_rather_than_editing_it(flat
     assert "Show every edit before you make it" in flat
 
 
+def test_the_skill_proposes_each_enabled_agents_own_file(flat):
+    assert "~/.codex/AGENTS.md" in flat
+    assert "for each agent in `enabled`" in flat
+
+
+def test_the_skill_checks_the_coding_agent_first_and_signs_nothing_in_itself(flat):
+    """A login opens a browser or prints a code: the owner's to do, not the session's."""
+    assert "uv run jarvis setup-agent --yes --json" in flat
+    assert flat.index("## 0. Check the coding agent") < flat.index("## 1. See what is there")
+    assert "theirs to do, not yours" in flat
+
+
 def test_the_skill_never_touches_the_env_file(flat):
     assert "never edits .env" in flat
     assert "OWNER_NAME=" in flat

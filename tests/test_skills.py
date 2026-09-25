@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from jarvis.skills import MAX_DESCRIPTION_CHARS, Skill, discover_skills
+from jarvis.skills import MAX_DESCRIPTION_CHARS, Skill, discover_skills, discover_skills_in
 
 
 def write_skill(root: Path, directory: str, body: str) -> Path:
@@ -68,3 +68,21 @@ def test_entries_without_a_usable_skill_file_are_skipped(tmp_path):
 
 def test_a_missing_skills_directory_is_not_an_error(tmp_path):
     assert discover_skills(tmp_path / "nothing-here") == []
+
+
+def test_skills_across_agents_are_listed_once_each(tmp_path):
+    first, second = tmp_path / "claude", tmp_path / "codex"
+    for root, name, text in (
+        (first, "review", "Claude's review."),
+        (second, "review", "Codex's review."),
+        (second, "plot", "Plots."),
+    ):
+        (root / name).mkdir(parents=True)
+        (root / name / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {text}\n---\n")
+
+    found = discover_skills_in([first, second, tmp_path / "missing"])
+
+    assert [(skill.name, skill.description) for skill in found] == [
+        ("review", "Claude's review."),
+        ("plot", "Plots."),
+    ]

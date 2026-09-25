@@ -63,7 +63,8 @@ again with the training results.
 ## Quick start
 
 You need Python 3.12, [uv](https://docs.astral.sh/uv/), an OpenAI API key with Realtime
-access, and a Claude login. The wake word runs on macOS; phone calls work on macOS or Linux
+access, and a coding agent to do the work: Claude Code or Codex, signed in with a
+subscription or an API key. The wake word runs on macOS; phone calls work on macOS or Linux
 and also need Twilio and a Cloudflare tunnel.
 
 ```bash
@@ -73,8 +74,15 @@ uv sync
 cp .env.example .env
 ```
 
-Add `OPENAI_API_KEY` to `.env` and sign in once with `claude /login`. For a server without
-an interactive login, `.env.example` lists token and API key options. Check your setup with:
+Add `OPENAI_API_KEY` to `.env`, then set up the coding agent. This finds what is installed,
+runs the sign-in that is missing, proves it with one real task, and prints the lines to add
+to `.env` (see [Choosing your coding agent](#choosing-your-coding-agent)):
+
+```bash
+uv run jarvis setup-agent
+```
+
+Check the rest of your setup with:
 
 ```bash
 uv run jarvis doctor
@@ -116,6 +124,24 @@ Settings when prompted.
 For a setup that starts automatically after a reboot, see the
 [wiki](https://github.com/wak31415/jarvis-voice-agent/wiki).
 
+## Choosing your coding agent
+
+Jarvis hands its work to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or
+[Codex](https://developers.openai.com/codex). `AGENT_BACKEND` picks the default; with both
+enabled in `AGENTS_ENABLED`, you can say "have Codex do it" on a call. Either one signs in
+three ways, and the first one set wins:
+
+| Tier | Claude | Codex |
+|---|---|---|
+| API key (pay per token) | `ANTHROPIC_API_KEY` | `CODEX_API_KEY` |
+| Headless subscription token | `CLAUDE_CODE_OAUTH_TOKEN` | `CODEX_ACCESS_TOKEN` |
+| Stored subscription login | `claude` → `/login` | `codex login` |
+
+Both do the same work here: voice dispatch, follow-ups, progress, projects, Slack, and Gmail
+and Calendar (for Codex through `GOOGLE_WORKSPACE_MCP` and `jarvis setup-google`). Claude
+also has a per-task dollar figure and cap. The approval bridge stays Claude Code only.
+[`docs/agents.md`](docs/agents.md) has the full comparison.
+
 ## Configuration
 
 `.env.example` lists all available settings. For phone calls, set `TWILIO_ACCOUNT_SID`,
@@ -129,8 +155,9 @@ narrow and the PIN enabled. Read the wiki's
 [security guidance](https://github.com/wak31415/jarvis-voice-agent/wiki/Security-Model)
 before putting the phone channel online.
 
-Voice calls incur OpenAI API charges. Coding-agent tasks count against your Claude
-subscription limits by default, or use token billing if you set `ANTHROPIC_API_KEY`.
+Voice calls incur OpenAI API charges. Coding-agent tasks count against your Claude or
+ChatGPT subscription limits by default, or use token billing if you set `ANTHROPIC_API_KEY`
+or `CODEX_API_KEY`.
 
 ## Extend Jarvis
 

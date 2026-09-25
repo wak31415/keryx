@@ -1,4 +1,4 @@
-"""The Claude skills installed on this machine, so the voice model knows they exist.
+"""The skills installed for the coding agents, so the voice model knows they exist.
 
 A skill is a directory with a `SKILL.md` whose front matter carries a name and a
 one-line description. The subagent finds and runs them by itself; this module exists
@@ -11,6 +11,7 @@ not the session.
 """
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -100,3 +101,16 @@ def discover_skills(root: Path) -> list[Skill]:
         name = fields.get("name") or entry.name
         skills.append(Skill(name=name, description=_shorten(description)))
     return skills
+
+
+def discover_skills_in(roots: Iterable[Path]) -> list[Skill]:
+    """Every skill under any of `roots`, each name once: the first root that has it wins.
+
+    One root per enabled coding agent. A skill both agents have installed is the same skill
+    to the voice model, which only needs to know the work is possible.
+    """
+    found: dict[str, Skill] = {}
+    for root in roots:
+        for skill in discover_skills(root):
+            found.setdefault(skill.name, skill)
+    return list(found.values())

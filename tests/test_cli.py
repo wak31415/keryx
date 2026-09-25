@@ -74,6 +74,51 @@ def test_help_lists_the_commands():
         assert command in result.output
 
 
+def test_setup_agent_is_a_command_with_its_switches():
+    assert "setup-agent" in runner.invoke(app, ["--help"]).output
+    result = runner.invoke(app, ["setup-agent", "--help"])
+
+    assert result.exit_code == 0
+    for option in ("--default", "--enable", "--no-smoke", "--yes", "--json"):
+        assert option in result.output
+
+
+def test_setup_agent_json_cannot_ask_so_it_needs_yes(settings_stub):
+    result = runner.invoke(app, ["setup-agent", "--json"])
+
+    assert result.exit_code == 2
+    assert "add --yes" in result.output
+
+
+def test_setup_agent_hands_its_flags_over_and_exits_with_the_result(settings_stub, monkeypatch):
+    seen: dict = {}
+
+    def fake(settings, **kw):
+        seen.update(kw)
+        return 1
+
+    monkeypatch.setattr("jarvis.cli.run_setup_agent", fake)
+
+    result = runner.invoke(
+        app, ["setup-agent", "--default", " Codex ", "--enable", "CLAUDE", "--no-smoke", "-y"]
+    )
+
+    assert result.exit_code == 1
+    assert (seen["default"], seen["enable"], seen["smoke"], seen["yes"]) == (
+        "codex",
+        ["claude"],
+        False,
+        True,
+    )
+
+
+def test_setup_agent_refuses_an_agent_it_does_not_know(settings_stub):
+    result = runner.invoke(app, ["setup-agent", "--default", "gemini", "--yes", "--no-smoke"])
+
+    assert result.exit_code == 2
+    assert "no agent called 'gemini'" in result.output
+
+
 def test_version_prints_the_installed_package_version():
     """The bug report template asks for it."""
     result = runner.invoke(app, ["--version"])
@@ -126,6 +171,19 @@ def test_serve_refuses_to_answer_the_phone_without_signature_checks_behind_a_tun
     assert "DEBUG_SKIP_TWILIO_VALIDATION" in result.output
     assert len(result.output.strip().splitlines()) == 1
     assert "config" not in built  # no server was ever built
+
+
+def test_serve_refuses_a_default_agent_that_is_not_enabled(settings_stub, monkeypatch):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    monkeypatch.setattr(settings_stub, "agents_enabled", ["claude"])
+    monkeypatch.setattr(settings_stub, "agent_backend", "codex")
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 2, result.output
+    assert "AGENT_BACKEND is codex" in result.output
+    assert "config" not in built
 
 
 def test_serve_without_the_phone_does_not_care_about_signature_checks(
@@ -306,7 +364,7 @@ def test_serve_wires_the_task_stack_into_the_shared_state(settings_stub, monkeyp
     assert result.exit_code == 0, result.output
     state = built["config"].app.state.jarvis
     assert state.manager is not None
-    assert isinstance(state.manager._runner, ClaudeAgentRunner)
+    assert isinstance(state.manager._runner.runners["claude"], ClaudeAgentRunner)
     assert "dispatch_task" in {schema["name"] for schema in state.registry.schemas()}
     assert state.store._conn is None  # the store is closed again when serve returns
 
@@ -1142,6 +1200,29 @@ def test_tasks_list_says_whether_they_have_been_told(settings_stub):
     assert "TOLD" in result.output
     assert "NO" in next(line for line in result.output.splitlines() if "not yet said" in line)
     assert "yes" in next(line for line in result.output.splitlines() if "already said" in line)
+
+
+def test_tasks_list_says_which_agent_ran_each_task(settings_stub):
+    seed_tasks(
+        settings_stub,
+        make_task("on the default", status=TaskStatus.DONE),
+        make_task("named out loud", status=TaskStatus.DONE, agent="codex"),
+    )
+
+    result = runner.invoke(app, ["tasks", "list"])
+
+    assert "AGENT" in result.output
+    lines = result.output.splitlines()
+    assert "claude" in next(line for line in lines if "on the default" in line)
+    assert "codex" in next(line for line in lines if "named out loud" in line)
+
+
+def test_tasks_show_names_the_agent(settings_stub):
+    seed_tasks(settings_stub, make_task("named out loud", agent="codex"))
+
+    result = runner.invoke(app, ["tasks", "show", "1"])
+
+    assert any(line.split() == ["agent", "codex"] for line in result.output.splitlines())
 
 
 def test_memory_says_so_when_there_is_nothing_remembered_yet(settings_stub):

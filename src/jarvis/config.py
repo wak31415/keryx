@@ -30,6 +30,9 @@ OWNER_FALLBACK = "the owner"
 OPTIONAL_STR_FIELDS = (
     "anthropic_api_key",
     "claude_code_oauth_token",
+    "codex_api_key",
+    "codex_access_token",
+    "codex_model",
     "twilio_account_sid",
     "twilio_auth_token",
     "twilio_number",
@@ -61,6 +64,9 @@ OPTIONAL_STR_FIELDS = (
 #: `bypassPermissions`, and eight at most because it is said or keyed under time pressure.
 PIN_PATTERN = re.compile(r"\d{6,8}")
 PIN_RULE = "must be 6 to 8 digits, and nothing but digits"
+
+#: The coding agents a task can run on (jarvis/agents/registry.py has one entry per name).
+AgentName = Literal["claude", "codex"]
 
 #: What a cluster name or partition has to be. Both are handed to a remote shell, so
 #: anything but a bare word is refused when the settings load rather than on a call.
@@ -120,6 +126,17 @@ class Settings(BaseSettings):
     #: Realtime API has no hosted search tool of its own).
     openai_web_search_model: str = "gpt-5.4-mini"
 
+    # Coding agents (jarvis/agents). Which agent runs a task nobody named one for, and every
+    # agent a task may be sent to. A task keeps the agent it started on for its whole life —
+    # follow-ups included — because a session id belongs to the agent that issued it.
+    agent_backend: AgentName = "claude"
+    #: Blank is just `AGENT_BACKEND`. `jarvis serve` refuses a default that is not in here.
+    agents_enabled: Annotated[list[AgentName], NoDecode] = Field(default_factory=list)
+    #: The longest one subagent run may take, whichever agent it is on, in seconds; 0 is no
+    #: limit. Claude also has a turn cap and a dollar cap below; Codex has neither, so this is
+    #: what bounds it. Generous, because real work — a test suite, a refactor — takes a while.
+    subagent_timeout_s: float = Field(default=3 * 60 * 60, ge=0)
+
     # Claude Agent SDK. Subagent auth, in order of precedence: ANTHROPIC_API_KEY
     # (pay-per-token) > CLAUDE_CODE_OAUTH_TOKEN (subscription, headless; from
     # `claude setup-token`) > the Claude CLI's stored subscription login (default).
@@ -128,6 +145,15 @@ class Settings(BaseSettings):
     subagent_model: str = "claude-opus-5"
     subagent_max_turns: int = 200
     subagent_max_budget_usd: float = 10.0
+
+    # Codex CLI. Auth, in the same order as Claude's: CODEX_API_KEY (pay per token) >
+    # CODEX_ACCESS_TOKEN (headless; logged in once into Jarvis's own CODEX_HOME) > the Codex
+    # CLI's stored login (`codex login`, the ChatGPT plan). OPENAI_API_KEY is the voice
+    # model's and is never borrowed for this: that would move a subscription onto billing.
+    codex_api_key: str | None = Field(default=None, repr=False)
+    codex_access_token: str | None = Field(default=None, repr=False)
+    #: Blank is Codex's own default model.
+    codex_model: str | None = None
 
     # Billing (jarvis/integrations/billing.py, behind the voice model's `check_billing`). Read-only,
     # and on an *admin*-scoped credential: the key the voice agent talks to the model with
@@ -346,6 +372,21 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
+    @field_validator("agents_enabled", mode="before")
+    @classmethod
+    def _parse_agent_list(cls, value: object) -> object:
+        """A comma list, case-insensitive; a name Jarvis does not know fails the load."""
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, list):
+            return [str(item).strip().lower() for item in value if str(item).strip()]
+        return value
+
+    @field_validator("agent_backend", mode="before")
+    @classmethod
+    def _agent_name_is_lowercase(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
     @field_validator(*OPTIONAL_STR_FIELDS, mode="before")
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
@@ -474,6 +515,25 @@ class Settings(BaseSettings):
             return (
                 "DEBUG_SKIP_TWILIO_VALIDATION is on while PUBLIC_HOST is set, so anyone who "
                 "can reach the tunnel could pose as Twilio — turn it off, or serve --no-phone"
+            )
+        return None
+
+    @property
+    def enabled_agents(self) -> tuple[str, ...]:
+        """Every agent a task may run on, the default first; `AGENTS_ENABLED` blank is it alone."""
+        names = [self.agent_backend, *self.agents_enabled]
+        return tuple(dict.fromkeys(names)) if self.agents_enabled else (self.agent_backend,)
+
+    def agent_refusal(self) -> str | None:
+        """Why `jarvis serve` must not start with these agents, in one line; None if it may.
+
+        A default that is not enabled is a contradiction: every task nobody named an agent
+        for would be sent to one this process was told not to run.
+        """
+        if self.agents_enabled and self.agent_backend not in self.agents_enabled:
+            return (
+                f"AGENT_BACKEND is {self.agent_backend}, which AGENTS_ENABLED "
+                f"({', '.join(self.agents_enabled)}) leaves out — add it, or pick one of those"
             )
         return None
 

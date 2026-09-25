@@ -30,7 +30,7 @@ PIN gating, and the local wake-word transport.
 | Decision | Choice |
 |---|---|
 | Realtime voice layer | **OpenAI Realtime API** (`gpt-realtime-2.1`, speech-to-speech, server VAD, function calling) |
-| Subagent runtime | **Claude Agent SDK (Python)**, `permission_mode="bypassPermissions"`, in-process |
+| Subagent runtime | **Claude Agent SDK (Python)**, `permission_mode="bypassPermissions"`, in-process. *Amended 2026-09-24: or **Codex CLI** (`codex exec --json`, `--dangerously-bypass-approvals-and-sandbox`), chosen by `AGENT_BACKEND` and by voice among `AGENTS_ENABLED`; a task stays on the agent it started on. Claude stays on the SDK rather than `claude -p` so `max_budget_usd`, `max_turns` and typed messages survive. See `docs/agents.md`.* |
 | Mail + calendar access | The Claude CLI's own **claude.ai connectors** (Gmail, Calendar, Drive), which every spawned CLI already carries authorized. *Amended 2026-08-24, was: a `workspace-mcp` stdio server — kept behind `GOOGLE_WORKSPACE_MCP` (default off) for a machine whose subagents authenticate with an API key and so have no connectors. Measured: the connectors answered while workspace-mcp returned "Google Authentication Needed".* |
 | Task kinds | **One** (`agent`): full tools, the machine, Gmail/Calendar, skills and subagents of its own. *Amended 2026-08-24, was: chat/research/coding/cowork with per-kind tool restrictions — classifying a request is a decision the voice model is badly placed to make, and it walled mail off from code.* |
 | Voice-side answers | The voice model answers small factual questions itself via a `web_search` function tool backed by the **Responses API** (a Realtime session accepts only `function` and `mcp` tools — there is no hosted search there). Everything else is dispatched. |
@@ -113,9 +113,15 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `tools/builtin_tasks.py` | `dispatch_task`, `list_tasks`, `get_task_status`, `get_task_result`, `mark_reported`, `recall`, `send_followup`, `cancel_task`, `list_projects`, `request_callback` |
 | `tools/builtin_restart.py` | `restart_service` |
 | `tools/builtin_session.py` | `list_pending_approvals`, `answer_approval`, `submit_pin`, `end_session` — the call itself |
-| `tasks/models.py` | `Task` (schema v4: `reported_at`, `internal`, `needs_restart`), `TaskKind`, `TaskStatus` |
+| `tasks/models.py` | `Task` (schema v5: `reported_at`, `internal`, `needs_restart`, `agent`), `TaskKind`, `TaskStatus` |
 | `tasks/store.py` | SQLite store (`TaskStore`) |
-| `tasks/agent_runner.py` | `AgentRunner` protocol; `ClaudeAgentRunner` (Agent SDK); `FakeAgentRunner` (tests) |
+| `tasks/agent_runner.py` | Re-exports the §3.2 names below from `agents/` (moved 2026-09-24) |
+| `agents/base.py` | `AgentRunner`/`AgentSession` protocols, `RunResult`, the `SPOKEN_SUMMARY:`/`RESTART_REQUIRED:` parsing, the subagent suffix, `FakeAgentRunner` |
+| `agents/claude.py` | `ClaudeAgentRunner` (Agent SDK), `CLAUDE_MODELS`, the Claude auth source |
+| `agents/codex.py` | `CodexAgentRunner` (`codex exec --json` through an injectable spawner), `CODEX_MODELS`, MCP translation |
+| `agents/auth.py` | the three auth tiers every agent shares: `resolve_auth`, `child_env`, `redact` |
+| `agents/registry.py` | `BACKENDS`: one `BackendSpec` per agent; `offered_agents`, `build_agent_runner` |
+| `agents/router.py` | `RoutingAgentRunner`: opens each task on `task.agent` |
 | `tasks/manager.py` | `TaskManager`: queue/semaphore, lifecycle, follow-up, cancel, logs, events |
 | `notify/callback.py` | `CALLBACK_TOKEN_TTL_S`, `HISTORY_PREAMBLE`, `MAX_REQUEST_CHARS`, `no_trailing_stop`: what the notifier's call-back and the restart's confirmation both have to agree on. Shared prompt copy, deliberately not in `deliver.py` |
 | `notify/deliver.py` | `announce_to_live_sessions` and `safe_send_sms`: the two ways a result reaches him, each in one place. The `can_text` gate is asserted here and nowhere else |
@@ -260,7 +266,9 @@ class TaskStatus(StrEnum): QUEUED="queued"; RUNNING="running"; DONE="done"; FAIL
 @dataclass class Task:
     id: int | None; kind: TaskKind; description: str; status: TaskStatus = QUEUED
     project: str | None = None; cwd: str | None = None; model: str = "claude-opus-5"
-    claude_session_id: str | None = None; summary: str | None = None; report_path: str | None = None
+    agent: str = "claude"                                  # the coding agent it runs on, for life (schema v5)
+    claude_session_id: str | None = None   # the *agent's* session id, whichever agent; name kept for older builds
+    summary: str | None = None; report_path: str | None = None
     error: str | None = None
     origin_channel: str = "local"; origin_caller: str | None = None; origin_session_id: str | None = None
     callback_requested: bool = False; callback_number: str | None = None; callback_note: str | None = None
@@ -737,7 +745,8 @@ class SessionRegistry:
   matching) and `read_tail`, because logs from before this hold it. Calls Jarvis places itself
   still open with their reason. The subagents' tools are not narrowed: the PIN is the control.
 - **Follow-ups**: `send_followup(task_id, text)` → finished task: new run with
-  `resume=claude_session_id`; running task: the text is queued and, when the current run
+  `resume=claude_session_id`, on `task.agent` — never the current default, since a session id
+  belongs to the agent that issued it (ruling 2026-09-24); running task: the text is queued and, when the current run
   finishes, the task is immediately re-run with `resume` and the queued follow-ups as the
   prompt (no completion announcement for the intermediate result). (Ruling 2026-08-19: the
   SDK's mid-turn `query()` semantics are unverified, so `AgentSession.send()` is not used
@@ -772,7 +781,12 @@ class SessionRegistry:
 | `CLUSTER_SSH_GUARD` | `cluster_ssh_guard` (the 2FA/ControlMaster guard `cluster_stats` runs every command through; its contract is in `integrations/cluster.py`) | `None` → no `cluster_stats` |
 | `CLUSTER_QUERY_TIMEOUT_S` | `cluster_query_timeout_s` (per cluster; all are queried at once, so it is the whole wait) | `20.0` |
 | `BILLING_MONTHLY_BUDGET` | `billing_monthly_budget` (what he calls a month's budget; neither provider serves one) | `None` → no percentage is spoken |
-| `SUBAGENT_MODEL` | `subagent_model` | `claude-opus-5` |
+| `AGENT_BACKEND` | `agent_backend` (`claude` or `codex`: the agent a task nobody named one for runs on) | `claude` (added 2026-09-24) |
+| `AGENTS_ENABLED` | `agents_enabled` (comma list; `serve` refuses a default it leaves out) | `[]` → `AGENT_BACKEND` alone |
+| `SUBAGENT_TIMEOUT_S` | `subagent_timeout_s` (wall-clock cap on one run, every agent; 0 is none) | `10800` |
+| `CODEX_API_KEY` / `CODEX_ACCESS_TOKEN` | `codex_api_key` / `codex_access_token` (Codex auth, same precedence as Claude's; `OPENAI_API_KEY` is never borrowed) | `None` → `codex login` |
+| `CODEX_MODEL` | `codex_model` | `None` → Codex's own default |
+| `SUBAGENT_MODEL` | `subagent_model` (Claude's default model) | `claude-opus-5` |
 | `SUBAGENT_MAX_TURNS` | `subagent_max_turns` | `200` |
 | `SUBAGENT_MAX_BUDGET_USD` | `subagent_max_budget_usd` | `10.0` |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_NUMBER` | `twilio_account_sid` / `twilio_auth_token` / `twilio_number` | `None` |
@@ -880,6 +894,22 @@ the `allowed_tools` option is only an auto-approve list and restricts nothing; t
 `tools=[…]`. That still holds — but nothing is restricted any more: `tools` is never set, so every subagent
 keeps the full built-in set (skills and its own subagents included), and the google MCP server is attached to
 every task with `allowed_tools=["mcp__google__*"]` for the MCP wildcard.
+
+**Codex CLI 0.156 (verified 2026-09-24 against real runs)** — `codex exec --json [-C dir]
+--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox [-m model] [-c key=toml] -` reads
+the prompt from stdin; `codex exec resume <id> --json … -` continues a thread (it has no `-C`: the
+process cwd is the directory). JSONL on stdout: `thread.started{thread_id}`, `turn.started`,
+`item.started`/`item.completed{item:{type: agent_message|command_execution|file_change|
+mcp_tool_call|web_search|reasoning|error, …}}`, `turn.completed{usage}`, `turn.failed{error}`,
+top-level `error{message}` (a 4xx body is quoted as a JSON string). Exit 1 on failure; SIGINT to
+the process group exits 1 at once with no `turn.failed`. `-c developer_instructions="…"` reaches
+the model (re-sent on resume). MCP: `-c mcp_servers.<name>.command=… .args=[…] .env_vars=[names]`
+forwards those variables from Codex's own environment — the values never touch argv.
+Auth: `CODEX_API_KEY` in the environment overrides a stored login; an inherited `OPENAI_API_KEY`
+does **not** (a ChatGPT login wins). `CODEX_ACCESS_TOKEN` is **not** read by `exec`: it is an
+agent-identity token for `codex login --with-access-token` (stdin), which rejects a ChatGPT
+access token. `codex login status` answers on **stderr**, exit 0/1. A refused key is quoted back
+masked (`sk-abcd****wxyz`). Fixtures: `tests/agents/fixtures/`.
 
 **Google Workspace MCP** — `uvx workspace-mcp --tools gmail calendar --transport stdio --single-user`;
 env `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/oauth2callback`,

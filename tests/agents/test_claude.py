@@ -1,12 +1,12 @@
-"""Tests for the Claude Agent SDK runner, the fake runner and summary extraction.
+"""Tests for the Claude backend: the Agent SDK options, runner and session.
 
 The real SDK is never started: `ClaudeAgentRunner` takes a `client_factory`, and the
 double below yields real `claude_agent_sdk` message dataclasses so the parsing code is
 exercised against the actual shapes the SDK emits.
 """
 
-import asyncio
 import stat
+import subprocess
 
 import pytest
 from claude_agent_sdk.types import (
@@ -18,19 +18,12 @@ from claude_agent_sdk.types import (
     UserMessage,
 )
 
-from jarvis.tasks.agent_runner import (
-    DEFAULT_FAKE_RESULT,
-    INTERRUPTED_RESULT,
-    NO_SUMMARY,
+from jarvis.agents.base import RunResult
+from jarvis.agents.claude import (
     SUBAGENT_MAX_BUFFER_BYTES,
     ClaudeAgentRunner,
     ClaudeAgentSession,
-    FakeAgentRunner,
-    RunResult,
     build_options,
-    extract_restart_request,
-    extract_spoken_summary,
-    render_subagent_suffix,
     resolve_model,
 )
 from jarvis.tasks.models import Task, TaskKind
@@ -108,70 +101,6 @@ class FakeSdkClient:
 # --------------------------------------------------------------------------- summaries
 
 
-def test_extract_spoken_summary_takes_the_marked_block():
-    text = "Long report.\n\nSPOKEN_SUMMARY: I fixed the test. It passes now."
-
-    assert extract_spoken_summary(text) == "I fixed the test. It passes now."
-
-
-def test_extract_spoken_summary_joins_the_lines_after_the_marker():
-    text = "Report.\n\nSPOKEN_SUMMARY:\nI read the repo.\nNothing was broken."
-
-    assert extract_spoken_summary(text) == "I read the repo. Nothing was broken."
-
-
-def test_extract_spoken_summary_tolerates_markdown_noise_around_the_marker():
-    text = "Report.\n\n## **SPOKEN_SUMMARY:** **I sent the email.**"
-
-    assert extract_spoken_summary(text) == "I sent the email."
-
-
-def test_extract_spoken_summary_uses_the_last_marker():
-    text = (
-        "SPOKEN_SUMMARY: the format is a line like this.\n\n"
-        "Real report here.\n\n"
-        "SPOKEN_SUMMARY: I booked the room."
-    )
-
-    assert extract_spoken_summary(text) == "I booked the room."
-
-
-def test_extract_spoken_summary_cleans_bullets_and_backticks():
-    text = "SPOKEN_SUMMARY:\n- I ran `pytest`.\n- Everything passed."
-
-    assert extract_spoken_summary(text) == "I ran pytest. Everything passed."
-
-
-def test_extract_spoken_summary_falls_back_to_the_last_paragraph():
-    text = "First paragraph.\n\nThe last thing I did was restart the server.\n\n   \n"
-
-    assert extract_spoken_summary(text) == "The last thing I did was restart the server."
-
-
-def test_extract_spoken_summary_of_empty_text_is_a_stand_in():
-    assert extract_spoken_summary("   \n\n  ") == NO_SUMMARY
-    assert extract_spoken_summary("SPOKEN_SUMMARY:   ") == NO_SUMMARY
-
-
-def test_extract_spoken_summary_of_an_empty_block_falls_back_to_the_report():
-    assert extract_spoken_summary("I archived the mail.\n\nSPOKEN_SUMMARY:\n") == (
-        "I archived the mail."
-    )
-
-
-def test_extract_spoken_summary_truncates_at_a_word_boundary():
-    words = " ".join(["alpha"] * 200)
-    summary = extract_spoken_summary(f"SPOKEN_SUMMARY: {words}")
-
-    assert len(summary) <= 400
-    assert summary.endswith("…")
-    assert not summary.endswith("alph…")
-    assert words.startswith(summary[:-1].strip())
-
-
-# ------------------------------------------------------------------------ model names
-
-
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
@@ -192,9 +121,6 @@ def test_resolve_model_defaults_to_the_configured_model(settings, name):
     settings.subagent_model = "claude-sonnet-5"
 
     assert resolve_model(name, settings) == "claude-sonnet-5"
-
-
-# ------------------------------------------------------------------------ build_options
 
 
 def test_build_options_sets_the_shared_agent_configuration(settings):
@@ -365,9 +291,6 @@ def test_build_options_omits_unconfigured_google_env(settings):
     assert env["OAUTHLIB_INSECURE_TRANSPORT"] == "1"
 
 
-# ---------------------------------------------------------------------------- runner
-
-
 async def test_runner_open_connects_a_client_built_from_the_task(settings):
     created: list[FakeSdkClient] = []
 
@@ -393,9 +316,6 @@ async def test_runner_open_propagates_a_connect_failure(settings):
 
     with pytest.raises(RuntimeError, match="no CLI on PATH"):
         await runner.open(make_task())
-
-
-# --------------------------------------------------------------------------- session
 
 
 async def test_session_run_returns_the_result_and_reports_progress():
@@ -536,97 +456,6 @@ async def test_session_interrupt_and_close_swallow_client_errors():
     assert client.disconnects == 2
 
 
-# ------------------------------------------------------------------------ fake runner
-
-
-async def test_fake_runner_returns_a_default_result_and_records_the_call():
-    runner = FakeAgentRunner()
-    task = make_task()
-
-    session = await runner.open(task, resume="sess-2")
-    outcome = await session.run("do the thing", on_progress=lambda text: None)
-
-    assert runner.opened == [(task, "sess-2")]
-    assert runner.sessions == [session]
-    assert outcome == DEFAULT_FAKE_RESULT
-    assert session.prompts == ["do the thing"]
-
-
-async def test_fake_runner_emits_the_scripted_progress_lines():
-    runner = FakeAgentRunner(progress=["reading", "writing"])
-    session = await runner.open(make_task())
-    seen: list[str] = []
-
-    await session.run("go", on_progress=seen.append)
-
-    assert seen == ["reading", "writing"]
-
-
-async def test_fake_runner_pops_scripted_results_and_repeats_the_last():
-    first = RunResult(ok=True, final_text="one", spoken_summary="one")
-    second = RunResult(ok=False, final_text="two", spoken_summary="two", error="nope")
-    runner = FakeAgentRunner([first, second])
-    session = await runner.open(make_task())
-
-    outcomes = [await session.run("a", on_progress=lambda t: None) for _ in range(3)]
-
-    assert outcomes == [first, second, second]
-    assert session.prompts == ["a", "a", "a"]
-
-
-async def test_fake_runner_calls_a_script_with_the_task_and_resume():
-    calls: list[tuple[Task, str | None]] = []
-
-    def script(task, resume):
-        calls.append((task, resume))
-        return RunResult(ok=True, final_text="scripted", spoken_summary="scripted")
-
-    runner = FakeAgentRunner(script)
-    task = make_task()
-    session = await runner.open(task, resume="sess-5")
-
-    outcome = await session.run("go", on_progress=lambda t: None)
-
-    assert calls == [(task, "sess-5")]
-    assert outcome.final_text == "scripted"
-
-
-async def test_fake_session_records_follow_ups_interrupts_and_close():
-    runner = FakeAgentRunner()
-    session = await runner.open(make_task())
-
-    await session.send("and also this")
-    await session.interrupt()
-    await session.close()
-
-    assert session.sent == ["and also this"]
-    assert session.interrupts == 1
-    assert session.closed is True
-
-
-async def test_fake_session_interrupt_can_end_the_turn():
-    runner = FakeAgentRunner(delay_s=30, interrupt_ends_run=True)
-    session = await runner.open(make_task())
-    turn = asyncio.create_task(session.run("go", on_progress=lambda t: None))
-    await asyncio.sleep(0)
-
-    await session.interrupt()
-
-    assert await asyncio.wait_for(turn, timeout=1) == INTERRUPTED_RESULT
-    assert session.interrupts == 1
-
-
-async def test_fake_session_run_is_cancellable_mid_delay():
-    runner = FakeAgentRunner(delay_s=5)
-    session = await runner.open(make_task())
-    task = asyncio.create_task(session.run("go", on_progress=lambda t: None))
-    await asyncio.sleep(0)
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-
 def test_the_subagent_suffix_makes_slack_opt_in(settings, unwrapped):
     """Subagents reach Slack through the MCP server the owner names; the suffix is the leash."""
     settings.slack_mcp_server = "team-slack"
@@ -659,82 +488,55 @@ def test_the_subagent_suffix_routes_unasked_output_to_the_report(settings, unwra
     assert "goes in the written report" in append
 
 
-# --- RESTART_REQUIRED ------------------------------------------------------
-
-
-def test_no_marker_means_no_restart():
-    assert extract_restart_request("I edited a file and ran the tests.") is None
-
-
-def test_the_marker_is_read_with_its_reason():
-    text = (
-        "Report.\n\nRESTART_REQUIRED: registers the new tool at startup"
-        "\n\nSPOKEN_SUMMARY: done"
-    )
-
-    assert extract_restart_request(text) == "registers the new tool at startup"
-
-
-def test_the_marker_survives_the_markdown_a_model_wraps_it_in():
-    """Same tolerance as SPOKEN_SUMMARY:, and for the same reason."""
-    wrapped = ("**RESTART_REQUIRED:** why", "- RESTART_REQUIRED: why", "## RESTART_REQUIRED: why")
-    for line in wrapped:
-        assert extract_restart_request(f"Report.\n{line}\n") == "why"
-
-
-def test_a_marker_with_no_reason_is_still_asking():
-    """Empty is not None: the ask is the line being there, not what it says."""
-    assert extract_restart_request("Report.\nRESTART_REQUIRED:\n") == ""
-
-
-def test_merely_talking_about_a_restart_is_not_asking_for_one():
-    """It takes Jarvis off the air, so only the explicit line counts."""
-    text = "You will need to restart the service. A restart is required to load this."
-
-    assert extract_restart_request(text) is None
-
-
-def test_the_reason_is_trimmed_to_something_sayable():
-    assert len(extract_restart_request("RESTART_REQUIRED: " + "x " * 400)) <= 120
-
-
-def test_the_subagent_suffix_carries_the_task_number_for_the_commit_trailer(settings):
-    """`git log` cannot recover which edits they asked for out loud; the trailer can."""
-    task = Task(id=31, kind=TaskKind.AGENT, description="add a recall tool")
-
-    suffix = render_subagent_suffix(task)
-
-    assert "Jarvis-Task: 31" in suffix
-    assert "Task number: 31" in suffix
-
-
-def test_a_task_with_no_number_yet_still_renders():
-    """The suffix is built at open(), after the row exists — but never crash if it is not."""
-    suffix = render_subagent_suffix(Task(id=None, kind=TaskKind.AGENT, description="x"))
-
-    assert "Jarvis-Task: unknown" in suffix
-
-
-def test_the_subagent_suffix_tells_it_not_to_restart_jarvis_itself(settings):
-    """It runs inside the service: restarting from there kills it mid-report."""
-    suffix = render_subagent_suffix(
-        Task(id=1, kind=TaskKind.AGENT, description="change jarvis")
-    )
-
-    assert "RESTART_REQUIRED:" in suffix
-    assert "Do not restart it yourself" in suffix
-
-
-def test_the_subagent_suffix_says_whom_the_work_is_for():
-    task = Task(id=1, kind=TaskKind.AGENT, description="x")
-
-    assert "dispatched on Ada's behalf" in render_subagent_suffix(task, owner="Ada")
-    assert "dispatched on the owner's behalf" in render_subagent_suffix(task)
-
-
 def test_build_options_hands_the_subagent_the_owners_name(settings):
     settings.owner_name = "Ada"
 
     options = build_options(make_task(), settings)
 
     assert "dispatched on Ada's behalf" in options.system_prompt["append"]
+
+
+# ------------------------------------------------------------------ install and login
+
+
+def test_the_claude_cli_is_the_one_the_sdk_bundles(monkeypatch, tmp_path):
+    from jarvis.agents import claude as claude_module
+
+    bundled = tmp_path / "_bundled" / "claude"
+    bundled.parent.mkdir()
+    bundled.write_text("")
+    monkeypatch.setattr(claude_module.claude_agent_sdk, "__file__", str(tmp_path / "x.py"))
+    assert claude_module.claude_cli() == str(bundled)
+
+    bundled.unlink()
+    monkeypatch.setattr(claude_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert claude_module.claude_cli() == "/usr/bin/claude"
+
+
+def test_a_stored_login_is_the_credentials_file_or_the_keychain(monkeypatch, tmp_path):
+    from jarvis.agents import claude as claude_module
+
+    monkeypatch.setattr(claude_module.Path, "home", lambda: tmp_path)
+    calls: list[list[str]] = []
+
+    def keychain(code):
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if code is None:
+                raise OSError("no security binary")
+            return subprocess.CompletedProcess(argv, code)
+
+        return run
+
+    monkeypatch.setattr(claude_module.subprocess, "run", keychain(0))
+    assert claude_module.claude_stored_login() is True
+    monkeypatch.setattr(claude_module.subprocess, "run", keychain(44))
+    assert claude_module.claude_stored_login() is False
+    monkeypatch.setattr(claude_module.subprocess, "run", keychain(None))
+    assert claude_module.claude_stored_login() is False
+
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / ".credentials.json").write_text("{}")
+    calls.clear()
+    assert claude_module.claude_stored_login() is True
+    assert calls == []  # the file answers; the keychain is never asked

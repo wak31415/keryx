@@ -16,12 +16,12 @@ can find out why a tool is missing without reading the source.
 
 import shutil
 import stat
-import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from jarvis.agents.registry import BACKENDS, auth_status
 from jarvis.config import (
     DATA_DIR_MODE,
     OWNER_FALLBACK,
@@ -43,12 +43,9 @@ WRITE_PROBE_NAME = ".doctor-write-probe"
 
 MARKERS = {"ok": "✅", "hard": "❌", "soft": "⚠️"}
 
-CLAUDE_CLI_HINT = "the Agent SDK needs it — npm i -g @anthropic-ai/claude-code"
 #: Tunnels that can put `/twilio/*` in front of Twilio, best first. The deployment uses
 #: Cloudflare Tunnel; ngrok still counts, so a dev machine set up before the move passes.
 TUNNEL_BINARIES = ("cloudflared", "ngrok")
-#: Where `claude-agent-sdk` 0.2.x keeps the CLI it ships with, relative to the package.
-BUNDLED_CLI_PATH = ("_bundled", "claude")
 
 
 @dataclass(frozen=True)
@@ -88,8 +85,8 @@ def run_doctor_checks(
     checks = [
         _env_file_check(),
         _openai_key_check(settings),
-        _subagent_auth_check(settings),
-        _claude_cli_check(),
+        _agent_config_check(settings),
+        *_agent_checks(settings),
         _twilio_check(settings),
         _signature_check(settings),
         _secret_check(
@@ -146,37 +143,36 @@ def _secret_check(name: str, value: str | None, consequence: str, *, reveal: boo
     return Check(name, True, value if reveal else "set")
 
 
-def _has_claude_subscription_login() -> bool:
-    """Best-effort: does the Claude CLI have a stored subscription login on this machine?"""
-    if (Path.home() / ".claude" / ".credentials.json").exists():
-        return True
-    try:  # macOS stores the login in the Keychain instead of a file
-        result = subprocess.run(
-            ["security", "find-generic-password", "-s", "Claude Code-credentials"],
-            capture_output=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+def _agent_config_check(settings: Settings) -> Check:
+    """`AGENT_BACKEND` among `AGENTS_ENABLED`, which `jarvis serve` refuses to start without."""
+    refusal = settings.agent_refusal()
+    if refusal is not None:
+        return Check("coding agents", False, refusal)
+    enabled = ", ".join(settings.enabled_agents)
+    return Check("coding agents", True, f"{settings.agent_backend} by default; enabled: {enabled}")
 
 
-def _subagent_auth_check(settings: Settings) -> Check:
-    """One of three ways subagents can authenticate; soft-fails because the login
-    detection is a heuristic (an odd Keychain setup could hide a working login)."""
-    if settings.anthropic_api_key:
-        return Check("subagent auth", True, "ANTHROPIC_API_KEY set (pay-per-token)")
-    if settings.claude_code_oauth_token:
-        return Check("subagent auth", True, "CLAUDE_CODE_OAUTH_TOKEN set (subscription)")
-    if _has_claude_subscription_login():
-        return Check("subagent auth", True, "Claude CLI subscription login (default)")
-    return Check(
-        "subagent auth",
-        False,
-        "no login found — run `claude /login` once, or `claude setup-token` for headless,"
-        " or set ANTHROPIC_API_KEY",
-        severity="soft",
-    )
+def _agent_checks(settings: Settings) -> list[Check]:
+    """Per enabled agent: is its CLI installed, and which credential will it run on?
+
+    Hard for the default agent — every task nobody named an agent for goes to it — and
+    soft for the rest, which only narrow what can be asked for by name. The stored-login
+    probe is a heuristic (an odd Keychain setup could hide a working Claude login), and
+    `jarvis setup-agent` is the test that actually runs one.
+    """
+    checks = []
+    for name in settings.enabled_agents:
+        spec = BACKENDS[name]
+        severity: Severity = "hard" if name == settings.agent_backend else "soft"
+        label = f"{spec.label} agent" + (" (default)" if name == settings.agent_backend else "")
+        cli = spec.find_cli()
+        if cli is None:
+            detail = f"{name} CLI not found — {spec.install_hint}"
+            checks.append(Check(label, False, detail, severity=severity))
+            continue
+        status = auth_status(name, settings)
+        checks.append(Check(label, status.ready, f"{cli}; {status.detail}", severity=severity))
+    return checks
 
 
 def _twilio_check(settings: Settings) -> Check:
@@ -240,36 +236,6 @@ def _pin_check(settings: Settings, problem: str | None = None) -> Check:
 
 
 # --- the machine -----------------------------------------------------------
-
-
-def _bundled_claude_cli() -> Path | None:
-    """The `claude` binary shipped inside `claude_agent_sdk`, if this install has one."""
-    try:
-        import claude_agent_sdk
-    except Exception:  # pragma: no cover - the SDK is a hard dependency
-        return None
-    path = Path(claude_agent_sdk.__file__).parent.joinpath(*BUNDLED_CLI_PATH)
-    return path if path.is_file() else None
-
-
-def _claude_cli_check() -> Check:
-    """The CLI the Agent SDK drives: the one it bundles, else one on `PATH`.
-
-    Soft: the SDK looks for its bundled binary first, so a machine without either is a
-    warning about subagents, not a reason to call the whole install broken.
-    """
-    bundled = _bundled_claude_cli()
-    if bundled is not None:
-        return Check("claude CLI", True, f"bundled with claude-agent-sdk: {bundled}")
-    found = shutil.which("claude")
-    if not found:
-        return Check(
-            "claude CLI",
-            False,
-            f"not bundled, not on PATH — {CLAUDE_CLI_HINT}",
-            severity="soft",
-        )
-    return Check("claude CLI", True, found)
 
 
 def _tunnel_check() -> Check:
@@ -419,8 +385,17 @@ def _google_check(settings: Settings) -> Check:
     """Warn-only, and only about `workspace-mcp` — which is off unless asked for.
 
     With it off, Gmail and Calendar reach the subagents through the Claude CLI's own
-    claude.ai connectors, which need nothing from us.
+    claude.ai connectors, which need nothing from us — for Claude. Codex has no connectors,
+    so with Codex enabled, off means its tasks have no mailbox and no calendar at all.
     """
+    if not settings.google_workspace_mcp and "codex" in settings.enabled_agents:
+        return Check(
+            "Google credentials",
+            False,
+            "workspace-mcp is off, so Codex tasks have no Gmail or Calendar (Claude's come "
+            "from its connectors) — set GOOGLE_WORKSPACE_MCP=true and run `jarvis setup-google`",
+            severity="soft",
+        )
     if not settings.google_workspace_mcp:
         return Check(
             "Google credentials",

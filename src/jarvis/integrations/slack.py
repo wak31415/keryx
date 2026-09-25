@@ -35,6 +35,20 @@ class SlackSender(Protocol):
         ...
 
 
+def mcp_server_config(server: str, config_path: Path = CLAUDE_CONFIG) -> dict | None:
+    """The user-scope MCP server `server` from the Claude CLI's config, or None.
+
+    Claude subagents find it there by themselves; this is for everything that does not —
+    `send_to_slack`, and a Codex subagent, which is handed the same server explicitly.
+    """
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    found = config.get("mcpServers", {}).get(server) if isinstance(config, dict) else None
+    return found if isinstance(found, dict) else None
+
+
 def slack_credentials(
     token: str | None = None,
     channel: str | None = None,
@@ -47,11 +61,7 @@ def slack_credentials(
         return token, channel
     if not server:
         return None
-    try:
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    env = config.get("mcpServers", {}).get(server, {}).get("env", {})
+    env = (mcp_server_config(server, config_path) or {}).get("env", {})
     resolved_token = token or env.get("SLACK_BOT_TOKEN")
     resolved_channel = channel or env.get("SLACK_CHANNEL_ID")
     if not (resolved_token and resolved_channel):

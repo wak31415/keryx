@@ -215,8 +215,13 @@ without the PIN is very much in scope.
 ## Out of scope
 
 - **The subagents having your full access.** They run with
-  `permission_mode="bypassPermissions"` by design; that is documented, not a vulnerability.
-  A way to *reach* that access without the PIN is very much in scope.
+  `permission_mode="bypassPermissions"` (Claude) or
+  `--dangerously-bypass-approvals-and-sandbox` (Codex) by design; that is documented, not a
+  vulnerability. The PIN gates the dispatch the same way whichever agent runs it, and
+  naming an agent out loud is an argument to that one gated tool, not a way around it.
+  A way to *reach* that access without the PIN is very much in scope, on either agent.
+  So is a subagent's credential reaching its command line, a log or a spoken error: it is
+  handed over in the environment only, and what a refused key is quoted back as is redacted.
 - **Anything that requires the host account already.** Someone who can read
   `~/.jarvis` or write `~/.claude/settings.json` is already you. Text that reaches a
   Claude Code session on the host — an issue, a pull request, a web page it reads — is
