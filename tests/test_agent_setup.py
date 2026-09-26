@@ -6,6 +6,7 @@ the smoke task are injected, and the terminal is a script of answers.
 
 import dataclasses
 import json
+from pathlib import Path
 
 import pytest
 
@@ -50,7 +51,7 @@ class Machine:
 
     def run_login(self, argv) -> int:
         self.logins.append(tuple(argv))
-        agent = argv[0]
+        agent = Path(argv[0]).name
         if agent in self.login_fixes:
             self.signed_in[agent] = True
         return 0
@@ -173,7 +174,8 @@ def test_a_missing_subscription_login_runs_the_agents_own_login(settings, monkey
 
     code, out = setup(settings, machine, ask=script("codex", "s"))
 
-    assert machine.logins == [("codex", "login")]
+    # The CLI that was found — the SDK's bundled one — not whatever is first on PATH.
+    assert machine.logins == [("/bin/codex", "login")]
     assert "running `codex login`" in out
     assert code == 0 and machine.smoked == ["codex", "claude"]
 
@@ -183,7 +185,7 @@ def test_a_headless_machine_gets_the_device_code_login(settings, monkeypatch):
 
     setup(settings, machine, ask=script("codex", "s"), confirm=lambda t, p: False, headless=True)
 
-    assert machine.logins == [("codex", "login", "--device-auth")]
+    assert machine.logins == [("/bin/codex", "login", "--device-auth")]
 
 
 def test_a_headless_claude_is_told_where_the_token_goes(settings, monkeypatch):
@@ -191,7 +193,7 @@ def test_a_headless_claude_is_told_where_the_token_goes(settings, monkeypatch):
 
     code, out = setup(settings, machine, ask=script("claude", "s"), headless=True)
 
-    assert machine.logins == [("claude", "setup-token")]
+    assert machine.logins == [("/bin/claude", "setup-token")]
     assert "CLAUDE_CODE_OAUTH_TOKEN=" in out
     assert code == 1  # still no login it can see: the token is theirs to paste
 

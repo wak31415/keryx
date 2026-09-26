@@ -159,8 +159,9 @@ def env_lines(settings: Settings, default: str, enabled: Sequence[str]) -> list[
         f"{env_var_name('agent_backend')}={default}",
         f"{env_var_name('agents_enabled')}={listed}",
     ]
-    if "codex" in enabled:
-        lines.append(f"{env_var_name('codex_model')}={settings.codex_model or ''}")
+    for name in enabled:
+        if setting := BACKENDS[name].model_setting:
+            lines.append(f"{env_var_name(setting)}={getattr(settings, setting) or ''}")
     return lines
 
 
@@ -248,14 +249,13 @@ def _sign_in(
         return
     command = spec.headless_login_command if headless else spec.login_commands[0]
     echo(f"running `{' '.join(command)}` — finish the sign-in it asks for.")
-    code = run_login(command)
+    # The CLI that was found, which is the one the runner uses: for Codex that is the SDK's
+    # bundled binary, and a `codex` on PATH may be another version or not there at all.
+    code = run_login((state.cli, *command[1:]))
     if code != 0:
         echo(f"`{' '.join(command)}` exited with {code}.")
-    if state.name == "claude" and headless:
-        echo(
-            "claude setup-token prints a token: add it to your .env as "
-            f"{spec.auth.token_env}= (setup-agent never edits it)."
-        )
+    if headless and spec.headless_login_note:
+        echo(spec.headless_login_note)
     state.auth = auth_status(state.name, settings)
 
 
