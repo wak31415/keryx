@@ -170,6 +170,23 @@ def test_from_row_converts_non_utc_offset_to_utc():
 # --- from_row against a newer schema ---------------------------------------
 
 
+def test_a_row_from_before_v6_spent_nothing_anyone_recorded():
+    row = _sample_task().to_row()
+    for column in ("input_tokens", "output_tokens", "cost_usd"):
+        row.pop(column)
+
+    task = Task.from_row(row)
+
+    assert (task.input_tokens, task.output_tokens, task.cost_usd) == (None, None, None)
+
+
+def test_what_a_task_spent_round_trips():
+    task = Task(id=1, kind=TaskKind.AGENT, description="x", input_tokens=900, output_tokens=40,
+                cost_usd=0.25)
+
+    assert Task.from_row(task.to_row()) == task
+
+
 def test_from_row_ignores_a_column_this_build_has_no_field_for():
     """Regression: the DB moves ahead of a running process, and reads must survive it.
 

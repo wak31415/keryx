@@ -18,7 +18,7 @@ import pytest
 from jarvis.agents.router import RoutingAgentRunner
 from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
-from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult
+from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult, TokenUsage
 from jarvis.tasks.manager import (
     CLOSE_TIMEOUT_S,
     AgentUnavailableError,
@@ -656,6 +656,51 @@ async def test_a_turn_blocked_in_its_reader_is_interrupted_closed_and_unwound(ma
 
     assert finished.status is TaskStatus.FAILED
     assert seen == [(1, 1, 1)]
+
+
+async def test_a_task_records_what_it_spent_across_a_live_follow_up(make_harness):
+    """Every turn of one run is summed: the first, and the re-run a follow-up caused."""
+    spent = RunResult(
+        ok=True,
+        final_text="SPOKEN_SUMMARY: done",
+        spoken_summary="done",
+        session_id="s-1",
+        cost_usd=0.25,
+        usage=TokenUsage(input_tokens=1000, output_tokens=50, cached_input_tokens=800),
+    )
+    harness = make_harness(FakeAgentRunner([spent], delay_s=SLOW))
+
+    task = await dispatch(harness.manager)
+    await wait_for_status(harness.manager, task.id, TaskStatus.RUNNING)
+    await harness.manager.followup(task.id, "and the tides")
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert len(harness.runner.opened) == 2
+    assert (finished.input_tokens, finished.output_tokens) == (2000, 100)
+    assert finished.cost_usd == 0.5
+
+
+async def test_a_re_run_adds_to_what_the_task_had_spent(make_harness):
+    spent = RunResult(
+        ok=True, spoken_summary="done", session_id="s-1", usage=TokenUsage(300, 20)
+    )
+    harness = make_harness(FakeAgentRunner([spent]))
+
+    task = await dispatch(harness.manager)
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+    await harness.manager.followup(task.id, "one more thing")
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert (finished.input_tokens, finished.output_tokens, finished.cost_usd) == (600, 40, None)
+
+
+async def test_an_agent_that_says_nothing_about_spend_leaves_the_columns_empty(make_harness):
+    harness = make_harness(FakeAgentRunner([RunResult(ok=True, spoken_summary="done")]))
+
+    task = await dispatch(harness.manager)
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert (finished.input_tokens, finished.output_tokens, finished.cost_usd) == (None, None, None)
 
 
 async def test_no_time_limit_means_none(make_harness):

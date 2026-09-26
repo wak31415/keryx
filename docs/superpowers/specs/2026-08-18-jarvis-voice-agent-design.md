@@ -113,7 +113,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `tools/builtin_tasks.py` | `dispatch_task`, `list_tasks`, `get_task_status`, `get_task_result`, `mark_reported`, `recall`, `send_followup`, `cancel_task`, `list_projects`, `request_callback` |
 | `tools/builtin_restart.py` | `restart_service` |
 | `tools/builtin_session.py` | `list_pending_approvals`, `answer_approval`, `submit_pin`, `end_session` — the call itself |
-| `tasks/models.py` | `Task` (schema v5: `reported_at`, `internal`, `needs_restart`, `agent`), `TaskKind`, `TaskStatus` |
+| `tasks/models.py` | `Task` (schema v6: `reported_at`, `internal`, `needs_restart`, `agent`, `input_tokens`/`output_tokens`/`cost_usd`), `TaskKind`, `TaskStatus` |
 | `tasks/store.py` | SQLite store (`TaskStore`) |
 | `tasks/agent_runner.py` | Re-exports the §3.2 names below from `agents/` (moved 2026-09-24) |
 | `agents/base.py` | `AgentRunner`/`AgentSession` protocols, `RunResult`, the `SPOKEN_SUMMARY:`/`RESTART_REQUIRED:` parsing, the subagent suffix, `FakeAgentRunner` |
@@ -277,6 +277,8 @@ class TaskStatus(StrEnum): QUEUED="queued"; RUNNING="running"; DONE="done"; FAIL
     reported_at: datetime | None = None                    # the only record that he was told (schema v3)
     internal: bool = False                                 # work Jarvis asked for itself (schema v3)
     needs_restart: bool = False                            # the subagent *asked* for one (schema v4)
+    input_tokens: int | None = None; output_tokens: int | None = None   # summed over every run (schema v6)
+    cost_usd: float | None = None                          # only from an agent that prices a call; None is unknown, not free
     created_at: datetime; started_at: datetime | None = None; finished_at: datetime | None = None
 ```
 
@@ -299,10 +301,14 @@ class TaskStore:
 
 ```python
 # tasks/agent_runner.py
+@dataclass(frozen=True) class TokenUsage:                      # added 2026-09-26
+    input_tokens: int = 0; output_tokens: int = 0; cached_input_tokens: int = 0   # input counts cached ones too; `+` sums
+
 @dataclass class RunResult:
     ok: bool; final_text: str = ""; spoken_summary: str = ""; session_id: str | None = None
     cost_usd: float | None = None; error: str | None = None
     restart_reason: str | None = None      # the subagent's `RESTART_REQUIRED:` line, if it wrote one
+    usage: TokenUsage | None = None        # tokens the turn spent, when the agent said (2026-09-26)
 
 class AgentSession(Protocol):                                     # one live subagent conversation
     async def run(self, prompt: str, *, on_progress: Callable[[str], Any]) -> RunResult   # one turn to completion; ok=False on error

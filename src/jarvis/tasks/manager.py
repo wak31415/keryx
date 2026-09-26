@@ -39,7 +39,7 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 
-from jarvis.agents.base import AgentRunner, AgentSession, RunResult
+from jarvis.agents.base import AgentRunner, AgentSession, RunResult, TokenUsage
 from jarvis.agents.registry import resolve_model
 from jarvis.config import Settings, secure_file
 from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
@@ -167,6 +167,24 @@ def _duration(seconds: float) -> str:
     return f"{seconds:.0f} seconds"
 
 
+def _spend(task: Task, results: Iterable[RunResult]) -> dict[str, object]:
+    """The row's spend columns after `results`, added to what the task had spent before.
+
+    Only what some turn reported is written: a column no turn said anything about keeps
+    whatever it held, so "unknown" never turns into zero.
+    """
+    usage = [result.usage for result in results if result.usage is not None]
+    costs = [result.cost_usd for result in results if result.cost_usd is not None]
+    fields: dict[str, object] = {}
+    if usage:
+        total = sum(usage, TokenUsage())
+        fields["input_tokens"] = (task.input_tokens or 0) + total.input_tokens
+        fields["output_tokens"] = (task.output_tokens or 0) + total.output_tokens
+    if costs:
+        fields["cost_usd"] = (task.cost_usd or 0.0) + sum(costs)
+    return fields
+
+
 def _normalize(name: str) -> str:
     """A project name with case, spaces, dashes and underscores flattened away."""
     return _NORMALIZE_RE.sub("", name.lower())
@@ -190,6 +208,7 @@ class TaskManager:
         self._resume_pending: dict[int, str] = {}
         self._live_followups: dict[int, list[str]] = {}
         self._locks: dict[int, asyncio.Lock] = {}
+        self._spent: dict[int, list[RunResult]] = {}
         settings.ensure_dirs()
 
     # --- lifecycle -------------------------------------------------------
@@ -353,6 +372,7 @@ class TaskManager:
         self._cancel_requested.discard(task_id)
         self._resume_pending.pop(task_id, None)
         self._live_followups.pop(task_id, None)
+        self._spent.pop(task_id, None)
         self._done_event(task_id).set()
 
     async def _execute(self, task_id: int, *, resume: str | None) -> None:
@@ -440,10 +460,8 @@ class TaskManager:
         """
         run = session.run(prompt, on_progress=partial(self._on_progress, task_id))
         limit = self._settings.subagent_timeout_s
-        if not limit:
-            return await run
         try:
-            return await asyncio.wait_for(run, limit)
+            result = await (asyncio.wait_for(run, limit) if limit else run)
         except TimeoutError:
             log.warning("task %s ran past its %.0fs limit; stopping it", task_id, limit)
             await self._interrupt(task_id, session)
@@ -453,6 +471,8 @@ class TaskManager:
                 spoken_summary=TIMEOUT_SUMMARY.format(duration=_duration(limit)),
                 error=f"timed out after {limit:.0f}s (SUBAGENT_TIMEOUT_S)",
             )
+        self._spent.setdefault(task_id, []).append(result)
+        return result
 
     async def _finish(self, task: Task, result: RunResult) -> TaskCompleted | TaskFailed:
         """Write the report and close the row out as `done`/`failed`; the event to publish."""
@@ -463,6 +483,7 @@ class TaskManager:
         }
         if result.session_id:
             fields["claude_session_id"] = result.session_id
+        fields.update(_spend(task, self._spent.pop(task.id, [])))
         if result.ok and result.restart_reason is not None and not task.internal:
             # The subagent says it changed Jarvis's own code. Recorded, not acted on: the
             # Notifier decides when a restart is safe, because it is the thing that knows

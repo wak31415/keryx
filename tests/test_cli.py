@@ -532,6 +532,9 @@ def test_tasks_show_prints_every_field_and_the_report(settings_stub, tmp_path):
             summary="Nothing on fire.",
             report_path=str(report),
             claude_session_id="sess-42",
+            input_tokens=55831,
+            output_tokens=303,
+            cost_usd=0.42,
         ),
     )
 
@@ -544,6 +547,9 @@ def test_tasks_show_prints_every_field_and_the_report(settings_stub, tmp_path):
         "jarvis",
         "Nothing on fire.",
         "sess-42",
+        "55831",
+        "303",
+        "0.42",
         str(report),
         "--- report ---",
         "Everything is fine.",
