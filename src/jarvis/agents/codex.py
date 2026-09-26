@@ -50,6 +50,7 @@ import subprocess
 import threading
 from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from importlib import metadata
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -111,7 +112,10 @@ def codex_home() -> Path:
 
 
 def codex_cli() -> str | None:
-    """The `codex` binary the SDK runs — the one it bundles — or None when it is missing."""
+    """The `codex` binary the SDK runs — the one it bundles — or None when either the SDK
+    (the `codex` extra) or its binary is missing."""
+    if not _importable("openai_codex"):
+        return None
     try:
         from codex_cli_bin import bundled_codex_path
     except ImportError:
@@ -120,6 +124,11 @@ def codex_cli() -> str | None:
         return str(bundled_codex_path())
     except FileNotFoundError:
         return None
+
+
+def _importable(module: str) -> bool:
+    """Is `module` installed, without importing it (`openai_codex` is 13,000 lines)?"""
+    return find_spec(module) is not None
 
 
 def codex_cli_version() -> str | None:

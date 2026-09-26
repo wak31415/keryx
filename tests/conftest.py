@@ -1,5 +1,7 @@
 """Shared pytest fixtures."""
 
+import dataclasses
+
 import pytest
 
 from jarvis.config import Settings
@@ -110,3 +112,22 @@ def _outside_any_service(monkeypatch):
     """
     monkeypatch.setattr("jarvis.restart.service.runs_under", lambda target, **_: False)
     monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target, **_: False)
+
+
+@pytest.fixture
+def every_agent_installed(monkeypatch):
+    """As if every agent's extra were installed, whatever this environment has.
+
+    CI installs them all, but a machine synced with one agent runs the suite too; a test
+    that is not about which extras are there asks for this rather than depend on it.
+    """
+    from jarvis import doctor
+    from jarvis.agents import registry
+
+    for module in (registry, doctor):
+        monkeypatch.setattr(module, "installed", lambda agent: True)
+    for name, spec in list(registry.BACKENDS.items()):
+        cli = f"/venv/bin/{name}"
+        monkeypatch.setitem(
+            registry.BACKENDS, name, dataclasses.replace(spec, find_cli=lambda cli=cli: cli)
+        )

@@ -5,6 +5,8 @@ Realtime API and Claude Agent SDK subagents.
 
 ## Commands
 
+- Install: `uv sync` (every coding agent, via the default `agents` group); one agent only:
+  `uv sync --no-group agents --extra codex` (or `claude`); with pip, `jarvis[all|claude|codex]`
 - Run tests: `uv run pytest -q` (coverage: `uv run pytest -q --cov`, floor 95%)
 - Lint: `uv run ruff check src tests`
 - Run the CLI: `uv run jarvis --help`
@@ -382,6 +384,14 @@ needs `tflite-runtime`, which has no cp312 wheel. `sounddevice`, `openwakeword` 
 `onnxruntime` are therefore `sys_platform == 'darwin'` dependencies, and on a Linux host
 `jarvis serve` finds them missing (`wakeword_unavailable`, which imports nothing), says so in
 one line and serves the phone alone — one more reason every import of them stays lazy.
+
+The coding agents are optional the same way, by choice rather than platform: each SDK is an
+extra (`claude`, `codex`, `all`), because each bundles a CLI of hundreds of megabytes. So
+`claude_agent_sdk` and `openai_codex` are imported only where an agent runs, never at module
+scope, and an agent whose package is missing is `registry.installed() == False`: shown as
+not installed with its `uv sync --extra` command, never offered, refused as `AGENT_BACKEND`
+by `Settings.agent_refusal`. `tests/agents/conftest.py` skips a backend's own tests without
+its SDK, and a test that is not about installation asks for `every_agent_installed`.
 
 ## Testing rule
 

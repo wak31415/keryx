@@ -37,7 +37,7 @@ runner = CliRunner()
 
 
 @pytest.fixture
-def settings_stub(monkeypatch, tmp_path):
+def settings_stub(monkeypatch, tmp_path, every_agent_installed):
     """Make every command see a hermetic Settings instead of the ambient environment."""
     settings = Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis")
     monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
@@ -183,6 +183,22 @@ def test_serve_refuses_a_default_agent_that_is_not_enabled(settings_stub, monkey
 
     assert result.exit_code == 2, result.output
     assert "AGENT_BACKEND is codex" in result.output
+    assert "config" not in built
+
+
+def test_serve_refuses_a_default_agent_whose_extra_is_not_installed(settings_stub, monkeypatch):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    from jarvis.agents import registry
+
+    monkeypatch.setattr(registry, "installed", lambda agent: agent != "claude")
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 2, result.output
+    assert "AGENT_BACKEND is claude, which is not installed — uv sync --extra claude" in (
+        result.output
+    )
     assert "config" not in built
 
 
@@ -885,7 +901,9 @@ def test_doctor_reports_a_missing_openai_key_instead_of_crashing(
     assert "OPENAI_API_KEY" in result.output
 
 
-def test_doctor_passes_on_a_complete_install(monkeypatch, tmp_path, wakeword_models):
+def test_doctor_passes_on_a_complete_install(
+    monkeypatch, tmp_path, wakeword_models, every_agent_installed
+):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
     (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")

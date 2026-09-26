@@ -6,6 +6,7 @@ the smoke task are injected, and the terminal is a script of answers.
 
 import dataclasses
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -225,10 +226,29 @@ def test_a_missing_cli_is_an_install_command_never_an_install(settings, monkeypa
 
     code, out = setup(settings, machine, default="codex")
 
-    assert "uv sync (the openai-codex SDK bundles the codex CLI)" in out
+    assert "uv sync --extra codex (the openai-codex SDK bundles the codex CLI)" in out
     assert machine.logins == []
     assert code == 1
     assert out.endswith(f"not_ready: {STATUSES['not_ready']}")
+
+
+def test_an_agent_whose_extra_is_missing_is_not_installed_with_the_command(
+    settings, monkeypatch
+):
+    monkeypatch.setitem(sys.modules, "openai_codex", None)
+    machine = Machine(monkeypatch)
+
+    code, out = setup(settings, machine, default="codex", yes=True, smoke=False, as_json=True)
+
+    codex = next(agent for agent in json.loads(out)["agents"] if agent["name"] == "codex")
+    assert (codex["cli"], codex["ready"]) == (None, False)
+    assert codex["install_hint"] == (
+        "uv sync --extra codex (the openai-codex SDK bundles the codex CLI)"
+    )
+    assert code == 1
+    text_code, text = setup(settings, machine, default="codex", ask=script("codex"))
+    assert "codex   not installed" in text
+    assert "    uv sync --extra codex (the openai-codex SDK bundles the codex CLI)" in text
 
 
 def test_yes_signs_nothing_in(settings, monkeypatch):

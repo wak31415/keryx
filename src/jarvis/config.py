@@ -528,12 +528,22 @@ class Settings(BaseSettings):
         """Why `jarvis serve` must not start with these agents, in one line; None if it may.
 
         A default that is not enabled is a contradiction: every task nobody named an agent
-        for would be sent to one this process was told not to run.
+        for would be sent to one this process was told not to run. A default whose SDK (its
+        extra) is not installed could run nothing at all. `--fake-agents` runs no real agent,
+        so it needs neither.
         """
         if self.agents_enabled and self.agent_backend not in self.agents_enabled:
             return (
                 f"AGENT_BACKEND is {self.agent_backend}, which AGENTS_ENABLED "
                 f"({', '.join(self.agents_enabled)}) leaves out — add it, or pick one of those"
+            )
+        # Imported here: the registry imports the agents, which import this module.
+        from jarvis.agents.registry import install_command, installed
+
+        if not self.fake_agents and not installed(self.agent_backend):
+            return (
+                f"AGENT_BACKEND is {self.agent_backend}, which is not installed — "
+                f"{install_command(self.agent_backend)}"
             )
         return None
 

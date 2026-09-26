@@ -1,6 +1,8 @@
 """Tests for the backend registry: model names and the runner `serve` builds."""
 
 import dataclasses
+import subprocess
+import sys
 
 import pytest
 
@@ -12,6 +14,7 @@ from jarvis.agents.registry import (
     agent_for_model,
     auth_status,
     build_agent_runner,
+    installed,
     offered_agents,
     ready_backends,
     resolve_model,
@@ -89,7 +92,9 @@ def fake_backend(monkeypatch, name, *, cli, login):
     )
 
 
-def test_ready_means_installed_and_signed_in(settings, monkeypatch):
+def test_ready_means_installed_and_signed_in(
+    settings, monkeypatch, every_agent_installed
+):
     settings.agents_enabled = ["claude", "codex"]
     fake_backend(monkeypatch, "claude", cli=True, login=True)
     fake_backend(monkeypatch, "codex", cli=True, login=False)
@@ -120,7 +125,9 @@ def test_both_agents_enabled_means_a_runner_for_each(settings):
     assert isinstance(runner.runners["claude"], ClaudeAgentRunner)
 
 
-def test_the_default_is_always_offered_and_the_rest_only_when_ready(settings, monkeypatch):
+def test_the_default_is_always_offered_and_the_rest_only_when_ready(
+    settings, monkeypatch, every_agent_installed
+):
     settings.agents_enabled = ["claude", "codex"]
     fake_backend(monkeypatch, "claude", cli=False, login=False)
     fake_backend(monkeypatch, "codex", cli=True, login=False)
@@ -143,3 +150,75 @@ def test_skills_come_from_every_enabled_agent_the_default_first(settings, monkey
     settings.agent_backend = "codex"
 
     assert skill_dirs(settings) == [tmp_path / "codex" / "skills", settings.skills_dir]
+
+
+# ------------------------------------------------------------- installed or not
+
+#: The module each backend's extra installs, and so the one whose absence says it is missing.
+PACKAGES = {"claude": "claude_agent_sdk", "codex": "openai_codex"}
+
+
+def uninstall(monkeypatch, *agents):
+    """As if `uv sync` had been run without these agents' extras."""
+    for agent in agents:
+        monkeypatch.setitem(sys.modules, PACKAGES[agent], None)
+    if "codex" in agents:
+        monkeypatch.setitem(sys.modules, "codex_cli_bin", None)
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+def test_an_agent_whose_extra_is_missing_is_not_installed_and_says_how(monkeypatch, agent):
+    uninstall(monkeypatch, agent)
+
+    assert not installed(agent)
+    assert BACKENDS[agent].find_cli() is None
+    assert BACKENDS[agent].install_hint.startswith(f"uv sync --extra {agent} ")
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+def test_an_agent_that_is_not_installed_is_never_offered_not_even_as_the_default(
+    settings, monkeypatch, agent
+):
+    """Not the default either: `serve` refuses a default that is not installed."""
+    settings.agents_enabled = ["claude", "codex"]
+    settings.agent_backend = agent
+    fake_backend(monkeypatch, "claude", cli=True, login=True)
+    fake_backend(monkeypatch, "codex", cli=True, login=True)
+    uninstall(monkeypatch, agent)
+
+    assert agent not in offered_agents(settings)
+    assert agent not in ready_backends(settings)
+
+
+def test_fake_agents_needs_neither_extra(settings, monkeypatch):
+    settings.agents_enabled = ["claude", "codex"]
+    settings.fake_agents = True
+    uninstall(monkeypatch, "claude", "codex")
+
+    assert offered_agents(settings) == ["claude", "codex"]
+    assert isinstance(build_agent_runner(settings), FakeAgentRunner)
+
+
+def test_all_of_jarvis_imports_with_neither_sdk_installed():
+    """A machine with one extra, or none, must still import every module: the SDKs are
+    only ever imported where an agent actually runs."""
+    script = """
+import importlib, pkgutil, sys
+for name in ("claude_agent_sdk", "openai_codex", "codex_cli_bin"):
+    sys.modules[name] = None
+import jarvis
+for module in pkgutil.walk_packages(jarvis.__path__, "jarvis."):
+    if module.name.endswith(("local_audio", "wakeword")):
+        continue  # macOS-only, and imported only on macOS
+    importlib.import_module(module.name)
+from jarvis.agents.registry import BACKENDS, installed
+assert not any(installed(name) for name in BACKENDS)
+assert all(spec.find_cli() is None for spec in BACKENDS.values())
+print("ok")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=120
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok"

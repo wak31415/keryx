@@ -1,14 +1,19 @@
 """Every coding agent Jarvis knows, as data: `BACKENDS`.
 
 A backend is a name, a runner factory, the model names that can be said for it out loud,
-where its credentials come from, and where it keeps its instructions and skills. Adding a
-third agent is one module under `jarvis/agents/` and one entry here; the router, the
-manager, the voice tools, `doctor` and `setup-agent` read this table and nothing else.
+where its credentials come from, and where it keeps its instructions and skills. The
+router, the manager, the voice tools, `doctor` and `setup-agent` read this table and
+nothing else (see docs/agents.md, "Adding a third agent").
+
+Each agent's SDK is an optional extra of the same name (`uv sync --extra codex`), so an
+agent can be simply not installed; `installed` says so, and such an agent is never ready,
+never offered, and refused as the default.
 """
 
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from importlib.util import find_spec
 from pathlib import Path
 
 from jarvis.agents.auth import AuthSource, AuthStatus, resolve_auth
@@ -34,6 +39,8 @@ class BackendSpec:
 
     #: The word in `AGENT_BACKEND`, `Task.agent` and the `dispatch_task` enum.
     name: str
+    #: The module its extra (named `name` too) installs: missing means not installed.
+    package: str
     #: What a person calls it on a screen, and what the voice model calls it out loud.
     label: str
     spoken_name: str
@@ -66,6 +73,7 @@ class BackendSpec:
 BACKENDS: dict[str, BackendSpec] = {
     "claude": BackendSpec(
         name="claude",
+        package="claude_agent_sdk",
         label="Claude Code",
         spoken_name="Claude",
         models=CLAUDE_MODELS,
@@ -74,7 +82,7 @@ BACKENDS: dict[str, BackendSpec] = {
         make_runner=ClaudeAgentRunner,
         auth=CLAUDE_AUTH,
         find_cli=claude_cli,
-        install_hint="uv sync (the Claude Agent SDK bundles the claude CLI)",
+        install_hint="uv sync --extra claude (the Claude Agent SDK bundles the claude CLI)",
         instructions_file=lambda: Path.home() / ".claude" / "CLAUDE.md",
         # `SKILLS_DIR`, which predates a second agent and is Claude's.
         skills_dir=lambda settings: settings.skills_dir,
@@ -87,6 +95,7 @@ BACKENDS: dict[str, BackendSpec] = {
     ),
     "codex": BackendSpec(
         name="codex",
+        package="openai_codex",
         label="Codex",
         spoken_name="Codex",
         models=CODEX_MODELS,
@@ -95,7 +104,7 @@ BACKENDS: dict[str, BackendSpec] = {
         make_runner=CodexAgentRunner,
         auth=CODEX_AUTH,
         find_cli=codex_cli,
-        install_hint="uv sync (the openai-codex SDK bundles the codex CLI)",
+        install_hint="uv sync --extra codex (the openai-codex SDK bundles the codex CLI)",
         instructions_file=lambda: codex_home() / "AGENTS.md",
         skills_dir=lambda settings: codex_home() / "skills",
         login_commands=(("codex", "login"),),
@@ -133,10 +142,22 @@ def auth_status(agent: str, settings: Settings) -> AuthStatus:
     return resolve_auth(BACKENDS[agent].auth, settings)
 
 
+def installed(agent: str) -> bool:
+    """Is `agent`'s SDK — its extra — installed? Checked without importing it."""
+    return find_spec(BACKENDS[agent].package) is not None
+
+
+def install_command(agent: str) -> str:
+    """What installs `agent`: its extra."""
+    return f"uv sync --extra {agent}"
+
+
 def is_ready(agent: str, settings: Settings) -> bool:
-    """Its CLI is installed and some credential resolves."""
+    """Its SDK and CLI are installed and some credential resolves."""
     spec = BACKENDS[agent]
-    return spec.find_cli() is not None and auth_status(agent, settings).ready
+    return (
+        installed(agent) and spec.find_cli() is not None and auth_status(agent, settings).ready
+    )
 
 
 def ready_backends(settings: Settings) -> list[str]:
@@ -147,8 +168,9 @@ def ready_backends(settings: Settings) -> list[str]:
 def offered_agents(settings: Settings) -> list[str]:
     """The agents the voice model may name: the default, then every other one that is ready.
 
-    The default is always there, ready or not: a task nobody named an agent for goes to it
-    either way, and its failure says why, which beats a tool that silently lost its agent.
+    The default is always there, ready or not — a task nobody named an agent for goes to it
+    either way, and its failure says why, which beats a tool that silently lost its agent —
+    unless it is not installed at all, which `serve` refuses before anything is offered.
     Under `--fake-agents` every enabled agent is offered, since none of them is real.
     """
     if settings.fake_agents:
@@ -156,7 +178,7 @@ def offered_agents(settings: Settings) -> list[str]:
     return [
         name
         for name in settings.enabled_agents
-        if name == settings.agent_backend or is_ready(name, settings)
+        if (name == settings.agent_backend and installed(name)) or is_ready(name, settings)
     ]
 
 

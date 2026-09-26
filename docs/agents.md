@@ -7,9 +7,29 @@ and a task runs on whichever one it was handed to for its whole life:
 - **Codex** (`codex`), driven through OpenAI's `openai-codex` Python SDK, which runs the
   `codex` CLI it bundles as an app-server.
 
-Both come with `uv sync`: each SDK carries its own CLI, so there is nothing else to
-install. The Codex one is large — about 350 MB installed (`openai-codex-cli-bin`) — and is
-pinned to one exact version, because Jarvis reads its messages field by field.
+Each agent is an optional extra of the same name — `claude`, `codex`, or `all` — and each
+SDK carries its own CLI, so there is nothing else to install. They are large: a complete
+environment measured about 760 MB, 510 MB with Codex alone, 410 MB with Claude alone and
+160 MB with neither (dev tools included in all four). The Codex SDK is pinned to one exact
+version, because Jarvis reads its messages field by field.
+
+| Command | Installs |
+|---|---|
+| `uv sync` (in a clone) | both agents — the default `agents` group is `jarvis[all]` |
+| `uv sync --no-group agents --extra codex` | Codex only (`--extra claude`: Claude only) |
+| `uv sync --no-group agents` | neither: `--fake-agents` only |
+| `uv sync --extra codex` | both still: the default group comes along |
+| `pip install '.[all]'`, `'.[codex]'`, `'.[claude]'` | what it names; plain `pip install .` installs neither |
+
+Python packaging has no default extras (PEP 771 is a draft, and uv 0.11 has no
+`default-extras`), which is why the default is a dependency group. One consequence: `uv run`
+syncs the environment back to the defaults before it runs, so on a narrowed checkout give it
+the same flags (`uv run --no-group agents --extra codex jarvis …`) or set `UV_NO_SYNC=1` —
+the service units run `uv run`, and would otherwise put every agent back.
+
+An agent that is not installed says so in `doctor` and `setup-agent`, with the command that
+installs it; it is never offered to the voice model; and `jarvis serve` refuses to start with
+it as `AGENT_BACKEND`. `--fake-agents` needs neither.
 
 `AGENT_BACKEND` picks the one that does the work when you do not say, and `AGENTS_ENABLED`
 lists every one a task may be sent to. With more than one enabled and signed in, you can
@@ -82,7 +102,7 @@ checked is marked, and listed under "possible".
 | Gmail and Calendar | ✅ claude.ai connectors | ✅ with `GOOGLE_WORKSPACE_MCP=true` |
 | Its own instructions file | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` |
 | Its own skills, listed to the voice model | `SKILLS_DIR` | `~/.codex/skills` |
-| Nothing to install beyond `uv sync` | ✅ | ✅ bundled CLI (~350 MB) |
+| Nothing to install beyond `uv sync` (extra `claude` / `codex`) | ✅ | ✅ bundled CLI (~350 MB) |
 | `doctor`, `setup-agent`, `--fake-agents` | ✅ | ✅ |
 | Approval bridge for your on-screen sessions | ✅ | — |
 <!-- agents:end -->

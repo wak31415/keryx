@@ -590,7 +590,9 @@ def test_the_claude_cli_is_the_one_the_sdk_bundles(monkeypatch, tmp_path):
     bundled = tmp_path / "_bundled" / "claude"
     bundled.parent.mkdir()
     bundled.write_text("")
-    monkeypatch.setattr(claude_module.claude_agent_sdk, "__file__", str(tmp_path / "x.py"))
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "__file__", str(tmp_path / "x.py"))
     assert claude_module.claude_cli() == str(bundled)
 
     bundled.unlink()

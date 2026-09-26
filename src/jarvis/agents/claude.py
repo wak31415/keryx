@@ -17,18 +17,19 @@ tools are not built-ins and `tools` cannot express them.
 
 This backend stays on the SDK rather than a bare `claude -p` subprocess: the SDK is what
 gives us `max_budget_usd`, `max_turns`, the lifted message-size limit and typed messages.
+
+`claude_agent_sdk` is imported only where a Claude agent actually runs: it is the `claude`
+extra, and a machine installed with Codex alone must still import all of Jarvis.
 """
+
+from __future__ import annotations
 
 import logging
 import shutil
 import subprocess
 from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from pathlib import Path
-from typing import Any, Protocol
-
-import claude_agent_sdk
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+from typing import TYPE_CHECKING, Any, Protocol
 
 from jarvis.agents.auth import AuthSource, child_env
 from jarvis.agents.base import SteerUnavailable, TokenUsage, google_mcp_server_config
@@ -44,6 +45,9 @@ from jarvis.agents.session import (
 )
 from jarvis.config import Settings
 from jarvis.tasks.models import Task
+
+if TYPE_CHECKING:
+    from claude_agent_sdk import ClaudeAgentOptions
 
 log = logging.getLogger("jarvis.agents.claude")
 
@@ -76,7 +80,15 @@ SUBAGENT_MAX_BUFFER_BYTES = 64 * 1024 * 1024
 
 
 def claude_cli() -> str | None:
-    """The `claude` binary the SDK will run: its bundled copy, else one on PATH."""
+    """The `claude` binary the SDK will run: its bundled copy, else one on PATH.
+
+    None when the SDK itself is not installed (the `claude` extra): a `claude` on PATH is
+    no use to a runner that cannot import the SDK that drives it.
+    """
+    try:
+        import claude_agent_sdk
+    except ImportError:
+        return None
     bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
     if bundled.is_file():
         return str(bundled)
@@ -161,6 +173,8 @@ def build_options(
 
 
 def _options(context: AgentContext, settings: Settings, resume: str | None) -> ClaudeAgentOptions:
+    from claude_agent_sdk import ClaudeAgentOptions
+
     options: dict[str, Any] = {
         "permission_mode": "bypassPermissions",
         "cwd": str(context.cwd),
@@ -210,6 +224,8 @@ class ClaudeAdapter:
         self.secrets = list(secrets)
 
     async def turn(self, prompt: str) -> AsyncIterator[AgentEvent]:
+        from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+
         await self._client.query(prompt)
         async for message in self._client.receive_response():
             if isinstance(message, AssistantMessage):
@@ -274,4 +290,6 @@ class ClaudeAgentRunner(AdapterRunner):
 
 
 def _default_client_factory(options: ClaudeAgentOptions) -> SdkClient:
+    from claude_agent_sdk import ClaudeSDKClient
+
     return ClaudeSDKClient(options)

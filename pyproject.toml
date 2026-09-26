@@ -42,6 +42,10 @@ dependencies = [
     # Majors here retire APIs: the legacy client/server went at 14.
     "websockets>=17.1,<18",
     "twilio>=9.11.0,<10",
+    # Starlette parses Twilio's webhook forms with it. It used to arrive only through the
+    # Claude Agent SDK (via `mcp`), so an install without the `claude` extra had a phone
+    # server that refused every call.
+    "python-multipart>=0.0.32,<0.1",
     "pydantic-settings>=2.15.0,<3",
     "numpy>=2.5.2,<3",
     "soxr>=1.1.0,<2",
@@ -51,15 +55,25 @@ dependencies = [
     "sounddevice>=0.5.6,<1.0; sys_platform == 'darwin'",
     "openwakeword>=0.6.0,<1.0; sys_platform == 'darwin'",
     "onnxruntime>=1.29.0,<2; sys_platform == 'darwin'",
+    "typer>=0.27.2,<1.0",
+]
+
+# One extra per coding agent, because each SDK bundles its agent's CLI and they are large:
+# install only the agents you will use. `uv sync` in a clone installs `all` anyway (the
+# `agents` group below); `pip install jarvis` installs neither, so say `jarvis[all]`.
+[project.optional-dependencies]
+claude = [
     # Young and moving fast, and the thing every task runs through. Held to one minor.
     "claude-agent-sdk>=0.2.148,<0.3",
+]
+codex = [
     # Pinned exactly, not to a minor: the Codex adapter reads the SDK's generated
     # notification types field by field, and the SDK pins its bundled `codex` CLI
     # (openai-codex-cli-bin, ~350 MB installed) to its own version. Move it deliberately,
     # re-recording tests/agents/fixtures/codex_app_*.jsonl.
     "openai-codex==0.157.1",
-    "typer>=0.27.2,<1.0",
 ]
+all = ["jarvis[claude,codex]"]
 
 [project.urls]
 Homepage = "https://github.com/wak31415/jarvis-voice-agent"
@@ -72,8 +86,13 @@ jarvis = "jarvis.cli:app"
 [tool.uv]
 # macOS (phone + wake word) and Linux (phone only, see the wake-word note above).
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+default-groups = ["dev", "agents"]
 
 [dependency-groups]
+# Every agent, by default: Python packaging has no default extras (PEP 771 is a draft, and
+# uv 0.11 has no `default-extras`), so `uv sync` gets them through this default group. For
+# fewer, leave the group out and name the extra: `uv sync --no-group agents --extra codex`.
+agents = ["jarvis[all]"]
 dev = [
     # Not imported by the tests: starlette's TestClient wants httpx2 and warns (which
     # `filterwarnings = ["error"]` turns into a collection error) when only httpx is there.
