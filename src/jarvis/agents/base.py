@@ -74,6 +74,27 @@ _EMPHASIS_RE = re.compile(r"[`*_]+")
 _PARAGRAPH_RE = re.compile(r"\n[ \t]*\n")
 
 
+@dataclass(frozen=True)
+class TokenUsage:
+    """What one or more turns cost in tokens, the same way for every agent.
+
+    `input_tokens` counts every input token, cached ones included, and `cached_input_tokens`
+    says how many of those were cache reads — Codex's meaning, and Claude's once its
+    uncached, cache-write and cache-read counts are summed.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        return TokenUsage(
+            self.input_tokens + other.input_tokens,
+            self.output_tokens + other.output_tokens,
+            self.cached_input_tokens + other.cached_input_tokens,
+        )
+
+
 @dataclass
 class RunResult:
     """The outcome of one subagent turn (spec §3.2)."""
@@ -87,6 +108,20 @@ class RunResult:
     #: The subagent's own `RESTART_REQUIRED:` line, or None when it did not ask for one.
     #: Empty string means it asked without saying why, which is still asking.
     restart_reason: str | None = None
+    #: Tokens the turn spent, when the agent said; None when it did not.
+    usage: TokenUsage | None = None
+
+
+class AgentOpenError(RuntimeError):
+    """A session could not be opened; the message has every credential redacted."""
+
+
+class SteerUnavailable(NotImplementedError):
+    """`send()` could not put the text into a running turn, and nothing was delivered.
+
+    The agent has no live steer at all, or the turn has already ended. Either way the text
+    was refused, never half-accepted, so the caller may safely deliver it another way.
+    """
 
 
 class AgentSession(Protocol):
