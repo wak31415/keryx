@@ -35,6 +35,7 @@ a voice agent you can use across calls:
 | Status and follow-ups in a later call | — | 🟡 in the app | ✅ |
 | SMS links to written reports | — | — | ✅ |
 | Callbacks when you ask for one | — | — | ✅ |
+| Pro-actively calls you when it needs input from you | — | — | ✅ |
 | Ask it to add a feature during a call | — | — | ✅ |
 
 For example:
@@ -141,6 +142,25 @@ Both do the same work here: voice dispatch, follow-ups, progress, projects, Slac
 and Calendar (for Codex through `GOOGLE_WORKSPACE_MCP` and `jarvis setup-google`). Claude
 also has a per-task dollar figure and cap. The approval bridge stays Claude Code only.
 [`docs/agents.md`](docs/agents.md) has the full comparison.
+
+## Answer Claude Code prompts by phone
+
+If you use Claude Code on the same machine, Jarvis can ring you when a session on your
+screen stops to ask you something and you haven't answered within five minutes. It reads
+the question out, and you answer on the keypad. Install the hook once:
+
+```bash
+scripts/install-claude-hook.sh
+```
+
+It copies `scripts/claude_hooks/jarvis_approval.py` into `~/.claude/hooks/` and adds it to
+`~/.claude/settings.json`, keeping a backup and any hooks you already have. Re-run it after
+pulling changes to `scripts/claude_hooks/`; Jarvis ignores an outdated copy. Answering at
+the keyboard always wins, and any failure leaves the prompt on your screen as usual.
+`uv run jarvis approvals` shows what it has asked and `--disable` turns it off. Only
+routine commands can be approved by phone; the
+[wiki](https://github.com/wak31415/jarvis-voice-agent/wiki/The-Approval-Bridge) has the
+details.
 
 ## Configuration
 
