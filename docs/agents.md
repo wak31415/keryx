@@ -4,7 +4,12 @@ Jarvis does the talking; a coding agent on your machine does the work. Two are s
 and a task runs on whichever one it was handed to for its whole life:
 
 - **Claude Code** (`claude`), driven through the Claude Agent SDK. The default.
-- **Codex** (`codex`), OpenAI's CLI, driven as `codex exec --json`.
+- **Codex** (`codex`), driven through OpenAI's `openai-codex` Python SDK, which runs the
+  `codex` CLI it bundles as an app-server.
+
+Both come with `uv sync`: each SDK carries its own CLI, so there is nothing else to
+install. The Codex one is large — about 350 MB installed (`openai-codex-cli-bin`) — and is
+pinned to one exact version, because Jarvis reads its messages field by field.
 
 `AGENT_BACKEND` picks the one that does the work when you do not say, and `AGENTS_ENABLED`
 lists every one a task may be sent to. With more than one enabled and signed in, you can
@@ -31,12 +36,22 @@ line, never in a log. `OPENAI_API_KEY`, the voice model's key, is never handed t
 that would quietly move a ChatGPT-plan user onto per-token billing. Set `CODEX_API_KEY` if
 that is what you want.
 
-`CODEX_ACCESS_TOKEN` is not a ChatGPT token. Codex 0.156 does not read it from the
-environment, and `codex login --with-access-token` expects an OpenAI *agent identity* token.
-Jarvis logs in with it once, into a Codex home of its own (`~/.jarvis/codex`, with your
-`config.toml`, `AGENTS.md` and `skills` linked in), so your own `codex login` is never
-touched. That path is wired and unit-tested but has not been run against a real agent
-identity token; the stored login and `CODEX_API_KEY` both have.
+Codex's own process is handed a copy of Jarvis's environment, so Jarvis overrides every
+credential variable the chosen tier does not use with an empty value, which Codex treats as
+unset. Beyond that, each Codex tier goes in its own way, because of what the app-server the
+SDK runs actually reads (checked against 0.157.1):
+
+- **`CODEX_API_KEY`** is *ignored* in the app-server's environment. So Jarvis logs in with
+  the key once — on stdin, never on a command line — into a Codex home of its own
+  (`~/.jarvis/codex`, owner-only, with your `config.toml`, `AGENTS.md` and `skills` linked
+  in, but not `hooks.json`: your hooks are your own automation), and logs in again only when
+  the key changes. Your own `~/.codex` login is never touched.
+- **`CODEX_ACCESS_TOKEN`** *is* read from the environment, so that is all Jarvis does with
+  it: nothing is stored. It is not a ChatGPT token but an OpenAI *agent identity* token; a
+  bogus one fails cleanly, but no real one has been run yet.
+- **The stored login** is your own `~/.codex`, exactly as the `codex` CLI uses it.
+  `jarvis setup-agent` runs the SDK's bundled `codex login`, which shares that home with any
+  `codex` you have on PATH.
 
 ## What each agent can do here
 
@@ -49,21 +64,25 @@ checked is marked, and listed under "possible".
 | Capability | claude | codex |
 |---|:---:|:---:|
 | Dispatch by voice, and name the agent out loud | ✅ | ✅ |
-| Follow-ups resume the same session | ✅ | ✅ `codex exec resume` |
+| Follow-ups resume the same session | ✅ | ✅ `thread_resume` |
+| A follow-up reaches a task while it is still running | re-runs after the turn | ✅ into the running turn |
+| Cancel stops the work | ✅ | ✅ `turn/interrupt`, then the app-server is stopped |
 | Progress lines in `~/.jarvis/tasks/<id>.log` | ✅ | ✅ |
 | `SPOKEN_SUMMARY:` / `RESTART_REQUIRED:` | ✅ | ✅ |
 | Project working directory and briefs | ✅ | ✅ |
 | The per-call memory update | ✅ | ✅ when it is the default |
 | API key and stored subscription login | ✅ | ✅ |
-| Headless subscription token | ✅ | 🟡 wired, not verified |
-| Choosing the model by name | ✅ opus, sonnet, fable, haiku | ✅ sol, terra, luna |
+| Headless subscription token | ✅ | 🟡 read from the environment; no real token run yet |
+| Choosing the model by name | ✅ opus, sonnet, fable, haiku | ✅ astra, sol, luna, terra |
 | Wall-clock cap (`SUBAGENT_TIMEOUT_S`) | ✅ | ✅ |
 | Turn cap and dollar cap | ✅ `SUBAGENT_MAX_TURNS`, `SUBAGENT_MAX_BUDGET_USD` | — |
-| Cost of each task, in dollars | ✅ | — tokens only |
+| Tokens recorded on the task (`jarvis tasks show`) | ✅ | ✅ |
+| Dollar cost recorded on the task | ✅ | — a plan call has no price |
 | Slack, through the server `SLACK_MCP_SERVER` names | ✅ | ✅ handed over from `~/.claude.json` |
 | Gmail and Calendar | ✅ claude.ai connectors | ✅ with `GOOGLE_WORKSPACE_MCP=true` |
 | Its own instructions file | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` |
 | Its own skills, listed to the voice model | `SKILLS_DIR` | `~/.codex/skills` |
+| Nothing to install beyond `uv sync` | ✅ | ✅ bundled CLI (~350 MB) |
 | `doctor`, `setup-agent`, `--fake-agents` | ✅ | ✅ |
 | Approval bridge for your on-screen sessions | ✅ | — |
 <!-- agents:end -->
@@ -77,9 +96,19 @@ Two of those are worth knowing before you switch:
   screen that stop and ask you something. It has nothing to do with which agent Jarvis
   dispatches to, and it stays Claude Code only.
 
-Both agents run with approvals and the sandbox off (`bypassPermissions` for Claude,
-`--dangerously-bypass-approvals-and-sandbox` for Codex). The phone PIN gates the dispatch,
+Both agents run with approvals and the sandbox off (`bypassPermissions` for Claude, the
+full-access sandbox with approvals never asked for Codex). The phone PIN gates the dispatch,
 the same way whichever agent runs it: see [SECURITY.md](../SECURITY.md).
+
+Two more that are true of both, and worth knowing:
+
+- **A follow-up to Claude while it works waits for the turn to end**, then resumes the
+  session with it; Codex takes it in the turn it is running. The difference is Claude's
+  SDK, not a choice: see "Possible later".
+- **Cancel and the wall-clock cap stop the agent, then its process.** For Codex that kills
+  the commands it was running — checked with one that ignores SIGTERM, SIGHUP and SIGINT.
+  A command that *detached itself* (`setsid`, a daemon) survives, as it would have under
+  `codex exec`: Jarvis stops the app-server, not a process group it never had.
 
 ## Possible later
 
@@ -88,10 +117,16 @@ the same way whichever agent runs it: see [SECURITY.md](../SECURITY.md).
 - **A turn cap for Codex.** There is no flag for one; the wall-clock cap stands in.
 - **The approval bridge for Codex sessions on your screen.** Codex has a hooks file, so this
   is plausible; nothing is built.
-- **Tokens and cost on the task row.** Neither agent records them there today; they are in
-  the service log.
 - **`CODEX_ACCESS_TOKEN`, verified.** The plumbing exists (above); it needs a run with a real
   agent identity token before it moves up.
+- **Codex's own budget.** The app-server can end a turn with `sessionBudgetExceeded`; that is
+  already reported as an ordinary failure, but nothing sets such a budget yet.
+- **A follow-up into a running Claude turn.** A `query()` sent while Claude works folds into
+  the turn at a tool boundary, but one sent after its final text starts a second turn that
+  the reader never sees, so it would be lost. The way in to try: start the CLI with
+  `extra_args={"replay-user-messages": None}` and see whether it echoes a queued message
+  when it takes it; if so, the adapter can read on past a result while a steer is
+  unacknowledged.
 
 ## Not easily possible
 
@@ -105,10 +140,20 @@ the same way whichever agent runs it: see [SECURITY.md](../SECURITY.md).
 
 ## Adding a third agent
 
-One module under `src/jarvis/agents/` with an `AgentRunner`, and one entry in
-`jarvis/agents/registry.py::BACKENDS` — its runner, its spoken model names, where its
-credentials come from (`AuthSource`), its install hint, instructions file, skills
-directory and login commands. The router, the task manager, the voice tools, `doctor` and
-`setup-agent` read that table and nothing else. Add its name to `AgentName` in
-`config.py`, a column to the table above (a test checks), and its settings to
-`.env.example`.
+Every agent runs through one session (`jarvis/agents/session.py`), which already does the
+progress lines, the `SPOKEN_SUMMARY:` and `RESTART_REQUIRED:` reading, the usage, the
+redaction and the error handling. A new agent is:
+
+- **one module** under `src/jarvis/agents/` holding an *adapter* — a class whose
+  `turn(prompt)` yields `Text`, `ToolCall`, `FileEdit`, `SessionId`, `Notice` and a final
+  `Done`, plus `steer`, `interrupt` and `close` — and an `AdapterRunner` subclass whose
+  `context(task)` builds its `AgentContext` and whose `connect(context, resume)` starts its
+  client and returns the adapter;
+- **one `BackendSpec` entry** in `jarvis/agents/registry.py::BACKENDS`: its runner, its
+  spoken model names, where its credentials come from (`AuthSource`), its install hint,
+  instructions file, skills directory and login commands. The router, the task manager, the
+  voice tools, `doctor` and `setup-agent` read that table and nothing else;
+- **its name** in `AgentName` in `config.py`, **its settings** in `Settings` and
+  `.env.example`, **a column** in the table above (a test checks), and **tests** — the
+  shared `ScriptedAdapter` in `tests/agents/fakes.py` covers the session, so its own tests
+  are the translation from its client's messages to those events.

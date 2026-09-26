@@ -138,10 +138,12 @@ three ways, and the first one set wins:
 | Headless subscription token | `CLAUDE_CODE_OAUTH_TOKEN` | `CODEX_ACCESS_TOKEN` |
 | Stored subscription login | `claude` → `/login` | `codex login` |
 
-Both do the same work here: voice dispatch, follow-ups, progress, projects, Slack, and Gmail
-and Calendar (for Codex through `GOOGLE_WORKSPACE_MCP` and `jarvis setup-google`). Claude
-also has a per-task dollar figure and cap. The approval bridge stays Claude Code only.
-[`docs/agents.md`](docs/agents.md) has the full comparison.
+`uv sync` installs both: each SDK bundles its own CLI (Codex's is about 350 MB). Both do
+the same work here: voice dispatch, follow-ups, progress, projects, Slack, and Gmail and
+Calendar (for Codex through `GOOGLE_WORKSPACE_MCP` and `jarvis setup-google`), and both
+record the tokens a task spent. A follow-up reaches Codex in the turn it is running; Claude
+takes it when the turn ends. Claude also has a per-task dollar figure and cap. The approval
+bridge stays Claude Code only. [`docs/agents.md`](docs/agents.md) has the full comparison.
 
 ## Answer Claude Code prompts by phone
 
