@@ -18,7 +18,7 @@ from jarvis.agent_setup import (
     passed_smoke,
     run_setup_agent,
 )
-from jarvis.agents.base import FakeAgentRunner, RunResult
+from jarvis.agents.base import AgentOpenError, FakeAgentRunner, RunResult
 from jarvis.agents.registry import BACKENDS
 
 READY = RunResult(ok=True, final_text="SPOKEN_SUMMARY: ready", spoken_summary="ready")
@@ -223,7 +223,7 @@ def test_a_missing_cli_is_an_install_command_never_an_install(settings, monkeypa
 
     code, out = setup(settings, machine, default="codex")
 
-    assert "npm install -g @openai/codex" in out
+    assert "uv sync (the openai-codex SDK bundles the codex CLI)" in out
     assert machine.logins == []
     assert code == 1
     assert out.endswith(f"not_ready: {STATUSES['not_ready']}")
@@ -277,6 +277,22 @@ def test_the_real_smoke_task_goes_through_the_agents_runner(settings, monkeypatc
     assert (task.agent, resume) == ("codex", None)
     assert runner.sessions[0].prompts == [SMOKE_PROMPT]
     assert runner.sessions[0].closed is True
+
+
+def test_a_smoke_task_that_cannot_even_open_is_a_failure_that_says_why(settings, monkeypatch):
+    class Refusing:
+        async def open(self, task, *, resume=None):
+            raise AgentOpenError("RuntimeError: codex refused CODEX_API_KEY: bad key")
+
+    spec = BACKENDS["codex"]
+    monkeypatch.setitem(
+        BACKENDS, "codex", dataclasses.replace(spec, make_runner=lambda settings: Refusing())
+    )
+
+    result = agent_setup.asyncio.run(agent_setup.run_smoke(settings, "codex"))
+
+    assert result.ok is False
+    assert result.error == "RuntimeError: codex refused CODEX_API_KEY: bad key"
 
 
 def test_a_smoke_task_that_hangs_is_a_failure(settings, monkeypatch):

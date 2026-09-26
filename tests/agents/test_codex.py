@@ -1,39 +1,59 @@
-"""Tests for the Codex backend.
+"""Tests for the Codex backend, on the `openai-codex` SDK.
 
-`codex` is never started: the runner takes a `spawner`, and the double below replays the
-JSONL fixtures in `fixtures/`, which keep the exact shapes Codex CLI 0.156 printed for real
-runs. The one test that spawns a process at all runs a local Python script standing in for
-the binary, to exercise the subprocess wrapper; no network, no `codex`.
+`codex` is never started: the runner takes a `client_factory`, and the doubles below replay
+the fixtures in `fixtures/codex_app_*.jsonl` — notifications the bundled app-server 0.157.1
+sent for real turns, rebuilt here into the SDK's own typed models, so the adapter is read
+against the exact shapes it will meet. The two tests that go as far as the SDK's `Popen`
+replace it, so nothing is spawned there either.
 """
 
 import asyncio
 import json
+import logging
 import stat
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from openai_codex import InternalRpcError, InvalidRequestError
+from openai_codex.generated.notification_registry import NOTIFICATION_MODELS
+from openai_codex.models import Notification
 
 from jarvis.agents import codex as codex_module
+from jarvis.agents.base import AgentOpenError, SteerUnavailable, TokenUsage
 from jarvis.agents.codex import (
-    INTERRUPTED_ERROR,
+    CODEX_MODELS,
     CodexAgentRunner,
-    build_command,
+    _tool_call,
+    codex_cli,
+    codex_cli_version,
     codex_stored_login,
-    ensure_token_home,
-    mcp_overrides,
-    progress_line,
-    spawn_codex,
+    ensure_login_home,
+    mcp_config,
 )
+from jarvis.agents.session import AdapterSession
 from jarvis.tasks.models import Task, TaskKind
 
 FIXTURES = Path(__file__).parent / "fixtures"
 THREAD_ID = "01a0d55f-0000-7000-8000-000000000001"
+KEY = "sk-codex-test-0123456789"
 
 
-def fixture_lines(name: str) -> list[str]:
-    return (FIXTURES / name).read_text().splitlines(keepends=True)
+def notifications(name: str) -> list[Notification]:
+    """A recorded turn, as the typed notifications the SDK would have handed us."""
+    lines = (FIXTURES / f"codex_app_{name}.jsonl").read_text().splitlines()
+    return [
+        Notification(d["method"], NOTIFICATION_MODELS[d["method"]].model_validate(d["params"]))
+        for d in map(json.loads, lines)
+    ]
+
+
+def notice(method: str, **params) -> Notification:
+    return Notification(method, NOTIFICATION_MODELS[method].model_validate(params))
 
 
 def make_task(**overrides) -> Task:
@@ -42,308 +62,391 @@ def make_task(**overrides) -> Task:
     return Task(**values)
 
 
-class FakeProcess:
-    """Replays `lines`; with `hangs`, then waits for an interrupt, as a turn mid-command does."""
+class FakeTurn:
+    """Replays a turn; with `pause_at`, waits there for an interrupt, as a command does."""
 
-    def __init__(self, lines=(), code=0, stderr="", *, hangs=False):
-        self._lines = list(lines)
-        self.code = code
-        self.stderr = stderr
+    def __init__(self, notes, *, pause_at=None, steer_error=None):
+        self.notes = list(notes)
+        self.pause_at = pause_at
+        self.steer_error = steer_error
+        self.steered: list[str] = []
         self.interrupts = 0
-        self.terminated = 0
-        self._hangs = hangs
+        self.stream_closed = False
+        self.paused = asyncio.Event()
         self._interrupted = asyncio.Event()
 
-    async def lines(self):
-        for line in self._lines:
-            yield line
-        if self._hangs:
-            await self._interrupted.wait()
+    async def stream(self):
+        try:
+            for index, note in enumerate(self.notes):
+                if index == self.pause_at:
+                    self.paused.set()
+                    await self._interrupted.wait()
+                yield note
+        finally:
+            self.stream_closed = True
 
-    async def wait(self) -> int:
-        return self.code
+    async def steer(self, text):
+        if self.steer_error is not None:
+            raise self.steer_error
+        self.steered.append(text)
 
-    def stderr_tail(self) -> str:
-        return self.stderr
-
-    def interrupt(self) -> None:
+    async def interrupt(self):
         self.interrupts += 1
         self._interrupted.set()
 
-    async def terminate(self) -> None:
-        self.terminated += 1
+
+class FakeThread:
+    def __init__(self, turns, thread_id=THREAD_ID):
+        self.id = thread_id
+        self.turns = list(turns)
+        self.prompts: list[str] = []
+
+    async def turn(self, prompt):
+        self.prompts.append(prompt)
+        return self.turns.pop(0)
 
 
-class FakeSpawner:
-    """Hands out scripted processes and records what each would have been started with."""
+class FakeCodex:
+    """One app-server's worth of recorded calls."""
 
-    def __init__(self, *processes: FakeProcess, fail: Exception | None = None):
-        self.processes = list(processes)
+    def __init__(self, *turns, fail=None, notes=()):
+        self.thread = FakeThread(turns)
         self.fail = fail
-        self.calls: list[dict] = []
+        self.notes = list(notes)
+        self.env: dict[str, str] = {}
+        self.cwd: Path | None = None
+        self.started: list[dict] = []
+        self.resumed: list[tuple[str, dict]] = []
+        self.closes = 0
+        self._gone = asyncio.Event()
 
-    async def __call__(self, argv, cwd, env, prompt):
-        self.calls.append({"argv": argv, "cwd": cwd, "env": env, "prompt": prompt})
+    async def thread_start(self, **options):
+        self.started.append(options)
         if self.fail is not None:
             raise self.fail
-        return self.processes.pop(0)
+        return self.thread
+
+    async def thread_resume(self, thread_id, **options):
+        self.resumed.append((thread_id, options))
+        if self.fail is not None:
+            raise self.fail
+        return self.thread
+
+    async def notices(self):
+        for note in self.notes:
+            yield note
+        await self._gone.wait()
+
+    async def close(self):
+        self.closes += 1
+        self._gone.set()
+
+
+class Factory:
+    def __init__(self, codex: FakeCodex):
+        self.codex = codex
+        self.calls = 0
+
+    def __call__(self, env, cwd):
+        self.calls += 1
+        self.codex.env, self.codex.cwd = env, cwd
+        return self.codex
 
 
 def no_login(*args, **kwargs):  # pragma: no cover - a test that reaches it has failed
     raise AssertionError("no login expected")
 
 
-@pytest.fixture(autouse=True)
-def no_codex_on_this_machine(monkeypatch):
-    """Whatever is installed here, the command is spelt with the bare name."""
-    monkeypatch.setattr(codex_module, "codex_cli", lambda: None)
-
-
-async def open_session(settings, spawner, *, task=None, resume=None):
-    runner = CodexAgentRunner(settings, spawner=spawner, login=no_login)
+async def open_session(settings, codex, *, task=None, resume=None, login=no_login):
+    runner = CodexAgentRunner(settings, client_factory=Factory(codex), login=login)
     return await runner.open(task or make_task(), resume=resume)
+
+
+def quiet(text):
+    return None
 
 
 # --------------------------------------------------------------------------- one turn
 
 
-async def test_a_turn_maps_the_events_into_a_result(settings):
-    spawner = FakeSpawner(FakeProcess(fixture_lines("codex_run.jsonl")))
-    session = await open_session(settings, spawner)
+async def test_a_turn_maps_the_notifications_into_a_result(settings):
+    codex = FakeCodex(FakeTurn(notifications("run")))
+    session = await open_session(settings, codex)
     progress: list[str] = []
 
     result = await session.run("add the notes", on_progress=progress.append)
 
     assert result.ok is True
     assert result.session_id == THREAD_ID
-    assert result.spoken_summary == (
-        "I added the notes file and checked the mail; nothing from the landlord."
-    )
-    assert result.restart_reason == "registers the new tool at startup"
-    assert result.final_text.startswith("Added `NOTES.md`")
+    assert result.final_text.startswith("Command output: `hello`")
+    assert result.spoken_summary == "Completed the command, file creation, and secret word lookup."
+    assert result.restart_reason == "registers the new tool"
     assert result.cost_usd is None  # tokens, not dollars: a plan call has no price
+    assert result.usage == TokenUsage(
+        input_tokens=55831, output_tokens=303, cached_input_tokens=47744
+    )
     assert progress == [
-        "I’ll look at the repository, then add the file.",
-        '[tool] shell "/usr/bin/zsh -lc ls"',
+        "I’ll run the command, create the requested note file, then locate and call the "
+        "probe server’s `secret_word` tool.",
+        "[tool] shell \"/usr/bin/zsh -lc 'echo hello'\"",
         "[edit] add /work/orchard/NOTES.md",
-        '[tool] mcp__google__search_gmail_messages {"query": "from:landlord"}',
+        "[tool] mcp__probe__secret_word {}",
         result.final_text,
     ]
-    assert spawner.calls[0]["prompt"] == "add the notes"
+    assert codex.thread.prompts == ["add the notes"]
 
 
-async def test_a_failed_turn_says_what_the_provider_said(settings):
-    spawner = FakeSpawner(FakeProcess(fixture_lines("codex_failed.jsonl"), code=1))
-    session = await open_session(settings, spawner)
+async def test_a_failed_turn_says_what_went_wrong_without_the_url(settings, caplog):
+    caplog.set_level(logging.INFO, logger="jarvis.agents.session")
+    session = await open_session(settings, FakeCodex(FakeTurn(notifications("failed"))))
 
-    result = await session.run("go", on_progress=lambda text: None)
+    result = await session.run("go", on_progress=quiet)
+
+    reason = "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header"
+    assert result.ok is False
+    assert result.error == reason
+    assert result.spoken_summary == f"The task failed: {reason}"
+    assert "cf-ray" not in result.error and "request id" not in result.error
+    retries = [r for r in caplog.records if "Reconnecting" in r.getMessage()]
+    assert retries and all(r.levelno == logging.INFO for r in retries)
+    [terminal] = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert terminal.getMessage() == f"subagent: {reason}"
+
+
+async def test_a_turn_the_runtime_ended_on_its_budget_is_an_ordinary_failure(settings):
+    session = await open_session(settings, FakeCodex(FakeTurn(notifications("budget"))))
+
+    result = await session.run("go", on_progress=quiet)
 
     assert result.ok is False
-    assert result.error == (
-        "The 'no-such-model' model is not supported when using Codex with a ChatGPT account."
-    )
-    assert result.spoken_summary.startswith("The task failed: The 'no-such-model' model")
-    assert result.session_id == "01a0d560-0000-7000-8000-000000000002"
-
-
-async def test_a_refused_key_never_reaches_the_error_even_masked(settings):
-    settings.codex_api_key = "sk-jarvis-test-fake"
-    spawner = FakeSpawner(FakeProcess(fixture_lines("codex_bad_key.jsonl"), code=1))
-    session = await open_session(settings, spawner)
-
-    result = await session.run("go", on_progress=lambda text: None)
-
-    assert result.ok is False
-    assert "Incorrect API key provided: [redacted]" in result.error
-    assert "sk-jarvi" not in result.error and "fake" not in result.error
-    assert "sk-jarvi" not in result.spoken_summary
-
-
-async def test_an_exit_no_event_explains_falls_back_to_stderr(settings):
-    """What an unknown resume id looks like: nothing on stdout, one line on stderr."""
-    error = "Error: thread/resume: thread/resume failed: no rollout found for thread id x"
-    spawner = FakeSpawner(FakeProcess([], code=1, stderr=f"a warning\n{error}\n"))
-    session = await open_session(settings, spawner, resume="x")
-
-    result = await session.run("go on", on_progress=lambda text: None)
-
-    assert result.ok is False
-    assert result.error == error
-    assert result.session_id == "x"
-
-
-async def test_an_exit_with_nothing_at_all_still_says_something(settings):
-    session = await open_session(settings, FakeSpawner(FakeProcess([], code=3)))
-
-    result = await session.run("go", on_progress=lambda text: None)
-
-    assert result.error == "codex exited with 3"
-
-
-async def test_a_process_that_cannot_start_is_a_failed_turn_not_an_exception(settings):
-    spawner = FakeSpawner(fail=FileNotFoundError("codex"))
-    session = await open_session(settings, spawner)
-
-    result = await session.run("go", on_progress=lambda text: None)
-
-    assert result.ok is False
-    assert result.error == "FileNotFoundError: codex"
-
-
-async def test_noise_on_stdout_is_skipped(settings):
-    lines = ["\n", "not json\n", "[1, 2]\n", *fixture_lines("codex_run.jsonl")]
-    session = await open_session(settings, FakeSpawner(FakeProcess(lines)))
-
-    result = await session.run("go", on_progress=lambda text: None)
-
-    assert result.ok is True
-
-
-async def test_a_failing_progress_callback_does_not_fail_the_turn(settings):
-    def explode(text):
-        raise RuntimeError("listener gone")
-
-    session = await open_session(
-        settings, FakeSpawner(FakeProcess(fixture_lines("codex_run.jsonl")))
-    )
-
-    assert (await session.run("go", on_progress=explode)).ok is True
-
-
-# ------------------------------------------------------------------- resume, interrupt
-
-
-async def test_the_second_turn_resumes_the_thread_the_first_one_started(settings):
-    spawner = FakeSpawner(
-        FakeProcess(fixture_lines("codex_run.jsonl")),
-        FakeProcess(fixture_lines("codex_run.jsonl")),
-    )
-    session = await open_session(settings, spawner)
-
-    await session.run("first", on_progress=lambda text: None)
-    await session.run("second", on_progress=lambda text: None)
-
-    first, second = (call["argv"] for call in spawner.calls)
-    assert first[:2] == ["codex", "exec"] and "resume" not in first
-    assert second[:4] == ["codex", "exec", "resume", THREAD_ID]
-
-
-async def test_opening_with_a_session_id_resumes_it(settings, tmp_path):
-    spawner = FakeSpawner(FakeProcess(fixture_lines("codex_run.jsonl")))
-    session = await open_session(settings, spawner, task=make_task(cwd=str(tmp_path)), resume="t-1")
-
-    await session.run("more", on_progress=lambda text: None)
-
-    call = spawner.calls[0]
-    assert call["argv"][:4] == ["codex", "exec", "resume", "t-1"]
-    assert "-C" not in call["argv"]  # `exec resume` has no -C; the process cwd is the dir
-    assert call["cwd"] == tmp_path
+    assert result.error == "This session has used its budget."
 
 
 async def test_an_interrupted_turn_is_reported_as_interrupted(settings):
-    process = FakeProcess(fixture_lines("codex_interrupted.jsonl"), code=1, hangs=True)
-    session = await open_session(settings, FakeSpawner(process))
+    notes = notifications("interrupted")
+    turn = FakeTurn(notes, pause_at=len(notes) - 1)  # mid-command, before turn/completed
+    session = await open_session(settings, FakeCodex(turn))
     await session.interrupt()  # nothing running yet: a no-op
-    progress: list[str] = []
 
-    run = asyncio.create_task(session.run("go", on_progress=progress.append))
-    while len(progress) < 2:  # the announcement and the command: it is mid-command now
-        await asyncio.sleep(0)
+    running = asyncio.create_task(session.run("go", on_progress=quiet))
+    await turn.paused.wait()
     await session.interrupt()
-    result = await asyncio.wait_for(run, 1)
+    result = await asyncio.wait_for(running, 1)
 
-    assert process.interrupts == 1
+    assert turn.interrupts == 1
     assert result.ok is False
-    assert result.error == INTERRUPTED_ERROR
+    assert result.error == "interrupted"
     # The last message was an announcement of work, not a result: it is never spoken.
     assert result.spoken_summary == "The task failed: interrupted"
+    assert result.usage == TokenUsage(18316, 116, 11136)
 
 
-async def test_close_terminates_the_process_and_is_safe_twice(settings):
-    process = FakeProcess(fixture_lines("codex_run.jsonl"))
-    session = await open_session(settings, FakeSpawner(process))
-    await session.close()  # before any run
+async def test_cancelling_a_turn_blocked_in_its_reader_closes_the_stream(settings):
+    notes = notifications("interrupted")
+    turn = FakeTurn(notes, pause_at=len(notes) - 1)
+    session = await open_session(settings, FakeCodex(turn))
 
-    await session.run("go", on_progress=lambda text: None)
-    await session.close()
-    await session.close()
+    running = asyncio.create_task(session.run("go", on_progress=quiet))
+    await turn.paused.wait()
+    running.cancel()
 
-    assert process.terminated == 2
-
-
-async def test_close_swallows_a_terminate_that_fails(settings):
-    process = FakeProcess(fixture_lines("codex_run.jsonl"))
-
-    async def broken():
-        raise ProcessLookupError
-
-    process.terminate = broken
-    session = await open_session(settings, FakeSpawner(process))
-    await session.run("go", on_progress=lambda text: None)
-
-    await session.close()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert turn.stream_closed is True
 
 
-async def test_send_is_not_how_codex_takes_a_follow_up(settings):
-    session = await open_session(settings, FakeSpawner())
+async def test_the_second_turn_of_a_session_runs_on_the_same_thread(settings):
+    codex = FakeCodex(FakeTurn(notifications("run")), FakeTurn(notifications("steered")))
+    session = await open_session(settings, codex)
 
-    with pytest.raises(NotImplementedError):
-        await session.send("and also")
+    await session.run("first", on_progress=quiet)
+    second = await session.run("second", on_progress=quiet)
 
-
-# ------------------------------------------------------------------------ the command
-
-
-def test_the_command_bypasses_approvals_and_reads_the_prompt_from_stdin(settings, tmp_path):
-    argv, env, cwd = build_command(make_task(cwd=str(tmp_path)), settings)
-
-    assert argv[:2] == ["codex", "exec"]
-    assert "--json" in argv and "--skip-git-repo-check" in argv
-    assert "--dangerously-bypass-approvals-and-sandbox" in argv
-    assert argv[argv.index("-C") + 1] == str(tmp_path)
-    assert argv[-1] == "-"
-    assert cwd == tmp_path
-    assert env == {}
+    assert codex.thread.prompts == ["first", "second"]
+    assert len(codex.started) == 1
+    assert second.session_id == THREAD_ID
 
 
-def test_the_suffix_goes_in_as_developer_instructions(settings):
+# --------------------------------------------------------------------------- steering
+
+
+async def test_a_follow_up_goes_into_the_running_turn(settings):
+    notes = notifications("steered")
+    turn = FakeTurn(notes, pause_at=9)  # after the command, before the steer lands
+    session = await open_session(settings, FakeCodex(turn))
+
+    running = asyncio.create_task(session.run("go", on_progress=quiet))
+    await turn.paused.wait()
+    await session.send("Also include the word KIWI in your answer.")
+    turn._interrupted.set()  # let the recorded turn play on
+    result = await running
+
+    assert turn.steered == ["Also include the word KIWI in your answer."]
+    assert "KIWI" in result.final_text
+
+
+async def test_there_is_nothing_to_steer_before_or_after_a_turn(settings):
+    session = await open_session(settings, FakeCodex(FakeTurn(notifications("run"))))
+
+    with pytest.raises(SteerUnavailable):
+        await session.send("too early")
+    await session.run("go", on_progress=quiet)
+    with pytest.raises(SteerUnavailable):
+        await session.send("too late")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        InvalidRequestError(-32600, "no active turn to steer"),
+        InternalRpcError(-32603, "busy", {"codexErrorInfo": "activeTurnNotSteerable"}),
+    ],
+)
+async def test_a_steer_the_server_refused_was_never_delivered(settings, error):
+    notes = notifications("steered")
+    turn = FakeTurn(notes, pause_at=9, steer_error=error)
+    session = await open_session(settings, FakeCodex(turn))
+
+    running = asyncio.create_task(session.run("go", on_progress=quiet))
+    await turn.paused.wait()
+    with pytest.raises(SteerUnavailable):
+        await session.send("more")
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+
+
+async def test_a_steer_that_failed_otherwise_is_not_unavailable(settings):
+    notes = notifications("steered")
+    turn = FakeTurn(notes, pause_at=9, steer_error=InternalRpcError(-32603, "pipe broke"))
+    session = await open_session(settings, FakeCodex(turn))
+
+    running = asyncio.create_task(session.run("go", on_progress=quiet))
+    await turn.paused.wait()
+    with pytest.raises(RuntimeError) as raised:
+        await session.send("more")
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+
+    assert not isinstance(raised.value, SteerUnavailable)
+
+
+# ------------------------------------------------------------------ open, resume, close
+
+
+async def test_a_new_task_starts_a_thread_with_the_instructions_and_the_model(settings, tmp_path):
     settings.owner_name = "Ada"
-    argv, _, _ = build_command(make_task(id=31), settings)
+    codex = FakeCodex()
 
-    [instructions] = [a for a in argv if a.startswith("developer_instructions=")]
-    text = json.loads(instructions.removeprefix("developer_instructions="))
-    assert "dispatched on Ada's behalf" in text
-    assert "Jarvis-Task: 31" in text
+    await open_session(settings, codex, task=make_task(id=31, cwd=str(tmp_path), model="gpt-6-sol"))
+
+    [options] = codex.started
+    assert options["cwd"] == str(tmp_path)
+    assert codex.cwd == tmp_path
+    assert options["model"] == "gpt-6-sol"
+    assert "dispatched on Ada's behalf" in options["developer_instructions"]
+    assert "Jarvis-Task: 31" in options["developer_instructions"]
+    assert options["config"] is None
+    assert codex.resumed == []
 
 
 @pytest.mark.parametrize(
     ("task_model", "codex_model", "expected"),
     [("gpt-5.6-terra", None, "gpt-5.6-terra"), ("", "gpt-5.5", "gpt-5.5"), ("", None, None)],
 )
-def test_the_model_flag_is_the_tasks_else_the_configured_else_none(
+async def test_the_model_is_the_tasks_else_the_configured_else_codexs_own(
     settings, task_model, codex_model, expected
 ):
     settings.codex_model = codex_model
-    argv, _, _ = build_command(make_task(model=task_model), settings)
+    codex = FakeCodex()
 
-    assert (argv[argv.index("-m") + 1] if "-m" in argv else None) == expected
+    await open_session(settings, codex, task=make_task(model=task_model))
+
+    assert codex.started[0]["model"] == expected
 
 
-def test_google_is_handed_over_as_an_mcp_server_with_its_secrets_by_name(settings):
+async def test_a_resume_resumes_the_thread_with_the_same_options(settings, tmp_path):
+    started, resumed = FakeCodex(), FakeCodex()
+    task = make_task(cwd=str(tmp_path))
+
+    await open_session(settings, started, task=task)
+    session = await open_session(settings, resumed, task=task, resume="t-1")
+
+    assert resumed.started == []
+    assert resumed.resumed == [("t-1", started.started[0])]
+    assert session._session_id == "t-1"
+
+
+async def test_an_unknown_resume_id_fails_the_open_and_closes_the_app_server(settings):
+    codex = FakeCodex(fail=InvalidRequestError(-32600, "no rollout found for thread id t-x"))
+
+    with pytest.raises(AgentOpenError, match="no rollout found for thread id t-x"):
+        await open_session(settings, codex, resume="t-x")
+
+    assert codex.closes == 1
+
+
+async def test_close_stops_the_app_server_and_is_safe_twice(settings):
+    codex = FakeCodex(FakeTurn(notifications("run")))
+    session = await open_session(settings, codex)
+
+    await session.run("go", on_progress=quiet)
+    await session.close()
+    await session.close()
+
+    assert codex.closes == 1
+
+
+# ------------------------------------------------------------------------------ notices
+
+
+async def test_warnings_that_reach_no_turn_are_logged_redacted(settings, caplog):
+    settings.codex_access_token = "agent-access-token-0001"
+    codex = FakeCodex(
+        notes=[
+            notice("configWarning", summary="unknown key", details="agent-access-token-0001"),
+            notice("deprecationNotice", summary="old flag"),
+            notice("warning", message="slow network"),
+            notice("mcpServer/startupStatus/updated", name="google", status="failed",
+                   error="uvx not found"),
+            notice("mcpServer/startupStatus/updated", name="probe", status="ready"),
+            notice("thread/status/changed", threadId=THREAD_ID, status={"type": "idle"}),
+            # A shape this build does not know is skipped, not a crash.
+            Notification("mcpServer/startupStatus/updated", SimpleNamespace()),
+        ]
+    )
+    session = await open_session(settings, codex)
+    for _ in range(20):
+        await asyncio.sleep(0)
+    await session.close()
+
+    said = [r.getMessage() for r in caplog.records if r.name == "jarvis.agents.codex"]
+    assert said == [
+        "codex: unknown key ([redacted])",
+        "codex: old flag",
+        "codex: slow network",
+        "codex: MCP server google did not start: uvx not found",
+    ]
+
+
+# ---------------------------------------------------------------------------------- MCP
+
+
+async def test_google_is_handed_over_with_its_secrets_by_name(settings):
     settings.google_workspace_mcp = True
     settings.google_oauth_client_id = "client-id"
     settings.google_oauth_client_secret = "client-secret-value"
+    codex = FakeCodex()
 
-    argv, env, _ = build_command(make_task(), settings)
+    await open_session(settings, codex)
 
-    assert 'mcp_servers.google.command="uvx"' in argv
-    names = next(a for a in argv if a.startswith("mcp_servers.google.env_vars="))
-    assert "GOOGLE_OAUTH_CLIENT_SECRET" in names
-    assert env["GOOGLE_OAUTH_CLIENT_SECRET"] == "client-secret-value"
-    assert not any("client-secret-value" in a for a in argv)
+    google = codex.started[0]["config"]["mcp_servers"]["google"]
+    assert google["command"] == "uvx"
+    assert "GOOGLE_OAUTH_CLIENT_SECRET" in google["env_vars"]
+    assert codex.env["GOOGLE_OAUTH_CLIENT_SECRET"] == "client-secret-value"
+    assert "client-secret-value" not in json.dumps(codex.started[0])
 
 
-def test_the_slack_server_is_translated_from_the_claude_config(settings, monkeypatch):
+async def test_the_slack_server_is_translated_from_the_claude_config(settings, monkeypatch):
     settings.slack_mcp_server = "team-slack"
     monkeypatch.setattr(
         codex_module,
@@ -354,143 +457,347 @@ def test_the_slack_server_is_translated_from_the_claude_config(settings, monkeyp
             "env": {"SLACK_BOT_TOKEN": "xoxb-1"},
         },
     )
+    codex = FakeCodex()
 
-    argv, env, _ = build_command(make_task(), settings)
+    await open_session(settings, codex)
 
-    assert 'mcp_servers.team-slack.command="/bin/slack-mcp"' in argv
-    assert 'mcp_servers.team-slack.args=["serve"]' in argv
-    assert 'mcp_servers.team-slack.env_vars=["SLACK_BOT_TOKEN"]' in argv
-    assert env == {"SLACK_BOT_TOKEN": "xoxb-1"}
+    assert codex.started[0]["config"] == {
+        "mcp_servers": {
+            "team-slack": {
+                "command": "/bin/slack-mcp",
+                "args": ["serve"],
+                "env_vars": ["SLACK_BOT_TOKEN"],
+            }
+        }
+    }
+    assert codex.env["SLACK_BOT_TOKEN"] == "xoxb-1"
 
 
-def test_a_named_slack_server_that_is_not_configured_is_left_out(settings, monkeypatch):
+async def test_a_named_slack_server_that_is_not_configured_is_left_out(settings, monkeypatch):
     settings.slack_mcp_server = "team-slack"
     monkeypatch.setattr(codex_module, "mcp_server_config", lambda name: None)
+    codex = FakeCodex()
 
-    argv, _, _ = build_command(make_task(), settings)
+    await open_session(settings, codex)
 
-    assert not any(a.startswith("mcp_servers.") for a in argv)
+    assert codex.started[0]["config"] is None
 
 
 def test_mcp_servers_codex_cannot_spell_or_run_are_skipped():
-    argv, env = mcp_overrides(
+    config, env = mcp_config(
         {
-            "has space": {"command": "x"},
-            "nothing": {"env": {"A": "1"}},
+            "has space": {"command": "x", "env": {"A": "1"}},
+            "nothing": {"env": {"B": "2"}},
             "remote": {"url": "https://mcp.example/sse"},
         }
     )
 
-    assert argv == ["-c", 'mcp_servers.remote.url="https://mcp.example/sse"']
+    assert config == {"mcp_servers": {"remote": {"url": "https://mcp.example/sse"}}}
     assert env == {}
 
 
-def test_only_new_tool_calls_and_finished_edits_are_progress():
-    assert progress_line({"type": "command_execution", "command": "ls"}, started=False) is None
-    assert progress_line({"type": "reasoning", "text": "hm"}, started=True) is None
-    assert progress_line({"type": "web_search", "query": "moon"}, started=True) == (
-        '[tool] web_search "moon"'
+async def test_an_mcp_secret_is_kept_out_of_a_failed_turn(settings, monkeypatch):
+    settings.slack_mcp_server = "team-slack"
+    token = "xoxb-0000000000-slack-bot-token"
+    monkeypatch.setattr(
+        codex_module,
+        "mcp_server_config",
+        lambda name: {"command": "slack-mcp", "env": {"SLACK_BOT_TOKEN": token}},
     )
+    turn = FakeTurn([RuntimeError(f"stderr_tail=token {token} refused")])
+
+    async def broken_stream():
+        raise turn.notes[0]
+        yield  # pragma: no cover
+
+    turn.stream = broken_stream
+    session = await open_session(settings, FakeCodex(turn))
+
+    result = await session.run("go", on_progress=quiet)
+
+    assert token not in result.error
+    assert "[redacted]" in result.error
+
+
+def test_every_kind_of_tool_call_is_a_bounded_progress_line():
+    assert _tool_call(SimpleNamespace(type="webSearch", query="moon")).arguments == "moon"
+    dynamic = SimpleNamespace(type="dynamicToolCall", namespace="fs", tool="read", arguments={})
+    assert _tool_call(dynamic).name == "fs.read"
+    bare = SimpleNamespace(type="dynamicToolCall", namespace=None, tool="read", arguments={})
+    assert _tool_call(bare).name == "read"
+    collab = SimpleNamespace(
+        type="collabAgentToolCall", tool=SimpleNamespace(value="spawnAgent"), prompt="look"
+    )
+    assert _tool_call(collab).name == "agent.spawnAgent"
+    assert _tool_call(SimpleNamespace(type="reasoning")) is None
 
 
 # ------------------------------------------------------------------------------- auth
 
 
-async def test_an_api_key_goes_to_the_child_environment_and_nowhere_else(settings):
-    settings.codex_api_key = "sk-codex-secret"
-    spawner = FakeSpawner(FakeProcess(fixture_lines("codex_run.jsonl")))
-    session = await open_session(settings, spawner)
-
-    await session.run("go", on_progress=lambda text: None)
-
-    call = spawner.calls[0]
-    assert call["env"]["CODEX_API_KEY"] == "sk-codex-secret"
-    assert not any("sk-codex-secret" in a for a in call["argv"])
-
-
-async def test_the_voice_models_key_is_never_borrowed(settings):
+async def test_the_stored_login_blanks_every_credential_it_did_not_choose(settings):
     """OPENAI_API_KEY would move a ChatGPT-plan user onto per-token billing unasked."""
     settings.openai_api_key = "sk-voice-model"
-    spawner = FakeSpawner(FakeProcess(fixture_lines("codex_run.jsonl")))
-    session = await open_session(settings, spawner)
+    codex = FakeCodex()
 
-    await session.run("go", on_progress=lambda text: None)
+    await open_session(settings, codex)
 
-    assert "sk-voice-model" not in json.dumps(spawner.calls[0], default=str)
-    assert "CODEX_API_KEY" not in spawner.calls[0]["env"]
+    assert codex.env == {"OPENAI_API_KEY": "", "CODEX_API_KEY": "", "CODEX_ACCESS_TOKEN": ""}
+
+
+async def test_the_token_goes_in_the_environment_and_is_never_persisted(settings):
+    settings.codex_access_token = "agent-access-token-0001"
+    codex = FakeCodex()
+
+    await open_session(settings, codex)
+
+    assert codex.env["CODEX_ACCESS_TOKEN"] == "agent-access-token-0001"
+    assert codex.env["CODEX_API_KEY"] == "" and codex.env["OPENAI_API_KEY"] == ""
+    assert "CODEX_HOME" not in codex.env
+    assert not (settings.data_dir / "codex").exists()
 
 
 class LoginRecorder:
-    def __init__(self, code=0, stderr=""):
+    def __init__(self, code=0, stderr="", *, delay=0.0, write=True):
         self.code = code
         self.stderr = stderr
+        self.delay = delay
+        self.write = write
         self.calls: list[dict] = []
 
     def __call__(self, argv, **kwargs):
         self.calls.append({"argv": argv, **kwargs})
-        if self.code == 0:
+        time.sleep(self.delay)
+        if self.code == 0 and self.write:
             (Path(kwargs["env"]["CODEX_HOME"]) / "auth.json").write_text("{}")
         return subprocess.CompletedProcess(argv, self.code, stdout="", stderr=self.stderr)
 
 
-def test_the_token_logs_in_once_into_a_home_of_jarvis_own(settings, tmp_path):
+@pytest.fixture
+def bundled(monkeypatch):
+    monkeypatch.setattr(codex_module, "codex_cli", lambda: "/venv/codex_cli_bin/bin/codex")
+
+
+async def test_an_api_key_logs_in_once_into_a_home_of_jarvis_own(
+    settings, tmp_path, monkeypatch, bundled
+):
+    settings.codex_api_key = KEY
     owner = tmp_path / "owner-codex"
     (owner / "skills").mkdir(parents=True)
     (owner / "config.toml").write_text('model = "x"\n')
+    (owner / "hooks.json").write_text("{}")
+    monkeypatch.setattr(codex_module, "codex_home", lambda: owner)
     login = LoginRecorder()
+    first, second = FakeCodex(), FakeCodex()
 
-    home = ensure_token_home(settings, "agent-token", run=login, owner_home=owner)
-    again = ensure_token_home(settings, "agent-token", run=login, owner_home=owner)
+    await open_session(settings, first, login=login)
+    await open_session(settings, second, login=login)
 
-    assert home == again == settings.data_dir / "codex"
-    assert stat.S_IMODE(home.stat().st_mode) == 0o700
+    home = settings.data_dir / "codex"
+    assert first.env["CODEX_HOME"] == second.env["CODEX_HOME"] == str(home)
+    assert first.env["CODEX_API_KEY"] == ""  # the app-server ignores it; the login is it
+    assert KEY not in json.dumps(first.env)
     assert len(login.calls) == 1
     call = login.calls[0]
-    assert call["argv"][1:] == ["login", "--with-access-token"]
-    assert call["input"] == "agent-token"  # on stdin, never in argv
-    assert not any("agent-token" in a for a in call["argv"])
+    assert call["argv"] == ["/venv/codex_cli_bin/bin/codex", "login", "--with-api-key"]
+    assert call["input"] == KEY  # on stdin, never argv
+    assert call["env"]["CODEX_HOME"] == str(home)
+    assert stat.S_IMODE(home.stat().st_mode) == 0o700
+    assert stat.S_IMODE((home / "auth.json").stat().st_mode) == 0o600
+    assert stat.S_IMODE((home / ".jarvis-login-sha256").stat().st_mode) == 0o600
     assert (home / "config.toml").resolve() == (owner / "config.toml").resolve()
     assert (home / "skills").is_symlink()
     assert not (home / "AGENTS.md").exists()  # the owner has none, so nothing to link
+    assert not (home / "hooks.json").exists()  # the owner's automation stays theirs
 
 
-def test_a_rotated_token_logs_in_again(settings, tmp_path):
+def test_a_rotated_key_logs_in_again(settings, tmp_path, bundled):
     login = LoginRecorder()
 
-    ensure_token_home(settings, "first", run=login, owner_home=tmp_path)
-    ensure_token_home(settings, "second", run=login, owner_home=tmp_path)
+    ensure_login_home(settings, "sk-first-0000", run=login, owner_home=tmp_path)
+    ensure_login_home(settings, "sk-second-000", run=login, owner_home=tmp_path)
+    ensure_login_home(settings, "sk-second-000", run=login, owner_home=tmp_path)
 
-    assert [call["input"] for call in login.calls] == ["first", "second"]
-
-
-def test_a_refused_token_raises_without_quoting_it(settings, tmp_path):
-    login = LoginRecorder(code=1, stderr="Error logging in with access token: bad agent-token\n")
-
-    with pytest.raises(RuntimeError) as raised:
-        ensure_token_home(settings, "agent-token", run=login, owner_home=tmp_path)
-
-    assert "agent-token" not in str(raised.value)
-    assert "Error logging in with access token" in str(raised.value)
+    assert [call["input"] for call in login.calls] == ["sk-first-0000", "sk-second-000"]
 
 
-async def test_the_token_tier_points_every_run_at_that_home(settings, tmp_path, monkeypatch):
-    settings.codex_access_token = "agent-token"
-    monkeypatch.setattr(codex_module, "codex_home", lambda: tmp_path)
-    spawner = FakeSpawner(FakeProcess(fixture_lines("codex_run.jsonl")))
-    runner = CodexAgentRunner(settings, spawner=spawner, login=LoginRecorder())
+def test_two_tasks_opening_at_once_log_in_once(settings, tmp_path, bundled):
+    login = LoginRecorder(delay=0.05)
+    homes: list[Path] = []
 
-    session = await runner.open(make_task())
-    await session.run("go", on_progress=lambda text: None)
+    def open_one():
+        homes.append(ensure_login_home(settings, KEY, run=login, owner_home=tmp_path))
 
-    env = spawner.calls[0]["env"]
-    assert env["CODEX_HOME"] == str(settings.data_dir / "codex")
-    assert "CODEX_ACCESS_TOKEN" not in env
+    threads = [threading.Thread(target=open_one) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(login.calls) == 1
+    assert homes[0] == homes[1]
+
+
+@pytest.mark.parametrize(
+    "login", [LoginRecorder(code=1, stderr=f"Error: bad key {KEY}\n"), LoginRecorder(write=False)]
+)
+async def test_a_refused_key_fails_the_open_without_quoting_it(settings, bundled, login):
+    settings.codex_api_key = KEY
+
+    with pytest.raises(AgentOpenError) as raised:
+        await open_session(settings, FakeCodex(), login=login)
+
+    assert KEY not in str(raised.value)
+    assert "codex refused CODEX_API_KEY" in str(raised.value)
+    assert not (settings.data_dir / "codex" / ".jarvis-login-sha256").exists()
+
+
+def test_no_bundled_cli_is_a_clear_refusal(settings, tmp_path, monkeypatch):
+    monkeypatch.setattr(codex_module, "codex_cli", lambda: None)
+
+    with pytest.raises(RuntimeError, match="bundled codex CLI is missing"):
+        ensure_login_home(settings, KEY, run=no_login, owner_home=tmp_path)
+
+
+# ------------------------------------------------------------------ the real SDK, no process
+
+
+class PopenRecorder:
+    """Stands in for `subprocess.Popen` inside the SDK: records the child's env and refuses."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def __call__(self, args, **kwargs):
+        self.calls.append({"args": args, **kwargs})
+        raise OSError("not in a test")
+
+
+@pytest.mark.parametrize(
+    ("tier", "expected"),
+    [
+        ("subscription", {"OPENAI_API_KEY": "", "CODEX_API_KEY": "", "CODEX_ACCESS_TOKEN": ""}),
+        ("token", {"OPENAI_API_KEY": "", "CODEX_API_KEY": "", "CODEX_ACCESS_TOKEN": "agent-tok-1"}),
+    ],
+)
+async def test_the_app_server_never_inherits_a_credential_jarvis_did_not_choose(
+    settings, monkeypatch, tier, expected
+):
+    from openai_codex import client as sdk_client
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-voice-model-inherited")
+    monkeypatch.setenv("CODEX_API_KEY", "sk-inherited-codex-key")
+    monkeypatch.setenv("CODEX_ACCESS_TOKEN", "inherited-token")
+    if tier == "token":
+        settings.codex_access_token = "agent-tok-1"
+    popen = PopenRecorder()
+    monkeypatch.setattr(sdk_client.subprocess, "Popen", popen)
+
+    with pytest.raises(AgentOpenError, match="not in a test"):
+        await CodexAgentRunner(settings).open(make_task())
+
+    [call] = popen.calls
+    env = call["env"]
+    assert {name: env[name] for name in expected} == expected
+    assert call["args"][1:] == ["app-server", "--listen", "stdio://"]
+    assert call["args"][0] == codex_cli()
+
+
+async def test_every_thread_runs_unattended_with_full_access(settings, monkeypatch, tmp_path):
+    import openai_codex
+    from openai_codex import ApprovalMode, Sandbox
+
+    made: list[SimpleNamespace] = []
+
+    class RecordingCodex:
+        def __init__(self, config):
+            self.config = config
+            self.calls: list[tuple[str, tuple, dict]] = []
+            made.append(self)
+
+        async def thread_start(self, **kwargs):
+            self.calls.append(("start", (), kwargs))
+            return SimpleNamespace(id="t-1")
+
+        async def thread_resume(self, thread_id, **kwargs):
+            self.calls.append(("resume", (thread_id,), kwargs))
+            return SimpleNamespace(id=thread_id)
+
+        async def close(self):
+            self.calls.append(("close", (), {}))
+
+    monkeypatch.setattr(openai_codex, "AsyncCodex", RecordingCodex)
+    client = codex_module.open_codex({"CODEX_API_KEY": ""}, tmp_path)
+
+    await client.thread_start(cwd="/w")
+    await client.thread_resume("t-9", cwd="/w")
+    await client.close()
+
+    [codex] = made
+    assert codex.config.env == {"CODEX_API_KEY": ""}
+    assert codex.config.cwd == str(tmp_path)
+    assert codex.config.codex_bin is None  # the bundled binary, never one on PATH
+    for _, _, kwargs in codex.calls[:2]:
+        assert kwargs["sandbox"] is Sandbox.full_access
+        assert kwargs["approval_mode"] is ApprovalMode.deny_all
+    assert codex.calls[1][1] == ("t-9",)
+
+
+async def test_the_sdk_notices_end_when_the_app_server_is_gone(settings, tmp_path):
+    client = codex_module.open_codex({}, tmp_path)
+    queue = [notice("warning", message="hi"), RuntimeError("transport closed")]
+
+    async def next_notification():
+        item = queue.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    client._codex._client.next_notification = next_notification
+
+    assert [n.method async for n in client.notices()] == ["warning"]
+
+
+# ------------------------------------------------------------------ install and login
+
+
+def test_the_codex_cli_is_the_one_the_sdk_bundles(monkeypatch):
+    import codex_cli_bin
+
+    assert codex_cli() == str(codex_cli_bin.bundled_codex_path())
+    assert codex_cli_version() == "codex-cli 0.157.1"
+
+    def missing():
+        raise FileNotFoundError("no binary")
+
+    monkeypatch.setattr(codex_cli_bin, "bundled_codex_path", missing)
+    assert codex_cli() is None
+    monkeypatch.setitem(sys.modules, "codex_cli_bin", None)
+    assert codex_cli() is None
+
+
+def test_no_cli_package_is_no_version(monkeypatch):
+    def missing(name):
+        raise codex_module.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(codex_module.metadata, "version", missing)
+
+    assert codex_cli_version() is None
+
+
+def test_the_spoken_aliases_are_the_models_codex_offers():
+    assert CODEX_MODELS == {
+        "astra": "gpt-6-astra",
+        "sol": "gpt-6-sol",
+        "luna": "gpt-6-luna",
+        "terra": "gpt-5.6-terra",
+    }
 
 
 @pytest.mark.parametrize(
     ("code", "stdout", "stderr", "expected"),
     [
-        # Codex 0.156 answers on stderr; stdout is checked too, in case that moves.
+        # Codex answers on stderr; stdout is checked too, in case that moves.
         (0, "", "Logged in using ChatGPT\n", True),
         (0, "Logged in using an API key - sk-…\n", "", True),
         (1, "", "Not logged in\n", False),
@@ -498,23 +805,23 @@ async def test_the_token_tier_points_every_run_at_that_home(settings, tmp_path, 
     ],
 )
 def test_the_stored_login_is_read_from_login_status(monkeypatch, code, stdout, stderr, expected):
-    monkeypatch.setattr(codex_module, "codex_cli", lambda: "/usr/bin/codex")
+    monkeypatch.setattr(codex_module, "codex_cli", lambda: "/venv/bin/codex")
 
     def run(argv, **kwargs):
-        assert argv == ["/usr/bin/codex", "login", "status"]
+        assert argv == ["/venv/bin/codex", "login", "status"]
         return subprocess.CompletedProcess(argv, code, stdout=stdout, stderr=stderr)
 
     assert codex_stored_login(run) is expected
 
 
-def test_no_codex_on_path_is_no_login(monkeypatch):
+def test_no_codex_is_no_login(monkeypatch):
     monkeypatch.setattr(codex_module, "codex_cli", lambda: None)
 
     assert codex_stored_login(no_login) is False
 
 
 def test_a_login_status_that_hangs_is_no_login(monkeypatch):
-    monkeypatch.setattr(codex_module, "codex_cli", lambda: "/usr/bin/codex")
+    monkeypatch.setattr(codex_module, "codex_cli", lambda: "/venv/bin/codex")
 
     def hang(argv, **kwargs):
         raise subprocess.TimeoutExpired(argv, 30)
@@ -522,66 +829,5 @@ def test_a_login_status_that_hangs_is_no_login(monkeypatch):
     assert codex_stored_login(hang) is False
 
 
-# --------------------------------------------------------------- the real subprocess
-
-STAND_IN = """
-import json, signal, sys, time
-signal.signal(signal.SIGINT, lambda *a: sys.exit(1))
-prompt = sys.stdin.read()
-sys.stderr.write("stand-in started\\n")
-sys.stdout.write(open(sys.argv[1]).read())
-message = {"type": "item.completed", "item": {"type": "agent_message", "text": "got: " + prompt}}
-sys.stdout.write(json.dumps(message) + "\\n")
-sys.stdout.flush()
-if len(sys.argv) > 2:
-    time.sleep(30)
-"""
-
-
-async def test_the_subprocess_wrapper_streams_stdout_and_keeps_stderr(tmp_path):
-    script = tmp_path / "stand_in.py"
-    script.write_text(STAND_IN)
-    argv = [sys.executable, str(script), str(FIXTURES / "codex_run.jsonl")]
-
-    process = await spawn_codex(argv, tmp_path, {"EXTRA": "1"}, "hello")
-    lines = [line async for line in process.lines()]
-    code = await process.wait()
-
-    assert code == 0
-    assert json.loads(lines[0])["thread_id"] == THREAD_ID
-    assert "got: hello" in lines[-1]
-    assert process.stderr_tail() == "stand-in started"
-    await process.terminate()  # already gone: a no-op
-
-
-async def test_the_subprocess_wrapper_interrupts_and_terminates_the_group(tmp_path):
-    script = tmp_path / "stand_in.py"
-    script.write_text(STAND_IN)
-    argv = [sys.executable, str(script), str(FIXTURES / "codex_run.jsonl"), "linger"]
-
-    process = await spawn_codex(argv, tmp_path, {}, "hello")
-    async for line in process.lines():
-        if "got: hello" in line:
-            break
-    process.interrupt()
-
-    assert await asyncio.wait_for(process.wait(), 10) == 1
-
-
-async def test_a_process_that_ignores_sigterm_is_killed(tmp_path, monkeypatch):
-    monkeypatch.setattr(codex_module, "TERMINATE_GRACE_S", 0.2)
-    script = tmp_path / "stubborn.py"
-    script.write_text(
-        "import signal, sys, time\n"
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        "sys.stdin.read()\n"
-        "print('ready', flush=True)\n"
-        "time.sleep(30)\n"
-    )
-
-    process = await spawn_codex([sys.executable, str(script)], tmp_path, {}, "")
-    async for _ in process.lines():
-        break
-    await asyncio.wait_for(process.terminate(), 10)
-
-    assert await process.wait() != 0
+async def test_the_session_is_the_shared_one(settings):
+    assert isinstance(await open_session(settings, FakeCodex()), AdapterSession)

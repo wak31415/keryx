@@ -310,6 +310,16 @@ async def test_runner_open_connects_a_client_built_from_the_task(settings):
     assert created[0].options.tools is None  # nothing is held back
 
 
+def test_the_default_client_is_the_sdks_own(settings):
+    from claude_agent_sdk import ClaudeSDKClient
+
+    from jarvis.agents.claude import _default_client_factory
+
+    client = _default_client_factory(build_options(make_task(), settings))
+
+    assert isinstance(client, ClaudeSDKClient)
+
+
 async def test_runner_open_propagates_a_connect_failure(settings):
     def factory(options):
         return FakeSdkClient(options, fail_on=["connect"])

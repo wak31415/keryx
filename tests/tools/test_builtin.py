@@ -247,9 +247,9 @@ def test_with_two_agents_the_dispatch_schema_offers_both(make_tools):
     assert "Leave it out and Claude does it" in properties["agent"]["description"]
     assert "codecs" in properties["agent"]["description"]
     assert properties["model"]["enum"] == [
-        "opus", "sonnet", "fable", "haiku", "sol", "terra", "luna",
+        "opus", "sonnet", "fable", "haiku", "astra", "sol", "luna", "terra",
     ]
-    assert "sol, terra or luna run on Codex" in properties["model"]["description"]
+    assert "astra, sol, luna or terra run on Codex" in properties["model"]["description"]
 
 
 def test_a_codex_default_names_codex_in_the_tool(make_tools):
@@ -258,8 +258,8 @@ def test_a_codex_default_names_codex_in_the_tool(make_tools):
 
     assert schema["description"].startswith("Hand a piece of work to Codex and get back")
     assert "details Codex can work out" in schema["description"]
-    assert model["enum"] == ["sol", "terra", "luna"]
-    assert "sol, terra or luna" in model["description"]
+    assert model["enum"] == ["astra", "sol", "luna", "terra"]
+    assert "astra, sol, luna or terra" in model["description"]
 
 
 async def test_naming_an_agent_dispatches_to_it(make_tools):

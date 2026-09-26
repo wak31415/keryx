@@ -30,7 +30,7 @@ PIN gating, and the local wake-word transport.
 | Decision | Choice |
 |---|---|
 | Realtime voice layer | **OpenAI Realtime API** (`gpt-realtime-2.1`, speech-to-speech, server VAD, function calling) |
-| Subagent runtime | **Claude Agent SDK (Python)**, `permission_mode="bypassPermissions"`, in-process. *Amended 2026-09-24: or **Codex CLI** (`codex exec --json`, `--dangerously-bypass-approvals-and-sandbox`), chosen by `AGENT_BACKEND` and by voice among `AGENTS_ENABLED`; a task stays on the agent it started on. Claude stays on the SDK rather than `claude -p` so `max_budget_usd`, `max_turns` and typed messages survive. See `docs/agents.md`.* |
+| Subagent runtime | **Claude Agent SDK (Python)**, `permission_mode="bypassPermissions"`, in-process. *Amended 2026-09-24: or **Codex CLI** (`codex exec --json`, `--dangerously-bypass-approvals-and-sandbox`), chosen by `AGENT_BACKEND` and by voice among `AGENTS_ENABLED`; a task stays on the agent it started on. Claude stays on the SDK rather than `claude -p` so `max_budget_usd`, `max_turns` and typed messages survive. See `docs/agents.md`. Amended 2026-09-26: Codex runs on the **`openai-codex` Python SDK** (`codex app-server`, the CLI it bundles; full-access sandbox, approvals never asked), not `codex exec`.* |
 | Mail + calendar access | The Claude CLI's own **claude.ai connectors** (Gmail, Calendar, Drive), which every spawned CLI already carries authorized. *Amended 2026-08-24, was: a `workspace-mcp` stdio server — kept behind `GOOGLE_WORKSPACE_MCP` (default off) for a machine whose subagents authenticate with an API key and so have no connectors. Measured: the connectors answered while workspace-mcp returned "Google Authentication Needed".* |
 | Task kinds | **One** (`agent`): full tools, the machine, Gmail/Calendar, skills and subagents of its own. *Amended 2026-08-24, was: chat/research/coding/cowork with per-kind tool restrictions — classifying a request is a decision the voice model is badly placed to make, and it walled mail off from code.* |
 | Voice-side answers | The voice model answers small factual questions itself via a `web_search` function tool backed by the **Responses API** (a Realtime session accepts only `function` and `mcp` tools — there is no hosted search there). Everything else is dispatched. |
@@ -118,7 +118,8 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `tasks/agent_runner.py` | Re-exports the §3.2 names below from `agents/` (moved 2026-09-24) |
 | `agents/base.py` | `AgentRunner`/`AgentSession` protocols, `RunResult`, the `SPOKEN_SUMMARY:`/`RESTART_REQUIRED:` parsing, the subagent suffix, `FakeAgentRunner` |
 | `agents/claude.py` | `ClaudeAgentRunner` (Agent SDK), `CLAUDE_MODELS`, the Claude auth source |
-| `agents/codex.py` | `CodexAgentRunner` (`codex exec --json` through an injectable spawner), `CODEX_MODELS`, MCP translation |
+| `agents/session.py` | The one session every backend runs through (added 2026-09-26): the normalized events, `AgentAdapter`, `AgentContext`, `AdapterSession` (progress, summary, restart request, usage, redaction), `AdapterRunner` (`AgentOpenError` on a failed connect) |
+| `agents/codex.py` | `CodexAgentRunner` on the `openai-codex` SDK through an injectable `CodexClient`, `CodexAdapter`, `CODEX_MODELS`, the API-key login home, MCP translation |
 | `agents/auth.py` | the three auth tiers every agent shares: `resolve_auth`, `child_env`, `redact` |
 | `agents/registry.py` | `BACKENDS`: one `BackendSpec` per agent; `offered_agents`, `build_agent_runner` |
 | `agents/router.py` | `RoutingAgentRunner`: opens each task on `task.agent` |
@@ -895,21 +896,32 @@ the `allowed_tools` option is only an auto-approve list and restricts nothing; t
 keeps the full built-in set (skills and its own subagents included), and the google MCP server is attached to
 every task with `allowed_tools=["mcp__google__*"]` for the MCP wildcard.
 
-**Codex CLI 0.156 (verified 2026-09-24 against real runs)** — `codex exec --json [-C dir]
---skip-git-repo-check --dangerously-bypass-approvals-and-sandbox [-m model] [-c key=toml] -` reads
-the prompt from stdin; `codex exec resume <id> --json … -` continues a thread (it has no `-C`: the
-process cwd is the directory). JSONL on stdout: `thread.started{thread_id}`, `turn.started`,
-`item.started`/`item.completed{item:{type: agent_message|command_execution|file_change|
-mcp_tool_call|web_search|reasoning|error, …}}`, `turn.completed{usage}`, `turn.failed{error}`,
-top-level `error{message}` (a 4xx body is quoted as a JSON string). Exit 1 on failure; SIGINT to
-the process group exits 1 at once with no `turn.failed`. `-c developer_instructions="…"` reaches
-the model (re-sent on resume). MCP: `-c mcp_servers.<name>.command=… .args=[…] .env_vars=[names]`
-forwards those variables from Codex's own environment — the values never touch argv.
-Auth: `CODEX_API_KEY` in the environment overrides a stored login; an inherited `OPENAI_API_KEY`
-does **not** (a ChatGPT login wins). `CODEX_ACCESS_TOKEN` is **not** read by `exec`: it is an
-agent-identity token for `codex login --with-access-token` (stdin), which rejects a ChatGPT
-access token. `codex login status` answers on **stderr**, exit 0/1. A refused key is quoted back
-masked (`sk-abcd****wxyz`). Fixtures: `tests/agents/fixtures/`.
+**Codex, `openai-codex` 0.157.1 (verified 2026-09-26 against real runs; superseded the `codex exec`
+notes of 2026-09-24)** — `AsyncCodex(CodexConfig(env=…, cwd=…))` runs the CLI it bundles
+(`openai-codex-cli-bin`, pinned to the same version; never a `codex` on PATH) as `codex app-server
+--listen stdio://`, one process per client, started on first use and gone after `close()`. The child's
+environment is a copy of the parent's with `env` laid over it — it cannot remove a variable — and an
+**empty** value is treated as unset (an empty `CODEX_ACCESS_TOKEN`/`CODEX_API_KEY`/`OPENAI_API_KEY` beside
+a ChatGPT login still runs on ChatGPT). `thread_start(sandbox=Sandbox.full_access,
+approval_mode=ApprovalMode.deny_all, cwd=…, developer_instructions=…, model=…, config={"mcp_servers":
+{name: {command, args, env_vars: [names]}}})` / `thread_resume(id, …same…)` (an unknown id is
+`InvalidRequestError` `no rollout found for thread id …`); `thread.turn(prompt)` returns a handle whose
+`stream()` yields typed notifications: `item/started`/`item/completed` (`payload.item.root.type` in
+`agentMessage` (`phase`: `MessagePhase.commentary|final_answer`) | `commandExecution` | `fileChange`
+(`changes[].kind.root.type`, `.path`) | `mcpToolCall` | `webSearch` | `dynamicToolCall` |
+`collabAgentToolCall` | …), `thread/tokenUsage/updated` (`token_usage.last`: input incl. cached,
+cached, output), `error` (`will_retry`, `error.message`, `additional_details`), and `turn/completed`
+(`turn.status`: `TurnStatus.completed|interrupted|failed`, plain `Enum`s — compare as enums;
+`turn.error` only on failure). `warning`/`configWarning`/`deprecationNotice` carry no turn id and never
+reach a turn's stream. `handle.interrupt()` ends the turn (`interrupted`) within a fraction of a second;
+`handle.steer(text)` mid-turn lands in the same turn, and with no turn running is `InvalidRequestError`
+`no active turn to steer`. `close()` terminates the app-server (not its process group): a foreground
+command that ignores SIGTERM/HUP/INT is gone with it, a `setsid`-detached one survives. Auth: the
+app-server **ignores `CODEX_API_KEY`** in its environment (with or without a stored login), so the key
+is logged in once with `codex login --with-api-key` (stdin) into a private `CODEX_HOME`; it **does**
+read `CODEX_ACCESS_TOKEN` (a bogus one fails the turn 401 after retries, `~/.codex/auth.json`
+untouched). A refused key is quoted back masked (`sk-abcd****wxyz`). Stream reading costs one
+default-executor thread per running turn (`asyncio.to_thread`). Fixtures: `tests/agents/fixtures/`.
 
 **Google Workspace MCP** — `uvx workspace-mcp --tools gmail calendar --transport stdio --single-user`;
 env `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/oauth2callback`,

@@ -171,7 +171,9 @@ def _agent_checks(settings: Settings) -> list[Check]:
             checks.append(Check(label, False, detail, severity=severity))
             continue
         status = auth_status(name, settings)
-        checks.append(Check(label, status.ready, f"{cli}; {status.detail}", severity=severity))
+        version = spec.cli_version()
+        where = f"{cli} ({version})" if version else cli
+        checks.append(Check(label, status.ready, f"{where}; {status.detail}", severity=severity))
     return checks
 
 

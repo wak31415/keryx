@@ -31,7 +31,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 from jarvis.agents.auth import AuthMode, AuthStatus
-from jarvis.agents.base import RunResult
+from jarvis.agents.base import AgentOpenError, RunResult
 from jarvis.agents.registry import BACKENDS, auth_status, resolve_model
 from jarvis.config import Settings, env_var_name
 from jarvis.tasks.models import Task, TaskKind
@@ -122,7 +122,10 @@ async def run_smoke(settings: Settings, agent: str) -> RunResult:
         agent=agent,
         model=resolve_model(agent, None, settings),
     )
-    session = await BACKENDS[agent].make_runner(settings).open(task)
+    try:
+        session = await BACKENDS[agent].make_runner(settings).open(task)
+    except AgentOpenError as exc:  # already redacted: it says why, and nothing more
+        return RunResult(ok=False, error=str(exc))
     try:
         return await asyncio.wait_for(
             session.run(SMOKE_PROMPT, on_progress=lambda _text: None), SMOKE_TIMEOUT_S
