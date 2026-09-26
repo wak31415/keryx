@@ -784,7 +784,7 @@ class SessionRegistry:
 | `BILLING_MONTHLY_BUDGET` | `billing_monthly_budget` (what he calls a month's budget; neither provider serves one) | `None` → no percentage is spoken |
 | `AGENT_BACKEND` | `agent_backend` (`claude` or `codex`: the agent a task nobody named one for runs on) | `claude` (added 2026-09-24) |
 | `AGENTS_ENABLED` | `agents_enabled` (comma list; `serve` refuses a default it leaves out) | `[]` → `AGENT_BACKEND` alone |
-| `SUBAGENT_TIMEOUT_S` | `subagent_timeout_s` (wall-clock cap on one run, every agent; 0 is none) | `10800` |
+| `SUBAGENT_TIMEOUT_S` | `subagent_timeout_s` (wall-clock cap on one run, every agent; 0 is none. *2026-09-26:* the agent is interrupted and closed before the failure is recorded or announced) | `10800` |
 | `CODEX_API_KEY` / `CODEX_ACCESS_TOKEN` | `codex_api_key` / `codex_access_token` (Codex auth, same precedence as Claude's; `OPENAI_API_KEY` is never borrowed) | `None` → `codex login` |
 | `CODEX_MODEL` | `codex_model` | `None` → Codex's own default |
 | `SUBAGENT_MODEL` | `subagent_model` (Claude's default model) | `claude-opus-5` |

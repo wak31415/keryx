@@ -511,6 +511,57 @@ async def test_a_run_past_the_time_limit_is_stopped_and_says_so(make_harness):
     assert harness.runner.sessions[0].closed is True
 
 
+async def test_a_timed_out_agent_is_stopped_before_its_failure_is_reported(make_harness):
+    """Timing out the reader does not stop the agent: Jarvis must not say it stopped work
+    that is still changing files. Interrupt and close come before the row and the event."""
+    harness = make_harness(FakeAgentRunner(delay_s=5), subagent_timeout_s=0.05)
+    seen: list[tuple[int, bool]] = []
+
+    def on_failed(event):
+        session = harness.runner.sessions[0]
+        seen.append((session.interrupts, session.closed))
+
+    harness.manager._bus.subscribe(TaskFailed, on_failed)
+    task = await dispatch(harness.manager)
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert seen == [(1, True)]
+
+
+class AdapterRunner:
+    """Real `AdapterSession`s over scripted adapters, for what only the real session does."""
+
+    def __init__(self, *adapters):
+        self.adapters = list(adapters)
+        self.opened: list[tuple[Task, str | None]] = []
+
+    async def open(self, task, *, resume=None):
+        from jarvis.agents.session import AdapterSession
+
+        self.opened.append((task, resume))
+        return AdapterSession(self.adapters.pop(0), session_id=resume)
+
+
+async def test_a_turn_blocked_in_its_reader_is_interrupted_closed_and_unwound(make_harness):
+    from agents.fakes import BLOCK, ScriptedAdapter
+
+    from jarvis.agents.session import Text
+
+    adapter = ScriptedAdapter([Text("working"), BLOCK])
+    harness = make_harness(AdapterRunner(adapter), subagent_timeout_s=0.05)
+    seen: list[tuple[int, int, int]] = []
+    harness.manager._bus.subscribe(
+        TaskFailed,
+        lambda event: seen.append((adapter.turns_closed, adapter.interrupts, adapter.closes)),
+    )
+
+    task = await dispatch(harness.manager)
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert finished.status is TaskStatus.FAILED
+    assert seen == [(1, 1, 1)]
+
+
 async def test_no_time_limit_means_none(make_harness):
     harness = make_harness(FakeAgentRunner(delay_s=0.05), subagent_timeout_s=0)
 

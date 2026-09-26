@@ -403,8 +403,11 @@ class TaskManager:
 
         The cap lives here rather than in a runner so that it is one rule for every agent:
         Claude also has a turn and a dollar cap, but Codex has neither, and a run nobody
-        bounds is a run that can hold a semaphore slot for ever. The session is closed by
-        `_run` on the way out, which is what actually stops the process.
+        bounds is a run that can hold a semaphore slot for ever.
+
+        Cutting off `run()` only stops *reading* the agent: its turn goes on, changing files,
+        in a process nobody is listening to. So a timed-out session is interrupted and closed
+        here, before anything records or announces that it was stopped.
         """
         run = session.run(prompt, on_progress=partial(self._on_progress, task_id))
         limit = self._settings.subagent_timeout_s
@@ -413,7 +416,9 @@ class TaskManager:
         try:
             return await asyncio.wait_for(run, limit)
         except TimeoutError:
-            log.warning("task %s ran past its %.0fs limit and was stopped", task_id, limit)
+            log.warning("task %s ran past its %.0fs limit; stopping it", task_id, limit)
+            await self._interrupt(task_id, session)
+            await self._close_session(task_id)
             return RunResult(
                 ok=False,
                 spoken_summary=TIMEOUT_SUMMARY.format(duration=_duration(limit)),
@@ -478,6 +483,13 @@ class TaskManager:
             return None
         log.info("task %s cancelled", task_id)
         return task
+
+    async def _interrupt(self, task_id: int, session: AgentSession) -> None:
+        """Ask `session` to stop its turn, for at most `SESSION_TIMEOUT_S`."""
+        try:
+            await asyncio.wait_for(session.interrupt(), SESSION_TIMEOUT_S)
+        except Exception:
+            log.exception("interrupting the subagent of task %s failed", task_id)
 
     async def _close_session(self, task_id: int) -> None:
         """Close and forget the live session for `task_id`, if there is one."""
@@ -666,10 +678,7 @@ class TaskManager:
         self._cancel_requested.add(task_id)
         session = self._live.get(task_id)
         if session is not None:
-            try:
-                await asyncio.wait_for(session.interrupt(), SESSION_TIMEOUT_S)
-            except Exception:
-                log.exception("interrupting the subagent of task %s failed", task_id)
+            await self._interrupt(task_id, session)
 
         runner_task = self._tasks.get(task_id)
         if runner_task is not None:
