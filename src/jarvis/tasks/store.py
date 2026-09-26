@@ -21,7 +21,7 @@ from jarvis.tasks.models import Task, TaskStatus, to_utc_iso
 
 log = logging.getLogger("jarvis.tasks.store")
 
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 
 #: How many unreported tasks a call opens with. The owner is on a phone: past a handful, the
 #: digest stops being a briefing and becomes a recital, and the rest keep until next time.
@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     reported_at TEXT,
     internal INTEGER NOT NULL DEFAULT 0,
     needs_restart INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cost_usd REAL,
     created_at TEXT NOT NULL,
     started_at TEXT,
     finished_at TEXT
@@ -107,6 +110,10 @@ _V4_COLUMNS = ("needs_restart INTEGER NOT NULL DEFAULT 0",)
 #: v4 -> v5 (2026-09-24): a task remembers which coding agent ran it. Every row before this
 #: ran on Claude, which is exactly what the default says.
 _V5_COLUMNS = ("agent TEXT NOT NULL DEFAULT 'claude'",)
+
+#: v5 -> v6 (2026-09-26): what a task spent, in tokens and (where the agent prices a call)
+#: dollars. Nullable: nothing before this recorded it, and "unknown" is not "free".
+_V6_COLUMNS = ("input_tokens INTEGER", "output_tokens INTEGER", "cost_usd REAL")
 
 
 class TaskStore:
@@ -179,6 +186,9 @@ class TaskStore:
                     conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
             if version < 5:
                 for column in _V5_COLUMNS:
+                    conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
+            if version < 6:
+                for column in _V6_COLUMNS:
                     conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
             conn.execute("UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,))
             log.info(

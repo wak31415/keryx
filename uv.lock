@@ -422,12 +422,12 @@ name = "jarvis"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "claude-agent-sdk" },
     { name = "fastapi" },
     { name = "numpy" },
     { name = "onnxruntime", marker = "sys_platform != 'linux'" },
     { name = "openwakeword", marker = "sys_platform != 'linux'" },
     { name = "pydantic-settings" },
+    { name = "python-multipart" },
     { name = "sounddevice", marker = "sys_platform != 'linux'" },
     { name = "soxr" },
     { name = "twilio" },
@@ -436,7 +436,22 @@ dependencies = [
     { name = "websockets" },
 ]
 
+[package.optional-dependencies]
+all = [
+    { name = "claude-agent-sdk" },
+    { name = "openai-codex" },
+]
+claude = [
+    { name = "claude-agent-sdk" },
+]
+codex = [
+    { name = "openai-codex" },
+]
+
 [package.dev-dependencies]
+agents = [
+    { name = "jarvis", extra = ["all"] },
+]
 dev = [
     { name = "httpx2" },
     { name = "pytest" },
@@ -447,12 +462,15 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "claude-agent-sdk", specifier = ">=0.2.148,<0.3" },
+    { name = "claude-agent-sdk", marker = "extra == 'claude'", specifier = ">=0.2.148,<0.3" },
     { name = "fastapi", specifier = ">=0.141.1,<1.0" },
+    { name = "jarvis", extras = ["claude", "codex"], marker = "extra == 'all'" },
     { name = "numpy", specifier = ">=2.5.2,<3" },
     { name = "onnxruntime", marker = "sys_platform == 'darwin'", specifier = ">=1.29.0,<2" },
+    { name = "openai-codex", marker = "extra == 'codex'", specifier = "==0.157.1" },
     { name = "openwakeword", marker = "sys_platform == 'darwin'", specifier = ">=0.6.0,<1.0" },
     { name = "pydantic-settings", specifier = ">=2.15.0,<3" },
+    { name = "python-multipart", specifier = ">=0.0.32,<0.1" },
     { name = "sounddevice", marker = "sys_platform == 'darwin'", specifier = ">=0.5.6,<1.0" },
     { name = "soxr", specifier = ">=1.1.0,<2" },
     { name = "twilio", specifier = ">=9.11.0,<10" },
@@ -460,8 +478,10 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4,<1.0" },
     { name = "websockets", specifier = ">=17.1,<18" },
 ]
+provides-extras = ["claude", "codex", "all"]
 
 [package.metadata.requires-dev]
+agents = [{ name = "jarvis", extras = ["all"] }]
 dev = [
     { name = "httpx2", specifier = ">=2.12.0,<3" },
     { name = "pytest", specifier = ">=9.1.1,<10" },
@@ -612,6 +632,33 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d4/80/381c1e9efed9cc32d00aa7cab0547dc84116cec906c3ffe3613686d6963a/onnxruntime-1.29.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:3a3814c041251d6a77fdf513fb282056538ee826d2f1178a0df3c549d3fff6ba", size = 21430049, upload-time = "2026-08-17T22:53:48.286Z" },
+]
+
+[[package]]
+name = "openai-codex"
+version = "0.157.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openai-codex-cli-bin" },
+    { name = "packaging" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1e/b5/b50b061d575bd76fa616fcfb2b5e732bccf816d0429e68bd47636dc16511/openai_codex-0.157.1.tar.gz", hash = "sha256:7c371c3be7722ffe36b9e8d823c05e3339a86b2f13403cc08fc2eaccf658d480", size = 89397, upload-time = "2026-09-26T01:14:34.727Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/9e/8620c10d9d76d21920162e81fa2d1bee9fbf55a3e66a7d9ba6d1f95a11d4/openai_codex-0.157.1-py3-none-any.whl", hash = "sha256:73a5051f9d68ab0c3e350e217664c2e46bb5aa10bfb3232144688bf600d65fbc", size = 97538, upload-time = "2026-09-26T01:14:33.348Z" },
+]
+
+[[package]]
+name = "openai-codex-cli-bin"
+version = "0.157.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c6/29/bb2884a56b938d7dbb9b81a42dbc527522e9540db09ed65200c512de2405/openai_codex_cli_bin-0.157.1-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:a140e29b3c88a559067c9ec5bf300477e7ecb0f8cb5f49ffbcc0f68608637476", size = 130992160, upload-time = "2026-09-26T01:12:11.55Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/d5/f706f04b14664414fa7051f340426eb0f74b1bf17006795c2d4d7776a2cb/openai_codex_cli_bin-0.157.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:55b5b7cdb257440e97de69ad780a3ebff5a0adf8eb89564a7d7fc400c548b2de", size = 120546939, upload-time = "2026-09-26T01:12:18.951Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/58/aacc67a9556ccebdfd36c0c3c3ee9dc1bd878fb8b82eab14c846662b37d3/openai_codex_cli_bin-0.157.1-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:f26f1cdec2869f9a53155f3909d5ef5d85d6f80d49b59758d00cdcc4941edf82", size = 128579765, upload-time = "2026-09-26T01:12:28.551Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/d6/64d2eab534be58817262edf5949755aa665a22fea1220ce7273d751525c3/openai_codex_cli_bin-0.157.1-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:277a13acf88c2cde0d1a4f39373db4b267286b862ef8cf19bc9e8cc688b3786d", size = 138002592, upload-time = "2026-09-26T01:12:40.25Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/a0/f76fe6b91724175ce49b4c4bf4ec82cf1c33ee4a63f3972a26ca70c4fc2f/openai_codex_cli_bin-0.157.1-py3-none-musllinux_1_1_aarch64.whl", hash = "sha256:dc76cb00530a409b28233878f5961e85fc6e46ad9dd45ef958ef2594b1585baf", size = 138205669, upload-time = "2026-09-26T01:12:52.416Z" },
+    { url = "https://files.pythonhosted.org/packages/60/24/53e9e1059d43dfd3ef89818adc189ed8cc56d2f2d9da1191e3ba23505fd0/openai_codex_cli_bin-0.157.1-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:477b6282b9b69131789b35c9ac198c8f499c374ba47dd82b2f34bf6472a585f4", size = 147768263, upload-time = "2026-09-26T01:13:05.761Z" },
 ]
 
 [[package]]

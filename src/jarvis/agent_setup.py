@@ -31,7 +31,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 from jarvis.agents.auth import AuthMode, AuthStatus
-from jarvis.agents.base import RunResult
+from jarvis.agents.base import AgentOpenError, RunResult
 from jarvis.agents.registry import BACKENDS, auth_status, resolve_model
 from jarvis.config import Settings, env_var_name
 from jarvis.tasks.models import Task, TaskKind
@@ -122,7 +122,10 @@ async def run_smoke(settings: Settings, agent: str) -> RunResult:
         agent=agent,
         model=resolve_model(agent, None, settings),
     )
-    session = await BACKENDS[agent].make_runner(settings).open(task)
+    try:
+        session = await BACKENDS[agent].make_runner(settings).open(task)
+    except AgentOpenError as exc:  # already redacted: it says why, and nothing more
+        return RunResult(ok=False, error=str(exc))
     try:
         return await asyncio.wait_for(
             session.run(SMOKE_PROMPT, on_progress=lambda _text: None), SMOKE_TIMEOUT_S
@@ -156,8 +159,9 @@ def env_lines(settings: Settings, default: str, enabled: Sequence[str]) -> list[
         f"{env_var_name('agent_backend')}={default}",
         f"{env_var_name('agents_enabled')}={listed}",
     ]
-    if "codex" in enabled:
-        lines.append(f"{env_var_name('codex_model')}={settings.codex_model or ''}")
+    for name in enabled:
+        if setting := BACKENDS[name].model_setting:
+            lines.append(f"{env_var_name(setting)}={getattr(settings, setting) or ''}")
     return lines
 
 
@@ -245,14 +249,13 @@ def _sign_in(
         return
     command = spec.headless_login_command if headless else spec.login_commands[0]
     echo(f"running `{' '.join(command)}` — finish the sign-in it asks for.")
-    code = run_login(command)
+    # The CLI that was found, which is the one the runner uses: for Codex that is the SDK's
+    # bundled binary, and a `codex` on PATH may be another version or not there at all.
+    code = run_login((state.cli, *command[1:]))
     if code != 0:
         echo(f"`{' '.join(command)}` exited with {code}.")
-    if state.name == "claude" and headless:
-        echo(
-            "claude setup-token prints a token: add it to your .env as "
-            f"{spec.auth.token_env}= (setup-agent never edits it)."
-        )
+    if headless and spec.headless_login_note:
+        echo(spec.headless_login_note)
     state.auth = auth_status(state.name, settings)
 
 

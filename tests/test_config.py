@@ -2,6 +2,7 @@
 
 import json
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,7 @@ def test_allowed_callers_defaults_to_empty_list(settings):
     assert settings.allowed_callers == []
 
 
-def test_the_default_agent_is_claude_and_alone(settings):
+def test_the_default_agent_is_claude_and_alone(settings, every_agent_installed):
     assert settings.agent_backend == "claude"
     assert settings.enabled_agents == ("claude",)
     assert settings.agent_refusal() is None
@@ -57,7 +58,28 @@ def test_a_default_agent_the_enabled_set_leaves_out_is_refused(settings):
     assert "AGENTS_ENABLED (claude)" in refusal
 
 
-def test_the_enabled_agents_put_the_default_first_and_say_each_once(settings):
+@pytest.mark.parametrize(
+    ("agent", "module"), [("claude", "claude_agent_sdk"), ("codex", "openai_codex")]
+)
+def test_a_default_agent_that_is_not_installed_is_refused_in_one_line(
+    settings, monkeypatch, agent, module
+):
+    settings.agents_enabled = [agent]
+    settings.agent_backend = agent
+    monkeypatch.setitem(sys.modules, module, None)
+
+    refusal = settings.agent_refusal()
+
+    assert refusal == (
+        f"AGENT_BACKEND is {agent}, which is not installed — uv sync --extra {agent}"
+    )
+    settings.fake_agents = True
+    assert settings.agent_refusal() is None  # --fake-agents runs no real agent
+
+
+def test_the_enabled_agents_put_the_default_first_and_say_each_once(
+    settings, every_agent_installed
+):
     settings.agents_enabled = ["claude", "codex", "claude"]
     settings.agent_backend = "codex"
 

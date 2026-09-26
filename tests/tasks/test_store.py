@@ -8,7 +8,13 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import BUSY_TIMEOUT_S, TaskStore
+from jarvis.tasks.store import (
+    _V3_COLUMNS,
+    _V4_COLUMNS,
+    _V5_COLUMNS,
+    BUSY_TIMEOUT_S,
+    TaskStore,
+)
 
 
 @pytest.fixture(params=["file", "memory"])
@@ -489,6 +495,29 @@ async def test_an_older_build_that_names_no_agent_still_writes_claude(tmp_path):
     store = TaskStore(path)
     try:
         assert [task.agent for task in await store.list()] == ["claude"]
+    finally:
+        await store.close()
+
+
+async def test_a_v5_database_gains_tokens_and_cost_and_keeps_its_rows(tmp_path):
+    """v6 adds what a task spent. Rows from before spent nothing anyone recorded: NULL."""
+    path = tmp_path / "tasks.db"
+    _v2_database(path)
+    conn = sqlite3.connect(path, isolation_level=None)
+    for column in (*_V3_COLUMNS, *_V4_COLUMNS, *_V5_COLUMNS):
+        conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
+    conn.execute("UPDATE schema_version SET version = 5")
+    conn.close()
+
+    store = TaskStore(path)
+    try:
+        tasks = await store.list()
+        assert {task.description for task in tasks} == {"old finished work", "old queued work"}
+        assert {(t.input_tokens, t.output_tokens, t.cost_usd) for t in tasks} == {
+            (None, None, None)
+        }
+        updated = await store.update(tasks[0].id, input_tokens=10, output_tokens=2, cost_usd=0.5)
+        assert (updated.input_tokens, updated.output_tokens, updated.cost_usd) == (10, 2, 0.5)
     finally:
         await store.close()
 

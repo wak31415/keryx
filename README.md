@@ -71,9 +71,14 @@ and also need Twilio and a Cloudflare tunnel.
 ```bash
 git clone https://github.com/wak31415/jarvis-voice-agent.git
 cd jarvis-voice-agent
-uv sync
+uv sync                                        # every coding agent; for one: see below
 cp .env.example .env
 ```
+
+`uv sync` installs both coding agents. Each bundles a large CLI, so on a tight disk install
+only the one you use: `uv sync --no-group agents --extra codex` (or `--extra claude`). With
+pip, name it: `pip install '.[all]'`, `'.[claude]'` or `'.[codex]'` — plain `pip install .`
+installs neither.
 
 Add `OPENAI_API_KEY` to `.env`, then set up the coding agent. This finds what is installed,
 runs the sign-in that is missing, proves it with one real task, and prints the lines to add
@@ -138,10 +143,13 @@ three ways, and the first one set wins:
 | Headless subscription token | `CLAUDE_CODE_OAUTH_TOKEN` | `CODEX_ACCESS_TOKEN` |
 | Stored subscription login | `claude` → `/login` | `codex login` |
 
-Both do the same work here: voice dispatch, follow-ups, progress, projects, Slack, and Gmail
-and Calendar (for Codex through `GOOGLE_WORKSPACE_MCP` and `jarvis setup-google`). Claude
-also has a per-task dollar figure and cap. The approval bridge stays Claude Code only.
-[`docs/agents.md`](docs/agents.md) has the full comparison.
+`uv sync` installs both: each SDK bundles its own CLI (Codex's is about 350 MB), and
+[Quick start](#quick-start) says how to install just one. Both do
+the same work here: voice dispatch, follow-ups, progress, projects, Slack, and Gmail and
+Calendar (for Codex through `GOOGLE_WORKSPACE_MCP` and `jarvis setup-google`), and both
+record the tokens a task spent. A follow-up reaches Codex in the turn it is running; Claude
+takes it when the turn ends. Claude also has a per-task dollar figure and cap. The approval
+bridge stays Claude Code only. [`docs/agents.md`](docs/agents.md) has the full comparison.
 
 ## Answer Claude Code prompts by phone
 

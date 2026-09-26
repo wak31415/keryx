@@ -1,6 +1,7 @@
 """Tests for `jarvis doctor`'s checks: pure functions, no hardware and no network."""
 
 import dataclasses
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ from jarvis.logging_util import mask_number
 
 
 @pytest.fixture
-def healthy(tmp_path, monkeypatch):
+def healthy(tmp_path, monkeypatch, every_agent_installed):
     """Settings + environment where every check passes, so tests can break one at a time."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
@@ -174,6 +175,28 @@ def test_the_agents_cli_is_named_when_it_is_there(healthy, monkeypatch):
 
     check = by_name(run_doctor_checks(healthy, probe_mic=False))[CLAUDE]
     assert check.detail.startswith("/opt/claude; ")
+
+
+def test_an_agent_that_is_not_installed_says_which_extra_installs_it(healthy, monkeypatch):
+    monkeypatch.setattr("jarvis.doctor.installed", lambda agent: agent != "codex")
+    settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["Codex agent"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert check.detail == (
+        "not installed — uv sync --extra codex (the openai-codex SDK bundles the codex CLI)"
+    )
+
+
+@pytest.mark.skipif(importlib.util.find_spec("openai_codex") is None, reason="codex extra")
+def test_codex_is_named_by_its_bundled_binary_and_version(healthy, monkeypatch):
+    with_agent(monkeypatch, "codex", cli="/venv/codex_cli_bin/bin/codex")
+    settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
+
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["Codex agent"]
+
+    assert check.detail.startswith("/venv/codex_cli_bin/bin/codex (codex-cli 0.157.1); ")
 
 
 def test_a_second_agent_that_is_not_ready_is_only_a_warning(healthy, monkeypatch):

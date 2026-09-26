@@ -5,6 +5,8 @@ Realtime API and Claude Agent SDK subagents.
 
 ## Commands
 
+- Install: `uv sync` (every coding agent, via the default `agents` group); one agent only:
+  `uv sync --no-group agents --extra codex` (or `claude`); with pip, `jarvis[all|claude|codex]`
 - Run tests: `uv run pytest -q` (coverage: `uv run pytest -q --cov`, floor 95%)
 - Lint: `uv run ruff check src tests`
 - Run the CLI: `uv run jarvis --help`
@@ -51,10 +53,15 @@ Six groups are named here because the file you want is rarely the one whose name
 remember:
 
 - **agents** — `agents/` is one module per coding agent (`claude`, `codex`) behind the
-  `AgentRunner` in `agents/base.py`, which also holds `RunResult`, the `SPOKEN_SUMMARY:` /
-  `RESTART_REQUIRED:` parsing and the fake. `agents/registry.py::BACKENDS` is the table
-  everything else reads (a third agent is one module and one entry), `agents/auth.py` the
-  three auth tiers both share, `agents/router.py` opens each task on `task.agent`.
+  `AgentRunner` in `agents/base.py`, which also holds `RunResult`, `TokenUsage`, the
+  `SPOKEN_SUMMARY:` / `RESTART_REQUIRED:` parsing and the fake. `agents/session.py` is the one
+  session every agent runs through: a backend is an *adapter* (its client's messages as
+  `Text`/`ToolCall`/`FileEdit`/`SessionId`/`Notice`/`Done`) plus an `AdapterRunner` that
+  `connect()`s one, and everything else — progress, summary, restart request, usage,
+  redaction — is written once there. `agents/registry.py::BACKENDS` is the table everything
+  else reads (a third agent is an adapter and a connector in one module, one entry, its
+  `AgentName`, its settings and a `docs/agents.md` column), `agents/auth.py` the three auth
+  tiers both share, `agents/router.py` opens each task on `task.agent`.
   `tasks/agent_runner.py` only re-exports the spec §3.2 names. `docs/agents.md` is the parity
   matrix, and `tests/test_docs_sync.py` wants a column in it for every backend.
 
@@ -93,18 +100,31 @@ read-only" — the phone PIN gates every dispatch instead.
 ## Two coding agents, one of them per task
 
 `AGENT_BACKEND` (Claude or Codex) runs what nobody named an agent for; `AGENTS_ENABLED` is
-what the voice may name. Four rulings:
+what the voice may name. Five rulings:
 
 - **A task keeps its agent for life.** `Task.agent` is fixed at dispatch, and every resume
   opens on it, never on today's default: a session id belongs to the agent that issued it.
   The column `claude_session_id` holds whichever agent's id, and keeps its name for the
   build running behind the database.
 - **A credential goes in the child's environment and nowhere else** — not argv, not a log,
-  not a spoken error (`agents/auth.redact`). `OPENAI_API_KEY` is never lent to Codex: that
-  would move a ChatGPT-plan user onto per-token billing unasked.
-- **Claude stays on the Agent SDK.** Driving it as `claude -p` like Codex would lose
-  `max_budget_usd`, `max_turns`, the lifted message-size limit and the typed messages.
-  `SUBAGENT_TIMEOUT_S` is the cap they share, applied in the task manager.
+  not a spoken error (`agents/auth.redact`, and `AdapterSession` redacts every error it
+  returns or logs of the credential *and* of every MCP secret the agent was handed). One
+  exception, forced by Codex's app-server ignoring `CODEX_API_KEY`: that key is logged in
+  once, on stdin, into `data_dir/codex`, never the owner's `~/.codex`. `OPENAI_API_KEY` is
+  never lent to Codex: that would move a ChatGPT-plan user onto per-token billing unasked,
+  and because the SDK copies Jarvis's environment into the app-server, every credential
+  variable the chosen tier does not use is overridden with an empty value.
+- **Both agents run on their vendor's SDK, whose client is injectable.** Claude on the Agent
+  SDK (driving it as `claude -p` would lose `max_budget_usd`, `max_turns`, the lifted
+  message-size limit and the typed messages); Codex on `openai-codex`, pinned exactly because
+  the adapter reads its generated types field by field, through the `CodexClient` protocol.
+  `SUBAGENT_TIMEOUT_S` is the cap they share, applied in the task manager, which interrupts
+  and closes a timed-out session before it records anything.
+- **A follow-up goes into a running turn only where that is safe.** Codex steers it in;
+  Claude's `send()` refuses (`SteerUnavailable`), because a `query()` after its final text
+  starts a turn nobody reads, and the manager re-runs instead. Only a refusal is re-queued:
+  any other steer failure may have landed. The per-task lock in the manager serializes
+  taking a follow-up in with closing the row out; keep it.
 - **Prompts say "Claude", and code names the agent.** Templates are live under whatever build
   is running, which blanks a placeholder it does not know, so the voice prompt's own wording
   is rewritten to the default agent's name in `prompts._name_the_agent` rather than templated.
@@ -365,12 +385,22 @@ needs `tflite-runtime`, which has no cp312 wheel. `sounddevice`, `openwakeword` 
 `jarvis serve` finds them missing (`wakeword_unavailable`, which imports nothing), says so in
 one line and serves the phone alone — one more reason every import of them stays lazy.
 
+The coding agents are optional the same way, by choice rather than platform: each SDK is an
+extra (`claude`, `codex`, `all`), because each bundles a CLI of hundreds of megabytes. So
+`claude_agent_sdk` and `openai_codex` are imported only where an agent runs, never at module
+scope, and an agent whose package is missing is `registry.installed() == False`: shown as
+not installed with its `uv sync --extra` command, never offered, refused as `AGENT_BACKEND`
+by `Settings.agent_refusal`. `tests/agents/conftest.py` skips a backend's own tests without
+its SDK, and a test that is not about installation asks for `every_agent_installed`.
+
 ## Testing rule
 
 No network or hardware access in tests. OpenAI, Twilio, sounddevice,
-openwakeword, and the Claude Agent SDK are always accessed through an
+openwakeword, the Claude Agent SDK and the Codex SDK are always accessed through an
 injectable interface (a `Protocol`) with a fake/test double used in tests —
-never the real network or hardware. Heavy/hardware imports (`sounddevice`,
+never the real network or hardware, and never a real `codex` process: the Codex
+tests replay `tests/agents/fixtures/codex_app_*.jsonl`, recorded from the bundled
+app-server, into the SDK's own typed models. Heavy/hardware imports (`sounddevice`,
 `openwakeword`) must be guarded inside functions, not imported at module
 scope, so the test suite can run on a machine with no mic.
 

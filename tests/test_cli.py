@@ -37,7 +37,7 @@ runner = CliRunner()
 
 
 @pytest.fixture
-def settings_stub(monkeypatch, tmp_path):
+def settings_stub(monkeypatch, tmp_path, every_agent_installed):
     """Make every command see a hermetic Settings instead of the ambient environment."""
     settings = Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis")
     monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
@@ -186,6 +186,22 @@ def test_serve_refuses_a_default_agent_that_is_not_enabled(settings_stub, monkey
     assert "config" not in built
 
 
+def test_serve_refuses_a_default_agent_whose_extra_is_not_installed(settings_stub, monkeypatch):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    from jarvis.agents import registry
+
+    monkeypatch.setattr(registry, "installed", lambda agent: agent != "claude")
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 2, result.output
+    assert "AGENT_BACKEND is claude, which is not installed — uv sync --extra claude" in (
+        result.output
+    )
+    assert "config" not in built
+
+
 def test_serve_without_the_phone_does_not_care_about_signature_checks(
     settings_stub, monkeypatch
 ):
@@ -217,6 +233,8 @@ def stub_local_runner(monkeypatch, built: dict, *, run=None) -> None:
 
         async def run(self):
             built["ran"] = True
+            executor = asyncio.get_running_loop()._default_executor
+            built["executor_workers"] = executor._max_workers if executor else 0
             if run is not None:
                 await run()
 
@@ -256,6 +274,7 @@ def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
     assert device is built["device"]
     assert kwargs["sessions"] is not None
     assert (settings_stub.data_dir / "calls").is_dir()  # ensure_dirs() ran
+    assert built["executor_workers"] >= 32  # room for every running turn's reader
 
 
 def test_serve_where_the_wake_word_cannot_run_serves_the_phone_alone(
@@ -529,6 +548,9 @@ def test_tasks_show_prints_every_field_and_the_report(settings_stub, tmp_path):
             summary="Nothing on fire.",
             report_path=str(report),
             claude_session_id="sess-42",
+            input_tokens=55831,
+            output_tokens=303,
+            cost_usd=0.42,
         ),
     )
 
@@ -541,6 +563,9 @@ def test_tasks_show_prints_every_field_and_the_report(settings_stub, tmp_path):
         "jarvis",
         "Nothing on fire.",
         "sess-42",
+        "55831",
+        "303",
+        "0.42",
         str(report),
         "--- report ---",
         "Everything is fine.",
@@ -876,7 +901,9 @@ def test_doctor_reports_a_missing_openai_key_instead_of_crashing(
     assert "OPENAI_API_KEY" in result.output
 
 
-def test_doctor_passes_on_a_complete_install(monkeypatch, tmp_path, wakeword_models):
+def test_doctor_passes_on_a_complete_install(
+    monkeypatch, tmp_path, wakeword_models, every_agent_installed
+):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
     (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")

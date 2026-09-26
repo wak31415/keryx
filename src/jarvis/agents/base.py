@@ -74,6 +74,27 @@ _EMPHASIS_RE = re.compile(r"[`*_]+")
 _PARAGRAPH_RE = re.compile(r"\n[ \t]*\n")
 
 
+@dataclass(frozen=True)
+class TokenUsage:
+    """What one or more turns cost in tokens, the same way for every agent.
+
+    `input_tokens` counts every input token, cached ones included, and `cached_input_tokens`
+    says how many of those were cache reads — Codex's meaning, and Claude's once its
+    uncached, cache-write and cache-read counts are summed.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        return TokenUsage(
+            self.input_tokens + other.input_tokens,
+            self.output_tokens + other.output_tokens,
+            self.cached_input_tokens + other.cached_input_tokens,
+        )
+
+
 @dataclass
 class RunResult:
     """The outcome of one subagent turn (spec §3.2)."""
@@ -87,6 +108,20 @@ class RunResult:
     #: The subagent's own `RESTART_REQUIRED:` line, or None when it did not ask for one.
     #: Empty string means it asked without saying why, which is still asking.
     restart_reason: str | None = None
+    #: Tokens the turn spent, when the agent said; None when it did not.
+    usage: TokenUsage | None = None
+
+
+class AgentOpenError(RuntimeError):
+    """A session could not be opened; the message has every credential redacted."""
+
+
+class SteerUnavailable(NotImplementedError):
+    """`send()` could not put the text into a running turn, and nothing was delivered.
+
+    The agent has no live steer at all, or the turn has already ended. Either way the text
+    was refused, never half-accepted, so the caller may safely deliver it another way.
+    """
 
 
 class AgentSession(Protocol):
@@ -97,11 +132,11 @@ class AgentSession(Protocol):
         ...
 
     async def send(self, text: str) -> None:
-        """Queue a follow-up into the running conversation.
+        """Put a follow-up into the turn that is running now (spec §3.3).
 
-        Part of the protocol, but the task manager never calls it: `run()` returns at the
-        first result and the SDK's mid-turn `query()` semantics are unverified, so live
-        follow-ups become a resumed run instead (spec §3.3 ruling).
+        `SteerUnavailable` means it was refused and nothing was delivered — the agent has
+        no live steer (Claude), or its turn has just ended — and the task manager re-runs
+        with the text instead. Any other exception is a steer that may have landed.
         """
         ...
 
@@ -328,6 +363,12 @@ class FakeAgentSession(AgentSession):
         return self._runner.next_result(self.task, self.resume)
 
     async def send(self, text: str) -> None:
+        """Steer when the runner says the agent can; refuse as one that cannot, otherwise."""
+        steer = self._runner.steer
+        if isinstance(steer, BaseException):
+            raise steer
+        if not steer:
+            raise SteerUnavailable("this fake agent has no live steer")
         self.sent.append(text)
 
     async def interrupt(self) -> None:
@@ -346,7 +387,9 @@ class FakeAgentRunner(AgentRunner):
     `results` is a list popped from the front (the last one repeats), a callable taking
     `(task, resume)`, or `None` for `DEFAULT_FAKE_RESULT` every time. `interrupt_ends_run`
     opts into the real session's interrupt semantics (see `FakeAgentSession.run`); it is
-    off by default, so an `interrupt()` merely gets counted.
+    off by default, so an `interrupt()` merely gets counted. `steer` is what `send()` does:
+    False refuses with `SteerUnavailable` (Claude), True takes the text (Codex), and an
+    exception is raised as a steer that failed for real.
     """
 
     def __init__(
@@ -356,8 +399,10 @@ class FakeAgentRunner(AgentRunner):
         delay_s: float = 0.0,
         progress: Iterable[str] | None = None,
         interrupt_ends_run: bool = False,
+        steer: bool | BaseException = False,
     ) -> None:
         self.delay_s = delay_s
+        self.steer = steer
         self.progress = list(progress or ())
         self.interrupt_ends_run = interrupt_ends_run
         self.opened: list[tuple[Task, str | None]] = []

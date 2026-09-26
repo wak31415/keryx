@@ -46,6 +46,7 @@ from jarvis.restart.version import loaded_version, mark_running, mark_startup_lo
 from jarvis.restart.watchdog import watch
 from jarvis.server import create_app
 from jarvis.session import VoiceSession
+from jarvis.tasks.manager import install_default_executor
 from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolRegistry
@@ -274,6 +275,8 @@ async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
     # And before we log a line of our own: everything past here is this process's doing,
     # which is what the confirmation call should be reading. See `mark_startup_logs`.
     mark_startup_logs(settings.data_dir)
+    # Every running Codex turn parks threads in this executor; see `executor_workers`.
+    install_default_executor(settings)
     state = build_app_state(settings)
     # Before anything writes: retention is off by default, so on most installs this looks
     # at two zeroes and returns. `memory.md` is trimmed either way — it is the one file

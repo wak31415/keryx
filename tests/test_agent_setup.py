@@ -6,6 +6,8 @@ the smoke task are injected, and the terminal is a script of answers.
 
 import dataclasses
 import json
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -18,7 +20,7 @@ from jarvis.agent_setup import (
     passed_smoke,
     run_setup_agent,
 )
-from jarvis.agents.base import FakeAgentRunner, RunResult
+from jarvis.agents.base import AgentOpenError, FakeAgentRunner, RunResult
 from jarvis.agents.registry import BACKENDS
 
 READY = RunResult(ok=True, final_text="SPOKEN_SUMMARY: ready", spoken_summary="ready")
@@ -50,7 +52,7 @@ class Machine:
 
     def run_login(self, argv) -> int:
         self.logins.append(tuple(argv))
-        agent = argv[0]
+        agent = Path(argv[0]).name
         if agent in self.login_fixes:
             self.signed_in[agent] = True
         return 0
@@ -173,7 +175,8 @@ def test_a_missing_subscription_login_runs_the_agents_own_login(settings, monkey
 
     code, out = setup(settings, machine, ask=script("codex", "s"))
 
-    assert machine.logins == [("codex", "login")]
+    # The CLI that was found — the SDK's bundled one — not whatever is first on PATH.
+    assert machine.logins == [("/bin/codex", "login")]
     assert "running `codex login`" in out
     assert code == 0 and machine.smoked == ["codex", "claude"]
 
@@ -183,7 +186,7 @@ def test_a_headless_machine_gets_the_device_code_login(settings, monkeypatch):
 
     setup(settings, machine, ask=script("codex", "s"), confirm=lambda t, p: False, headless=True)
 
-    assert machine.logins == [("codex", "login", "--device-auth")]
+    assert machine.logins == [("/bin/codex", "login", "--device-auth")]
 
 
 def test_a_headless_claude_is_told_where_the_token_goes(settings, monkeypatch):
@@ -191,7 +194,7 @@ def test_a_headless_claude_is_told_where_the_token_goes(settings, monkeypatch):
 
     code, out = setup(settings, machine, ask=script("claude", "s"), headless=True)
 
-    assert machine.logins == [("claude", "setup-token")]
+    assert machine.logins == [("/bin/claude", "setup-token")]
     assert "CLAUDE_CODE_OAUTH_TOKEN=" in out
     assert code == 1  # still no login it can see: the token is theirs to paste
 
@@ -223,10 +226,29 @@ def test_a_missing_cli_is_an_install_command_never_an_install(settings, monkeypa
 
     code, out = setup(settings, machine, default="codex")
 
-    assert "npm install -g @openai/codex" in out
+    assert "uv sync --extra codex (the openai-codex SDK bundles the codex CLI)" in out
     assert machine.logins == []
     assert code == 1
     assert out.endswith(f"not_ready: {STATUSES['not_ready']}")
+
+
+def test_an_agent_whose_extra_is_missing_is_not_installed_with_the_command(
+    settings, monkeypatch
+):
+    monkeypatch.setitem(sys.modules, "openai_codex", None)
+    machine = Machine(monkeypatch)
+
+    code, out = setup(settings, machine, default="codex", yes=True, smoke=False, as_json=True)
+
+    codex = next(agent for agent in json.loads(out)["agents"] if agent["name"] == "codex")
+    assert (codex["cli"], codex["ready"]) == (None, False)
+    assert codex["install_hint"] == (
+        "uv sync --extra codex (the openai-codex SDK bundles the codex CLI)"
+    )
+    assert code == 1
+    text_code, text = setup(settings, machine, default="codex", ask=script("codex"))
+    assert "codex   not installed" in text
+    assert "    uv sync --extra codex (the openai-codex SDK bundles the codex CLI)" in text
 
 
 def test_yes_signs_nothing_in(settings, monkeypatch):
@@ -277,6 +299,22 @@ def test_the_real_smoke_task_goes_through_the_agents_runner(settings, monkeypatc
     assert (task.agent, resume) == ("codex", None)
     assert runner.sessions[0].prompts == [SMOKE_PROMPT]
     assert runner.sessions[0].closed is True
+
+
+def test_a_smoke_task_that_cannot_even_open_is_a_failure_that_says_why(settings, monkeypatch):
+    class Refusing:
+        async def open(self, task, *, resume=None):
+            raise AgentOpenError("RuntimeError: codex refused CODEX_API_KEY: bad key")
+
+    spec = BACKENDS["codex"]
+    monkeypatch.setitem(
+        BACKENDS, "codex", dataclasses.replace(spec, make_runner=lambda settings: Refusing())
+    )
+
+    result = agent_setup.asyncio.run(agent_setup.run_smoke(settings, "codex"))
+
+    assert result.ok is False
+    assert result.error == "RuntimeError: codex refused CODEX_API_KEY: bad key"
 
 
 def test_a_smoke_task_that_hangs_is_a_failure(settings, monkeypatch):

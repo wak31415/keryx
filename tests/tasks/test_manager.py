@@ -6,7 +6,9 @@ no test may wait longer than `WAIT` seconds for anything.
 """
 
 import asyncio
+import logging
 import stat
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,7 +18,7 @@ import pytest
 from jarvis.agents.router import RoutingAgentRunner
 from jarvis.config import Settings
 from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
-from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult
+from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult, TokenUsage
 from jarvis.tasks.manager import (
     CLOSE_TIMEOUT_S,
     AgentUnavailableError,
@@ -25,6 +27,8 @@ from jarvis.tasks.manager import (
     UnknownProjectError,
     _duration,
     build_prompt,
+    executor_workers,
+    install_default_executor,
 )
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
@@ -420,6 +424,98 @@ async def test_followup_on_a_running_task_is_queued_and_resumed_after_the_turn(m
     assert harness.events.of(TaskCompleted) == [TaskCompleted(task.id, "I finished the task.")]
 
 
+async def test_a_followup_steers_a_running_turn_that_can_take_it(make_harness, caplog):
+    """Codex takes a follow-up into the turn it is running: no re-run, one announcement."""
+    caplog.set_level(logging.INFO, logger="jarvis.tasks.manager")
+    harness = make_harness(FakeAgentRunner(delay_s=SLOW, steer=True))
+
+    task = await dispatch(harness.manager)
+    await wait_for_status(harness.manager, task.id, TaskStatus.RUNNING)
+    returned = await harness.manager.followup(task.id, "also check the weather")
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert returned.status is TaskStatus.RUNNING
+    assert harness.runner.sessions[0].sent == ["also check the weather"]
+    assert len(harness.runner.opened) == 1
+    assert finished.status is TaskStatus.DONE
+    assert harness.events.of(TaskCompleted) == [TaskCompleted(task.id, "I finished the task.")]
+    assert "[followup] also check the weather" in harness.log_text(task.id)
+    assert f"[followup steered] task {task.id}" in caplog.text
+
+
+async def test_a_steer_that_fails_for_real_is_the_followups_error_not_a_second_delivery(
+    make_harness,
+):
+    """It may have landed: re-running it as well could do the thing twice."""
+    harness = make_harness(FakeAgentRunner(delay_s=SLOW, steer=RuntimeError("pipe broke")))
+
+    task = await dispatch(harness.manager)
+    await wait_for_status(harness.manager, task.id, TaskStatus.RUNNING)
+    with pytest.raises(RuntimeError, match="pipe broke"):
+        await harness.manager.followup(task.id, "also check the weather")
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert len(harness.runner.opened) == 1
+
+
+async def test_a_followup_after_the_last_drain_still_runs(make_harness, monkeypatch):
+    """The turn is over and the queue was empty, but the row still says running: a
+    follow-up now must not be queued into a drain that has already happened."""
+    harness = make_harness(FakeAgentRunner(delay_s=0.01))
+    drained, gate = asyncio.Event(), asyncio.Event()
+    drain = harness.manager._run_live_followups
+
+    async def drain_then_wait(task, result):
+        result = await drain(task, result)
+        if not drained.is_set():
+            drained.set()
+            await gate.wait()
+        return result
+
+    monkeypatch.setattr(harness.manager, "_run_live_followups", drain_then_wait)
+    task = await dispatch(harness.manager)
+    await asyncio.wait_for(drained.wait(), WAIT)
+
+    await harness.manager.followup(task.id, "and the tides")
+    gate.set()
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert finished.status is TaskStatus.DONE
+    assert harness.runner.sessions[1].prompts == ["Follow-up from the user:\n- and the tides"]
+    assert harness.events.of(TaskCompleted) == [TaskCompleted(task.id, "I finished the task.")]
+
+
+async def test_a_followup_just_after_the_row_is_done_waits_for_the_run_to_tidy_up(
+    make_harness, monkeypatch
+):
+    """The row is `done` but the run is still closing its session. Restarting underneath
+    it would let its clean-up drop the new run's prompt and wake `wait_for` too early."""
+    harness = make_harness(FakeAgentRunner(delay_s=SLOW))
+    closing, gate = asyncio.Event(), asyncio.Event()
+    close = harness.manager._close_session
+
+    async def slow_first_close(task_id):
+        if not closing.is_set():
+            closing.set()
+            await gate.wait()
+        await close(task_id)
+
+    monkeypatch.setattr(harness.manager, "_close_session", slow_first_close)
+    task = await dispatch(harness.manager)
+    await asyncio.wait_for(closing.wait(), WAIT)
+    assert (await harness.manager.get(task.id)).status is TaskStatus.DONE
+
+    followup = asyncio.create_task(harness.manager.followup(task.id, "one more thing"))
+    await asyncio.sleep(0.05)
+    gate.set()
+    await asyncio.wait_for(followup, WAIT)
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert finished.status is TaskStatus.DONE
+    assert harness.runner.sessions[1].prompts == ["one more thing"]
+    assert len(harness.events.of(TaskCompleted)) == 2
+
+
 async def test_several_live_followups_are_joined_into_one_resumed_run(make_harness):
     harness = make_harness(FakeAgentRunner(delay_s=SLOW))
 
@@ -509,6 +605,102 @@ async def test_a_run_past_the_time_limit_is_stopped_and_says_so(make_harness):
     assert finished.error == "timed out after 0s (SUBAGENT_TIMEOUT_S)"
     assert finished.summary == "The task ran for 0 seconds without finishing, so I stopped it."
     assert harness.runner.sessions[0].closed is True
+
+
+async def test_a_timed_out_agent_is_stopped_before_its_failure_is_reported(make_harness):
+    """Timing out the reader does not stop the agent: Jarvis must not say it stopped work
+    that is still changing files. Interrupt and close come before the row and the event."""
+    harness = make_harness(FakeAgentRunner(delay_s=5), subagent_timeout_s=0.05)
+    seen: list[tuple[int, bool]] = []
+
+    def on_failed(event):
+        session = harness.runner.sessions[0]
+        seen.append((session.interrupts, session.closed))
+
+    harness.manager._bus.subscribe(TaskFailed, on_failed)
+    task = await dispatch(harness.manager)
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert seen == [(1, True)]
+
+
+class AdapterRunner:
+    """Real `AdapterSession`s over scripted adapters, for what only the real session does."""
+
+    def __init__(self, *adapters):
+        self.adapters = list(adapters)
+        self.opened: list[tuple[Task, str | None]] = []
+
+    async def open(self, task, *, resume=None):
+        from jarvis.agents.session import AdapterSession
+
+        self.opened.append((task, resume))
+        return AdapterSession(self.adapters.pop(0), session_id=resume)
+
+
+async def test_a_turn_blocked_in_its_reader_is_interrupted_closed_and_unwound(make_harness):
+    from agents.fakes import BLOCK, ScriptedAdapter
+
+    from jarvis.agents.session import Text
+
+    adapter = ScriptedAdapter([Text("working"), BLOCK])
+    harness = make_harness(AdapterRunner(adapter), subagent_timeout_s=0.05)
+    seen: list[tuple[int, int, int]] = []
+    harness.manager._bus.subscribe(
+        TaskFailed,
+        lambda event: seen.append((adapter.turns_closed, adapter.interrupts, adapter.closes)),
+    )
+
+    task = await dispatch(harness.manager)
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert finished.status is TaskStatus.FAILED
+    assert seen == [(1, 1, 1)]
+
+
+async def test_a_task_records_what_it_spent_across_a_live_follow_up(make_harness):
+    """Every turn of one run is summed: the first, and the re-run a follow-up caused."""
+    spent = RunResult(
+        ok=True,
+        final_text="SPOKEN_SUMMARY: done",
+        spoken_summary="done",
+        session_id="s-1",
+        cost_usd=0.25,
+        usage=TokenUsage(input_tokens=1000, output_tokens=50, cached_input_tokens=800),
+    )
+    harness = make_harness(FakeAgentRunner([spent], delay_s=SLOW))
+
+    task = await dispatch(harness.manager)
+    await wait_for_status(harness.manager, task.id, TaskStatus.RUNNING)
+    await harness.manager.followup(task.id, "and the tides")
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert len(harness.runner.opened) == 2
+    assert (finished.input_tokens, finished.output_tokens) == (2000, 100)
+    assert finished.cost_usd == 0.5
+
+
+async def test_a_re_run_adds_to_what_the_task_had_spent(make_harness):
+    spent = RunResult(
+        ok=True, spoken_summary="done", session_id="s-1", usage=TokenUsage(300, 20)
+    )
+    harness = make_harness(FakeAgentRunner([spent]))
+
+    task = await dispatch(harness.manager)
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+    await harness.manager.followup(task.id, "one more thing")
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert (finished.input_tokens, finished.output_tokens, finished.cost_usd) == (600, 40, None)
+
+
+async def test_an_agent_that_says_nothing_about_spend_leaves_the_columns_empty(make_harness):
+    harness = make_harness(FakeAgentRunner([RunResult(ok=True, spoken_summary="done")]))
+
+    task = await dispatch(harness.manager)
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert (finished.input_tokens, finished.output_tokens, finished.cost_usd) == (None, None, None)
 
 
 async def test_no_time_limit_means_none(make_harness):
@@ -909,3 +1101,36 @@ async def test_a_store_that_will_not_answer_does_not_stop_the_service_starting(m
     harness.manager._store.list = explode
 
     assert await harness.manager.resume_queued() == []
+
+
+# --- the default executor --------------------------------------------------
+
+
+@pytest.mark.parametrize(("tasks", "workers"), [(1, 32), (3, 32), (10, 56)])
+def test_the_executor_has_room_for_every_task_and_then_some(settings, tasks, workers):
+    assert executor_workers(settings.model_copy(update={"max_concurrent_tasks": tasks})) == workers
+
+
+async def test_with_every_stream_blocked_a_cancel_and_the_database_still_run(settings, store):
+    """Each running Codex turn parks two threads (its stream and its notices) in the default
+    executor. With every slot's worth parked, what a cancel and a status write need must
+    still get a thread."""
+    settings = settings.model_copy(update={"max_concurrent_tasks": 10})
+    install_default_executor(settings)  # the loop shuts it down when the test ends
+    release = threading.Event()
+    parked = [
+        asyncio.create_task(asyncio.to_thread(release.wait))
+        for _ in range(2 * settings.max_concurrent_tasks)
+    ]
+    try:
+        created = await asyncio.wait_for(
+            store.create(Task(id=None, kind=TaskKind.AGENT, description="x")), WAIT
+        )
+        interrupted = await asyncio.wait_for(asyncio.to_thread(lambda: "interrupt sent"), WAIT)
+        closed = await asyncio.wait_for(asyncio.to_thread(lambda: "closed"), WAIT)
+    finally:
+        release.set()
+        await asyncio.gather(*parked)
+
+    assert created.id is not None
+    assert (interrupted, closed) == ("interrupt sent", "closed")

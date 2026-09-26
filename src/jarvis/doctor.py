@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from jarvis.agents.registry import BACKENDS, auth_status
+from jarvis.agents.registry import BACKENDS, auth_status, installed
 from jarvis.config import (
     DATA_DIR_MODE,
     OWNER_FALLBACK,
@@ -166,12 +166,19 @@ def _agent_checks(settings: Settings) -> list[Check]:
         severity: Severity = "hard" if name == settings.agent_backend else "soft"
         label = f"{spec.label} agent" + (" (default)" if name == settings.agent_backend else "")
         cli = spec.find_cli()
+        if not installed(name):
+            checks.append(
+                Check(label, False, f"not installed — {spec.install_hint}", severity=severity)
+            )
+            continue
         if cli is None:
             detail = f"{name} CLI not found — {spec.install_hint}"
             checks.append(Check(label, False, detail, severity=severity))
             continue
         status = auth_status(name, settings)
-        checks.append(Check(label, status.ready, f"{cli}; {status.detail}", severity=severity))
+        version = spec.cli_version()
+        where = f"{cli} ({version})" if version else cli
+        checks.append(Check(label, status.ready, f"{where}; {status.detail}", severity=severity))
     return checks
 
 

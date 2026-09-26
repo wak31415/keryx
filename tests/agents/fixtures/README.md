@@ -1,20 +1,31 @@
-# Codex event fixtures
+# Codex notification fixtures
 
-`codex exec --json` output, in the shapes Codex CLI 0.156 actually printed for real runs
-recorded on 2026-09-24. The content is synthetic — ids, paths, messages and keys are made
-up — but every event type, field name and nesting is copied from a real run, the way the
-cluster fixtures were made:
+What `codex app-server` sent through the `openai-codex` SDK (0.157.1, its bundled CLI) for
+real turns recorded on 2026-09-26: one JSON object per notification, `{"method", "params"}`,
+where `params` is the SDK's typed payload dumped with `model_dump(by_alias=True,
+mode="json")`. The tests rebuild each line into that same typed model
+(`NOTIFICATION_MODELS[method].model_validate(params)`), so the adapter is read against the
+shapes it will meet, and a newer SDK that changes one fails here first.
 
-- `codex_run.jsonl` — a turn that runs a command, writes a file, calls an MCP tool and
-  finishes with `RESTART_REQUIRED:` and `SPOKEN_SUMMARY:`.
-- `codex_failed.jsonl` — a model the plan does not offer: a non-fatal `error` item, then
-  `turn.failed` with the provider's JSON body quoted as a string. Exit code 1.
-- `codex_bad_key.jsonl` — a refused `CODEX_API_KEY`, which Codex quotes back masked.
-  Exit code 1.
-- `codex_interrupted.jsonl` — SIGINT to the process group mid-command: stdout simply stops,
-  no `turn.failed`, exit code 1 within a fraction of a second.
+The content is synthetic — thread, turn and item ids, paths, ray and request ids were
+replaced, and the prompts were written for the recording — and a few lines were dropped to
+keep them short: the owner's `hook/*` events, all but two `item/agentMessage/delta`s, all
+but one `turn/diff/updated`, and all but two retrying `error`s. Every field name and nesting
+is as recorded.
 
-A resume (`codex exec resume <id> --json -`) prints the same `thread.started` id it was
-given, then an ordinary turn. A resume of an id Codex does not know prints nothing on
-stdout and exits 1 with `Error: thread/resume: … no rollout found for thread id …` on
-stderr.
+- `codex_app_run.jsonl` — a turn that runs a command, writes a file, calls a tool on a
+  stand-in MCP server, and ends with `RESTART_REQUIRED:` and `SPOKEN_SUMMARY:`.
+- `codex_app_failed.jsonl` — a refused credential: retrying `error`s (`willRetry: true`,
+  `Reconnecting... n/5`), the terminal `error`, and `turn/completed` with status `failed`
+  and the provider's 401 trailing its URL, ray and request id.
+- `codex_app_interrupted.jsonl` — `turn/interrupt` mid-command: the command never
+  completes, and `turn/completed` says `interrupted` with no error.
+- `codex_app_steered.jsonl` — `turn/steer` mid-command: a second `userMessage` in the same
+  turn, and a final answer that honours it.
+- `codex_app_budget.jsonl` — **not recorded**: the failed turn with the terminal error's
+  `codexErrorInfo` set to `sessionBudgetExceeded`, which cannot be provoked on demand.
+
+Recorded against the same runtime: a `turn/steer` with no turn running (before one, or after
+`turn/completed`) is `InvalidRequestError` (-32600, `no active turn to steer`), and
+resuming a thread id the runtime does not know is `InvalidRequestError` (`no rollout found
+for thread id …`).

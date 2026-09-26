@@ -172,6 +172,12 @@ class Task:
     #: working tree says only that *somebody* has an edit open. The Notifier reads it and
     #: arms the restart, whose confirmation call then doubles as this task's call-back.
     needs_restart: bool = False
+    #: What the task's runs spent, summed over every one of them (schema v6): tokens from
+    #: whichever agent ran it, dollars only from one that prices a call (Claude — a Codex
+    #: run on the ChatGPT plan has no price). None is "never reported", not zero.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     finished_at: datetime | None = None

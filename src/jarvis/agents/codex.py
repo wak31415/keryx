@@ -1,37 +1,42 @@
-"""The Codex backend: subagents on OpenAI's Codex CLI, driven as `codex exec --json`.
+"""The Codex backend: subagents on OpenAI's `openai-codex` Python SDK.
 
-There is no Python SDK for Codex, so a turn is one process: the prompt goes in on stdin,
-and stdout is a stream of JSON events (recorded shapes are in
-`tests/agents/fixtures/codex_*.jsonl`):
+The SDK drives `codex app-server` — the CLI it bundles, never one on PATH — over JSON-RPC:
+a *thread* is one conversation, and each `run()` is one *turn* on it, streamed as typed
+notifications (recorded shapes in `tests/agents/fixtures/codex_app_*.jsonl`). `CodexAdapter`
+turns those into the shared events `AdapterSession` (`agents/session.py`) runs every
+backend's turn from:
 
-- `thread.started` carries the session id, which is what `codex exec resume <id>` takes;
-- `item.started` / `item.completed` are the work — `agent_message` (the model talking),
-  `command_execution`, `file_change`, `mcp_tool_call`, `web_search` — and become progress
-  lines; the last `agent_message` is the final text;
-- `turn.completed` carries token usage, and `turn.failed` / `error` say what went wrong.
+- `item/started` for a command, an MCP call, a web search or a delegated agent is a tool
+  line; `item/completed` for a file change is an edit line, and for an agent message is
+  text — the last `final_answer` message is the report;
+- `thread/tokenUsage/updated` carries each model call's tokens, summed per turn;
+- `error` is a retry (logged quietly) or the terminal failure, and `turn/completed` says
+  which of completed, interrupted or failed the turn came to.
 
-The process is spawned through an injectable `CodexSpawner`, so tests never start `codex`
-(CLAUDE.md testing rule).
+A follow-up can go straight into the running turn (`steer`), and `interrupt()` is a real
+`turn/interrupt`. The SDK client is injected (`client_factory`), so tests never start
+`codex` (CLAUDE.md testing rule); `openai_codex` is imported lazily, because it is a
+13,000-line generated module that `doctor` and `setup-agent` have no use for.
 
-What Claude gets from its SDK options, Codex gets from flags:
-- the rendered `subagent_suffix.md` as `-c developer_instructions=…` (verified to reach
-  the model; it is re-sent on a resume, since config is per invocation);
-- `bypassPermissions` as `--dangerously-bypass-approvals-and-sandbox`, because the phone
-  PIN gates the dispatch, not the agent;
-- MCP servers (`workspace-mcp` for Gmail and Calendar, the Slack server) as
-  `-c mcp_servers.<name>.*`, with their secrets forwarded by *name* through `env_vars`
-  and the values in the child's environment only — never in argv.
+What Claude gets from its SDK options, Codex gets from the thread:
+- the rendered `subagent_suffix.md` as `developer_instructions` (re-sent on a resume);
+- `bypassPermissions` as the full-access sandbox with approvals never asked for, because
+  the phone PIN gates the dispatch, not the agent;
+- MCP servers (`workspace-mcp` for Gmail and Calendar, the Slack server) as the thread's
+  `mcp_servers` config, with their secrets forwarded by *name* through `env_vars` and the
+  values in the app-server's environment only.
+
+Credentials (verified against the bundled 0.157.1): the app-server ignores `CODEX_API_KEY`
+in its environment, so the API-key tier logs in once, with the key on stdin, into a
+`CODEX_HOME` of Jarvis's own (`data_dir/codex`, with the owner's config, instructions and
+skills linked in); `CODEX_ACCESS_TOKEN` it *does* read from the environment, so the token
+tier is that variable and nothing persisted; the stored login is the owner's own
+`~/.codex`. The SDK hands the app-server a copy of Jarvis's whole environment, so every
+credential variable not chosen is overridden with an empty value, which it treats as unset.
 
 Codex has no `max_budget_usd` and no `max_turns`; the wall-clock cap every backend shares
 (`SUBAGENT_TIMEOUT_S`, applied by the task manager) is what bounds it. It reports tokens,
 not dollars, so `RunResult.cost_usd` stays None: on the ChatGPT plan a call has no price.
-
-The headless token tier (`CODEX_ACCESS_TOKEN`) is the odd one out. `codex exec` does not
-read that variable — checked against Codex 0.156 — so the token is instead handed to
-`codex login --with-access-token` once, on stdin, into a `CODEX_HOME` of Jarvis's own
-(`data_dir/codex`), which every run then points at. The owner's own login in `~/.codex` is
-never touched; their config, instructions and skills are linked in so the agent is the
-same one they use.
 """
 
 import asyncio
@@ -41,26 +46,26 @@ import json
 import logging
 import os
 import re
-import shutil
-import signal
 import subprocess
-from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+import threading
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
+from importlib import metadata
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Protocol
 
-from jarvis.agents.auth import AuthMode, AuthSource, AuthStatus, child_env, redact, resolve_auth
-from jarvis.agents.base import (
-    AgentRunner,
-    AgentSession,
-    RunResult,
-    emit_progress,
-    extract_restart_request,
-    extract_spoken_summary,
-    failure_summary,
-    google_mcp_server_config,
-    render_subagent_suffix,
-    workspace_dir,
+from jarvis.agents.auth import AuthMode, AuthSource, AuthStatus, redact
+from jarvis.agents.base import SteerUnavailable, TokenUsage, google_mcp_server_config
+from jarvis.agents.session import (
+    AdapterRunner,
+    AgentContext,
+    AgentEvent,
+    Done,
+    FileEdit,
+    Notice,
+    SessionId,
+    Text,
+    ToolCall,
 )
 from jarvis.config import Settings, secure_dir, secure_file
 from jarvis.integrations.slack import mcp_server_config
@@ -68,36 +73,34 @@ from jarvis.tasks.models import Task
 
 log = logging.getLogger("jarvis.agents.codex")
 
-CODEX_BINARY = "codex"
-
 #: The model names that can be said out loud, and the Codex ids they mean. Blank is
 #: `CODEX_MODEL`, and a blank `CODEX_MODEL` is Codex's own default, whatever that is today.
 CODEX_MODELS = {
-    "sol": "gpt-5.6-sol",
+    "astra": "gpt-6-astra",
+    "sol": "gpt-6-sol",
+    "luna": "gpt-6-luna",
     "terra": "gpt-5.6-terra",
-    "luna": "gpt-5.6-luna",
 }
 
-#: One stdout line can be a whole command's output (`aggregated_output`); the asyncio
-#: default of 64 KiB per line is the same trap the Claude SDK's 1 MiB buffer was.
-CODEX_LINE_LIMIT_BYTES = 64 * 1024 * 1024
-#: How much of the process's stderr is kept, for an exit that no event explains.
-STDERR_TAIL_LINES = 40
-#: How long `close()` waits after SIGTERM before it kills the process group.
-TERMINATE_GRACE_S = 5.0
-#: How long `codex login status` / `codex login --with-access-token` may take.
+#: The distribution that carries the bundled `codex` binary.
+CLI_PACKAGE = "openai-codex-cli-bin"
+#: How long `codex login status` / `codex login --with-api-key` may take.
 LOGIN_TIMEOUT_S = 30.0
-
-_MAX_TOOL_INPUT_CHARS = 200
-#: An MCP server name has to be a bare TOML key to be spelt in a `-c` path.
-_BARE_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
-#: The error of a turn that `interrupt()` ended: SIGINT makes `codex exec` exit 1 at once,
-#: with no `turn.failed` to say why.
-INTERRUPTED_ERROR = "interrupted"
+#: Every variable the app-server would take a credential from. Whichever the chosen tier
+#: does not use is set empty, so nothing inherited from Jarvis's own environment — the
+#: voice model's `OPENAI_API_KEY` above all — is ever lent to Codex.
+CREDENTIAL_VARIABLES = ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")
 #: The files in the owner's `~/.codex` that make Codex *their* Codex: linked into
-#: Jarvis's own home for the token tier, so only the login differs.
+#: Jarvis's own home for the API-key tier, so only the login differs. Not `hooks.json`:
+#: hooks are the owner's automation, with side effects of their own.
 SHARED_HOME_ENTRIES = ("config.toml", "AGENTS.md", "skills")
-_TOKEN_STAMP = ".jarvis-token-sha256"
+_LOGIN_STAMP = ".jarvis-login-sha256"
+#: One login at a time: two tasks opening at once must not both log in to the same home.
+_LOGIN_LOCK = threading.Lock()
+#: An MCP server name is kept to a bare word, the only kind Codex config can always spell.
+_BARE_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
+#: Global notifications worth a warning: they reach no turn, so the adapter logs them.
+_WARNING_METHODS = ("warning", "configWarning", "deprecationNotice", "guardianWarning")
 
 
 # ------------------------------------------------------------------------------ auth
@@ -109,15 +112,38 @@ def codex_home() -> Path:
 
 
 def codex_cli() -> str | None:
-    """The `codex` binary on PATH, or None when it is not installed."""
-    return shutil.which(CODEX_BINARY)
+    """The `codex` binary the SDK runs — the one it bundles — or None when either the SDK
+    (the `codex` extra) or its binary is missing."""
+    if not _importable("openai_codex"):
+        return None
+    try:
+        from codex_cli_bin import bundled_codex_path
+    except ImportError:
+        return None
+    try:
+        return str(bundled_codex_path())
+    except FileNotFoundError:
+        return None
+
+
+def _importable(module: str) -> bool:
+    """Is `module` installed, without importing it (`openai_codex` is 13,000 lines)?"""
+    return find_spec(module) is not None
+
+
+def codex_cli_version() -> str | None:
+    """The bundled CLI's version, for `doctor`."""
+    try:
+        return f"codex-cli {metadata.version(CLI_PACKAGE)}"
+    except metadata.PackageNotFoundError:
+        return None
 
 
 def codex_stored_login(run: Callable[..., Any] = subprocess.run) -> bool:
     """Best effort: does `codex login status` say there is a login?
 
     It is a local file check inside the CLI — no network — and answers in milliseconds.
-    Codex 0.156 prints the answer on stderr, so both streams are read.
+    Codex prints the answer on stderr, so both streams are read.
     """
     binary = codex_cli()
     if binary is None:
@@ -146,85 +172,62 @@ CODEX_AUTH = AuthSource(
 
 
 def private_codex_home(settings: Settings) -> Path:
-    """Jarvis's own `CODEX_HOME`, for the token tier."""
+    """Jarvis's own `CODEX_HOME`, for the API-key tier."""
     return settings.data_dir / "codex"
 
 
-def ensure_token_home(
+def ensure_login_home(
     settings: Settings,
-    token: str,
+    key: str,
     *,
     run: Callable[..., Any] = subprocess.run,
     owner_home: Path | None = None,
 ) -> Path:
-    """A `CODEX_HOME` logged in with `token`, created and logged in only when it is new.
+    """A `CODEX_HOME` logged in with `key`, logging in only when the key is new.
 
-    The token goes to `codex login --with-access-token` on stdin. A digest of it is kept
-    beside the login, so a rotated token logs in again and an unchanged one never does.
-    Raises `RuntimeError` (with the token redacted) when Codex refuses it.
+    The key goes to `codex login --with-api-key` on stdin, never argv. A digest of it is
+    stamped beside the login — atomically, and only once the login is in place and
+    owner-only — so a rotated key logs in again and an unchanged one never does. Raises
+    `RuntimeError`, with the key redacted, when Codex refuses it.
     """
-    home = secure_dir(private_codex_home(settings))
-    owner_home = owner_home or codex_home()
-    for name in SHARED_HOME_ENTRIES:
-        link, target = home / name, owner_home / name
-        if target.exists() and not link.exists() and not link.is_symlink():
-            link.symlink_to(target)
+    with _LOGIN_LOCK:
+        home = secure_dir(private_codex_home(settings))
+        owner_home = owner_home or codex_home()
+        for name in SHARED_HOME_ENTRIES:
+            link, target = home / name, owner_home / name
+            if target.exists() and not link.exists() and not link.is_symlink():
+                link.symlink_to(target)
 
-    stamp = home / _TOKEN_STAMP
-    digest = hashlib.sha256(token.encode()).hexdigest()
-    if (home / "auth.json").exists() and stamp.exists() and stamp.read_text() == digest:
+        stamp, auth = home / _LOGIN_STAMP, home / "auth.json"
+        digest = hashlib.sha256(key.encode()).hexdigest()
+        if auth.exists() and stamp.exists() and stamp.read_text() == digest:
+            return home
+
+        binary = codex_cli()
+        if binary is None:
+            raise RuntimeError(f"the bundled codex CLI is missing ({CLI_PACKAGE}); run uv sync")
+        blank = dict.fromkeys(CREDENTIAL_VARIABLES, "")
+        result = run(
+            [binary, "login", "--with-api-key"],
+            input=key,
+            capture_output=True,
+            text=True,
+            timeout=LOGIN_TIMEOUT_S,
+            env={**os.environ, **blank, "CODEX_HOME": str(home)},
+        )
+        if result.returncode != 0 or not auth.exists():
+            lines = redact(f"{result.stdout or ''}\n{result.stderr or ''}", [key]).split("\n")
+            why = next((line.strip() for line in reversed(lines) if line.strip()), "no reason")
+            raise RuntimeError(f"codex refused CODEX_API_KEY: {why}")
+        secure_file(auth)
+        pending = stamp.with_name(f"{_LOGIN_STAMP}.tmp")
+        pending.write_text(digest)
+        secure_file(pending)
+        os.replace(pending, stamp)
         return home
 
-    binary = codex_cli() or CODEX_BINARY
-    result = run(
-        [binary, "login", "--with-access-token"],
-        input=token,
-        capture_output=True,
-        text=True,
-        timeout=LOGIN_TIMEOUT_S,
-        env={**os.environ, "CODEX_HOME": str(home)},
-    )
-    if result.returncode != 0:
-        lines = redact(f"{result.stdout or ''}\n{result.stderr or ''}", [token]).split("\n")
-        why = next((line.strip() for line in reversed(lines) if line.strip()), "no reason given")
-        raise RuntimeError(f"codex refused CODEX_ACCESS_TOKEN: {why}")
-    stamp.write_text(digest)
-    secure_file(stamp)
-    secure_file(home / "auth.json")
-    return home
 
-
-# ------------------------------------------------------------------------- the command
-
-
-def mcp_overrides(servers: Mapping[str, Mapping[str, Any]]) -> tuple[list[str], dict[str, str]]:
-    """MCP server configs as `-c mcp_servers.<name>.*` flags, plus the env they forward.
-
-    Only a server's variable *names* reach argv (`env_vars`); their values go into the
-    child's environment, which Codex hands on to the server. A server name that is not a
-    bare word, or one with no command or url, is skipped with a warning.
-    """
-    argv: list[str] = []
-    env: dict[str, str] = {}
-    for name, config in servers.items():
-        if not _BARE_KEY_RE.fullmatch(name):
-            log.warning("skipping MCP server %r: not a name Codex config can spell", name)
-            continue
-        prefix = f"mcp_servers.{name}"
-        if config.get("command"):
-            argv += ["-c", f"{prefix}.command={json.dumps(config['command'])}"]
-            if config.get("args"):
-                argv += ["-c", f"{prefix}.args={json.dumps([str(a) for a in config['args']])}"]
-        elif config.get("url"):
-            argv += ["-c", f"{prefix}.url={json.dumps(config['url'])}"]
-        else:
-            log.warning("skipping MCP server %r: it has neither a command nor a url", name)
-            continue
-        server_env = {str(k): str(v) for k, v in (config.get("env") or {}).items()}
-        if server_env:
-            argv += ["-c", f"{prefix}.env_vars={json.dumps(sorted(server_env))}"]
-            env.update(server_env)
-    return argv, env
+# --------------------------------------------------------------------------- MCP servers
 
 
 def mcp_servers(settings: Settings) -> dict[str, Mapping[str, Any]]:
@@ -245,360 +248,319 @@ def mcp_servers(settings: Settings) -> dict[str, Mapping[str, Any]]:
     return servers
 
 
-def build_command(
-    task: Task,
-    settings: Settings,
-    *,
-    resume: str | None = None,
-    binary: str = CODEX_BINARY,
-) -> tuple[list[str], dict[str, str], Path]:
-    """`(argv, extra env, cwd)` for one turn of `task`; the prompt goes on stdin (`-`).
+def mcp_config(
+    servers: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any] | None, dict[str, str]]:
+    """The thread's `mcp_servers` config, and the environment values it forwards.
 
-    The env holds only what the MCP servers forward — the credential is the runner's to
-    add. `exec resume` has no `-C`, so the working directory is also the process's own.
+    Only a server's variable *names* go in the config (`env_vars`); their values go into
+    the app-server's environment, which Codex hands on to the server. A server name that is
+    not a bare word, or one with no command or url, is skipped with a warning.
     """
-    cwd = workspace_dir(task, settings)
-    argv = [binary, "exec"]
-    if resume:
-        argv += ["resume", resume]
-    argv += ["--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"]
-    if not resume:
-        argv += ["-C", str(cwd)]
-    model = task.model or settings.codex_model
-    if model:
-        argv += ["-m", model]
-    suffix = render_subagent_suffix(
-        task, slack_mcp_server=settings.slack_mcp_server, owner=settings.owner_label
-    )
-    argv += ["-c", f"developer_instructions={json.dumps(suffix)}"]
-    server_argv, env = mcp_overrides(mcp_servers(settings))
-    argv += server_argv
-    argv.append("-")
-    return argv, env, cwd
+    config: dict[str, Any] = {}
+    env: dict[str, str] = {}
+    for name, server in servers.items():
+        if not _BARE_KEY_RE.fullmatch(name):
+            log.warning("skipping MCP server %r: not a name Codex config can spell", name)
+            continue
+        entry: dict[str, Any] = {}
+        if server.get("command"):
+            entry["command"] = str(server["command"])
+            if server.get("args"):
+                entry["args"] = [str(arg) for arg in server["args"]]
+        elif server.get("url"):
+            entry["url"] = str(server["url"])
+        else:
+            log.warning("skipping MCP server %r: it has neither a command nor a url", name)
+            continue
+        server_env = {str(k): str(v) for k, v in (server.get("env") or {}).items()}
+        if server_env:
+            entry["env_vars"] = sorted(server_env)
+            env.update(server_env)
+        config[name] = entry
+    return ({"mcp_servers": config} if config else None), env
 
 
-# ------------------------------------------------------------------------- the process
+# ---------------------------------------------------------------------------- the client
 
 
-class CodexProcess(Protocol):
-    """One running `codex exec` (injectable for tests)."""
+class CodexTurn(Protocol):
+    """One running turn: `AsyncTurnHandle`, as far as this module uses it."""
 
-    def lines(self) -> AsyncIterator[str]:
-        """Stdout, one line at a time, until the process closes it."""
+    def stream(self) -> AsyncIterator[Any]: ...
+    async def steer(self, text: str) -> Any: ...
+    async def interrupt(self) -> Any: ...
+
+
+class CodexThread(Protocol):
+    """One conversation: `AsyncThread`, as far as this module uses it."""
+
+    id: str
+
+    async def turn(self, prompt: str) -> CodexTurn: ...
+
+
+class CodexClient(Protocol):
+    """One app-server process (injectable for tests)."""
+
+    async def thread_start(self, **options: Any) -> CodexThread: ...
+    async def thread_resume(self, thread_id: str, **options: Any) -> CodexThread: ...
+
+    def notices(self) -> AsyncIterator[Any]:
+        """The notifications that belong to no turn, until the process is gone."""
         ...
 
-    async def wait(self) -> int: ...
-    def stderr_tail(self) -> str: ...
-    def interrupt(self) -> None: ...
-    async def terminate(self) -> None: ...
+    async def close(self) -> None: ...
 
 
-CodexSpawner = Callable[[list[str], Path, dict[str, str], str], Awaitable[CodexProcess]]
+CodexFactory = Callable[[dict[str, str], Path], CodexClient]
 
 
-class _SubprocessCodex(CodexProcess):
-    """`codex exec` as an asyncio subprocess in a process group of its own.
+class _SdkCodex(CodexClient):
+    """`AsyncCodex`, with every thread on full access and never asking for approval."""
 
-    Its own group, so an interrupt or a close reaches the shell commands it started too,
-    not just the CLI. Stderr is drained continuously into a bounded tail, because a pipe
-    nobody reads fills up and stalls the process.
-    """
+    def __init__(self, env: dict[str, str], cwd: Path) -> None:
+        from openai_codex import AsyncCodex, CodexConfig
 
-    def __init__(self, process: asyncio.subprocess.Process) -> None:
-        self._process = process
-        self._stderr: deque[str] = deque(maxlen=STDERR_TAIL_LINES)
-        self._drain = asyncio.create_task(self._drain_stderr())
+        config = CodexConfig(env=env, cwd=str(cwd), client_name="jarvis", client_title="Jarvis")
+        self._codex = AsyncCodex(config)
 
-    async def _drain_stderr(self) -> None:
-        stream = self._process.stderr
-        while stream is not None and (line := await stream.readline()):
-            self._stderr.append(line.decode(errors="replace").rstrip())
+    @staticmethod
+    def _unattended(options: dict[str, Any]) -> dict[str, Any]:
+        from openai_codex import ApprovalMode, Sandbox
 
-    async def lines(self) -> AsyncIterator[str]:
-        stream = self._process.stdout
-        while stream is not None and (line := await stream.readline()):
-            yield line.decode(errors="replace")
+        return {"sandbox": Sandbox.full_access, "approval_mode": ApprovalMode.deny_all, **options}
 
-    async def wait(self) -> int:
-        code = await self._process.wait()
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(self._drain, 1.0)
-        return code
+    async def thread_start(self, **options: Any) -> CodexThread:
+        return await self._codex.thread_start(**self._unattended(options))
 
-    def stderr_tail(self) -> str:
-        return "\n".join(self._stderr)
+    async def thread_resume(self, thread_id: str, **options: Any) -> CodexThread:
+        # The reply need not carry the thread's history — the model keeps its context either
+        # way — and asking for it is deprecated for paginated threads (seen live).
+        options = {"include_turns": False, **options}
+        return await self._codex.thread_resume(thread_id, **self._unattended(options))
 
-    def _signal(self, sig: int) -> None:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(self._process.pid, sig)
+    async def notices(self) -> AsyncIterator[Any]:
+        # `AsyncCodex` has no public reader for these; its client's is the one the SDK's
+        # own examples use. It ends when the reader thread fails every waiter on close.
+        while True:
+            try:
+                yield await self._codex._client.next_notification()
+            except Exception:
+                return
 
-    def interrupt(self) -> None:
-        self._signal(signal.SIGINT)
-
-    async def terminate(self) -> None:
-        if self._process.returncode is not None:
-            return
-        self._signal(signal.SIGTERM)
-        try:
-            await asyncio.wait_for(self._process.wait(), TERMINATE_GRACE_S)
-        except TimeoutError:
-            self._signal(signal.SIGKILL)
-            await self._process.wait()
+    async def close(self) -> None:
+        await self._codex.close()
 
 
-async def spawn_codex(argv: list[str], cwd: Path, env: dict[str, str], prompt: str) -> CodexProcess:
-    """Start `argv` in `cwd` with `env` added to ours, and write `prompt` to its stdin."""
-    process = await asyncio.create_subprocess_exec(
-        *argv,
-        cwd=str(cwd),
-        env={**os.environ, **env},
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        limit=CODEX_LINE_LIMIT_BYTES,
-        start_new_session=True,
-    )
-    assert process.stdin is not None
-    process.stdin.write(prompt.encode())
-    await process.stdin.drain()
-    process.stdin.close()
-    return _SubprocessCodex(process)
+def open_codex(env: dict[str, str], cwd: Path) -> CodexClient:
+    """The real client: an app-server started lazily, with `env` over Jarvis's own."""
+    return _SdkCodex(env, cwd)
 
 
-# ---------------------------------------------------------------------------- progress
+# --------------------------------------------------------------------------- the adapter
 
 
-def _arguments(value: Any) -> str:
+def _error_text(error: Any) -> str:
+    """A turn error as one line: the provider's own message out of a JSON body it is quoted
+    as, and without the URL, ray and request id a 4xx trails."""
+    text = (error.message or "").strip()
     try:
-        text = json.dumps(value, default=str)
-    except (TypeError, ValueError):  # pragma: no cover - json.dumps(default=str) rarely fails
-        text = str(value)
-    return text[:_MAX_TOOL_INPUT_CHARS]
+        body = json.loads(text)
+    except ValueError:
+        body = None
+    inner = body.get("error") if isinstance(body, dict) else None
+    if isinstance(inner, dict) and inner.get("message"):
+        text = str(inner["message"])
+    if error.additional_details:
+        text = f"{text}: {error.additional_details.strip()}"
+    return text.split(", url:")[0]
 
 
-def progress_line(item: Mapping[str, Any], *, started: bool) -> str | None:
-    """A short, loggable one-liner for an item event; None for one that is not worth one.
-
-    Tool calls are reported when they start (that is when they are news), file changes and
-    messages when they complete.
-    """
-    kind = item.get("type")
-    if kind == "command_execution" and started:
-        return f"[tool] shell {_arguments(item.get('command', ''))}"
-    if kind == "mcp_tool_call" and started:
-        tool = f"mcp__{item.get('server', '?')}__{item.get('tool', '?')}"
-        return f"[tool] {tool} {_arguments(item.get('arguments') or {})}"
-    if kind == "web_search" and started:
-        return f"[tool] web_search {_arguments(item.get('query', ''))}"
-    if kind == "file_change" and not started:
-        changes = item.get("changes") or []
-        paths = ", ".join(f"{c.get('kind', '?')} {c.get('path', '?')}" for c in changes)
-        return f"[edit] {paths[:_MAX_TOOL_INPUT_CHARS]}"
+def _tool_call(item: Any) -> ToolCall | None:
+    """The tool line for an item that has just started, or None for any other item."""
+    if item.type == "commandExecution":
+        return ToolCall("shell", item.command)
+    if item.type == "mcpToolCall":
+        return ToolCall(f"mcp__{item.server}__{item.tool}", item.arguments)
+    if item.type == "webSearch":
+        return ToolCall("web_search", item.query)
+    if item.type == "dynamicToolCall":
+        name = f"{item.namespace}.{item.tool}" if item.namespace else item.tool
+        return ToolCall(name, item.arguments)
+    if item.type == "collabAgentToolCall":
+        return ToolCall(f"agent.{item.tool.value}", item.prompt)
     return None
 
 
-# ------------------------------------------------------------------------- the session
+def _notice_text(notification: Any) -> str | None:
+    """What a global notification says worth a warning, or None for the rest."""
+    payload = notification.payload
+    if notification.method in _WARNING_METHODS:
+        text = getattr(payload, "message", None) or getattr(payload, "summary", "")
+        details = getattr(payload, "details", None)
+        return f"{text} ({details})" if details else text
+    if notification.method == "mcpServer/startupStatus/updated" and payload.error:
+        return f"MCP server {payload.name} did not start: {payload.error}"
+    return None
 
 
-class CodexAgentSession(AgentSession):
-    """One task's Codex conversation: each `run()` is one `codex exec` process.
-
-    The first run starts the thread; every later one resumes it by the id the first one
-    printed, so one session is one conversation however many processes it takes.
-    """
+class CodexAdapter:
+    """One Codex thread on one app-server, as the events `AdapterSession` runs on."""
 
     def __init__(
-        self,
-        task: Task,
-        settings: Settings,
-        *,
-        resume: str | None,
-        auth: AuthStatus,
-        env: dict[str, str],
-        spawner: CodexSpawner,
-        binary: str,
+        self, client: CodexClient, thread: CodexThread, *, secrets: Iterable[str | None] = ()
     ) -> None:
-        self._task = task
-        self._settings = settings
-        self._session_id = resume
-        self._auth = auth
-        self._env = env
-        self._spawner = spawner
-        self._binary = binary
-        self._process: CodexProcess | None = None
-        self._interrupted = False
+        self._client = client
+        self._thread = thread
+        self.secrets = list(secrets)
+        self._turn: CodexTurn | None = None
+        self._notices = asyncio.create_task(self._log_notices())
 
-    def _redact(self, text: str) -> str:
-        return redact(text, [self._auth.secret])
+    async def turn(self, prompt: str) -> AsyncIterator[AgentEvent]:
+        from openai_codex.generated.v2_all import MessagePhase, TurnStatus
 
-    async def run(self, prompt: str, *, on_progress: Callable[[str], Any]) -> RunResult:
-        """Run one `codex exec` to its end; never raises."""
-        self._interrupted = False
-        messages: list[str] = []
-        failure: str | None = None
-        last_error: str | None = None
+        yield SessionId(self._thread.id)
+        self._turn = await self._thread.turn(prompt)
+        usage: TokenUsage | None = None
+        final: str | None = None
         try:
-            argv, server_env, cwd = build_command(
-                self._task, self._settings, resume=self._session_id, binary=self._binary
-            )
-            self._process = await self._spawner(argv, cwd, {**server_env, **self._env}, prompt)
-            async for line in self._process.lines():
-                event = _parse(line)
-                if event is None:
-                    continue
-                kind = event.get("type")
-                if kind == "thread.started":
-                    self._session_id = event.get("thread_id") or self._session_id
-                elif kind in ("item.started", "item.completed"):
-                    item = event.get("item") or {}
-                    started = kind == "item.started"
-                    if item.get("type") == "agent_message" and not started:
-                        text = (item.get("text") or "").strip()
-                        if text:
-                            messages.append(text)
-                            await emit_progress(on_progress, text)
-                    elif item.get("type") == "error":
-                        log.warning("codex: %s", self._redact(str(item.get("message", ""))))
-                    elif line_text := progress_line(item, started=started):
-                        await emit_progress(on_progress, line_text)
-                elif kind == "turn.completed":
-                    usage = event.get("usage") or {}
-                    log.info(
-                        "codex turn done for task %s: %s input / %s output tokens",
-                        self._task.id,
-                        usage.get("input_tokens"),
-                        usage.get("output_tokens"),
-                    )
-                elif kind == "turn.failed":
-                    failure = _error_text(event.get("error")) or "the turn failed"
-                elif kind == "error":
-                    last_error = _error_text(event)
-            code = await self._process.wait()
-        except Exception as exc:
-            log.exception("codex turn failed")
-            error = self._redact(f"{type(exc).__name__}: {exc}")
-            return RunResult(
-                ok=False,
-                final_text=messages[-1] if messages else "",
-                spoken_summary=failure_summary(error),
-                session_id=self._session_id,
-                error=error,
-            )
+            async with contextlib.aclosing(self._turn.stream()) as stream:
+                async for notification in stream:
+                    method, payload = notification.method, notification.payload
+                    if method == "item/started":
+                        if call := _tool_call(payload.item.root):
+                            yield call
+                    elif method == "item/completed":
+                        item = payload.item.root
+                        if item.type == "agentMessage":
+                            if item.phase is MessagePhase.final_answer:
+                                final = item.text
+                            yield Text(item.text)
+                        elif item.type == "fileChange":
+                            yield FileEdit(tuple((c.kind.root.type, c.path) for c in item.changes))
+                    elif method == "thread/tokenUsage/updated":
+                        last = payload.token_usage.last
+                        spent = TokenUsage(
+                            last.input_tokens, last.output_tokens, last.cached_input_tokens
+                        )
+                        usage = spent if usage is None else usage + spent
+                    elif method == "error":
+                        level = logging.INFO if payload.will_retry else logging.WARNING
+                        yield Notice(_error_text(payload.error), level=level)
+                    elif method == "turn/completed":
+                        # Cleared before `Done`, so a follow-up from here on re-runs.
+                        self._turn = None
+                        turn = payload.turn
+                        yield Done(
+                            ok=turn.status is TurnStatus.completed,
+                            result_text=final,
+                            error=_error_text(turn.error) if turn.error else None,
+                            interrupted=turn.status is TurnStatus.interrupted,
+                            usage=usage,
+                        )
+        finally:
+            self._turn = None
 
-        final_text = messages[-1] if messages else ""
-        if failure is None and code != 0:
-            if self._interrupted:
-                failure = INTERRUPTED_ERROR
-            else:
-                tail = self._process.stderr_tail().strip().splitlines()
-                failure = last_error or (tail[-1] if tail else f"codex exited with {code}")
-        if failure is not None:
-            # The spoken line is the failure, not the last message: that is usually the
-            # model announcing what it was about to do, which reads as a result it is not.
-            error = self._redact(failure)
-            return RunResult(
-                ok=False,
-                final_text=final_text,
-                spoken_summary=failure_summary(error),
-                session_id=self._session_id,
-                error=error,
-            )
-        return RunResult(
-            ok=True,
-            final_text=final_text,
-            spoken_summary=extract_spoken_summary(final_text),
-            session_id=self._session_id,
-            restart_reason=extract_restart_request(final_text),
-        )
+    async def steer(self, text: str) -> None:
+        """Into the running turn; `SteerUnavailable` when the server refused it."""
+        from openai_codex import CodexRpcError, InvalidRequestError
 
-    async def send(self, text: str) -> None:
-        """Not supported mid-turn: the manager turns follow-ups into a resumed run."""
-        raise NotImplementedError("codex takes follow-ups as a resumed run")
+        turn = self._turn
+        if turn is None:
+            raise SteerUnavailable("no codex turn is running")
+        try:
+            await turn.steer(text)
+        except CodexRpcError as exc:
+            # A request the server rejected was never accepted: "no active turn to steer",
+            # or a turn that cannot be steered. Anything else may have landed.
+            if isinstance(exc, InvalidRequestError) or "activeTurnNotSteerable" in str(exc.data):
+                raise SteerUnavailable(exc.message) from None
+            raise
 
     async def interrupt(self) -> None:
-        """SIGINT to the process group, which ends the turn within a moment."""
-        if self._process is not None:
-            self._interrupted = True
-            self._process.interrupt()
+        if self._turn is not None:
+            await self._turn.interrupt()
 
     async def close(self) -> None:
-        """Terminate the process group if it is still there; safe to call more than once."""
-        if self._process is not None:
+        """Stop the app-server, which kills the commands it started (see docs/agents.md)."""
+        try:
+            await self._client.close()
+        finally:
+            self._notices.cancel()
+            await asyncio.gather(self._notices, return_exceptions=True)
+
+    async def _log_notices(self) -> None:
+        """Log the warnings that belong to no turn — config, deprecation, an MCP server
+        that would not start — until the app-server is gone."""
+        async for notification in self._client.notices():
             try:
-                await self._process.terminate()
-            except Exception:
-                log.exception("terminating the codex process failed")
+                text = _notice_text(notification)
+            except Exception:  # a shape this build does not know is not worth a crash
+                log.debug("codex: unreadable %s notification", notification.method)
+                continue
+            if text:
+                log.warning("codex: %s", redact(text, self.secrets))
 
 
-def _parse(line: str) -> dict[str, Any] | None:
-    """One JSONL event; anything else on stdout (there should be nothing) is logged."""
-    line = line.strip()
-    if not line:
-        return None
-    try:
-        event = json.loads(line)
-    except json.JSONDecodeError:
-        log.debug("codex printed a non-JSON line: %.200s", line)
-        return None
-    return event if isinstance(event, dict) else None
+# ---------------------------------------------------------------------------- the runner
 
 
-def _error_text(error: Any) -> str | None:
-    """The message out of an error event, unwrapping the JSON body a 4xx is quoted as."""
-    if not isinstance(error, dict):
-        return None
-    message = str(error.get("message") or "").strip()
-    try:
-        body = json.loads(message)
-    except (json.JSONDecodeError, TypeError):
-        return message or None
-    inner = body.get("error") if isinstance(body, dict) else None
-    if isinstance(inner, dict) and inner.get("message"):
-        return str(inner["message"])
-    return message or None
+class CodexAgentRunner(AdapterRunner):
+    """Opens Codex conversations (`client_factory` and `login` are injected in tests)."""
 
-
-# -------------------------------------------------------------------------- the runner
-
-
-class CodexAgentRunner(AgentRunner):
-    """Opens Codex conversations (`spawner` and `login` are injected in tests)."""
+    name = "codex"
 
     def __init__(
         self,
         settings: Settings,
         *,
-        spawner: CodexSpawner = spawn_codex,
+        client_factory: CodexFactory = open_codex,
         login: Callable[..., Any] = subprocess.run,
     ) -> None:
-        self._settings = settings
-        self._spawner = spawner
+        super().__init__(settings)
+        self._client_factory = client_factory
         self._login = login
 
-    async def open(self, task: Task, *, resume: str | None = None) -> AgentSession:
-        """A session for `task`; nothing is spawned until its first `run()`."""
-        auth = resolve_auth(CODEX_AUTH, self._settings, probe=False)
-        if auth.mode is AuthMode.TOKEN:
-            home = await asyncio.to_thread(
-                ensure_token_home, self._settings, auth.secret or "", run=self._login
-            )
-            env = {"CODEX_HOME": str(home)}
-        else:
-            env = child_env(auth)
-        binary = codex_cli() or CODEX_BINARY
-        log.info(
-            "codex subagent opened for task %s (model=%s, auth=%s, resume=%s)",
-            task.id,
-            task.model or self._settings.codex_model or "codex default",
-            auth.mode,
-            resume,
-        )
-        return CodexAgentSession(
+    def context(self, task: Task) -> AgentContext:
+        return AgentContext.build(
             task,
-            self._settings,
-            resume=resume,
-            auth=auth,
-            env=env,
-            spawner=self._spawner,
-            binary=binary,
+            self.settings,
+            auth=CODEX_AUTH,
+            model=task.model or self.settings.codex_model,
+            mcp_servers=mcp_servers(self.settings),
         )
+
+    async def connect(self, context: AgentContext, resume: str | None) -> CodexAdapter:
+        """Start an app-server and a thread on it — or resume one — for `context`."""
+        config, server_env = mcp_config(context.mcp_servers)
+        env = {**server_env, **await self._credential_env(context.auth)}
+        client = self._client_factory(env, context.cwd)
+        options = {
+            "cwd": str(context.cwd),
+            "developer_instructions": context.instructions,
+            "model": context.model,
+            "config": config,
+        }
+        try:
+            if resume:
+                thread = await client.thread_resume(resume, **options)
+            else:
+                thread = await client.thread_start(**options)
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await client.close()
+            raise
+        return CodexAdapter(client, thread, secrets=context.secrets)
+
+    async def _credential_env(self, auth: AuthStatus) -> dict[str, str]:
+        """The credential variables for the app-server: the chosen one, the rest empty."""
+        env = dict.fromkeys(CREDENTIAL_VARIABLES, "")
+        if auth.mode is AuthMode.API_KEY:
+            home = await asyncio.to_thread(
+                ensure_login_home, self.settings, auth.secret or "", run=self._login
+            )
+            env["CODEX_HOME"] = str(home)
+        elif auth.mode is AuthMode.TOKEN:
+            env["CODEX_ACCESS_TOKEN"] = auth.secret or ""
+        return env

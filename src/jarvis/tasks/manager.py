@@ -12,11 +12,12 @@ re-run will send (`_resume_pending`) and the follow-ups that arrived mid-turn
 (`_live_followups`). The event is created at dispatch and stays set after a terminal
 state, so a late waiter returns immediately.
 
-A follow-up to a *running* task is never pushed into the open turn: `run()` has already
-stopped at the first result and the SDK's mid-turn `query()` semantics are unverified
-(spec §3.3 ruling), so the text is queued and becomes the prompt of an immediate resumed
-run inside the same semaphore slot. Only the last run of that chain is published, so one
-request stays one announcement.
+A follow-up to a *running* task goes straight into its turn when the agent can take it
+(`AgentSession.send`, Codex). When it cannot — Claude, or a turn that has just ended — the
+text is queued and becomes the prompt of an immediate resumed run inside the same semaphore
+slot (spec §3.3). Only the last run of that chain is published, so one request stays one
+announcement. A per-task lock (`_locks`) makes taking a follow-up in and closing the row out
+one at a time, so a follow-up can never land in a queue nobody will read again.
 
 `cancel()` cannot rely on cancelling the asyncio task alone: interrupting a live session
 is itself what ends the agent's turn, so `run()` typically returns a (useless) result
@@ -33,11 +34,12 @@ import asyncio
 import logging
 import re
 from collections.abc import Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 
-from jarvis.agents.base import AgentRunner, AgentSession, RunResult
+from jarvis.agents.base import AgentRunner, AgentSession, RunResult, TokenUsage
 from jarvis.agents.registry import resolve_model
 from jarvis.config import Settings, secure_file
 from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
@@ -135,6 +137,25 @@ def build_prompt(task: Task) -> str:
     )
 
 
+def executor_workers(settings: Settings) -> int:
+    """How many threads the event loop's default executor needs under this manager.
+
+    A running Codex turn holds two of them for as long as it runs — the SDK reads its
+    stream, and its turn-less warnings, one blocking `asyncio.to_thread` at a time — and
+    steering, interrupting and closing it need more, as does every SQLite call. Python's
+    default (`min(32, cpus + 4)`) can be fewer than a full slate of tasks holds, which would
+    leave a cancel waiting on a thread that only the turn it is cancelling can free.
+    """
+    return max(32, 4 * settings.max_concurrent_tasks + 16)
+
+
+def install_default_executor(settings: Settings) -> ThreadPoolExecutor:
+    """Give the running loop a default executor sized by `executor_workers`."""
+    executor = ThreadPoolExecutor(executor_workers(settings), thread_name_prefix="jarvis")
+    asyncio.get_running_loop().set_default_executor(executor)
+    return executor
+
+
 def _duration(seconds: float) -> str:
     """`seconds` as a speakable length: "3 hours", "90 minutes", "45 seconds"."""
     if seconds >= 3600 and seconds % 3600 == 0:
@@ -144,6 +165,24 @@ def _duration(seconds: float) -> str:
         minutes = round(seconds / 60)
         return f"{minutes} minute{'s' if minutes != 1 else ''}"
     return f"{seconds:.0f} seconds"
+
+
+def _spend(task: Task, results: Iterable[RunResult]) -> dict[str, object]:
+    """The row's spend columns after `results`, added to what the task had spent before.
+
+    Only what some turn reported is written: a column no turn said anything about keeps
+    whatever it held, so "unknown" never turns into zero.
+    """
+    usage = [result.usage for result in results if result.usage is not None]
+    costs = [result.cost_usd for result in results if result.cost_usd is not None]
+    fields: dict[str, object] = {}
+    if usage:
+        total = sum(usage, TokenUsage())
+        fields["input_tokens"] = (task.input_tokens or 0) + total.input_tokens
+        fields["output_tokens"] = (task.output_tokens or 0) + total.output_tokens
+    if costs:
+        fields["cost_usd"] = (task.cost_usd or 0.0) + sum(costs)
+    return fields
 
 
 def _normalize(name: str) -> str:
@@ -168,6 +207,8 @@ class TaskManager:
         self._cancel_requested: set[int] = set()
         self._resume_pending: dict[int, str] = {}
         self._live_followups: dict[int, list[str]] = {}
+        self._locks: dict[int, asyncio.Lock] = {}
+        self._spent: dict[int, list[RunResult]] = {}
         settings.ensure_dirs()
 
     # --- lifecycle -------------------------------------------------------
@@ -331,6 +372,7 @@ class TaskManager:
         self._cancel_requested.discard(task_id)
         self._resume_pending.pop(task_id, None)
         self._live_followups.pop(task_id, None)
+        self._spent.pop(task_id, None)
         self._done_event(task_id).set()
 
     async def _execute(self, task_id: int, *, resume: str | None) -> None:
@@ -361,16 +403,23 @@ class TaskManager:
         # queued are all included.
         prompt = self._resume_pending.pop(task_id, None) or build_prompt(task)
         result = await self._run_turn(task_id, session, prompt)
-        result = await self._run_live_followups(task, result)
-
-        if task_id in self._cancel_requested:
-            # `interrupt()` ended the turn: the result is the wreckage of a cancel, not an
-            # outcome. Record the cancel and publish nothing, exactly as if the asyncio
-            # task's own cancellation had landed first.
-            log.info("task %s was cancelled while running; discarding the result", task_id)
-            await self._mark_cancelled(task_id)
+        while True:
+            result = await self._run_live_followups(task, result)
+            # Under the lock a follow-up is either already queued — and runs, below — or
+            # waits, and then finds the row terminal and restarts it.
+            async with self._lock(task_id):
+                if self._live_followups.get(task_id) and task_id not in self._cancel_requested:
+                    continue
+                if task_id in self._cancel_requested:
+                    # `interrupt()` ended the turn: the result is the wreckage of a cancel,
+                    # not an outcome. Record the cancel and publish nothing, exactly as if
+                    # the asyncio task's own cancellation had landed first.
+                    log.info("task %s was cancelled while running; discarding it", task_id)
+                    await self._mark_cancelled(task_id)
+                    return
+                event = await self._finish(task, result)
+            await self._bus.publish(event)
             return
-        await self._finish(task, result)
 
     async def _run_live_followups(self, task: Task, result: RunResult) -> RunResult:
         """Re-run `task` for the follow-ups that arrived while it was running (spec §3.3).
@@ -403,25 +452,30 @@ class TaskManager:
 
         The cap lives here rather than in a runner so that it is one rule for every agent:
         Claude also has a turn and a dollar cap, but Codex has neither, and a run nobody
-        bounds is a run that can hold a semaphore slot for ever. The session is closed by
-        `_run` on the way out, which is what actually stops the process.
+        bounds is a run that can hold a semaphore slot for ever.
+
+        Cutting off `run()` only stops *reading* the agent: its turn goes on, changing files,
+        in a process nobody is listening to. So a timed-out session is interrupted and closed
+        here, before anything records or announces that it was stopped.
         """
         run = session.run(prompt, on_progress=partial(self._on_progress, task_id))
         limit = self._settings.subagent_timeout_s
-        if not limit:
-            return await run
         try:
-            return await asyncio.wait_for(run, limit)
+            result = await (asyncio.wait_for(run, limit) if limit else run)
         except TimeoutError:
-            log.warning("task %s ran past its %.0fs limit and was stopped", task_id, limit)
+            log.warning("task %s ran past its %.0fs limit; stopping it", task_id, limit)
+            await self._interrupt(task_id, session)
+            await self._close_session(task_id)
             return RunResult(
                 ok=False,
                 spoken_summary=TIMEOUT_SUMMARY.format(duration=_duration(limit)),
                 error=f"timed out after {limit:.0f}s (SUBAGENT_TIMEOUT_S)",
             )
+        self._spent.setdefault(task_id, []).append(result)
+        return result
 
-    async def _finish(self, task: Task, result: RunResult) -> None:
-        """Write the report, close the row out as `done`/`failed` and publish the event."""
+    async def _finish(self, task: Task, result: RunResult) -> TaskCompleted | TaskFailed:
+        """Write the report and close the row out as `done`/`failed`; the event to publish."""
         fields: dict[str, object] = {
             "summary": result.spoken_summary,
             "report_path": str(self._write_report(task, result)),
@@ -429,6 +483,7 @@ class TaskManager:
         }
         if result.session_id:
             fields["claude_session_id"] = result.session_id
+        fields.update(_spend(task, self._spent.pop(task.id, [])))
         if result.ok and result.restart_reason is not None and not task.internal:
             # The subagent says it changed Jarvis's own code. Recorded, not acted on: the
             # Notifier decides when a restart is safe, because it is the thing that knows
@@ -439,12 +494,11 @@ class TaskManager:
         if result.ok:
             await self._store.update(task.id, status=TaskStatus.DONE, error=None, **fields)
             log.info("task %s done", task.id)
-            await self._bus.publish(TaskCompleted(task.id, result.spoken_summary))
-        else:
-            error = result.error or UNKNOWN_ERROR
-            await self._store.update(task.id, status=TaskStatus.FAILED, error=error, **fields)
-            log.warning("task %s failed: %s", task.id, error)
-            await self._bus.publish(TaskFailed(task.id, error))
+            return TaskCompleted(task.id, result.spoken_summary)
+        error = result.error or UNKNOWN_ERROR
+        await self._store.update(task.id, status=TaskStatus.FAILED, error=error, **fields)
+        log.warning("task %s failed: %s", task.id, error)
+        return TaskFailed(task.id, error)
 
     async def _fail(self, task_id: int, error: str) -> None:
         """Mark a task failed after an exception escaped the run."""
@@ -478,6 +532,13 @@ class TaskManager:
             return None
         log.info("task %s cancelled", task_id)
         return task
+
+    async def _interrupt(self, task_id: int, session: AgentSession) -> None:
+        """Ask `session` to stop its turn, for at most `SESSION_TIMEOUT_S`."""
+        try:
+            await asyncio.wait_for(session.interrupt(), SESSION_TIMEOUT_S)
+        except Exception:
+            log.exception("interrupting the subagent of task %s failed", task_id)
 
     async def _close_session(self, task_id: int) -> None:
         """Close and forget the live session for `task_id`, if there is one."""
@@ -596,26 +657,58 @@ class TaskManager:
     # --- follow-ups and cancel -------------------------------------------
 
     async def followup(self, task_id: int, text: str) -> Task:
-        """Add `text` to a task: queued for its next run, or folded into its description."""
-        task = await self._store.get(task_id)
-        if task is None:
-            raise KeyError(task_id)
-        if task.status is TaskStatus.CANCELLED:
-            raise ValueError("task is cancelled")
+        """Add `text` to a task: into its running turn, queued for its next run, or folded
+        into its description.
 
-        if task.status is TaskStatus.QUEUED:
-            updated = await self._queue_followup(task, text)
-        elif task.status is TaskStatus.RUNNING:
-            if task_id not in self._live:
-                raise ValueError("task is starting up; try the follow-up again in a moment")
-            self._live_followups.setdefault(task_id, []).append(text)
-            log.info("[followup queued] task %s re-runs when this turn ends", task_id)
-            updated = task
-        else:
-            updated = await self._restart(task, text)
+        Raises whatever a steer that failed for real raised: the text may have landed, so
+        it is not delivered a second way behind the caller's back.
+        """
+        async with self._lock(task_id):
+            task = await self._store.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task.status is TaskStatus.CANCELLED:
+                raise ValueError("task is cancelled")
+
+            if task.status is TaskStatus.QUEUED:
+                updated = await self._queue_followup(task, text)
+            elif task.status is TaskStatus.RUNNING:
+                session = self._live.get(task_id)
+                if session is None:
+                    raise ValueError("task is starting up; try the follow-up again in a moment")
+                if not await self._steer(task_id, session, text):
+                    self._live_followups.setdefault(task_id, []).append(text)
+                    log.info("[followup queued] task %s re-runs when this turn ends", task_id)
+                updated = task
+            else:
+                await self._settle(task_id)
+                updated = await self._restart(task, text)
 
         self._append_log(task_id, f"[followup] {text}")
         return updated
+
+    def _lock(self, task_id: int) -> asyncio.Lock:
+        """The lock that takes follow-ups in and closes the row out one at a time."""
+        return self._locks.setdefault(task_id, asyncio.Lock())
+
+    async def _steer(self, task_id: int, session: AgentSession, text: str) -> bool:
+        """Put `text` into the running turn; False when the agent refused it undelivered."""
+        try:
+            await session.send(text)
+        except NotImplementedError:  # `SteerUnavailable`: no live steer, or the turn is over
+            return False
+        log.info("[followup steered] task %s: into the running turn", task_id)
+        return True
+
+    async def _settle(self, task_id: int) -> None:
+        """Let a run whose row has just gone terminal finish tidying up.
+
+        Its clean-up forgets the task's pending prompt and wakes `wait_for`; a restart
+        underneath it would lose the one and wake the other too early.
+        """
+        runner = self._tasks.get(task_id)
+        if runner is not None and runner is not asyncio.current_task() and not runner.done():
+            await asyncio.wait({runner}, timeout=CLOSE_TIMEOUT_S + CANCEL_TIMEOUT_S)
 
     async def _queue_followup(self, task: Task, text: str) -> Task:
         """Fold `text` into a queued task: into a pending resume prompt, else its description.
@@ -666,10 +759,7 @@ class TaskManager:
         self._cancel_requested.add(task_id)
         session = self._live.get(task_id)
         if session is not None:
-            try:
-                await asyncio.wait_for(session.interrupt(), SESSION_TIMEOUT_S)
-            except Exception:
-                log.exception("interrupting the subagent of task %s failed", task_id)
+            await self._interrupt(task_id, session)
 
         runner_task = self._tasks.get(task_id)
         if runner_task is not None:

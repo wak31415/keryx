@@ -18,14 +18,16 @@ from claude_agent_sdk.types import (
     UserMessage,
 )
 
-from jarvis.agents.base import RunResult
+from jarvis.agents.base import AgentOpenError, RunResult, SteerUnavailable, TokenUsage
 from jarvis.agents.claude import (
     SUBAGENT_MAX_BUFFER_BYTES,
     ClaudeAgentRunner,
     ClaudeAgentSession,
     build_options,
+    claude_usage,
     resolve_model,
 )
+from jarvis.agents.session import AdapterSession
 from jarvis.tasks.models import Task, TaskKind
 
 
@@ -302,10 +304,20 @@ async def test_runner_open_connects_a_client_built_from_the_task(settings):
     runner = ClaudeAgentRunner(settings, client_factory=factory)
     session = await runner.open(make_task(), resume="sess-3")
 
-    assert isinstance(session, ClaudeAgentSession)
+    assert isinstance(session, AdapterSession)
     assert created[0].connects == 1
     assert created[0].options.resume == "sess-3"
     assert created[0].options.tools is None  # nothing is held back
+
+
+def test_the_default_client_is_the_sdks_own(settings):
+    from claude_agent_sdk import ClaudeSDKClient
+
+    from jarvis.agents.claude import _default_client_factory
+
+    client = _default_client_factory(build_options(make_task(), settings))
+
+    assert isinstance(client, ClaudeSDKClient)
 
 
 async def test_runner_open_propagates_a_connect_failure(settings):
@@ -314,8 +326,38 @@ async def test_runner_open_propagates_a_connect_failure(settings):
 
     runner = ClaudeAgentRunner(settings, client_factory=factory)
 
-    with pytest.raises(RuntimeError, match="no CLI on PATH"):
+    with pytest.raises(AgentOpenError, match="RuntimeError: no CLI on PATH"):
         await runner.open(make_task())
+
+
+async def test_a_connect_failure_never_quotes_the_key(settings):
+    settings.anthropic_api_key = "sk-ant-api03-secret-key"
+
+    class Refusing(FakeSdkClient):
+        async def connect(self):
+            raise PermissionError("bad key sk-ant-api03-secret-key")
+
+    runner = ClaudeAgentRunner(settings, client_factory=Refusing)
+
+    with pytest.raises(AgentOpenError) as raised:
+        await runner.open(make_task())
+
+    assert "sk-ant-api03-secret-key" not in str(raised.value)
+
+
+async def test_the_google_client_secret_is_kept_out_of_a_failed_turn(settings):
+    settings.google_workspace_mcp = True
+    settings.google_oauth_client_id = "client-id"
+    settings.google_oauth_client_secret = "GOCSPX-a-real-looking-secret"
+    client = FakeSdkClient(error=RuntimeError("workspace-mcp: GOCSPX-a-real-looking-secret"))
+    session = await ClaudeAgentRunner(settings, client_factory=lambda options: client).open(
+        make_task()
+    )
+
+    outcome = await session.run("go", on_progress=lambda text: None)
+
+    assert "GOCSPX" not in outcome.error
+    assert "[redacted]" in outcome.error
 
 
 async def test_session_run_returns_the_result_and_reports_progress():
@@ -388,6 +430,41 @@ async def test_session_run_ignores_a_failing_progress_callback():
     assert outcome.ok is True
 
 
+async def test_the_usage_and_the_cost_come_from_the_result():
+    usage = {
+        "input_tokens": 10,
+        "cache_creation_input_tokens": 200,
+        "cache_read_input_tokens": 3000,
+        "output_tokens": 45,
+    }
+    client = FakeSdkClient(messages=[result_message(usage=usage, total_cost_usd=0.07)])
+
+    outcome = await ClaudeAgentSession(client).run("go", on_progress=lambda text: None)
+
+    assert outcome.cost_usd == 0.07
+    assert outcome.usage == TokenUsage(
+        input_tokens=3210, output_tokens=45, cached_input_tokens=3000
+    )
+
+
+def test_no_usage_reported_is_none():
+    assert claude_usage(None) is None
+    assert claude_usage({}) is None
+
+
+async def test_an_error_result_speaks_the_failure_not_a_summary():
+    """The unified rule: a failed turn is spoken as the failure, whatever text it carries."""
+    failed = result_message(is_error=True, subtype="error_during_execution", result="API down")
+    client = FakeSdkClient(messages=[failed])
+
+    outcome = await ClaudeAgentSession(client).run("go", on_progress=lambda text: None)
+
+    assert outcome.ok is False
+    assert outcome.error == "API down"
+    assert outcome.final_text == "API down"
+    assert outcome.spoken_summary == "The task failed: API down"
+
+
 async def test_session_run_reports_an_error_result():
     client = FakeSdkClient(
         messages=[result_message(is_error=True, subtype="error_max_turns", result=None)]
@@ -412,7 +489,7 @@ async def test_session_run_survives_a_transport_exception():
     assert outcome.ok is False
     assert outcome.error == "RuntimeError: stream closed"
     assert outcome.final_text == "Partial work."
-    assert outcome.spoken_summary == "The task failed: stream closed"
+    assert outcome.spoken_summary == "The task failed: RuntimeError: stream closed"
 
 
 async def test_session_run_survives_a_buffer_overflow():
@@ -432,15 +509,23 @@ async def test_session_run_survives_a_buffer_overflow():
     assert outcome.spoken_summary.startswith("The task failed")
 
 
-async def test_session_send_interrupt_and_close_reach_the_client():
+async def test_a_follow_up_is_never_put_into_a_running_claude_turn():
+    """A `query()` after the final text starts a turn `receive_response()` never reads."""
+    client = FakeSdkClient(messages=[result_message()])
+
+    with pytest.raises(SteerUnavailable):
+        await ClaudeAgentSession(client).send("also check Wednesday")
+
+    assert client.queries == []
+
+
+async def test_session_interrupt_and_close_reach_the_client():
     client = FakeSdkClient(messages=[result_message()])
     session = ClaudeAgentSession(client)
 
-    await session.send("also check Wednesday")
     await session.interrupt()
     await session.close()
 
-    assert client.queries == ["also check Wednesday"]
     assert client.interrupts == 1
     assert client.disconnects == 1
 
@@ -453,7 +538,7 @@ async def test_session_interrupt_and_close_swallow_client_errors():
     await session.close()
     await session.close()
 
-    assert client.disconnects == 2
+    assert client.disconnects == 1
 
 
 def test_the_subagent_suffix_makes_slack_opt_in(settings, unwrapped):
@@ -505,7 +590,9 @@ def test_the_claude_cli_is_the_one_the_sdk_bundles(monkeypatch, tmp_path):
     bundled = tmp_path / "_bundled" / "claude"
     bundled.parent.mkdir()
     bundled.write_text("")
-    monkeypatch.setattr(claude_module.claude_agent_sdk, "__file__", str(tmp_path / "x.py"))
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "__file__", str(tmp_path / "x.py"))
     assert claude_module.claude_cli() == str(bundled)
 
     bundled.unlink()
