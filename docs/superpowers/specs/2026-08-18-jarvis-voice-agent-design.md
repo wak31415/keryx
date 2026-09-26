@@ -753,7 +753,7 @@ class SessionRegistry:
   SDK's mid-turn `query()` semantics are unverified, so `AgentSession.send()` is not used
   for live follow-ups.) PIN gate applies to `send_followup`/`cancel_task` on destructive
   kinds exactly as to `dispatch_task`.
-- **Concurrency**: `MAX_CONCURRENT_TASKS` (default 3); overflow tasks stay `queued`.
+- **Concurrency**: `MAX_CONCURRENT_TASKS` (default 3); overflow tasks stay `queued`. *Amended 2026-09-26:* `jarvis serve` gives the loop a default executor of `max(32, 4 × MAX_CONCURRENT_TASKS + 16)` threads (`tasks.manager.executor_workers`), because each running Codex turn parks two of them for its whole length and a cancel, a steer and every SQLite call need their own.
 - **Local session end**: `end_session` tool, or `LOCAL_SILENCE_TIMEOUT` (30 s without user speech
   after the last response) → goodbye → back to wake-word listening.
 - **Reconnects**: provider WS drop mid-call → one `reconnect()`; on success inject

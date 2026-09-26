@@ -33,6 +33,7 @@ import asyncio
 import logging
 import re
 from collections.abc import Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -133,6 +134,25 @@ def build_prompt(task: Task) -> str:
         cwd=task.cwd or "the current directory",
         project_clause=f" (project '{task.project}')" if task.project else "",
     )
+
+
+def executor_workers(settings: Settings) -> int:
+    """How many threads the event loop's default executor needs under this manager.
+
+    A running Codex turn holds two of them for as long as it runs — the SDK reads its
+    stream, and its turn-less warnings, one blocking `asyncio.to_thread` at a time — and
+    steering, interrupting and closing it need more, as does every SQLite call. Python's
+    default (`min(32, cpus + 4)`) can be fewer than a full slate of tasks holds, which would
+    leave a cancel waiting on a thread that only the turn it is cancelling can free.
+    """
+    return max(32, 4 * settings.max_concurrent_tasks + 16)
+
+
+def install_default_executor(settings: Settings) -> ThreadPoolExecutor:
+    """Give the running loop a default executor sized by `executor_workers`."""
+    executor = ThreadPoolExecutor(executor_workers(settings), thread_name_prefix="jarvis")
+    asyncio.get_running_loop().set_default_executor(executor)
+    return executor
 
 
 def _duration(seconds: float) -> str:

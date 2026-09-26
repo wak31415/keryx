@@ -7,6 +7,7 @@ no test may wait longer than `WAIT` seconds for anything.
 
 import asyncio
 import stat
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +26,8 @@ from jarvis.tasks.manager import (
     UnknownProjectError,
     _duration,
     build_prompt,
+    executor_workers,
+    install_default_executor,
 )
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
@@ -960,3 +963,36 @@ async def test_a_store_that_will_not_answer_does_not_stop_the_service_starting(m
     harness.manager._store.list = explode
 
     assert await harness.manager.resume_queued() == []
+
+
+# --- the default executor --------------------------------------------------
+
+
+@pytest.mark.parametrize(("tasks", "workers"), [(1, 32), (3, 32), (10, 56)])
+def test_the_executor_has_room_for_every_task_and_then_some(settings, tasks, workers):
+    assert executor_workers(settings.model_copy(update={"max_concurrent_tasks": tasks})) == workers
+
+
+async def test_with_every_stream_blocked_a_cancel_and_the_database_still_run(settings, store):
+    """Each running Codex turn parks two threads (its stream and its notices) in the default
+    executor. With every slot's worth parked, what a cancel and a status write need must
+    still get a thread."""
+    settings = settings.model_copy(update={"max_concurrent_tasks": 10})
+    install_default_executor(settings)  # the loop shuts it down when the test ends
+    release = threading.Event()
+    parked = [
+        asyncio.create_task(asyncio.to_thread(release.wait))
+        for _ in range(2 * settings.max_concurrent_tasks)
+    ]
+    try:
+        created = await asyncio.wait_for(
+            store.create(Task(id=None, kind=TaskKind.AGENT, description="x")), WAIT
+        )
+        interrupted = await asyncio.wait_for(asyncio.to_thread(lambda: "interrupt sent"), WAIT)
+        closed = await asyncio.wait_for(asyncio.to_thread(lambda: "closed"), WAIT)
+    finally:
+        release.set()
+        await asyncio.gather(*parked)
+
+    assert created.id is not None
+    assert (interrupted, closed) == ("interrupt sent", "closed")

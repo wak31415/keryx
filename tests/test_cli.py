@@ -217,6 +217,8 @@ def stub_local_runner(monkeypatch, built: dict, *, run=None) -> None:
 
         async def run(self):
             built["ran"] = True
+            executor = asyncio.get_running_loop()._default_executor
+            built["executor_workers"] = executor._max_workers if executor else 0
             if run is not None:
                 await run()
 
@@ -256,6 +258,7 @@ def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
     assert device is built["device"]
     assert kwargs["sessions"] is not None
     assert (settings_stub.data_dir / "calls").is_dir()  # ensure_dirs() ran
+    assert built["executor_workers"] >= 32  # room for every running turn's reader
 
 
 def test_serve_where_the_wake_word_cannot_run_serves_the_phone_alone(
