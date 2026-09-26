@@ -53,6 +53,11 @@ dependencies = [
     "onnxruntime>=1.29.0,<2; sys_platform == 'darwin'",
     # Young and moving fast, and the thing every task runs through. Held to one minor.
     "claude-agent-sdk>=0.2.148,<0.3",
+    # Pinned exactly, not to a minor: the Codex adapter reads the SDK's generated
+    # notification types field by field, and the SDK pins its bundled `codex` CLI
+    # (openai-codex-cli-bin, ~350 MB installed) to its own version. Move it deliberately,
+    # re-recording tests/agents/fixtures/codex_app_*.jsonl.
+    "openai-codex==0.157.1",
     "typer>=0.27.2,<1.0",
 ]
 
