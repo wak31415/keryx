@@ -1,10 +1,13 @@
 """The Claude backend: subagents on the Claude Agent SDK.
 
-`ClaudeAgentRunner.open()` builds `ClaudeAgentOptions` for one task and connects a
-`ClaudeSDKClient`; the returned `ClaudeAgentSession` drives one live conversation —
-`run()` streams a turn to completion, `send()` queues a follow-up into it, `interrupt()`
-and `close()` end it. The SDK client is injected (`client_factory`) so tests never start
-the `claude` CLI.
+`ClaudeAgentRunner` builds `ClaudeAgentOptions` for one task from its `AgentContext` and
+connects a `ClaudeSDKClient`; `ClaudeAdapter` turns the SDK's messages into the events the
+shared `AdapterSession` (`agents/session.py`) runs every backend's turn from. The SDK client
+is injected (`client_factory`) so tests never start the `claude` CLI.
+
+A follow-up never goes into a running Claude turn: a `query()` sent after the final text
+but before the `ResultMessage` starts a second turn that `receive_response()` never reads
+(verified 2026-09-26), so `steer()` refuses and the task manager re-runs instead.
 
 Tool restriction goes through `ClaudeAgentOptions.tools` — the base set of built-in tools
 the subagent has at all. Do **not** use `allowed_tools` for that: it is an auto-approve
@@ -16,11 +19,10 @@ This backend stays on the SDK rather than a bare `claude -p` subprocess: the SDK
 gives us `max_budget_usd`, `max_turns`, the lifted message-size limit and typed messages.
 """
 
-import json
 import logging
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -28,18 +30,17 @@ import claude_agent_sdk
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
-from jarvis.agents.auth import AuthSource, child_env, resolve_auth
-from jarvis.agents.base import (
-    AgentRunner,
-    AgentSession,
-    RunResult,
-    emit_progress,
-    extract_restart_request,
-    extract_spoken_summary,
-    failure_summary,
-    google_mcp_server_config,
-    render_subagent_suffix,
-    workspace_dir,
+from jarvis.agents.auth import AuthSource, child_env
+from jarvis.agents.base import SteerUnavailable, TokenUsage, google_mcp_server_config
+from jarvis.agents.session import (
+    AdapterRunner,
+    AdapterSession,
+    AgentContext,
+    AgentEvent,
+    Done,
+    SessionId,
+    Text,
+    ToolCall,
 )
 from jarvis.config import Settings
 from jarvis.tasks.models import Task
@@ -72,8 +73,6 @@ GOOGLE_MCP_TOOLS = ["mcp__google__*"]
 #: (1 MiB) is smaller than the echo of one `Read` of a screenshot or figure, which
 #: arrives as base64 in a single NDJSON line and killed the turn (tasks 68-98).
 SUBAGENT_MAX_BUFFER_BYTES = 64 * 1024 * 1024
-
-_MAX_TOOL_INPUT_CHARS = 200
 
 
 def claude_cli() -> str | None:
@@ -133,136 +132,127 @@ def resolve_model(name: str | None, settings: Settings) -> str:
     return CLAUDE_MODELS.get(alias.lower(), alias)
 
 
+def claude_context(task: Task, settings: Settings) -> AgentContext:
+    """Everything a Claude subagent for `task` is started with."""
+    servers = {}
+    if settings.google_workspace_mcp:
+        servers["google"] = google_mcp_server_config(settings)
+    return AgentContext.build(
+        task,
+        settings,
+        auth=CLAUDE_AUTH,
+        model=resolve_model(task.model, settings),
+        mcp_servers=servers,
+    )
+
+
 def build_options(
-    task: Task, settings: Settings, *, resume: str | None = None
+    task: Task,
+    settings: Settings,
+    *,
+    resume: str | None = None,
+    context: AgentContext | None = None,
 ) -> ClaudeAgentOptions:
-    """The Agent SDK options for one task: permissions, tools, model, prompt suffix."""
+    """The Agent SDK options for one task: permissions, tools, model, prompt suffix.
+
+    `context` is the task's resolved `AgentContext`, when the caller already has it.
+    """
+    return _options(context or claude_context(task, settings), settings, resume)
+
+
+def _options(context: AgentContext, settings: Settings, resume: str | None) -> ClaudeAgentOptions:
     options: dict[str, Any] = {
         "permission_mode": "bypassPermissions",
-        "cwd": str(workspace_dir(task, settings)),
+        "cwd": str(context.cwd),
         "setting_sources": ["user", "project"],
         "system_prompt": {
             "type": "preset",
             "preset": "claude_code",
-            "append": render_subagent_suffix(
-                task, slack_mcp_server=settings.slack_mcp_server, owner=settings.owner_label
-            ),
+            "append": context.instructions,
         },
-        "model": resolve_model(task.model, settings),
+        "model": context.model,
         "max_turns": settings.subagent_max_turns,
         "max_budget_usd": settings.subagent_max_budget_usd,
         "resume": resume,
         "max_buffer_size": SUBAGENT_MAX_BUFFER_BYTES,
     }
-    if settings.google_workspace_mcp:
-        options["mcp_servers"] = {"google": google_mcp_server_config(settings)}
+    if context.mcp_servers:
+        options["mcp_servers"] = dict(context.mcp_servers)
         options["allowed_tools"] = list(GOOGLE_MCP_TOOLS)
     # With neither key nor token set, the spawned CLI falls back to the user's stored
     # Claude subscription login — the default, so subagents don't bill per token.
-    if env := child_env(resolve_auth(CLAUDE_AUTH, settings, probe=False)):
+    if env := child_env(context.auth):
         options["env"] = env
     return ClaudeAgentOptions(**options)
 
 
-# ---------------------------------------------------------------------------- progress
+# ----------------------------------------------------------------------------- adapter
 
 
+def claude_usage(usage: Mapping[str, Any] | None) -> TokenUsage | None:
+    """The SDK's usage as a `TokenUsage`: its `input_tokens` are the uncached ones only."""
+    if not usage:
+        return None
+    cached = int(usage.get("cache_read_input_tokens") or 0)
+    written = int(usage.get("cache_creation_input_tokens") or 0)
+    return TokenUsage(
+        input_tokens=int(usage.get("input_tokens") or 0) + written + cached,
+        output_tokens=int(usage.get("output_tokens") or 0),
+        cached_input_tokens=cached,
+    )
 
-def _tool_line(block: ToolUseBlock) -> str:
-    """A short, loggable one-liner for a tool call."""
-    try:
-        arguments = json.dumps(block.input, default=str)
-    except (TypeError, ValueError):  # pragma: no cover - json.dumps(default=str) rarely fails
-        arguments = str(block.input)
-    return f"[tool] {block.name} {arguments[:_MAX_TOOL_INPUT_CHARS]}"
 
+class ClaudeAdapter:
+    """One `ClaudeSDKClient` conversation, as the events `AdapterSession` runs on."""
 
-# ------------------------------------------------------------------------- real runner
-
-
-class ClaudeAgentSession(AgentSession):
-    """One `ClaudeSDKClient` conversation, driven message by message."""
-
-    def __init__(self, client: SdkClient) -> None:
+    def __init__(self, client: SdkClient, *, secrets: Iterable[str | None] = ()) -> None:
         self._client = client
+        self.secrets = list(secrets)
 
-    async def run(self, prompt: str, *, on_progress: Callable[[str], Any]) -> RunResult:
-        """Send `prompt` and consume the reply stream until the agent's turn is done."""
-        texts: list[str] = []
-        result_text = ""
-        session_id: str | None = None
-        cost_usd: float | None = None
-        error: str | None = None
-        ok = True
-        try:
-            await self._client.query(prompt)
-            async for message in self._client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            text = block.text.strip()
-                            if not text:
-                                continue
-                            texts.append(text)
-                            await emit_progress(on_progress, text)
-                        elif isinstance(block, ToolUseBlock):
-                            await emit_progress(on_progress, _tool_line(block))
-                elif isinstance(message, ResultMessage):
-                    session_id = message.session_id
-                    cost_usd = message.total_cost_usd
-                    result_text = (message.result or "").strip()
-                    if message.is_error:
-                        ok = False
-                        error = result_text or message.subtype
-        except Exception as exc:
-            log.exception("subagent turn failed")
-            final_text = result_text or "\n\n".join(texts)
-            return RunResult(
-                ok=False,
-                final_text=final_text,
-                spoken_summary=failure_summary(str(exc)),
-                session_id=session_id,
-                cost_usd=cost_usd,
-                error=f"{type(exc).__name__}: {exc}",
-            )
+    async def turn(self, prompt: str) -> AsyncIterator[AgentEvent]:
+        await self._client.query(prompt)
+        async for message in self._client.receive_response():
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        yield Text(block.text)
+                    elif isinstance(block, ToolUseBlock):
+                        yield ToolCall(block.name, block.input)
+            elif isinstance(message, ResultMessage):
+                yield SessionId(message.session_id)
+                result = (message.result or "").strip() or None
+                yield Done(
+                    ok=not message.is_error,
+                    result_text=result,
+                    error=(result or message.subtype) if message.is_error else None,
+                    usage=claude_usage(message.usage),
+                    cost_usd=message.total_cost_usd,
+                )
 
-        final_text = result_text or (texts[-1] if texts else "")
-        restart_reason = extract_restart_request(final_text) if ok else None
-        if ok or final_text:
-            spoken_summary = extract_spoken_summary(final_text)
-        else:  # errored with nothing to summarise
-            spoken_summary = failure_summary(error)
-        return RunResult(
-            ok=ok,
-            final_text=final_text,
-            spoken_summary=spoken_summary,
-            session_id=session_id,
-            cost_usd=cost_usd,
-            error=error,
-            restart_reason=restart_reason,
-        )
-
-    async def send(self, text: str) -> None:
-        """Queue a follow-up message into the live conversation."""
-        await self._client.query(text)
+    async def steer(self, text: str) -> None:
+        raise SteerUnavailable("claude takes follow-ups as a resumed run")
 
     async def interrupt(self) -> None:
-        """Interrupt the current turn; a client that refuses is only logged."""
-        try:
-            await self._client.interrupt()
-        except Exception:
-            log.exception("interrupting the subagent failed")
+        await self._client.interrupt()
 
     async def close(self) -> None:
-        """Disconnect the client; safe to call more than once."""
-        try:
-            await self._client.disconnect()
-        except Exception:
-            log.exception("disconnecting the subagent failed")
+        await self._client.disconnect()
 
 
-class ClaudeAgentRunner(AgentRunner):
+class ClaudeAgentSession(AdapterSession):
+    """A `ClaudeSDKClient` conversation as an `AgentSession` (spec §3.2 name)."""
+
+    def __init__(self, client: SdkClient) -> None:
+        super().__init__(ClaudeAdapter(client))
+
+
+# ------------------------------------------------------------------------------ runner
+
+
+class ClaudeAgentRunner(AdapterRunner):
     """Opens real Agent SDK conversations (`client_factory` is injected in tests)."""
+
+    name = "claude"
 
     def __init__(
         self,
@@ -270,26 +260,18 @@ class ClaudeAgentRunner(AgentRunner):
         *,
         client_factory: Callable[[ClaudeAgentOptions], SdkClient] | None = None,
     ) -> None:
-        self._settings = settings
+        super().__init__(settings)
         self._client_factory = client_factory or _default_client_factory
 
-    async def open(self, task: Task, *, resume: str | None = None) -> AgentSession:
-        """Connect a client for `task`; a failure to connect propagates to the caller."""
-        options = build_options(task, self._settings, resume=resume)
+    def context(self, task: Task) -> AgentContext:
+        return claude_context(task, self.settings)
+
+    async def connect(self, context: AgentContext, resume: str | None) -> ClaudeAdapter:
+        options = _options(context, self.settings, resume)
         client = self._client_factory(options)
         await client.connect()
-        log.info(
-            "subagent opened for task %s (%s, model=%s, cwd=%s, resume=%s)",
-            task.id,
-            task.kind,
-            options.model,
-            options.cwd,
-            resume,
-        )
-        return ClaudeAgentSession(client)
+        return ClaudeAdapter(client, secrets=context.secrets)
 
 
 def _default_client_factory(options: ClaudeAgentOptions) -> SdkClient:
     return ClaudeSDKClient(options)
-
-
