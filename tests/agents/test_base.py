@@ -10,6 +10,7 @@ from jarvis.agents.base import (
     NO_SUMMARY,
     FakeAgentRunner,
     RunResult,
+    SteerUnavailable,
     extract_restart_request,
     extract_spoken_summary,
     render_subagent_suffix,
@@ -141,7 +142,7 @@ async def test_fake_runner_calls_a_script_with_the_task_and_resume():
 
 
 async def test_fake_session_records_follow_ups_interrupts_and_close():
-    runner = FakeAgentRunner()
+    runner = FakeAgentRunner(steer=True)
     session = await runner.open(make_task())
 
     await session.send("and also this")
@@ -151,6 +152,22 @@ async def test_fake_session_records_follow_ups_interrupts_and_close():
     assert session.sent == ["and also this"]
     assert session.interrupts == 1
     assert session.closed is True
+
+
+async def test_a_fake_that_cannot_steer_refuses_like_a_real_agent_would():
+    session = await FakeAgentRunner().open(make_task())
+
+    with pytest.raises(SteerUnavailable):
+        await session.send("and also this")
+
+    assert session.sent == []
+
+
+async def test_a_fake_steer_can_fail_for_real():
+    session = await FakeAgentRunner(steer=RuntimeError("pipe broke")).open(make_task())
+
+    with pytest.raises(RuntimeError, match="pipe broke"):
+        await session.send("and also this")
 
 
 async def test_fake_session_interrupt_can_end_the_turn():

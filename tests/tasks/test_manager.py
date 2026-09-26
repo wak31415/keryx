@@ -6,6 +6,7 @@ no test may wait longer than `WAIT` seconds for anything.
 """
 
 import asyncio
+import logging
 import stat
 import threading
 from dataclasses import dataclass
@@ -421,6 +422,98 @@ async def test_followup_on_a_running_task_is_queued_and_resumed_after_the_turn(m
     # One task, one announcement: the intermediate result is never published.
     assert harness.events.of(TaskStarted) == [TaskStarted(task.id)]
     assert harness.events.of(TaskCompleted) == [TaskCompleted(task.id, "I finished the task.")]
+
+
+async def test_a_followup_steers_a_running_turn_that_can_take_it(make_harness, caplog):
+    """Codex takes a follow-up into the turn it is running: no re-run, one announcement."""
+    caplog.set_level(logging.INFO, logger="jarvis.tasks.manager")
+    harness = make_harness(FakeAgentRunner(delay_s=SLOW, steer=True))
+
+    task = await dispatch(harness.manager)
+    await wait_for_status(harness.manager, task.id, TaskStatus.RUNNING)
+    returned = await harness.manager.followup(task.id, "also check the weather")
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert returned.status is TaskStatus.RUNNING
+    assert harness.runner.sessions[0].sent == ["also check the weather"]
+    assert len(harness.runner.opened) == 1
+    assert finished.status is TaskStatus.DONE
+    assert harness.events.of(TaskCompleted) == [TaskCompleted(task.id, "I finished the task.")]
+    assert "[followup] also check the weather" in harness.log_text(task.id)
+    assert f"[followup steered] task {task.id}" in caplog.text
+
+
+async def test_a_steer_that_fails_for_real_is_the_followups_error_not_a_second_delivery(
+    make_harness,
+):
+    """It may have landed: re-running it as well could do the thing twice."""
+    harness = make_harness(FakeAgentRunner(delay_s=SLOW, steer=RuntimeError("pipe broke")))
+
+    task = await dispatch(harness.manager)
+    await wait_for_status(harness.manager, task.id, TaskStatus.RUNNING)
+    with pytest.raises(RuntimeError, match="pipe broke"):
+        await harness.manager.followup(task.id, "also check the weather")
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert len(harness.runner.opened) == 1
+
+
+async def test_a_followup_after_the_last_drain_still_runs(make_harness, monkeypatch):
+    """The turn is over and the queue was empty, but the row still says running: a
+    follow-up now must not be queued into a drain that has already happened."""
+    harness = make_harness(FakeAgentRunner(delay_s=0.01))
+    drained, gate = asyncio.Event(), asyncio.Event()
+    drain = harness.manager._run_live_followups
+
+    async def drain_then_wait(task, result):
+        result = await drain(task, result)
+        if not drained.is_set():
+            drained.set()
+            await gate.wait()
+        return result
+
+    monkeypatch.setattr(harness.manager, "_run_live_followups", drain_then_wait)
+    task = await dispatch(harness.manager)
+    await asyncio.wait_for(drained.wait(), WAIT)
+
+    await harness.manager.followup(task.id, "and the tides")
+    gate.set()
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert finished.status is TaskStatus.DONE
+    assert harness.runner.sessions[1].prompts == ["Follow-up from the user:\n- and the tides"]
+    assert harness.events.of(TaskCompleted) == [TaskCompleted(task.id, "I finished the task.")]
+
+
+async def test_a_followup_just_after_the_row_is_done_waits_for_the_run_to_tidy_up(
+    make_harness, monkeypatch
+):
+    """The row is `done` but the run is still closing its session. Restarting underneath
+    it would let its clean-up drop the new run's prompt and wake `wait_for` too early."""
+    harness = make_harness(FakeAgentRunner(delay_s=SLOW))
+    closing, gate = asyncio.Event(), asyncio.Event()
+    close = harness.manager._close_session
+
+    async def slow_first_close(task_id):
+        if not closing.is_set():
+            closing.set()
+            await gate.wait()
+        await close(task_id)
+
+    monkeypatch.setattr(harness.manager, "_close_session", slow_first_close)
+    task = await dispatch(harness.manager)
+    await asyncio.wait_for(closing.wait(), WAIT)
+    assert (await harness.manager.get(task.id)).status is TaskStatus.DONE
+
+    followup = asyncio.create_task(harness.manager.followup(task.id, "one more thing"))
+    await asyncio.sleep(0.05)
+    gate.set()
+    await asyncio.wait_for(followup, WAIT)
+    finished = await harness.manager.wait_for(task.id, timeout=WAIT)
+
+    assert finished.status is TaskStatus.DONE
+    assert harness.runner.sessions[1].prompts == ["one more thing"]
+    assert len(harness.events.of(TaskCompleted)) == 2
 
 
 async def test_several_live_followups_are_joined_into_one_resumed_run(make_harness):

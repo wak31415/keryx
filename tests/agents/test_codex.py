@@ -295,6 +295,26 @@ async def test_there_is_nothing_to_steer_before_or_after_a_turn(settings):
         await session.send("too late")
 
 
+async def test_a_steer_the_moment_the_turn_is_done_is_refused_not_sent(settings):
+    """`Done` is yielded with the turn already forgotten: nothing is sent into a turn the
+    server has closed, so the manager re-runs with the text instead."""
+    turn = FakeTurn(notifications("run"))
+    codex = FakeCodex(turn)
+    runner = CodexAgentRunner(settings, client_factory=Factory(codex), login=no_login)
+    adapter = await runner.connect(runner.context(make_task()), None)
+
+    events = adapter.turn("go")
+    async for event in events:
+        if type(event).__name__ == "Done":
+            with pytest.raises(SteerUnavailable):
+                await adapter.steer("too late")
+            break
+    await events.aclose()
+    await adapter.close()
+
+    assert turn.steered == []
+
+
 @pytest.mark.parametrize(
     "error",
     [

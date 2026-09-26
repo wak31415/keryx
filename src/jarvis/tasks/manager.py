@@ -12,11 +12,12 @@ re-run will send (`_resume_pending`) and the follow-ups that arrived mid-turn
 (`_live_followups`). The event is created at dispatch and stays set after a terminal
 state, so a late waiter returns immediately.
 
-A follow-up to a *running* task is never pushed into the open turn: `run()` has already
-stopped at the first result and the SDK's mid-turn `query()` semantics are unverified
-(spec §3.3 ruling), so the text is queued and becomes the prompt of an immediate resumed
-run inside the same semaphore slot. Only the last run of that chain is published, so one
-request stays one announcement.
+A follow-up to a *running* task goes straight into its turn when the agent can take it
+(`AgentSession.send`, Codex). When it cannot — Claude, or a turn that has just ended — the
+text is queued and becomes the prompt of an immediate resumed run inside the same semaphore
+slot (spec §3.3). Only the last run of that chain is published, so one request stays one
+announcement. A per-task lock (`_locks`) makes taking a follow-up in and closing the row out
+one at a time, so a follow-up can never land in a queue nobody will read again.
 
 `cancel()` cannot rely on cancelling the asyncio task alone: interrupting a live session
 is itself what ends the agent's turn, so `run()` typically returns a (useless) result
@@ -188,6 +189,7 @@ class TaskManager:
         self._cancel_requested: set[int] = set()
         self._resume_pending: dict[int, str] = {}
         self._live_followups: dict[int, list[str]] = {}
+        self._locks: dict[int, asyncio.Lock] = {}
         settings.ensure_dirs()
 
     # --- lifecycle -------------------------------------------------------
@@ -381,16 +383,23 @@ class TaskManager:
         # queued are all included.
         prompt = self._resume_pending.pop(task_id, None) or build_prompt(task)
         result = await self._run_turn(task_id, session, prompt)
-        result = await self._run_live_followups(task, result)
-
-        if task_id in self._cancel_requested:
-            # `interrupt()` ended the turn: the result is the wreckage of a cancel, not an
-            # outcome. Record the cancel and publish nothing, exactly as if the asyncio
-            # task's own cancellation had landed first.
-            log.info("task %s was cancelled while running; discarding the result", task_id)
-            await self._mark_cancelled(task_id)
+        while True:
+            result = await self._run_live_followups(task, result)
+            # Under the lock a follow-up is either already queued — and runs, below — or
+            # waits, and then finds the row terminal and restarts it.
+            async with self._lock(task_id):
+                if self._live_followups.get(task_id) and task_id not in self._cancel_requested:
+                    continue
+                if task_id in self._cancel_requested:
+                    # `interrupt()` ended the turn: the result is the wreckage of a cancel,
+                    # not an outcome. Record the cancel and publish nothing, exactly as if
+                    # the asyncio task's own cancellation had landed first.
+                    log.info("task %s was cancelled while running; discarding it", task_id)
+                    await self._mark_cancelled(task_id)
+                    return
+                event = await self._finish(task, result)
+            await self._bus.publish(event)
             return
-        await self._finish(task, result)
 
     async def _run_live_followups(self, task: Task, result: RunResult) -> RunResult:
         """Re-run `task` for the follow-ups that arrived while it was running (spec §3.3).
@@ -445,8 +454,8 @@ class TaskManager:
                 error=f"timed out after {limit:.0f}s (SUBAGENT_TIMEOUT_S)",
             )
 
-    async def _finish(self, task: Task, result: RunResult) -> None:
-        """Write the report, close the row out as `done`/`failed` and publish the event."""
+    async def _finish(self, task: Task, result: RunResult) -> TaskCompleted | TaskFailed:
+        """Write the report and close the row out as `done`/`failed`; the event to publish."""
         fields: dict[str, object] = {
             "summary": result.spoken_summary,
             "report_path": str(self._write_report(task, result)),
@@ -464,12 +473,11 @@ class TaskManager:
         if result.ok:
             await self._store.update(task.id, status=TaskStatus.DONE, error=None, **fields)
             log.info("task %s done", task.id)
-            await self._bus.publish(TaskCompleted(task.id, result.spoken_summary))
-        else:
-            error = result.error or UNKNOWN_ERROR
-            await self._store.update(task.id, status=TaskStatus.FAILED, error=error, **fields)
-            log.warning("task %s failed: %s", task.id, error)
-            await self._bus.publish(TaskFailed(task.id, error))
+            return TaskCompleted(task.id, result.spoken_summary)
+        error = result.error or UNKNOWN_ERROR
+        await self._store.update(task.id, status=TaskStatus.FAILED, error=error, **fields)
+        log.warning("task %s failed: %s", task.id, error)
+        return TaskFailed(task.id, error)
 
     async def _fail(self, task_id: int, error: str) -> None:
         """Mark a task failed after an exception escaped the run."""
@@ -628,26 +636,58 @@ class TaskManager:
     # --- follow-ups and cancel -------------------------------------------
 
     async def followup(self, task_id: int, text: str) -> Task:
-        """Add `text` to a task: queued for its next run, or folded into its description."""
-        task = await self._store.get(task_id)
-        if task is None:
-            raise KeyError(task_id)
-        if task.status is TaskStatus.CANCELLED:
-            raise ValueError("task is cancelled")
+        """Add `text` to a task: into its running turn, queued for its next run, or folded
+        into its description.
 
-        if task.status is TaskStatus.QUEUED:
-            updated = await self._queue_followup(task, text)
-        elif task.status is TaskStatus.RUNNING:
-            if task_id not in self._live:
-                raise ValueError("task is starting up; try the follow-up again in a moment")
-            self._live_followups.setdefault(task_id, []).append(text)
-            log.info("[followup queued] task %s re-runs when this turn ends", task_id)
-            updated = task
-        else:
-            updated = await self._restart(task, text)
+        Raises whatever a steer that failed for real raised: the text may have landed, so
+        it is not delivered a second way behind the caller's back.
+        """
+        async with self._lock(task_id):
+            task = await self._store.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task.status is TaskStatus.CANCELLED:
+                raise ValueError("task is cancelled")
+
+            if task.status is TaskStatus.QUEUED:
+                updated = await self._queue_followup(task, text)
+            elif task.status is TaskStatus.RUNNING:
+                session = self._live.get(task_id)
+                if session is None:
+                    raise ValueError("task is starting up; try the follow-up again in a moment")
+                if not await self._steer(task_id, session, text):
+                    self._live_followups.setdefault(task_id, []).append(text)
+                    log.info("[followup queued] task %s re-runs when this turn ends", task_id)
+                updated = task
+            else:
+                await self._settle(task_id)
+                updated = await self._restart(task, text)
 
         self._append_log(task_id, f"[followup] {text}")
         return updated
+
+    def _lock(self, task_id: int) -> asyncio.Lock:
+        """The lock that takes follow-ups in and closes the row out one at a time."""
+        return self._locks.setdefault(task_id, asyncio.Lock())
+
+    async def _steer(self, task_id: int, session: AgentSession, text: str) -> bool:
+        """Put `text` into the running turn; False when the agent refused it undelivered."""
+        try:
+            await session.send(text)
+        except NotImplementedError:  # `SteerUnavailable`: no live steer, or the turn is over
+            return False
+        log.info("[followup steered] task %s: into the running turn", task_id)
+        return True
+
+    async def _settle(self, task_id: int) -> None:
+        """Let a run whose row has just gone terminal finish tidying up.
+
+        Its clean-up forgets the task's pending prompt and wakes `wait_for`; a restart
+        underneath it would lose the one and wake the other too early.
+        """
+        runner = self._tasks.get(task_id)
+        if runner is not None and runner is not asyncio.current_task() and not runner.done():
+            await asyncio.wait({runner}, timeout=CLOSE_TIMEOUT_S + CANCEL_TIMEOUT_S)
 
     async def _queue_followup(self, task: Task, text: str) -> Task:
         """Fold `text` into a queued task: into a pending resume prompt, else its description.

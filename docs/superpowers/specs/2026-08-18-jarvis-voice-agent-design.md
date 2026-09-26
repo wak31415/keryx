@@ -306,7 +306,7 @@ class TaskStore:
 
 class AgentSession(Protocol):                                     # one live subagent conversation
     async def run(self, prompt: str, *, on_progress: Callable[[str], Any]) -> RunResult   # one turn to completion; ok=False on error
-    async def send(self, text: str) -> None                       # follow-up while running (queued into the live conversation)
+    async def send(self, text: str) -> None                       # into the running turn; SteerUnavailable = refused, nothing delivered (2026-09-26)
     async def interrupt(self) -> None
     async def close(self) -> None
 
@@ -751,7 +751,16 @@ class SessionRegistry:
   finishes, the task is immediately re-run with `resume` and the queued follow-ups as the
   prompt (no completion announcement for the intermediate result). (Ruling 2026-08-19: the
   SDK's mid-turn `query()` semantics are unverified, so `AgentSession.send()` is not used
-  for live follow-ups.) PIN gate applies to `send_followup`/`cancel_task` on destructive
+  for live follow-ups.) *Amended 2026-09-26:* a running task's follow-up is first offered to
+  `AgentSession.send()`, which steers it into the running turn where the agent can take it —
+  Codex, by `turn/steer`, verified mid-command and while the final answer streams. Claude
+  still refuses (`SteerUnavailable`): a `query()` after the final text but before the
+  `ResultMessage` starts a second turn that `receive_response()` never reads (verified), so
+  the 2026-08-19 ruling stands for it. A refusal — no live steer, or a turn that has just
+  ended — queues the text as before; any other failure is the follow-up's error and is
+  never also queued, because the text may have landed. Taking a follow-up in and closing
+  the row out hold one per-task lock, and a restart waits for the finished run to tidy up,
+  so no follow-up lands where nothing will read it. PIN gate applies to `send_followup`/`cancel_task` on destructive
   kinds exactly as to `dispatch_task`.
 - **Concurrency**: `MAX_CONCURRENT_TASKS` (default 3); overflow tasks stay `queued`. *Amended 2026-09-26:* `jarvis serve` gives the loop a default executor of `max(32, 4 × MAX_CONCURRENT_TASKS + 16)` threads (`tasks.manager.executor_workers`), because each running Codex turn parks two of them for its whole length and a cancel, a steer and every SQLite call need their own.
 - **Local session end**: `end_session` tool, or `LOCAL_SILENCE_TIMEOUT` (30 s without user speech

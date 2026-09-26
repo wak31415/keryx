@@ -132,11 +132,11 @@ class AgentSession(Protocol):
         ...
 
     async def send(self, text: str) -> None:
-        """Queue a follow-up into the running conversation.
+        """Put a follow-up into the turn that is running now (spec §3.3).
 
-        Part of the protocol, but the task manager never calls it: `run()` returns at the
-        first result and the SDK's mid-turn `query()` semantics are unverified, so live
-        follow-ups become a resumed run instead (spec §3.3 ruling).
+        `SteerUnavailable` means it was refused and nothing was delivered — the agent has
+        no live steer (Claude), or its turn has just ended — and the task manager re-runs
+        with the text instead. Any other exception is a steer that may have landed.
         """
         ...
 
@@ -363,6 +363,12 @@ class FakeAgentSession(AgentSession):
         return self._runner.next_result(self.task, self.resume)
 
     async def send(self, text: str) -> None:
+        """Steer when the runner says the agent can; refuse as one that cannot, otherwise."""
+        steer = self._runner.steer
+        if isinstance(steer, BaseException):
+            raise steer
+        if not steer:
+            raise SteerUnavailable("this fake agent has no live steer")
         self.sent.append(text)
 
     async def interrupt(self) -> None:
@@ -381,7 +387,9 @@ class FakeAgentRunner(AgentRunner):
     `results` is a list popped from the front (the last one repeats), a callable taking
     `(task, resume)`, or `None` for `DEFAULT_FAKE_RESULT` every time. `interrupt_ends_run`
     opts into the real session's interrupt semantics (see `FakeAgentSession.run`); it is
-    off by default, so an `interrupt()` merely gets counted.
+    off by default, so an `interrupt()` merely gets counted. `steer` is what `send()` does:
+    False refuses with `SteerUnavailable` (Claude), True takes the text (Codex), and an
+    exception is raised as a steer that failed for real.
     """
 
     def __init__(
@@ -391,8 +399,10 @@ class FakeAgentRunner(AgentRunner):
         delay_s: float = 0.0,
         progress: Iterable[str] | None = None,
         interrupt_ends_run: bool = False,
+        steer: bool | BaseException = False,
     ) -> None:
         self.delay_s = delay_s
+        self.steer = steer
         self.progress = list(progress or ())
         self.interrupt_ends_run = interrupt_ends_run
         self.opened: list[tuple[Task, str | None]] = []
