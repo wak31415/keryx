@@ -42,6 +42,7 @@ not dollars, so `RunResult.cost_usd` stays None: on the ChatGPT plan a call has 
 import asyncio
 import contextlib
 import hashlib
+import json
 import logging
 import os
 import re
@@ -325,6 +326,9 @@ class _SdkCodex(CodexClient):
         return await self._codex.thread_start(**self._unattended(options))
 
     async def thread_resume(self, thread_id: str, **options: Any) -> CodexThread:
+        # The reply need not carry the thread's history — the model keeps its context either
+        # way — and asking for it is deprecated for paginated threads (seen live).
+        options = {"include_turns": False, **options}
         return await self._codex.thread_resume(thread_id, **self._unattended(options))
 
     async def notices(self) -> AsyncIterator[Any]:
@@ -349,8 +353,16 @@ def open_codex(env: dict[str, str], cwd: Path) -> CodexClient:
 
 
 def _error_text(error: Any) -> str:
-    """A turn error as one line, without the URL, ray and request id a 4xx trails."""
+    """A turn error as one line: the provider's own message out of a JSON body it is quoted
+    as, and without the URL, ray and request id a 4xx trails."""
     text = (error.message or "").strip()
+    try:
+        body = json.loads(text)
+    except ValueError:
+        body = None
+    inner = body.get("error") if isinstance(body, dict) else None
+    if isinstance(inner, dict) and inner.get("message"):
+        text = str(inner["message"])
     if error.additional_details:
         text = f"{text}: {error.additional_details.strip()}"
     return text.split(", url:")[0]

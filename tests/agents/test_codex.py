@@ -28,6 +28,7 @@ from jarvis.agents.base import AgentOpenError, SteerUnavailable, TokenUsage
 from jarvis.agents.codex import (
     CODEX_MODELS,
     CodexAgentRunner,
+    _error_text,
     _tool_call,
     codex_cli,
     codex_cli_version,
@@ -539,6 +540,20 @@ async def test_an_mcp_secret_is_kept_out_of_a_failed_turn(settings, monkeypatch)
     assert "[redacted]" in result.error
 
 
+def test_a_provider_body_quoted_as_json_is_unwrapped_to_its_message():
+    """A 400 arrives as the provider's JSON body in `message` (seen live, 2026-09-26)."""
+    body = (
+        '{"type":"error","status":400,"error":{"type":"invalid_request_error",'
+        '"message":"The \'x\' model is not supported when using Codex with a ChatGPT account."}}'
+    )
+    error = SimpleNamespace(message=body, additional_details=None)
+
+    assert _error_text(error) == (
+        "The 'x' model is not supported when using Codex with a ChatGPT account."
+    )
+    assert _error_text(SimpleNamespace(message="[1, 2]", additional_details=None)) == "[1, 2]"
+
+
 def test_every_kind_of_tool_call_is_a_bounded_progress_line():
     assert _tool_call(SimpleNamespace(type="webSearch", query="moon")).arguments == "moon"
     dynamic = SimpleNamespace(type="dynamicToolCall", namespace="fs", tool="read", arguments={})
@@ -754,6 +769,7 @@ async def test_every_thread_runs_unattended_with_full_access(settings, monkeypat
     await client.close()
 
     [codex] = made
+    assert codex.calls[1][2]["include_turns"] is False  # no deprecated full-history reply
     assert codex.config.env == {"CODEX_API_KEY": ""}
     assert codex.config.cwd == str(tmp_path)
     assert codex.config.codex_bin is None  # the bundled binary, never one on PATH
