@@ -47,7 +47,7 @@ def run_section(ctx: SetupContext) -> None:
     ui.note("Call Jarvis from your phone, and have it call you back when work lands.")
     choice = ui.select(
         "Set up phone calls?",
-        [Choice("setup", "Set up phone calls"), Choice("skip", "Skip — the Mac's microphone only")],
+        [Choice("setup", "Set up phone calls"), Choice("skip", "Skip — no phone for now")],
         default="setup",
     )
     if choice == "skip":
