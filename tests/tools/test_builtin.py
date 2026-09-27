@@ -20,6 +20,8 @@ from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
 from jarvis.integrations.billing import BillingError, BillingReport
 from jarvis.integrations.cluster import MESSAGES, ClusterError, ClusterReport, GpuCounts, MyJobs
+from jarvis.integrations.gmail import MESSAGES as EMAIL_MESSAGES
+from jarvis.integrations.gmail import EmailError
 from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import TaskStatus
@@ -140,6 +142,7 @@ async def make_tools(tmp_path):
         cluster=None,
         approvals=None,
         agents=None,
+        email=None,
         **overrides,
     ) -> Harness:
         settings = Settings(
@@ -168,6 +171,7 @@ async def make_tools(tmp_path):
             cluster=cluster,
             approvals=approvals,
             agents=agents,
+            email=email,
         )
         harness = Harness(
             registry, manager, settings, store, agent_runner, StubSession(), inline_waits
@@ -476,6 +480,7 @@ def _everything(make_tools, **overrides):
         billing=billing_factory(a_report()),
         cluster=both_clusters(),
         approvals=approvals,
+        email=FakeEmail(),
         pin="123456",
         **overrides,
     )
@@ -2008,3 +2013,74 @@ async def test_the_recall_limit_is_clamped_to_something_speakable(make_tools):
     await harness.call("recall", {"query": "orchard", "limit": 99})
 
     assert recaller.queries[0][1] == MAX_RECALL_LIMIT
+
+
+# --- check_email -------------------------------------------------------------
+
+
+class FakeEmail:
+    """Stands in for `EmailReader`: records the question, answers or fails as told."""
+
+    def __init__(self, fail: EmailError | None = None) -> None:
+        self.fail = fail
+        self.asked: list[tuple[str, str | None, str | None]] = []
+
+    async def ask(self, question, *, query=None, day=None):
+        self.asked.append((question, query, day))
+        if self.fail is not None:
+            raise self.fail
+        return {"status": "ok", "scope": "search", "answer": "Ann needs the numbers.", "threads": 1}
+
+
+def test_check_email_is_only_offered_with_a_reader(make_tools):
+    assert "check_email" not in {s["name"] for s in make_tools().registry.schemas()}
+    schema = next(
+        s for s in make_tools(email=FakeEmail()).registry.schemas() if s["name"] == "check_email"
+    )
+    assert schema["parameters"]["required"] == ["question"]
+    assert schema["parameters"]["properties"]["day"]["enum"] == ["today", "yesterday"]
+
+
+async def test_check_email_hands_the_question_over_and_says_the_answer(make_tools):
+    email = FakeEmail()
+    tools = make_tools(email=email)
+
+    result = await tools.call(
+        "check_email",
+        {"question": "did Ann write?", "gmail_query": "from:ann", "day": "Yesterday"},
+    )
+
+    assert result["answer"] == "Ann needs the numbers."
+    assert email.asked == [("did Ann write?", "from:ann", "yesterday")]
+
+
+async def test_check_email_refuses_a_day_it_does_not_read_and_an_empty_ask(make_tools):
+    email = FakeEmail()
+    tools = make_tools(email=email)
+
+    older = await tools.call("check_email", {"question": "x", "day": "last week"})
+    empty = await tools.call("check_email", {})
+
+    assert "gmail_query" in older["error"]
+    assert "question is required" in empty["error"]
+    assert email.asked == []
+
+
+async def test_check_email_failing_is_a_status_and_a_sentence(make_tools):
+    tools = make_tools(email=FakeEmail(fail=EmailError("signed_out", "invalid_grant")))
+
+    result = await tools.call("check_email", {"question": "anything today?"})
+
+    assert result == {"status": "signed_out", "message": EMAIL_MESSAGES["signed_out"]}
+
+
+async def test_check_email_needs_the_pin_on_the_phone(make_tools):
+    email = FakeEmail()
+    tools = make_tools(email=email, pin="123456")
+
+    result = await tools.call(
+        "check_email", {"question": "x"}, channel="phone", caller="+15550001111", authorized=False
+    )
+
+    assert result["status"] == "pin_required"
+    assert email.asked == []

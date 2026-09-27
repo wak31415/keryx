@@ -1274,3 +1274,34 @@ def test_memory_path_prints_only_the_path(settings_stub):
 
     assert result.exit_code == 0, result.output
     assert result.output.strip() == str(memory_path(settings_stub.data_dir))
+
+
+def test_setup_gmail_prints_a_link_then_finishes_with_the_url(settings_stub, monkeypatch):
+    monkeypatch.setattr("jarvis.cli.start_signin", lambda settings: "https://accounts.example/x")
+    finished: list[str] = []
+    monkeypatch.setattr(
+        "jarvis.cli.finish_signin",
+        lambda settings, url: finished.append(url) or settings.data_dir / "gmail_token.json",
+    )
+
+    started = runner.invoke(app, ["setup-gmail"])
+    done = runner.invoke(app, ["setup-gmail", "--finish", "http://localhost:1/?code=x"])
+
+    assert started.exit_code == 0 and "https://accounts.example/x" in started.output
+    assert "--finish" in started.output
+    assert done.exit_code == 0 and "signed in" in done.output
+    assert finished == ["http://localhost:1/?code=x"]
+
+
+def test_setup_gmail_failing_says_why_and_exits_1(settings_stub, monkeypatch):
+    from jarvis.gmail_setup import GmailSetupError
+
+    def refuse(settings):
+        raise GmailSetupError("no Google OAuth client")
+
+    monkeypatch.setattr("jarvis.cli.start_signin", refuse)
+
+    result = runner.invoke(app, ["setup-gmail"])
+
+    assert result.exit_code == 1
+    assert "no Google OAuth client" in result.output

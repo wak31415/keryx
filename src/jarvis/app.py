@@ -39,6 +39,7 @@ from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
 from jarvis.integrations.billing import build_billing_reader
 from jarvis.integrations.cluster import build_cluster_stats
+from jarvis.integrations.gmail import build_email_reader
 from jarvis.integrations.slack import SlackWebApi, slack_credentials
 from jarvis.integrations.web_search import OpenAIWebSearch
 from jarvis.notify.notifier import Notifier
@@ -128,6 +129,9 @@ def build_app_state(settings: Settings) -> AppState:
         # None, and so no tool, until clusters are configured and the ssh guard is on
         # disk: which clusters exist is one machine's setup, never a default.
         cluster=build_cluster_stats(settings),
+        # None, and so no tool, until `jarvis setup-gmail` has signed in and the claude
+        # CLI is installed.
+        email=build_email_reader(settings),
         restarter=restart,
         recaller=Recaller(settings.data_dir, manager, pin=settings.pin),
         approvals=approvals,

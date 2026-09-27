@@ -28,7 +28,10 @@ VOICE_SYSTEM_PROMPT = "voice_system.md"
 #: placeholder each fills. A paragraph is spliced in only when the session actually has the
 #: tool: describing one it was not given is an invitation to call something that is not
 #: there.
-OPTIONAL_TOOL_PROMPTS = {"cluster_stats": ("cluster_stats_tool", "voice_tool_cluster_stats.md")}
+OPTIONAL_TOOL_PROMPTS = {
+    "cluster_stats": ("cluster_stats_tool", "voice_tool_cluster_stats.md"),
+    "check_email": ("check_email_tool", "voice_tool_check_email.md"),
+}
 #: The same rule inside a sentence: words that name a tool only some machines offer, by tool
 #: name, as the placeholder and what fills it when the session has the tool.
 OPTIONAL_TOOL_PHRASES = {"cluster_stats": ("cluster_phrase", "the cluster, ")}

@@ -10,7 +10,7 @@
   <a href="https://github.com/wak31415/jarvis-voice-agent/actions/workflows/ci.yml"><img src="https://github.com/wak31415/jarvis-voice-agent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache--2.0-6366f1.svg" alt="Apache-2.0"></a>
   <img src="https://img.shields.io/badge/python-3.12-6366f1.svg" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/coverage-95%25-22d3ee.svg" alt="Coverage 95%">
+  <img src="https://img.shields.io/badge/coverage-96%25-22d3ee.svg" alt="Coverage 96%">
 </p>
 
 Start hours of work in a short call. Ask Jarvis to research a question, change code, or run

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from jarvis.agents.registry import BACKENDS, auth_status, installed
+from jarvis.agents.registry import BACKENDS, auth_status, install_command, installed
 from jarvis.config import (
     DATA_DIR_MODE,
     OWNER_FALLBACK,
@@ -31,6 +31,7 @@ from jarvis.config import (
 )
 from jarvis.continuity.memory import memory_path, read_memory
 from jarvis.integrations import slack
+from jarvis.integrations.gmail import token_path
 from jarvis.logging_util import mask_number
 from jarvis.restart.service import INSTALLERS, candidate_target, resolve_target
 
@@ -110,6 +111,7 @@ def run_doctor_checks(
     checks.append(_memory_check(settings))
     checks.append(_projects_root_check(settings))
     checks.append(_cluster_check(settings))
+    checks.append(_email_check(settings))
     checks.append(_slack_check(settings))
     return checks
 
@@ -476,6 +478,30 @@ def _projects_root_check(settings: Settings) -> Check:
             severity="soft",
         )
     return Check("projects root", True, str(root), severity="soft")
+
+
+def _email_check(settings: Settings) -> Check:
+    """Is `check_email` offered: the same condition as `integrations.gmail.build_email_reader`.
+
+    Not signed in is a tick, like an unconfigured cluster: an optional tool. Signed in with
+    no claude CLI to summarise with is the one half-done state worth a warning.
+    """
+    if not token_path(settings).is_file():
+        return Check(
+            "email",
+            True,
+            "not signed in — check_email is not offered (`jarvis setup-gmail`)",
+            severity="soft",
+        )
+    if not installed("claude") or BACKENDS["claude"].find_cli() is None:
+        return Check(
+            "email",
+            False,
+            f"signed in, but the claude CLI is missing — `{install_command('claude')}`",
+            severity="soft",
+        )
+    model = f"{settings.email_model}, {settings.email_effort} effort"
+    return Check("email", True, f"check_email is offered ({model})", severity="soft")
 
 
 def _cluster_check(settings: Settings) -> Check:

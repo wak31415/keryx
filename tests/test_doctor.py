@@ -634,3 +634,34 @@ def test_a_formatted_check_carries_its_name_and_detail():
 
     assert "tunnel" in line
     assert "/usr/local/bin/cloudflared" in line
+
+
+def test_email_not_signed_in_is_fine_and_says_how(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["email"]
+
+    assert check.ok is True
+    assert "jarvis setup-gmail" in check.detail
+
+
+def test_email_signed_in_is_offered_with_its_model(healthy, monkeypatch):
+    from jarvis.integrations.gmail import token_path
+
+    token_path(healthy).write_text("{}")
+    with_agent(monkeypatch, "claude", cli="/bin/claude")
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["email"]
+
+    assert check.ok is True
+    assert check.detail == "check_email is offered (claude-opus-5-5, low effort)"
+
+
+def test_email_signed_in_without_the_claude_cli_is_a_warning(healthy, monkeypatch):
+    from jarvis.integrations.gmail import token_path
+
+    token_path(healthy).write_text("{}")
+    with_agent(monkeypatch, "claude", cli=None)
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["email"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "uv sync --extra claude" in check.detail

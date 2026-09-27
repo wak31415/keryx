@@ -190,6 +190,13 @@ class Settings(BaseSettings):
     #: whole wait — and it is a wait inside a phone call.
     cluster_query_timeout_s: float = 20.0
 
+    # Email (jarvis/integrations/gmail.py, behind the voice model's `check_email`). Offered
+    # once `jarvis setup-gmail` has signed in (read-only) and the claude CLI is installed.
+    # One model call per question, through that CLI on the Claude sign-in; low effort
+    # because the answer is waited for inside a call (measured: ~5 s end to end).
+    email_model: str = "claude-opus-5-5"
+    email_effort: Literal["low", "medium", "high"] = "low"
+
     # Twilio
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = Field(default=None, repr=False)

@@ -7,7 +7,7 @@ Realtime API and Claude Agent SDK subagents.
 
 - Install: `uv sync` (every coding agent, via the default `agents` group); one agent only:
   `uv sync --no-group agents --extra codex` (or `claude`); with pip, `jarvis[all|claude|codex]`
-- Run tests: `uv run pytest -q` (coverage: `uv run pytest -q --cov`, floor 95%)
+- Run tests: `uv run pytest -q` (coverage: `uv run pytest -q --cov`, floor 96%)
 - Lint: `uv run ruff check src tests`
 - Run the CLI: `uv run jarvis --help`
 - Check the machine's setup: `uv run jarvis doctor` (`--no-mic` where there is none)
@@ -34,7 +34,9 @@ Realtime API and Claude Agent SDK subagents.
   (it phones back when it is up again, and rings with a plain spoken alert — texting too,
   when `SMS_ENABLED` is on — if it never comes back);
   `uv run jarvis restart --status` for the last one, including what the logs said
-- One-off setup: `uv run jarvis download-models`, `uv run jarvis setup-google`
+- One-off setup: `uv run jarvis download-models`, `uv run jarvis setup-google`,
+  `uv run jarvis setup-gmail` (read-only sign-in for `check_email`; prints a link, then
+  `--finish '<redirect URL>'`, so it works with no browser on the machine)
 - Background service: `scripts/install-systemd.sh [--uninstall]` on Linux,
   `scripts/install-launchd.sh [--uninstall]` on macOS
 
@@ -80,7 +82,7 @@ remember:
 - **notify** — `notify/deliver.py` holds `announce_to_live_sessions` and `safe_send_sms`.
   The `can_text` gate is asserted there and nowhere else.
 - **integrations** — `integrations/` is one module per outside service (`billing`,
-  `cluster`, `slack`, `web_search`), each behind exactly one voice tool. The tool's
+  `cluster`, `gmail`, `slack`, `web_search`), each behind exactly one voice tool. The tool's
   *registration* goes in `tools/builtin_<domain>.py`; its *client* goes here.
 - **continuity** — `continuity/` is what survives the end of a call: `briefing`, `memory`
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
@@ -433,7 +435,7 @@ scope, so the test suite can run on a machine with no mic.
   `git log --grep '^Jarvis-Task:'` is everything the owner asked for out loud rather than
   typed — the one thing `git log` cannot otherwise recover.
 - Clean and minimal over clever; TDD, with `uv run pytest -q` and
-  `uv run ruff check src tests` pristine before a commit. Coverage has a floor (95%) and it
+  `uv run ruff check src tests` pristine before a commit. Coverage has a floor (96%) and it
   is a ratchet: raise it when the measured number moves up, never lower it to pass.
 - `data_dir` is 0700 and the files under it 0600 (`config.secure_dir` / `secure_file`).
   Anything new that writes there goes through them.

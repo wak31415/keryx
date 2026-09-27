@@ -30,7 +30,8 @@ the digest at the top of your next call depends on it.
 because they are worked examples of the shape rather than because you need them.
 `cluster_stats` reads Slurm clusters through an ssh guard you write yourself, and is not
 offered at all until `CLUSTERS` and `CLUSTER_SSH_GUARD` are set;
-`check_billing` reads an API bill; the approval pair is for someone who uses Claude Code
+`check_billing` reads an API bill; `check_email` needs `jarvis setup-gmail` (read-only) and the
+`claude` extra, and waits behind the PIN; the approval pair is for someone who uses Claude Code
 on the same machine. Read them for the pattern, then delete them and write your own.
 
 | Example tool | What it does | Why it is a tool and not a task |
@@ -38,6 +39,7 @@ on the same machine. Read them for the pattern, then delete them and write your 
 | `send_to_slack` | send a written message to the Slack DM — only when asked | the answer belongs somewhere you can read later |
 | `check_billing` | what the month has cost, read off the provider's billing API | two numbers, wanted mid-sentence |
 | `cluster_stats` | what is free and what is running on the Slurm clusters | same — "is my job still going" is a question, not a job |
+| `check_email` | answer a question about your email: a whole day as a few spoken lines (each thread once, answered threads left out), or a Gmail search with the newest few matches read in full | a task took minutes to read the inbox; this is one Gmail pass and one model call, about five seconds |
 | `list_pending_approvals` | what a Claude Code session on the desktop is waiting on | you are being asked, not asking |
 | `answer_approval` | read that prompt out and offer the keypad — it cannot approve anything itself | the keypad decides, never the transcription |
 <!-- tools:end -->

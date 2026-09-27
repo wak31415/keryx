@@ -32,6 +32,7 @@ from jarvis.config import Settings
 from jarvis.continuity.recall import Recaller
 from jarvis.inline_waits import InlineWaits
 from jarvis.integrations.cluster import ClusterQuerier
+from jarvis.integrations.gmail import EmailReader
 from jarvis.integrations.slack import SlackSender
 from jarvis.integrations.web_search import WebSearcher
 from jarvis.restart.coordinator import RestartCoordinator
@@ -59,21 +60,25 @@ def register_builtin_tools(
     billing: BillingFactory | None = None,
     cluster: ClusterQuerier | None = None,
     agents: Sequence[str] | None = None,
+    email: EmailReader | None = None,
 ) -> None:
     """Register every tool the voice model has, bound to this process's task manager.
 
     `agents` is the coding agents `dispatch_task` may name, the default first; None is the
     default alone, which leaves the tool without an `agent` parameter.
 
-    `web_search`, `send_to_slack`, `restart_service`, `recall`, `check_billing`,
-    `cluster_stats` and the two approval tools are registered only when a `searcher` /
-    `slack` / `restarter` / `recaller` / `billing` / `cluster` / `approvals` is supplied,
+    `web_search`, `send_to_slack`, `check_email`, `restart_service`, `recall`,
+    `check_billing`, `cluster_stats` and the two approval tools are registered only when a
+    `searcher` / `slack` / `email` / `restarter` / `recaller` / `billing` / `cluster` /
+    `approvals` is supplied,
     so a process without one simply does not offer that tool. Registering
     `send_to_slack` only makes it *available*: whether it may be called is the voice
     model's decision, and both its description and the system prompt confine that to the
     turns where the owner explicitly asked for something on Slack.
     """
-    register_comms_tools(registry, settings=settings, slack=slack, searcher=searcher)
+    register_comms_tools(
+        registry, settings=settings, slack=slack, searcher=searcher, email=email
+    )
     register_billing_tools(registry, billing=billing, cluster=cluster)
     register_task_tools(
         registry,

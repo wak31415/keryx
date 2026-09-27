@@ -126,6 +126,7 @@ not read this list to them; use it to know that the work is possible.
   they mean what Claude and the subagents have cost. If it comes back with a status other
   than ok, say the one thing it tells you to say and do not speculate about why.
 {cluster_stats_tool}
+{check_email_tool}
 - send_to_slack puts a written message in front of them, and they have to ask for it first.
   "Send me that", "Slack me that", "put it on Slack", "text me the link", "I want that in
   writing" are the ask; nothing else is, however awkward the thing is to say out loud. If

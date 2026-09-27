@@ -88,9 +88,10 @@ def test_docs_tools_documents_exactly_the_tools_that_are_registered():
     assert registered - documented == set(), "a registered tool is missing from docs/tools.md"
 
 
-#: Snake-case words in the prompt's "Your tools" section that are not tool names: two
-#: tool *arguments* the model has to pass by name, and the status a gated tool returns.
-NOT_TOOLS = frozenset({"wait_seconds", "task_id", "pin_required"})
+#: Snake-case words in the prompt's "Your tools" section that are not tool names: three
+#: tool *arguments* the model has to pass by name, a Gmail search operator it is shown as
+#: an example, and the status a gated tool returns.
+NOT_TOOLS = frozenset({"wait_seconds", "task_id", "gmail_query", "newer_than", "pin_required"})
 
 
 def prompt_tool_names() -> set[str]:

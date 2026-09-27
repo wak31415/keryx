@@ -27,6 +27,7 @@ from jarvis.continuity.memory import memory_path, read_memory
 from jarvis.continuity.retention import cutoff_for, prune, prune_with
 from jarvis.doctor import format_check, has_hard_failure, run_doctor_checks
 from jarvis.events import EventBus
+from jarvis.gmail_setup import GmailSetupError, finish_signin, start_signin
 from jarvis.google_setup import GoogleSetupError, run_google_setup
 from jarvis.local_runner import LocalRunner
 from jarvis.logging_util import mask_number
@@ -936,6 +937,37 @@ def setup_agent(
         raise typer.Exit(2) from None
     if code:
         raise typer.Exit(code)
+
+
+@app.command("setup-gmail")
+def setup_gmail(
+    finish: Annotated[
+        str | None,
+        typer.Option("--finish", help="The URL you landed on after approving, in quotes."),
+    ] = None,
+) -> None:
+    """Sign in to Gmail, read-only, for the check_email voice tool. Two steps.
+
+    Run it once for a link; open it on any device and approve; you land on a page that
+    does not load (http://localhost:1/...). Then run it again with --finish and that whole
+    URL, in single quotes. A restart makes the voice model offer the tool.
+    """
+    settings = _configure_readonly()
+    try:
+        if finish is None:
+            url = start_signin(settings)
+            typer.echo("Open this link on any device and approve read-only Gmail access:\n")
+            typer.echo(url)
+            typer.echo(
+                "\nYou will land on a page that does not load. Copy its whole address, then run"
+                "\n  jarvis setup-gmail --finish '<that address>'"
+            )
+            return
+        path = finish_signin(settings, finish)
+    except GmailSetupError as exc:
+        typer.echo(f"gmail sign-in failed: {exc}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"signed in; saved to {path} (read-only). Restart Jarvis to offer check_email.")
 
 
 @app.command("setup-google")

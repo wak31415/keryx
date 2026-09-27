@@ -781,3 +781,14 @@ def test_the_skills_of_every_enabled_agent_are_listed(settings, tmp_path, monkey
 
     assert "mermaid: Does mermaid." in alone and "review" not in alone
     assert "mermaid: Does mermaid." in both and "review: Does review." in both
+
+
+def test_the_email_paragraph_is_only_there_when_the_tool_is(settings):
+    without = render_voice_prompt(settings, channel="phone", caller=None, skills=[])
+    with_it = render_voice_prompt(
+        settings, channel="phone", caller=None, skills=[], tool_names={"check_email"}
+    )
+
+    assert "check_email" not in without
+    assert "check_email answers a question about the owner's email" in with_it
+    assert "{" not in with_it and "}" not in with_it
