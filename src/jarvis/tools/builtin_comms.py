@@ -49,10 +49,12 @@ def register_comms_tools(
             "send_to_slack",
             f"Send {settings.owner_label} a message on Slack, in the direct-message channel "
             "they already use for this. Only call it when they have explicitly asked for "
-            'something in writing — "send me that", "put it on Slack", "text me the link". '
-            "Never call it unasked, however awkward the content is to say out loud, and never "
-            "to repeat in writing something you have already said; if it truly will not "
-            "survive being spoken, offer to send it and call this only once they accept. "
+            'something in writing — "send me that", "Slack me that", "put it on Slack", '
+            '"text me the link". Never call it unasked, however awkward the content is to say '
+            "out loud, and never volunteer a written copy of something you have already said; "
+            "but when they ask for what you just said in writing, that is exactly what to "
+            "send, with this tool. If something truly will not survive being spoken, offer to "
+            "send it and call this only once they accept. "
             "For anything a subagent produced (a file, a plot, a report), dispatch the "
             "sending to Claude instead: it can attach the file itself.",
             {

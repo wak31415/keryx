@@ -254,7 +254,17 @@ def test_voice_prompt_offers_slack_rather_than_sending_it(unwrapped):
     text = unwrapped(load_prompt("voice_system.md"))
 
     assert "send it only once they say yes" in text
-    assert "never send a written copy of something you have already said" in text
+    assert "never volunteer a written copy of something you have already said" in text
+
+
+def test_voice_prompt_sends_what_it_just_said_when_that_is_what_they_ask_for(unwrapped):
+    """The unasked-copy ban once read as a ban on asked-for copies too, and "Slack me that"
+    went to a subagent. Asked for, the copy is sent here, with the tool, by the voice."""
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "when they ask for what you just said in writing, that is exactly what to send" in text
+    assert "call send_to_slack yourself" in text
+    assert '"Slack me that"' in text
 
 
 def test_voice_prompt_does_not_promise_slack_as_a_delivery_route(settings, unwrapped):

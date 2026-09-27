@@ -1697,10 +1697,15 @@ async def test_the_slack_tool_names_whom_it_sends_to(make_tools):
 
 
 async def test_the_slack_tool_does_not_invite_a_written_copy_of_the_answer(make_tools):
-    """Repeating in writing what was just said out loud is the commonest unasked send."""
+    """Repeating in writing what was just said out loud is the commonest unasked send.
+
+    But only unasked: a flat ban on it once sent "Slack me that" to a subagent instead.
+    """
     description = _slack_description(make_tools(slack=FakeSlack()))
 
-    assert "never to repeat in writing something you have already said" in description
+    assert "never volunteer a written copy of something you have already said" in description
+    assert "when they ask for what you just said in writing, that is exactly what" in description
+    assert '"Slack me that"' in description
 
 
 async def test_the_slack_tool_still_sends_when_it_is_called(make_tools):
