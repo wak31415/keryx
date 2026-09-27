@@ -31,7 +31,11 @@ only what they approve.
   call; a hand-written copy is overwritten or fights with the writer. Everything you agree
   on goes in through `jarvis init`.
 - **Jarvis never edits `.env`, and neither do you.** Print the `OWNER_NAME=` line and let
-  them paste it.
+  them paste it, and the `JARVIS_PIN=` line with it when `jarvis init` offers one.
+- **Never choose a PIN for them, and never read `~/.jarvis/pin`.** `jarvis init` prints a
+  suggested line of six random digits when the machine has none; those digits are theirs
+  to keep or replace, and the only other way to set one is the first phone call, which
+  they make themselves.
 - **Never read or quote `.env`, a token, a key, or anything under `~/.jarvis/`** — the call
   transcripts there carry the spoken PIN.
 - **Never scan a project they did not pick**, and never run `jarvis init --force` without
@@ -68,7 +72,9 @@ memory's size against the 4,000 characters a call reads, every project it found 
 of them wrote a brief, the brief total against its cap, the installed skills, and whether
 `OWNER_NAME` is set. Exit 0 is that report; exit 1 means a memory was wanted and not
 written; exit 2 means the command line was wrong. Read the `projects` list; you will need
-it in step 3.
+it in step 3. The `pin` block says whether this machine has a PIN and where it came from,
+never the digits: `"set": false` is the one thing they have to act on before the phone is
+any use at all, and step 6 is where you say so.
 
 Then tell them, in three or four sentences: what Jarvis does with what you are about to
 collect, that it goes to the realtime provider on every call, and that nothing is written
@@ -130,8 +136,8 @@ printf '%s\n' \
 ```
 
 `jarvis init --from - --yes` reads one fact per line from stdin, writes `memory.md` and
-nothing else, and prints the `OWNER_NAME=` line for them to add to `.env` — it never edits
-.env itself. Add `--json` if you want the result as a document; exit 1 means there was
+nothing else, and prints the lines for them to add to `.env` — the `OWNER_NAME=` one, and a
+suggested `JARVIS_PIN=` where the machine has no PIN. It never edits .env itself. Add `--json` if you want the result as a document; exit 1 means there was
 already a memory there, and that is theirs to decide about, not yours.
 
 ## 6. Hand over
@@ -141,7 +147,15 @@ Tell them, in a few lines:
 - What the first call will be like: with a memory now seeded it opens as an ordinary call.
   Had they skipped this, Jarvis would have spent the first call getting to know them
   instead — and it still will if the memory is empty.
+- **The PIN, if `jarvis init` printed a line for one.** Nothing of theirs is read out on
+  the phone and nothing can be dispatched until a PIN exists. Two ways, and they pick: paste
+  the suggested `JARVIS_PIN=` line (or digits of their own) into `.env`, which is the
+  permanent home; or let the **first call** set one — it asks for six to eight digits and
+  hash, twice, and that is the PIN from then on. Say the second half of that plainly: the
+  first call to reach Jarvis is the one that sets it, and once set nothing in Jarvis can
+  change it — only they can, at the keyboard. `SECURITY.md` has the reasoning.
 - `uv run jarvis memory` shows what it remembers, `uv run jarvis doctor` says what is still
-  missing, and the memory is plain markdown they can edit by hand.
+  missing (including which source the PIN came from), and the memory is plain markdown they
+  can edit by hand.
 - After every authorized call, Jarvis folds that call into the memory itself. This was the
   first draft, not the last word.

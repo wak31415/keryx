@@ -6,7 +6,9 @@ nothing until an authorized call has ended and the memory update has written som
 document a call will read, and written through `continuity.memory.seed_memory`.
 
 It never writes `.env`. Only scripts and people touch that file, so when the name is new
-`init` prints the `OWNER_NAME=` line to add instead.
+`init` prints the `OWNER_NAME=` line to add instead — and, where the machine has no PIN,
+a `JARVIS_PIN=` line with six random digits beside it. That one is a suggestion and not a
+setting: `init` does not enrol a PIN, and the first call can key one in instead.
 
 It ends with what a call will carry and what it will not: the projects a task can be pointed
 at, which of them wrote a brief, how many characters the briefs and the memory add to
@@ -25,6 +27,7 @@ wiring and none of this needs a terminal to test.
 """
 
 import json
+import secrets
 import shlex
 import sys
 from collections.abc import Callable
@@ -32,7 +35,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis.agents.registry import BACKENDS, skill_dirs
-from jarvis.config import OWNER_FALLBACK, Settings, env_var_name
+from jarvis.config import (
+    OWNER_FALLBACK,
+    PIN_FROM_ENV,
+    PIN_FROM_FILE,
+    Settings,
+    env_var_name,
+    pin_file,
+)
 from jarvis.continuity.memory import (
     MAX_MEMORY_CHARS,
     compose_memory,
@@ -79,12 +89,64 @@ STATUSES = {
 }
 _REFUSED = frozenset({"exists", "too_long", "raced"})
 
+#: One line about the PIN per source, for `--json` (the human run prints the suggested
+#: line and the alternative instead). Never the digits: the owner can read their own file,
+#: and this output is pasted into terminals and logs. Each one stands on its own, because
+#: a document has no "the line above" to point at.
+#: The enrolled line says `.env` because the file is a bootstrap, not a home — a subagent
+#: runs as the owner and so could delete it, which would re-open enrolment (SECURITY.md).
+PIN_NOTES = {
+    PIN_FROM_ENV: f"set from {env_var_name('pin')} in your environment",
+    PIN_FROM_FILE: (
+        f"enrolled on the phone; copy it from the file into .env as {env_var_name('pin')} "
+        "to make it permanent"
+    ),
+    None: (
+        f"not set — put {env_var_name('pin')} in your .env, or key one in on the first "
+        "call; until a PIN exists, nothing of yours is read out on the phone and no task "
+        "can be dispatched"
+    ),
+}
+#: The fourth state, and the one only the keyboard clears: a `data_dir/pin` that is not
+#: 6-8 digits is no PIN *and* no enrolment, because `O_EXCL` will not replace a file that
+#: is there. Sending them to the first call instead would be sending them nowhere.
+PIN_SEALED_NOTE = (
+    "not set, and no call can set one — {path} is not 6 to 8 digits; delete that file, or "
+    f"put {env_var_name('pin')} in your .env"
+)
+#: How many digits `init` suggests. Six is the shortest a PIN may be (`config.PIN_RULE`),
+#: and the suggestion is there to be typed by a person who did not want to choose one.
+SUGGESTED_PIN_DIGITS = 6
+
 NAME_QUESTION = f'what should Jarvis call you? (blank for "{OWNER_FALLBACK}")'
 FACTS_INTRO = (
     "a few things Jarvis should know about you, one per line: what you do, what keeps "
     "coming up, how you like to be answered. a blank line finishes."
 )
 FACT_PROMPT = "fact"
+
+
+def pin_note(settings: Settings) -> str:
+    """The one line about this machine's PIN: where it came from, or what to do about it.
+
+    Four states, the same four `jarvis doctor` reports, and never the digits.
+    """
+    if settings.pin_source is not None:
+        return PIN_NOTES[settings.pin_source]
+    if settings.pin_enrolment_open:
+        return PIN_NOTES[None]
+    return PIN_SEALED_NOTE.format(path=pin_file(settings.data_dir))
+
+
+def suggested_pin_line() -> str:
+    """A `JARVIS_PIN=` line with six cryptographically random digits, to paste or ignore.
+
+    `secrets`, not `random`: this is the one thing between somebody who has spoofed a
+    caller id and a subagent running with the owner's full access. `init` prints it and
+    nothing else — it never writes `.env`, and it never sets a PIN itself.
+    """
+    digits = "".join(str(secrets.randbelow(10)) for _ in range(SUGGESTED_PIN_DIGITS))
+    return f"{env_var_name('pin')}={digits}"
 
 
 def facts_from_text(text: str) -> list[str]:
@@ -146,8 +208,20 @@ def run_init(
     if as_json:
         echo(json.dumps(setup_summary(settings, status=status, env_line=line), indent=2))
         return exit_code(status)
-    if line:
-        echo(f"\nadd this line to your .env (init never edits it):\n\n    {line}")
+    # The PIN is the one setup step the phone cannot do for them, so it is offered here
+    # first: a suggestion to paste, and — only where the phone could still do it — the
+    # alternative in one line.
+    pin_line = None if settings.pin else suggested_pin_line()
+    if lines := [one for one in (line, pin_line) if one]:
+        label = "this line" if len(lines) == 1 else "these lines"
+        echo(f"\nadd {label} to your .env (init never edits it):\n")
+        for one in lines:
+            echo(f"    {one}")
+        if settings.pin_enrolment_open:
+            echo(
+                "\nor key one in on the first call, which can set the PIN while there is "
+                "none — nothing of yours is read out until there is."
+            )
     echo("")
     for report_line in setup_report(settings):
         echo(report_line)
@@ -292,6 +366,9 @@ def setup_summary(
 
     `brief_chars` is what a call actually carries of that project, so a brief left out for
     being past `MAX_BRIEFS_CHARS` in total counts 0 — the cap is the point of the number.
+
+    `pin` says whether there is one and where it came from, and never what it is: this
+    document is printed into terminals and logs by whatever ran `init`.
     """
     found = _inventory(settings)
     written = {brief.name: len(brief.text) for brief in found.briefs}
@@ -301,6 +378,13 @@ def setup_summary(
         "owner_name": settings.owner_name or None,
         "owner_name_set": bool(settings.owner_name),
         "env_line": env_line,
+        "pin": {
+            "set": bool(settings.pin),
+            "source": settings.pin_source,
+            "enrolment_open": settings.pin_enrolment_open,
+            "path": str(pin_file(settings.data_dir)),
+            "note": pin_note(settings),
+        },
         "memory": {
             "path": str(memory_path(settings.data_dir)),
             "chars": len(found.memory),

@@ -18,7 +18,12 @@ from jarvis.continuity.briefing import Briefing
 from jarvis.continuity.transcripts import was_authorized
 from jarvis.events import EventBus, SessionEnded
 from jarvis.realtime.base import FunctionCall, Transcript
-from jarvis.session import OPENING_MESSAGE, PIN_ACCEPTED_MESSAGE, VoiceSession
+from jarvis.session import (
+    ENROL_CONFIRM_MESSAGE,
+    OPENING_MESSAGE,
+    PIN_ACCEPTED_MESSAGE,
+    VoiceSession,
+)
 from jarvis.tools import ToolRegistry
 from jarvis.transports.base import Dtmf
 from jarvis.trust import TrustLevel
@@ -114,11 +119,11 @@ def tools():
 @pytest.fixture
 def make_session(tmp_path, bus, tools):
     def build(
-        transport, prov, *, authorized=False, briefing_before_pin=True, **kwargs
+        transport, prov, *, authorized=False, briefing_before_pin=True, pin=PIN, **kwargs
     ) -> VoiceSession:
         settings = make_settings(
             tmp_path,
-            pin=PIN,
+            pin=pin,
             projects={"orchard": str(tmp_path)},
             projects_root=tmp_path / "no-projects",
             skills_dir=tmp_path / "no-skills",
@@ -162,6 +167,51 @@ async def test_an_unauthorized_call_hears_the_whole_standing_briefing(
         assert "orchard" in provider.config.instructions  # and what they are working on
         assert provider.injected[0][0].startswith(OPENING_MESSAGE)
         assert "1 task finished" in provider.injected[0][0]
+
+
+async def test_with_no_pin_on_the_machine_the_call_is_handed_nothing(
+    make_session, phone, provider
+):
+    """The hole that closed: `BRIEFING_BEFORE_PIN` cannot apply before a PIN exists.
+
+    Until one does there is no authentication on the phone at all, so an allowed caller
+    would otherwise hear the memory read out on every call with no way to gate it. The
+    briefer is not even asked.
+    """
+    briefer = FakeBriefer()
+    session = make_session(phone, provider, briefer=briefer, pin=None)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert DIGEST not in provider.config.instructions
+        assert MEMORY not in provider.config.instructions
+        assert "orchard" not in provider.config.instructions
+        assert provider.injected[0][0] == OPENING_MESSAGE
+        assert briefer.builds == 0
+
+
+async def test_enrolling_a_pin_hands_the_call_the_briefing_it_could_not_hear(
+    make_session, phone, provider
+):
+    """After enrolment the call is `FULL`, so the re-render carries what was withheld."""
+    briefer = FakeBriefer()
+    session = make_session(phone, provider, briefer=briefer, pin=None)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+        assert MEMORY not in provider.config.instructions
+
+        for digit in "135790#":
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: ENROL_CONFIRM_MESSAGE in [text for text, *_ in provider.injected])
+        for digit in "135790#":
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: session.trusted)
+
+    assert briefer.builds == 1
+    assert MEMORY in provider.instruction_updates[-1]
+    assert "orchard" in provider.instruction_updates[-1]
 
 
 async def test_briefing_before_pin_off_restores_the_old_silence(make_session, phone, provider):

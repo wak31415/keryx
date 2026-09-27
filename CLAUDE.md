@@ -160,7 +160,12 @@ Four rulings, and `SECURITY.md` is the threat model:
   charged that defence to every ordinary call. So the whole standing briefing comes before
   the PIN (`BRIEFING_BEFORE_PIN`, default on): the digest, the memory, the project names, the
   briefs, the skills. `false` restores the older silence exactly, and the `withheld`
-  machinery in `prompts/__init__.py` exists for that — do not delete it. `announce(text,
+  machinery in `prompts/__init__.py` exists for that — do not delete it. **The ruling
+  presumes a PIN exists**, so the predicate is `Settings.reads_before_pin`, never
+  `briefing_before_pin` itself: on a machine that has never had one there is no keypad
+  entry to trade a read against, and an allowed caller would hear the memory for ever with
+  no way to gate it, so everything is withheld until a PIN exists (see "Working
+  agreements"). `announce(text,
   needs=…)` says which kind each announcement is: news needs nothing, an approval needs a
   call that could answer it. `Announced.delivered` still takes `POSSESSION`, because a
   stranger hearing the news is not the owner having been told, so the text and the call-back
@@ -209,7 +214,8 @@ Jarvis knows at the top of a call is assembled every time by
   and `sms_sent` only say a delivery was attempted, and neither survives a call they missed.
   Until `reported_at` is stamped, the task rides at the top of the next call — from the
   greeting, PIN or no PIN, along with the rest of the standing briefing
-  (`BRIEFING_BEFORE_PIN`; see "Trust has three levels"). Exactly one
+  (`reads_before_pin`; see "Trust has three levels" — a machine with no PIN at all is
+  handed none of it). Exactly one
   thing stamps it: the voice model's `mark_reported` tool, after it has spoken the result.
   Do not stamp it from a delivery path — hearing something twice is recoverable, never
   hearing it is not.
@@ -440,6 +446,15 @@ scope, so the test suite can run on a machine with no mic.
 - `data_dir` is 0700 and the files under it 0600 (`config.secure_dir` / `secure_file`).
   Anything new that writes there goes through them.
 - A configured `JARVIS_PIN` is 6-8 digits and `jarvis serve` refuses to start otherwise.
+  With none set anywhere, **the first call may enrol one** and that is the only way the
+  phone ever sets a PIN: `Settings.pin` resolves environment-then-`data_dir/pin`,
+  `pin_enrolment_open` is the door, and `config.write_enrolled_pin` shuts it with
+  `O_CREAT | O_EXCL` — the kernel refusing a second write is the whole guarantee, which is
+  why there is no setter in any tool or CLI command and why you must not add one. The
+  digits are keyed twice and compared (`session._enrol_keypad_pin`), never spoken: a
+  mishearing here is unfixable. Any `data_dir/pin` shuts the door, usable or not, and only
+  the owner at the keyboard re-opens it. Until a PIN exists nothing of theirs is read out
+  (`reads_before_pin`), and SECURITY.md carries the accepted risk.
   Wrong PINs also count across calls (`jarvis/pin_guard.py`): while that has PIN entry locked
   the right PIN is refused before it is compared, and nothing resets the count early — not
   the lock lifting, not a right PIN. That a spoofed caller can keep the owner's PIN locked is the

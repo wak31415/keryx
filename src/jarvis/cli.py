@@ -100,6 +100,15 @@ MAX_MEMORY_PRINT_CHARS = 100_000
 #: broken install still gets a report rather than a traceback. A field not listed here is
 #: one `doctor` cannot work around, and it re-raises.
 DOCTOR_FALLBACKS: dict[str, object] = {"openai_api_key": PLACEHOLDER_KEY, "pin": None}
+#: Every name a refused value can arrive under, mapped back to its field. `pydantic`
+#: reports a field's *alias* when it has one — a bad `JARVIS_PIN` comes back as
+#: `JARVIS_PIN`, where a bad `OPENAI_API_KEY` comes back as `openai_api_key` — so matching
+#: on the field name alone quietly stopped `doctor` working in the one state it is for.
+DOCTOR_FALLBACK_NAMES: dict[str, str] = {
+    name: field
+    for field in DOCTOR_FALLBACKS
+    for name in (field, env_var_name(field))
+}
 
 
 def _validation_message(detail: Mapping[str, Any]) -> str:
@@ -155,8 +164,11 @@ def _load_settings_reporting() -> tuple[Settings, dict[str, str]]:
             fresh = {
                 field: _validation_message(detail)
                 for detail in error.errors()
-                if (field := str(detail["loc"][0]) if detail.get("loc") else "")
-                in DOCTOR_FALLBACKS
+                if (
+                    field := DOCTOR_FALLBACK_NAMES.get(
+                        str(detail["loc"][0]) if detail.get("loc") else "", ""
+                    )
+                )
                 and field not in overrides
             }
             if not fresh:

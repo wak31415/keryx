@@ -69,6 +69,24 @@ surface — a removed or renamed setting or command is a major bump.
   your `ALLOWED_CALLERS` hears it; `false` restores the old silence and puts those four
   tools back behind the PIN with it.
 
+- **The first call can set the PIN.** `JARVIS_PIN` is set at the keyboard, and until it is
+  the phone is no use to you — the one setup step Jarvis cannot do for itself. So while
+  there is no PIN at all, the first call may key one in: six to eight digits and hash,
+  keyed a second time to confirm, written to `~/.jarvis/pin` (owner-only) and used from
+  then on, briefing and all. It is a one-way door, held shut by the kernel: the file is
+  created with `O_EXCL`, no tool or command anywhere can change an enrolled PIN, and only
+  you can — in `.env`, which always wins, or by deleting the file. A spoken PIN cannot
+  enrol one; the digits are keyed, checked twice and never reach the model, the transcript
+  or a log line. The risk you accept is that whoever calls first sets it: the window is a
+  few minutes long and closes on first use, and
+  [SECURITY.md](SECURITY.md#setting-the-first-pin-on-the-first-call) has it in full,
+  including what a subagent can still do to the file and what it cannot.
+- **`jarvis init` suggests a PIN**: a `JARVIS_PIN=` line with six cryptographically random
+  digits beside the `OWNER_NAME=` one, to paste or ignore — it still never edits `.env` and
+  never sets a PIN itself. `--json` gains a `pin` block saying whether one is set, where it
+  came from and where the file lives, and never the digits. `jarvis doctor` reports the same
+  four states, and tells you to copy an enrolled PIN into `.env` to make it permanent.
+
 ### Changed
 
 - **Before the PIN, the phone keeps nothing and changes nothing.** Caller ID is spoofable,
@@ -133,8 +151,20 @@ surface — a removed or renamed setting or command is a major bump.
   counts as having told *you* unless the call proved at least that much, so the text and
   the call-back still go out to a call that has not.
 
+- **Before a PIN exists at all, nothing of yours is read out.** `BRIEFING_BEFORE_PIN`
+  trades a read against a keypad entry, and that presumed there was an entry to make: on a
+  machine that had never had a PIN there is no authentication on the phone, so an allowed
+  caller heard the memory, the unheard results and your project names on every call, for
+  ever, with no way to gate it. The briefing is withheld and the four read-only voice tools
+  are refused until a PIN exists, whatever the setting says — which also makes `JARVIS_PIN`
+  optional in `.env.example` rather than required.
+
 ### Fixed
 
+- `jarvis doctor` died with a pydantic traceback when `JARVIS_PIN` was set to something
+  that is not 6–8 digits — the one state it exists to explain, since `jarvis serve` will
+  not load at all. The fallback it has for that matched the field name and never the
+  `JARVIS_PIN` the error actually carries.
 - `uv run jarvis serve` crashed on Linux unless given `--no-wakeword`; it now says the wake
   word needs macOS and serves the phone channel.
 - A spoken PIN was written into call transcripts, where `recall` could read it back. It is

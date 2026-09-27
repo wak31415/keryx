@@ -104,6 +104,16 @@ PIN_NOT_CONFIGURED_MESSAGE = (
     "There is no PIN set on this machine, so there is nothing to check. Tell them that in "
     "one sentence rather than asking again."
 )
+#: The same two states, on a machine that has never had a PIN and may still be given one
+#: (`Settings.pin_enrolment_open`). It is the one moment the keypad *sets* a PIN instead
+#: of giving one, so the sentence has to say the shape of the entry — and say, as firmly,
+#: that the digits are theirs: a suggested PIN is one the model has said out loud.
+PIN_ENROL_MESSAGE = (
+    "This machine has no PIN yet, and they can set one now. Ask them in one sentence to "
+    "key in the PIN they want — six to eight digits, then hash — and you will be told when "
+    "to ask for it a second time. Never say a digit, never suggest one, and never repeat "
+    "back what you think you heard."
+)
 #: What a call Jarvis placed is asked for before it acts on something said out loud. An
 #: answering machine can hold a conversation of sorts; it cannot press a key. Written to
 #: cost one short sentence and to be asked once, the first time it is actually needed —
@@ -352,7 +362,14 @@ def pin_gate(ctx: ToolContext, settings: Settings) -> dict | None:
     if ctx.trust is TrustLevel.FULL:
         return None
     if not settings.pin:
-        return {"status": "refused", "message": PIN_MISSING_MESSAGE}
+        # Two different sentences, because they are two different situations: a machine
+        # that can still be given a PIN on this call, and one whose PIN file is there and
+        # unusable, where only the owner at the keyboard can help.
+        enrolling = settings.pin_enrolment_open
+        return {
+            "status": "refused",
+            "message": PIN_ENROL_MESSAGE if enrolling else PIN_MISSING_MESSAGE,
+        }
     log.info("session %s needs a PIN first", ctx.session.session_id)
     return {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}
 
@@ -374,7 +391,7 @@ def read_gate(ctx: ToolContext, settings: Settings) -> dict | None:
     quantity of exposure, and the one thing on the phone a caller-id spoofer could
     actually mine. It keeps `pin_gate`.
     """
-    if settings.briefing_before_pin:
+    if settings.reads_before_pin:
         return None
     return pin_gate(ctx, settings)
 

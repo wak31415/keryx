@@ -22,6 +22,7 @@ from jarvis.tools.builtin_common import (
     APPROVAL_NONE_MESSAGE,
     APPROVAL_PHONE_ONLY_MESSAGE,
     ENDING_MESSAGE,
+    PIN_ENROL_MESSAGE,
     PIN_INVALID_MESSAGE,
     PIN_LOCKED_MESSAGE,
     PIN_NOT_CONFIGURED_MESSAGE,
@@ -127,7 +128,12 @@ def register_session_tools(
         A `message` the session already set wins, so nothing here can talk over it.
         """
         result = await ctx.session.submit_pin(str(arguments.get("pin") or ""))
-        message = PIN_MESSAGES.get(str(result.get("status")))
+        status = str(result.get("status"))
+        message = PIN_MESSAGES.get(status)
+        if status == "not_configured" and settings.pin_enrolment_open:
+            # Not "there is nothing to check" but "there is nothing *yet*": the keypad can
+            # set one on this call, and a spoken PIN is the one thing that cannot.
+            message = PIN_ENROL_MESSAGE
         if message is not None:
             result.setdefault("message", message)
         return result

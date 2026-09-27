@@ -68,9 +68,9 @@ _MEMORY_HEADING = (
 FIRST_CALL_PROMPT = "first_call.md"
 _NO_SKILLS = "none installed"
 _NO_BRIEFS = "nothing written down yet"
-#: What a withheld prompt says in place of anything discovered from their machine. Only
-#: reached with `BRIEFING_BEFORE_PIN` off: on, a call below `FULL` is handed the standing
-#: context like any other (`jarvis.continuity.briefing`).
+#: What a withheld prompt says in place of anything discovered from their machine.
+#: Reached two ways: `BRIEFING_BEFORE_PIN` off, and a machine with no PIN at all, where
+#: there is nothing to be held back *until* and so everything is (`Settings.reads_before_pin`).
 _WITHHELD = "held back until the PIN"
 
 #: The "How much this call has proved" line, per level. A label, not a sentence: the
@@ -113,6 +113,20 @@ _WITHHELD_TRUST_NOTE = (
     "say what a number is. Anything that hands work to Claude, reads something of "
     "theirs, or leaves something behind comes back asking for the PIN — call the tool "
     "and let it ask, rather than predicting it."
+)
+#: The `NONE`/`POSSESSION` note for a machine that has never had a PIN. It replaces the
+#: withheld note rather than joining it: the prompt is withheld for a *different* reason
+#: here — there is nothing to be held back until — and the model's first job is to get one
+#: keyed in, which it will not do if it is told to wait for a PIN that does not exist.
+_ENROL_TRUST_NOTE = (
+    "**There is no PIN on this machine yet, and this call can set one.** Until it is set "
+    "you have been told nothing of theirs — not what you remember, not their projects, not "
+    "what the back office can do — and you can do nothing for them, so setting it is the "
+    "call. Ask them to key in the PIN they want, six to eight digits then hash, and you "
+    "will be asked to have them key it a second time to confirm. The digits are theirs: "
+    "never suggest one, never say one out loud, and never repeat back what you think you "
+    "heard — it is keyed, not spoken, and you do not see it. Once it is set you will be "
+    "told, and everything of theirs reaches you."
 )
 #: The paragraph under "The PIN" that only belongs in a withheld prompt, for the same
 #: reason: a model told its instructions are incomplete will not say "there is nothing on
@@ -211,6 +225,13 @@ def _format_briefs(briefs: list[ProjectBrief]) -> str:
     return "\n\n".join(f"### {brief.name}\n\n{brief.text}" for brief in briefs)
 
 
+def _trust_note(trust: TrustLevel, *, withheld: bool, enrolling: bool) -> str:
+    """What this call may do and how it gets further, matched to what it was handed."""
+    if enrolling:
+        return _ENROL_TRUST_NOTE
+    return _WITHHELD_TRUST_NOTE if withheld else _TRUST_NOTE[trust]
+
+
 def render_voice_prompt(
     settings: "Settings",
     *,
@@ -260,7 +281,11 @@ def render_voice_prompt(
     The first-call introduction is the one thing `FULL` still buys outright: possession
     says whose phone answered, not that an interview is wanted.
     """
-    withheld = trust is not TrustLevel.FULL and not settings.briefing_before_pin
+    withheld = trust is not TrustLevel.FULL and not settings.reads_before_pin
+    # The one state in which the keypad sets a PIN instead of giving one. It implies
+    # `withheld` (there is no PIN, so `reads_before_pin` is false) and it replaces the two
+    # notes that would otherwise tell the model to wait for a PIN nobody has set.
+    enrolling = trust is not TrustLevel.FULL and settings.pin_enrolment_open
     if withheld:
         project_names = skill_lines = brief_blocks = _WITHHELD
         memory = None
@@ -300,9 +325,9 @@ def render_voice_prompt(
         caller=caller or "unknown",
         trust=_TRUST_LABEL[trust],
         trust_note=_name_the_agent(
-            _WITHHELD_TRUST_NOTE if withheld else _TRUST_NOTE[trust], spoken
+            _trust_note(trust, withheld=withheld, enrolling=enrolling), spoken
         ),
-        withheld_note=_WITHHELD_PIN_NOTE if withheld else "",
+        withheld_note="" if enrolling or not withheld else _WITHHELD_PIN_NOTE,
         projects=project_names,
         skills=skill_lines,
         project_briefs=brief_blocks,

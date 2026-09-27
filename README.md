@@ -174,7 +174,9 @@ details.
 
 `.env.example` lists all available settings. For phone calls, set `TWILIO_ACCOUNT_SID`,
 `TWILIO_AUTH_TOKEN`, `TWILIO_NUMBER`, `ALLOWED_CALLERS`, `JARVIS_PIN`, and `PUBLIC_HOST`.
-Use a 6–8 digit PIN and list allowed callers in E.164 format. You can also set `PROJECTS`
+Use a 6–8 digit PIN and list allowed callers in E.164 format. With no PIN set, the first
+call may key one in, once; it is then written to `~/.jarvis/pin` and nothing in Jarvis can
+change it ([SECURITY.md](SECURITY.md#setting-the-first-pin-on-the-first-call)). You can also set `PROJECTS`
 to give your repositories names you can say aloud. Texting is off until you set
 `SMS_ENABLED=true`, since many Twilio accounts can't send SMS in every region.
 

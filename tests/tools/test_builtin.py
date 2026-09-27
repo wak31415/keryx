@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jarvis.config import Settings
+from jarvis.config import Settings, pin_file, secure_dir
 from jarvis.continuity.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
 from jarvis.continuity.recall import MAX_LIMIT as MAX_RECALL_LIMIT
 from jarvis.continuity.recall import Hit
@@ -31,7 +31,10 @@ from jarvis.tools.builtin import register_builtin_tools
 from jarvis.tools.builtin_common import (
     CALLBACK_SET_MESSAGE,
     KEYPRESS_REQUIRED_MESSAGE,
+    PIN_ENROL_MESSAGE,
     PIN_INVALID_MESSAGE,
+    PIN_MISSING_MESSAGE,
+    PIN_NOT_CONFIGURED_MESSAGE,
     PIN_OK_MESSAGE,
     PIN_REQUIRED_MESSAGE,
     REPORTED_MESSAGE,
@@ -391,6 +394,7 @@ async def test_every_phone_dispatch_needs_the_pin_now(make_tools):
 
 
 async def test_destructive_work_is_refused_when_no_pin_is_configured(make_tools):
+    """And the sentence sends them to the keypad: a machine with no PIN can be given one."""
     tools = make_tools()  # settings.pin is None
 
     result = await tools.call(
@@ -401,8 +405,28 @@ async def test_destructive_work_is_refused_when_no_pin_is_configured(make_tools)
         authorized=False,
     )
 
-    assert result["status"] == "refused"
-    assert "none is configured" in result["message"]
+    assert result == {"status": "refused", "message": PIN_ENROL_MESSAGE}
+
+
+async def test_a_pin_file_that_is_not_a_pin_is_a_machine_only_its_owner_can_fix(make_tools):
+    """The door is sealed by the file existing, not by what is in it.
+
+    So there is no PIN to give and no PIN to set, and the sentence says the plain thing
+    rather than sending them to a keypad that would refuse them.
+    """
+    tools = make_tools()
+    secure_dir(tools.settings.data_dir)
+    pin_file(tools.settings.data_dir).write_text("not-a-pin\n", encoding="utf-8")
+
+    result = await tools.call(
+        "dispatch_task",
+        {"description": "add a README", "project": "jarvis"},
+        channel="phone",
+        caller="+15555555555",
+        authorized=False,
+    )
+
+    assert result == {"status": "refused", "message": PIN_MISSING_MESSAGE}
 
 
 async def test_a_blank_pin_is_no_pin_at_all(make_tools):
@@ -481,8 +505,7 @@ def _everything(make_tools, **overrides):
         cluster=both_clusters(),
         approvals=approvals,
         email=FakeEmail(),
-        pin="123456",
-        **overrides,
+        **{"pin": "123456", **overrides},
     )
     return tools, slack, restarter, recaller, approvals
 
@@ -533,6 +556,28 @@ async def test_with_the_briefing_held_back_every_tool_but_five_asks_for_the_pin(
             assert result.get("status") != "pin_required", name
         else:
             assert result == {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}, name
+
+
+async def test_with_no_pin_on_the_machine_even_the_read_only_tools_are_refused(make_tools):
+    """The prompt is withheld before a PIN exists, and these read the same material back.
+
+    A tool that answered here would be the hole in exactly the thing that withholding is
+    for: until a PIN exists nothing can authenticate, so nothing of the owner's is read
+    out. `PIN_MISSING_MESSAGE` sends the model to ask them to key a new one in.
+    """
+    tools, *_ = _everything(make_tools, pin=None)
+
+    for name in sorted(READ_TOOLS):
+        result = await tools.call(
+            name, dict(EVERY_ARGUMENT), channel="phone", caller="+15550001111", authorized=False
+        )
+        assert result == {"status": "refused", "message": PIN_ENROL_MESSAGE}, name
+
+    for name in sorted(UNGATED - {"submit_pin"}):
+        result = await tools.call(
+            name, dict(EVERY_ARGUMENT), channel="phone", caller="+15550001111", authorized=False
+        )
+        assert result.get("status") not in ("refused", "pin_required"), name
 
 
 async def test_recall_needs_the_pin_however_much_the_briefing_gives_away(make_tools):
@@ -724,8 +769,7 @@ async def test_with_no_pin_configured_the_phone_reads_nothing(make_tools):
 
     result = await tools.call("recall", {"query": "x"}, channel="phone", authorized=False)
 
-    assert result["status"] == "refused"
-    assert "none is configured" in result["message"]
+    assert result == {"status": "refused", "message": PIN_ENROL_MESSAGE}
 
 
 # --- dispatch_task: dispatching -------------------------------------------
@@ -1282,6 +1326,28 @@ async def test_an_accepted_pin_is_not_something_to_announce(tools):
     assert result["status"] == "authorized"
     assert result["message"] == PIN_OK_MESSAGE
     assert "Say nothing about the PIN" in result["message"]
+
+
+async def test_a_spoken_pin_on_a_machine_with_none_sends_them_to_the_keypad(make_tools):
+    """Saying digits cannot enrol one — a mishearing would be unfixable — so say so."""
+    tools = make_tools()
+    tools.session.pin_result = {"status": "not_configured"}
+
+    result = await tools.call("submit_pin", {"pin": "123456"})
+
+    assert result["message"] == PIN_ENROL_MESSAGE
+    assert "six to eight digits, then hash" in result["message"]
+
+
+async def test_with_a_pin_file_nothing_can_read_there_is_nothing_to_check(make_tools):
+    tools = make_tools()
+    secure_dir(tools.settings.data_dir)
+    pin_file(tools.settings.data_dir).write_text("not-a-pin\n", encoding="utf-8")
+    tools.session.pin_result = {"status": "not_configured"}
+
+    result = await tools.call("submit_pin", {"pin": "123456"})
+
+    assert result["message"] == PIN_NOT_CONFIGURED_MESSAGE
 
 
 async def test_the_pin_ask_itself_is_one_sentence_with_no_preamble(make_tools):
