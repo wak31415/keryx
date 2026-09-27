@@ -14,8 +14,8 @@ makes that cheap. So the allowlist is not authentication; the PIN is, and a phon
 spoofer is the whole of what it stands between you and.
 
 It is **not** a defence against a compromised machine, and it was never going to be.
-Anyone who can read your files has `.env`, and `.env` has `JARVIS_PIN` — along with the
-API keys, the Twilio token and everything else. Against that attacker the PIN is worth
+Anyone who can read your files has `~/.jarvis/secrets.toml` and `~/.jarvis/pin` — the API
+keys, the Twilio token, the PIN and everything else. Against that attacker the PIN is worth
 nothing, and `~/.jarvis` is already theirs to read directly.
 
 That is why **reads happen before the PIN**. Gating them bought nothing against the
@@ -27,8 +27,8 @@ changes anything or outlives the call.
 - **Until a PIN exists, none of this happens.** The trade above is a read against a keypad
   entry, and it presumes there is an entry to make: on a machine that has never had a PIN
   a phone call cannot authenticate at all, so an allowed caller would otherwise hear the
-  memory read out on every call for ever. Until one is set — in `.env`, or on the first
-  call — the briefing is withheld whatever `BRIEFING_BEFORE_PIN` says, and the read-only
+  memory read out on every call for ever. Until one is set — by `jarvis setup`, or on the
+  first call — the briefing is withheld whatever `BRIEFING_BEFORE_PIN` says, and the read-only
   tools over the same material are refused with it.
 - **A call opens knowing what Jarvis knows.** The results you have not been told about,
   what Jarvis remembers about you (`memory.md`), your project names, your project briefs
@@ -76,15 +76,17 @@ in**, and that is the only way a PIN is ever set from the phone.
 and once the two match that is the PIN from then on. The moment a PIN exists the door is
 shut, and it is shut by the write itself rather than by a check: `DATA_DIR/pin` is created
 with `O_CREAT | O_EXCL`, so a second write fails in the kernel. There is deliberately no
-setter anywhere — no voice tool, no CLI command — that can change an enrolled PIN.
+setter anywhere — no voice tool, no `jarvis config set` — that can change an enrolled PIN.
+`jarvis setup`, at a terminal, is the owner at the keyboard: it writes a first PIN the same
+way, and replaces one only by deleting the file after two explicit yeses, with the new
+digits already typed twice.
 
 **The accepted risk: whoever calls first sets it.** The window is the few minutes between
 starting Jarvis and making the first call, it closes on first use, and nobody is going to
 spoof your number inside it; the caller still has to be on `ALLOWED_CALLERS` to reach the
-voice model at all. If you would rather not take that bet, set `JARVIS_PIN` in `.env`
-before you start — an environment PIN always wins, and there is then no window to close.
-`jarvis init` prints a `JARVIS_PIN=` line with six random digits for you to paste, and
-`jarvis doctor` says which of the two sources the PIN in use came from.
+voice model at all. If you would rather not take that bet, choose the PIN in `jarvis setup`
+before the first call, and there is then no window to close. `jarvis doctor` says where the
+PIN in use came from, never what it is.
 
 **The digits are keyed, never spoken.** Saying a PIN out loud cannot enrol one, because
 transcription mishears digits and a mis-set PIN that nothing can change is the worst
@@ -97,19 +99,57 @@ microseconds, so hashing would imply a protection that is not there, and the fil
 beside your call transcripts and `memory.md`, which are no less private.
 
 **What a subagent can do to it, and what it cannot.** A subagent runs as you with
-`bypassPermissions`, so it can delete `DATA_DIR/pin` exactly as it can edit `.env`. What
+`bypassPermissions`, so it can delete `DATA_DIR/pin` exactly as it can edit any of your files. What
 it cannot do is *rewrite* an enrolled PIN — that is what `O_EXCL` buys — so there is no
 silent swap. Deleting the file is a lockout plus a fresh enrolment window for whoever
 calls next: loud, and visible in `jarvis doctor`, rather than a PIN quietly becoming
-somebody else's. The answer, once a PIN has been enrolled, is to move it into `.env`,
-where the environment wins for ever after; that is what `jarvis doctor` tells you to do
-with one.
+somebody else's. If that worries you, set `JARVIS_PIN` in the service's own environment
+(the unit's `Environment=`), which always wins over the file.
 
 **Why there is no "config setter script Jarvis can call"**, so that nobody proposes one
 later: any sudoers rule that lets Jarvis run a setter without a password lets a subagent
 run it too, which hands straight back the ability the `O_EXCL` write exists to remove. A
 root-owned setter that *you* run with your own sudo password is fine — the point is only
 that Jarvis must have no privileged way to invoke it.
+
+## Where secrets live
+
+Every key, token and password is in `~/.jarvis/secrets.toml` (`JARVIS_HOME` moves it),
+created 0600 inside an 0700 directory and replaced atomically, so there is no moment at
+which it exists with looser permissions. The plain settings are in `config.toml` beside it,
+and the PIN in `DATA_DIR/pin`. Not a keyring, on purpose: a service started by systemd at
+boot, with nobody logged in, cannot unlock one — the same reason Claude Code and Codex keep
+their credentials in a file of their own. `jarvis doctor` warns when any of these is readable
+by anyone else (`--fix` tightens it and changes nothing else), when one sits inside a git
+work tree, when a secret has been written into `config.toml` by hand, and while a legacy
+`.env` or an imported copy of one is still on disk.
+
+A secret is never put on a command line, where `ps` and your shell history keep it:
+`jarvis config set KEY --stdin` reads it from standard input and `--from-env VAR` from a
+variable, and the command refuses one given as a plain argument. Nothing prints one back —
+not `jarvis config get`, not `config list`, not an error message.
+
+## What Jarvis may change about itself
+
+Jarvis can change some of its own settings: the voice model's `set_config` tool, when you
+ask on a call (it needs the PIN), and any subagent that runs `jarvis config set` inside a
+task, since everything `jarvis serve` starts is marked as the running service. It may
+change only a *service-writable* setting — by default the ones you would plausibly ask for
+out loud: the voice, turn-taking, which model, a few timeouts and limits, quiet hours, the
+monthly budget figure, the log level. `jarvis config lock KEY` and `unlock KEY` move the
+rest, and `jarvis config list` shows where each one stands.
+
+Some can never be unlocked: every credential, the PIN, who may call and which number is
+yours, `BRIEFING_BEFORE_PIN`, the approval bridge's switch and allowlist, the spending cap,
+the daily task cap, retention, texting, the network settings, where data lives, the cluster
+settings and every debug switch. Each is either a secret or a line of defence, and Jarvis's
+own tools must not be able to lower their own guard because somebody asked nicely on the
+phone.
+
+Be clear about what this is: **a rule Jarvis's own tools obey, not a sandbox.** A subagent
+runs as you with a shell, and can edit `config.toml` directly, exactly as it can edit any
+other file of yours. What the rule buys is that the ordinary paths — the tool the voice
+model is handed, the command a subagent reaches for — refuse, and say so.
 
 ## Calls Jarvis places itself
 

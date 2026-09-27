@@ -47,7 +47,10 @@ Prerequisites the owner supplies (in `.env`): `OPENAI_API_KEY`, subagent auth (t
 CLI subscription login by default; `ANTHROPIC_API_KEY` is the pay-per-token override —
 amended 2026-08-24, was: the Agent SDK cannot use the subscription login), Twilio account
 SID / auth token / number, a Cloudflare-routed hostname for the tunnel, Google Cloud
-OAuth client (Gmail + Calendar scopes).
+OAuth client (Gmail + Calendar scopes). *Amended 2026-09-27: supplied through `jarvis setup`
+(a person) or `jarvis config` / `jarvis auth` (a coding agent), and kept in
+`JARVIS_HOME/config.toml` and a 0600 `secrets.toml` rather than a hand-edited `.env`, which
+is still read below them (§3.4).*
 
 ## 3. Architecture
 
@@ -71,7 +74,8 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 
 | Module | Responsibility |
 |---|---|
-| `config.py` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails |
+| `config/` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails. A package since 2026-09-27: `settings` (each field with a description, a group and a default `service_writable`), `store` (`config.toml`/`secrets.toml`, the only writer), `permissions` (`PROTECTED_KEYS`), `pin` (`data_dir/pin`), `files`, `reference` (generates `docs/configuration.md`); the package re-exports the old names |
+| `setup/` | `jarvis setup` (the wizard: `wizard`, `sections`, `agents`, `phone`, `google`, `profile`, `project_context`, `ui`, `context`) and `jarvis auth` (`auth`); `guides/*.md` are rendered by the wizard and linked from the README (added 2026-09-27, replacing `agent_setup.py`, `onboarding.py`, `google_setup.py` and `gmail_setup.py`) |
 | `projects.py` | `discover_projects` (configured projects plus `projects_root` subdirectories, shared by `TaskManager` and the voice prompt) and `discover_briefs` (each project's own `.jarvis-brief.md`, `MAX_BRIEF_CHARS` each and `MAX_BRIEFS_CHARS` together) |
 | `continuity/transcripts.py` | `read_tail`: the end of an earlier call, read back out of `data_dir/calls/<session_id>.log` for a call-back's opening context |
 | `continuity/briefing.py` | `Briefer`/`Briefing`: what a call opens knowing — the digest of finished-but-unreported tasks, and the memory it reads back through `continuity.memory`. Grouped with the four around it under `continuity/` 2026-09-08 |
@@ -135,8 +139,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `prompts/first_call.md` | the memory's stand-in on a trusted session that has none: a short get-to-know-you introduction, dropped the moment work or a refusal arrives (added 2026-09-19) |
 | `prompts/subagent_suffix.md` | appended to Agent SDK system prompt: autonomous, ends with `SPOKEN_SUMMARY:` block |
 | `prompts/memory_update.md` | the internal memory subagent's prompt: merge this call's transcript into `memory.md`, keep the structure (rendered from `memory_skeleton` into `{structure}`), stay under budget |
-| `onboarding.py` | `run_init` and `setup_report`, behind `jarvis init`: a name and a first `memory.md` through `seed_memory`, and a report of what every call will carry (added 2026-09-16; `setup_summary` and the `--json` report, 2026-09-19) |
-| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory`, `init`, `forget`, `approvals`, `setup-google`, `doctor`, `restart`, `restart-watch` (hidden; armed by a restart, not run by hand) |
+| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory [seed]`, `forget`, `approvals`, `setup`, `config …`, `auth login|status`, `doctor`, `restart`, `restart-watch` (hidden; armed by a restart, not run by hand). `init`, `setup-agent`, `setup-google` and `setup-gmail` were removed 2026-09-27 |
 
 ### 3.2 Binding interfaces
 
@@ -612,7 +615,14 @@ class SessionRegistry:
   is the keyboard session that drives it for an owner whose own agent is doing the setup: it
   drafts a `.jarvis-brief.md` for the projects they pick **after seeing the list**, proposes
   `~/.claude/CLAUDE.md` lines, and pipes the agreed facts into `jarvis init --from - --yes` —
-  writing neither `memory.md` nor `.env` itself.*
+  writing neither `memory.md` nor `.env` itself.* *Amended 2026-09-27: `jarvis init` is gone.
+  The keyboard half is `jarvis setup`'s "About you" section (`setup/profile.py`); the agent
+  half is `jarvis memory seed --file - [--json]`, with the same statuses and exit codes; and
+  the skill is `skills/jarvis-setup`, which starts from `jarvis setup --agent-instructions`.
+  A project's brief may also be a summary in `data_dir/projects/<name>.md`, drafted by a
+  read-only task (`prompts/setup_project_context.md`) and kept only when the owner accepts
+  it; a repository's own `.jarvis-brief.md` still wins. `add_standing_facts` puts accepted
+  facts into the memory, through the same skeleton.*
 - **The voice prompt only promises what this machine does (added 2026-09-16).** Its clock
   carries the time zone. Words naming a tool only some machines offer are spliced in with
   `OPTIONAL_TOOL_PHRASES`, as whole paragraphs are with `OPTIONAL_TOOL_PROMPTS` ("the cluster"
@@ -804,7 +814,23 @@ class SessionRegistry:
 - **Guardrails**: `MAX_CALL_SECONDS` (default 1800), `SUBAGENT_MAX_TURNS`, `SUBAGENT_MAX_BUDGET_USD`,
   `DAILY_TASK_CAP`.
 
-### 3.4 Configuration (`.env` names → `Settings` fields)
+### 3.4 Configuration (names → `Settings` fields)
+
+*Amended 2026-09-27.* Values come from, first to last: the code, the process environment,
+`JARVIS_HOME/secrets.toml`, `JARVIS_HOME/config.toml` (default `~/.jarvis`), a legacy `.env`
+in the working directory (read, never written; `jarvis config import-env` moves it in), the
+default. Every `repr=False` field is stored in `secrets.toml` (0600) and never printed; the
+rest in `config.toml`. The PIN is neither: it stays in `data_dir/pin`. Only
+`config/store.py` writes the two files, every write is validated against `Settings`, and a
+secret is never taken from argv. Each field declares whether the running service
+(`set_config`, or `jarvis config set` inside a task — `JARVIS_ACTOR=service`) may change it;
+the owner overrides that with `jarvis config lock|unlock`, and `permissions.PROTECTED_KEYS`
+(every secret; trust, approvals, spending, deletion, network, debug) can never be unlocked.
+`docs/configuration.md`, generated from `Settings`, is the complete and current list; the
+table below is kept for its rulings. New since: `CLOUDFLARE_TUNNEL` (`cloudflare_tunnel`,
+default `jarvis`, read by the scripts through `jarvis config get`), and
+`GOOGLE_CLIENT_SECRETS_FILE` now defaults to blank — `data_dir/google_client_secret.json`,
+where `jarvis setup` puts the downloaded client, else the old `.secrets/client_secret.json`.
 
 | Env | Field | Default |
 |---|---|---|
@@ -871,7 +897,10 @@ Data layout under `data_dir`: `tasks.db`, `tasks/<id>.log` (agent transcript),
 `tasks/<id>.md` (final report), `calls/<session_id>.log` (voice transcript),
 `report_secret`, `restart.json` (0600; the pending restart's call-back, its log marks and
 its watchdog), `pin-failures.json` (0600; wrong PINs across calls and the lock they set),
-`pin` (0600; the PIN a first call enrolled, written once and never replaced),
+`pin` (0600; the PIN a first call or `jarvis setup` wrote, written once and never replaced),
+`google_client_secret.json` (0600; the Google OAuth client `jarvis setup` was handed),
+`gmail_token.json` (0600; the read-only Gmail sign-in), `projects/<name>.md` (the project
+summaries setup kept),
 `memory.md` (what Jarvis remembers between calls), `logs/jarvis.log` (our own
 rotated handler) alongside the `jarvis.out.log`/`jarvis.err.log` the service unit appends to
 and `logs/restart-watch.log` (the watchdog's own output), `google/` (MCP credentials).

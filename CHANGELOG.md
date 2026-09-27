@@ -8,6 +8,27 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Added
 
+- **`jarvis setup`**, a wizard that asks only for what is still missing and saves as it
+  goes: the voice key (checked with OpenAI), the coding agents and their sign-ins (never
+  asked of an agent that can already run), your name, numbers and PIN, then — each optional —
+  Twilio (numbers listed from your account; the webhooks set only after you say yes),
+  Google, Slack, billing, a first memory, project summaries a coding agent drafts for you to
+  accept, and the background service. `--all` reviews everything.
+- **A configuration store.** Settings live in `~/.jarvis/config.toml` and every secret in a
+  0600 `secrets.toml`; `jarvis config list|get|set|unset|path|import-env|lock|unlock` reads
+  and changes them, and a secret is only ever taken from `--stdin` or `--from-env`.
+  `docs/configuration.md` describes every setting, generated from the code.
+- **`jarvis auth login claude|codex|gmail|google-workspace`** and `jarvis auth status`: every
+  sign-in in one place. `--client-file` takes the Google client JSON the console downloads.
+- **`jarvis setup --agent-instructions`**: how a coding agent sets Jarvis up from the command
+  line; `skills/jarvis-setup` is the same as a Claude Code skill.
+- **`set_config`**: ask Jarvis on a call to change its own voice, turn-taking or model. It
+  may change only what the running service is allowed to; credentials, the PIN, who may call
+  and every other line of defence are protected and cannot be unlocked.
+- `jarvis doctor --json` and `--fix` (tightens loose secret files), and checks that secrets
+  are private, outside git, not in `config.toml`, and that the Twilio webhook points here.
+- `jarvis memory seed --file -` writes a first memory from standing facts.
+
 - **`jarvis init`** starts the memory before the first call: it asks what Jarvis should call
   you and a few things it should know, shows the `memory.md` it will write (owner-only), and
   reports what every call will carry to the realtime provider — memory, project briefs,
@@ -158,6 +179,12 @@ surface — a removed or renamed setting or command is a major bump.
   ever, with no way to gate it. The briefing is withheld and the four read-only voice tools
   are refused until a PIN exists, whatever the setting says — which also makes `JARVIS_PIN`
   optional in `.env.example` rather than required.
+
+### Removed
+
+- `jarvis init`, `setup-agent`, `setup-google` and `setup-gmail`: `jarvis setup`, `jarvis auth`
+  and `jarvis memory seed` do what they did. `.env.example` is gone; an existing `.env` is
+  still read below the store until `jarvis config import-env` moves it in.
 
 ### Fixed
 
