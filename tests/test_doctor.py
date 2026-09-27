@@ -16,6 +16,7 @@ from jarvis.doctor import (
     has_hard_failure,
     run_doctor_checks,
 )
+from jarvis.integrations.gmail import token_path
 from jarvis.logging_util import mask_number
 
 
@@ -23,7 +24,6 @@ from jarvis.logging_util import mask_number
 def healthy(tmp_path, monkeypatch, every_agent_installed):
     """Settings + environment where every check passes, so tests can break one at a time."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
 
     models = tmp_path / "models"
     models.mkdir()
@@ -34,8 +34,11 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
     monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target: True)
 
     credentials = tmp_path / "jarvis" / "google"
-    credentials.mkdir(parents=True)
+    credentials.mkdir(parents=True, mode=0o700)
     (credentials / "credentials.json").write_text("{}")
+    (credentials / "credentials.json").chmod(0o600)
+    (tmp_path / "jarvis" / "gmail_token.json").write_text("{}")
+    (tmp_path / "jarvis" / "gmail_token.json").chmod(0o600)
 
     settings = Settings(
         _env_file=None,
@@ -97,11 +100,20 @@ def test_the_mic_probe_never_raises_without_a_device(healthy, monkeypatch):
 # --- individual failures ---------------------------------------------------
 
 
-def test_a_missing_env_file_is_a_hard_failure(healthy, tmp_path):
-    (tmp_path / ".env").unlink()
+def test_a_legacy_env_file_is_still_read_and_says_how_to_move_it(healthy, tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("OPENAI_VOICE=marin\n")
+    monkeypatch.setitem(Settings.model_config, "env_file", ".env")
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))[".env"]
-    assert (check.ok, check.severity) == (False, "hard")
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["configuration"]
+
+    assert (check.ok, check.severity, check.state) == (False, "soft", "missing")
+    assert "jarvis config import-env" in check.detail
+    assert check.section == "import"
+
+
+def test_no_legacy_env_file_is_fine(healthy):
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["configuration"]
+    assert check.ok is True
 
 
 def test_a_missing_openai_key_is_reported_not_raised(healthy, monkeypatch):
@@ -223,9 +235,9 @@ def test_codex_without_workspace_mcp_has_no_mailbox_and_says_so(healthy, monkeyp
     with_agent(monkeypatch, "codex")
     settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Google credentials"]
-    assert (check.ok, check.severity) == (False, "soft")
-    assert "jarvis setup-google" in check.detail
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["Google for agents"]
+    assert (check.ok, check.severity, check.state) == (False, "soft", "missing")
+    assert "not set up (optional)" in check.detail and "jarvis setup" in check.detail
 
 
 def test_cloudflared_satisfies_the_tunnel_check(healthy, monkeypatch):
@@ -317,45 +329,42 @@ def test_a_missing_pin_only_warns_and_says_the_first_call_can_set_one(healthy):
     check = by_name(checks)["PIN"]
     assert (check.ok, check.severity) == (False, "soft")
     assert "no PIN yet" in check.detail
-    assert "the first call can set one" in check.detail
-    assert "nothing of yours is read out until it does" in check.detail
+    assert "`jarvis setup` or the first call can set one" in check.detail
+    assert "nothing of yours is read out until then" in check.detail
+    assert check.state == "missing"
     assert has_hard_failure(checks) is False
 
 
 def test_a_pin_from_the_environment_says_so(healthy):
     check = by_name(run_doctor_checks(healthy, probe_mic=False))["PIN"]
 
-    assert (check.ok, check.detail) == (True, "set from the environment")
+    assert check.ok is True
+    assert check.detail.startswith("set from the environment")
     assert "123456" not in check.detail
 
 
-def test_an_enrolled_pin_says_when_and_how_to_make_it_permanent(healthy):
-    """It is a bootstrap, not a home: a subagent runs as the owner and could delete the
-    file, which re-opens enrolment for whoever calls next. `.env` is the durable place."""
+def test_a_pin_in_its_own_file_says_when_and_where(healthy):
+    """`DATA_DIR/pin` is the PIN's store now, whoever wrote it — setup or a first call."""
     settings = healthy.model_copy(update={"pin": None})
     assert settings.enrol_pin("987654") is True
 
     check = by_name(run_doctor_checks(settings, probe_mic=False))["PIN"]
 
     assert check.ok is True
-    assert "enrolled on the phone on " in check.detail
+    assert check.detail.startswith("set on ")
     assert str(pin_file(settings.data_dir)) in check.detail
-    assert "JARVIS_PIN" in check.detail and "makes it permanent" in check.detail
     assert "987654" not in check.detail
 
 
-def test_a_pin_moved_into_the_env_stops_being_something_to_do(healthy):
-    """The line above, carried out. It has to stop asking once the PIN is in `.env`.
-
-    Following the advice leaves the same digits in both places, and a source read off the
-    file's contents would tell them to do it again on every run.
-    """
+def test_the_environment_wins_over_the_same_digits_in_the_file(healthy):
+    """The same digits in both places are the environment's: a source read off the file's
+    contents would say otherwise."""
     copied = healthy.model_copy(update={"pin": None})
     assert copied.enrol_pin("123456") is True  # the digits `healthy` has in its environment
 
     check = by_name(run_doctor_checks(healthy, probe_mic=False))["PIN"]
 
-    assert check.detail == "set from the environment"
+    assert check.detail.startswith("set from the environment")
 
 
 def test_a_pin_file_that_is_not_a_pin_is_reported_as_the_dead_end_it_is(healthy):
@@ -470,7 +479,7 @@ def test_a_world_readable_data_dir_only_warns(healthy):
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "0755" in check.detail
-    assert "chmod 0700" in check.detail
+    assert "jarvis doctor --fix" in check.detail
 
 
 def test_a_group_readable_data_dir_is_reported_too(healthy):
@@ -503,7 +512,7 @@ def test_a_data_dir_that_cannot_be_read_is_reported_not_raised(healthy):
 
 
 def test_google_is_reported_as_unused_while_workspace_mcp_is_off(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["Google credentials"]
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["Google for agents"]
 
     assert (check.ok, check.severity) == (True, "soft")
     assert "connectors" in check.detail
@@ -515,9 +524,9 @@ def test_google_credentials_only_warn_when_the_oauth_client_is_configured(health
         path.unlink()
 
     checks = run_doctor_checks(healthy, probe_mic=False)
-    check = by_name(checks)["Google credentials"]
+    check = by_name(checks)["Google for agents"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "setup-google" in check.detail
+    assert "jarvis auth login google-workspace" in check.detail
     assert has_hard_failure(checks) is False
 
 
@@ -530,9 +539,9 @@ def test_google_is_reported_as_not_configured_without_an_oauth_client(healthy):
         }
     )
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Google credentials"]
-    assert (check.ok, check.severity) == (True, "soft")
-    assert "not configured" in check.detail
+    check = by_name(run_doctor_checks(settings, probe_mic=False))["Google for agents"]
+    assert (check.ok, check.severity, check.state) == (False, "soft", "failed")
+    assert "no OAuth client" in check.detail
 
 
 # --- what a stranger needs to know about their own install -----------------
@@ -555,13 +564,13 @@ def test_an_owner_name_is_reported(healthy):
     assert (check.ok, check.detail) == (True, "Sam")
 
 
-def test_an_empty_memory_points_at_init(healthy):
+def test_an_empty_memory_points_at_setup(healthy):
     memory_path(healthy.data_dir).unlink()
 
     checks = run_doctor_checks(healthy, probe_mic=False)
     check = by_name(checks)["memory"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "jarvis init" in check.detail
+    assert "jarvis setup" in check.detail
     assert has_hard_failure(checks) is False
 
 
@@ -687,11 +696,16 @@ def test_a_formatted_check_carries_its_name_and_detail():
     assert "/usr/local/bin/cloudflared" in line
 
 
-def test_email_not_signed_in_is_fine_and_says_how(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["email"]
+def test_email_not_signed_in_is_optional_and_says_how(healthy):
+    token_path(healthy).unlink()
+    checks = run_doctor_checks(healthy, probe_mic=False)
+    check = by_name(checks)["email"]
 
-    assert check.ok is True
-    assert "jarvis setup-gmail" in check.detail
+    assert (check.ok, check.state) == (False, "missing")
+    assert "not set up (optional)" in check.detail
+    assert "jarvis auth login gmail" in check.detail
+    assert format_check(check).startswith("○")
+    assert has_hard_failure(checks) is False
 
 
 def test_email_signed_in_is_offered_with_its_model(healthy, monkeypatch):
@@ -716,3 +730,145 @@ def test_email_signed_in_without_the_claude_cli_is_a_warning(healthy, monkeypatc
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "uv sync --extra claude" in check.detail
+
+
+# --- where the secrets are ----------------------------------------------------
+
+
+def test_a_loose_secret_file_is_named_and_fix_tightens_only_modes(healthy):
+    from jarvis.config.store import ConfigStore
+    from jarvis.doctor import fix_permissions
+
+    store = ConfigStore()
+    store.set({"OPENAI_API_KEY": "sk-1"})
+    store.secrets_path.chmod(0o644)
+    token_path(healthy).chmod(0o640)
+    before = store.secrets_path.read_text()
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False, store=store))[
+        "secret files private"
+    ]
+    assert (check.ok, check.severity) == (False, "soft")
+    assert str(store.secrets_path) in check.detail and "0644" in check.detail
+
+    changed = fix_permissions(healthy, store)
+
+    assert len(changed) == 2
+    assert store.secrets_path.stat().st_mode & 0o777 == 0o600
+    assert token_path(healthy).stat().st_mode & 0o777 == 0o600
+    assert store.secrets_path.read_text() == before
+    assert by_name(run_doctor_checks(healthy, probe_mic=False, store=store))[
+        "secret files private"
+    ].ok
+
+
+def test_a_config_inside_a_git_work_tree_warns(healthy, tmp_path, monkeypatch):
+    from jarvis.config.store import ConfigStore
+
+    (tmp_path / "repo" / ".git").mkdir(parents=True)
+    store = ConfigStore(tmp_path / "repo" / "jarvis-home")
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False, store=store))["outside git"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert str(tmp_path / "repo") in check.detail
+
+
+def test_a_secret_written_into_config_toml_by_hand_warns(healthy):
+    from jarvis.config.files import dump_toml, write_private
+    from jarvis.config.store import ConfigStore
+
+    store = ConfigStore()
+    write_private(store.config_path, dump_toml({"TWILIO_AUTH_TOKEN": "tok"}))
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False, store=store))["config.toml"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "TWILIO_AUTH_TOKEN" in check.detail and "tok" not in check.detail
+
+
+def test_a_protected_key_unlocked_by_hand_is_reported(healthy):
+    from jarvis.config.files import dump_toml, write_private
+    from jarvis.config.store import ConfigStore
+
+    store = ConfigStore()
+    write_private(store.config_path, dump_toml({"service_writable": {"PORT": True}}))
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False, store=store))[
+        "protected settings"
+    ]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "PORT" in check.detail
+
+
+def test_an_imported_env_left_behind_is_reported(healthy, tmp_path, monkeypatch):
+    monkeypatch.setitem(Settings.model_config, "env_file", str(tmp_path / ".env"))
+    (tmp_path / ".env.imported-2026-09-27").write_text("OPENAI_API_KEY=sk\n")
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["old .env"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert ".env.imported-2026-09-27" in check.detail
+
+
+# --- the Twilio webhook -----------------------------------------------------------
+
+
+class FakeTwilio:
+    def __init__(self, voice_url=None, *, fail=False):
+        from jarvis.notify.twilio_out import TwilioNumber
+
+        self.fail = fail
+        self.number = TwilioNumber("PN1", "+15550000000", voice_url, None)
+
+    def numbers(self):
+        if self.fail:
+            raise RuntimeError("network down")
+        return [self.number]
+
+
+def test_the_webhook_is_checked_only_when_a_client_is_given(healthy):
+    assert "Twilio webhook" not in by_name(run_doctor_checks(healthy, probe_mic=False))
+
+
+def test_a_webhook_pointed_here_passes(healthy):
+    twilio = FakeTwilio("https://jarvis.example.com/twilio/voice")
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False, twilio=twilio))["Twilio webhook"]
+
+    assert check.ok is True
+
+
+def test_a_webhook_pointed_elsewhere_is_a_warning_that_says_setup_fixes_it(healthy):
+    twilio = FakeTwilio("https://old.example.com/voice")
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False, twilio=twilio))["Twilio webhook"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "old.example.com" in check.detail and "jarvis setup" in check.detail
+
+
+def test_twilio_down_is_a_warning_not_a_crash(healthy):
+    check = by_name(
+        run_doctor_checks(healthy, probe_mic=False, twilio=FakeTwilio(fail=True))
+    )["Twilio webhook"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+
+
+def test_a_number_not_on_the_account_is_a_failure(healthy):
+    settings = healthy.model_copy(update={"twilio_number": "+15559999999"})
+
+    check = by_name(
+        run_doctor_checks(settings, probe_mic=False, twilio=FakeTwilio("x"))
+    )["Twilio webhook"]
+
+    assert (check.ok, check.severity) == (False, "hard")
+    assert "+15559999999" not in check.detail
+
+
+def test_every_check_has_a_section_and_a_state(healthy):
+    for check in run_doctor_checks(healthy, probe_mic=False):
+        assert check.section
+        assert check.as_dict()["state"] in {"ok", "missing", "failed"}

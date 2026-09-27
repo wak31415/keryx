@@ -44,7 +44,6 @@ if (( UNINSTALL )); then
   exit 0
 fi
 
-require_env_file
 require_public_host "use a reserved ngrok domain"
 require_command UV uv "https://docs.astral.sh/uv/"
 require_command NGROK ngrok "brew install ngrok"
@@ -56,7 +55,8 @@ for label in "${LABELS[@]}"; do
   plist="$AGENTS/$label.plist"
   render "$TEMPLATES/$label.plist" "$plist" \
     "UV=$UV" "NGROK=$NGROK" "PUBLIC_HOST=$PUBLIC_HOST" "PORT=$PORT" \
-    "PATH=$(xml_escape "$PATH")" "LOGS=$(xml_escape "$LOGS")"
+    "PATH=$(xml_escape "$PATH")" "LOGS=$(xml_escape "$LOGS")" \
+    "JARVIS_HOME=$(xml_escape "$JARVIS_HOME_DIR")"
   # A previous version may still be loaded; booting it out first makes this re-runnable.
   launchctl bootout "gui/$UID/$label" 2>/dev/null || true
   launchctl bootstrap "gui/$UID" "$plist"

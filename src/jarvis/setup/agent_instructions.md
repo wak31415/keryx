@@ -1,0 +1,32 @@
+# Setting up Jarvis, for a coding agent
+
+You are setting up Jarvis for the person at this keyboard. Everything is a command that
+prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
+`{home}` (`config.toml`, and `secrets.toml` at 0600). Never read, print or paste a secret.
+
+1. **See what is there.** `jarvis config list --json`: every setting, whether it is set,
+   where from, whether it is secret. `jarvis doctor --json` says what is missing or failing,
+   grouped by `section`.
+2. **Set what you know.** `jarvis config set KEY VALUE [KEY VALUE …]` for plain settings.
+   A secret never goes on the command line: `jarvis config set OPENAI_API_KEY --from-env VAR`
+   (a variable already in your environment) or `… --stdin`. If you do not have a secret,
+   ask the person to run `jarvis setup`, which asks for it hidden; do not ask them to paste
+   it to you. `jarvis config import-env` moves a legacy `.env` into the store.
+3. **Sign-ins.** `jarvis auth status --json` lists each one. For a coding agent,
+   `jarvis auth login claude|codex` runs its own login on the terminal. For Gmail,
+   `jarvis auth login gmail --client-file PATH` prints a link: relay it; the person
+   approves it on any device and gives you the address their browser lands on
+   (`http://localhost:1/?…`); finish with
+   `jarvis auth login gmail --callback-url 'THAT ADDRESS'`. The person has to make the
+   Google Cloud client first (the steps: `{google_guide}`).
+4. **About them, with their permission.** Ask before you read their folders. If they agree,
+   draft one summary per project into `{projects}/<name>.md` — written to be heard, at
+   most {max_brief} characters each and {max_total} in all, and nothing from `.env` files,
+   keys or credential stores. A repository's own `.jarvis-brief.md` wins over yours.
+   Then a few standing facts, one per line: `jarvis memory seed --file - --json`.
+5. **Check.** `jarvis doctor --json`; exit 0 means nothing stops Jarvis from starting.
+6. **Hand over** what only the person can do, by saying: "run `jarvis setup`". It walks
+   only what is left — browser sign-ins, choosing the phone PIN (never set it yourself),
+   and approving the Twilio webhook.
+
+Exit codes: 0 done, 1 refused or failing (the message says why), 2 a wrong command line.

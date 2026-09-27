@@ -139,3 +139,26 @@ def every_agent_installed(monkeypatch):
         monkeypatch.setitem(
             registry.BACKENDS, name, dataclasses.replace(spec, find_cli=lambda cli=cli: cli)
         )
+
+
+@pytest.fixture(autouse=True)
+def _no_twilio_from_doctor(monkeypatch):
+    """`jarvis doctor` asks Twilio where the number points when it has credentials. Never
+    from a test: the doctor tests hand in a fake client of their own."""
+    monkeypatch.setattr("jarvis.cli._twilio_admin", lambda settings: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_http(monkeypatch):
+    """No test reaches the network through httpx, whatever a patch missed.
+
+    The transports are where a real request leaves the process; `httpx.MockTransport`, which
+    the tests that want HTTP use, is not one of them and keeps working.
+    """
+    import httpx
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a test tried to reach the network through httpx")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", refuse)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", refuse)

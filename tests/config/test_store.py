@@ -266,12 +266,12 @@ def test_the_service_may_switch_agents_only_among_those_enabled(store, settings)
     store.set({"AGENT_BACKEND": "codex"}, actor="service", settings=both)
 
 
-def test_skipped_sections_are_remembered(store):
-    store.mark_skipped("google")
-    store.mark_skipped("phone")
-    store.mark_skipped("google", skipped=False)
+def test_walked_sections_are_remembered(store):
+    store.mark_walked("google")
+    store.mark_walked("phone")
+    store.mark_walked("google", walked=False)
 
-    assert store.skipped_sections() == ["phone"]
+    assert store.walked_sections() == ["phone"]
     assert store.stored() == {}
 
 

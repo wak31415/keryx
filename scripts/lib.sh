@@ -1,41 +1,37 @@
 # Shared helpers for the scripts in this directory. Source it; do not run it.
 #
-# Sourcing sets REPO, ENV_FILE, JARVIS_DIR and LOGS, and provides the scaffolding that
+# Sourcing sets REPO, JARVIS_HOME_DIR, JARVIS_DIR and LOGS, and provides the scaffolding that
 # install-systemd.sh and install-launchd.sh each had their own copy of: argument parsing,
-# the env-file and PATH checks, template rendering, and the closing banner. What is left in
-# the installers is what is genuinely different — systemd units versus launchd agents.
+# the configuration and PATH checks, template rendering, and the closing banner. What is left
+# in the installers is what is genuinely different — systemd units versus launchd agents.
 #
-# ENV_FILE is the repository's .env; JARVIS_ENV_FILE points it somewhere else (the tests
-# use that, so they never read a real one).
+# Settings are read through `jarvis config get`, the way the service reads them — the store
+# in JARVIS_HOME, a legacy .env in the repository, the defaults — and never by grepping a
+# file. JARVIS_CLI says how to run jarvis (default `uv run --project "$REPO" jarvis`); the
+# tests point it at the interpreter running them.
 #
 # Deliberately no `set -euo pipefail` here: this file is sourced, and a sourced file should
 # not change the shell options of whoever sourced it. Every script that needs them sets
 # them itself, before the source line.
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${JARVIS_ENV_FILE:-$REPO/.env}"
 #: Set by `parse_install_args` when `--uninstall` was passed.
 UNINSTALL=0
 
-env_value() {
-  # env_value NAME [FILE] — the value of NAME in an env file, without surrounding quotes.
-  # Deliberately not `source`: the file holds JSON (PROJECTS={"a": "/b"}), and sourcing
-  # that under `set -e` is a syntax error at best and arbitrary code at worst. A file that
-  # is not there has no values, quietly: `require_env_file` is what complains about that.
-  local name="$1" file="${2:-$ENV_FILE}" value
-  value="$(grep -E "^[[:space:]]*${name}=" "$file" 2>/dev/null | tail -n 1 | cut -d= -f2-)" \
-    || true
-  value="${value%\"}"; value="${value#\"}"
-  value="${value%\'}"; value="${value#\'}"
-  printf '%s' "$value"
+config_value() {
+  # config_value NAME — the value jarvis would use for NAME; empty when it has none. Run from
+  # the repository, the service's working directory, so a legacy .env there still counts.
+  # Never a secret: `jarvis config get` refuses those.
+  local cli="${JARVIS_CLI:-uv run --quiet --project $REPO jarvis}"
+  # shellcheck disable=SC2086 # JARVIS_CLI is a command line, split on purpose
+  (cd "$REPO" && $cli config get "$1")
 }
 
 resolve_data_dir() {
-  # resolve_data_dir — DATA_DIR the way the service resolves it: the env file's value, else
-  # ~/.jarvis; `~` expanded; a relative path taken from the repository, which is the
-  # service's working directory. Everything the service writes, its logs included, is here.
+  # resolve_data_dir — DATA_DIR the way the service resolves it: `~` expanded, a relative
+  # path taken from the repository. Everything the service writes, its logs included, is here.
   local dir
-  dir="$(env_value DATA_DIR)"
+  dir="$(config_value DATA_DIR)" || return 1
   dir="${dir:-~/.jarvis}"
   case "$dir" in
     "~") dir="$HOME" ;;
@@ -45,9 +41,11 @@ resolve_data_dir() {
   printf '%s' "${dir%/}"
 }
 
+#: Where the configuration lives; rendered into the units so the service reads the same one.
+JARVIS_HOME_DIR="${JARVIS_HOME:-$HOME/.jarvis}"
 #: The resolved DATA_DIR. Not called DATA_DIR: if the caller's shell exports one, assigning
-#: it here would hand the env file's value to every `jarvis` the script runs.
-JARVIS_DIR="$(resolve_data_dir)"
+#: it here would hand the value to every `jarvis` the script runs.
+JARVIS_DIR="$(resolve_data_dir)" || JARVIS_DIR="$HOME/.jarvis"
 LOGS="$JARVIS_DIR/logs"
 
 parse_install_args() {
@@ -60,15 +58,6 @@ parse_install_args() {
       exit 2
       ;;
   esac
-}
-
-require_env_file() {
-  # The installers read PUBLIC_HOST and friends out of it; without one there is nothing
-  # to render a unit from.
-  if [[ ! -f "$ENV_FILE" ]]; then
-    echo "no env file at $ENV_FILE: copy .env.example to .env and fill it in" >&2
-    exit 1
-  fi
 }
 
 require_command() {
@@ -87,12 +76,13 @@ require_command() {
 }
 
 require_public_host() {
-  # require_public_host HINT — sets PUBLIC_HOST and PORT from the env file, or exits.
-  PUBLIC_HOST="$(env_value PUBLIC_HOST)"
-  PORT="$(env_value PORT)"
+  # require_public_host HINT — sets PUBLIC_HOST and PORT from the configuration, or exits.
+  PUBLIC_HOST="$(config_value PUBLIC_HOST)"
+  PORT="$(config_value PORT)"
   PORT="${PORT:-8080}"
   if [[ -z "$PUBLIC_HOST" ]]; then
-    echo "PUBLIC_HOST is not set in $ENV_FILE ($1)" >&2
+    echo "PUBLIC_HOST is not set ($1): run \`jarvis setup\`, or" >&2
+    echo "  jarvis config set PUBLIC_HOST jarvis.example.com" >&2
     exit 1
   fi
 }

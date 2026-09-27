@@ -6,10 +6,10 @@
 #   scripts/install-systemd.sh --uninstall  # stop both units and delete them
 #
 # The templates in ops/systemd/ carry __PLACEHOLDER__ names; this script fills them in from
-# `command -v` and the env file, writes the result to ~/.config/systemd/user/, and hands
+# `command -v` and `jarvis config get`, writes the result to ~/.config/systemd/user/, and hands
 # them to systemctl. Lingering keeps both running when nobody is logged in, so the machine
 # answers the phone after a reboot. Logs land in DATA_DIR/logs/ (~/.jarvis/logs/ unless the
-# env file says otherwise), and the units get this shell's PATH — run it from the shell
+# configuration says otherwise), and the units get this shell's PATH — run it from the shell
 # whose tools the subagents should have, and again after that changes.
 #
 # The scaffolding every installer needs — argument parsing, the env-file and PATH checks,
@@ -38,9 +38,8 @@ if (( UNINSTALL )); then
   exit 0
 fi
 
-require_env_file
 require_public_host "the hostname routed to the Cloudflare tunnel"
-TUNNEL="$(env_value CLOUDFLARE_TUNNEL)"
+TUNNEL="$(config_value CLOUDFLARE_TUNNEL)"
 TUNNEL="${TUNNEL:-jarvis}"
 
 require_command UV uv "https://docs.astral.sh/uv/"
@@ -53,7 +52,7 @@ no Cloudflare tunnel named "$TUNNEL" on this machine. Create it once (opens a br
   cloudflared tunnel create $TUNNEL
   cloudflared tunnel route dns $TUNNEL $PUBLIC_HOST
 
-Set CLOUDFLARE_TUNNEL in the env file to use a different name.
+To use a different name: jarvis config set CLOUDFLARE_TUNNEL <name>
 HINT
   exit 1
 fi
@@ -63,7 +62,8 @@ make_dirs "$UNITS"
 for name in "${SERVICES[@]}"; do
   render "$TEMPLATES/$name.service" "$UNITS/$name.service" \
     "UV=$UV" "CLOUDFLARED=$CLOUDFLARED" "TUNNEL=$TUNNEL" "PORT=$PORT" \
-    "PATH=$(systemd_quoted "$PATH")" "LOGS=$(systemd_path "$LOGS")"
+    "PATH=$(systemd_quoted "$PATH")" "LOGS=$(systemd_path "$LOGS")" \
+    "JARVIS_HOME=$(systemd_quoted "$JARVIS_HOME_DIR")"
 done
 systemctl --user daemon-reload
 for name in "${SERVICES[@]}"; do

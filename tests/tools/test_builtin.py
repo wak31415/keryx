@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 import pytest
 
 from jarvis.config import Settings, pin_file, secure_dir
+from jarvis.config.store import ConfigStore
 from jarvis.continuity.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
 from jarvis.continuity.recall import MAX_LIMIT as MAX_RECALL_LIMIT
 from jarvis.continuity.recall import Hit
@@ -30,6 +31,7 @@ from jarvis.tools import ToolContext, ToolRegistry
 from jarvis.tools.builtin import register_builtin_tools
 from jarvis.tools.builtin_common import (
     CALLBACK_SET_MESSAGE,
+    CONFIG_SET_MESSAGE,
     KEYPRESS_REQUIRED_MESSAGE,
     PIN_ENROL_MESSAGE,
     PIN_INVALID_MESSAGE,
@@ -55,6 +57,7 @@ TOOL_NAMES = {
     "list_projects",
     "request_callback",
     "mark_reported",
+    "set_config",
     "submit_pin",
     "end_session",
 }
@@ -2150,3 +2153,69 @@ async def test_check_email_needs_the_pin_on_the_phone(make_tools):
 
     assert result["status"] == "pin_required"
     assert email.asked == []
+
+
+# --- set_config -------------------------------------------------------------------------
+
+
+async def test_set_config_needs_the_pin(make_tools):
+    tools = make_tools(pin="123456")
+
+    result = await tools.call(
+        "set_config",
+        {"key": "OPENAI_VOICE", "value": "marin"},
+        channel="phone",
+        caller="+15550001111",
+        authorized=False,
+    )
+
+    assert result == {"status": "pin_required", "message": PIN_REQUIRED_MESSAGE}
+    assert ConfigStore().stored() == {}
+
+
+async def test_set_config_saves_a_writable_key_as_the_service_and_says_so_once(make_tools):
+    tools = make_tools()
+
+    result = await tools.call("set_config", {"key": "openai_voice", "value": "marin"})
+
+    assert result["status"] == "set"
+    assert result["message"] == CONFIG_SET_MESSAGE
+    assert "restart" in result["message"] and "one short sentence" in result["message"]
+    assert ConfigStore().stored() == {"OPENAI_VOICE": "marin"}
+
+
+async def test_set_config_refuses_a_protected_key_whatever_the_owner_unlocked(make_tools):
+    from jarvis.config.files import dump_toml, write_private
+
+    store = ConfigStore()
+    write_private(store.config_path, dump_toml({"service_writable": {"ALLOWED_CALLERS": True}}))
+    tools = make_tools()
+
+    result = await tools.call("set_config", {"key": "ALLOWED_CALLERS", "value": "+15559999999"})
+
+    assert result["status"] == "refused"
+    assert "protected" in result["message"]
+    assert "ALLOWED_CALLERS" not in store.stored()
+
+
+async def test_set_config_refuses_a_key_the_owner_locked(make_tools):
+    ConfigStore().lock("OPENAI_VOICE")
+    tools = make_tools()
+
+    result = await tools.call("set_config", {"key": "OPENAI_VOICE", "value": "marin"})
+
+    assert result["status"] == "refused"
+    assert "not unlocked" in result["message"]
+
+
+async def test_set_config_offers_the_model_only_what_it_may_write(make_tools):
+    ConfigStore().lock("OPENAI_VOICE")
+    tools = make_tools()
+
+    [schema] = [s for s in tools.registry.schemas() if s["name"] == "set_config"]
+    offered = schema["parameters"]["properties"]["key"]["enum"]
+
+    assert "VAD_EAGERNESS" in offered
+    assert "OPENAI_VOICE" not in offered
+    assert not {"OPENAI_API_KEY", "JARVIS_PIN", "ALLOWED_CALLERS", "PUBLIC_HOST"} & set(offered)
+    assert "Needs the PIN" in schema["description"]

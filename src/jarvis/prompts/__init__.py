@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from jarvis.notify.twilio_out import TwilioOut
-from jarvis.projects import ProjectBrief, discover_briefs, discover_projects
+from jarvis.projects import ProjectBrief, discover_briefs, discover_projects, summaries_dir
 from jarvis.skills import Skill, discover_skills_in
 from jarvis.trust import TrustLevel
 
@@ -293,7 +293,9 @@ def render_voice_prompt(
         known = discover_projects(settings)
         names = list(known) if projects is None else projects
         catalog = discover_skills_in(_skill_dirs(settings)) if skills is None else skills
-        written = discover_briefs(known) if briefs is None else briefs
+        written = (
+            discover_briefs(known, summaries=summaries_dir(settings)) if briefs is None else briefs
+        )
         project_names = ", ".join(names) if names else "none configured"
         skill_lines = _format_skills(catalog)
         brief_blocks = _format_briefs(written)

@@ -159,6 +159,15 @@ RECALL_EMPTY_MESSAGE = (
     "nothing on record about that; say so plainly and offer to put Claude on it"
 )
 ENDING_MESSAGE = "The session is ending now; do not say anything else."
+#: What `set_config` hands back. The change is on disk and nothing is running it yet, so the
+#: one sentence is that; a restart is theirs to ask for, never offered twice.
+CONFIG_SET_MESSAGE = (
+    "Saved; it takes effect after a restart. Say that in one short sentence, and restart "
+    "only if they ask — do not repeat the setting back."
+)
+CONFIG_REFUSED_MESSAGE = (
+    "Not changed: {why}. Say in one sentence that you cannot change that one from the phone."
+)
 #: What `answer_approval` hands back. It never answers anything itself: the most it can do
 #: is put the menu in the model's mouth, and the keypad does the rest (jarvis/approvals).
 APPROVAL_KEYPAD_MESSAGE = (

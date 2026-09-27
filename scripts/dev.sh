@@ -10,9 +10,8 @@ cd "$(dirname "$0")/.."
 # shellcheck source=scripts/lib.sh
 source scripts/lib.sh
 
-require_env_file
 require_public_host "the hostname routed to the Cloudflare tunnel"
-TUNNEL="$(env_value CLOUDFLARE_TUNNEL)"
+TUNNEL="$(config_value CLOUDFLARE_TUNNEL)"
 TUNNEL="${TUNNEL:-jarvis}"
 require_command CLOUDFLARED cloudflared "https://developers.cloudflare.com/cloudflare-one/"
 

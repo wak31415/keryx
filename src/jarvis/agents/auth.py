@@ -8,7 +8,7 @@
 
 The first one configured wins. A backend supplies only data — its two setting names, the
 variables they travel under, and a probe for the stored login (`AuthSource`) — and
-`resolve_auth` applies the precedence for all of them, so `doctor`, `setup-agent` and the
+`resolve_auth` applies the precedence for all of them, so `doctor`, `jarvis setup` and the
 runners can never disagree about which credential a subagent is on.
 
 A credential reaches the subagent in its *environment* and nowhere else: never argv, which
@@ -54,7 +54,7 @@ class AuthSource:
     token_env: str
     #: Best effort: is there a stored subscription login on this machine?
     stored_login: Callable[[], bool]
-    #: What to run for each tier, for the sentences `doctor` and `setup-agent` print.
+    #: What to run for each tier, for the sentences `doctor` and `jarvis setup` print.
     login_hint: str
 
 
@@ -78,7 +78,7 @@ def resolve_auth(source: AuthSource, settings: Settings, *, probe: bool = True) 
 
     `probe=False` skips looking for the stored login and calls it one: a runner does not
     need to know, because the agent's own CLI finds that login by itself, and a runner
-    opens a session per task. `doctor` and `setup-agent` probe.
+    opens a session per task. `doctor` and `jarvis auth status` probe.
     """
     key = getattr(settings, source.api_key_setting)
     if key:

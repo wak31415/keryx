@@ -1,4 +1,5 @@
-"""Tests for `jarvis setup-gmail`: a consent link, then the redirect URL exchanged once."""
+"""Tests for the Gmail sign-in behind `jarvis auth login gmail`: a consent link, then the
+redirect address exchanged once."""
 
 import json
 import stat
@@ -6,14 +7,14 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from jarvis.gmail_setup import (
+from jarvis.integrations.gmail import SCOPE, TOKEN_URL, token_path
+from jarvis.setup.google import (
     PENDING_FILE,
     REDIRECT_URI,
-    GmailSetupError,
+    GoogleSetupError,
     finish_signin,
     start_signin,
 )
-from jarvis.integrations.gmail import SCOPE, TOKEN_URL, token_path
 
 
 @pytest.fixture
@@ -100,7 +101,7 @@ def test_finishing_exchanges_the_code_once_and_keeps_the_token_private(client):
 def test_a_redirect_that_does_not_fit_is_refused(client, change, says):
     url = start_signin(client)
 
-    with pytest.raises(GmailSetupError, match=says):
+    with pytest.raises(GoogleSetupError, match=says):
         finish_signin(client, redirect(url, **change), post=FakePost())
 
 
@@ -110,16 +111,16 @@ def test_a_redirect_that_does_not_fit_is_refused(client, change, says):
 def test_google_refusing_the_code_is_said(client, post):
     url = start_signin(client)
 
-    with pytest.raises(GmailSetupError, match="refused the code"):
+    with pytest.raises(GoogleSetupError, match="refused the code"):
         finish_signin(client, redirect(url), post=post)
     assert not token_path(client).exists()
 
 
 def test_finishing_with_nothing_started_says_to_start(client):
-    with pytest.raises(GmailSetupError, match="run `jarvis setup-gmail` first"):
+    with pytest.raises(GoogleSetupError, match="run `jarvis auth login gmail` first"):
         finish_signin(client, REDIRECT_URI + "/?code=x&state=y", post=FakePost())
 
 
 def test_no_oauth_client_says_where_one_goes(settings):
-    with pytest.raises(GmailSetupError, match="no Google OAuth client"):
+    with pytest.raises(GoogleSetupError, match="no Google OAuth client"):
         start_signin(settings)

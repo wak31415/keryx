@@ -7,8 +7,11 @@ import importlib.metadata
 import json
 import logging
 import logging.handlers
+import os
+import shlex
 import signal
 import subprocess
+import sys
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -19,19 +22,26 @@ import typer
 import uvicorn
 from pydantic import ValidationError
 
-from jarvis.agent_setup import SetupError, run_setup_agent
 from jarvis.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
-from jarvis.config import PLACEHOLDER_KEY, Settings, env_var_name, load_settings
+from jarvis.config import (
+    GROUPS,
+    PLACEHOLDER_KEY,
+    Settings,
+    env_var_name,
+    field_for,
+    is_secret,
+    load_settings,
+)
+from jarvis.config.permissions import ACTOR_ENV, SERVICE, current_actor
+from jarvis.config.store import FROM_ENV, ConfigError, ConfigStore
 from jarvis.continuity.memory import memory_path, read_memory
 from jarvis.continuity.retention import cutoff_for, prune, prune_with
-from jarvis.doctor import format_check, has_hard_failure, run_doctor_checks
+from jarvis.doctor import fix_permissions, format_check, has_hard_failure, run_doctor_checks
 from jarvis.events import EventBus
-from jarvis.gmail_setup import GmailSetupError, finish_signin, start_signin
-from jarvis.google_setup import GoogleSetupError, run_google_setup
 from jarvis.local_runner import LocalRunner
 from jarvis.logging_util import mask_number
-from jarvis.onboarding import read_facts, run_init
+from jarvis.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.restart.health import health_probe, wait_until_serving
 from jarvis.restart.logscan import errors_since
@@ -47,6 +57,12 @@ from jarvis.restart.version import loaded_version, mark_running, mark_startup_lo
 from jarvis.restart.watchdog import watch
 from jarvis.server import create_app
 from jarvis.session import VoiceSession
+from jarvis.setup import auth as auth_flow
+from jarvis.setup import profile
+from jarvis.setup.agents import is_headless
+from jarvis.setup.context import SetupContext, run_command
+from jarvis.setup.ui import Aborted
+from jarvis.setup.wizard import agent_instructions, run_wizard
 from jarvis.tasks.manager import install_default_executor
 from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tasks.store import TaskStore
@@ -58,6 +74,14 @@ from jarvis.wakeword import OpenWakeWordDetector, WakeWordListener, wakeword_una
 app = typer.Typer(help="Jarvis voice agent.")
 tasks_app = typer.Typer(help="Inspect the tasks handed to subagents.")
 app.add_typer(tasks_app, name="tasks")
+config_app = typer.Typer(
+    help="Read and change Jarvis's settings (JARVIS_HOME/config.toml and secrets.toml)."
+)
+app.add_typer(config_app, name="config")
+auth_app = typer.Typer(help="Sign in to what Jarvis needs: the coding agents and Google.")
+app.add_typer(auth_app, name="auth")
+memory_app = typer.Typer(help="What Jarvis remembers between calls.")
+app.add_typer(memory_app, name="memory")
 log = logging.getLogger("jarvis.cli")
 
 
@@ -277,6 +301,9 @@ def serve(
             raise typer.Exit(1)
         typer.echo(f"{why}; serving the phone channel only")
         wakeword = False
+    # Everything this process starts — every subagent — is the service, not the owner, when
+    # it runs `jarvis config set` (jarvis.config.permissions).
+    os.environ[ACTOR_ENV] = SERVICE
     asyncio.run(_serve(settings, phone=not no_phone, wakeword=wakeword))
 
 
@@ -720,73 +747,9 @@ def _echo_report(path: Path) -> None:
 # --- memory ----------------------------------------------------------------
 
 
-@app.command()
-def init(
-    name: Annotated[
-        str | None, typer.Option("--name", help="What Jarvis should call you (OWNER_NAME).")
-    ] = None,
-    fact: Annotated[
-        list[str] | None,
-        typer.Option("--fact", help="Something Jarvis should know about you; repeatable."),
-    ] = None,
-    from_file: Annotated[
-        str | None,
-        typer.Option("--from", help="Read the facts from a file, one per line; - is stdin."),
-    ] = None,
-    force: Annotated[
-        bool, typer.Option("--force", help="Replace a memory that already has something in it.")
-    ] = False,
-    yes: Annotated[
-        bool, typer.Option("--yes", "-y", help="Ask nothing: write what was given.")
-    ] = False,
-    as_json: Annotated[
-        bool,
-        typer.Option("--json", help="Print the report as JSON and nothing else (needs --yes)."),
-    ] = False,
-) -> None:
-    """Tell Jarvis whom it works for before its first call: a name and a first memory.
-
-    Writes `memory.md` and nothing else — the `OWNER_NAME=` line for `.env` is printed for you
-    to add — and ends with what every call will carry.
-
-    For an agent setting this up: `--from - --yes --json` takes the facts on stdin and prints
-    one JSON document. Exit 0 means the memory was written, or nothing was given to write;
-    exit 1 means a memory was wanted and not written (one is already there without --force,
-    or it is longer than a call reads); exit 2 means the command line itself is wrong.
-    """
-    if (from_file == "-" or as_json) and not yes:
-        typer.echo(
-            "--from - reads the facts from stdin and --json leaves nowhere to print a "
-            "question, so neither can stop to ask: add --yes",
-            err=True,
-        )
-        raise typer.Exit(2)
-    settings = _configure_readonly()
-    facts: list[str] | None = None
-    if fact or from_file is not None:
-        facts = list(fact or [])
-        try:
-            facts += read_facts(from_file) if from_file is not None else []
-        except OSError as exc:
-            typer.echo(f"could not read {from_file}: {exc}", err=True)
-            raise typer.Exit(2) from None
-    code = run_init(
-        settings,
-        name=name,
-        facts=facts,
-        force=force,
-        yes=yes,
-        echo=typer.echo,
-        ask=lambda text: typer.prompt(text, default="", show_default=False),
-        confirm=lambda text: typer.confirm(text, default=True),
-        as_json=as_json,
-    )
-    if code:
-        raise typer.Exit(code)
-
-
-@app.command()
+@memory_app.callback(invoke_without_command=True)
 def memory(
+    ctx: typer.Context,
     path_only: Annotated[
         bool, typer.Option("--path", help="Print where the memory lives and nothing else.")
     ] = False,
@@ -797,6 +760,8 @@ def memory(
     of its prompt. It is plain markdown and safe to edit by hand — the next update merges
     around whatever is there.
     """
+    if ctx.invoked_subcommand is not None:
+        return
     settings = _configure_readonly()
     path = memory_path(settings.data_dir)
     if path_only:
@@ -809,6 +774,42 @@ def memory(
         return
     typer.echo(f"# {path}\n")
     typer.echo(text)
+
+
+@memory_app.command("seed")
+def memory_seed(
+    file: Annotated[
+        str, typer.Option("--file", help="The facts, one per line; - is stdin.")
+    ],
+    force: Annotated[
+        bool, typer.Option("--force", help="Replace a memory that already has something in it.")
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print what every call will carry, as JSON.")
+    ] = False,
+) -> None:
+    """Write a first memory from standing facts, before any call has.
+
+    For an agent: `--file - --json` takes the facts on stdin and prints one JSON document.
+    Exit 0 means the memory was written, or nothing was given to write; exit 1 means a
+    memory was wanted and not written (one is there without --force, or it is longer than a
+    call reads); exit 2 means the command line itself is wrong.
+    """
+    settings = _configure_readonly()
+    try:
+        facts = profile.read_facts(file)
+    except OSError as exc:
+        typer.echo(f"could not read {file}: {exc}", err=True)
+        raise typer.Exit(2) from None
+    say = (lambda _line: None) if as_json else typer.echo
+    status = profile.seed(settings, facts, force=force, echo=say)
+    if as_json:
+        typer.echo(json.dumps(profile.setup_summary(settings, status=status), indent=2))
+    else:
+        for line in profile.setup_report(settings):
+            typer.echo(line)
+    if code := profile.exit_code(status):
+        raise typer.Exit(code)
 
 
 @app.command()
@@ -878,119 +879,392 @@ def forget(
 # --- diagnostics -----------------------------------------------------------
 
 
+def _twilio_admin(settings: Settings) -> TwilioAdmin | None:
+    """A Twilio client for doctor's webhook check, when there is anything to check."""
+    if not (settings.twilio_account_sid and settings.twilio_auth_token and settings.public_host):
+        return None
+    return RestTwilioAdmin(settings.twilio_account_sid, settings.twilio_auth_token)
+
+
 @app.command()
 def doctor(
     no_mic: Annotated[
         bool, typer.Option("--no-mic", help="Skip the microphone probe (headless machines).")
     ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print every check as JSON and nothing else.")
+    ] = False,
+    fix: Annotated[
+        bool, typer.Option("--fix", help="Make every secret file owner-only first. Nothing else.")
+    ] = False,
 ) -> None:
     """Check that this machine is set up to run Jarvis; exits non-zero on a hard failure."""
     settings, problems = _load_settings_reporting()
-    checks = run_doctor_checks(settings, probe_mic=not no_mic, config_problems=problems)
+    store = ConfigStore()
+    if fix:
+        changed = fix_permissions(settings, store)
+        if not as_json:
+            for line in changed or ["nothing to tighten"]:
+                typer.echo(f"fix: {line}")
+    checks = run_doctor_checks(
+        settings,
+        probe_mic=not no_mic,
+        config_problems=problems,
+        store=store,
+        twilio=_twilio_admin(settings),
+    )
+    failed = sum(1 for check in checks if not check.ok and check.severity == "hard")
+    if as_json:
+        typer.echo(
+            json.dumps({"ok": not failed, "checks": [c.as_dict() for c in checks]}, indent=2)
+        )
+        if failed:
+            raise typer.Exit(1)
+        return
     for check in checks:
         typer.echo(format_check(check))
-
     if has_hard_failure(checks):
-        failed = sum(1 for check in checks if not check.ok and check.severity == "hard")
         typer.echo(f"\n{failed} check(s) failed.")
         raise typer.Exit(1)
     typer.echo("\nall good.")
 
 
-@app.command("setup-agent")
-def setup_agent(
-    default: Annotated[
-        str | None,
-        typer.Option("--default", help="The agent that does the work when none is named."),
-    ] = None,
-    enable: Annotated[
-        list[str] | None,
-        typer.Option("--enable", help="Another agent a task may be sent to; repeatable."),
-    ] = None,
-    no_smoke: Annotated[
-        bool, typer.Option("--no-smoke", help="Skip running one real task on each agent.")
+# --- setup, config, auth ---------------------------------------------------
+
+
+@app.command()
+def setup(
+    review_all: Annotated[
+        bool, typer.Option("--all", help="Walk every section, and ask again about what is set.")
     ] = False,
-    yes: Annotated[
-        bool, typer.Option("--yes", "-y", help="Ask nothing and sign nothing in: report.")
-    ] = False,
-    as_json: Annotated[
-        bool, typer.Option("--json", help="Print one JSON document instead; needs --yes.")
+    instructions: Annotated[
+        bool,
+        typer.Option(
+            "--agent-instructions",
+            help="Print how a coding agent sets Jarvis up from the command line, and exit.",
+        ),
     ] = False,
 ) -> None:
-    """Choose the coding agent Jarvis hands work to, sign it in, and prove it runs.
+    """Set Jarvis up: a guided walk through only what is still missing.
 
-    Shows which agents are installed and signed in, asks which should do the work, runs
-    the login each one is missing (an API key is a line for you to add — this never reads
-    or writes .env), runs one real task through each as a smoke test, and prints the
-    AGENT_BACKEND= and AGENTS_ENABLED= lines to paste.
-
-    For an agent setting this up: `--yes --json` prints one JSON document. Exit 0 means
-    every chosen agent can run a task; exit 1 means one cannot (not installed, not signed
-    in, or failed its smoke test); exit 2 means the command line itself is wrong.
+    Everything it saves goes to JARVIS_HOME as you go, so stopping part way loses nothing.
+    A coding agent setting Jarvis up uses the commands instead: --agent-instructions.
     """
-    if as_json and not yes:
-        typer.echo("--json leaves nowhere to print a question: add --yes", err=True)
-        raise typer.Exit(2)
     settings = _configure_readonly()
-    try:
-        code = run_setup_agent(
-            settings,
-            default=default.strip().lower() if default else None,
-            enable=[name.strip().lower() for name in enable] if enable else None,
-            smoke=not no_smoke,
-            yes=yes,
-            as_json=as_json,
-            echo=typer.echo,
-            ask=lambda text, preset: typer.prompt(text, default=preset),
-            confirm=lambda text, preset: typer.confirm(text, default=preset),
+    if instructions:
+        typer.echo(agent_instructions(settings, ConfigStore()))
+        return
+    if not _interactive():
+        typer.echo(
+            "jarvis setup asks questions, so it needs a terminal. A coding agent: "
+            "jarvis setup --agent-instructions",
+            err=True,
         )
-    except SetupError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(2) from None
+        raise typer.Exit(2)
+    from jarvis.setup.ui import RichPrompter
+
+    ctx = SetupContext(ui=RichPrompter(), store=ConfigStore(), load=_load_settings_optional)
+    try:
+        code = run_wizard(ctx, review_all=review_all)
+    except Aborted:
+        typer.echo("\nsetup stopped. What was saved stays saved; `jarvis setup` picks up here.")
+        raise typer.Exit(130) from None
     if code:
         raise typer.Exit(code)
 
 
-@app.command("setup-gmail")
-def setup_gmail(
-    finish: Annotated[
-        str | None,
-        typer.Option("--finish", help="The URL you landed on after approving, in quotes."),
+def _interactive() -> bool:
+    """A person at a terminal: both ends of it."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _plain(value: Any) -> str:
+    """A setting's value as a script reads it: lists comma-joined, maps as JSON."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, list):
+        return ",".join(map(str, value))
+    if isinstance(value, dict):
+        return json.dumps(value)
+    return str(value)
+
+
+def _key_or_exit(key: str) -> str:
+    name = field_for(key)
+    if name is None:
+        typer.echo(f"there is no setting called {key.upper()} (`jarvis config list`)", err=True)
+        raise typer.Exit(2)
+    return env_var_name(name)
+
+
+@config_app.command("list")
+def config_list(
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+    group: Annotated[
+        str | None, typer.Option("--group", help=f"Only one group: {', '.join(GROUPS)}.")
     ] = None,
 ) -> None:
-    """Sign in to Gmail, read-only, for the check_email voice tool. Two steps.
+    """Every setting: whether it is set, where from, and whether the service may change it.
 
-    Run it once for a link; open it on any device and approve; you land on a page that
-    does not load (http://localhost:1/...). Then run it again with --finish and that whole
-    URL, in single quotes. A restart makes the voice model offer the tool.
+    A secret's value is never shown — only whether it is set.
     """
-    settings = _configure_readonly()
-    try:
-        if finish is None:
-            url = start_signin(settings)
-            typer.echo("Open this link on any device and approve read-only Gmail access:\n")
-            typer.echo(url)
+    settings = _load_settings_optional()
+    rows = ConfigStore().describe(settings)
+    if group is not None:
+        if group not in GROUPS:
+            typer.echo(f"no group {group!r}; one of: {', '.join(GROUPS)}", err=True)
+            raise typer.Exit(2)
+        rows = [row for row in rows if row["group"] == group]
+    if as_json:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+    for name, title in GROUPS.items():
+        members = [row for row in rows if row["group"] == name]
+        if not members:
+            continue
+        typer.echo(f"\n{title}")
+        width = max(len(row["key"]) for row in members)
+        for row in members:
+            if row["secret"]:
+                value = "(secret, set)" if row["set"] else "(secret)"
+            else:
+                value = _plain(row["value"])
+            where = row["source"] if row["set"] else ""
+            mark = "*" if row["service_writable"] else " "
+            typer.echo(f"  {mark} {row['key']:<{width}}  {_shorten(value, 50):<50}  {where}")
+    typer.echo("\n* the running service may change it (`jarvis config lock KEY` to stop that)")
+
+
+@config_app.command("get")
+def config_get(
+    keys: Annotated[list[str], typer.Argument(help="One or more settings, by name.")],
+    shell: Annotated[
+        bool, typer.Option("--shell", help="Print KEY='value' lines a shell can eval.")
+    ] = False,
+) -> None:
+    """Print the value a setting has now, from wherever it comes. Never a secret's."""
+    settings = _load_settings_optional()
+    dumped = settings.model_dump(mode="json")
+    for key in keys:
+        name = field_for(_key_or_exit(key))
+        assert name is not None
+        if is_secret(name):
             typer.echo(
-                "\nYou will land on a page that does not load. Copy its whole address, then run"
-                "\n  jarvis setup-gmail --finish '<that address>'"
+                f"{env_var_name(name)} is a secret and is never printed; "
+                "`jarvis config list` says whether it is set",
+                err=True,
             )
-            return
-        path = finish_signin(settings, finish)
-    except GmailSetupError as exc:
-        typer.echo(f"gmail sign-in failed: {exc}", err=True)
-        raise typer.Exit(1) from None
-    typer.echo(f"signed in; saved to {path} (read-only). Restart Jarvis to offer check_email.")
+            raise typer.Exit(1)
+        value = _plain(dumped[name])
+        typer.echo(f"{env_var_name(name)}={shlex.quote(value)}" if shell else value)
 
 
-@app.command("setup-google")
-def setup_google() -> None:
-    """Authorize Gmail + Calendar access once, so subagents can use them."""
-    settings = _configure_readonly()
+def _read_secret_input(key: str) -> str:
+    if sys.stdin.isatty():
+        return typer.prompt(key, hide_input=True).strip()
+    return sys.stdin.read().strip()
+
+
+@config_app.command("set")
+def config_set(
+    pairs: Annotated[list[str], typer.Argument(help="KEY VALUE [KEY VALUE …], or one KEY.")],
+    stdin: Annotated[
+        bool, typer.Option("--stdin", help="Read the one KEY's value from standard input.")
+    ] = False,
+    from_env: Annotated[
+        str | None,
+        typer.Option("--from-env", help="Take the one KEY's value from this variable."),
+    ] = None,
+) -> None:
+    """Change settings. A secret's value is taken only from --stdin or --from-env.
+
+    Never on the command line, where `ps` and the shell's history keep it. Run inside a
+    Jarvis task, this acts as the running service, and may change only what that is allowed
+    to (`jarvis config list`).
+    """
+    if stdin or from_env is not None:
+        if len(pairs) != 1 or (stdin and from_env is not None):
+            typer.echo("--stdin and --from-env set exactly one KEY, and only one of them", err=True)
+            raise typer.Exit(2)
+        key = _key_or_exit(pairs[0])
+        if from_env is not None:
+            if not os.environ.get(from_env):
+                typer.echo(f"{from_env} is not set in this environment", err=True)
+                raise typer.Exit(2)
+            values = {key: os.environ[from_env]}
+        else:
+            values = {key: _read_secret_input(key)}
+    else:
+        if not pairs or len(pairs) % 2:
+            typer.echo("give KEY VALUE pairs (or one KEY with --stdin / --from-env)", err=True)
+            raise typer.Exit(2)
+        values = {}
+        for key, value in zip(pairs[::2], pairs[1::2], strict=True):
+            key = _key_or_exit(key)
+            name = field_for(key)
+            if name is not None and is_secret(name):
+                typer.echo(
+                    f"{key} is a secret: never on the command line. "
+                    f"`jarvis config set {key} --stdin`, or --from-env VAR",
+                    err=True,
+                )
+                raise typer.Exit(2)
+            values[key] = value
+    _store_values(values)
+
+
+def _store_values(values: dict[str, Any]) -> None:
+    store = ConfigStore()
+    settings = _load_settings_optional()
+    actor = current_actor()
     try:
-        run_google_setup(settings, echo=typer.echo)
-    except GoogleSetupError as exc:
-        typer.echo(f"google setup failed: {exc}")
+        stored = store.set(values, actor=actor, settings=settings)
+    except ConfigError as error:
+        typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
+    for key, value in stored.items():
+        name = field_for(key)
+        where = "secrets.toml" if name is not None and is_secret(name) else "config.toml"
+        typer.echo(f"{key} unset" if value is None else f"{key} saved to {where}")
+        if store.source_of(key, settings) == FROM_ENV:
+            typer.echo(f"note: {key} is also set in the environment, which wins")
+    if actor == SERVICE:
+        typer.echo("set; takes effect after a restart")
+
+
+@config_app.command("unset")
+def config_unset(
+    keys: Annotated[list[str], typer.Argument(help="The settings to return to their default.")],
+) -> None:
+    """Remove settings from the store, so the default (or the environment) applies again."""
+    _store_values({_key_or_exit(key): None for key in keys})
+
+
+@config_app.command("path")
+def config_path() -> None:
+    """Print where the configuration lives."""
+    store = ConfigStore()
+    typer.echo(f"JARVIS_HOME  {store.home}")
+    typer.echo(f"config       {store.config_path}")
+    typer.echo(f"secrets      {store.secrets_path}")
+
+
+@config_app.command("import-env")
+def config_import_env(
+    path: Annotated[
+        Path, typer.Argument(help="The legacy env file.", exists=True, dir_okay=False)
+    ] = Path(".env"),
+) -> None:
+    """Move a legacy .env (and .secrets/client_secret.json) into the store, then rename it."""
+    try:
+        report = ConfigStore().import_env(path)
+    except ConfigError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"imported: {', '.join(report.imported) or 'nothing'}")
+    if report.defaults:
+        typer.echo(f"left at their defaults: {', '.join(report.defaults)}")
+    if report.pin:
+        typer.echo(f"PIN: {report.pin}")
+    if report.client_file:
+        typer.echo(f"Google client file: {report.client_file}")
+    if report.unknown:
+        typer.echo(f"not settings, not imported: {', '.join(report.unknown)}")
+    typer.echo(f"{path} is now {report.renamed_to}; delete it once Jarvis runs from the store.")
+
+
+def _owner_only(verb: str) -> None:
+    if current_actor() == SERVICE:
+        typer.echo(f"only the owner may {verb} a setting, at their own terminal", err=True)
+        raise typer.Exit(1)
+
+
+@config_app.command("lock")
+def config_lock(key: Annotated[str, typer.Argument(help="The setting.")]) -> None:
+    """Stop the running service changing KEY."""
+    _owner_only("lock")
+    try:
+        ConfigStore().lock(_key_or_exit(key))
+    except ConfigError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"{key.upper()}: the running service may no longer change it")
+
+
+@config_app.command("unlock")
+def config_unlock(key: Annotated[str, typer.Argument(help="The setting.")]) -> None:
+    """Let the running service change KEY. Refused for credentials and protected settings."""
+    _owner_only("unlock")
+    try:
+        ConfigStore().unlock(_key_or_exit(key))
+    except ConfigError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"{key.upper()}: the running service may change it")
+
+
+@auth_app.command("login")
+def auth_login(
+    name: Annotated[str, typer.Argument(help="claude, codex, gmail or google-workspace.")],
+    headless: Annotated[
+        bool | None,
+        typer.Option(
+            "--headless/--browser",
+            help="The agent login for a machine with no browser (default: detected).",
+        ),
+    ] = None,
+    client_file: Annotated[
+        Path | None,
+        typer.Option("--client-file", help="The Google OAuth client JSON you downloaded."),
+    ] = None,
+    callback_url: Annotated[
+        str | None,
+        typer.Option("--callback-url", help="gmail: the address you landed on, in quotes."),
+    ] = None,
+) -> None:
+    """Sign in to one thing: a coding agent, Gmail (read-only), or Google for agents.
+
+    gmail is two steps: once for a link to open on any device, then again with
+    --callback-url and the address the browser landed on.
+    """
+    if name not in auth_flow.LOGINS:
+        typer.echo(f"sign in to one of: {', '.join(auth_flow.LOGINS)}", err=True)
+        raise typer.Exit(2)
+    settings = _configure_readonly()
+    options = auth_flow.LoginOptions(
+        headless=is_headless() if headless is None else headless,
+        client_file=client_file,
+        callback_url=callback_url,
+    )
+    try:
+        auth_flow.login(
+            name, settings, ConfigStore(), options=options, echo=typer.echo, run_login=run_command
+        )
+    except auth_flow.AuthError as error:
+        typer.echo(f"{name} sign-in failed: {error}", err=True)
+        raise typer.Exit(1) from None
+
+
+@auth_app.command("status")
+def auth_status_command(
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+    smoke: Annotated[
+        bool, typer.Option("--smoke", help="Also run one real task on each enabled agent.")
+    ] = False,
+) -> None:
+    """Every sign-in Jarvis needs, and whether it is done. Exit 1 if one has failed."""
+    settings = _configure_readonly()
+    report = auth_flow.status(settings, ConfigStore(), smoke=smoke)
+    if as_json:
+        typer.echo(json.dumps(report, indent=2))
+    else:
+        width = max(map(len, report))
+        for name, entry in report.items():
+            typer.echo(f"{name:<{width}}  {entry['state']:<8}  {entry['detail']}")
+    if any(entry["state"] == "failed" for entry in report.values()):
+        raise typer.Exit(1)
 
 
 # --- approvals -------------------------------------------------------------

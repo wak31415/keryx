@@ -226,3 +226,77 @@ async def test_a_twilio_error_does_not_quote_the_number_back(out, client, resour
     assert TO not in written
     assert NUMBER not in written
     assert mask_number(TO) in written
+
+
+# --- the account, for setup and doctor --------------------------------------------------
+
+
+class FakeAccountClient:
+    """The slice of the REST client `RestTwilioAdmin` reaches, recording every update."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.updates: list[tuple[str, dict]] = []
+        client = self
+
+        class Numbers:
+            def list(self, limit):
+                if client.fail:
+                    raise RuntimeError("HTTP 401 for +15550001111")
+                return [
+                    SimpleNamespace(
+                        sid="PN1", phone_number="+15550001111", voice_url="", status_callback=None
+                    )
+                ]
+
+            def __call__(self, sid):
+                return SimpleNamespace(update=lambda **kw: client.updates.append((sid, kw)))
+
+        self.incoming_phone_numbers = Numbers()
+        self.api = SimpleNamespace(
+            accounts=lambda sid: SimpleNamespace(
+                fetch=lambda: SimpleNamespace(friendly_name="Ada's account")
+            )
+        )
+
+
+def test_the_admin_reads_the_account_and_its_numbers():
+    from jarvis.notify.twilio_out import RestTwilioAdmin, TwilioNumber
+
+    admin = RestTwilioAdmin("AC1", "tok", client=FakeAccountClient())
+
+    assert admin.account_name() == "Ada's account"
+    assert admin.numbers() == [TwilioNumber("PN1", "+15550001111", None, None)]
+
+
+def test_the_admin_sets_both_webhooks_as_post():
+    from jarvis.notify.twilio_out import RestTwilioAdmin
+
+    client = FakeAccountClient()
+    RestTwilioAdmin("AC1", "tok", client=client).set_webhooks(
+        "PN1", voice_url="https://h/twilio/voice", status_url="https://h/twilio/status"
+    )
+
+    assert client.updates == [
+        (
+            "PN1",
+            {
+                "voice_url": "https://h/twilio/voice",
+                "voice_method": "POST",
+                "status_callback": "https://h/twilio/status",
+                "status_callback_method": "POST",
+            },
+        )
+    ]
+
+
+def test_an_admin_failure_is_a_twilio_error_with_the_number_masked():
+    from jarvis.notify.twilio_out import RestTwilioAdmin
+
+    admin = RestTwilioAdmin("AC1", "tok", client=FakeAccountClient(fail=True))
+
+    with pytest.raises(TwilioError) as caught:
+        admin.numbers()
+
+    assert "+15550001111" not in str(caught.value)
+    assert mask_number("+15550001111") in str(caught.value)

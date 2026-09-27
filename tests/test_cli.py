@@ -68,56 +68,13 @@ def test_help_lists_the_commands():
         "download-models",
         "tasks",
         "doctor",
-        "setup-google",
+        "setup",
+        "config",
+        "auth",
+        "memory",
         "restart",
-        "init",
     ):
         assert command in result.output
-
-
-def test_setup_agent_is_a_command_with_its_switches():
-    assert "setup-agent" in runner.invoke(app, ["--help"]).output
-    result = runner.invoke(app, ["setup-agent", "--help"])
-
-    assert result.exit_code == 0
-    for option in ("--default", "--enable", "--no-smoke", "--yes", "--json"):
-        assert option in result.output
-
-
-def test_setup_agent_json_cannot_ask_so_it_needs_yes(settings_stub):
-    result = runner.invoke(app, ["setup-agent", "--json"])
-
-    assert result.exit_code == 2
-    assert "add --yes" in result.output
-
-
-def test_setup_agent_hands_its_flags_over_and_exits_with_the_result(settings_stub, monkeypatch):
-    seen: dict = {}
-
-    def fake(settings, **kw):
-        seen.update(kw)
-        return 1
-
-    monkeypatch.setattr("jarvis.cli.run_setup_agent", fake)
-
-    result = runner.invoke(
-        app, ["setup-agent", "--default", " Codex ", "--enable", "CLAUDE", "--no-smoke", "-y"]
-    )
-
-    assert result.exit_code == 1
-    assert (seen["default"], seen["enable"], seen["smoke"], seen["yes"]) == (
-        "codex",
-        ["claude"],
-        False,
-        True,
-    )
-
-
-def test_setup_agent_refuses_an_agent_it_does_not_know(settings_stub):
-    result = runner.invoke(app, ["setup-agent", "--default", "gemini", "--yes", "--no-smoke"])
-
-    assert result.exit_code == 2
-    assert "no agent called 'gemini'" in result.output
 
 
 def test_version_prints_the_installed_package_version():
@@ -1153,48 +1110,6 @@ def test_doctor_help_documents_no_mic():
     assert "--no-mic" in result.output
 
 
-# --- setup-google ----------------------------------------------------------
-
-
-def test_setup_google_refuses_without_an_oauth_client(settings_stub, monkeypatch):
-    spawned: list[object] = []
-    # Recorded, not raised: an exception here would *also* exit 1 and hide the difference
-    # between "refused" and "started a server and then blew up".
-    monkeypatch.setattr(
-        "jarvis.google_setup.subprocess.Popen",
-        lambda argv, **kwargs: spawned.append(argv),
-    )
-
-    result = runner.invoke(app, ["setup-google"])
-
-    assert result.exit_code == 1
-    assert "GOOGLE_OAUTH_CLIENT_ID" in result.output
-    assert spawned == []  # no workspace-mcp server was ever started
-
-
-def test_setup_google_runs_the_flow_and_prints_what_it_says(settings_stub, monkeypatch):
-    seen: list[Settings] = []
-
-    def fake_setup(settings, *, echo, **kwargs):
-        seen.append(settings)
-        echo("open this: https://accounts.google.com/o/oauth2/auth")
-        return True
-
-    monkeypatch.setattr("jarvis.cli.run_google_setup", fake_setup)
-
-    result = runner.invoke(app, ["setup-google"])
-
-    assert result.exit_code == 0, result.output
-    assert seen == [settings_stub]
-    assert "https://accounts.google.com/o/oauth2/auth" in result.output
-
-
-def test_setup_google_help():
-    result = runner.invoke(app, ["setup-google", "--help"])
-
-    assert result.exit_code == 0
-
-
 def test_download_models_help():
     result = runner.invoke(app, ["download-models", "--help"])
 
@@ -1308,33 +1223,3 @@ def test_memory_path_prints_only_the_path(settings_stub):
     assert result.exit_code == 0, result.output
     assert result.output.strip() == str(memory_path(settings_stub.data_dir))
 
-
-def test_setup_gmail_prints_a_link_then_finishes_with_the_url(settings_stub, monkeypatch):
-    monkeypatch.setattr("jarvis.cli.start_signin", lambda settings: "https://accounts.example/x")
-    finished: list[str] = []
-    monkeypatch.setattr(
-        "jarvis.cli.finish_signin",
-        lambda settings, url: finished.append(url) or settings.data_dir / "gmail_token.json",
-    )
-
-    started = runner.invoke(app, ["setup-gmail"])
-    done = runner.invoke(app, ["setup-gmail", "--finish", "http://localhost:1/?code=x"])
-
-    assert started.exit_code == 0 and "https://accounts.example/x" in started.output
-    assert "--finish" in started.output
-    assert done.exit_code == 0 and "signed in" in done.output
-    assert finished == ["http://localhost:1/?code=x"]
-
-
-def test_setup_gmail_failing_says_why_and_exits_1(settings_stub, monkeypatch):
-    from jarvis.gmail_setup import GmailSetupError
-
-    def refuse(settings):
-        raise GmailSetupError("no Google OAuth client")
-
-    monkeypatch.setattr("jarvis.cli.start_signin", refuse)
-
-    result = runner.invoke(app, ["setup-gmail"])
-
-    assert result.exit_code == 1
-    assert "no Google OAuth client" in result.output

@@ -44,6 +44,7 @@ from jarvis.config.settings import (
     Settings,
     env_var_name,
     field_for,
+    field_group,
     is_secret,
     parse_google_client,
 )
@@ -199,11 +200,15 @@ class ConfigStore:
             if (name := field_for(key)) is not None and is_secret(name)
         )
 
-    def skipped_sections(self) -> list[str]:
-        """The `jarvis setup` sections walked and left unfinished on purpose."""
+    def walked_sections(self) -> list[str]:
+        """The `jarvis setup` sections already walked: not asked again unless reviewing.
+
+        What `doctor` cannot judge — the settings kept at their defaults, Google left for
+        later — is only known to be settled because somebody went through it and said so.
+        """
         table = self._config().get("setup", {})
-        skipped = table.get("skipped", []) if isinstance(table, dict) else []
-        return [str(name) for name in skipped]
+        walked = table.get("walked", []) if isinstance(table, dict) else []
+        return [str(name) for name in walked]
 
     def source_of(self, key: str, settings: Settings | None = None) -> str:
         """Where `key`'s value comes from, in the order `Settings` looks (see its docstring)."""
@@ -226,6 +231,31 @@ class ConfigStore:
         if key == "JARVIS_PIN" and settings is not None and pin_file(settings.data_dir).exists():
             return FROM_PIN_FILE
         return FROM_DEFAULT
+
+    def describe(self, settings: Settings) -> list[dict[str, Any]]:
+        """Every setting as `jarvis config list` shows it. A secret's value is never here."""
+        overrides = self.overrides()
+        dumped = settings.model_dump(mode="json")
+        rows = []
+        for name, info in Settings.model_fields.items():
+            key = env_var_name(name)
+            secret = is_secret(name)
+            source = self.source_of(key, settings)
+            rows.append(
+                {
+                    "key": key,
+                    "group": field_group(name),
+                    "description": info.description or "",
+                    "required": info.is_required(),
+                    "set": source != FROM_DEFAULT,
+                    "source": source,
+                    "secret": secret,
+                    "service_writable": permissions.service_writable(key, overrides),
+                    "protected": permissions.is_protected(key),
+                    "value": None if secret else dumped[name],
+                }
+            )
+        return rows
 
     # --- writing ----------------------------------------------------------------------
 
@@ -286,14 +316,14 @@ class ConfigStore:
         table[key] = writable
         write_private(self.config_path, dump_toml(config, CONFIG_HEADER))
 
-    def mark_skipped(self, section: str, skipped: bool = True) -> None:
-        """Remember that `jarvis setup` should not walk `section` again unasked (or should)."""
+    def mark_walked(self, section: str, walked: bool = True) -> None:
+        """Remember that `jarvis setup` has been through `section` (or forget that it has)."""
         config = self._config()
         table = config.setdefault("setup", {})
-        names = [name for name in table.get("skipped", []) if name != section]
-        if skipped:
+        names = [name for name in table.get("walked", []) if name != section]
+        if walked:
             names.append(section)
-        table["skipped"] = names
+        table["walked"] = names
         write_private(self.config_path, dump_toml(config, CONFIG_HEADER))
 
     def _write(self, cleaned: Mapping[str, Any]) -> None:

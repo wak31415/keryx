@@ -68,6 +68,9 @@ SILENT_MODES = frozenset({"bypassPermissions"})
 #: nothing (the prompt waits on screen), a false negative costs them a key.
 DENY_SUBSTRINGS = (
     ".env",
+    "secrets.toml",
+    "client_secret",
+    "gmail_token",
     ".pem",
     ".key",
     "id_rsa",

@@ -30,7 +30,7 @@ Opus 5.5 at low effort; Sonnet 5 was as fast).
 
 Read-only by construction: the token is `gmail.readonly`, and `GmailApi` has only `get`.
 The credential never leaves this module: it is read from `data_dir/gmail_token.json` (0600,
-written by `jarvis setup-gmail`), sent only to Google, and never logged; failures come back
+written by `jarvis auth login gmail`), sent only to Google, and never logged; failures come back
 as an `EmailError` with a sentence to say. Mail content is never logged either — counts only.
 """
 
@@ -94,7 +94,7 @@ MESSAGES: dict[ErrorCode, str] = {
     "not_configured": "Email isn't set up on this machine yet. Say that in one sentence.",
     "signed_out": (
         "Jarvis has been signed out of Gmail, so it can't read the email. Say that in one "
-        "sentence; it needs `jarvis setup-gmail` at the keyboard."
+        "sentence; it needs `jarvis auth login gmail` at the keyboard."
     ),
     "gmail_failed": "Gmail didn't answer just now. Say so in one sentence; trying again may work.",
     "model_failed": (
@@ -163,10 +163,10 @@ def token_path(settings: Settings) -> Path:
 class HttpGmail(GmailApi):
     """Gmail over HTTPS with a refresh token; the access token is kept and reused.
 
-    The token file is the one `jarvis setup-gmail` writes (the same keys a
+    The token file is the one `jarvis auth login gmail` writes (the same keys a
     `google.oauth2.credentials.Credentials.to_json()` has, so either kind works). A refresh
     Google refuses (`invalid_grant`: revoked, or a Testing-mode app past its seven days) is
-    `signed_out`, which the voice turns into "run jarvis setup-gmail".
+    `signed_out`, which the voice turns into "run jarvis auth login gmail".
     """
 
     def __init__(
@@ -631,7 +631,7 @@ class EmailReader:
 def build_email_reader(settings: Settings) -> EmailReader | None:
     """The production reader, or None — and so no tool — until it could answer.
 
-    It needs a Gmail sign-in (`jarvis setup-gmail`) and the `claude` CLI (the `claude`
+    It needs a Gmail sign-in (`jarvis auth login gmail`) and the `claude` CLI (the `claude`
     extra). The model and effort are settings: `EMAIL_MODEL`, `EMAIL_EFFORT`.
     """
     path = token_path(settings)

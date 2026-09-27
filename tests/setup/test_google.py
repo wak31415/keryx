@@ -1,4 +1,4 @@
-"""Tests for the one-off Google OAuth bootstrap: a scripted stdio server, no subprocess."""
+"""Tests for the workspace-mcp sign-in: a scripted stdio server, no subprocess."""
 
 import json
 import threading
@@ -7,7 +7,7 @@ import time
 import pytest
 
 from jarvis.config import Settings
-from jarvis.google_setup import (
+from jarvis.setup.google import (
     MCP_PROTOCOL_VERSION,
     PROBE_TOOL,
     SIGN_IN_INSTRUCTIONS,
@@ -22,6 +22,7 @@ def settings(tmp_path):
         _env_file=None,
         openai_api_key="test",
         data_dir=tmp_path / "jarvis",
+        google_client_secrets_file=tmp_path / "no-client.json",
         google_oauth_client_id="client-id",
         google_oauth_client_secret="client-secret",
         user_google_email="me@example.com",
@@ -125,8 +126,31 @@ def test_missing_oauth_client_settings_refuse_to_start_the_server(settings):
     with pytest.raises(GoogleSetupError) as excinfo:
         run_google_setup(incomplete, popen=make_popen(FakeProcess([]), calls))
 
-    assert "GOOGLE_OAUTH_CLIENT_SECRET" in str(excinfo.value)
+    assert "no Google OAuth client" in str(excinfo.value)
     assert calls == []
+
+
+def test_a_client_file_is_as_good_as_the_pair(settings, tmp_path):
+    """The old `setup-google` refused unless the id/secret pair was set, though everything
+    else in Jarvis took the downloaded JSON: one loader now, for both sign-ins."""
+    client = tmp_path / "client.json"
+    client.write_text('{"installed": {"client_id": "file-id", "client_secret": "file-secret"}}')
+    from_file = settings.model_copy(
+        update={
+            "google_oauth_client_id": None,
+            "google_oauth_client_secret": None,
+            "google_client_secrets_file": client,
+        }
+    )
+    calls: list[dict] = []
+
+    run_google_setup(from_file, popen=make_popen(scripted_process(), calls))
+
+    env = calls[0]["env"]
+    assert (env["GOOGLE_OAUTH_CLIENT_ID"], env["GOOGLE_OAUTH_CLIENT_SECRET"]) == (
+        "file-id",
+        "file-secret",
+    )
 
 
 # --- the flow --------------------------------------------------------------
@@ -313,7 +337,7 @@ def test_the_default_popen_is_resolved_when_it_is_called(settings, monkeypatch):
         spawned.append(argv)
         return scripted_process()
 
-    monkeypatch.setattr("jarvis.google_setup.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("jarvis.setup.google.subprocess.Popen", fake_popen)
 
     run_google_setup(settings, echo=lambda _text: None)
 

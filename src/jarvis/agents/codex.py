@@ -16,7 +16,7 @@ backend's turn from:
 A follow-up can go straight into the running turn (`steer`), and `interrupt()` is a real
 `turn/interrupt`. The SDK client is injected (`client_factory`), so tests never start
 `codex` (CLAUDE.md testing rule); `openai_codex` is imported lazily, because it is a
-13,000-line generated module that `doctor` and `setup-agent` have no use for.
+13,000-line generated module that `doctor` and `jarvis setup` have no use for.
 
 What Claude gets from its SDK options, Codex gets from the thread:
 - the rendered `subagent_suffix.md` as `developer_instructions` (re-sent on a resume);
