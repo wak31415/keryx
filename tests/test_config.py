@@ -15,6 +15,7 @@ from jarvis.config import (
     PIN_FROM_ENV,
     PIN_FROM_FILE,
     Settings,
+    env_var_name,
     load_settings,
     pin_file,
     read_enrolled_pin,
@@ -367,10 +368,11 @@ def test_fake_agents_env(monkeypatch, tmp_path):
 # --- blank optional settings count as unset (spec §3.3 PIN gate) -------------
 
 
-def test_the_shipped_env_example_leaves_every_optional_setting_unset(tmp_path):
-    """`.env.example` ships blank values; not one of them may become an empty string."""
+def test_a_legacy_env_file_of_blanks_leaves_every_optional_setting_unset(tmp_path):
+    """The old `.env.example` shipped every setting blank, and `.env` files copied from it
+    are still read; not one blank may become an empty string."""
     env_file = tmp_path / ".env"
-    env_file.write_text(Path(".env.example").read_text())
+    env_file.write_text("".join(f"{env_var_name(name)}=\n" for name in Settings.model_fields))
 
     settings = Settings(
         _env_file=env_file, openai_api_key="test", data_dir=tmp_path / "jarvis"

@@ -729,7 +729,7 @@ async def test_a_write_that_fails_changes_nothing_and_says_so(
     make_session, phone, provider, monkeypatch
 ):
     monkeypatch.setattr(
-        "jarvis.config.write_enrolled_pin", lambda *_args, **_kwargs: False
+        "jarvis.config.settings.write_enrolled_pin", lambda *_args, **_kwargs: False
     )
     session = make_session(phone, provider, pin=None)
 

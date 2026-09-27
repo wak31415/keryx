@@ -61,10 +61,18 @@ def _plain_cli_output(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolated_env(monkeypatch):
-    """Strip ambient env vars `Settings` reads so tests are hermetic on any machine/CI."""
+def _isolated_env(monkeypatch, tmp_path):
+    """Strip ambient env vars `Settings` reads so tests are hermetic on any machine/CI.
+
+    `JARVIS_HOME` too, pointed at a directory of the test's own: `Settings` reads
+    `config.toml` and `secrets.toml` from it, and the developer's real ones must never take
+    part in a test — nor be written by one. `JARVIS_ACTOR` goes because a suite run by a
+    subagent of the live service inherits `service`, and would be refused as one.
+    """
     for name in _settings_env_var_names():
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "jarvis-home"))
+    monkeypatch.delenv("JARVIS_ACTOR", raising=False)
 
 
 @pytest.fixture

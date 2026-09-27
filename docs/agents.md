@@ -172,8 +172,8 @@ redaction and the error handling. A new agent is:
 - **one `BackendSpec` entry** in `jarvis/agents/registry.py::BACKENDS`: its runner, its
   spoken model names, where its credentials come from (`AuthSource`), its install hint,
   instructions file, skills directory and login commands. The router, the task manager, the
-  voice tools, `doctor` and `setup-agent` read that table and nothing else;
-- **its name** in `AgentName` in `config.py`, **its settings** in `Settings` and
-  `.env.example`, **a column** in the table above (a test checks), and **tests** — the
+  voice tools, `doctor` and `jarvis setup` read that table and nothing else;
+- **its name** in `AgentName` in `config/settings.py`, **its settings** in `Settings`
+  (`docs/configuration.md` is regenerated from it), **a column** in the table above (a test checks), and **tests** — the
   shared `ScriptedAdapter` in `tests/agents/fakes.py` covers the session, so its own tests
   are the translation from its client's messages to those events.
