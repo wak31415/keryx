@@ -85,6 +85,20 @@ class ServiceTarget:
     def describe(self) -> str:
         return f"{self.manager} {self.unit}"
 
+    def stop_command(self) -> list[str]:
+        """Stop it and keep it stopped: `bootout` on launchd, where `KeepAlive` would
+        start a merely killed job again."""
+        if self.manager == "systemd":
+            return ["systemctl", "--user", "stop", self.unit]
+        return ["launchctl", "bootout", f"gui/{os.getuid()}/{self.unit}"]
+
+    def start_command(self) -> list[str]:
+        """Start it again after `stop_command`."""
+        if self.manager == "systemd":
+            return ["systemctl", "--user", "start", self.unit]
+        plist = Path.home() / "Library" / "LaunchAgents" / f"{self.unit}.plist"
+        return ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)]
+
 
 def resolve_target(
     settings: Settings,
@@ -207,6 +221,29 @@ def is_installed(
     if result.returncode != 0:
         return False
     return target.manager != "systemd" or result.stdout.strip() == "loaded"
+
+
+def is_active(
+    target: ServiceTarget, *, run: Callable[..., object] = subprocess.run
+) -> bool:
+    """Whether the service is running, or on its way up or down. Asks; changes nothing.
+
+    Anything short of a clear "stopped" counts as running — `activating`, `deactivating`,
+    a probe that timed out — because the one caller (`jarvis migrate`) must not move a
+    database out from under a process that still has it open.
+    """
+    if target.manager == "systemd":
+        command = ["systemctl", "--user", "is-active", target.unit]
+    else:
+        command = ["launchctl", "print", f"gui/{os.getuid()}/{target.unit}"]
+    try:
+        result = run(command, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if target.manager == "systemd":
+        return result.stdout.strip() not in ("inactive", "failed", "unknown")
+    # launchd: not loaded at all is stopped; loaded is running unless it says otherwise.
+    return result.returncode == 0 and "state = not running" not in result.stdout
 
 
 # --- the watchdog that outlives the restart ---------------------------------

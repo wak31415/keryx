@@ -160,6 +160,14 @@ def every_agent_installed(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_checkout_env(monkeypatch, tmp_path):
+    """`jarvis migrate` reads a `.env` and `.secrets/` in the checkout the service runs in,
+    and in a test that checkout would be this one — a developer's real one, with every key
+    in it. Pointed at a directory of the test's own instead."""
+    monkeypatch.setattr("jarvis.cli.repo_root", lambda: tmp_path / "checkout")
+
+
+@pytest.fixture(autouse=True)
 def _no_twilio_from_doctor(monkeypatch):
     """`jarvis doctor` asks Twilio where the number points when it has credentials. Never
     from a test: the doctor tests hand in a fake client of their own."""

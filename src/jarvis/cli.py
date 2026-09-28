@@ -36,6 +36,10 @@ from jarvis.config import (
     secure_file,
 )
 from jarvis.config.files import HOME_ENV, XDG_HOMES, xdg_home
+from jarvis.config.migrate import MigrationError, make_plan
+from jarvis.config.migrate import Report as MigrationReport
+from jarvis.config.migrate import Service as MigratingService
+from jarvis.config.migrate import run as run_migration
 from jarvis.config.permissions import ACTOR_ENV, SERVICE, current_actor
 from jarvis.config.settings import ConfigFileError, tolerate_broken_files
 from jarvis.config.store import FROM_ENV, ConfigError, ConfigStore
@@ -51,6 +55,7 @@ from jarvis.restart.health import health_probe, wait_until_serving
 from jarvis.restart.logscan import errors_since
 from jarvis.restart.logscan import marks as log_marks
 from jarvis.restart.service import (
+    INSTALLERS,
     UNSUPPORTED_HINT,
     resolve_target,
     spawn_watchdog,
@@ -65,6 +70,7 @@ from jarvis.setup import auth as auth_flow
 from jarvis.setup import profile
 from jarvis.setup.agents import is_headless
 from jarvis.setup.context import SetupContext, run_command
+from jarvis.setup.sections import repo_root
 from jarvis.setup.ui import Aborted
 from jarvis.setup.wizard import agent_instructions, run_wizard
 from jarvis.tasks.manager import install_default_executor
@@ -1222,6 +1228,118 @@ def config_import_env(
     if report.unknown:
         typer.echo(f"not settings, not imported: {', '.join(report.unknown)}")
     typer.echo(f"{path} is now {report.renamed_to}; delete it once Jarvis runs from the store.")
+
+
+# --- migrate ---------------------------------------------------------------
+
+
+#: How many of the tasks that lost their sessions are named one by one.
+MAX_LOST_SESSIONS_LISTED = 10
+
+
+@app.command()
+def migrate(
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print what would move, and change nothing.")
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Do not ask before starting.")] = False,
+) -> None:
+    """Move Jarvis's files from ~/.jarvis, and a .env here, to the XDG directories.
+
+    Stops the service while it moves things, re-renders it and the approval hook, and
+    starts it again. Run it from the checkout the service runs in. Nothing is deleted:
+    ~/.jarvis is renamed aside with whatever is left in it.
+    """
+    _owner_only("migrate Jarvis's files")
+    plan = make_plan([Path.cwd(), repo_root()])
+    if plan.empty and not plan.conflicts:
+        typer.echo("nothing to migrate: Jarvis already keeps everything where it should")
+        return
+    for line in plan.describe():
+        typer.echo(line)
+    settings = _load_settings_optional()
+    target = resolve_target(settings, from_outside=True)
+    if target is not None:
+        typer.echo(f"  {target.describe()}: stopped first, re-rendered, and started again")
+    if plan.conflicts:
+        typer.echo("\nNothing can move until these are settled:", err=True)
+        for conflict in plan.conflicts:
+            typer.echo(f"  {conflict}", err=True)
+        raise typer.Exit(1)
+    if dry_run:
+        return
+    if (live := health_probe(settings)) and target is not None:
+        typer.echo(f"{live} live call(s): migrating stops the service and would cut them off. "
+                   "Run it again once the line is clear.", err=True)
+        raise typer.Exit(1)
+    if not yes:
+        if not _interactive():
+            typer.echo("pass --yes to migrate without a terminal to ask at", err=True)
+            raise typer.Exit(2)
+        if not typer.confirm("\nGo ahead?", default=False):
+            raise typer.Exit(1)
+    try:
+        report = run_migration(
+            plan,
+            service=MigratingService(target) if target is not None else None,
+            fix_permissions=lambda: fix_permissions(_load_settings_optional(), ConfigStore()),
+            rerender=lambda: _rerender(target),
+            echo=typer.echo,
+        )
+    except MigrationError as error:
+        typer.echo(f"jarvis migrate: {error}", err=True)
+        raise typer.Exit(1) from None
+    _echo_migration(report)
+
+
+def _rerender(target) -> list[str]:
+    """Re-install what names the old paths: the service's unit, and the approval hook."""
+    done = []
+    scripts = repo_root() / "scripts"
+    if target is not None:
+        installer = scripts / Path(INSTALLERS[target.manager]).name
+        code = run_command([str(installer)])
+        done.append(f"{installer.name}: {'done' if code == 0 else f'exited {code}, run it again'}")
+    claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    try:
+        hooked = "jarvis_approval.py" in (claude / "settings.json").read_text(encoding="utf-8")
+    except OSError:
+        hooked = False
+    if hooked:
+        code = run_command([str(scripts / "install-claude-hook.sh")])
+        done.append(f"approval hook: {'done' if code == 0 else f'exited {code}, run it again'}")
+    return done
+
+
+def _echo_migration(report: MigrationReport) -> None:
+    typer.echo(f"\nmoved {len(report.moved)} entr{'y' if len(report.moved) == 1 else 'ies'}")
+    for line in report.imported:
+        typer.echo(f"imported {line}")
+    if report.rewritten:
+        typer.echo(f"tasks.db: {report.rewritten} path(s) rewritten")
+    for line in report.notes + report.tightened + report.rerendered:
+        typer.echo(line)
+    if report.lost_sessions:
+        typer.echo(
+            f"\n{len(report.lost_sessions)} Claude task(s) ran in the old workspace, so their "
+            "sessions are gone; a follow-up to one starts afresh:"
+        )
+        for task_id, status, description in report.lost_sessions[:MAX_LOST_SESSIONS_LISTED]:
+            what = _shorten(description, MAX_DESCRIPTION_CHARS)
+            typer.echo(f"  #{task_id:<5} {status:<9} {what}")
+        if len(report.lost_sessions) > MAX_LOST_SESSIONS_LISTED:
+            typer.echo(f"  … and {len(report.lost_sessions) - MAX_LOST_SESSIONS_LISTED} more")
+    if report.retired_to is not None:
+        typer.echo(f"\nthe old directory is now {report.retired_to}")
+    if report.leftovers:
+        typer.echo("\nNothing reads these any more. Delete them once you are sure (and revoke a "
+                   "token before you delete it):")
+        for path in report.leftovers:
+            typer.echo(f"  {path}")
+    if report.started is True:
+        typer.echo("\nthe service is running again")
+    elif report.started is False:
+        typer.echo("\nthe service did not start: `jarvis doctor`, and its logs, say why")
 
 
 def _owner_only(verb: str) -> None:

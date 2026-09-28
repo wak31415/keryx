@@ -385,39 +385,18 @@ class ConfigStore:
             # It writes protected settings and the PIN by its nature: the owner's alone.
             raise ConfigError("only the owner may import settings, at their own terminal")
         path = path.resolve()
-        report = ImportReport()
-        raw: dict[str, str] = {}
-        for key, value in dotenv_values(path).items():
-            key = key.strip().upper()
-            if value is None or not value.strip():
-                continue
-            if field_for(key) is None:
-                report.unknown.append(key)
-                continue
-            raw[key] = value.strip()
-        pin = raw.pop("JARVIS_PIN", None)
-        client_raw = raw.pop("GOOGLE_CLIENT_SECRETS_FILE", None)
-        for key in PATH_KEYS & raw.keys():
-            candidate = Path(raw[key]).expanduser()
-            raw[key] = str(candidate if candidate.is_absolute() else path.parent / candidate)
-        cleaned = validate(raw)
+        parsed = _read_env(path)
+        report = ImportReport(unknown=parsed.unknown)
         stored = self.stored()
-        for key, value in cleaned.items():
+        for key, value in parsed.cleaned.items():
             if key in stored:
                 report.kept.append(key)
             elif value == default_value(key):
                 report.defaults.append(key)
             else:
                 report.imported.append(key)
-        keep = {key: cleaned[key] for key in report.imported}
-        client = Path(client_raw).expanduser() if client_raw else LEGACY_GOOGLE_CLIENT_FILE
-        client = client if client.is_absolute() else path.parent / client
-        client_text = client.read_text(encoding="utf-8") if client.is_file() else None
-        if client_text is not None:
-            try:
-                parse_google_client(client_text)
-            except ValueError as error:
-                raise ConfigError(f"{client} is not a Google OAuth client file: {error}") from None
+        keep = {key: parsed.cleaned[key] for key in report.imported}
+        pin, client_text = parsed.pin, parsed.client_text
         # Everything that can refuse has been asked; from here on it is only writing.
         if pin is not None:
             report.pin = self._import_pin(self.home, pin)
@@ -428,9 +407,16 @@ class ConfigStore:
         return report
 
     @staticmethod
+    def check_import(path: Path) -> str | None:
+        """Everything `import_env` could refuse about `path`, asked without writing a thing.
+
+        Returns the `.env`'s PIN, if it has one, for a caller that has PINs of its own to
+        compare it with (`jarvis migrate`, before it moves anything).
+        """
+        return _read_env(path.resolve()).pin
+
+    @staticmethod
     def _import_pin(home: Path, pin: str) -> str:
-        if not PIN_PATTERN.fullmatch(pin):
-            raise ConfigError(f"JARVIS_PIN {PIN_RULE}")
         existing = read_enrolled_pin(home)
         if pin_file(home).exists() and existing != pin:
             raise ConfigError(
@@ -443,6 +429,47 @@ class ConfigStore:
         if not write_enrolled_pin(home, pin):
             raise ConfigError(f"could not write the PIN to {pin_file(home)}")
         return "moved to JARVIS_HOME/pin"
+
+
+@dataclass
+class _EnvFile:
+    """A legacy `.env` read and validated: what `import_env` would write."""
+
+    cleaned: dict[str, Any]
+    unknown: list[str]
+    pin: str | None
+    client_text: str | None
+
+
+def _read_env(path: Path) -> _EnvFile:
+    """`path` parsed and checked, raising `ConfigError` for anything an import would refuse."""
+    unknown: list[str] = []
+    raw: dict[str, str] = {}
+    for key, value in dotenv_values(path).items():
+        key = key.strip().upper()
+        if value is None or not value.strip():
+            continue
+        if field_for(key) is None:
+            unknown.append(key)
+            continue
+        raw[key] = value.strip()
+    pin = raw.pop("JARVIS_PIN", None)
+    if pin is not None and not PIN_PATTERN.fullmatch(pin):
+        raise ConfigError(f"JARVIS_PIN {PIN_RULE}")
+    client_raw = raw.pop("GOOGLE_CLIENT_SECRETS_FILE", None)
+    for key in PATH_KEYS & raw.keys():
+        candidate = Path(raw[key]).expanduser()
+        raw[key] = str(candidate if candidate.is_absolute() else path.parent / candidate)
+    cleaned = validate(raw)
+    client = Path(client_raw).expanduser() if client_raw else LEGACY_GOOGLE_CLIENT_FILE
+    client = client if client.is_absolute() else path.parent / client
+    client_text = client.read_text(encoding="utf-8") if client.is_file() else None
+    if client_text is not None:
+        try:
+            parse_google_client(client_text)
+        except ValueError as error:
+            raise ConfigError(f"{client} is not a Google OAuth client file: {error}") from None
+    return _EnvFile(cleaned, unknown, pin, client_text)
 
 
 def _rename_aside(path: Path, today: date) -> Path:
