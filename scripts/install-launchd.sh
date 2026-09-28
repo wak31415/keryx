@@ -9,9 +9,9 @@
 # from `command -v` and `jarvis config get`, writes the result to ~/Library/LaunchAgents/, and hands them
 # to launchctl. The tunnel agent runs ngrok here rather than cloudflared: a reserved ngrok
 # domain needs no DNS zone, which is the right trade on a laptop. Logs land in
-# DATA_DIR/logs/ (~/.jarvis/logs/ unless the configuration says otherwise), and the agents get
-# this shell's PATH — run it from the shell whose tools the subagents should have, and
-# again after that changes.
+# STATE_DIR/logs/ (~/.local/state/jarvis/logs/ unless the configuration says otherwise), and
+# the agents get this shell's PATH, JARVIS_HOME and XDG directories — run it from the shell
+# whose tools the subagents should have, and again after that changes.
 #
 # The scaffolding every installer needs — argument parsing, reading the configuration, the PATH checks,
 # template rendering — is in scripts/lib.sh.
@@ -56,7 +56,11 @@ for label in "${LABELS[@]}"; do
   render "$TEMPLATES/$label.plist" "$plist" \
     "UV=$UV" "NGROK=$NGROK" "PUBLIC_HOST=$PUBLIC_HOST" "PORT=$PORT" \
     "PATH=$(xml_escape "$PATH")" "LOGS=$(xml_escape "$LOGS")" \
-    "JARVIS_HOME=$(xml_escape "$JARVIS_HOME_DIR")"
+    "JARVIS_HOME=$(xml_escape "$JARVIS_HOME_DIR")" \
+    "XDG_CONFIG_HOME=$(xml_escape "$RESOLVED_XDG_CONFIG_HOME")" \
+    "XDG_DATA_HOME=$(xml_escape "$RESOLVED_XDG_DATA_HOME")" \
+    "XDG_STATE_HOME=$(xml_escape "$RESOLVED_XDG_STATE_HOME")" \
+    "XDG_CACHE_HOME=$(xml_escape "$RESOLVED_XDG_CACHE_HOME")"
   # A previous version may still be loaded; booting it out first makes this re-runnable.
   launchctl bootout "gui/$UID/$label" 2>/dev/null || true
   launchctl bootstrap "gui/$UID" "$plist"

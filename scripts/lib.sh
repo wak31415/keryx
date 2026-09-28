@@ -117,7 +117,9 @@ make_dirs() {
   # Owner-only when it creates STATE_DIR itself, as `jarvis` would (config.secure_dir).
   require_paths
   (umask 077 && mkdir -p "$LOGS")
-  mkdir -p "$@"
+  if (( $# )); then
+    mkdir -p "$@"
+  fi
 }
 
 sed_literal() {

@@ -191,6 +191,10 @@ def test_the_systemd_units_carry_this_shell_path_and_state_dir(machine):
         assert settings["StandardError"] == f"append:{logs}/{log}.err.log"
     jarvis_unit = (units / "jarvis.service").read_text()
     assert f'Environment="JARVIS_HOME={machine["jarvis_home"]}"' in jarvis_unit
+    home = machine["home"]
+    for name, path in (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"),
+                       ("XDG_STATE_HOME", ".local/state"), ("XDG_CACHE_HOME", ".cache")):
+        assert f'Environment="{name}={home}/{path}"' in jarvis_unit, name
     assert logs.is_dir()
     # Created by the installer, so owner-only, as `jarvis` itself would make it.
     assert (logs.parent.stat().st_mode & 0o077) == 0
@@ -203,6 +207,8 @@ def test_the_systemd_units_carry_this_shell_path_and_state_dir(machine):
 def test_the_launch_agents_carry_this_shell_path_and_state_dir(machine, tmp_path):
     state_dir = tmp_path / "state <&> more"
     configure(machine, PUBLIC_HOST="jarvis.example.com", STATE_DIR=str(state_dir))
+    xdg_state = tmp_path / "xdg <state>"
+    machine["env"]["XDG_STATE_HOME"] = str(xdg_state)
 
     run("install-launchd.sh", machine)
 
@@ -216,7 +222,36 @@ def test_the_launch_agents_carry_this_shell_path_and_state_dir(machine, tmp_path
         assert plist["StandardOutPath"] == f"{logs}/{log}.out.log"
         assert plist["StandardErrorPath"] == f"{logs}/{log}.err.log"
     agent = plistlib.loads((agents / "dev.jarvis.agent.plist").read_bytes())
-    assert agent["EnvironmentVariables"]["JARVIS_HOME"] == str(machine["jarvis_home"])
+    environment = agent["EnvironmentVariables"]
+    assert environment["JARVIS_HOME"] == str(machine["jarvis_home"])
+    assert environment["XDG_DATA_HOME"] == f"{machine['home']}/.local/share"
+    assert environment["XDG_STATE_HOME"] == str(xdg_state)
+
+
+def test_the_units_carry_an_xdg_directory_the_shell_moved(machine):
+    """What the installer's terminal resolved is what the service resolves, whatever the
+    user manager's own environment says."""
+    machine["env"]["XDG_DATA_HOME"] = str(machine["home"] / "data & more")
+
+    run("install-systemd.sh", machine)
+
+    unit = (machine["home"] / ".config" / "systemd" / "user" / "jarvis.service").read_text()
+    [line] = [line for line in unit.splitlines() if line.startswith('Environment="XDG_DATA')]
+    assert systemd_unquote(line.removeprefix("Environment=")) == (
+        f"XDG_DATA_HOME={machine['home']}/data & more"
+    )
+
+
+# --- the dev loop -----------------------------------------------------------------
+
+
+def test_the_dev_loop_logs_the_tunnel_beside_the_services_logs(machine):
+    run("dev.sh", machine)
+
+    logs = machine["home"] / ".local" / "state" / "jarvis" / "logs"
+    assert (logs / "cloudflared.log").exists()
+    assert not (machine["repo"] / ".cloudflared.log").exists()
+    assert "uv run jarvis serve --no-wakeword" in machine["calls"].read_text()
 
 
 # --- the approval hook -----------------------------------------------------------

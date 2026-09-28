@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Template: scripts/install-launchd.sh fills in the placeholders (UV, REPO, HOME, PATH, LOGS
-  and JARVIS_HOME, each between double underscores) and writes the result to
+  Template: scripts/install-launchd.sh fills in the placeholders (UV, REPO, HOME, PATH, LOGS,
+  JARVIS_HOME and the four XDG_*_HOME, each between double underscores) and writes the result to
   ~/Library/LaunchAgents/dev.jarvis.agent.plist. Do not load this file directly. They are
   not spelled out in this comment: a value rendered into it that held "-" twice in a row
   would end the comment early and leave a plist launchd refuses.
@@ -22,7 +22,7 @@
         <string>serve</string>
     </array>
 
-    <!-- The checkout: a legacy .env here is still read. -->
+    <!-- The checkout. Nothing here is read as configuration. -->
     <key>WorkingDirectory</key>
     <string>__REPO__</string>
 
@@ -34,9 +34,19 @@
         <string>__PATH__</string>
         <key>HOME</key>
         <string>__HOME__</string>
-        <!-- Where the settings are (config.toml, secrets.toml): the installer's. -->
+        <!-- Where the settings are (config.toml, secrets.toml, the PIN), and the XDG
+             directories everything else is found under: the installer's, so the agent
+             resolves exactly what its terminal did. -->
         <key>JARVIS_HOME</key>
         <string>__JARVIS_HOME__</string>
+        <key>XDG_CONFIG_HOME</key>
+        <string>__XDG_CONFIG_HOME__</string>
+        <key>XDG_DATA_HOME</key>
+        <string>__XDG_DATA_HOME__</string>
+        <key>XDG_STATE_HOME</key>
+        <string>__XDG_STATE_HOME__</string>
+        <key>XDG_CACHE_HOME</key>
+        <string>__XDG_CACHE_HOME__</string>
     </dict>
 
     <key>RunAtLoad</key>
