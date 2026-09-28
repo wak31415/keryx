@@ -13,6 +13,21 @@
   <img src="https://img.shields.io/badge/coverage-96%25-22d3ee.svg" alt="Coverage 96%">
 </p>
 
+> [!NOTE]
+> **This is `feat/local-wakeword`**: talking to Jarvis at a Mac, which `main` leaves out until
+> it has been tested. On macOS, after `jarvis setup`:
+>
+> ```bash
+> uv run jarvis download-models   # the wake-word models, into CACHE_DIR
+> uv run jarvis serve --no-phone  # or plain `serve` for both channels
+> ```
+>
+> Say "hey jarvis", and allow your terminal the microphone when macOS asks.
+>
+> `main` removed this channel in one commit, `1ddbfc7`; this branch merged `main` and reverted
+> it once (`7b20c43`), so merging `main` in stays clean. Do not revert it again, and do
+> not merge this branch into `main` until the local channel is ready.
+
 Start hours of work in a short call. Ask Jarvis to research a question, change code, or run
 an experiment, then hang up. It keeps working, lets you check in or add instructions later,
 and can call you back or text you the report when it's done.
