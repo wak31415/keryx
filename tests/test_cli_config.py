@@ -359,10 +359,12 @@ def test_setup_agent_instructions_print_without_asking(home):
 # --- the rest of the wiring ------------------------------------------------------------------
 
 
-def test_doctor_asks_twilio_only_with_credentials_and_a_host(home, monkeypatch):
+def test_doctor_asks_twilio_only_with_credentials_and_a_host(
+    home, monkeypatch, _no_twilio_from_doctor
+):
     from jarvis import cli
 
-    monkeypatch.undo()  # the suite's stub of `_twilio_admin` included
+    monkeypatch.setattr(cli, "_twilio_admin", _no_twilio_from_doctor)
     settings = cli._load_settings_optional()
     assert cli._twilio_admin(settings) is None
 

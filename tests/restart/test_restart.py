@@ -1096,12 +1096,13 @@ async def test_a_failed_record_is_not_retried(harness):
 async def test_a_crash_loop_rings_once_not_once_per_crash(harness, monkeypatch):
     """A service that dies before it can dial leaves the count behind; the cap stops it."""
     harness.store.save(pending())
+    deliver = RestartCoordinator._deliver
     monkeypatch.setattr(RestartCoordinator, "_deliver", _nothing)
     for _ in range(MAX_CALLBACK_ATTEMPTS):
         await harness.coordinator.resume(wait_ready=lambda: ready())
     assert harness.record().attempts == MAX_CALLBACK_ATTEMPTS
 
-    monkeypatch.undo()
+    monkeypatch.setattr(RestartCoordinator, "_deliver", deliver)
     await harness.coordinator.resume(wait_ready=lambda: ready())
 
     assert harness.twilio.calls == []

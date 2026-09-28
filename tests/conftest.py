@@ -156,8 +156,14 @@ def _no_checkout_env(monkeypatch, tmp_path):
 @pytest.fixture(autouse=True)
 def _no_twilio_from_doctor(monkeypatch):
     """`jarvis doctor` asks Twilio where the number points when it has credentials. Never
-    from a test: the doctor tests hand in a fake client of their own."""
-    monkeypatch.setattr("jarvis.cli._twilio_admin", lambda settings: None)
+    from a test: the doctor tests hand in a fake client of their own. Returns the real one,
+    for the one test about it — never `monkeypatch.undo()`, which would also undo the
+    suite's HOME and XDG isolation and read the developer's own settings."""
+    from jarvis import cli
+
+    real = cli._twilio_admin
+    monkeypatch.setattr(cli, "_twilio_admin", lambda settings: None)
+    return real
 
 
 @pytest.fixture(autouse=True)
