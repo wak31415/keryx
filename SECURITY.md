@@ -251,8 +251,7 @@ history, not separately supported lines.
 
 Caller ID is spoofable, so anyone who knows an allowed number can reach a phone session, and
 from there `JARVIS_PIN` is the only thing between them and a subagent with your access. This
-section is what stands behind that PIN, what it costs you, and the one channel that has no
-PIN at all.
+section is what stands behind that PIN and what it costs you.
 
 **Per call.** Three wrong PINs, spoken or keyed, end the call, and a call that has locked
 takes no further PIN — not even the right one.
