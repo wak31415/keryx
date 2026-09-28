@@ -20,6 +20,10 @@ and can call you back or text you the report when it's done.
 Jarvis uses the OpenAI Realtime API for conversation and coding agents on your machine for
 the work. Call it from a phone or a watch that can place calls.
 
+<p align="center">
+  <img src="docs/assets/jarvis-incoming-call.jpg" width="480" alt="A Garmin watch showing an incoming call from Jarvis.">
+</p>
+
 ## What Jarvis adds
 
 Jarvis turns the [Realtime API](https://developers.openai.com/api/docs/guides/realtime) into
@@ -36,6 +40,7 @@ a voice agent you can use across calls:
 | Callbacks when you ask for one | — | — | ✅ |
 | Pro-actively calls you when it needs input from you | — | — | ✅ |
 | Ask it to add a feature during a call | — | — | ✅ |
+| Answer Claude Code prompts on your screen by phone | — | — | ✅ |
 
 For example:
 
@@ -63,159 +68,37 @@ again with the training results.
 ## Quick start
 
 You need Python 3.12, [uv](https://docs.astral.sh/uv/), an OpenAI API key with Realtime
-access, and a coding agent to do the work: Claude Code or Codex, signed in with a
-subscription or an API key. Phone calls work on macOS or Linux and need Twilio and a tunnel
-(Cloudflare Tunnel or ngrok).
+access, a Twilio number, and Claude Code or Codex.
 
 ```bash
 git clone https://github.com/wak31415/jarvis-voice-agent.git
 cd jarvis-voice-agent
-uv sync                                        # every coding agent; for one: see below
+uv sync
 uv run jarvis setup
 ```
 
-`jarvis setup` asks only for what is still missing and saves as it goes: the OpenAI key
-(checked with OpenAI before it is kept), which coding agent does the work and its sign-in
-(skipped for an agent that is already signed in), your name, your numbers and the phone PIN,
-then — each optional — Twilio, Google, Slack, billing, a first memory, short summaries of your
-projects, and the background service. Run it again at any time: it walks what is left, or
-everything with `--all`. `uv run jarvis doctor` says what is still missing.
+`jarvis setup` asks only for what is still missing. When it's done, call your Twilio number.
+If a coding agent is setting Jarvis up for you, point it at
+`uv run jarvis setup --agent-instructions`, or give Claude Code the `skills/jarvis-setup`
+skill. The full walkthrough is in [docs/setup.md](docs/setup.md).
 
-**Using a coding agent to set Jarvis up?** Point it at
-`uv run jarvis setup --agent-instructions`: every step is a `jarvis config`, `jarvis auth`
-or `jarvis memory` command it can run, and it hands you `jarvis setup` for what only you can
-do. Claude Code
-users can copy `skills/jarvis-setup` into `~/.claude/skills/` for the same thing as a skill.
-
-Settings live in `~/.config/jarvis/config.toml`, and every key and token in `secrets.toml`
-beside it, readable by you alone. `uv run jarvis config list` shows them all;
-[`docs/configuration.md`](docs/configuration.md) describes each one.
-
-Jarvis keeps its files where uv, gh and git keep theirs, on Linux and macOS alike, and
-honours each `XDG_*_HOME` (`uv run jarvis config path` prints them all):
-
-| Directory | What is in it |
-|---|---|
-| `~/.config/jarvis` (`JARVIS_HOME`) | `config.toml`, `secrets.toml`, the PIN, the Google client file |
-| `~/.local/share/jarvis` (`DATA_DIR`) | tasks and their reports, call transcripts, the memory, sign-in tokens |
-| `~/.local/state/jarvis` (`STATE_DIR`) | logs, the restart record, the approval bridge's socket |
-| `~/.cache/jarvis` (`CACHE_DIR`) | the wake-word models |
-
-`~/.config/jarvis` holds `secrets.toml` and `pin`: keep it out of a dotfiles repository.
-
-**Upgrading from `~/.jarvis`, or a `.env` in the checkout?** Neither is read any more, and
-`jarvis serve` will not start while either is still there. `uv run jarvis migrate --dry-run`
-shows what would move; `uv run jarvis migrate` moves it, stopping the service while it does,
-re-rendering it and the approval hook, and starting it again. Nothing is deleted: the old
-directory is renamed `~/.jarvis.migrated-<date>` with whatever was left in it.
-
-`uv sync` installs both coding agents. Each bundles a large CLI, so on a tight disk install
-only the one you use: `uv sync --no-group agents --extra codex` (or `--extra claude`). With
-pip, name it: `pip install '.[all]'`, `'.[claude]'` or `'.[codex]'` — plain `pip install .`
-installs neither.
-
-### Talking locally on a Mac
-
-Saying "hey jarvis" at your Mac, with no phone involved, is in development on the
-[`feat/local-wakeword`](https://github.com/wak31415/jarvis-voice-agent/tree/feat/local-wakeword) branch and is not part of `main` yet.
-
-### Call Jarvis by phone
-
-`jarvis setup`'s phone section does all of it: it checks your Twilio credentials and lists
-your numbers, walks you through the tunnel ([Cloudflare Tunnel](src/jarvis/setup/guides/tunnel.md)
-on Linux, ngrok on macOS), and — after showing you both addresses and asking — points the
-number's webhooks at `https://<PUBLIC_HOST>/twilio/voice` and `/twilio/status`. Then start
-the server and tunnel with `scripts/dev.sh`, or install them as a service with
-`scripts/install-systemd.sh` (Linux) or `scripts/install-launchd.sh` (macOS), which setup
-also offers. The step-by-step: [Twilio](src/jarvis/setup/guides/twilio.md).
-
-## Choosing your coding agent
+## Claude Code or Codex
 
 Jarvis hands its work to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or
-[Codex](https://developers.openai.com/codex). `AGENT_BACKEND` picks the default; with both
-enabled in `AGENTS_ENABLED`, you can say "have Codex do it" on a call. Either one signs in
-three ways, and the first one set wins:
+[Codex](https://developers.openai.com/codex), signed in with a subscription or an API key.
+`jarvis setup` asks which one to use by default. If you enable both, you can say "have Codex do it" on a
+call. [docs/agents.md](docs/agents.md) compares the two.
 
-| Tier | Claude | Codex |
-|---|---|---|
-| API key (pay per token) | `ANTHROPIC_API_KEY` | `CODEX_API_KEY` |
-| Headless subscription token | `CLAUDE_CODE_OAUTH_TOKEN` | `CODEX_ACCESS_TOKEN` |
-| Stored subscription login | `claude` → `/login` | `codex login` |
+## Documentation
 
-`uv sync` installs both: each SDK bundles its own CLI (Codex's is about 350 MB), and
-[Quick start](#quick-start) says how to install just one. Both do
-the same work here: voice dispatch, follow-ups, progress, projects, Slack, and Gmail and
-Calendar (for Codex, by connecting Google for agents in `jarvis setup`), and both
-record the tokens a task spent. A follow-up reaches Codex in the turn it is running; Claude
-takes it when the turn ends. Claude also has a per-task dollar figure and cap. The approval
-bridge stays Claude Code only. [`docs/agents.md`](docs/agents.md) has the full comparison.
-
-## Answer Claude Code prompts by phone
-
-If you use Claude Code on the same machine, Jarvis can ring you when a session on your
-screen stops to ask you something and you haven't answered within five minutes. It reads
-the question out, and you answer on the keypad. Install the hook once:
-
-```bash
-scripts/install-claude-hook.sh
-```
-
-It copies `scripts/claude_hooks/jarvis_approval.py` into `~/.claude/hooks/` and adds it to
-`~/.claude/settings.json`, keeping a backup and any hooks you already have. Re-run it after
-pulling changes to `scripts/claude_hooks/`; Jarvis ignores an outdated copy. Answering at
-the keyboard always wins, and any failure leaves the prompt on your screen as usual.
-`uv run jarvis approvals` shows what it has asked and `--disable` turns it off. Only
-routine commands can be approved by phone; the
-[wiki](https://github.com/wak31415/jarvis-voice-agent/wiki/The-Approval-Bridge) has the
-details.
-
-## Configuration
-
-`uv run jarvis config list` shows every setting and where its value came from; `jarvis
-config set KEY VALUE` changes one, and a secret goes in with `--stdin` so it never lands in
-your shell history. [`docs/configuration.md`](docs/configuration.md) is the full list. With
-no PIN set, the first call may key one in, once; it is then written to `~/.config/jarvis/pin` and
-nothing in Jarvis can change it ([SECURITY.md](SECURITY.md#setting-the-first-pin-on-the-first-call)).
-Texting is off until you turn it on, since many Twilio accounts can't send SMS in every
-region.
-
-Jarvis can change a few of its own settings when you ask on a call — its voice, how long it
-waits before answering, which model does the work — and nothing else: credentials, who may
-call, the PIN and every other line of defence are protected. `jarvis config lock KEY` and
-`unlock KEY` move the rest.
-
-Google is optional and set up from `jarvis setup` too: one Google Cloud client of your own
-([the steps](src/jarvis/setup/guides/google.md)), then a read-only Gmail sign-in so Jarvis can
-answer questions about your email on a call, and — if you want it — a second one so agents
-can send mail and manage your calendar.
-
-Tasks run with your user account's access to files and the network. Keep the caller list
-narrow and the PIN enabled. Read the wiki's
-[security guidance](https://github.com/wak31415/jarvis-voice-agent/wiki/Security-Model)
-before putting the phone channel online.
-
-Voice calls incur OpenAI API charges. Coding-agent tasks count against your Claude or
-ChatGPT subscription limits by default, or use token billing if you set `ANTHROPIC_API_KEY`
-or `CODEX_API_KEY`.
-
-## Extend Jarvis
-
-You can ask Jarvis to add a feature while you're on the phone. For example:
-
-> *"In the jarvis project, add a tool that tells me when the next train leaves my station."*
-
-Jarvis turns the request into a task for a coding agent, which can update the code and run
-the tests. When the change is ready, ask Jarvis to restart so the new tool becomes
-available. You can also expand what tasks can do by adding skills or connected services for
-the agent to use. [`docs/tools.md`](docs/tools.md) lists the tools the voice model has and
-how to write one by hand; the [wiki](https://github.com/wak31415/jarvis-voice-agent/wiki)
-has worked examples.
-
-## More information
-
-- [Wiki](https://github.com/wak31415/jarvis-voice-agent/wiki) for setup, troubleshooting,
-  security, and examples.
-- [Contributing guide](CONTRIBUTING.md) for development and pull requests.
-- [Security policy](SECURITY.md) for reporting vulnerabilities.
+- [Setup](docs/setup.md): phone, Google, the PIN, where files live, upgrading, costs
+- [Configuration](docs/configuration.md): every setting
+- [Coding agents](docs/agents.md): signing in, installing only one, what each can do
+- [Tools](docs/tools.md): what the voice model can do, and how to add a tool
+- [Approval bridge](docs/approvals.md): answer Claude Code prompts on your screen by phone
+- [Security](SECURITY.md): the threat model. Read it before putting the phone line online
+- [Wiki](https://github.com/wak31415/jarvis-voice-agent/wiki): troubleshooting and worked
+  examples
+- [Contributing](CONTRIBUTING.md)
 
 Licensed under [Apache 2.0](LICENSE).

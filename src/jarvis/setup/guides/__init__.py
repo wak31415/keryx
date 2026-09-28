@@ -1,1 +1,1 @@
-"""Step-by-step guides `jarvis setup` renders, and the README links to."""
+"""Step-by-step guides `jarvis setup` renders, and `docs/setup.md` links to."""

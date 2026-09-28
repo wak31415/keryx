@@ -20,7 +20,7 @@ one Google Cloud client:
 The client is `Settings.google_oauth_client()` for both — the id/secret pair, else the
 downloaded JSON — and `install_client_file` is how that JSON gets to
 `JARVIS_HOME/google_client_secret.json`. `run_section` is the wizard's screen for all of it,
-reading its instructions from `guides/google.md` so the README can link the same steps.
+reading its instructions from `guides/google.md` so `docs/setup.md` can link the same steps.
 
 The MCP stdio framing is newline-delimited JSON-RPC: `initialize` (request),
 `notifications/initialized` (notification), then `tools/call`. Anything the server writes
@@ -493,7 +493,7 @@ GUIDE = "google.md"
 
 
 def guide() -> str:
-    """The numbered Google Cloud steps, shared with the README (`setup/guides/google.md`)."""
+    """The numbered Google Cloud steps, shared with `docs/setup.md` (`setup/guides/google.md`)."""
     return resources.files("jarvis.setup.guides").joinpath(GUIDE).read_text(encoding="utf-8")
 
 
