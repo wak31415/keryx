@@ -456,6 +456,20 @@ def test_auth_status_prints_a_table_and_exits_1_on_a_failure(home, monkeypatch):
     assert "claude  failed    no key" in result.output
 
 
+def test_auth_status_says_off_for_an_agent_that_is_not_enabled(home, monkeypatch):
+    monkeypatch.setattr(
+        "jarvis.setup.auth.status",
+        lambda settings, store, smoke: {
+            "codex": {"state": "missing", "detail": "not enabled", "enabled": False}
+        },
+    )
+
+    result = run("auth", "status")
+
+    assert result.exit_code == 0
+    assert "codex  off       not enabled" in result.output
+
+
 @pytest.mark.parametrize(
     "args",
     [

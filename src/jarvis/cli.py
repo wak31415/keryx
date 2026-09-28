@@ -1380,7 +1380,10 @@ def auth_status_command(
     else:
         width = max(map(len, report))
         for name, entry in report.items():
-            typer.echo(f"{name:<{width}}  {entry['state']:<8}  {entry['detail']}")
+            # An agent nobody chose is not a sign-in that is missing. The JSON keeps the
+            # state (and says `enabled`), so a script reading it sees no new value.
+            state = "off" if entry.get("enabled") is False else entry["state"]
+            typer.echo(f"{name:<{width}}  {state:<8}  {entry['detail']}")
     if any(entry["state"] == "failed" for entry in report.values()):
         raise typer.Exit(1)
 
