@@ -506,7 +506,7 @@ class Settings(BaseSettings):
     google_client_secrets_file: Path | None = setting(
         None,
         "The OAuth client JSON the Google Cloud console downloads (desktop or web shape). "
-        f"Blank: `DATA_DIR/{GOOGLE_CLIENT_FILE}`, where `jarvis setup` puts it.",
+        f"Blank: `JARVIS_HOME/{GOOGLE_CLIENT_FILE}`, where `jarvis setup` puts it.",
         group="google",
     )
     user_google_email: str | None = setting(

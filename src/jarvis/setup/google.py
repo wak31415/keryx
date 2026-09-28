@@ -19,7 +19,7 @@ one Google Cloud client:
 
 The client is `Settings.google_oauth_client()` for both — the id/secret pair, else the
 downloaded JSON — and `install_client_file` is how that JSON gets to
-`DATA_DIR/google_client_secret.json`. `run_section` is the wizard's screen for all of it,
+`JARVIS_HOME/google_client_secret.json`. `run_section` is the wizard's screen for all of it,
 reading its instructions from `guides/google.md` so the README can link the same steps.
 
 The MCP stdio framing is newline-delimited JSON-RPC: `initialize` (request),
@@ -341,7 +341,7 @@ def _stop(process: Any) -> None:
 
 
 def install_client_file(settings: Settings, source: Path) -> Path:
-    """Copy a downloaded OAuth client JSON to `DATA_DIR/google_client_secret.json` (0600).
+    """Copy a downloaded OAuth client JSON to `JARVIS_HOME/google_client_secret.json` (0600).
 
     Validated first — the `installed` (desktop) or `web` shape — so a wrong file is refused
     here rather than at the first sign-in. Returns where it now is; the caller points

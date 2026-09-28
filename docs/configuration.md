@@ -94,7 +94,7 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 |---|---|---|---|
 | `GOOGLE_OAUTH_CLIENT_ID` |  | no | The Google OAuth client id. Blank: read from `GOOGLE_CLIENT_SECRETS_FILE`. |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | (secret) | never | The Google OAuth client secret, with the id above. |
-| `GOOGLE_CLIENT_SECRETS_FILE` |  | no | The OAuth client JSON the Google Cloud console downloads (desktop or web shape). Blank: `DATA_DIR/google_client_secret.json`, where `jarvis setup` puts it. |
+| `GOOGLE_CLIENT_SECRETS_FILE` |  | no | The OAuth client JSON the Google Cloud console downloads (desktop or web shape). Blank: `JARVIS_HOME/google_client_secret.json`, where `jarvis setup` puts it. |
 | `USER_GOOGLE_EMAIL` |  | no | The Google account agents act as; `jarvis setup` fills it in from the sign-in. |
 | `GOOGLE_WORKSPACE_MCP` | `false` | no | Give every subagent the workspace-mcp server (send mail, manage the calendar). Needed for Codex, which has no claude.ai connectors; Claude already has them. |
 | `EMAIL_MODEL` | `claude-opus-5-5` | yes | The model `check_email` answers with, through the bundled `claude` CLI. |
