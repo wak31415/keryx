@@ -44,7 +44,12 @@ from typing import Protocol
 from jarvis.audio.util import ms_for_bytes
 from jarvis.config import PIN_MAX_DIGITS, PIN_PATTERN, Settings, secure_dir, secure_file
 from jarvis.continuity.briefing import Briefing, BriefingSource
-from jarvis.continuity.transcripts import AUTHORIZED_MARKER, redact_pin, session_header
+from jarvis.continuity.transcripts import (
+    AUTHORIZED_MARKER,
+    redact_pin,
+    session_header,
+    transcript_path,
+)
 from jarvis.events import EventBus, PinLockedOut, SessionEnded, SessionStarted
 from jarvis.logging_util import mask_number
 from jarvis.pin_guard import PinGuard
@@ -335,7 +340,7 @@ class VoiceSession:
 
     @property
     def transcript_path(self) -> Path:
-        return self._settings.data_dir / "calls" / f"{self.session_id}.log"
+        return transcript_path(self._settings.data_dir, self.session_id)
 
     async def run(self) -> None:
         """Run the session to completion. Returns once the call has been torn down."""

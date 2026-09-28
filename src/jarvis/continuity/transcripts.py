@@ -22,6 +22,9 @@ from pathlib import Path
 
 from jarvis.logging_util import mask_number
 
+#: The transcripts' directory under `data_dir`.
+CALLS_DIR = "calls"
+
 log = logging.getLogger("jarvis.transcripts")
 
 #: How much of the previous call the context carries.
@@ -98,9 +101,15 @@ def was_authorized(raw: str) -> bool:
     return not header.endswith(_UNAUTHORIZED_FLAG) or AUTHORIZED_MARKER in lines
 
 
+def calls_dir(data_dir: Path) -> Path:
+    """Where the transcripts are, one `<session id>.log` per session. The one definition:
+    the session writes here, and `recall` and `retention` read and prune it."""
+    return data_dir / CALLS_DIR
+
+
 def transcript_path(data_dir: Path, session_id: str) -> Path:
     """Where the session with this id wrote its transcript."""
-    return data_dir / "calls" / f"{session_id}.log"
+    return calls_dir(data_dir) / f"{session_id}.log"
 
 
 def read_tail(
