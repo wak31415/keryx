@@ -216,8 +216,9 @@ def stub_local_runner(monkeypatch, built: dict, *, run=None) -> None:
             built["device"] = self
 
     class StubDetector:
-        def __init__(self, model_name):
+        def __init__(self, model_name, directory):
             built["model"] = model_name
+            built["models"] = directory
 
     class StubRunner:
         def __init__(self, settings, device, listener, **kwargs):
@@ -261,6 +262,7 @@ def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     assert built["ran"] is True
     assert built["model"] == settings_stub.wakeword_model
+    assert built["models"] == settings_stub.cache_dir / "models"
     settings, device, _listener, kwargs = built["runner"]
     assert settings is settings_stub
     assert device is built["device"]
@@ -870,7 +872,7 @@ def wakeword_models(monkeypatch, tmp_path):
     """Point the wake-word check at a directory instead of importing openwakeword."""
     models = tmp_path / "models"
     models.mkdir()
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda: models)
+    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: models)
     return models
 
 
@@ -897,7 +899,8 @@ def test_doctor_passes_on_a_complete_install(
     monkeypatch, tmp_path, wakeword_models, every_agent_installed
 ):
     monkeypatch.chdir(tmp_path)
-    (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
+    for name in ("hey_jarvis_v0.1.onnx", "melspectrogram.onnx", "embedding_model.onnx"):
+        (wakeword_models / name).write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     settings = Settings(
         _env_file=None,
@@ -926,7 +929,8 @@ def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path, w
     so if it stopped `doctor` too there would be nothing left to diagnose it with.
     """
     monkeypatch.chdir(tmp_path)
-    (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
+    for name in ("hey_jarvis_v0.1.onnx", "melspectrogram.onnx", "embedding_model.onnx"):
+        (wakeword_models / name).write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
 
     def load(**overrides):
@@ -970,7 +974,8 @@ def test_doctor_explains_a_malformed_pin_set_the_way_a_person_sets_one(
     to explain.
     """
     monkeypatch.chdir(tmp_path)
-    (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
+    for name in ("hey_jarvis_v0.1.onnx", "melspectrogram.onnx", "embedding_model.onnx"):
+        (wakeword_models / name).write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     for name, value in {
         "OPENAI_API_KEY": "sk-test",
@@ -1159,6 +1164,27 @@ def test_download_models_where_the_wake_word_cannot_run_says_so_in_one_line(
     assert isinstance(result.exception, SystemExit)  # a clean exit, not a traceback
     assert result.output.strip().count("\n") == 0
     assert "the wake word needs macOS" in result.output
+
+
+def test_download_models_fetches_into_the_cache(settings_stub, monkeypatch):
+    import sys
+    import types
+
+    fetched: dict = {}
+    utils = types.ModuleType("openwakeword.utils")
+    utils.download_models = lambda **kwargs: fetched.update(kwargs)
+    package = types.ModuleType("openwakeword")
+    package.utils = utils
+    monkeypatch.setitem(sys.modules, "openwakeword", package)
+    monkeypatch.setitem(sys.modules, "openwakeword.utils", utils)
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: None)
+
+    result = runner.invoke(app, ["download-models"])
+
+    assert result.exit_code == 0, result.output
+    target = settings_stub.cache_dir / "models"
+    assert fetched == {"model_names": ["hey_jarvis"], "target_directory": str(target)}
+    assert stat.S_IMODE(target.stat().st_mode) == 0o700
 
 
 # --- housekeeping and the memory -------------------------------------------

@@ -18,6 +18,7 @@ from jarvis.doctor import (
 )
 from jarvis.integrations.gmail import token_path
 from jarvis.logging_util import mask_number
+from jarvis.wakeword import FEATURE_MODELS
 
 
 @pytest.fixture
@@ -27,8 +28,9 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
 
     models = tmp_path / "models"
     models.mkdir()
-    (models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda: models)
+    for name in ("hey_jarvis_v0.1.onnx", *FEATURE_MODELS):
+        (models / name).write_bytes(b"")
+    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: models)
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     # The service is installed. Asked of a fake: the real question goes to `systemctl`.
     monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target: True)
@@ -395,17 +397,41 @@ def test_a_pin_file_that_is_not_a_pin_is_reported_as_the_dead_end_it_is(healthy)
 def test_an_undownloaded_wake_word_model_points_at_download_models(healthy, monkeypatch, tmp_path):
     empty = tmp_path / "empty-models"
     empty.mkdir()
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda: empty)
+    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: empty)
 
     check = by_name(run_doctor_checks(healthy, probe_mic=False))["wake-word model"]
     assert check.ok is False
     assert "download-models" in check.detail
 
 
+def test_a_wake_word_without_its_feature_models_cannot_load(healthy, monkeypatch, tmp_path):
+    partial = tmp_path / "partial"
+    partial.mkdir()
+    (partial / "hey_jarvis_v0.1.onnx").write_bytes(b"")
+    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: partial)
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["wake-word model"]
+
+    assert check.ok is False
+    assert "melspectrogram.onnx, embedding_model.onnx" in check.detail
+
+
+def test_the_models_are_looked_for_in_the_cache(settings, monkeypatch):
+    """Not inside the installed package, which the next `uv sync` replaces."""
+    import sys
+    import types
+
+    from jarvis import doctor
+
+    monkeypatch.setitem(sys.modules, "openwakeword", types.ModuleType("openwakeword"))
+
+    assert doctor._wakeword_models_dir(settings) == settings.cache_dir / "models"
+
+
 def test_an_uninstalled_openwakeword_only_warns(healthy, monkeypatch):
     """openwakeword is macOS-only, so a Linux phone-only host is not a broken install."""
 
-    def explode():
+    def explode(settings):
         raise ImportError("no openwakeword here")
 
     monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", explode)
@@ -418,7 +444,7 @@ def test_an_uninstalled_openwakeword_only_warns(healthy, monkeypatch):
 
 
 def test_a_broken_openwakeword_install_is_reported_not_raised(healthy, monkeypatch):
-    def explode():
+    def explode(settings):
         raise OSError("resources are gone")
 
     monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", explode)

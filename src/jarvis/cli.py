@@ -79,7 +79,12 @@ from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolRegistry
 from jarvis.transports.local_audio import LocalAudioDevice
 from jarvis.transports.wav import WavTransport
-from jarvis.wakeword import OpenWakeWordDetector, WakeWordListener, wakeword_unavailable
+from jarvis.wakeword import (
+    OpenWakeWordDetector,
+    WakeWordListener,
+    models_dir,
+    wakeword_unavailable,
+)
 
 app = typer.Typer(help="Jarvis voice agent.")
 tasks_app = typer.Typer(help="Inspect the tasks handed to subagents.")
@@ -275,7 +280,12 @@ def download_models() -> None:
     import openwakeword.utils
 
     settings = _load_settings_optional()
-    openwakeword.utils.download_models(model_names=[settings.wakeword_model])
+    target = models_dir(settings.cache_dir)
+    secure_dir(target)
+    openwakeword.utils.download_models(
+        model_names=[settings.wakeword_model], target_directory=str(target)
+    )
+    typer.echo(f"{settings.wakeword_model}: {target}")
 
 
 @app.command()
@@ -443,7 +453,7 @@ def _build_server(state: AppState) -> uvicorn.Server:
 def _build_local_runner(state: AppState) -> LocalRunner:
     """The wake-word loop, sharing every registry with the phone server."""
     listener = WakeWordListener(
-        OpenWakeWordDetector(state.settings.wakeword_model),
+        OpenWakeWordDetector(state.settings.wakeword_model, models_dir(state.settings.cache_dir)),
         threshold=state.settings.wakeword_threshold,
     )
     return LocalRunner(

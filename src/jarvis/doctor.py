@@ -50,6 +50,7 @@ from jarvis.integrations import slack
 from jarvis.integrations.gmail import token_path
 from jarvis.logging_util import mask_number
 from jarvis.restart.service import INSTALLERS, candidate_target, resolve_target
+from jarvis.wakeword import missing_models, models_dir
 
 Severity = Literal["hard", "soft"]
 
@@ -455,19 +456,20 @@ def _tunnel_check() -> Check:
     )
 
 
-def _wakeword_models_dir() -> Path:
-    """Where openWakeWord keeps its downloaded `.onnx` models. Raises if it isn't installed."""
-    import openwakeword
+def _wakeword_models_dir(settings: Settings) -> Path:
+    """Where `jarvis download-models` puts the `.onnx` models. Raises if openWakeWord is
+    not installed, which is the question asked first."""
+    import openwakeword  # noqa: F401 - whether it is there
 
-    return Path(openwakeword.__file__).parent / "resources" / "models"
+    return models_dir(settings.cache_dir)
 
 
 def _wakeword_check(settings: Settings) -> Check:
     """Has `jarvis download-models` been run for the configured wake word?"""
     model = settings.wakeword_model
     try:
-        models_dir = _wakeword_models_dir()
-        found = sorted(models_dir.glob(f"{model}*.onnx"))
+        directory = _wakeword_models_dir(settings)
+        missing = missing_models(directory, model)
     except ImportError:
         # openwakeword is a macOS-only dependency (see pyproject): on a Linux host the
         # wake-word channel is simply absent, which narrows Jarvis rather than breaking it.
@@ -481,13 +483,14 @@ def _wakeword_check(settings: Settings) -> Check:
         )
     except Exception as exc:
         return Check("wake-word model", False, f"openwakeword is unusable: {exc}", section="local")
-    if not found:
+    if missing:
         return Check(
             "wake-word model",
             False,
-            f"no {model}*.onnx in {models_dir} — run `jarvis download-models`",
+            f"no {', '.join(missing)} in {directory} — run `jarvis download-models`",
             section="local",
         )
+    found = sorted(directory.glob(f"{model}*.onnx"))
     return Check("wake-word model", True, ", ".join(path.name for path in found), section="local")
 
 
