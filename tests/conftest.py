@@ -154,6 +154,27 @@ def _no_checkout_env(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _wake_word_models_downloaded(monkeypatch):
+    """doctor's wake-word check never imports openwakeword in a test, and finds the models.
+
+    Otherwise it depends on the host: on a Mac with the package installed and nothing
+    downloaded, a test that runs doctor fails, and every test after it runs with
+    openwakeword imported (`test_openwakeword_is_never_imported_at_module_scope`). The
+    models go in the test's own CACHE_DIR; the wake-word tests patch their own directory.
+    """
+    from jarvis.wakeword import FEATURE_MODELS, models_dir
+
+    def downloaded(settings):
+        directory = models_dir(settings.cache_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        for name in (f"{settings.wakeword_model}_v0.1.onnx", *FEATURE_MODELS):
+            (directory / name).touch()
+        return directory
+
+    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", downloaded)
+
+
+@pytest.fixture(autouse=True)
 def _no_twilio_from_doctor(monkeypatch):
     """`jarvis doctor` asks Twilio where the number points when it has credentials. Never
     from a test: the doctor tests hand in a fake client of their own. Returns the real one,

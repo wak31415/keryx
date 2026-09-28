@@ -16,6 +16,7 @@ from jarvis.doctor import (
     has_hard_failure,
     run_doctor_checks,
 )
+from jarvis.doctor import _wakeword_models_dir as real_wakeword_models_dir
 from jarvis.integrations.gmail import token_path
 from jarvis.logging_util import mask_number
 from jarvis.wakeword import FEATURE_MODELS
@@ -424,6 +425,8 @@ def test_the_models_are_looked_for_in_the_cache(settings, monkeypatch):
     from jarvis import doctor
 
     monkeypatch.setitem(sys.modules, "openwakeword", types.ModuleType("openwakeword"))
+    # The real one, not the conftest's stand-in: this is the test of where it looks.
+    monkeypatch.setattr(doctor, "_wakeword_models_dir", real_wakeword_models_dir)
 
     assert doctor._wakeword_models_dir(settings) == settings.cache_dir / "models"
 
