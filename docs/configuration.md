@@ -55,7 +55,7 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 | `CLAUDE_CODE_OAUTH_TOKEN` | (secret) | never | Claude on your subscription, for a machine with no browser: the token `claude setup-token` prints. Blank uses the stored `claude` login. |
 | `SUBAGENT_MODEL` | `claude-opus-5` | yes | The model a Claude task runs on when none is named. |
 | `SUBAGENT_MAX_TURNS` | `200` | no | Agent turns one Claude task may take. |
-| `SUBAGENT_MAX_BUDGET_USD` | `10` | never | Dollars one Claude task may spend. |
+| `SUBAGENT_MAX_BUDGET_USD` | `10` | never | Dollars one Claude task may spend: a runaway cap. On a subscription it is the SDK's estimate of what the task would have cost, not a charge. |
 | `CODEX_API_KEY` | (secret) | never | Codex, paid per token. Jarvis logs in with it once, into its own `CODEX_HOME`; `OPENAI_API_KEY` is never used for Codex. |
 | `CODEX_ACCESS_TOKEN` | (secret) | never | Codex on your ChatGPT plan, for a machine with no browser. Blank uses the stored `codex login`. |
 | `CODEX_MODEL` |  | yes | The model a Codex task runs on; blank is Codex's own default. |

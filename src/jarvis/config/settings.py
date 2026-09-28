@@ -369,7 +369,8 @@ class Settings(BaseSettings):
         ge=1,
     )
     subagent_max_budget_usd: float = setting(
-        10.0, "Dollars one Claude task may spend.", group="agents",
+        10.0, "Dollars one Claude task may spend: a runaway cap. On a subscription it is "
+        "the SDK's estimate of what the task would have cost, not a charge.", group="agents",
         gt=0,
     )
     # Codex. The same order: CODEX_API_KEY > CODEX_ACCESS_TOKEN (logged in once into
