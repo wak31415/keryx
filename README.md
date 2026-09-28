@@ -80,22 +80,22 @@ uv run jarvis setup
 `jarvis setup` asks only for what is still missing. When it's done, call your Twilio number.
 If a coding agent is setting Jarvis up for you, point it at
 `uv run jarvis setup --agent-instructions`, or give Claude Code the `skills/jarvis-setup`
-skill. The full walkthrough is in [docs/setup.md](docs/setup.md).
+skill. The full walkthrough is on the [wiki](https://github.com/wak31415/jarvis-voice-agent/wiki/Setup).
 
 ## Claude Code or Codex
 
 Jarvis hands its work to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or
 [Codex](https://developers.openai.com/codex), signed in with a subscription or an API key.
-`jarvis setup` asks which one to use by default. If you enable both, you can say "have Codex do it" on a
-call. [docs/agents.md](docs/agents.md) compares the two.
+`jarvis setup` asks which one to use by default. If you enable both, you can say "have
+Codex do it" on a call. [docs/agents.md](docs/agents.md) compares the two.
 
 ## Documentation
 
-- [Setup](docs/setup.md): phone, Google, the PIN, where files live, upgrading, costs
+- [Setup](https://github.com/wak31415/jarvis-voice-agent/wiki/Setup): phone, Google, the PIN, where files live, upgrading, costs
 - [Configuration](docs/configuration.md): every setting
 - [Coding agents](docs/agents.md): signing in, installing only one, what each can do
 - [Tools](docs/tools.md): what the voice model can do, and how to add a tool
-- [Approval bridge](docs/approvals.md): answer Claude Code prompts on your screen by phone
+- [Approval bridge](https://github.com/wak31415/jarvis-voice-agent/wiki/The-Approval-Bridge): answer Claude Code prompts on your screen by phone
 - [Security](SECURITY.md): the threat model. Read it before putting the phone line online
 - [Wiki](https://github.com/wak31415/jarvis-voice-agent/wiki): troubleshooting and worked
   examples
