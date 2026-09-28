@@ -34,6 +34,7 @@ from jarvis.config import (
     load_settings,
 )
 from jarvis.config.permissions import ACTOR_ENV, SERVICE, current_actor
+from jarvis.config.settings import ConfigFileError, tolerate_broken_files
 from jarvis.config.store import FROM_ENV, ConfigError, ConfigStore
 from jarvis.continuity.memory import memory_path, read_memory
 from jarvis.continuity.retention import cutoff_for, prune, prune_with
@@ -154,6 +155,9 @@ def _configure(**overrides: object) -> Settings:
     """Load settings (with any command-line overrides), make the data dirs, set up logging."""
     try:
         settings = load_settings()
+    except ConfigFileError as error:
+        typer.echo(f"jarvis cannot start: {error}", err=True)
+        raise typer.Exit(2) from None
     except ValidationError as error:
         # This is the path `jarvis serve` takes, so this message is what somebody reads in
         # `journalctl` after a restart failed to bring the service back. A traceback would
@@ -184,6 +188,12 @@ def _load_settings_reporting() -> tuple[Settings, dict[str, str]]:
     while True:
         try:
             return load_settings(**overrides), problems
+        except ConfigFileError as error:
+            if "config_file" in problems:
+                raise
+            # Read on without the broken file; doctor's `config.toml` check says what broke.
+            problems["config_file"] = str(error)
+            tolerate_broken_files.set(True)
         except ValidationError as error:
             fresh = {
                 field: _validation_message(detail)
@@ -795,6 +805,7 @@ def memory_seed(
     memory was wanted and not written (one is there without --force, or it is longer than a
     call reads); exit 2 means the command line itself is wrong.
     """
+    _owner_only("seed the memory")
     settings = _configure_readonly()
     try:
         facts = profile.read_facts(file)
@@ -954,6 +965,7 @@ def setup(
     if instructions:
         typer.echo(agent_instructions(settings, ConfigStore()))
         return
+    _owner_only("run setup")
     if not _interactive():
         typer.echo(
             "jarvis setup asks questions, so it needs a terminal. A coding agent: "
@@ -1045,7 +1057,10 @@ def config_get(
     ] = False,
 ) -> None:
     """Print the value a setting has now, from wherever it comes. Never a secret's."""
-    settings = _load_settings_optional()
+    settings, problems = _load_settings_reporting()
+    if "config_file" in problems:  # a script must not be handed the defaults instead
+        typer.echo(problems["config_file"], err=True)
+        raise typer.Exit(1)
     dumped = settings.model_dump(mode="json")
     for key in keys:
         name = field_for(_key_or_exit(key))
@@ -1158,6 +1173,7 @@ def config_import_env(
     ] = Path(".env"),
 ) -> None:
     """Move a legacy .env (and .secrets/client_secret.json) into the store, then rename it."""
+    _owner_only("import settings")
     try:
         report = ConfigStore().import_env(path)
     except ConfigError as error:
@@ -1166,6 +1182,8 @@ def config_import_env(
     typer.echo(f"imported: {', '.join(report.imported) or 'nothing'}")
     if report.defaults:
         typer.echo(f"left at their defaults: {', '.join(report.defaults)}")
+    if report.kept:
+        typer.echo(f"already set in the store, kept as they were: {', '.join(report.kept)}")
     if report.pin:
         typer.echo(f"PIN: {report.pin}")
     if report.client_file:
@@ -1176,15 +1194,20 @@ def config_import_env(
 
 
 def _owner_only(verb: str) -> None:
+    """Refuse inside anything `jarvis serve` started: this command is the owner's alone.
+
+    Each of these writes what the running service may not — protected settings, the PIN,
+    the memory whole — so the service-actor rule would mean nothing if they skipped it.
+    """
     if current_actor() == SERVICE:
-        typer.echo(f"only the owner may {verb} a setting, at their own terminal", err=True)
+        typer.echo(f"only the owner may {verb}, at their own terminal", err=True)
         raise typer.Exit(1)
 
 
 @config_app.command("lock")
 def config_lock(key: Annotated[str, typer.Argument(help="The setting.")]) -> None:
     """Stop the running service changing KEY."""
-    _owner_only("lock")
+    _owner_only("lock a setting")
     try:
         ConfigStore().lock(_key_or_exit(key))
     except ConfigError as error:
@@ -1196,7 +1219,7 @@ def config_lock(key: Annotated[str, typer.Argument(help="The setting.")]) -> Non
 @config_app.command("unlock")
 def config_unlock(key: Annotated[str, typer.Argument(help="The setting.")]) -> None:
     """Let the running service change KEY. Refused for credentials and protected settings."""
-    _owner_only("unlock")
+    _owner_only("unlock a setting")
     try:
         ConfigStore().unlock(_key_or_exit(key))
     except ConfigError as error:
@@ -1232,6 +1255,7 @@ def auth_login(
     if name not in auth_flow.LOGINS:
         typer.echo(f"sign in to one of: {', '.join(auth_flow.LOGINS)}", err=True)
         raise typer.Exit(2)
+    _owner_only("sign in")
     settings = _configure_readonly()
     options = auth_flow.LoginOptions(
         headless=is_headless() if headless is None else headless,

@@ -31,6 +31,7 @@ from jarvis.config.pin import (
     is_trivial_pin,
     pin_file,
     read_enrolled_pin,
+    replace_pin_at_keyboard,
     write_enrolled_pin,
 )
 from jarvis.config.settings import (
@@ -81,6 +82,7 @@ __all__ = [
     "parse_google_client",
     "pin_file",
     "read_enrolled_pin",
+    "replace_pin_at_keyboard",
     "secrets_file",
     "secure_dir",
     "secure_file",

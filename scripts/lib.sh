@@ -21,10 +21,17 @@ UNINSTALL=0
 config_value() {
   # config_value NAME — the value jarvis would use for NAME; empty when it has none. Run from
   # the repository, the service's working directory, so a legacy .env there still counts.
-  # Never a secret: `jarvis config get` refuses those.
-  local cli="${JARVIS_CLI:-uv run --quiet --project $REPO jarvis}"
-  # shellcheck disable=SC2086 # JARVIS_CLI is a command line, split on purpose
-  (cd "$REPO" && $cli config get "$1")
+  # Never a secret: `jarvis config get` refuses those, and a config.toml that does not parse.
+  local -a cli
+  if [[ -n "${JARVIS_CLI:-}" ]]; then
+    read -r -a cli <<< "$JARVIS_CLI"  # a command line, split on purpose
+  elif command -v uv >/dev/null 2>&1; then
+    cli=(uv run --quiet --project "$REPO" jarvis)  # an array: $REPO may hold a space
+  else
+    echo "uv is not on PATH (https://docs.astral.sh/uv/)" >&2
+    return 1
+  fi
+  (cd "$REPO" && "${cli[@]}" config get "$1")
 }
 
 resolve_data_dir() {

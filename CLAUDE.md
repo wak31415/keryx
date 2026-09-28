@@ -287,7 +287,13 @@ it is running. Do not make a subagent restart Jarvis itself; it is inside the cg
   key: the field's default, overridden by `jarvis config lock|unlock` under
   `[service_writable]`. `PROTECTED_KEYS` (every secret, the PIN, trust, approvals, spending,
   deletion, the network, the debug switches) can never be unlocked, and a hand edit that
-  tries is ignored and reported by `doctor`. This binds Jarvis's own tools; it is not a
+  tries is ignored and reported by `doctor`. The service may tune a limit in
+  `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
+  against the whole store, so nothing it saves can stop `jarvis serve` from starting. The
+  commands that write what the service may not — `config import-env`, `auth login`,
+  `memory seed`, `setup`, `config lock|unlock` — refuse outright under
+  `JARVIS_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
+  context) run as the service. This binds Jarvis's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
   `tests/config/test_permissions.py` names the writable set.
 - **The PIN is not a setting.** It stays in `DATA_DIR/pin`; `config set JARVIS_PIN` is
@@ -506,8 +512,9 @@ scope, so the test suite can run on a machine with no mic.
   `O_CREAT | O_EXCL` — the kernel refusing a second write is the whole guarantee, which is
   why there is no setter in any tool or CLI command and why you must not add one. The one
   keyboard path is `jarvis setup` at a terminal, which sets a PIN the same way when there is
-  none and replaces one only by deleting the file after two explicit yeses, with the new
-  digits already typed twice. The
+  none and replaces one only after two explicit yeses, with the new digits already typed
+  twice, by an atomic rename (`pin.replace_pin_at_keyboard`) so no failure leaves no PIN.
+  A running service keeps the PIN it started with until it restarts, and setup says so. The
   digits are keyed twice and compared (`session._enrol_keypad_pin`), never spoken: a
   mishearing here is unfixable. Any `data_dir/pin` shuts the door, usable or not, and only
   the owner at the keyboard re-opens it. Until a PIN exists nothing of theirs is read out

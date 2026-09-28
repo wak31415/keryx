@@ -22,6 +22,8 @@ import json
 import logging
 import re
 import secrets
+import tomllib
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -152,6 +154,15 @@ def setting(
     return Field(description=description, json_schema_extra=extra, **kwargs)
 
 
+class ConfigFileError(ValueError):
+    """A configuration file that does not parse: named, with where, and nothing else."""
+
+
+#: While set, a configuration file that does not parse is skipped instead of raised: how
+#: `jarvis doctor` still runs on the machine whose file it has to report.
+tolerate_broken_files: ContextVar[bool] = ContextVar("tolerate_broken_files", default=False)
+
+
 class _TomlLayer(PydanticBaseSettingsSource):
     """One of the two files in `JARVIS_HOME`, keyed by environment-variable name.
 
@@ -169,7 +180,13 @@ class _TomlLayer(PydanticBaseSettingsSource):
     def __call__(self) -> dict[str, Any]:
         fields = {env_var_name(name): name for name in self.settings_cls.model_fields}
         values: dict[str, Any] = {}
-        for key, value in read_toml(self.path).items():
+        try:
+            data = read_toml(self.path)
+        except tomllib.TOMLDecodeError as error:
+            if tolerate_broken_files.get():
+                return {}
+            raise ConfigFileError(f"{self.path} does not parse ({error})") from None
+        for key, value in data.items():
             name = fields.get(key)
             if name is None or key in NOT_STORED or value == "":
                 continue
@@ -266,10 +283,12 @@ class Settings(BaseSettings):
     vad_silence_ms: int = setting(
         1200, "Server mode only: the silence, in milliseconds, that ends a turn.",
         group="voice", service_writable=True,
+        ge=0,
     )
     vad_threshold: float = setting(
         0.5, "Server mode only: how loud counts as speech (0 to 1).",
         group="voice", service_writable=True,
+        ge=0, le=1,
     )
     vad_prefix_ms: int = setting(
         300,
@@ -277,6 +296,7 @@ class Settings(BaseSettings):
         "syllable is not clipped.",
         group="voice",
         service_writable=True,
+        ge=0,
     )
     noise_reduction: Literal["auto", "near_field", "far_field", "off"] = setting(
         "auto",
@@ -293,6 +313,7 @@ class Settings(BaseSettings):
     wakeword_threshold: float = setting(
         0.5, "How sure the wake-word model must be before a session opens (0 to 1).",
         group="voice",
+        ge=0, le=1,
     )
 
     # --- coding agents -----------------------------------------------------------------
@@ -341,10 +362,12 @@ class Settings(BaseSettings):
         group="agents", service_writable=True,
     )
     subagent_max_turns: int = setting(
-        200, "Agent turns one Claude task may take.", group="agents"
+        200, "Agent turns one Claude task may take.", group="agents",
+        ge=1,
     )
     subagent_max_budget_usd: float = setting(
-        10.0, "Dollars one Claude task may spend.", group="agents"
+        10.0, "Dollars one Claude task may spend.", group="agents",
+        gt=0,
     )
     # Codex. The same order: CODEX_API_KEY > CODEX_ACCESS_TOKEN (logged in once into
     # Jarvis's own CODEX_HOME) > the CLI's stored login. OPENAI_API_KEY is the voice
@@ -457,7 +480,7 @@ class Settings(BaseSettings):
         group="phone",
     )
     host: str = setting("127.0.0.1", "The address the phone server binds.", group="phone")
-    port: int = setting(8080, "The port the phone server binds.", group="phone")
+    port: int = setting(8080, "The port the phone server binds.", group="phone", ge=1, le=65535)
 
     # --- google and email --------------------------------------------------------------
 
@@ -578,6 +601,7 @@ class Settings(BaseSettings):
         20.0,
         "The whole wait, since every cluster is asked at once — inside a call.",
         group="cluster",
+        gt=0,
     )
 
     # --- projects ------------------------------------------------------------------------
@@ -620,7 +644,8 @@ class Settings(BaseSettings):
         group="approvals",
     )
     approval_max_per_hour: int = setting(
-        4, "Approval calls per hour, however many prompts pile up.", group="approvals"
+        4, "Approval calls per hour, however many prompts pile up.", group="approvals",
+        ge=0,
     )
     approval_quiet_hours: str | None = setting(
         None,
@@ -646,22 +671,26 @@ class Settings(BaseSettings):
     # --- limits and retention ------------------------------------------------------------
 
     max_concurrent_tasks: int = setting(
-        3, "Subagents running at once; the rest queue.", group="limits", service_writable=True
+        3, "Subagents running at once; the rest queue.", group="limits", service_writable=True,
+        ge=1,
     )
     dispatch_wait_max_seconds: int = setting(
-        25, "How long a call waits for a short task to answer inline.", group="limits"
+        25, "How long a call waits for a short task to answer inline.", group="limits",
+        ge=0,
     )
     local_silence_timeout: float = setting(
         30,
         "Seconds of silence that end a local session; 0 never does.",
         group="limits",
         service_writable=True,
+        ge=0,
     )
     max_call_seconds: float = setting(
         1800,
         "The longest a phone call may run; Jarvis wraps up 30 s before. 0 is no limit.",
         group="limits",
         service_writable=True,
+        ge=0,
     )
     max_phone_sessions: int = setting(
         2,
@@ -670,7 +699,7 @@ class Settings(BaseSettings):
         group="limits",
         ge=1,
     )
-    daily_task_cap: int = setting(50, "Tasks dispatched per day.", group="limits")
+    daily_task_cap: int = setting(50, "Tasks dispatched per day.", group="limits", ge=0)
     # Both off at 0, which is what Jarvis has always done: a default that deleted
     # someone's own call transcripts because nobody changed a number is not one worth
     # having. See also `jarvis forget`.
@@ -713,7 +742,7 @@ class Settings(BaseSettings):
         group="service",
         repr=False,
     )
-    log_level: str = setting(
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = setting(
         "INFO", "How much `DATA_DIR/logs/jarvis.log` says.", group="service",
         service_writable=True,
     )
@@ -748,6 +777,11 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [str(item).strip().lower() for item in value if str(item).strip()]
         return value
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _log_level_is_uppercase(cls, value: object) -> object:
+        return value.strip().upper() if isinstance(value, str) else value
 
     @field_validator("agent_backend", mode="before")
     @classmethod

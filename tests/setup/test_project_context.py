@@ -102,7 +102,7 @@ def test_the_owner_accepts_edits_and_drops_and_only_that_is_kept(make_ctx, world
     )
     ctx = make_ctx(
         [
-            ("Folders to look through", DEFAULT),
+            ("Folders to look through", f"{root}, {tmp_path / 'elsewhere'}"),
             ("May Claude look through", True),
             ("summary of orchard", "accept"),
             ("summary of weather", "drop"),
@@ -216,3 +216,19 @@ def test_blank_folders_skip_the_section(make_ctx, world):
     project_context.run_section(make_ctx([("Folders", "")]))
 
     assert not [call for call in world.calls if call[0] == "task"]
+
+
+def test_a_path_outside_the_chosen_folders_never_becomes_a_project(make_ctx, world, root, tmp_path):
+    """What a README with an injected path would ask for: `/home/<them>` as a project, which
+    would make everything under it a place a keypad approval may write."""
+    home = tmp_path / "home"
+    home.mkdir()
+    world.task_result = RunResult(
+        ok=True, final_text=answer([{"name": "home", "path": str(home), "summary": "Hi."}])
+    )
+    ctx = make_ctx([("Folders", DEFAULT), ("May Claude", True), ("summary of home", "accept")])
+
+    project_context.run_section(ctx)
+
+    assert "PROJECTS" not in ConfigStore().stored()
+    assert any(str(home) in line for line in ctx.ui.lines("panel"))

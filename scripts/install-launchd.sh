@@ -6,14 +6,14 @@
 #   scripts/install-launchd.sh --uninstall  # unload both agents and delete the plists
 #
 # The templates in ops/launchd/ carry __PLACEHOLDER__ names; this script fills them in
-# from `command -v` and .env, writes the result to ~/Library/LaunchAgents/, and hands them
+# from `command -v` and `jarvis config get`, writes the result to ~/Library/LaunchAgents/, and hands them
 # to launchctl. The tunnel agent runs ngrok here rather than cloudflared: a reserved ngrok
 # domain needs no DNS zone, which is the right trade on a laptop. Logs land in
-# DATA_DIR/logs/ (~/.jarvis/logs/ unless the env file says otherwise), and the agents get
+# DATA_DIR/logs/ (~/.jarvis/logs/ unless the configuration says otherwise), and the agents get
 # this shell's PATH — run it from the shell whose tools the subagents should have, and
 # again after that changes.
 #
-# The scaffolding every installer needs — argument parsing, the env-file and PATH checks,
+# The scaffolding every installer needs — argument parsing, reading the configuration, the PATH checks,
 # template rendering — is in scripts/lib.sh.
 set -euo pipefail
 

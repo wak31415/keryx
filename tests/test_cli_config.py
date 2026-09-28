@@ -428,3 +428,55 @@ def test_auth_status_prints_a_table_and_exits_1_on_a_failure(home, monkeypatch):
 
     assert result.exit_code == 1
     assert "claude  failed    no key" in result.output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("config", "import-env"),
+        ("auth", "login", "google-workspace"),
+        ("memory", "seed", "--file", "-", "--force"),
+        ("setup",),
+    ],
+)
+def test_inside_a_task_the_owners_commands_are_refused(home, tmp_path, monkeypatch, args):
+    (tmp_path / ".env").write_text("ALLOWED_CALLERS=+15550000000\n")
+    monkeypatch.setenv("JARVIS_ACTOR", "service")
+
+    result = run(*args, input="A fact.\n")
+
+    assert result.exit_code == 1
+    assert "only the owner" in result.output
+    assert home.stored() == {}
+    assert (tmp_path / ".env").exists()
+
+
+def test_config_get_refuses_a_config_that_does_not_parse(home):
+    home.home.mkdir(parents=True, exist_ok=True)
+    home.config_path.write_text("PORT = \n")
+
+    result = run("config", "get", "PORT")
+
+    assert result.exit_code == 1 and "does not parse" in result.output
+
+
+def test_serve_refuses_a_config_that_does_not_parse_in_one_line(home):
+    home.home.mkdir(parents=True, exist_ok=True)
+    home.config_path.write_text("PORT = \n")
+
+    result = run("serve", "--no-phone", "--no-wakeword")
+
+    assert result.exit_code == 2
+    assert "jarvis cannot start" in result.output and "Traceback" not in result.output
+
+
+def test_doctor_reports_a_config_that_does_not_parse_rather_than_crashing(home):
+    home.home.mkdir(parents=True, exist_ok=True)
+    home.config_path.write_text("PORT = \n")
+
+    result = run("doctor", "--json", "--no-mic")
+
+    document = json.loads(result.output)
+    check = next(c for c in document["checks"] if c["name"] == "config.toml")
+    assert (check["state"], check["severity"]) == ("failed", "hard")
+    assert result.exit_code == 1

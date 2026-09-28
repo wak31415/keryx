@@ -690,8 +690,9 @@ def _git_check(settings: Settings, store: ConfigStore) -> Check:
 def _secrets_in_config_check(store: ConfigStore) -> Check:
     try:
         found = store.secrets_in_config()
-    except Exception as exc:  # a config.toml that does not parse
-        return Check("config.toml", False, f"{store.config_path}: {exc}", section="security")
+    except Exception as exc:  # a config.toml that does not parse: `serve` will not start
+        return Check("config.toml", False, f"does not parse — {exc}; fix it by hand",
+                     section="security")
     if found:
         return Check(
             "config.toml",

@@ -12,7 +12,7 @@ import os
 import re
 from pathlib import Path
 
-from jarvis.config.files import DATA_FILE_MODE, secure_dir, secure_file
+from jarvis.config.files import DATA_FILE_MODE, secure_dir, secure_file, write_private
 
 log = logging.getLogger("jarvis.config")
 
@@ -98,6 +98,20 @@ def write_enrolled_pin(data_dir: Path, digits: str) -> bool:
         secure_file(path)
     log.info("a PIN was enrolled at %s", path)
     return True
+
+
+def replace_pin_at_keyboard(data_dir: Path, digits: str) -> None:
+    """The owner, at a terminal, putting a new PIN in place of the one there. `jarvis setup`
+    only, after two yeses — never a tool, never a command a subagent could run for itself.
+
+    A rename rather than delete-then-create, so there is no moment with no PIN and an open
+    door, and a write that fails leaves the old PIN exactly where it was. The running
+    service keeps the PIN it read at startup until it restarts.
+    """
+    if not PIN_PATTERN.fullmatch(digits):
+        raise ValueError(PIN_RULE)
+    write_private(pin_file(data_dir), f"{digits}\n")
+    log.info("the PIN at %s was replaced at the keyboard", pin_file(data_dir))
 
 
 def is_trivial_pin(digits: str) -> bool:

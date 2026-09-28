@@ -32,6 +32,7 @@ from jarvis.config.files import (
     jarvis_home,
     read_toml,
     secrets_file,
+    secure_file,
     write_private,
 )
 from jarvis.config.pin import PIN_PATTERN, PIN_RULE, pin_file, read_enrolled_pin, write_enrolled_pin
@@ -143,6 +144,8 @@ class ImportReport:
 
     imported: list[str] = field(default_factory=list)
     defaults: list[str] = field(default_factory=list)
+    #: In the `.env` and already in the store, whose value was the one in use: left alone.
+    kept: list[str] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
     pin: str | None = None
     client_file: Path | None = None
@@ -216,7 +219,7 @@ class ConfigStore:
         if name is None:
             raise ConfigError(f"there is no setting called {key}")
         key = env_var_name(name)
-        if any(os.environ.get(candidate, "").strip() for candidate in (key, name.upper())):
+        if os.environ.get(key, "").strip():
             return FROM_ENV
         if key not in NOT_STORED:
             if key in self._secrets():
@@ -226,7 +229,7 @@ class ConfigStore:
         legacy = legacy_env_file()
         if legacy is not None and legacy.is_file():
             raw = dotenv_values(legacy)
-            if any((raw.get(candidate) or "").strip() for candidate in (key, name.upper())):
+            if (raw.get(key) or "").strip():
                 return FROM_LEGACY
         if key == "JARVIS_PIN" and settings is not None and pin_file(settings.data_dir).exists():
             return FROM_PIN_FILE
@@ -271,17 +274,22 @@ class ConfigStore:
         All or nothing: one refused or invalid value and neither file is touched.
         """
         keys = {key.strip().upper(): value for key, value in values.items()}
-        overrides = self.overrides()
-        for key, value in keys.items():
+        for key in keys:
             if field_for(key) is None:
                 raise ConfigError(f"there is no setting called {key} (`jarvis config list`)")
+            if key in NOT_STORED:  # before validating: a refusal must not echo a PIN's rule
+                raise ConfigError(permissions.refusal(key, None, actor=actor, overrides={},
+                                                      settings=settings) or key)
+        cleaned = validate({key: value for key, value in keys.items() if value is not None})
+        cleaned.update({key: None for key, value in keys.items() if value is None})
+        overrides = self.overrides()
+        for key, value in cleaned.items():
             why = permissions.refusal(
                 key, value, actor=actor, overrides=overrides, settings=settings
             )
             if why is not None:
                 raise ConfigError(why)
-        cleaned = validate({key: value for key, value in keys.items() if value is not None})
-        cleaned.update({key: None for key, value in keys.items() if value is None})
+        self._check_whole(cleaned)
         self._write(cleaned)
         return cleaned
 
@@ -326,6 +334,18 @@ class ConfigStore:
         table["walked"] = names
         write_private(self.config_path, dump_toml(config, CONFIG_HEADER))
 
+    def _check_whole(self, cleaned: Mapping[str, Any]) -> None:
+        """Refuse a write after which the store as a whole would not load.
+
+        Each value was validated on its own; this is the same load `jarvis serve` does, over
+        everything the store would hold, so a combination no single value shows is caught
+        here rather than at the next start.
+        """
+        merged = {key: value for key, value in self.stored().items() if key not in NOT_STORED}
+        merged.update(cleaned)
+        validate({key: value for key, value in merged.items()
+                  if value is not None and field_for(key) is not None})
+
     def _write(self, cleaned: Mapping[str, Any]) -> None:
         """Put each key in the file its kind belongs in, and out of the other one."""
         config, secrets = self._config(), self._secrets()
@@ -346,7 +366,9 @@ class ConfigStore:
 
     # --- a legacy .env ------------------------------------------------------------------
 
-    def import_env(self, path: Path, *, today: date | None = None) -> ImportReport:
+    def import_env(
+        self, path: Path, *, today: date | None = None, actor: str = permissions.OWNER
+    ) -> ImportReport:
         """Move a legacy `.env` into the store, then rename it out of the way.
 
         Settings still at their defaults are not copied, so a `.env` made from the old
@@ -357,6 +379,10 @@ class ConfigStore:
         Google client file (`GOOGLE_CLIENT_SECRETS_FILE`, or `.secrets/client_secret.json`
         beside the `.env`) is copied to `DATA_DIR/google_client_secret.json`.
         """
+        if actor != permissions.OWNER:
+            # It writes protected settings and the PIN by its nature: the owner's alone.
+            raise ConfigError("only the owner may import settings, at their own terminal")
+        path = path.resolve()
         report = ImportReport()
         raw: dict[str, str] = {}
         for key, value in dotenv_values(path).items():
@@ -373,13 +399,26 @@ class ConfigStore:
             candidate = Path(raw[key]).expanduser()
             raw[key] = str(candidate if candidate.is_absolute() else path.parent / candidate)
         cleaned = validate(raw)
+        stored = self.stored()
         for key, value in cleaned.items():
-            (report.defaults if value == default_value(key) else report.imported).append(key)
+            if key in stored:
+                report.kept.append(key)
+            elif value == default_value(key):
+                report.defaults.append(key)
+            else:
+                report.imported.append(key)
         keep = {key: cleaned[key] for key in report.imported}
 
+        # The data directory the service will use after the import, found the way it finds
+        # it: the environment first, then the store as it will be, then the default.
         data_dir = Path(
-            keep.get("DATA_DIR") or self.stored().get("DATA_DIR") or default_value("DATA_DIR")
+            os.environ.get("DATA_DIR", "").strip()
+            or keep.get("DATA_DIR")
+            or stored.get("DATA_DIR")
+            or default_value("DATA_DIR")
         ).expanduser()
+        if not data_dir.is_absolute():
+            data_dir = path.parent / data_dir
         client = Path(client_raw).expanduser() if client_raw else LEGACY_GOOGLE_CLIENT_FILE
         client = client if client.is_absolute() else path.parent / client
         client_text = client.read_text(encoding="utf-8") if client.is_file() else None
@@ -423,4 +462,6 @@ def _rename_aside(path: Path, today: date) -> Path:
         count += 1
         target = path.with_name(f"{path.name}.imported-{today.isoformat()}-{count}")
     path.rename(target)
+    # It still holds every secret the store now holds; no looser than the store.
+    secure_file(target)
     return target

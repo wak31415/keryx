@@ -126,7 +126,7 @@ def test_a_pin_in_its_file_is_left_alone_outside_a_review(make_ctx):
 def test_replacing_a_pin_takes_the_new_one_twice_and_two_yeses(make_ctx):
     ctx = make_ctx(
         [("Choose a new PIN", True), ("New PIN", "739104"), ("same PIN", "739104"),
-         ("Delete", True)],
+         ("Replace the PIN", True)],
         review=True,
     )
     write_enrolled_pin(ctx.settings.data_dir, "482915")
@@ -142,7 +142,7 @@ def test_stopping_before_the_last_yes_leaves_the_old_pin(make_ctx):
     are in hand, and only on the last yes."""
     ctx = make_ctx(
         [("Choose a new PIN", True), ("New PIN", "739104"), ("same PIN", "739104"),
-         ("Delete", False)],
+         ("Replace the PIN", False)],
         review=True,
     )
     write_enrolled_pin(ctx.settings.data_dir, "482915")
@@ -164,7 +164,7 @@ def test_a_pin_in_the_environment_is_never_touched(make_ctx, monkeypatch):
 
 
 def test_an_unusable_pin_file_is_replaced_after_asking(make_ctx):
-    ctx = make_ctx([("New PIN", "739104"), ("same PIN", "739104"), ("Delete", True)])
+    ctx = make_ctx([("New PIN", "739104"), ("same PIN", "739104"), ("Replace the PIN", True)])
     ctx.settings.data_dir.mkdir(parents=True)
     pin_file(ctx.settings.data_dir).write_text("oops\n")
     ctx.refresh()
@@ -477,3 +477,41 @@ def test_a_failing_installer_or_a_no_is_said(make_ctx, world, tmp_path, monkeypa
 
     assert declined.ui.lines("error") == []
     assert any("exited with 1" in line for line in failed.ui.lines("error"))
+
+
+def test_clearing_a_setting_in_the_manual_walk_unsets_it(make_ctx):
+    ConfigStore().set({"CODEX_MODEL": "sol"})
+    ctx = make_ctx([("CODEX_MODEL", "")])
+
+    assert sections._ask_setting(ctx, "codex_model") is None
+    assert sections._ask_setting(make_ctx([("CODEX_MODEL", DEFAULT)]), "codex_model") is (
+        sections.UNCHANGED
+    )
+
+
+def test_a_replacement_that_fails_to_write_leaves_the_old_pin(make_ctx, monkeypatch):
+    ctx = make_ctx(
+        [("Choose a new PIN", True), ("New PIN", "739104"), ("same PIN", "739104"),
+         ("Replace the PIN", True)],
+        review=True,
+    )
+    write_enrolled_pin(ctx.settings.data_dir, "482915")
+    ctx.refresh()
+
+    def disk_full(*args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("jarvis.config.files.os.replace", disk_full)
+
+    with pytest.raises(OSError):
+        sections.run_pin(ctx)
+
+    assert read_enrolled_pin(ctx.settings.data_dir) == "482915"
+
+
+def test_a_new_pin_says_a_running_jarvis_needs_a_restart(make_ctx):
+    ctx = make_ctx([("Set the PIN", "now"), ("New PIN", "739104"), ("same PIN", "739104")])
+
+    sections.run_pin(ctx)
+
+    assert any("jarvis restart" in line for line in ctx.ui.lines("note"))

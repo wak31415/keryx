@@ -27,6 +27,7 @@ from jarvis.agents.auth import AuthMode, AuthStatus
 from jarvis.agents.base import AgentOpenError, RunResult
 from jarvis.agents.registry import BACKENDS, auth_status, install_command, resolve_model
 from jarvis.config import Settings
+from jarvis.config.permissions import ACTOR_ENV, SERVICE
 from jarvis.setup.context import SetupContext
 from jarvis.setup.ui import Choice
 from jarvis.tasks.models import Task, TaskKind
@@ -115,18 +116,28 @@ async def run_task(
         agent=agent,
         model=resolve_model(agent, None, settings),
     )
+    # The agent is not the owner, even when the owner started setup: it runs as the service,
+    # so a `jarvis config set` it reaches for is held to what the service may change.
+    previous = os.environ.get(ACTOR_ENV)
+    os.environ[ACTOR_ENV] = SERVICE
     try:
-        session = await BACKENDS[agent].make_runner(settings).open(task)
-    except AgentOpenError as exc:  # already redacted: it says why, and nothing more
-        return RunResult(ok=False, error=str(exc))
-    try:
-        return await asyncio.wait_for(
-            session.run(prompt, on_progress=lambda _text: None), timeout_s
-        )
-    except TimeoutError:
-        return RunResult(ok=False, error=f"no answer within {timeout_s:.0f}s")
+        try:
+            session = await BACKENDS[agent].make_runner(settings).open(task)
+        except AgentOpenError as exc:  # already redacted: it says why, and nothing more
+            return RunResult(ok=False, error=str(exc))
+        try:
+            return await asyncio.wait_for(
+                session.run(prompt, on_progress=lambda _text: None), timeout_s
+            )
+        except TimeoutError:
+            return RunResult(ok=False, error=f"no answer within {timeout_s:.0f}s")
+        finally:
+            await session.close()
     finally:
-        await session.close()
+        if previous is None:
+            os.environ.pop(ACTOR_ENV, None)
+        else:
+            os.environ[ACTOR_ENV] = previous
 
 
 async def run_smoke(settings: Settings, agent: str) -> RunResult:

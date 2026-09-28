@@ -7,9 +7,9 @@ the wizard is reviewing (`ctx.review`), and each saves as it goes.
 
 The PIN is the one thing here with a door of its own (`jarvis.config.pin`): it is written
 once, with `O_CREAT | O_EXCL`, and this is the only place outside a first call that writes
-it. Replacing one is the owner at the keyboard deleting the file — which this does only on
-two explicit yeses, and only after the new PIN has been typed twice, so that stopping half
-way never leaves the machine with no PIN and an open door.
+it. Replacing one is the owner at the keyboard — only on two explicit yeses, only after the
+new PIN has been typed twice, and by an atomic rename, so that stopping or failing half way
+never leaves the machine with no PIN and an open door.
 """
 
 import json
@@ -31,6 +31,7 @@ from jarvis.config import (
     is_secret,
     is_trivial_pin,
     pin_file,
+    replace_pin_at_keyboard,
     write_enrolled_pin,
 )
 from jarvis.config.permissions import is_protected, service_writable, writable_keys
@@ -71,6 +72,8 @@ def run_import(ctx: SetupContext) -> None:
         ui.success(f"the PIN: {report.pin}")
     if report.client_file:
         ui.success(f"the Google client file: copied to {report.client_file}")
+    if report.kept:
+        ui.note(f"already set here, kept as they were: {', '.join(report.kept)}")
     if report.unknown:
         ui.warn(f"not settings, left behind: {', '.join(report.unknown)}")
     ui.note(f"the old file is now {report.renamed_to}; delete it once Jarvis runs.")
@@ -136,7 +139,7 @@ def run_settings(ctx: SetupContext) -> None:
             if key in NOT_MANUAL:
                 continue
             value = _ask_setting(ctx, name)
-            if value is not None:
+            if value is not UNCHANGED:
                 changes[key] = value
     if changes:
         ctx.save(changes)
@@ -157,8 +160,12 @@ def _display(value: Any) -> str:
     return str(value).lower() if isinstance(value, bool) else str(value)
 
 
-def _ask_setting(ctx: SetupContext, name: str) -> Any | None:
-    """One setting, asked by type; its new raw value, or None when it did not change."""
+#: What `_ask_setting` answers for a setting left as it was (None is "cleared").
+UNCHANGED = object()
+
+
+def _ask_setting(ctx: SetupContext, name: str) -> Any:
+    """One setting, asked by type: its new raw value, None to clear it, or `UNCHANGED`."""
     ui = ctx.ui
     info = Settings.model_fields[name]
     key = env_var_name(name)
@@ -181,7 +188,7 @@ def _ask_setting(ctx: SetupContext, name: str) -> Any | None:
 
         answer = ui.text(message, default=_display(current), validate=check)
     if _display(answer) == _display(current):
-        return None
+        return UNCHANGED
     return answer if answer != "" else None
 
 
@@ -286,14 +293,15 @@ def run_pin(ctx: SetupContext) -> None:
     if digits is None:
         return
     if replacing:
-        if not ui.confirm(f"Delete {path} and use the new PIN?", default=False):
+        if not ui.confirm(f"Replace the PIN in {path} with the new one?", default=False):
             return
-        path.unlink(missing_ok=True)
-    if write_enrolled_pin(settings.data_dir, digits):
-        ctx.refresh()
-        ui.success(f"PIN set, kept in {path} (readable by you alone)")
-    else:
+        replace_pin_at_keyboard(settings.data_dir, digits)
+    elif not write_enrolled_pin(settings.data_dir, digits):
         ui.error(f"A PIN appeared in {path} meanwhile; it was left alone.")
+        return
+    ctx.refresh()
+    ui.success(f"PIN set, kept in {path} (readable by you alone)")
+    ui.note("A Jarvis already running keeps the PIN it started with; `jarvis restart` moves it on.")
 
 
 def _new_pin(ctx: SetupContext) -> str | None:

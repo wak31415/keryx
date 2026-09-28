@@ -120,8 +120,8 @@ def run_section(ctx: SetupContext) -> None:
     if not folders:
         return
     if not ui.confirm(
-        f"May {label} look through these folders to summarise your projects? It reads only, "
-        "and skips anything secret.",
+        f"May {label} look through these folders to summarise your projects? It is asked "
+        "to read only and to skip anything secret, and nothing is kept until you accept it.",
         default=True,
     ):
         return
@@ -139,17 +139,32 @@ def run_section(ctx: SetupContext) -> None:
         return
     if draft.dropped:
         ui.warn(f"Left out, past {MAX_BRIEFS_CHARS} characters in all: {', '.join(draft.dropped)}")
-    _review_projects(ctx, draft)
+    _review_projects(ctx, draft, folders)
     _review_facts(ctx, draft)
 
 
-def _review_projects(ctx: SetupContext, draft: Draft) -> None:
+def _inside(path: str, folders: list[Path]) -> Path | None:
+    """`path` resolved, when it is a directory inside one of `folders`; else None."""
+    if not path:
+        return None
+    try:
+        resolved = Path(path).expanduser().resolve()
+    except OSError:
+        return None
+    for folder in folders:
+        if resolved.is_dir() and resolved.is_relative_to(folder.expanduser().resolve()):
+            return resolved
+    return None
+
+
+def _review_projects(ctx: SetupContext, draft: Draft, folders: list[Path]) -> None:
     ui, settings = ctx.ui, ctx.settings
     known = discover_projects(settings)
     kept = 0
     new_projects = dict(settings.projects)
     for name, path, summary in draft.projects:
-        ui.panel(name, summary)
+        inside = _inside(path, folders)
+        ui.panel(f"{name} — {path or 'no path given'}", summary)
         choice = ui.select(
             f"Keep the summary of {name}?",
             [Choice("accept", "Accept"), Choice("edit", "Edit"), Choice("drop", "Drop")],
@@ -163,8 +178,11 @@ def _review_projects(ctx: SetupContext, draft: Draft) -> None:
                 continue
         write_private(summaries_dir(settings) / f"{name}.md", summary + "\n")
         kept += 1
-        if name not in known and path and Path(path).is_dir():
-            new_projects[name] = path
+        # Only a folder they chose to have read becomes a project by name: a path from
+        # anywhere else is what a prompt injected into a README would ask for, and projects
+        # widen where a keypad approval may write (`approvals.policy`).
+        if name not in known and inside is not None:
+            new_projects[name] = str(inside)
     if new_projects != settings.projects:
         ctx.save({"PROJECTS": json.dumps(new_projects)})
     if kept:

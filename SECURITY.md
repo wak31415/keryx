@@ -78,8 +78,9 @@ shut, and it is shut by the write itself rather than by a check: `DATA_DIR/pin` 
 with `O_CREAT | O_EXCL`, so a second write fails in the kernel. There is deliberately no
 setter anywhere — no voice tool, no `jarvis config set` — that can change an enrolled PIN.
 `jarvis setup`, at a terminal, is the owner at the keyboard: it writes a first PIN the same
-way, and replaces one only by deleting the file after two explicit yeses, with the new
-digits already typed twice.
+way, and replaces one only after two explicit yeses, with the new digits already typed
+twice, by an atomic rename, so a failure part way leaves the old PIN in place. A Jarvis
+already running keeps the PIN it started with until `jarvis restart`.
 
 **The accepted risk: whoever calls first sets it.** The window is the few minutes between
 starting Jarvis and making the first call, it closes on first use, and nobody is going to
@@ -136,7 +137,9 @@ ask on a call (it needs the PIN), and any subagent that runs `jarvis config set`
 task, since everything `jarvis serve` starts is marked as the running service. It may
 change only a *service-writable* setting — by default the ones you would plausibly ask for
 out loud: the voice, turn-taking, which model, a few timeouts and limits, quiet hours, the
-monthly budget figure, the log level. `jarvis config lock KEY` and `unlock KEY` move the
+monthly budget figure, the log level. A limit it may tune it may never switch off — the
+subagent timeout, the call length and the local silence timeout all mean "no limit" at 0,
+and that is a spending decision — and no value it saves can stop Jarvis starting again. `jarvis config lock KEY` and `unlock KEY` move the
 rest, and `jarvis config list` shows where each one stands.
 
 Some can never be unlocked: every credential, the PIN, who may call and which number is
@@ -149,7 +152,15 @@ phone.
 Be clear about what this is: **a rule Jarvis's own tools obey, not a sandbox.** A subagent
 runs as you with a shell, and can edit `config.toml` directly, exactly as it can edit any
 other file of yours. What the rule buys is that the ordinary paths — the tool the voice
-model is handed, the command a subagent reaches for — refuse, and say so.
+model is handed, the command a subagent reaches for — refuse, and say so: `jarvis config
+set` holds it to the service-writable keys, and `config import-env`, `auth login`,
+`memory seed`, `setup` and `config lock|unlock` refuse it outright.
+
+`jarvis setup`'s project summaries are drafted by a coding agent reading the folders you
+chose, which means it reads whatever a README in them says. So nothing it writes is kept
+until you accept it, the path of each project is shown beside its summary, and a project is
+only added to `PROJECTS` when its path is inside a folder you chose: projects widen where a
+keypad approval may write files.
 
 ## Calls Jarvis places itself
 

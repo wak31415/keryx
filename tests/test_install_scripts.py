@@ -42,7 +42,7 @@ def machine(tmp_path):
     """A scratch HOME and JARVIS_HOME, a copy of the scripts, and stubs that record calls."""
     home = tmp_path / "home"
     home.mkdir()
-    repo = tmp_path / "repo"
+    repo = tmp_path / "re po"  # a space, which the default `uv` command must survive
     for name in ("scripts", "ops"):
         shutil.copytree(SOURCE / name, repo / name)
     stubs = tmp_path / "bin"
@@ -267,3 +267,18 @@ def test_the_resolve_command_still_runs_when_nothing_is_pending(machine):
     )
 
     assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
+
+
+def test_the_default_command_keeps_a_repository_path_with_a_space_whole(machine, tmp_path):
+    """Without JARVIS_CLI, `uv run --project <repo> jarvis config get` — the path one argument."""
+    stub = tmp_path / "bin" / "uv"
+    stub.write_text('#!/bin/sh\nfor arg in "$@"; do echo "[$arg]"; done\n')
+    env = {key: value for key, value in machine["env"].items() if key != "JARVIS_CLI"}
+
+    result = subprocess.run(
+        [BASH, "-c", f'source "{machine["repo"] / "scripts" / "lib.sh"}"\nconfig_value PORT'],
+        env=env, capture_output=True, text=True, timeout=30, check=False,
+    )
+
+    assert f"[{machine['repo']}]" in result.stdout.splitlines()
+    assert result.stdout.splitlines()[-3:] == ["[config]", "[get]", "[PORT]"]

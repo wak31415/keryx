@@ -69,6 +69,10 @@ PROTECTED_PATTERNS = (
 )
 
 
+#: Service-writable limits whose 0 means "no limit": the service may change them, not lift them.
+NEVER_OFF = frozenset({"SUBAGENT_TIMEOUT_S", "MAX_CALL_SECONDS", "LOCAL_SILENCE_TIMEOUT"})
+
+
 def current_actor() -> str:
     """`service` inside anything `jarvis serve` started, `owner` everywhere else."""
     return SERVICE if os.environ.get(ACTOR_ENV) == SERVICE else OWNER
@@ -112,10 +116,13 @@ def refusal(
 ) -> str | None:
     """Why `actor` may not set `key` to `value`, in one sentence; None when it may.
 
-    The one rule that is about a value rather than a key: the service may move
-    `AGENT_BACKEND` only among the agents already enabled, because enabling one is the
-    owner's decision and a default outside that set is one `jarvis serve` refuses to start
-    with.
+    `value` is the validated one (`store.validate`), or None for an unset. Two rules are
+    about a value rather than a key. The service may move `AGENT_BACKEND` only among the
+    agents already enabled, because enabling one is the owner's decision and a default
+    outside that set is one `jarvis serve` refuses to start with. And it may tune a limit
+    in `NEVER_OFF` but never switch it off: 0 is "no limit" for each, which is a spending
+    decision (an unbounded subagent, an unbounded realtime call), and spending is the
+    owner's.
     """
     if key in NOT_STORED:
         return (
@@ -127,6 +134,8 @@ def refusal(
     if not service_writable(key, overrides):
         why = "it is protected" if is_protected(key) else "the owner has not unlocked it"
         return f"the running service may not change {key}: {why}"
+    if key in NEVER_OFF and value is not None and not value:
+        return f"the running service may not switch {key} off (0 means no limit)"
     if key == "AGENT_BACKEND" and settings is not None and value not in settings.enabled_agents:
         enabled = ", ".join(settings.enabled_agents)
         return f"AGENT_BACKEND may only be switched among the enabled agents ({enabled})"

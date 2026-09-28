@@ -9,8 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.config import Settings, jarvis_home, pin_file, write_enrolled_pin
+from jarvis.config import Settings, jarvis_home, pin_file, read_enrolled_pin, write_enrolled_pin
 from jarvis.config.files import dump_toml, read_toml, write_private
+from jarvis.config.settings import ConfigFileError
 from jarvis.config.store import (
     FROM_CONFIG,
     FROM_DEFAULT,
@@ -213,7 +214,7 @@ def test_a_config_file_that_does_not_parse_says_so(store):
     store.home.mkdir(parents=True)
     store.config_path.write_text("PORT = = 1\n")
 
-    with pytest.raises(tomllib.TOMLDecodeError):
+    with pytest.raises(ConfigFileError, match="does not parse"):
         load()
 
 
@@ -372,3 +373,84 @@ def test_import_env_refuses_a_client_file_that_is_not_one(store, tmp_path):
 
     with pytest.raises(ConfigError, match="not a Google OAuth client"):
         store.import_env(env)
+
+
+# --- what the review found -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("LOG_LEVEL", "verbose"), ("MAX_CONCURRENT_TASKS", "0"), ("VAD_THRESHOLD", "7"),
+     ("MAX_CALL_SECONDS", "-5"), ("PORT", "0")],
+)
+def test_a_value_that_would_stop_serve_is_refused(store, key, value):
+    with pytest.raises(ConfigError, match=key):
+        store.set({key: value}, actor="service")
+    assert store.stored() == {}
+
+
+@pytest.mark.parametrize("key", ["SUBAGENT_TIMEOUT_S", "MAX_CALL_SECONDS", "LOCAL_SILENCE_TIMEOUT"])
+def test_the_service_may_tune_a_limit_but_never_lift_it(store, key):
+    store.set({key: "900"}, actor="service")
+
+    with pytest.raises(ConfigError, match="switch .* off"):
+        store.set({key: "0"}, actor="service")
+    store.set({key: "0"})  # the owner may
+
+
+def test_the_service_names_an_agent_in_any_case(store, settings):
+    both = settings.model_copy(update={"agents_enabled": ["claude", "codex"]})
+
+    store.set({"AGENT_BACKEND": " Codex "}, actor="service", settings=both)
+
+    assert store.stored()["AGENT_BACKEND"] == "codex"
+
+
+def test_import_env_is_the_owners_alone(store, tmp_path):
+    env = write_env(tmp_path, "ALLOWED_CALLERS=+15550000000\nJARVIS_PIN=482915\n")
+
+    with pytest.raises(ConfigError, match="only the owner"):
+        store.import_env(env, actor="service")
+
+    assert env.exists() and store.stored() == {}
+
+
+def test_import_env_puts_the_pin_where_the_environment_says_data_lives(
+    store, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "from-env"))
+    env = write_env(tmp_path, f"JARVIS_PIN=482915\nDATA_DIR={tmp_path / 'from-dotenv'}\n")
+
+    store.import_env(env)
+
+    assert read_enrolled_pin(tmp_path / "from-env") == "482915"
+    assert not (tmp_path / "from-dotenv").exists()
+
+
+def test_import_env_from_a_relative_path_stores_absolute_paths(store, tmp_path, monkeypatch):
+    write_env(tmp_path, "DATA_DIR=./data\n")
+    monkeypatch.chdir(tmp_path / "repo")
+
+    store.import_env(Path(".env"))
+
+    assert store.stored()["DATA_DIR"] == str(tmp_path / "repo" / "data")
+
+
+def test_import_env_keeps_what_the_store_already_had(store, tmp_path):
+    store.set({"OPENAI_API_KEY": "sk-new"})
+    env = write_env(tmp_path, "OPENAI_API_KEY=sk-stale\nOPENAI_VOICE=marin\n")
+
+    report = store.import_env(env)
+
+    assert report.kept == ["OPENAI_API_KEY"]
+    assert read_toml(store.secrets_path) == {"OPENAI_API_KEY": "sk-new"}
+    assert store.stored()["OPENAI_VOICE"] == "marin"
+
+
+def test_the_renamed_env_is_owner_only(store, tmp_path):
+    env = write_env(tmp_path, "OPENAI_API_KEY=sk\n")
+    env.chmod(0o664)
+
+    report = store.import_env(env)
+
+    assert mode(report.renamed_to) == 0o600

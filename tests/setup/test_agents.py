@@ -289,3 +289,24 @@ def test_a_command_runs_on_this_terminal(monkeypatch):
 
     monkeypatch.setattr("jarvis.setup.context.subprocess.run", missing)
     assert run_command(("codex", "login")) == 127
+
+
+def test_a_setup_task_runs_as_the_service_and_puts_the_actor_back(settings, monkeypatch):
+    import os
+
+    seen = []
+
+    class Recording(FakeAgentRunner):
+        async def open(self, task, *, resume=None):
+            seen.append(os.environ.get("JARVIS_ACTOR"))
+            return await super().open(task, resume=resume)
+
+    spec = BACKENDS["claude"]
+    monkeypatch.setitem(
+        BACKENDS, "claude", dataclasses.replace(spec, make_runner=lambda s: Recording([READY]))
+    )
+
+    asyncio.run(agents.run_task(settings, "claude", "hi"))
+
+    assert seen == ["service"]
+    assert "JARVIS_ACTOR" not in os.environ

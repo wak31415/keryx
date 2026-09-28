@@ -12,7 +12,7 @@
 # configuration says otherwise), and the units get this shell's PATH — run it from the shell
 # whose tools the subagents should have, and again after that changes.
 #
-# The scaffolding every installer needs — argument parsing, the env-file and PATH checks,
+# The scaffolding every installer needs — argument parsing, reading the configuration, the PATH checks,
 # template rendering — is in scripts/lib.sh.
 set -euo pipefail
 
