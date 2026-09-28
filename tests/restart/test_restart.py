@@ -44,6 +44,8 @@ from jarvis.restart.service import (
 )
 from jarvis.restart.store import RestartRecord, RestartStore, format_duration
 from jarvis.restart.version import (
+    RUNNING_NAME,
+    STARTUP_MARKS_NAME,
     current_version,
     loaded_version,
     mark_running,
@@ -69,7 +71,7 @@ TRACEBACK = (
 
 def write_log(settings, name: str, text: str) -> None:
     """Append to one of the service log files, as systemd/launchd would."""
-    directory = log_dir(settings.data_dir)
+    directory = log_dir(settings.state_dir)
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / name).open("a", encoding="utf-8") as handle:
         handle.write(text)
@@ -190,6 +192,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
     values = {
         "openai_api_key": "test",
         "data_dir": tmp_path / "jarvis",
+        "state_dir": tmp_path / "state",
         "owner_number_explicit": OWNER,
         "public_host": HOST,
         "service_manager": "systemd",
@@ -213,7 +216,7 @@ class Harness:
         self.spawn = spawn or FakeSpawn()
         self.watch = watch or FakeWatchSpawn()
         self.sleep = sleep or FakeSleep()
-        self.store = RestartStore(settings.data_dir / "restart.json")
+        self.store = RestartStore(settings.state_dir / "restart.json")
         self.coordinator = RestartCoordinator(
             settings,
             self.sessions,
@@ -852,7 +855,7 @@ async def test_the_summary_reports_what_went_wrong_since_the_restart(tmp_path):
     settings = make_settings(tmp_path)
     write_log(settings, "jarvis.log", "2026-08-26 INFO    jarvis: from an earlier life\n")
     harness = Harness(settings)
-    record = pending(log_marks=log_marks(settings.data_dir))
+    record = pending(log_marks=log_marks(settings.state_dir))
     write_log(settings, "jarvis.err.log", TRACEBACK)
 
     summary = await harness.coordinator.status_summary(record, phone_up=True)
@@ -864,7 +867,7 @@ async def test_the_summary_reports_what_went_wrong_since_the_restart(tmp_path):
 async def test_a_clean_log_says_nothing_about_errors(tmp_path):
     settings = make_settings(tmp_path)
     harness = Harness(settings)
-    record = pending(log_marks=log_marks(settings.data_dir))
+    record = pending(log_marks=log_marks(settings.state_dir))
     write_log(settings, "jarvis.log", "2026-08-26 INFO    jarvis: serving\n")
 
     summary = await harness.coordinator.status_summary(record, phone_up=True)
@@ -876,7 +879,7 @@ async def test_errors_are_said_before_the_housekeeping(tmp_path):
     """The one question a restart has to answer is "did it work" — it cannot be buried."""
     settings = make_settings(tmp_path)
     harness = Harness(settings)
-    record = pending(log_marks=log_marks(settings.data_dir))
+    record = pending(log_marks=log_marks(settings.state_dir))
     write_log(settings, "jarvis.err.log", TRACEBACK)
 
     summary = await harness.coordinator.status_summary(record, phone_up=True)
@@ -911,24 +914,36 @@ async def test_an_unchanged_checkout_is_only_worth_saying_when_a_task_was_loadin
 def test_the_stamp_records_what_this_process_imported(tmp_path):
     settings = make_settings(tmp_path)
 
-    assert mark_running(settings.data_dir) == VERSION
-    assert running_version(settings.data_dir) == VERSION
+    assert mark_running(settings.state_dir) == VERSION
+    assert running_version(settings.state_dir) == VERSION
+
+
+def test_every_stamp_and_the_record_are_owner_only(tmp_path):
+    """The record holds a phone number; none of the three is anybody else's business."""
+    settings = make_settings(tmp_path)
+
+    mark_running(settings.state_dir)
+    mark_startup_logs(settings.state_dir)
+    RestartStore(settings.state_dir / "restart.json").save(pending())
+
+    for name in (RUNNING_NAME, STARTUP_MARKS_NAME, "restart.json"):
+        assert stat.S_IMODE((settings.state_dir / name).stat().st_mode) == 0o600, name
 
 
 def test_without_a_stamp_the_checkout_is_the_best_guess(tmp_path):
     """A service too old to stamp anything: one wrong comparison beats no answer at all."""
     settings = make_settings(tmp_path)
 
-    assert running_version(settings.data_dir) is None
-    assert loaded_version(settings.data_dir) == VERSION
+    assert running_version(settings.state_dir) is None
+    assert loaded_version(settings.state_dir) == VERSION
 
 
 def test_the_stamp_beats_a_checkout_that_has_moved_on(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
-    mark_running(settings.data_dir)
+    mark_running(settings.state_dir)
     monkeypatch.setattr("jarvis.restart.version.current_version", lambda repo=None: "v2-newer00")
 
-    assert loaded_version(settings.data_dir) == VERSION
+    assert loaded_version(settings.state_dir) == VERSION
 
 
 async def test_a_commit_made_before_the_restart_still_counts_as_loaded(tmp_path, monkeypatch):
@@ -940,7 +955,7 @@ async def test_a_commit_made_before_the_restart_still_counts_as_loaded(tmp_path,
     """
     settings = make_settings(tmp_path)
     harness = Harness(settings)
-    mark_running(settings.data_dir)  # the process that is about to be restarted
+    mark_running(settings.state_dir)  # the process that is about to be restarted
     monkeypatch.setattr("jarvis.restart.version.current_version", lambda repo=None: "v2-newer00")
 
     await harness.coordinator.request(reason="new code", task_id=7)
@@ -948,7 +963,7 @@ async def test_a_commit_made_before_the_restart_still_counts_as_loaded(tmp_path,
     record = harness.record()
     assert record.version == VERSION  # what was running, not the commit that just landed
 
-    mark_running(settings.data_dir)  # the process that comes back
+    mark_running(settings.state_dir)  # the process that comes back
     summary = await harness.coordinator.status_summary(record, phone_up=True)
 
     assert f"now on v2-newer00, was {VERSION}" in summary
@@ -1226,6 +1241,45 @@ def test_the_watchdogs_own_output_goes_somewhere_a_person_can_find(tmp_path):
     assert all("jarvis.log" not in argument for argument in plan.argv)  # not our own log
 
 
+def test_the_watchdog_is_told_where_the_service_keeps_things(tmp_path):
+    """A transient unit gets the user manager's environment, not the service's: without
+    these it could resolve another `JARVIS_HOME`, read no restart record, and ring nobody."""
+    environ = {
+        "JARVIS_HOME": "/srv/jarvis config",
+        "XDG_STATE_HOME": "/srv/state",
+        "XDG_DATA_HOME": "",  # unset in all but name: not passed on
+        "STATE_DIR": "/srv/elsewhere",
+        "PATH": "/usr/bin",  # not a location: the unit has its own
+    }
+    plan = watch_command(
+        make_settings(tmp_path),
+        ServiceTarget("systemd", "jarvis.service"),
+        which=lambda name: f"/usr/bin/{name}",
+        environ=environ,
+    )
+
+    assert plan is not None
+    setenv = [argument for argument in plan.argv if argument.startswith("--setenv=")]
+    assert setenv == [
+        "--setenv=JARVIS_HOME=/srv/jarvis config",
+        "--setenv=XDG_STATE_HOME=/srv/state",
+        "--setenv=STATE_DIR=/srv/elsewhere",
+    ]
+    assert plan.argv.index(setenv[-1]) < plan.argv.index("--")  # options, not the command
+
+
+def test_the_watchdog_takes_this_processs_own_environment_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", "/srv/cache")
+
+    plan = watch_command(
+        make_settings(tmp_path), ServiceTarget("systemd", "jarvis.service"), which=lambda n: n
+    )
+
+    assert plan is not None
+    assert "--setenv=XDG_CACHE_HOME=/srv/cache" in plan.argv
+    assert f"--setenv=JARVIS_HOME={os.environ['JARVIS_HOME']}" in plan.argv
+
+
 def test_launchd_needs_no_help_escaping(tmp_path):
     """There is no cgroup to get out of; a new session outlives `launchctl kickstart -k`."""
     plan = watch_command(make_settings(tmp_path), ServiceTarget("launchd", LAUNCHD_LABEL))
@@ -1455,13 +1509,13 @@ async def test_the_dying_process_last_gasps_are_not_this_restarts_errors(tmp_pat
     would have said it on every self-edit restart, the one case the check exists for."""
     settings = make_settings(tmp_path)
     harness = Harness(settings)
-    record = pending(log_marks=log_marks(settings.data_dir))
+    record = pending(log_marks=log_marks(settings.state_dir))
 
     # The old process dies noisily...
     write_log(settings, "jarvis.err.log", "Traceback (most recent call last):\n")
     write_log(settings, "jarvis.err.log", "RuntimeError: Event loop is closed\n")
     # ...and only then do we start, which is where our own story begins.
-    mark_startup_logs(settings.data_dir)
+    mark_startup_logs(settings.state_dir)
 
     summary = await harness.coordinator.status_summary(record, phone_up=True)
 
@@ -1471,8 +1525,8 @@ async def test_the_dying_process_last_gasps_are_not_this_restarts_errors(tmp_pat
 async def test_what_the_new_process_logs_is_very_much_its_own(tmp_path):
     settings = make_settings(tmp_path)
     harness = Harness(settings)
-    record = pending(log_marks=log_marks(settings.data_dir))
-    mark_startup_logs(settings.data_dir)
+    record = pending(log_marks=log_marks(settings.state_dir))
+    mark_startup_logs(settings.state_dir)
     write_log(settings, "jarvis.err.log", TRACEBACK)
 
     summary = await harness.coordinator.status_summary(record, phone_up=True)
@@ -1484,7 +1538,7 @@ async def test_without_a_startup_mark_the_record_is_still_used(tmp_path):
     """A service too old to have stamped one is no worse off than it was before."""
     settings = make_settings(tmp_path)
     harness = Harness(settings)
-    record = pending(log_marks=log_marks(settings.data_dir))
+    record = pending(log_marks=log_marks(settings.state_dir))
     write_log(settings, "jarvis.err.log", TRACEBACK)
 
     summary = await harness.coordinator.status_summary(record, phone_up=True)
@@ -1547,10 +1601,10 @@ def test_a_redirected_watchdog_is_pointed_at_its_own_log(tmp_path, monkeypatch):
     assert watch_log_path(settings).parent.is_dir()
 
 
-def test_the_watchdog_log_lives_under_the_data_dir(tmp_path):
+def test_the_watchdog_log_lives_under_the_state_dir(tmp_path):
     settings = make_settings(tmp_path)
 
-    assert watch_log_path(settings).parent == settings.data_dir / "logs"
+    assert watch_log_path(settings).parent == settings.state_dir / "logs"
 
 
 # --- the record's failure paths ---------------------------------------------

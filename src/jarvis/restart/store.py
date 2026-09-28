@@ -2,7 +2,7 @@
 
 Split out of `restart.py` (2026-09-02). The process that runs `systemctl restart` is the
 process the service manager kills, so the two halves of a restart cannot hand anything to
-each other in memory. `data_dir/restart.json` is the whole handover: what was asked for, by
+each other in memory. `state_dir/restart.json` is the whole handover: what was asked for, by
 whom, on which number, what was running, and how the watchdog was armed.
 
 Every method here swallows its I/O errors. This is a breadcrumb, and losing a breadcrumb
@@ -13,14 +13,15 @@ import contextlib
 import dataclasses
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from jarvis.config.files import write_private
+
 log = logging.getLogger("jarvis.restart")
 
-#: Where the two halves of a restart meet, under `data_dir`.
+#: Where the two halves of a restart meet, under `state_dir`.
 RECORD_NAME = "restart.json"
 
 
@@ -100,18 +101,12 @@ class RestartStore:
             return None
 
     def save(self, record: RestartRecord) -> bool:
-        """Write the record atomically (0600). False if it could not be written."""
-        tmp = self._path.with_name(self._path.name + ".tmp")
+        """Write the record atomically, 0600 (it holds a phone number). False on failure."""
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(json.dumps(dataclasses.asdict(record), indent=2), encoding="utf-8")
-            os.chmod(tmp, 0o600)  # it holds a phone number
-            os.replace(tmp, self._path)
+            write_private(self._path, json.dumps(dataclasses.asdict(record), indent=2))
             return True
         except OSError:
             log.exception("could not write the restart record at %s", self._path)
-            with contextlib.suppress(OSError):
-                tmp.unlink()
             return False
 
     def clear(self) -> None:

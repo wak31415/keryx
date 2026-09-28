@@ -95,7 +95,7 @@ async def watch(
     try:
         return await _watch(
             settings,
-            store=store or RestartStore(settings.data_dir / RECORD_NAME),
+            store=store or RestartStore(settings.state_dir / RECORD_NAME),
             twilio=twilio if twilio is not None else TwilioOut(settings),
             deadline_s=deadline_s,
             poll_s=poll_s,
@@ -157,7 +157,7 @@ async def _alert(
 
     live = await asyncio.to_thread(probe, settings)
     up = live is not None
-    errors = await asyncio.to_thread(errors_since, settings.data_dir, record.log_marks)
+    errors = await asyncio.to_thread(errors_since, settings.state_dir, record.log_marks)
     body = _body(record, errors, up=up)
     log.error("%s", body)
 

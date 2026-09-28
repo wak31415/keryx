@@ -75,19 +75,19 @@ class LogErrors:
         return "\n".join(self.lines)
 
 
-def log_dir(data_dir: Path) -> Path:
+def log_dir(state_dir: Path) -> Path:
     """Where the service's log files live."""
-    return data_dir / "logs"
+    return state_dir / "logs"
 
 
-def marks(data_dir: Path) -> dict[str, int]:
+def marks(state_dir: Path) -> dict[str, int]:
     """How long each log file is right now — the "everything past here is new" line.
 
     Every name gets an entry, zero for a file that does not exist yet, so that an empty
     dict means one thing only: nobody took a mark. A file that appears later is read from
     the start, because all of it happened after this.
     """
-    directory = log_dir(data_dir)
+    directory = log_dir(state_dir)
     found: dict[str, int] = {}
     for name in LOG_NAMES:
         try:
@@ -97,7 +97,7 @@ def marks(data_dir: Path) -> dict[str, int]:
     return found
 
 
-def errors_since(data_dir: Path, recorded: dict[str, int] | None) -> LogErrors:
+def errors_since(state_dir: Path, recorded: dict[str, int] | None) -> LogErrors:
     """The errors written to the logs since `recorded` was taken by `marks()`.
 
     `None` or `{}` means nobody took a mark — an older restart record, or a machine with
@@ -106,7 +106,7 @@ def errors_since(data_dir: Path, recorded: dict[str, int] | None) -> LogErrors:
     """
     if not isinstance(recorded, dict) or not recorded:
         return LogErrors()
-    directory = log_dir(data_dir)
+    directory = log_dir(state_dir)
     lines: list[str] = []
     for name in LOG_NAMES:
         lines += _errors_in(directory / name, _mark(recorded, name))

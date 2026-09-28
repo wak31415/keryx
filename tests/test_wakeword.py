@@ -3,6 +3,8 @@
 import inspect
 import sys
 
+import pytest
+
 from jarvis.wakeword import (
     WAKE_FRAME_SAMPLES,
     WAKE_SAMPLE_RATE,
@@ -119,6 +121,63 @@ def test_openwakeword_detector_declares_the_wake_frame_contract():
     for name in method_names:
         expected = list(inspect.signature(getattr(WakeWordDetector, name)).parameters)
         assert list(inspect.signature(getattr(OpenWakeWordDetector, name)).parameters) == expected
+
+
+class FakeModel:
+    """`openwakeword.model.Model`, as far as the loader can tell: what it was built with."""
+
+    built: dict = {}
+
+    def __init__(self, **kwargs):
+        FakeModel.built = kwargs
+
+
+@pytest.fixture
+def fake_openwakeword(monkeypatch):
+    import types
+
+    model = types.ModuleType("openwakeword.model")
+    model.Model = FakeModel
+    monkeypatch.setitem(sys.modules, "openwakeword", types.ModuleType("openwakeword"))
+    monkeypatch.setitem(sys.modules, "openwakeword.model", model)
+    FakeModel.built = {}
+
+
+def test_every_model_is_loaded_by_path_from_the_cache(fake_openwakeword, tmp_path):
+    """Given bare names, openwakeword looks inside its own package, which `uv sync` replaces."""
+    for name in ("hey_jarvis_v0.1.onnx", "melspectrogram.onnx", "embedding_model.onnx"):
+        (tmp_path / name).write_bytes(b"")
+
+    OpenWakeWordDetector("hey_jarvis", tmp_path)
+
+    assert FakeModel.built == {
+        "wakeword_models": [str(tmp_path / "hey_jarvis_v0.1.onnx")],
+        "inference_framework": "onnx",
+        "melspec_model_path": str(tmp_path / "melspectrogram.onnx"),
+        "embedding_model_path": str(tmp_path / "embedding_model.onnx"),
+    }
+
+
+def test_a_model_not_yet_downloaded_says_how_to_get_it(fake_openwakeword, tmp_path):
+    (tmp_path / "hey_jarvis_v0.1.onnx").write_bytes(b"")  # but no feature models
+
+    with pytest.raises(RuntimeError, match="download-models"):
+        OpenWakeWordDetector("hey_jarvis", tmp_path)
+
+    assert FakeModel.built == {}
+
+
+def test_a_model_that_will_not_load_says_how_to_get_it_again(fake_openwakeword, tmp_path):
+    for name in ("hey_jarvis_v0.1.onnx", "melspectrogram.onnx", "embedding_model.onnx"):
+        (tmp_path / name).write_bytes(b"")
+
+    def corrupt(**kwargs):
+        raise ValueError("not an onnx file")
+
+    sys.modules["openwakeword.model"].Model = corrupt
+
+    with pytest.raises(RuntimeError, match="download-models"):
+        OpenWakeWordDetector("hey_jarvis", tmp_path)
 
 
 def test_openwakeword_is_never_imported_at_module_scope():

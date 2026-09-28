@@ -38,7 +38,7 @@ from jarvis.config.files import (
 from jarvis.config.pin import PIN_PATTERN, PIN_RULE, pin_file, read_enrolled_pin, write_enrolled_pin
 from jarvis.config.settings import (
     GOOGLE_CLIENT_FILE,
-    LEGACY_GOOGLE_CLIENT_FILE,
+    LEGACY_CLIENT_FILE,
     META_TABLES,
     NOT_STORED,
     PLACEHOLDER_KEY,
@@ -65,13 +65,14 @@ FROM_INIT = "command line"
 FROM_ENV = "environment"
 FROM_SECRETS = "secrets.toml"
 FROM_CONFIG = "config.toml"
-FROM_LEGACY = ".env (legacy)"
-FROM_PIN_FILE = "DATA_DIR/pin"
+FROM_PIN_FILE = "JARVIS_HOME/pin"
 FROM_DEFAULT = "default"
 
 #: Settings whose value is a path: a legacy `.env` meant them relative to the directory
 #: the service ran in, which is the `.env`'s own, so an import resolves them there.
-PATH_KEYS = frozenset({"DATA_DIR", "PROJECTS_ROOT", "SKILLS_DIR", "CLUSTER_SSH_GUARD"})
+PATH_KEYS = frozenset(
+    {"DATA_DIR", "STATE_DIR", "CACHE_DIR", "PROJECTS_ROOT", "SKILLS_DIR", "CLUSTER_SSH_GUARD"}
+)
 
 
 class ConfigError(ValueError):
@@ -130,12 +131,6 @@ def default_value(key: str) -> Any:
         return None
     value = info.get_default(call_default_factory=True)
     return validate({key: value})[key] if value is not None else None
-
-
-def legacy_env_file() -> Path | None:
-    """The `.env` `Settings` still reads, or None (the tests switch it off)."""
-    configured = Settings.model_config.get("env_file")
-    return Path(configured) if isinstance(configured, str | Path) else None
 
 
 @dataclass
@@ -226,12 +221,7 @@ class ConfigStore:
                 return FROM_SECRETS
             if key in self._config():
                 return FROM_CONFIG
-        legacy = legacy_env_file()
-        if legacy is not None and legacy.is_file():
-            raw = dotenv_values(legacy)
-            if (raw.get(key) or "").strip():
-                return FROM_LEGACY
-        if key == "JARVIS_PIN" and settings is not None and pin_file(settings.data_dir).exists():
+        if key == "JARVIS_PIN" and settings is not None and pin_file(settings.config_dir).exists():
             return FROM_PIN_FILE
         return FROM_DEFAULT
 
@@ -373,85 +363,101 @@ class ConfigStore:
 
         Settings still at their defaults are not copied, so a `.env` made from the old
         example file does not pin sixty defaults for ever. `JARVIS_PIN` goes to
-        `DATA_DIR/pin`, the PIN's own store — unless a *different* PIN is already there, in
-        which case nothing at all is written: until now the `.env` one was in use, and
+        `JARVIS_HOME/pin`, the PIN's own store — unless a *different* PIN is already there,
+        in which case nothing at all is written: until now the `.env` one was in use, and
         silently switching to the other would lock the owner out of their own phone. The
         Google client file (`GOOGLE_CLIENT_SECRETS_FILE`, or `.secrets/client_secret.json`
-        beside the `.env`) is copied to `DATA_DIR/google_client_secret.json`.
+        beside the `.env`) is copied to `JARVIS_HOME/google_client_secret.json`.
         """
         if actor != permissions.OWNER:
             # It writes protected settings and the PIN by its nature: the owner's alone.
             raise ConfigError("only the owner may import settings, at their own terminal")
         path = path.resolve()
-        report = ImportReport()
-        raw: dict[str, str] = {}
-        for key, value in dotenv_values(path).items():
-            key = key.strip().upper()
-            if value is None or not value.strip():
-                continue
-            if field_for(key) is None:
-                report.unknown.append(key)
-                continue
-            raw[key] = value.strip()
-        pin = raw.pop("JARVIS_PIN", None)
-        client_raw = raw.pop("GOOGLE_CLIENT_SECRETS_FILE", None)
-        for key in PATH_KEYS & raw.keys():
-            candidate = Path(raw[key]).expanduser()
-            raw[key] = str(candidate if candidate.is_absolute() else path.parent / candidate)
-        cleaned = validate(raw)
+        parsed = _read_env(path)
+        report = ImportReport(unknown=parsed.unknown)
         stored = self.stored()
-        for key, value in cleaned.items():
+        for key, value in parsed.cleaned.items():
             if key in stored:
                 report.kept.append(key)
             elif value == default_value(key):
                 report.defaults.append(key)
             else:
                 report.imported.append(key)
-        keep = {key: cleaned[key] for key in report.imported}
-
-        # The data directory the service will use after the import, found the way it finds
-        # it: the environment first, then the store as it will be, then the default.
-        data_dir = Path(
-            os.environ.get("DATA_DIR", "").strip()
-            or keep.get("DATA_DIR")
-            or stored.get("DATA_DIR")
-            or default_value("DATA_DIR")
-        ).expanduser()
-        if not data_dir.is_absolute():
-            data_dir = path.parent / data_dir
-        client = Path(client_raw).expanduser() if client_raw else LEGACY_GOOGLE_CLIENT_FILE
-        client = client if client.is_absolute() else path.parent / client
-        client_text = client.read_text(encoding="utf-8") if client.is_file() else None
-        if client_text is not None:
-            try:
-                parse_google_client(client_text)
-            except ValueError as error:
-                raise ConfigError(f"{client} is not a Google OAuth client file: {error}") from None
+        keep = {key: parsed.cleaned[key] for key in report.imported}
+        pin, client_text = parsed.pin, parsed.client_text
         # Everything that can refuse has been asked; from here on it is only writing.
         if pin is not None:
-            report.pin = self._import_pin(data_dir, pin)
+            report.pin = self._import_pin(self.home, pin)
         if client_text is not None:
-            report.client_file = write_private(data_dir / GOOGLE_CLIENT_FILE, client_text)
+            report.client_file = write_private(self.home / GOOGLE_CLIENT_FILE, client_text)
         self._write(keep)
         report.renamed_to = _rename_aside(path, today or date.today())
         return report
 
     @staticmethod
-    def _import_pin(data_dir: Path, pin: str) -> str:
-        if not PIN_PATTERN.fullmatch(pin):
-            raise ConfigError(f"JARVIS_PIN {PIN_RULE}")
-        existing = read_enrolled_pin(data_dir)
-        if pin_file(data_dir).exists() and existing != pin:
+    def check_import(path: Path) -> str | None:
+        """Everything `import_env` could refuse about `path`, asked without writing a thing.
+
+        Returns the `.env`'s PIN, if it has one, for a caller that has PINs of its own to
+        compare it with (`jarvis migrate`, before it moves anything).
+        """
+        return _read_env(path.resolve()).pin
+
+    @staticmethod
+    def _import_pin(home: Path, pin: str) -> str:
+        existing = read_enrolled_pin(home)
+        if pin_file(home).exists() and existing != pin:
             raise ConfigError(
-                f"the .env's JARVIS_PIN is not the PIN in {pin_file(data_dir)}. The .env one "
+                f"the .env's JARVIS_PIN is not the PIN in {pin_file(home)}. The .env one "
                 "has been the PIN in use; to keep it, delete that file and import again. "
                 "Nothing was imported."
             )
         if existing == pin:
             return "already there"
-        if not write_enrolled_pin(data_dir, pin):
-            raise ConfigError(f"could not write the PIN to {pin_file(data_dir)}")
-        return "moved to DATA_DIR/pin"
+        if not write_enrolled_pin(home, pin):
+            raise ConfigError(f"could not write the PIN to {pin_file(home)}")
+        return "moved to JARVIS_HOME/pin"
+
+
+@dataclass
+class _EnvFile:
+    """A legacy `.env` read and validated: what `import_env` would write."""
+
+    cleaned: dict[str, Any]
+    unknown: list[str]
+    pin: str | None
+    client_text: str | None
+
+
+def _read_env(path: Path) -> _EnvFile:
+    """`path` parsed and checked, raising `ConfigError` for anything an import would refuse."""
+    unknown: list[str] = []
+    raw: dict[str, str] = {}
+    for key, value in dotenv_values(path).items():
+        key = key.strip().upper()
+        if value is None or not value.strip():
+            continue
+        if field_for(key) is None:
+            unknown.append(key)
+            continue
+        raw[key] = value.strip()
+    pin = raw.pop("JARVIS_PIN", None)
+    if pin is not None and not PIN_PATTERN.fullmatch(pin):
+        raise ConfigError(f"JARVIS_PIN {PIN_RULE}")
+    client_raw = raw.pop("GOOGLE_CLIENT_SECRETS_FILE", None)
+    for key in PATH_KEYS & raw.keys():
+        candidate = Path(raw[key]).expanduser()
+        raw[key] = str(candidate if candidate.is_absolute() else path.parent / candidate)
+    cleaned = validate(raw)
+    client = Path(client_raw).expanduser() if client_raw else LEGACY_CLIENT_FILE
+    client = client if client.is_absolute() else path.parent / client
+    client_text = client.read_text(encoding="utf-8") if client.is_file() else None
+    if client_text is not None:
+        try:
+            parse_google_client(client_text)
+        except ValueError as error:
+            raise ConfigError(f"{client} is not a Google OAuth client file: {error}") from None
+    return _EnvFile(cleaned, unknown, pin, client_text)
 
 
 def _rename_aside(path: Path, today: date) -> Path:

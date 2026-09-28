@@ -64,15 +64,15 @@ _REFUSED = frozenset({"exists", "too_long", "raced"})
 #: terminals and logs. Each one stands on its own, because a document has no "the line
 #: above" to point at.
 PIN_NOTES = {
-    PIN_FROM_ENV: "set from JARVIS_PIN in the environment, which wins over DATA_DIR/pin",
-    PIN_FROM_FILE: "set, and kept in DATA_DIR/pin",
+    PIN_FROM_ENV: "set from JARVIS_PIN in the environment, which wins over JARVIS_HOME/pin",
+    PIN_FROM_FILE: "set, and kept in JARVIS_HOME/pin",
     None: (
         "not set — `jarvis setup` asks for one at the keyboard, or the first call can key "
         "one in; until a PIN exists, nothing of yours is read out on the phone and no task "
         "can be dispatched"
     ),
 }
-#: The fourth state, and the one only the keyboard clears: a `data_dir/pin` that is not
+#: The fourth state, and the one only the keyboard clears: a `JARVIS_HOME/pin` that is not
 #: 6-8 digits is no PIN *and* no enrolment, because `O_EXCL` will not replace a file that
 #: is there. Sending them to the first call instead would be sending them nowhere.
 PIN_SEALED_NOTE = (
@@ -105,7 +105,7 @@ def pin_note(settings: Settings) -> str:
         return PIN_NOTES[settings.pin_source]
     if settings.pin_enrolment_open:
         return PIN_NOTES[None]
-    return PIN_SEALED_NOTE.format(path=pin_file(settings.data_dir))
+    return PIN_SEALED_NOTE.format(path=pin_file(settings.config_dir))
 
 
 def facts_from_text(text: str) -> list[str]:
@@ -276,7 +276,7 @@ def setup_summary(settings: Settings, *, status: str = "unchanged") -> dict:
             "set": bool(settings.pin),
             "source": settings.pin_source,
             "enrolment_open": settings.pin_enrolment_open,
-            "path": str(pin_file(settings.data_dir)),
+            "path": str(pin_file(settings.config_dir)),
             "note": pin_note(settings),
         },
         "memory": {

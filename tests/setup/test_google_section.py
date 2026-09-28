@@ -67,7 +67,7 @@ def test_email_answers_end_to_end(make_ctx, world, tmp_path):
 
     google.run_section(ctx)
 
-    installed = ctx.settings.data_dir / "google_client_secret.json"
+    installed = ctx.settings.config_dir / "google_client_secret.json"
     assert json.loads(installed.read_text()) == CLIENT
     assert stat.S_IMODE(installed.stat().st_mode) == 0o600
     assert ConfigStore().stored()["GOOGLE_CLIENT_SECRETS_FILE"] == str(installed)
@@ -101,7 +101,7 @@ def test_a_wrong_client_file_is_refused_and_asked_again(make_ctx, tmp_path):
     google.run_section(ctx)
 
     assert any("not a Google OAuth client file" in line for line in ctx.ui.lines("error"))
-    assert not (ctx.settings.data_dir / "google_client_secret.json").exists()
+    assert not (ctx.settings.config_dir / "google_client_secret.json").exists()
 
 
 def test_agents_turn_on_workspace_mcp_and_sign_it_in(make_ctx, world, tmp_path):

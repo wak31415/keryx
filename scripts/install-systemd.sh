@@ -8,9 +8,10 @@
 # The templates in ops/systemd/ carry __PLACEHOLDER__ names; this script fills them in from
 # `command -v` and `jarvis config get`, writes the result to ~/.config/systemd/user/, and hands
 # them to systemctl. Lingering keeps both running when nobody is logged in, so the machine
-# answers the phone after a reboot. Logs land in DATA_DIR/logs/ (~/.jarvis/logs/ unless the
-# configuration says otherwise), and the units get this shell's PATH — run it from the shell
-# whose tools the subagents should have, and again after that changes.
+# answers the phone after a reboot. Logs land in STATE_DIR/logs/ (~/.local/state/jarvis/logs/
+# unless the configuration says otherwise), and the units get this shell's PATH, JARVIS_HOME
+# and XDG directories — run it from the shell whose tools the subagents should have, and again
+# after that changes.
 #
 # The scaffolding every installer needs — argument parsing, reading the configuration, the PATH checks,
 # template rendering — is in scripts/lib.sh.
@@ -63,7 +64,11 @@ for name in "${SERVICES[@]}"; do
   render "$TEMPLATES/$name.service" "$UNITS/$name.service" \
     "UV=$UV" "CLOUDFLARED=$CLOUDFLARED" "TUNNEL=$TUNNEL" "PORT=$PORT" \
     "PATH=$(systemd_quoted "$PATH")" "LOGS=$(systemd_path "$LOGS")" \
-    "JARVIS_HOME=$(systemd_quoted "$JARVIS_HOME_DIR")"
+    "JARVIS_HOME=$(systemd_quoted "$JARVIS_HOME_DIR")" \
+    "XDG_CONFIG_HOME=$(systemd_quoted "$RESOLVED_XDG_CONFIG_HOME")" \
+    "XDG_DATA_HOME=$(systemd_quoted "$RESOLVED_XDG_DATA_HOME")" \
+    "XDG_STATE_HOME=$(systemd_quoted "$RESOLVED_XDG_STATE_HOME")" \
+    "XDG_CACHE_HOME=$(systemd_quoted "$RESOLVED_XDG_CACHE_HOME")"
 done
 systemctl --user daemon-reload
 for name in "${SERVICES[@]}"; do

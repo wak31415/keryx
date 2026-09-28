@@ -13,9 +13,11 @@ A value is taken from the first of these that has one (`settings_customise_sourc
 1. what the code passed in (the CLI's `--port`, a test);
 2. the process environment (`JARVIS_PIN=… jarvis serve`, a systemd `Environment=`);
 3. `JARVIS_HOME/secrets.toml`, then `JARVIS_HOME/config.toml` (`jarvis config set`);
-4. a legacy `.env` in the working directory — read, never written, and `jarvis doctor`
-   says so while one is there (`jarvis config import-env` moves it into the store);
-5. the default below.
+4. the default below.
+
+Nothing is read from the working directory. A `.env` there used to be a fifth source, and a
+checkout is the one place a secret must never live; `jarvis migrate` moves one into the
+store, and `storage_refusal` keeps `jarvis serve` from starting while one is still there.
 """
 
 import json
@@ -39,11 +41,16 @@ from pydantic_settings import (
 
 from jarvis.config.files import (
     config_file,
+    default_cache_dir,
+    default_data_dir,
+    default_state_dir,
     jarvis_home,
+    legacy_entries,
+    legacy_home,
     read_toml,
     secrets_file,
     secure_dir,
-    secure_file,
+    write_private,
 )
 from jarvis.config.pin import (
     PIN_FROM_ENV,
@@ -124,18 +131,25 @@ GROUPS: dict[str, str] = {
 }
 
 #: Keys that are never read from, or written to, the configuration files. The PIN has a
-#: store of its own (`data_dir/pin`, jarvis.config.pin), written once; a copy in a TOML
+#: store of its own (`JARVIS_HOME/pin`, jarvis.config.pin), written once; a copy in a TOML
 #: file would be a second PIN that a text editor can change.
 NOT_STORED = frozenset({"JARVIS_PIN"})
 #: Tables in `config.toml` that are about the settings rather than settings themselves.
 META_TABLES = frozenset({"service_writable", "setup"})
 
-#: Where `jarvis setup` puts the Google OAuth client file it is handed, under `data_dir`.
-#: Not inside `data_dir/google`, which is workspace-mcp's own credentials directory.
+#: Where `jarvis setup` puts the Google OAuth client file it is handed, in `JARVIS_HOME`
+#: beside `secrets.toml`: it is configuration, and a secret one. Not `DATA_DIR/google`,
+#: which is workspace-mcp's own credentials directory.
 GOOGLE_CLIENT_FILE = "google_client_secret.json"
-#: Where the client file used to be expected, relative to the working directory. Still
-#: read when nothing else is configured, so an install from before the store keeps working.
-LEGACY_GOOGLE_CLIENT_FILE = Path(".secrets/client_secret.json")
+#: The settings that say where Jarvis keeps things. Each must be absolute: a relative one
+#: would be resolved against whatever directory a process happened to start in, and the
+#: service, the CLI and the installers would each find a different one.
+DIRECTORY_FIELDS = ("data_dir", "state_dir", "cache_dir")
+#: What a working directory held when it was configuration: never read now, and `serve`
+#: refuses to start while either is there (`storage_refusal`), until `jarvis migrate`.
+LEGACY_ENV_FILE = Path(".env")
+LEGACY_CLIENT_FILE = Path(".secrets") / "client_secret.json"
+LEGACY_WORKING_FILES = (LEGACY_ENV_FILE, LEGACY_CLIENT_FILE)
 
 
 def setting(
@@ -198,8 +212,6 @@ class Settings(BaseSettings):
     """Jarvis runtime configuration. See spec §3.4, and `docs/configuration.md`."""
 
     model_config = SettingsConfigDict(
-        # Legacy: read from the working directory, below the store, never written.
-        env_file=".env",
         extra="ignore",
         populate_by_name=True,
         env_ignore_empty=True,
@@ -224,7 +236,6 @@ class Settings(BaseSettings):
             env_settings,
             _TomlLayer(settings_cls, secrets_file(home)),
             _TomlLayer(settings_cls, config_file(home)),
-            dotenv_settings,
             file_secret_settings,
         )
 
@@ -232,7 +243,7 @@ class Settings(BaseSettings):
     #: request, and the fallback lives in a file.
     _report_secret_cache: str | None = PrivateAttr(default=None)
 
-    #: The digits this object took from `data_dir/pin`, if it took any: what `pin_source`
+    #: The digits this object took from `JARVIS_HOME/pin`, if it took any: what `pin_source`
     #: compares `pin` against. Never read for anything else — `pin` is the one field every
     #: reader asks — and it is a comparison rather than a remembered label so that a copy
     #: carrying a different PIN cannot inherit a source that was true only of the original.
@@ -413,12 +424,12 @@ class Settings(BaseSettings):
         group="owner",
         validation_alias="OWNER_NUMBER",
     )
-    #: `JARVIS_PIN` always wins; with it unset this is filled from `data_dir/pin` by
+    #: `JARVIS_PIN` always wins; with it unset this is filled from `JARVIS_HOME/pin` by
     #: `_resolve_pin` below, so every reader of `settings.pin` sees one source.
     pin: str | None = setting(
         None,
         "The phone PIN: 6 to 8 digits, asked for before anything is dispatched from a "
-        "call. Not kept in the configuration files: it lives in `DATA_DIR/pin`, written "
+        "call. Not kept in the configuration files: it lives in `JARVIS_HOME/pin`, written "
         "once by `jarvis setup` or by the first call, and this variable, set in the "
         "environment, overrides that file. With no PIN anywhere nothing of yours is read "
         "out on the phone and every dispatch is refused.",
@@ -718,10 +729,21 @@ class Settings(BaseSettings):
     # --- service, storage and logging ----------------------------------------------------
 
     data_dir: Path = setting(
-        Path("~/.jarvis"),
-        "Where tasks, transcripts, memory and logs are kept, owner-only (0700, files "
-        "0600).",
+        description="Where tasks, transcripts, memory and sign-in tokens are kept, owner-only "
+        "(0700, files 0600).",
         group="service",
+        default_factory=default_data_dir,
+    )
+    state_dir: Path = setting(
+        description="Where the logs, the restart record and the approval bridge's socket "
+        "are kept, owner-only.",
+        group="service",
+        default_factory=default_state_dir,
+    )
+    cache_dir: Path = setting(
+        description="Where what can be downloaded again is kept: the wake-word models.",
+        group="service",
+        default_factory=default_cache_dir,
     )
     service_manager: Literal["auto", "systemd", "launchd", "none"] = setting(
         "auto",
@@ -743,7 +765,7 @@ class Settings(BaseSettings):
         repr=False,
     )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = setting(
-        "INFO", "How much `DATA_DIR/logs/jarvis.log` says.", group="service",
+        "INFO", "How much `STATE_DIR/logs/jarvis.log` says.", group="service",
         service_writable=True,
     )
 
@@ -849,7 +871,7 @@ class Settings(BaseSettings):
         return clusters
 
     @field_validator(
-        "data_dir",
+        *DIRECTORY_FIELDS,
         "projects_root",
         "skills_dir",
         "google_client_secrets_file",
@@ -860,20 +882,37 @@ class Settings(BaseSettings):
     def _expand_path(cls, value: Path | None) -> Path | None:
         return value.expanduser() if value is not None else None
 
+    @field_validator(*DIRECTORY_FIELDS, mode="after")
+    @classmethod
+    def _directory_is_absolute(cls, value: Path) -> Path:
+        """One place resolves a directory setting, and it resolves no relative one."""
+        if not value.is_absolute():
+            raise ValueError("must be an absolute path (or start with ~)")
+        return value
+
     @model_validator(mode="after")
     def _resolve_pin(self) -> "Settings":
-        """Fill `pin` from `data_dir/pin` when the environment set none (spec §5).
+        """Fill `pin` from `JARVIS_HOME/pin` when the environment set none (spec §5).
 
         Two sources, one field, resolved once here so that every existing reader of
         `settings.pin` — the session's compare, the gates, the transcript redaction — keeps
         working without knowing there are two. `JARVIS_PIN` wins: it is the owner at the
         keyboard, and it outranks anything a call enrolled.
         """
-        if not self.pin and (enrolled := read_enrolled_pin(self.data_dir)) is not None:
+        if not self.pin and (enrolled := read_enrolled_pin(self.config_dir)) is not None:
             self.pin, self._adopted_pin = enrolled, enrolled
         return self
 
     # --- the PIN -------------------------------------------------------------------------
+
+    @property
+    def config_dir(self) -> Path:
+        """`JARVIS_HOME`: the store, the PIN and the Google client file.
+
+        Not a field: it is what says where the fields are read from, so only the
+        environment can move it (`jarvis.config.files.jarvis_home`).
+        """
+        return jarvis_home()
 
     @property
     def pin_source(self) -> str | None:
@@ -894,8 +933,17 @@ class Settings(BaseSettings):
 
         Both halves, because they are different facts. An unusable file is no PIN *and* no
         enrolment: it seals the door exactly as a good one does (`write_enrolled_pin`).
+
+        A PIN still in the legacy `~/.jarvis` seals it too. That machine has a PIN; it has
+        simply not been moved yet (`jarvis migrate`), and a caller must not be the one to
+        choose a new one in the meantime. `serve` refuses to start in that state anyway
+        (`storage_refusal`); this is the door's own belt to that.
         """
-        return not self.pin and not pin_file(self.data_dir).exists()
+        return (
+            not self.pin
+            and not pin_file(self.config_dir).exists()
+            and not pin_file(legacy_home()).exists()
+        )
 
     @property
     def reads_before_pin(self) -> bool:
@@ -917,7 +965,7 @@ class Settings(BaseSettings):
         `jarvis serve` — which holds one `Settings` from startup — compares against it,
         redacts it out of transcripts and closes the door without waiting for a restart.
         """
-        if not write_enrolled_pin(self.data_dir, digits):
+        if not write_enrolled_pin(self.config_dir, digits):
             return False
         self.pin = self._adopted_pin = digits
         return True
@@ -925,13 +973,11 @@ class Settings(BaseSettings):
     # --- derived -------------------------------------------------------------------------
 
     def google_client_file(self) -> Path | None:
-        """The OAuth client JSON in use: the setting, else setup's copy, else the legacy one."""
+        """The OAuth client JSON in use: the setting, else setup's copy beside the store."""
         if self.google_client_secrets_file is not None:
             return self.google_client_secrets_file
-        for path in (self.data_dir / GOOGLE_CLIENT_FILE, LEGACY_GOOGLE_CLIENT_FILE):
-            if path.is_file():
-                return path
-        return None
+        path = self.config_dir / GOOGLE_CLIENT_FILE
+        return path if path.is_file() else None
 
     def google_oauth_client(self) -> tuple[str, str] | None:
         """The OAuth client as `(id, secret)`: the configured pair if set, else the JSON file.
@@ -996,6 +1042,33 @@ class Settings(BaseSettings):
             )
         return None
 
+    def storage_refusal(self, working_dir: Path | None = None) -> str | None:
+        """Why `jarvis serve` must not start until `jarvis migrate` has run; None if it may.
+
+        Two states, both of an install from before the XDG layout. `~/.jarvis` still holding
+        what Jarvis put there, while neither `JARVIS_HOME` nor `DATA_DIR` names it: started
+        now, the service would find an empty data directory — no tasks, no memory, and no
+        PIN, which is an open enrolment door. Or a `.env` or `.secrets/client_secret.json`
+        in the working directory: configuration this build never reads, so it would start
+        without it.
+
+        The signal is the old files being there, never the new directory being missing:
+        `ensure_dirs` creates that on the first command of any kind.
+        """
+        legacy = legacy_home()
+        found = legacy_entries(legacy)
+        if found and legacy not in (self.config_dir, self.data_dir):
+            shown = ", ".join(found[:3]) + (", …" if len(found) > 3 else "")
+            return f"{legacy} still holds Jarvis's files ({shown}) — run `jarvis migrate`"
+        working = Path.cwd() if working_dir is None else working_dir
+        for name in LEGACY_WORKING_FILES:
+            if (working / name).is_file():
+                return (
+                    f"{working / name} is configuration Jarvis no longer reads — run "
+                    "`jarvis migrate`"
+                )
+        return None
+
     @property
     def enabled_agents(self) -> tuple[str, ...]:
         """Every agent a task may run on, the default first; `AGENTS_ENABLED` blank is it alone."""
@@ -1034,14 +1107,17 @@ class Settings(BaseSettings):
         return "near_field" if channel == "phone" else "far_field"
 
     def ensure_dirs(self) -> None:
-        """Create `data_dir` and its `tasks`/`calls`/`approvals` subdirectories, owner-only.
+        """Create `data_dir` (`tasks`, `calls`) and `state_dir` (`logs`, `approvals`), owner-only.
 
         Existing directories are tightened in place, so an install made before this simply
-        becomes private the next time anything starts.
+        becomes private the next time anything starts. The cache directory is made by what
+        downloads into it, when it does.
         """
-        secure_dir(self.data_dir)
-        for name in ("tasks", "calls", "approvals"):
-            secure_dir(self.data_dir / name)
+        for root, names in ((self.data_dir, ("tasks", "calls")),
+                            (self.state_dir, ("logs", "approvals"))):
+            secure_dir(root)
+            for name in names:
+                secure_dir(root / name)
 
     def report_secret_value(self) -> str:
         """The configured report secret, or a persisted random one at `data_dir/report_secret`.
@@ -1060,10 +1136,8 @@ class Settings(BaseSettings):
         if secret_path.exists():
             return secret_path.read_text().strip()
 
-        secure_dir(self.data_dir)
         secret = secrets.token_hex(32)
-        secret_path.write_text(secret)
-        secure_file(secret_path)
+        write_private(secret_path, secret)
         return secret
 
 

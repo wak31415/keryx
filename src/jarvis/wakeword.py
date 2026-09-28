@@ -3,7 +3,9 @@ listener that turns a stream of scores into rate-limited detections.
 
 `openwakeword` (and its onnxruntime model) is imported lazily inside
 `OpenWakeWordDetector.__init__`, so importing this module costs nothing and works on a
-machine with no models downloaded. A Porcupine (`pvporcupine`) detector would be a
+machine with no models downloaded. The models are loaded by path from
+`CACHE_DIR/models`, where `jarvis download-models` puts them — never from inside the
+installed package, which a `uv sync` replaces. A Porcupine (`pvporcupine`) detector would be a
 drop-in fallback: implement `WakeWordDetector` and pass it to `WakeWordListener`.
 """
 
@@ -12,6 +14,7 @@ import logging
 import sys
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
@@ -24,6 +27,21 @@ MODEL_MISSING_ERROR = "wake-word model missing; run `jarvis download-models`"
 #: What the wake-word channel imports. Both are `sys_platform == 'darwin'` dependencies
 #: (see pyproject.toml), so on any other platform neither is installed.
 WAKEWORD_PACKAGES = ("openwakeword", "sounddevice")
+#: The two feature models every wake word runs on, which `download_models` fetches beside it.
+FEATURE_MODELS = ("melspectrogram.onnx", "embedding_model.onnx")
+
+
+def models_dir(cache_dir: Path) -> Path:
+    """Where `jarvis download-models` puts the models, and where they are loaded from."""
+    return cache_dir / "models"
+
+
+def missing_models(directory: Path, model_name: str) -> list[str]:
+    """What is not yet in `directory` for `model_name` to load: empty when it can."""
+    missing = [name for name in FEATURE_MODELS if not (directory / name).is_file()]
+    if not list(directory.glob(f"{model_name}*.onnx")):
+        missing.insert(0, f"{model_name}*.onnx")
+    return missing
 
 
 def wakeword_unavailable(
@@ -71,9 +89,9 @@ class OpenWakeWordDetector:
     sample_rate = WAKE_SAMPLE_RATE
     frame_samples = WAKE_FRAME_SAMPLES
 
-    def __init__(self, model_name: str = "hey_jarvis") -> None:
+    def __init__(self, model_name: str, directory: Path) -> None:
         self.model_name = model_name
-        self._model = _load_openwakeword_model(model_name)
+        self._model = _load_openwakeword_model(model_name, directory)
 
     def score(self, frame_int16: bytes) -> float:
         samples = np.frombuffer(frame_int16, dtype="<i2")
@@ -84,15 +102,25 @@ class OpenWakeWordDetector:
         self._model.reset()
 
 
-def _load_openwakeword_model(model_name: str):
-    """Import openWakeWord and build the model, mapping failures to a clear error."""
+def _load_openwakeword_model(model_name: str, directory: Path):
+    """Import openWakeWord and build the model from `directory`, mapping failures to a clear
+    error. By path, all three: given a bare name, openwakeword looks in its own package."""
     try:
         from openwakeword.model import Model
     except ImportError as exc:  # pragma: no cover - openwakeword is a hard dependency
         raise RuntimeError("openwakeword is not installed") from exc
 
+    if missing_models(directory, model_name):
+        raise RuntimeError(MODEL_MISSING_ERROR)
+    wakeword = sorted(directory.glob(f"{model_name}*.onnx"))[0]
+    melspec, embedding = (directory / name for name in FEATURE_MODELS)
     try:
-        return Model(wakeword_models=[model_name], inference_framework="onnx")
+        return Model(
+            wakeword_models=[str(wakeword)],
+            inference_framework="onnx",
+            melspec_model_path=str(melspec),
+            embedding_model_path=str(embedding),
+        )
     except Exception as exc:
         raise RuntimeError(MODEL_MISSING_ERROR) from exc
 

@@ -18,6 +18,7 @@ from jarvis.doctor import (
 )
 from jarvis.integrations.gmail import token_path
 from jarvis.logging_util import mask_number
+from jarvis.wakeword import FEATURE_MODELS
 
 
 @pytest.fixture
@@ -27,8 +28,9 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
 
     models = tmp_path / "models"
     models.mkdir()
-    (models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda: models)
+    for name in ("hey_jarvis_v0.1.onnx", *FEATURE_MODELS):
+        (models / name).write_bytes(b"")
+    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: models)
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     # The service is installed. Asked of a fake: the real question goes to `systemctl`.
     monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target: True)
@@ -100,20 +102,31 @@ def test_the_mic_probe_never_raises_without_a_device(healthy, monkeypatch):
 # --- individual failures ---------------------------------------------------
 
 
-def test_a_legacy_env_file_is_still_read_and_says_how_to_move_it(healthy, tmp_path, monkeypatch):
-    (tmp_path / ".env").write_text("OPENAI_VOICE=marin\n")
-    monkeypatch.setitem(Settings.model_config, "env_file", ".env")
+def test_files_left_in_the_old_home_are_a_migration_still_to_run(healthy):
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(parents=True)
+    (legacy / "tasks.db").touch()
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["configuration"]
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["storage"]
 
-    assert (check.ok, check.severity, check.state) == (False, "soft", "missing")
-    assert "jarvis config import-env" in check.detail
+    assert (check.ok, check.severity, check.state) == (False, "hard", "missing")
+    assert "jarvis migrate" in check.detail and str(legacy) in check.detail
     assert check.section == "import"
 
 
-def test_no_legacy_env_file_is_fine(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["configuration"]
-    assert check.ok is True
+def test_a_env_in_the_working_directory_is_a_migration_still_to_run(healthy):
+    Path(".env").write_text("OPENAI_VOICE=marin\n")
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["storage"]
+
+    assert check.ok is False and "jarvis migrate" in check.detail
+
+
+def test_nothing_legacy_is_fine(healthy):
+    checks = by_name(run_doctor_checks(healthy, probe_mic=False))
+
+    assert checks["storage"].ok is True
+    assert checks["configuration"].ok is True
 
 
 def test_a_missing_openai_key_is_reported_not_raised(healthy, monkeypatch):
@@ -344,7 +357,7 @@ def test_a_pin_from_the_environment_says_so(healthy):
 
 
 def test_a_pin_in_its_own_file_says_when_and_where(healthy):
-    """`DATA_DIR/pin` is the PIN's store now, whoever wrote it — setup or a first call."""
+    """`JARVIS_HOME/pin` is the PIN's store now, whoever wrote it — setup or a first call."""
     settings = healthy.model_copy(update={"pin": None})
     assert settings.enrol_pin("987654") is True
 
@@ -352,7 +365,7 @@ def test_a_pin_in_its_own_file_says_when_and_where(healthy):
 
     assert check.ok is True
     assert check.detail.startswith("set on ")
-    assert str(pin_file(settings.data_dir)) in check.detail
+    assert str(pin_file(settings.config_dir)) in check.detail
     assert "987654" not in check.detail
 
 
@@ -369,13 +382,14 @@ def test_the_environment_wins_over_the_same_digits_in_the_file(healthy):
 
 def test_a_pin_file_that_is_not_a_pin_is_reported_as_the_dead_end_it_is(healthy):
     settings = healthy.model_copy(update={"pin": None})
-    pin_file(settings.data_dir).write_text("not-a-pin\n", encoding="utf-8")
+    settings.config_dir.mkdir(parents=True, exist_ok=True)
+    pin_file(settings.config_dir).write_text("not-a-pin\n", encoding="utf-8")
 
     checks = run_doctor_checks(settings, probe_mic=False)
     check = by_name(checks)["PIN"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert str(pin_file(settings.data_dir)) in check.detail
+    assert str(pin_file(settings.config_dir)) in check.detail
     assert "no call can set one" in check.detail
     assert has_hard_failure(checks) is False
 
@@ -383,17 +397,41 @@ def test_a_pin_file_that_is_not_a_pin_is_reported_as_the_dead_end_it_is(healthy)
 def test_an_undownloaded_wake_word_model_points_at_download_models(healthy, monkeypatch, tmp_path):
     empty = tmp_path / "empty-models"
     empty.mkdir()
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda: empty)
+    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: empty)
 
     check = by_name(run_doctor_checks(healthy, probe_mic=False))["wake-word model"]
     assert check.ok is False
     assert "download-models" in check.detail
 
 
+def test_a_wake_word_without_its_feature_models_cannot_load(healthy, monkeypatch, tmp_path):
+    partial = tmp_path / "partial"
+    partial.mkdir()
+    (partial / "hey_jarvis_v0.1.onnx").write_bytes(b"")
+    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: partial)
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["wake-word model"]
+
+    assert check.ok is False
+    assert "melspectrogram.onnx, embedding_model.onnx" in check.detail
+
+
+def test_the_models_are_looked_for_in_the_cache(settings, monkeypatch):
+    """Not inside the installed package, which the next `uv sync` replaces."""
+    import sys
+    import types
+
+    from jarvis import doctor
+
+    monkeypatch.setitem(sys.modules, "openwakeword", types.ModuleType("openwakeword"))
+
+    assert doctor._wakeword_models_dir(settings) == settings.cache_dir / "models"
+
+
 def test_an_uninstalled_openwakeword_only_warns(healthy, monkeypatch):
     """openwakeword is macOS-only, so a Linux phone-only host is not a broken install."""
 
-    def explode():
+    def explode(settings):
         raise ImportError("no openwakeword here")
 
     monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", explode)
@@ -406,7 +444,7 @@ def test_an_uninstalled_openwakeword_only_warns(healthy, monkeypatch):
 
 
 def test_a_broken_openwakeword_install_is_reported_not_raised(healthy, monkeypatch):
-    def explode():
+    def explode(settings):
         raise OSError("resources are gone")
 
     monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", explode)

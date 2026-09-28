@@ -7,15 +7,19 @@ Every setting Jarvis reads, by the name you set it under. The usual way to set t
 `uv run jarvis config set KEY VALUE`; `uv run jarvis config list` shows each one with where
 its value came from.
 
-**Where they live.** `JARVIS_HOME` (default `~/.jarvis`) holds `config.toml` for the plain
-settings and `secrets.toml` for the credentials, both readable by you alone. A secret is
-never put on a command line: `jarvis config set KEY --stdin` reads it from standard input,
-and `--from-env VAR` from a variable. The PIN is not in either file: it lives in
-`DATA_DIR/pin`, written once (see `SECURITY.md`).
+**Where they live.** `JARVIS_HOME` (default `$XDG_CONFIG_HOME/jarvis`, which is
+`~/.config/jarvis`, on Linux and macOS alike) holds `config.toml` for the plain settings and
+`secrets.toml` for the credentials, both readable by you alone. A secret is never put on a
+command line: `jarvis config set KEY --stdin` reads it from standard input, and
+`--from-env VAR` from a variable. The PIN is not in either file: it lives beside them in
+`JARVIS_HOME/pin`, written once (see `SECURITY.md`). Keep that directory out of a
+dotfiles repository. What Jarvis keeps is in `DATA_DIR`, `STATE_DIR` and `CACHE_DIR`, the
+XDG data, state and cache directories below.
 
 **Which value wins**, first to last: the process environment (a systemd `Environment=`,
-say), `secrets.toml`, `config.toml`, a legacy `.env` in the working directory (read, never
-written; `jarvis config import-env` moves it into the store), and the default below.
+say), `secrets.toml`, `config.toml`, and the default below. Nothing is read from the
+working directory: an install that still has a `.env` there, or its files in `~/.jarvis`,
+moves them with `jarvis migrate`, and `jarvis serve` refuses to start until it has.
 
 **What the running service may change.** Jarvis can change some of its own settings — the
 voice model's `set_config` tool, or a subagent running `jarvis config set` in a task — and
@@ -65,7 +69,7 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 | `OWNER_NAME` |  | no | What Jarvis calls you in the prompts it is handed; blank is "the owner". Only a name: the rest of what it knows about you is its memory. |
 | `ALLOWED_CALLERS` |  | never | Your phone numbers in E.164 (`+15551234567`), comma-separated. Every other caller is refused. This is the handsets one person picks up, not a guest list: a call Jarvis places to any of them reached you. |
 | `OWNER_NUMBER` |  | never | Which of your numbers Jarvis rings first; blank is the first of `ALLOWED_CALLERS`. |
-| `JARVIS_PIN` | (secret) | never | The phone PIN: 6 to 8 digits, asked for before anything is dispatched from a call. Not kept in the configuration files: it lives in `DATA_DIR/pin`, written once by `jarvis setup` or by the first call, and this variable, set in the environment, overrides that file. With no PIN anywhere nothing of yours is read out on the phone and every dispatch is refused. |
+| `JARVIS_PIN` | (secret) | never | The phone PIN: 6 to 8 digits, asked for before anything is dispatched from a call. Not kept in the configuration files: it lives in `JARVIS_HOME/pin`, written once by `jarvis setup` or by the first call, and this variable, set in the environment, overrides that file. With no PIN anywhere nothing of yours is read out on the phone and every dispatch is refused. |
 | `PIN_FAILURE_LIMIT` | `10` | never | Wrong PINs, counted across every call, before PIN entry locks for everyone — the right PIN included. |
 | `PIN_FAILURE_WINDOW_HOURS` | `24` | never | How long a wrong PIN is remembered. |
 | `PIN_LOCKOUT_MINUTES` | `60` | never | How long PIN entry stays locked once the limit is reached. |
@@ -161,11 +165,13 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 
 | Setting | Default | Service may change | What it is |
 |---|---|---|---|
-| `DATA_DIR` | `~/.jarvis` | never | Where tasks, transcripts, memory and logs are kept, owner-only (0700, files 0600). |
+| `DATA_DIR` | `$XDG_DATA_HOME/jarvis` (`~/.local/share/jarvis`) | never | Where tasks, transcripts, memory and sign-in tokens are kept, owner-only (0700, files 0600). |
+| `STATE_DIR` | `$XDG_STATE_HOME/jarvis` (`~/.local/state/jarvis`) | never | Where the logs, the restart record and the approval bridge's socket are kept, owner-only. |
+| `CACHE_DIR` | `$XDG_CACHE_HOME/jarvis` (`~/.cache/jarvis`) | never | Where what can be downloaded again is kept: the wake-word models. |
 | `SERVICE_MANAGER` | `auto` | never | What `jarvis restart` asks to restart this process: `auto` is systemd or launchd, but only for a process actually running under it; `none` refuses. |
 | `SERVICE_UNIT` |  | never | The systemd unit or launchd label; blank is the installed default (`jarvis.service`, `dev.jarvis.agent`). |
 | `REPORT_SECRET` | (secret) | never | Signs the `/reports/{id}` links texted to you; blank generates one into `DATA_DIR/report_secret`. |
-| `LOG_LEVEL` | `INFO` | yes | How much `DATA_DIR/logs/jarvis.log` says. |
+| `LOG_LEVEL` | `INFO` | yes | How much `STATE_DIR/logs/jarvis.log` says. |
 
 ## Development switches
 

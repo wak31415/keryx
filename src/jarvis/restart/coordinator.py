@@ -2,7 +2,7 @@
 
 A restart is the one job Jarvis cannot see through inside one process: the process that
 runs `systemctl restart` is the process the service manager then kills. The flow is
-therefore split across that death, joined by one small file (`data_dir/restart.json`):
+therefore split across that death, joined by one small file (`state_dir/restart.json`):
 
 1. **Before** — `RestartCoordinator.request()` records what was asked for, by whom, on
    which number, and which version was running; then it hands the restart to the service
@@ -165,7 +165,7 @@ class RestartCoordinator:
         self._twilio = twilio_out
         self._stream_tokens = stream_tokens
         self._tasks = task_store
-        self._store = store or RestartStore(settings.data_dir / RECORD_NAME)
+        self._store = store or RestartStore(settings.state_dir / RECORD_NAME)
         self._spawn = spawn or _spawn_detached
         self._spawn_watch = spawn_watch or spawn_watchdog
         self._sleep = sleep
@@ -213,9 +213,9 @@ class RestartCoordinator:
             origin_channel=origin_channel,
             origin_session_id=origin_session_id,
             target=target.describe(),
-            version=await asyncio.to_thread(loaded_version, self._settings.data_dir),
+            version=await asyncio.to_thread(loaded_version, self._settings.state_dir),
             task_id=task_id,
-            log_marks=await asyncio.to_thread(marks, self._settings.data_dir),
+            log_marks=await asyncio.to_thread(marks, self._settings.state_dir),
         )
         if not self._store.save(record):
             # Without the record the new process has no idea it should call anyone, and a
@@ -439,12 +439,12 @@ class RestartCoordinator:
         # This process's own mark in preference to the record's: see `mark_startup_logs`
         # for why the difference matters. The record's is the fallback for a service too
         # old to have stamped one, which is no worse than what there was before.
-        since = startup_log_marks(self._settings.data_dir) or record.log_marks
-        errors = await asyncio.to_thread(errors_since, self._settings.data_dir, since)
+        since = startup_log_marks(self._settings.state_dir) or record.log_marks
+        errors = await asyncio.to_thread(errors_since, self._settings.state_dir, since)
         if errors:
             parts.append(f"but {errors.spoken()}")
 
-        version = await asyncio.to_thread(loaded_version, self._settings.data_dir)
+        version = await asyncio.to_thread(loaded_version, self._settings.state_dir)
         if version and record.version and version != record.version:
             parts.append(f"now on {version}, was {record.version}")
         elif version:

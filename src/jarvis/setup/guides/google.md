@@ -19,7 +19,7 @@ in about five minutes, and every Google sign-in after that uses it.
    **Download JSON**.
 6. **Hand it to Jarvis.** Give the path of that downloaded file below (dragging it into
    the terminal types the path). Jarvis checks it, copies it to
-   `~/.jarvis/google_client_secret.json` readable by you alone, and uses it from then on;
-   you may delete the download.
+   `~/.config/jarvis/google_client_secret.json` readable by you alone, and uses it from then
+   on; you may delete the download.
 
 From the command line instead: `jarvis auth login gmail --client-file <that file>`.

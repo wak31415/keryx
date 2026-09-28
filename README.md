@@ -87,10 +87,27 @@ or `jarvis memory` command it can run, and it hands you `jarvis setup` for what 
 do. Claude Code
 users can copy `skills/jarvis-setup` into `~/.claude/skills/` for the same thing as a skill.
 
-Settings live in `~/.jarvis/config.toml`, and every key and token in `~/.jarvis/secrets.toml`
+Settings live in `~/.config/jarvis/config.toml`, and every key and token in `secrets.toml`
 beside it, readable by you alone. `uv run jarvis config list` shows them all;
-[`docs/configuration.md`](docs/configuration.md) describes each one. An existing `.env` is
-still read, and `jarvis setup` offers to move it in.
+[`docs/configuration.md`](docs/configuration.md) describes each one.
+
+Jarvis keeps its files where uv, gh and git keep theirs, on Linux and macOS alike, and
+honours each `XDG_*_HOME` (`uv run jarvis config path` prints them all):
+
+| Directory | What is in it |
+|---|---|
+| `~/.config/jarvis` (`JARVIS_HOME`) | `config.toml`, `secrets.toml`, the PIN, the Google client file |
+| `~/.local/share/jarvis` (`DATA_DIR`) | tasks and their reports, call transcripts, the memory, sign-in tokens |
+| `~/.local/state/jarvis` (`STATE_DIR`) | logs, the restart record, the approval bridge's socket |
+| `~/.cache/jarvis` (`CACHE_DIR`) | the wake-word models |
+
+`~/.config/jarvis` holds `secrets.toml` and `pin`: keep it out of a dotfiles repository.
+
+**Upgrading from `~/.jarvis`, or a `.env` in the checkout?** Neither is read any more, and
+`jarvis serve` will not start while either is still there. `uv run jarvis migrate --dry-run`
+shows what would move; `uv run jarvis migrate` moves it, stopping the service while it does,
+re-rendering it and the approval hook, and starting it again. Nothing is deleted: the old
+directory is renamed `~/.jarvis.migrated-<date>` with whatever was left in it.
 
 `uv sync` installs both coding agents. Each bundles a large CLI, so on a tight disk install
 only the one you use: `uv sync --no-group agents --extra codex` (or `--extra claude`). With
@@ -157,7 +174,7 @@ details.
 `uv run jarvis config list` shows every setting and where its value came from; `jarvis
 config set KEY VALUE` changes one, and a secret goes in with `--stdin` so it never lands in
 your shell history. [`docs/configuration.md`](docs/configuration.md) is the full list. With
-no PIN set, the first call may key one in, once; it is then written to `~/.jarvis/pin` and
+no PIN set, the first call may key one in, once; it is then written to `~/.config/jarvis/pin` and
 nothing in Jarvis can change it ([SECURITY.md](SECURITY.md#setting-the-first-pin-on-the-first-call)).
 Texting is off until you turn it on, since many Twilio accounts can't send SMS in every
 region.

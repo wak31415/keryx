@@ -36,8 +36,11 @@ Everything below is those instructions plus the rules for talking to the owner.
   `--from-env VAR`, never `jarvis config set KEY value`. If you do not already have a secret
   in your environment, do not ask them to paste it to you — `jarvis setup` asks for it
   hidden, and that is theirs to run.
-- **Never read `~/.jarvis/`**: `secrets.toml` is every key, and the call transcripts carry
-  the spoken PIN. The one place you write there is `~/.jarvis/projects/<name>.md`.
+- **Never read Jarvis's own directories** — `~/.config/jarvis/`, `~/.local/share/jarvis/`,
+  `~/.local/state/jarvis/`, or an old `~/.jarvis/`: `secrets.toml` and `pin` are every key
+  and the PIN, and the call transcripts carry the spoken PIN. The one place you write there
+  is `~/.local/share/jarvis/projects/<name>.md` (`jarvis config path` says where, if
+  `DATA_DIR` moved it).
 - **Never write `memory.md` yourself.** Jarvis owns that file and rewrites it after every
   call. Everything you agree on goes in through `jarvis memory seed`.
 - **Never choose a PIN for them.** A PIN you picked is a PIN in a transcript. `jarvis setup`
@@ -55,8 +58,9 @@ uv run jarvis auth status --json
 
 `config list` is every setting with whether it is set and where from — a secret's value is
 never in it. `doctor` groups each check by `section` with a `state` of ok, missing or failed.
-`auth status` is every sign-in. If `doctor` names a legacy `.env`, `jarvis config
-import-env` moves it into the store.
+`auth status` is every sign-in. If `doctor`'s `storage` check fails, an old `~/.jarvis` or
+a `.env` in the checkout is still about: ask them to run `jarvis migrate` (it stops the
+service while it moves things), and carry on once it has.
 
 Then tell them, in three or four sentences: what Jarvis does with what you are about to
 collect, that it goes to the realtime provider on every call, and that nothing is written
@@ -89,7 +93,7 @@ Show them the project names from `projects` in the memory report (`jarvis memory
 and ask which ones matter enough for Jarvis to know about. Draft a summary only for those,
 and only after they have seen the list.
 
-For each one, read its `README.md` and draft `~/.jarvis/projects/<name>.md`:
+For each one, read its `README.md` and draft `~/.local/share/jarvis/projects/<name>.md`:
 
 - Written to be **heard**, not read: what the project is, what state it is in, and what the
   words in it mean out loud. No build commands, no directory trees, no code fences.

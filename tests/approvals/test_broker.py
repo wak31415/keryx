@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import json
 import os
+import stat
 from dataclasses import dataclass, field
 
 import pytest
@@ -82,7 +83,8 @@ def settings(tmp_path, short_tmp_path):
     return Settings(
         _env_file=None,
         openai_api_key="test",
-        data_dir=short_tmp_path / "jarvis",
+        data_dir=tmp_path / "data",
+        state_dir=short_tmp_path / "jarvis",
         google_client_secrets_file=tmp_path / "none.json",
         approval_roots=[str(tmp_path / "roots")],
         public_host="jarvis.example",
@@ -118,11 +120,11 @@ async def broker(settings, sessions, twilio, clock):
         await made.stop()
 
 
-async def test_a_data_dir_too_deep_for_a_unix_socket_is_explained(settings, sessions, twilio):
+async def test_a_state_dir_too_deep_for_a_unix_socket_is_explained(settings, sessions, twilio):
     """`OSError: AF_UNIX path too long` says nothing anyone can act on; this says the fix."""
-    deep = settings.data_dir.joinpath(*["a-fairly-long-directory-name"] * 5)
+    deep = settings.state_dir.joinpath(*["a-fairly-long-directory-name"] * 5)
     broker = ApprovalBroker(
-        settings.model_copy(update={"data_dir": deep}), sessions, twilio, StreamTokenStore()
+        settings.model_copy(update={"state_dir": deep}), sessions, twilio, StreamTokenStore()
     )
 
     assert await broker.start() is False
@@ -267,6 +269,8 @@ async def test_an_eligible_prompt_pends_and_marks(broker, tmp_path, hooks):
     assert "git push" in waiting[0]["summary"]
     assert "press 1 for approve" in waiting[0]["options"]
     assert (broker.state_dir / "PENDING").exists()
+    assert stat.S_IMODE((broker.state_dir / "PENDING").stat().st_mode) == 0o600
+    assert stat.S_IMODE(broker.state_dir.stat().st_mode) == 0o700
 
 
 # --- escalation ------------------------------------------------------------

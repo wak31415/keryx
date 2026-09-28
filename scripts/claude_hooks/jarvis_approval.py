@@ -57,8 +57,20 @@ RESOLVE_TIMEOUT_S = 3.0
 DEFAULT_MAX_WAIT_S = 600.0
 
 
-def _data_dir():
-    return os.path.expanduser(os.environ.get("JARVIS_DATA_DIR") or "~/.jarvis")
+def _state_dir():
+    """Where the broker listens: `JARVIS_STATE_DIR`, else `$XDG_STATE_HOME/jarvis`.
+
+    The installer always writes `JARVIS_STATE_DIR` into the hook's command, so the default
+    is only for a hook somebody wired up by hand. `XDG_STATE_HOME` counts only when it is
+    absolute, as the specification says and as Jarvis itself resolves it.
+    """
+    configured = os.environ.get("JARVIS_STATE_DIR")
+    if configured:
+        return os.path.expanduser(configured)
+    base = os.environ.get("XDG_STATE_HOME") or ""
+    if not os.path.isabs(base):
+        base = os.path.expanduser("~/.local/state")
+    return os.path.join(base, "jarvis")
 
 
 def _trim(value, cuts, depth=0):
@@ -143,12 +155,12 @@ def main():
     if not isinstance(event, dict):
         return
     name = event.get("hook_event_name")
-    data_dir = _data_dir()
-    socket_path = os.path.join(data_dir, "approvals.sock")
+    state_dir = _state_dir()
+    socket_path = os.path.join(state_dir, "approvals.sock")
 
     if name in RESOLVE_EVENTS:
         # One stat, and on all but a handful of tool calls a year that is the whole cost.
-        if not os.path.exists(os.path.join(data_dir, "approvals", "PENDING")):
+        if not os.path.exists(os.path.join(state_dir, "approvals", "PENDING")):
             return
         _exchange(
             {"op": "resolve", "protocol": PROTOCOL, "event": _slim(event)},
@@ -159,7 +171,7 @@ def main():
 
     if name != RAISE_EVENT:
         return
-    if os.path.exists(os.path.join(data_dir, "approvals", "DISABLED")):
+    if os.path.exists(os.path.join(state_dir, "approvals", "DISABLED")):
         return
     try:
         max_wait = float(os.environ.get("JARVIS_APPROVAL_MAX_WAIT") or DEFAULT_MAX_WAIT_S)

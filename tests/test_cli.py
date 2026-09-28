@@ -5,6 +5,7 @@ import importlib.metadata
 import json
 import logging
 import shutil
+import stat
 import wave
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
@@ -160,6 +161,39 @@ def test_serve_refuses_a_default_agent_whose_extra_is_not_installed(settings_stu
     assert "config" not in built
 
 
+def test_serve_refuses_until_the_old_files_are_migrated(settings_stub, monkeypatch):
+    """Started now it would find no tasks, no memory, and no PIN: an open enrolment door."""
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    Path(".env").write_text("OPENAI_API_KEY=sk-old\n")
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 2, result.output
+    assert "jarvis migrate" in result.output
+    assert "config" not in built
+    assert not (settings_stub.state_dir / "logs" / "jarvis.log").exists()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [["tasks", "list"], ["tasks", "show", "1"], ["memory"], ["forget", "--yes"], ["approvals"],
+     ["restart", "--status"], ["auth", "status"]],
+)
+def test_what_reads_the_data_waits_for_the_migration_too(settings_stub, command):
+    """It would answer from an empty directory, and `tasks` would make a `tasks.db` there for
+    the migration to trip over."""
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(parents=True)
+    (legacy / "tasks.db").touch()
+
+    result = runner.invoke(app, command)
+
+    assert result.exit_code == 2, result.output
+    assert "jarvis migrate" in result.output
+    assert not (settings_stub.data_dir / "tasks.db").exists()
+
+
 def test_serve_without_the_phone_does_not_care_about_signature_checks(
     settings_stub, monkeypatch
 ):
@@ -182,8 +216,9 @@ def stub_local_runner(monkeypatch, built: dict, *, run=None) -> None:
             built["device"] = self
 
     class StubDetector:
-        def __init__(self, model_name):
+        def __init__(self, model_name, directory):
             built["model"] = model_name
+            built["models"] = directory
 
     class StubRunner:
         def __init__(self, settings, device, listener, **kwargs):
@@ -227,6 +262,7 @@ def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     assert built["ran"] is True
     assert built["model"] == settings_stub.wakeword_model
+    assert built["models"] == settings_stub.cache_dir / "models"
     settings, device, _listener, kwargs = built["runner"]
     assert settings is settings_stub
     assert device is built["device"]
@@ -404,7 +440,7 @@ def test_serve_writes_a_rotating_log_file(settings_stub, monkeypatch):
         if isinstance(handler, RotatingFileHandler)
     ]
     assert len(handlers) == 1  # re-running serve replaces the handler, it does not stack
-    assert Path(handlers[0].baseFilename) == settings_stub.data_dir / "logs" / "jarvis.log"
+    assert Path(handlers[0].baseFilename) == settings_stub.state_dir / "logs" / "jarvis.log"
     assert handlers[0].maxBytes == LOG_MAX_BYTES
     assert handlers[0].backupCount == LOG_BACKUP_COUNT
 
@@ -708,7 +744,7 @@ def test_restart_asks_the_service_manager_and_records_the_call_back(restart_sett
 
     assert result.exit_code == 0
     assert calls == [["systemctl", "--user", "restart", "jarvis.service"]]
-    record = RestartStore(restart_settings.data_dir / RECORD_NAME).load()
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
     assert record.reason == "new code"
     assert record.number == "+15550000001"
     assert record.origin_channel == "cli"
@@ -725,7 +761,7 @@ def test_a_quiet_restart_arms_no_watchdog(restart_settings, ran):
 
     runner.invoke(app, ["restart", "--no-callback"])
 
-    record = RestartStore(restart_settings.data_dir / RECORD_NAME).load()
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
     assert record.watchdog == ""
     assert calls == [["systemctl", "--user", "restart", "jarvis.service"]]
 
@@ -739,7 +775,7 @@ def test_restart_refuses_to_cut_off_a_live_call(restart_settings, ran, monkeypat
     assert result.exit_code == 1
     assert "cuts them off" in result.output
     assert calls == []
-    assert not (restart_settings.data_dir / RECORD_NAME).exists()
+    assert not (restart_settings.state_dir / RECORD_NAME).exists()
 
 
 def test_restart_force_goes_ahead_anyway(restart_settings, ran, monkeypatch):
@@ -785,7 +821,7 @@ def test_restart_no_callback_leaves_no_number(restart_settings, ran):
     result = runner.invoke(app, ["restart", "--no-callback"])
 
     assert result.exit_code == 0
-    assert RestartStore(restart_settings.data_dir / RECORD_NAME).load().number is None
+    assert RestartStore(restart_settings.state_dir / RECORD_NAME).load().number is None
     assert "no call back was asked for" in result.output
 
 
@@ -796,7 +832,7 @@ def test_a_restart_command_that_fails_says_so_and_keeps_the_record(restart_setti
     result = runner.invoke(app, ["restart"])
 
     assert result.exit_code == 1
-    record = RestartStore(restart_settings.data_dir / RECORD_NAME).load()
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
     assert record.state == "failed"
     assert "exited 3" in record.error
 
@@ -809,7 +845,7 @@ def test_restart_status_with_nothing_on_record(restart_settings):
 
 
 def test_restart_status_reads_back_a_failure(restart_settings):
-    store = RestartStore(restart_settings.data_dir / RECORD_NAME)
+    store = RestartStore(restart_settings.state_dir / RECORD_NAME)
     store.save(
         RestartRecord(
             requested_at="2026-08-24T10:00:00+00:00",
@@ -836,7 +872,7 @@ def wakeword_models(monkeypatch, tmp_path):
     """Point the wake-word check at a directory instead of importing openwakeword."""
     models = tmp_path / "models"
     models.mkdir()
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda: models)
+    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: models)
     return models
 
 
@@ -863,8 +899,8 @@ def test_doctor_passes_on_a_complete_install(
     monkeypatch, tmp_path, wakeword_models, every_agent_installed
 ):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
-    (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
+    for name in ("hey_jarvis_v0.1.onnx", "melspectrogram.onnx", "embedding_model.onnx"):
+        (wakeword_models / name).write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     settings = Settings(
         _env_file=None,
@@ -893,8 +929,8 @@ def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path, w
     so if it stopped `doctor` too there would be nothing left to diagnose it with.
     """
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
-    (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
+    for name in ("hey_jarvis_v0.1.onnx", "melspectrogram.onnx", "embedding_model.onnx"):
+        (wakeword_models / name).write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
 
     def load(**overrides):
@@ -938,8 +974,8 @@ def test_doctor_explains_a_malformed_pin_set_the_way_a_person_sets_one(
     to explain.
     """
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
-    (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
+    for name in ("hey_jarvis_v0.1.onnx", "melspectrogram.onnx", "embedding_model.onnx"):
+        (wakeword_models / name).write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     for name, value in {
         "OPENAI_API_KEY": "sk-test",
@@ -981,7 +1017,7 @@ def test_serve_refuses_to_start_on_a_malformed_pin(monkeypatch, tmp_path):
 
 
 def _audit(settings, *entries) -> None:
-    path = settings.data_dir / STATE_DIR_NAME / AUDIT_NAME
+    path = settings.state_dir / STATE_DIR_NAME / AUDIT_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n")
 
@@ -1011,7 +1047,7 @@ def test_approvals_prints_the_audit_trail(settings_stub):
 
 
 def test_approvals_ignores_a_corrupt_audit_line_rather_than_failing(settings_stub):
-    path = settings_stub.data_dir / STATE_DIR_NAME / AUDIT_NAME
+    path = settings_stub.state_dir / STATE_DIR_NAME / AUDIT_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('not json\n{"ts": "2026-09-02T14:05:00Z", "event": "raised"}\n')
 
@@ -1035,10 +1071,11 @@ def test_approvals_limit_shows_only_the_tail(settings_stub):
 
 
 def test_the_kill_switch_is_a_file_so_it_needs_no_restart(settings_stub):
-    switch = settings_stub.data_dir / STATE_DIR_NAME / KILL_SWITCH_NAME
+    switch = settings_stub.state_dir / STATE_DIR_NAME / KILL_SWITCH_NAME
 
     assert runner.invoke(app, ["approvals", "--disable"]).exit_code == 0
     assert switch.exists()
+    assert stat.S_IMODE(switch.stat().st_mode) == 0o600
     assert "OFF (kill switch)" in runner.invoke(app, ["approvals"]).output
 
     assert runner.invoke(app, ["approvals", "--enable"]).exit_code == 0
@@ -1127,6 +1164,27 @@ def test_download_models_where_the_wake_word_cannot_run_says_so_in_one_line(
     assert isinstance(result.exception, SystemExit)  # a clean exit, not a traceback
     assert result.output.strip().count("\n") == 0
     assert "the wake word needs macOS" in result.output
+
+
+def test_download_models_fetches_into_the_cache(settings_stub, monkeypatch):
+    import sys
+    import types
+
+    fetched: dict = {}
+    utils = types.ModuleType("openwakeword.utils")
+    utils.download_models = lambda **kwargs: fetched.update(kwargs)
+    package = types.ModuleType("openwakeword")
+    package.utils = utils
+    monkeypatch.setitem(sys.modules, "openwakeword", package)
+    monkeypatch.setitem(sys.modules, "openwakeword.utils", utils)
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: None)
+
+    result = runner.invoke(app, ["download-models"])
+
+    assert result.exit_code == 0, result.output
+    target = settings_stub.cache_dir / "models"
+    assert fetched == {"model_names": ["hey_jarvis"], "target_directory": str(target)}
+    assert stat.S_IMODE(target.stat().st_mode) == 0o700
 
 
 # --- housekeeping and the memory -------------------------------------------

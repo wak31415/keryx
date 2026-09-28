@@ -11,7 +11,8 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    A secret never goes on the command line: `jarvis config set OPENAI_API_KEY --from-env VAR`
    (a variable already in your environment) or `… --stdin`. If you do not have a secret,
    ask the person to run `jarvis setup`, which asks for it hidden; do not ask them to paste
-   it to you. `jarvis config import-env` moves a legacy `.env` into the store.
+   it to you. If `doctor` fails its `storage` check, files from before the XDG layout are
+   still about: ask the person to run `jarvis migrate`, which stops the service for it.
 3. **Sign-ins.** `jarvis auth status --json` lists each one. For a coding agent,
    `jarvis auth login claude|codex` runs its own login on the terminal. For Gmail,
    `jarvis auth login gmail --client-file PATH` prints a link: relay it; the person

@@ -55,6 +55,8 @@ def test_nothing_protected_defaults_to_writable():
         "HOST",
         "PORT",
         "DATA_DIR",
+        "STATE_DIR",
+        "CACHE_DIR",
         "SERVICE_MANAGER",
         "CLUSTERS",
         "SKILLS_DIR",

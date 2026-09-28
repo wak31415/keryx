@@ -17,9 +17,10 @@ uv run jarvis doctor --no-mic      # what this machine is still missing
 ```
 
 You do **not** need an API key, Twilio, or a microphone to run the tests. The suite never
-reads your own configuration — `~/.jarvis/config.toml`, `secrets.toml` or a legacy `.env` —
-and never reaches the network: see the fixtures in `tests/conftest.py`, and do not weaken
-them.
+reads your own configuration or data — each test has its own `HOME`, XDG directories,
+`JARVIS_HOME` and working directory, so neither `~/.config/jarvis` nor a `.env` in your
+checkout takes part — and never reaches the network: see the fixtures in
+`tests/conftest.py`, and do not weaken them.
 
 To run the thing itself without spending Claude tokens:
 

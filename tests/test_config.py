@@ -16,12 +16,14 @@ from jarvis.config import (
     PIN_FROM_FILE,
     Settings,
     env_var_name,
+    jarvis_home,
     load_settings,
     pin_file,
     read_enrolled_pin,
     secure_dir,
     secure_file,
 )
+from jarvis.config.files import config_file, dump_toml, write_private
 
 
 def test_allowed_callers_parses_comma_separated_env(monkeypatch, tmp_path):
@@ -244,9 +246,43 @@ def test_ensure_dirs_makes_the_whole_tree_owner_only(settings):
         settings.data_dir,
         settings.data_dir / "tasks",
         settings.data_dir / "calls",
-        settings.data_dir / "approvals",
+        settings.state_dir,
+        settings.state_dir / "logs",
+        settings.state_dir / "approvals",
     ):
         assert stat.S_IMODE(path.stat().st_mode) == 0o700, path
+    assert not settings.cache_dir.exists()  # made by what downloads into it, when it does
+
+
+@pytest.mark.parametrize("key", ["DATA_DIR", "STATE_DIR", "CACHE_DIR"])
+def test_a_relative_directory_is_refused(key, monkeypatch):
+    """It would be resolved against whatever directory a process started in, and the
+    service, the CLI and the installers would each find a different one."""
+    monkeypatch.setenv(key, "jarvis-data")
+
+    with pytest.raises(ValidationError, match="absolute"):
+        Settings(_env_file=None, openai_api_key="test")
+
+
+@pytest.mark.parametrize("key", ["DATA_DIR", "STATE_DIR", "CACHE_DIR"])
+def test_a_directory_under_home_is_expanded(key, monkeypatch):
+    monkeypatch.setenv(key, "~/somewhere")
+
+    settings = Settings(_env_file=None, openai_api_key="test")
+
+    assert getattr(settings, key.lower()) == Path.home() / "somewhere"
+
+
+def test_the_directories_default_to_the_xdg_ones(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "d"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "s"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "c"))
+
+    settings = Settings(_env_file=None, openai_api_key="test")
+
+    assert settings.data_dir == tmp_path / "d" / "jarvis"
+    assert settings.state_dir == tmp_path / "s" / "jarvis"
+    assert settings.cache_dir == tmp_path / "c" / "jarvis"
 
 
 def test_ensure_dirs_tightens_a_directory_that_already_exists(settings):
@@ -368,15 +404,13 @@ def test_fake_agents_env(monkeypatch, tmp_path):
 # --- blank optional settings count as unset (spec §3.3 PIN gate) -------------
 
 
-def test_a_legacy_env_file_of_blanks_leaves_every_optional_setting_unset(tmp_path):
-    """The old `.env.example` shipped every setting blank, and `.env` files copied from it
-    are still read; not one blank may become an empty string."""
-    env_file = tmp_path / ".env"
-    env_file.write_text("".join(f"{env_var_name(name)}=\n" for name in Settings.model_fields))
+def test_a_config_file_of_blanks_leaves_every_optional_setting_unset(tmp_path):
+    """The old `.env.example` shipped every setting blank, and a store imported or edited
+    from one may too; not one blank may become an empty string."""
+    blanks = {env_var_name(name): "" for name in Settings.model_fields}
+    write_private(config_file(), dump_toml(blanks))
 
-    settings = Settings(
-        _env_file=env_file, openai_api_key="test", data_dir=tmp_path / "jarvis"
-    )
+    settings = Settings(openai_api_key="test", data_dir=tmp_path / "jarvis")
 
     for name in OPTIONAL_STR_FIELDS:
         assert getattr(settings, name) is None, name
@@ -641,15 +675,15 @@ def test_an_enrolled_pin_can_never_be_overwritten(tmp_path):
 
     assert make(tmp_path).enrol_pin("654321") is False
 
-    assert pin_file(tmp_path / "jarvis").read_text(encoding="utf-8").strip() == "123456"
+    assert pin_file(jarvis_home()).read_text(encoding="utf-8").strip() == "123456"
     assert make(tmp_path).pin == "123456"
 
 
 def test_the_enrolled_pin_file_is_readable_by_nobody_else(tmp_path):
-    """It sits beside `memory.md` and every call transcript; the mode is the protection."""
+    """It sits beside `secrets.toml`; the mode is the protection."""
     make(tmp_path).enrol_pin("123456")
 
-    mode = stat.S_IMODE(pin_file(tmp_path / "jarvis").stat().st_mode)
+    mode = stat.S_IMODE(pin_file(jarvis_home()).stat().st_mode)
 
     assert mode == 0o600
 
@@ -658,7 +692,7 @@ def test_the_enrolled_pin_is_stored_as_digits_and_not_as_a_hash(tmp_path):
     """Deliberate: six digits fall to any hash in microseconds, so one buys nothing."""
     make(tmp_path).enrol_pin("123456")
 
-    assert pin_file(tmp_path / "jarvis").read_text(encoding="utf-8").strip() == "123456"
+    assert pin_file(jarvis_home()).read_text(encoding="utf-8").strip() == "123456"
 
 
 def test_enrolment_refuses_anything_that_is_not_a_pin(tmp_path):
@@ -668,7 +702,7 @@ def test_enrolment_refuses_anything_that_is_not_a_pin(tmp_path):
         with pytest.raises(ValueError, match="6 to 8 digits"):
             settings.enrol_pin(candidate)
 
-    assert not pin_file(tmp_path / "jarvis").exists()
+    assert not pin_file(jarvis_home()).exists()
 
 
 def test_enrolling_adopts_the_pin_in_this_process_too(tmp_path):
@@ -697,8 +731,8 @@ def test_an_unusable_enrolled_pin_file_still_seals_the_door(tmp_path):
     It is no PIN (so nothing authorizes), and `O_EXCL` still refuses to replace it: the
     owner deletes it or sets `JARVIS_PIN`, which is exactly the one-way door working.
     """
-    secure_dir(tmp_path / "jarvis")
-    pin_file(tmp_path / "jarvis").write_text("not-a-pin\n", encoding="utf-8")
+    secure_dir(jarvis_home())
+    pin_file(jarvis_home()).write_text("not-a-pin\n", encoding="utf-8")
 
     settings = make(tmp_path)
 
@@ -710,10 +744,77 @@ def test_an_unusable_enrolled_pin_file_still_seals_the_door(tmp_path):
 
 def test_a_pin_file_that_cannot_be_read_is_no_pin(tmp_path):
     """A directory where the file should be: unreadable, and never an exception at import."""
-    secure_dir(tmp_path / "jarvis")
-    pin_file(tmp_path / "jarvis").mkdir()
+    secure_dir(jarvis_home())
+    pin_file(jarvis_home()).mkdir()
 
     assert make(tmp_path).pin is None
+
+
+def test_an_install_from_before_the_xdg_layout_may_not_start(tmp_path):
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(parents=True)
+    for name in ("tasks.db", "calls", "memory.md", "pin"):
+        (legacy / name).touch()
+
+    refusal = make(tmp_path).storage_refusal()
+
+    assert refusal is not None and "jarvis migrate" in refusal
+    assert "calls, memory.md, pin, …" in refusal
+
+
+def test_what_is_not_jarviss_in_the_old_home_stops_nothing(tmp_path):
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(parents=True)
+    (legacy / "restart-after-task7.sh").touch()
+
+    assert make(tmp_path).storage_refusal() is None
+
+
+def test_an_old_home_still_named_on_purpose_is_in_use_not_legacy(tmp_path):
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(parents=True)
+    (legacy / "tasks.db").touch()
+
+    in_use = Settings(_env_file=None, openai_api_key="test", data_dir=legacy)
+
+    assert in_use.storage_refusal() is None
+
+
+@pytest.mark.parametrize("name", [".env", ".secrets/client_secret.json"])
+def test_configuration_in_the_working_directory_may_not_be_started_beside(name, tmp_path):
+    working = tmp_path / "checkout"
+    (working / name).parent.mkdir(parents=True, exist_ok=True)
+    (working / name).write_text("{}")
+
+    refusal = make(tmp_path).storage_refusal(working)
+
+    assert refusal is not None and name in refusal and "jarvis migrate" in refusal
+    assert make(tmp_path).storage_refusal(tmp_path / "elsewhere") is None
+
+
+def test_moving_data_dir_neither_loses_the_pin_nor_opens_the_door(tmp_path):
+    """Where the PIN is must not depend on a setting. It used to be `DATA_DIR/pin`, so a
+    `DATA_DIR` pointed at an empty directory found no PIN — and no PIN is an open door."""
+    assert make(tmp_path).enrol_pin("123456") is True
+
+    moved = Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path / "empty")
+
+    assert moved.pin == "123456"
+    assert moved.pin_enrolment_open is False
+    assert moved.enrol_pin("654321") is False
+
+
+def test_a_pin_left_in_the_legacy_home_keeps_the_door_shut(tmp_path):
+    """That machine has a PIN; it has not been moved yet (`jarvis migrate`), and a caller
+    must not be the one to choose a new one in the meantime."""
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(parents=True)
+    (legacy / "pin").write_text("123456\n")
+
+    settings = make(tmp_path)
+
+    assert settings.pin is None  # never read from there: `jarvis migrate` moves it
+    assert settings.pin_enrolment_open is False
 
 
 def test_nothing_of_the_owners_is_read_out_before_a_pin_exists(tmp_path):
@@ -795,6 +896,6 @@ def test_a_write_that_cannot_finish_leaves_no_usable_pin_and_says_so(tmp_path, m
     assert settings.enrol_pin("123456") is False
 
     assert settings.pin is None
-    assert read_enrolled_pin(tmp_path / "jarvis") is None
-    assert pin_file(tmp_path / "jarvis").exists()  # left exactly where it fell
+    assert read_enrolled_pin(jarvis_home()) is None
+    assert pin_file(jarvis_home()).exists()  # left exactly where it fell
     assert make(tmp_path).pin_enrolment_open is False

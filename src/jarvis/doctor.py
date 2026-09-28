@@ -43,12 +43,14 @@ from jarvis.config import (
     pin_file,
 )
 from jarvis.config.permissions import is_protected
-from jarvis.config.store import ConfigStore, legacy_env_file
+from jarvis.config.settings import LEGACY_ENV_FILE
+from jarvis.config.store import ConfigStore
 from jarvis.continuity.memory import memory_path, read_memory
 from jarvis.integrations import slack
 from jarvis.integrations.gmail import token_path
 from jarvis.logging_util import mask_number
 from jarvis.restart.service import INSTALLERS, candidate_target, resolve_target
+from jarvis.wakeword import missing_models, models_dir
 
 Severity = Literal["hard", "soft"]
 
@@ -123,6 +125,7 @@ def run_doctor_checks(
     problems = config_problems or {}
     store = store or ConfigStore()
     checks = [
+        _storage_check(settings),
         _config_check(store),
         _openai_key_check(settings),
         _agent_config_check(settings),
@@ -164,19 +167,20 @@ def run_doctor_checks(
 # --- configuration ---------------------------------------------------------
 
 
+def _storage_check(settings: Settings) -> Check:
+    """Whether an install from before the XDG layout is still waiting for `jarvis migrate`.
+
+    Hard, because `jarvis serve` refuses to start in that state (`storage_refusal`), and
+    missing rather than failed: nothing is broken, a step has not been taken yet.
+    """
+    refusal = settings.storage_refusal()
+    if refusal is not None:
+        return Check("storage", False, refusal, section="import", unset=True)
+    return Check("storage", True, "the XDG directories", section="import")
+
+
 def _config_check(store: ConfigStore) -> Check:
-    """Where the configuration lives, and whether a legacy `.env` is still being read."""
-    legacy = legacy_env_file()
-    if legacy is not None and legacy.is_file():
-        return Check(
-            "configuration",
-            False,
-            f"{legacy.resolve()} is still read, below {store.home} — `jarvis config "
-            "import-env` moves it into the store",
-            severity="soft",
-            section="import",
-            unset=True,
-        )
+    """Where the configuration lives."""
     where = store.config_path if store.config_path.is_file() else store.home
     return Check("configuration", True, str(where), severity="soft", section="import")
 
@@ -371,7 +375,7 @@ def _pin_check(settings: Settings, problem: str | None = None) -> Check:
     runnable when nothing else is. No PIN at all is a warning and not a dead end — `jarvis
     setup` or the first call can set one, and until then nothing of the owner's is read
     out on the phone. A PIN from the environment is simply set, and so is one in
-    `DATA_DIR/pin`, the PIN's own store. An unusable file is the one dead end left, and
+    `JARVIS_HOME/pin`, the PIN's own store. An unusable file is the one dead end left, and
     only the owner can clear it.
     """
     if problem is not None:
@@ -380,10 +384,10 @@ def _pin_check(settings: Settings, problem: str | None = None) -> Check:
         )
     if settings.pin_source == PIN_FROM_ENV:
         return Check(
-            "PIN", True, "set from the environment, which wins over DATA_DIR/pin",
+            "PIN", True, "set from the environment, which wins over JARVIS_HOME/pin",
             severity="soft", section="owner",
         )
-    path = pin_file(settings.data_dir)
+    path = pin_file(settings.config_dir)
     if settings.pin_source == PIN_FROM_FILE:
         return Check(
             "PIN",
@@ -452,19 +456,20 @@ def _tunnel_check() -> Check:
     )
 
 
-def _wakeword_models_dir() -> Path:
-    """Where openWakeWord keeps its downloaded `.onnx` models. Raises if it isn't installed."""
-    import openwakeword
+def _wakeword_models_dir(settings: Settings) -> Path:
+    """Where `jarvis download-models` puts the `.onnx` models. Raises if openWakeWord is
+    not installed, which is the question asked first."""
+    import openwakeword  # noqa: F401 - whether it is there
 
-    return Path(openwakeword.__file__).parent / "resources" / "models"
+    return models_dir(settings.cache_dir)
 
 
 def _wakeword_check(settings: Settings) -> Check:
     """Has `jarvis download-models` been run for the configured wake word?"""
     model = settings.wakeword_model
     try:
-        models_dir = _wakeword_models_dir()
-        found = sorted(models_dir.glob(f"{model}*.onnx"))
+        directory = _wakeword_models_dir(settings)
+        missing = missing_models(directory, model)
     except ImportError:
         # openwakeword is a macOS-only dependency (see pyproject): on a Linux host the
         # wake-word channel is simply absent, which narrows Jarvis rather than breaking it.
@@ -478,13 +483,14 @@ def _wakeword_check(settings: Settings) -> Check:
         )
     except Exception as exc:
         return Check("wake-word model", False, f"openwakeword is unusable: {exc}", section="local")
-    if not found:
+    if missing:
         return Check(
             "wake-word model",
             False,
-            f"no {model}*.onnx in {models_dir} — run `jarvis download-models`",
+            f"no {', '.join(missing)} in {directory} — run `jarvis download-models`",
             section="local",
         )
+    found = sorted(directory.glob(f"{model}*.onnx"))
     return Check("wake-word model", True, ", ".join(path.name for path in found), section="local")
 
 
@@ -551,7 +557,7 @@ def _data_dir_check(settings: Settings) -> Check:
     probe = path / WRITE_PROBE_NAME
     try:
         # `mode=` rather than `secure_dir`: `doctor` must not leave a world-readable
-        # `~/.jarvis` behind on a machine that did not have one, and it must not quietly
+        # data directory behind on a machine that did not have one, and it must not quietly
         # tighten one that does — the privacy check's job is to report what is there.
         path.mkdir(mode=DATA_DIR_MODE, parents=True, exist_ok=True)
         probe.write_text("ok")
@@ -594,13 +600,21 @@ def _data_dir_privacy_check(settings: Settings) -> Check:
 
 
 def private_paths(settings: Settings, store: ConfigStore) -> list[tuple[Path, int]]:
-    """Every path that holds a secret, with the mode it should have. Only those that exist."""
+    """Every path that holds a secret, with the mode it should have. Only those that exist.
+
+    All four of Jarvis's directories are here: the logs quote tool calls and the socket
+    beside them is what a keypad approval arrives through, so the state directory is no
+    less private than the data one.
+    """
     candidates: list[tuple[Path, int]] = [
         (store.home, DATA_DIR_MODE),
         (store.config_path, DATA_FILE_MODE),
         (store.secrets_path, DATA_FILE_MODE),
         (settings.data_dir, DATA_DIR_MODE),
-        (pin_file(settings.data_dir), DATA_FILE_MODE),
+        (settings.state_dir, DATA_DIR_MODE),
+        (settings.state_dir / "logs", DATA_DIR_MODE),
+        (settings.cache_dir, DATA_DIR_MODE),
+        (pin_file(settings.config_dir), DATA_FILE_MODE),
         (token_path(settings), DATA_FILE_MODE),
         (settings.data_dir / "report_secret", DATA_FILE_MODE),
     ]
@@ -726,8 +740,7 @@ def _unlocked_check(store: ConfigStore) -> Check:
 
 
 def _imported_env_check() -> Check:
-    legacy = legacy_env_file()
-    leftovers = sorted(legacy.parent.glob(f"{legacy.name}.imported-*")) if legacy else []
+    leftovers = sorted(Path.cwd().glob(f"{LEGACY_ENV_FILE.name}.imported-*"))
     if leftovers:
         return Check(
             "old .env",

@@ -35,7 +35,7 @@ from jarvis.config import (
     write_enrolled_pin,
 )
 from jarvis.config.permissions import is_protected, service_writable, writable_keys
-from jarvis.config.store import ConfigError, legacy_env_file, validate
+from jarvis.config.store import ConfigError, validate
 from jarvis.doctor import service_manager_check
 from jarvis.setup.context import SetupContext
 from jarvis.setup.phone import numbers_problem
@@ -49,34 +49,20 @@ NOT_MANUAL = frozenset({"JARVIS_PIN", "ALLOWED_CALLERS", "OWNER_NUMBER", "OWNER_
 
 
 def run_import(ctx: SetupContext) -> None:
-    """Move a legacy `.env` into the store, when there is one."""
-    ui = ctx.ui
-    legacy = legacy_env_file()
-    if legacy is None or not legacy.is_file():
+    """Point at `jarvis migrate`, when files from before the XDG layout are still about.
+
+    Not done from here: a migration stops the service and moves the database under it,
+    which wants the owner's attention on its own, and a plan they can read first.
+    """
+    refusal = ctx.settings.storage_refusal()
+    if refusal is None:
+        ctx.ui.success("everything is where Jarvis looks for it")
         return
-    ui.note(
-        f"{legacy.resolve()} is a settings file from before the store. It is still read, "
-        f"but nothing writes it; importing moves every value into {ctx.store.home} and "
-        "renames the file out of the way."
+    ctx.ui.warn(refusal)
+    ctx.ui.note(
+        "`jarvis migrate --dry-run` shows what would move; `jarvis migrate` moves it, "
+        "stopping and restarting the service around it."
     )
-    if not ui.confirm("Import it now?", default=True):
-        return
-    try:
-        report = ctx.store.import_env(legacy)
-    except ConfigError as error:
-        ui.error(str(error))
-        return
-    ctx.refresh()
-    ui.success(f"imported {len(report.imported)} settings; {len(report.defaults)} were defaults")
-    if report.pin:
-        ui.success(f"the PIN: {report.pin}")
-    if report.client_file:
-        ui.success(f"the Google client file: copied to {report.client_file}")
-    if report.kept:
-        ui.note(f"already set here, kept as they were: {', '.join(report.kept)}")
-    if report.unknown:
-        ui.warn(f"not settings, left behind: {', '.join(report.unknown)}")
-    ui.note(f"the old file is now {report.renamed_to}; delete it once Jarvis runs.")
 
 
 # --- voice -----------------------------------------------------------------------------
@@ -259,7 +245,7 @@ def pin_problem(digits: str) -> str | None:
 def run_pin(ctx: SetupContext) -> None:
     """Set the PIN here, or leave it to the first call; replace one only on two yeses."""
     ui, settings = ctx.ui, ctx.settings
-    path = pin_file(settings.data_dir)
+    path = pin_file(settings.config_dir)
     if settings.pin_source == PIN_FROM_ENV:
         ui.success("PIN: set by JARVIS_PIN in your environment, which wins over anything here")
         return
@@ -295,8 +281,8 @@ def run_pin(ctx: SetupContext) -> None:
     if replacing:
         if not ui.confirm(f"Replace the PIN in {path} with the new one?", default=False):
             return
-        replace_pin_at_keyboard(settings.data_dir, digits)
-    elif not write_enrolled_pin(settings.data_dir, digits):
+        replace_pin_at_keyboard(settings.config_dir, digits)
+    elif not write_enrolled_pin(settings.config_dir, digits):
         ui.error(f"A PIN appeared in {path} meanwhile; it was left alone.")
         return
     ctx.refresh()
