@@ -6,9 +6,10 @@ The voice model has no such thing — it only has the tools this process registe
 module gives it one, using the very same bot token and DM channel rather than a second
 Slack app.
 
-`slack_credentials` reads the env pair first (so the process environment can override) and, when a server is
-named, falls back to that server's entry in the Claude CLI config, which keeps one Slack
-app and one place to rotate it. No server name is built in: unset, there is no fallback.
+`slack_credentials` reads the env pair first (so the process environment can override)
+and, when a server is named, falls back to that server's entry in the Claude CLI config,
+which keeps one Slack app and one place to rotate it. No server name is built in: unset,
+there is no fallback.
 """
 
 import asyncio
