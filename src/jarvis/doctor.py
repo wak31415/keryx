@@ -557,7 +557,7 @@ def _data_dir_check(settings: Settings) -> Check:
     probe = path / WRITE_PROBE_NAME
     try:
         # `mode=` rather than `secure_dir`: `doctor` must not leave a world-readable
-        # `~/.jarvis` behind on a machine that did not have one, and it must not quietly
+        # data directory behind on a machine that did not have one, and it must not quietly
         # tighten one that does — the privacy check's job is to report what is there.
         path.mkdir(mode=DATA_DIR_MODE, parents=True, exist_ok=True)
         probe.write_text("ok")

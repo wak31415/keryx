@@ -66,9 +66,9 @@ SDK runs actually reads (checked against 0.157.1):
 
 - **`CODEX_API_KEY`** is *ignored* in the app-server's environment. So Jarvis logs in with
   the key once — on stdin, never on a command line — into a Codex home of its own
-  (`~/.jarvis/codex`, owner-only, with your `config.toml`, `AGENTS.md` and `skills` linked
-  in, but not `hooks.json`: your hooks are your own automation), and logs in again only when
-  the key changes. Your own `~/.codex` login is never touched.
+  (`~/.local/share/jarvis/codex`, owner-only, with your `config.toml`, `AGENTS.md` and
+  `skills` linked in, but not `hooks.json`: your hooks are your own automation), and logs in
+  again only when the key changes. Your own `~/.codex` login is never touched.
 - **`CODEX_ACCESS_TOKEN`** *is* read from the environment, so that is all Jarvis does with
   it: nothing is stored. It is not a ChatGPT token but an OpenAI *agent identity* token; a
   bogus one fails cleanly, but no real one has been run yet.
@@ -90,7 +90,7 @@ checked is marked, and listed under "possible".
 | Follow-ups resume the same session | ✅ | ✅ `thread_resume` |
 | A follow-up reaches a task while it is still running | re-runs after the turn | ✅ into the running turn |
 | Cancel stops the work | ✅ | ✅ `turn/interrupt`, then the app-server is stopped |
-| Progress lines in `~/.jarvis/tasks/<id>.log` | ✅ | ✅ |
+| Progress lines in `DATA_DIR/tasks/<id>.log` | ✅ | ✅ |
 | `SPOKEN_SUMMARY:` / `RESTART_REQUIRED:` | ✅ | ✅ |
 | Project working directory and briefs | ✅ | ✅ |
 | The per-call memory update | ✅ | ✅ when it is the default |

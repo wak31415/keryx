@@ -14,9 +14,9 @@ makes that cheap. So the allowlist is not authentication; the PIN is, and a phon
 spoofer is the whole of what it stands between you and.
 
 It is **not** a defence against a compromised machine, and it was never going to be.
-Anyone who can read your files has `~/.jarvis/secrets.toml` and `~/.jarvis/pin` — the API
-keys, the Twilio token, the PIN and everything else. Against that attacker the PIN is worth
-nothing, and `~/.jarvis` is already theirs to read directly.
+Anyone who can read your files has `~/.config/jarvis/secrets.toml` and `~/.config/jarvis/pin`
+— the API keys, the Twilio token, the PIN and everything else. Against that attacker the PIN
+is worth nothing, and Jarvis's directories are already theirs to read directly.
 
 That is why **reads happen before the PIN**. Gating them bought nothing against the
 attacker who matters, and charged a keypad entry to every ordinary call you make. The
@@ -72,9 +72,9 @@ setup step the thing being set up cannot do for itself — so **the first call m
 in**, and that is the only way a PIN is ever set from the phone.
 
 **It is a one-way door.** While no PIN exists anywhere — none in the environment, no
-`DATA_DIR/pin` — a caller keys six to eight digits, is asked to key the same digits again,
+`JARVIS_HOME/pin` — a caller keys six to eight digits, is asked to key the same digits again,
 and once the two match that is the PIN from then on. The moment a PIN exists the door is
-shut, and it is shut by the write itself rather than by a check: `DATA_DIR/pin` is created
+shut, and it is shut by the write itself rather than by a check: `JARVIS_HOME/pin` is created
 with `O_CREAT | O_EXCL`, so a second write fails in the kernel. There is deliberately no
 setter anywhere — no voice tool, no `jarvis config set` — that can change an enrolled PIN.
 `jarvis setup`, at a terminal, is the owner at the keyboard: it writes a first PIN the same
@@ -95,12 +95,18 @@ outcome here; the keyed digits take the same path as any other keyed PIN and nev
 the model, the transcript or a log line. Three unusable entries leave the PIN for the rest
 of that call — a cap, not a lockout: nothing has been set, so there is nothing to guess
 at, and the next call may still enrol. An enrolled PIN is stored as digits rather than a
-hash, in a 0600 file inside a 0700 `~/.jarvis`: six digits fall to any hash in
+hash, in a 0600 file inside a 0700 `~/.config/jarvis`: six digits fall to any hash in
 microseconds, so hashing would imply a protection that is not there, and the file sits
-beside your call transcripts and `memory.md`, which are no less private.
+beside `secrets.toml`, which is no less private.
+
+**Where the PIN is does not depend on a setting.** It lives in the configuration directory,
+which only the `JARVIS_HOME` environment variable moves, and not in `DATA_DIR`, which a
+setting does. When it was `DATA_DIR/pin`, pointing `DATA_DIR` at an empty directory found no
+PIN — and no PIN is an open door. A PIN still in an old `~/.jarvis` keeps the door shut
+too, until `jarvis migrate` has moved it.
 
 **What a subagent can do to it, and what it cannot.** A subagent runs as you with
-`bypassPermissions`, so it can delete `DATA_DIR/pin` exactly as it can edit any of your files. What
+`bypassPermissions`, so it can delete `JARVIS_HOME/pin` exactly as it can edit any of your files. What
 it cannot do is *rewrite* an enrolled PIN — that is what `O_EXCL` buys — so there is no
 silent swap. Deleting the file is a lockout plus a fresh enrolment window for whoever
 calls next: loud, and visible in `jarvis doctor`, rather than a PIN quietly becoming
@@ -115,15 +121,24 @@ that Jarvis must have no privileged way to invoke it.
 
 ## Where secrets live
 
-Every key, token and password is in `~/.jarvis/secrets.toml` (`JARVIS_HOME` moves it),
-created 0600 inside an 0700 directory and replaced atomically, so there is no moment at
+Every key, token and password is in `~/.config/jarvis/secrets.toml` (`JARVIS_HOME` moves
+it), created 0600 inside an 0700 directory and replaced atomically, so there is no moment at
 which it exists with looser permissions. The plain settings are in `config.toml` beside it,
-and the PIN in `DATA_DIR/pin`. Not a keyring, on purpose: a service started by systemd at
-boot, with nobody logged in, cannot unlock one — the same reason Claude Code and Codex keep
-their credentials in a file of their own. `jarvis doctor` warns when any of these is readable
-by anyone else (`--fix` tightens it and changes nothing else), when one sits inside a git
-work tree, when a secret has been written into `config.toml` by hand, and while a legacy
-`.env` or an imported copy of one is still on disk.
+and so are the PIN (`pin`) and the Google client file. **Keep that directory out of a
+dotfiles repository**: it is configuration in name only. Not a keyring, on purpose: a
+service started by systemd at boot, with nobody logged in, cannot unlock one — the same
+reason Claude Code and Codex keep their credentials in a file of their own. What Jarvis
+keeps is owner-only as well: the data (`~/.local/share/jarvis`: transcripts, tasks, the
+memory, sign-in tokens), the state (`~/.local/state/jarvis`: logs, and the approval socket)
+and the cache. `jarvis doctor` warns when any of these is readable by anyone else (`--fix`
+tightens it and changes nothing else), when one sits inside a git work tree, when a secret
+has been written into `config.toml` by hand, and while an imported copy of an old `.env` is
+still on disk.
+
+Nothing is read from the working directory. A `.env` in the checkout used to be read, and a
+checkout is the one place a secret is one `git add` from leaving the machine; `jarvis serve`
+now refuses to start while one is there, or while files are still in an old `~/.jarvis`,
+until `jarvis migrate` has moved them.
 
 A secret is never put on a command line, where `ps` and your shell history keep it:
 `jarvis config set KEY --stdin` reads it from standard input and `--from-env VAR` from a
@@ -259,7 +274,9 @@ takes no further PIN — not even the right one.
 
 **Across calls.** A per-call limit alone was worth little: three guesses a call is roughly
 167,000 calls for a 6-digit PIN, about a day and a half at twenty in parallel. So every wrong
-PIN on every call is also counted in `DATA_DIR/pin-failures.json`, which survives a restart:
+PIN on every call is also counted in `DATA_DIR/pin-failures.json`, which survives a restart
+(and lives with the data rather than the more disposable state, since losing it hands a
+guesser a fresh budget):
 
 | Setting | Default | |
 |---|---|---|
@@ -328,8 +345,8 @@ without the PIN is very much in scope.
   So is a subagent's credential reaching its command line, a log or a spoken error: it is
   handed over in the environment only, and what a refused key is quoted back as is redacted.
 - **Anything that requires the host account already.** Someone who can read
-  `~/.jarvis` or write `~/.claude/settings.json` is already you — deleting
-  `DATA_DIR/pin` is that, and it re-opens enrolment for the next caller rather than
+  `~/.config/jarvis` or write `~/.claude/settings.json` is already you — deleting
+  `JARVIS_HOME/pin` is that, and it re-opens enrolment for the next caller rather than
   changing the PIN in place (above). Text that reaches a
   Claude Code session on the host — an issue, a pull request, a web page it reads — is
   not that: a way for it to get the approval bridge to ring you about one command and

@@ -816,6 +816,19 @@ class SessionRegistry:
 
 ### 3.4 Configuration (names → `Settings` fields)
 
+*Amended 2026-09-28: storage follows XDG.* Everything that lived in one `~/.jarvis` is now in
+four directories, on Linux and macOS alike (never `~/Library`), each honouring its
+`XDG_*_HOME`: `JARVIS_HOME` defaults to `~/.config/jarvis` and holds `config.toml`,
+`secrets.toml`, the PIN (`JARVIS_HOME/pin`, moved from `data_dir/pin` so that where it is
+depends on no setting) and `google_client_secret.json`; `DATA_DIR` defaults to
+`~/.local/share/jarvis`; the new `STATE_DIR` (`~/.local/state/jarvis`) holds the logs, the
+restart record, the version stamps and the approval socket; the new `CACHE_DIR`
+(`~/.cache/jarvis`) the wake-word models. A relative directory setting is refused. **Nothing
+is read from the working directory any more**: the `.env` source and the
+`.secrets/client_secret.json` fallback below are gone, `jarvis migrate` moves an old install
+across, and `serve` refuses to start while `~/.jarvis` still holds Jarvis's files or a `.env`
+sits in the working directory. Where this paragraph and the next disagree, this one wins.
+
 *Amended 2026-09-27.* Values come from, first to last: the code, the process environment,
 `JARVIS_HOME/secrets.toml`, `JARVIS_HOME/config.toml` (default `~/.jarvis`), a legacy `.env`
 in the working directory (read, never written; `jarvis config import-env` moves it in), the
@@ -872,7 +885,9 @@ where `jarvis setup` puts the downloaded client, else the old `.secrets/client_s
 | `PROJECTS` | `projects: dict[str,str]` (JSON) | `{}` |
 | `PROJECTS_ROOT` | `projects_root` (where a task with no project starts; never created) | `~/projects` (was a machine-specific path until 2026-09-16); not a directory → such a task starts in `data_dir/workspace` |
 | `SKILLS_DIR` | `skills_dir` (Claude skills listed in the voice prompt) | `~/.claude/skills` |
-| `DATA_DIR` | `data_dir` | `~/.jarvis` |
+| `DATA_DIR` | `data_dir` | `~/.jarvis`; since 2026-09-28 `$XDG_DATA_HOME/jarvis` (`~/.local/share/jarvis`), and never relative |
+| `STATE_DIR` | `state_dir` (logs, `restart.json`, the stamps, `approvals/` and `approvals.sock`) | `$XDG_STATE_HOME/jarvis` (`~/.local/state/jarvis`; added 2026-09-28) |
+| `CACHE_DIR` | `cache_dir` (the wake-word models, in `models/`) | `$XDG_CACHE_HOME/jarvis` (`~/.cache/jarvis`; added 2026-09-28) |
 | `MAX_CONCURRENT_TASKS` | `max_concurrent_tasks` | `3` |
 | `DISPATCH_WAIT_MAX_SECONDS` | `dispatch_wait_max_seconds` | `25` |
 | `LOCAL_SILENCE_TIMEOUT` | `local_silence_timeout` | `30` |
@@ -886,14 +901,16 @@ where `jarvis setup` puts the downloaded client, else the old `.secrets/client_s
 | `WAKEWORD_MODEL` / `WAKEWORD_THRESHOLD` | `wakeword_model` / `wakeword_threshold` | `hey_jarvis` / `0.5` |
 | `REPORT_SECRET` | `report_secret` | `None` → random secret persisted at `data_dir/report_secret` |
 | `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` / `USER_GOOGLE_EMAIL` | same names lowercased | `None` |
-| `GOOGLE_CLIENT_SECRETS_FILE` | `google_client_secrets_file` (used when the id/secret pair is unset) | `.secrets/client_secret.json` |
+| `GOOGLE_CLIENT_SECRETS_FILE` | `google_client_secrets_file` (used when the id/secret pair is unset) | `.secrets/client_secret.json`; since 2026-09-28 blank → `JARVIS_HOME/google_client_secret.json`, never the working directory |
 | `GOOGLE_WORKSPACE_MCP` | `google_workspace_mcp` (attach the `workspace-mcp` server to subagents) | `false` |
 | `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` | `slack_bot_token` / `slack_channel_id` | `None` → the `SLACK_MCP_SERVER` server's config |
 | `SLACK_MCP_SERVER` | `slack_mcp_server` (the user-scope MCP server in `~/.claude.json` that gives subagents Slack) | `None` → no fallback, and subagents are told nothing about Slack |
 | `SMS_ENABLED` | `sms_enabled` (may Jarvis text at all; outbound *calls* are separate) | `false` (added 2026-08-26) |
 | `LOG_LEVEL` | `log_level` | `INFO` |
 
-Data layout under `data_dir`: `tasks.db`, `tasks/<id>.log` (agent transcript),
+Data layout under `data_dir` (*until 2026-09-28*; the amendment at the top of this section
+moves `pin` and `google_client_secret.json` to `JARVIS_HOME`, and `restart.json`, `logs/`,
+the stamps and `approvals/` to `state_dir`): `tasks.db`, `tasks/<id>.log` (agent transcript),
 `tasks/<id>.md` (final report), `calls/<session_id>.log` (voice transcript),
 `report_secret`, `restart.json` (0600; the pending restart's call-back, its log marks and
 its watchdog), `pin-failures.json` (0600; wrong PINs across calls and the lock they set),
@@ -1057,7 +1074,8 @@ content a subagent reads, effectively has a shell as the owner. `SECURITY.md` is
 above no longer says "is told nothing of the owner's". The PIN defends against a **phone-side
 caller-id spoofer** and against nothing else. It is not, and never was, a defence against a
 compromised machine: that attacker has `.env`, which has `JARVIS_PIN` along with every other
-credential, and `~/.jarvis` is already theirs to read. Gating *reads* therefore bought nothing
+credential, and `~/.jarvis` is already theirs to read (since 2026-09-28: `secrets.toml` and
+`pin` in `~/.config/jarvis`, which is no harder to read). Gating *reads* therefore bought nothing
 against the attacker who matters, and charged a keypad entry to every ordinary call — so the
 line is reading versus acting, and reads happen before the PIN
 (`BRIEFING_BEFORE_PIN`, default true). The residual risk, accepted and written down: a spoofer
@@ -1075,7 +1093,7 @@ and nobody is going to spoof your number in that time" — the caller must still
 must never be able to *change* it afterwards, which is why the door is `O_CREAT | O_EXCL` at
 the syscall rather than a policy check, and why no tool or command sets a PIN. The residual
 risk, written down: a subagent runs as the owner with `bypassPermissions`, so it can delete
-`data_dir/pin` exactly as it can edit `.env`. It cannot rewrite an enrolled PIN, so the worst
+`data_dir/pin` (since 2026-09-28 `JARVIS_HOME/pin`) exactly as it can edit `.env`. It cannot rewrite an enrolled PIN, so the worst
 case is a lockout plus a fresh enrolment window for the next caller — loud, and visible in
 `jarvis doctor` — and not a silent swap. The answer is to move the PIN into `.env`, where the
 environment wins for ever after; `doctor` says so on every run that finds an enrolled one. A
@@ -1100,7 +1118,7 @@ in `~/.claude/hooks/` hands the pending prompt to the broker over a Unix socket 
 and five minutes later Jarvis rings him. Four rulings, none of them a preference:
 
 - **A Unix socket, never an HTTP route.** `cloudflared` puts the whole of port 8080 on the
-  internet. `data_dir/approvals.sock` at 0600 is unreachable through it by construction, and
+  internet. `data_dir/approvals.sock` (since 2026-09-28 `state_dir/approvals.sock`) at 0600 is unreachable through it by construction, and
   filesystem permissions are the right authorization for a client already running as him.
 - **`policy.py` is the *primary* control, not a second layer.** A `PermissionRequest` hook
   returning `allow` appears to skip the CLI's own `permissions.deny` re-check (measured

@@ -8,6 +8,19 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Added
 
+- **`jarvis migrate`** moves an install from `~/.jarvis`, and a `.env` or `.secrets/` in the
+  checkout, to the XDG directories. `--dry-run` prints the plan, and a conflict stops it
+  before anything is touched. It stops the service while it moves things, rewrites the
+  paths `tasks.db` holds, imports the `.env`, re-renders the service and the approval hook,
+  and starts the service again. Nothing is deleted: the old directory is renamed
+  `~/.jarvis.migrated-<date>`. It can be run twice. Claude tasks that ran in the old
+  workspace lose their session, and a follow-up starts afresh; the migration lists them.
+- **`STATE_DIR`** (`~/.local/state/jarvis`): the logs, the restart record and stamps, and the
+  approval bridge's socket and markers. **`CACHE_DIR`** (`~/.cache/jarvis`): the wake-word
+  models, which `jarvis download-models` now fetches there instead of into the installed
+  package. Neither may be changed by the running service.
+- `jarvis config path` names the data, state and cache directories, and `--shell` prints
+  them for a script to eval.
 - **`jarvis setup`**, a wizard that asks only for what is still missing and saves as it
   goes: the voice key (checked with OpenAI), the coding agents and their sign-ins (never
   asked of an agent that can already run), your name, numbers and PIN, then — each optional —
@@ -110,6 +123,15 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Changed
 
+- **Storage follows XDG, on Linux and macOS alike.** The configuration, the PIN and the
+  Google client file are in `~/.config/jarvis` (`JARVIS_HOME`), the data in
+  `~/.local/share/jarvis` (`DATA_DIR`), the state in `~/.local/state/jarvis` and the cache in
+  `~/.cache/jarvis`; each `XDG_*_HOME` is honoured. The PIN moved out of `DATA_DIR`, so
+  that where it is no longer depends on a setting. A relative `DATA_DIR` is refused. The
+  service units and the restart watchdog carry the resolved directories, the approval hook
+  is always told where the socket is (`JARVIS_STATE_DIR`), and `scripts/dev.sh` logs the
+  tunnel to `STATE_DIR/logs` rather than the checkout. `jarvis serve`, and every command
+  that reads the data, refuses to start until `jarvis migrate` has run on an older install.
 - **Before the PIN, the phone keeps nothing and changes nothing.** Caller ID is spoofable,
   so an allowed number no longer earns the right to *do* anything. On the phone, dispatch,
   `recall`, Slack, cancelling, restarting, arranging a call back and answering a pending
@@ -182,6 +204,9 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Removed
 
+- **A `.env` in the working directory is no longer read**, nor
+  `.secrets/client_secret.json`: a checkout is the one place a secret must never live.
+  `jarvis migrate` moves both into the store.
 - `jarvis init`, `setup-agent`, `setup-google` and `setup-gmail`: `jarvis setup`, `jarvis auth`
   and `jarvis memory seed` do what they did. `.env.example` is gone; an existing `.env` is
   still read below the store until `jarvis config import-env` moves it in.

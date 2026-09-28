@@ -53,7 +53,8 @@ def test_the_skill_keeps_secrets_off_the_command_line_and_out_of_its_hands(flat)
     assert "A secret never goes on the command line" in flat
     assert "--stdin" in flat and "--from-env VAR" in flat
     assert "do not ask them to paste it to you" in flat
-    assert "Never read `~/.jarvis/`" in flat
+    assert "Never read Jarvis's own directories" in flat
+    assert "`~/.config/jarvis/`" in flat and "`~/.local/share/jarvis/`" in flat
 
 
 def test_the_skill_goes_through_memory_seed_and_never_writes_the_memory_itself(flat):
@@ -68,7 +69,7 @@ def test_the_skill_picks_the_projects_after_the_owner_has_seen_the_list(flat):
 
 def test_the_skill_says_where_the_summaries_and_the_memory_end_up(flat):
     assert "sent to the realtime provider on every call" in flat
-    assert "~/.jarvis/projects/<name>.md" in flat
+    assert "~/.local/share/jarvis/projects/<name>.md" in flat
     assert "`.jarvis-brief.md` wins" in flat
 
 

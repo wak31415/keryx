@@ -1,6 +1,6 @@
 """What may be written down about a call, and in what shape.
 
-A phone number identifies a person. Jarvis's logs go to `~/.jarvis/logs/jarvis.log`,
+A phone number identifies a person. Jarvis's logs go to `STATE_DIR/logs/jarvis.log`,
 to the service manager's journal, and into the terminal of whoever is debugging — none of
 which is the right home for the owner's number or a caller's, and the last four digits are
 enough to tell two callers apart while reading a log. Everything that writes a number to a

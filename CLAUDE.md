@@ -18,8 +18,11 @@ Realtime API and Claude Agent SDK subagents.
   `state`: ok / missing / failed)
 - Settings: `uv run jarvis config list [--json] [--group G]`, `config get KEY… [--shell]`
   (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
-  `--from-env VAR`), `config unset KEY…`, `config path`, `config import-env [PATH]`,
-  `config lock|unlock KEY` (what the running service may change)
+  `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
+  `config import-env [PATH]`, `config lock|unlock KEY` (what the running service may change)
+- Move an install from `~/.jarvis` and a checkout `.env` to the XDG directories:
+  `uv run jarvis migrate [--dry-run] [--yes]` (stops the service, moves, re-renders the unit
+  and the approval hook, starts it again; `serve` refuses to start until it has run)
 - Sign-ins: `uv run jarvis auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
   the browser landed on), `uv run jarvis auth status [--json] [--smoke]`
@@ -93,8 +96,9 @@ remember:
   a `description`, a `group` and a default `service_writable`, declared with `setting(...)`),
   `store` (`JARVIS_HOME/config.toml` and `secrets.toml`, the only writer of either),
   `permissions` (what the running service may change; `PROTECTED_KEYS`), `pin`
-  (`DATA_DIR/pin`), `files` (modes and atomic writes) and `reference` (generates
-  `docs/configuration.md`). The package re-exports the old `jarvis.config` names.
+  (`JARVIS_HOME/pin`), `files` (the XDG directories, the modes and atomic writes), `migrate`
+  (`jarvis migrate`) and `reference` (generates `docs/configuration.md`). The package
+  re-exports the old `jarvis.config` names.
 - **setup** — `setup/` is `jarvis setup` and `jarvis auth`: `wizard` (section order, what is
   left, the closing summary), one module per large section (`agents`, `phone`, `google`,
   `profile`, `project_context`) and `sections` for the small ones, `context` (the
@@ -173,7 +177,7 @@ Four rulings, and `SECURITY.md` is the threat model:
   number — that only makes the tier fail silently on the owner's other phone.
 - **The PIN is the line between reading and acting, not between private and not.** The
   owner's ruling, and the reasoning is why it is written down: the threat case is somebody
-  who has the machine, and they have `secrets.toml` and `DATA_DIR/pin` — so gating reads buys
+  who has the machine, and they have `secrets.toml` and `JARVIS_HOME/pin` — so gating reads buys
   nothing against them. It only ever defended against a phone-side caller-id spoofer, and it
   charged that defence to every ordinary call. So the whole standing briefing comes before
   the PIN (`BRIEFING_BEFORE_PIN`, default on): the digest, the memory, the project names, the
@@ -269,15 +273,15 @@ it is running. Do not make a subagent restart Jarvis itself; it is inside the cg
 
 ## Settings live in a store, and the service may change only some
 
-`jarvis setup`, `jarvis config` and `jarvis auth` replace a hand-edited `.env`. Four rulings:
+`jarvis setup`, `jarvis config` and `jarvis auth` replaced a hand-edited `.env`. Four rulings:
 
 - **Secrets in a 0600 file, not a keyring.** Plain settings in `JARVIS_HOME/config.toml`,
   every `repr=False` field in `secrets.toml`, both 0600 in an 0700 directory and replaced
   atomically (`files.write_private`). A keyring cannot be unlocked by a headless systemd
   unit, and the split is the one Claude Code and Codex make. Precedence is code → process
-  environment → `secrets.toml` → `config.toml` → a legacy cwd `.env` (read, never written;
-  `doctor` says so) → default. `JARVIS_HOME` is an environment variable only, since it is
-  what says where the settings are.
+  environment → `secrets.toml` → `config.toml` → default, and nothing is read from the
+  working directory (see "Storage follows XDG"). `JARVIS_HOME` is an environment variable
+  only, since it is what says where the settings are.
 - **A secret never on argv.** `jarvis config set` refuses one given as a value; it takes
   `--stdin` or `--from-env`. `config get` and `config list` never print one, and a refused
   value is never quoted back (`hide_input_in_errors`).
@@ -291,13 +295,14 @@ it is running. Do not make a subagent restart Jarvis itself; it is inside the cg
   `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
   against the whole store, so nothing it saves can stop `jarvis serve` from starting. The
   commands that write what the service may not — `config import-env`, `auth login`,
-  `memory seed`, `setup`, `config lock|unlock` — refuse outright under
+  `memory seed`, `setup`, `config lock|unlock`, `migrate` — refuse outright under
   `JARVIS_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Jarvis's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
   `tests/config/test_permissions.py` names the writable set.
-- **The PIN is not a setting.** It stays in `DATA_DIR/pin`; `config set JARVIS_PIN` is
-  refused, `import-env` moves a `.env` PIN there — and refuses the whole import when a
+- **The PIN is not a setting.** It stays in `JARVIS_HOME/pin`, a write-once file of its own
+  and never a key in `config.toml`; `config set JARVIS_PIN` is refused, `import-env` (and
+  `migrate`, through it) moves a `.env` PIN there — and refuses the whole import when a
   different PIN is already enrolled, because silently switching would lock the owner out.
 
 `jarvis setup` reads `doctor`'s checks to decide what is left (each has a `section`, and is
@@ -307,11 +312,45 @@ It never assumes what the machine lacks: an agent that is signed in is not asked
 The one write it makes outside the machine — the Twilio webhooks — comes after showing both
 addresses and a yes.
 
+## Storage follows XDG
+
+Jarvis keeps its files where uv, gh, git and neovim keep theirs, on Linux and macOS alike —
+never `~/Library`, so no `platformdirs` — and each `XDG_*_HOME` is honoured, an empty or
+relative one ignored as the specification says (`config/files.py::xdg_home`):
+
+- `~/.config/jarvis` — `JARVIS_HOME`: `config.toml`, `secrets.toml`, `pin`, the Google
+  client file. Only the environment moves it.
+- `~/.local/share/jarvis` — `DATA_DIR`: `tasks.db`, `tasks/`, `calls/`, `memory.md`,
+  `projects/`, `workspace/`, the sign-in tokens, `codex/`, and `pin-failures.json`.
+- `~/.local/state/jarvis` — `STATE_DIR`: `logs/`, `restart.json`, the version stamps,
+  `approvals/` and `approvals.sock` together, so the hook needs one directory.
+- `~/.cache/jarvis` — `CACHE_DIR`: the wake-word models, loaded by path.
+
+Four rulings:
+
+- **The PIN is in the configuration directory, not the data one.** Where the PIN is must not
+  depend on a setting: at `DATA_DIR/pin`, a `DATA_DIR` pointed at an empty directory found
+  no PIN, and no PIN is an open enrolment door. `pin-failures.json` stays with the data,
+  not the state, because people treat state as disposable and losing it hands a guesser a
+  fresh budget.
+- **Nothing is read from the working directory.** No `.env`, no `.secrets/`. `serve` (and
+  every command that reads the data) refuses while one is there or while `~/.jarvis` still
+  holds Jarvis's files (`Settings.storage_refusal`). The signal is the old files being
+  there, never the new directory missing — `ensure_dirs` makes that on any command.
+- **`jarvis migrate` plans before it touches anything, and can run twice.** A conflict
+  stops it before the service is stopped; an entry already moved is not in the next plan.
+  Nothing is deleted but a stale socket: `~/.jarvis` is renamed aside with its leftovers.
+  Claude sessions that ran in the old workspace are let go, so a follow-up starts afresh.
+- **The service resolves what its installer's terminal resolved.** The units render
+  `JARVIS_HOME` and the four `XDG_*_HOME`, and the restart watchdog's transient unit is
+  handed them with `--setenv`: a user manager's environment is not the service's. A
+  relative `DATA_DIR`, `STATE_DIR` or `CACHE_DIR` is refused for the same reason.
+
 ## Restarts are three halves
 
 The process that runs `systemctl restart` is the one that gets killed, so
 `jarvis/restart/coordinator.py` splits the flow across that death and joins it with
-`data_dir/restart.json`: `request()` writes the record and hands over, `resume()` (one task
+`state_dir/restart.json`: `request()` writes the record and hands over, `resume()` (one task
 per `jarvis serve`) finds it on the far side and rings back with a status summary. Neither
 half may interrupt a call — a restart asked for during one waits for the line to clear, and
 the confirmation is announced or texted rather than dialled into a live session. Keep it
@@ -322,7 +361,7 @@ that way, and keep every failure path landing somewhere a human can find it
 refuses rather than restart the installed one. Only `jarvis restart` and `doctor`, which run
 outside the unit, ask whether it is installed.
 
-"Did it load the change" is answered from `data_dir/running-version`, stamped by `mark_running()`
+"Did it load the change" is answered from `state_dir/running-version`, stamped by `mark_running()`
 at the top of `jarvis serve` — *not* from `current_version()` at request time. The checkout moves
 under a running process, and the normal order (edit, commit, ask for the restart) puts the new
 commit on disk before the question is put, so a request-time read compares the new commit with
@@ -358,7 +397,7 @@ and blocks; five minutes later, if they still have not answered, Jarvis rings th
 Four rulings hold it up, and none of them is a preference:
 
 - **A Unix socket, never an HTTP route.** `cloudflared` puts the whole of port 8080 on the
-  internet. `data_dir/approvals.sock` at 0600 is unreachable through it by construction.
+  internet. `state_dir/approvals.sock` at 0600 is unreachable through it by construction.
 - **`policy.py` is the *primary* control, not a second layer.** A `PermissionRequest` hook
   returning `allow` appears to skip the CLI's own `permissions.deny` re-check, so whatever
   `classify` calls eligible is what a keypad digit can run. It is an allowlist, it starts
@@ -474,7 +513,7 @@ scope, so the test suite can run on a machine with no mic.
 ## Working agreements
 
 - Only `config/store.py` writes the configuration, and a secret is never on argv, in a log
-  or in output. Never print or paste `secrets.toml` or a legacy `.env`. `docs/configuration.md`
+  or in output. Never print or paste `secrets.toml` or an old `.env`. `docs/configuration.md`
   is generated from `Settings` (`python -m jarvis.config.reference`); a new field gets a
   description and a group, and `tests/test_docs_sync.py` fails until the doc is regenerated.
 - The database runs ahead of the code. `_migrate` upgrades `tasks.db` from whichever process
@@ -490,9 +529,9 @@ scope, so the test suite can run on a machine with no mic.
   the `*_MESSAGE` constants in `builtin_common`, the call-back contexts, the voice prompt —
   says what *not* to say as firmly as what to say, because the failure mode is never
   silence, it is a second turn restating the first. Transcripts of real calls are in
-  `~/.jarvis/calls/`; read a few before editing any of it. They may contain a spoken PIN and
-  other personal details, so nothing from them is ever copied into code, tests, docs or
-  commit messages — describe the pattern, never quote the call.
+  `~/.local/share/jarvis/calls/`; read a few before editing any of it. They may contain a
+  spoken PIN and other personal details, so nothing from them is ever copied into code,
+  tests, docs or commit messages — describe the pattern, never quote the call.
 - Spec §3.2 interface names and signatures stay stable (extra optional keyword
   arguments are fine). §3.3/§4 hold rulings: follow them, and amend the spec in a
   docs commit when one changes.
@@ -503,11 +542,12 @@ scope, so the test suite can run on a machine with no mic.
 - Clean and minimal over clever; TDD, with `uv run pytest -q` and
   `uv run ruff check src tests` pristine before a commit. Coverage has a floor (96%) and it
   is a ratchet: raise it when the measured number moves up, never lower it to pass.
-- `data_dir` is 0700 and the files under it 0600 (`config.secure_dir` / `secure_file`).
-  Anything new that writes there goes through them.
+- All four of Jarvis's directories are 0700 and the files under them 0600
+  (`config.secure_dir` / `secure_file` / `write_private`). Anything new that writes there
+  goes through them.
 - A configured `JARVIS_PIN` is 6-8 digits and `jarvis serve` refuses to start otherwise.
   With none set anywhere, **the first call may enrol one** and that is the only way the
-  phone ever sets a PIN: `Settings.pin` resolves environment-then-`data_dir/pin`,
+  phone ever sets a PIN: `Settings.pin` resolves environment-then-`JARVIS_HOME/pin`,
   `pin_enrolment_open` is the door, and `config.write_enrolled_pin` shuts it with
   `O_CREAT | O_EXCL` — the kernel refusing a second write is the whole guarantee, which is
   why there is no setter in any tool or CLI command and why you must not add one. The one
@@ -516,9 +556,10 @@ scope, so the test suite can run on a machine with no mic.
   twice, by an atomic rename (`pin.replace_pin_at_keyboard`) so no failure leaves no PIN.
   A running service keeps the PIN it started with until it restarts, and setup says so. The
   digits are keyed twice and compared (`session._enrol_keypad_pin`), never spoken: a
-  mishearing here is unfixable. Any `data_dir/pin` shuts the door, usable or not, and only
-  the owner at the keyboard re-opens it. Until a PIN exists nothing of theirs is read out
-  (`reads_before_pin`), and SECURITY.md carries the accepted risk.
+  mishearing here is unfixable. Any `JARVIS_HOME/pin` shuts the door, usable or not, and so
+  does a PIN still in an unmigrated `~/.jarvis`; only the owner at the keyboard re-opens it.
+  Until a PIN exists nothing of theirs is read out (`reads_before_pin`), and SECURITY.md
+  carries the accepted risk.
   Wrong PINs also count across calls (`jarvis/pin_guard.py`): while that has PIN entry locked
   the right PIN is refused before it is compared, and nothing resets the count early — not
   the lock lifting, not a right PIN. That a spoofed caller can keep the owner's PIN locked is the
