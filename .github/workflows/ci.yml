@@ -10,6 +10,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Actions are pinned by commit SHA (the tag in a comment), since a tag can be moved under us;
+# Dependabot's github-actions updates keep the pins current. No secret is referenced, and
+# the trigger is `pull_request`, never `pull_request_target` (#47).
 permissions:
   contents: read
 
@@ -26,10 +29,10 @@ jobs:
         # machine with no microphone, and only the Linux leg proves that.
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
           enable-cache: true
 
@@ -64,10 +67,10 @@ jobs:
     name: wheel builds and installs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
           enable-cache: true
 
