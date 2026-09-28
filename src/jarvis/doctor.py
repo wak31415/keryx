@@ -613,7 +613,12 @@ def _file_modes_check(settings: Settings, store: ConfigStore) -> Check:
 
 
 def _inside_git(path: Path) -> Path | None:
-    """The work tree `path` is inside, found by looking for `.git` upwards. No subprocess."""
+    """The work tree `path` is inside, found by looking for `.git` upwards. No subprocess.
+
+    Resolved first, existing or not: `fresh/../jh` has `fresh` among its lexical parents
+    and is not inside it.
+    """
+    path = path.resolve()
     for parent in [path, *path.parents]:
         if (parent / ".git").exists():
             return parent
@@ -623,7 +628,7 @@ def _inside_git(path: Path) -> Path | None:
 def _git_check(settings: Settings, store: ConfigStore) -> Check:
     """A secret under version control is one `git add .` from being pushed somewhere."""
     for path in (store.home, settings.data_dir):
-        tree = _inside_git(path.resolve() if path.exists() else path)
+        tree = _inside_git(path)
         if tree is not None:
             return Check(
                 "outside git",

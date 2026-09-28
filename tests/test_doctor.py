@@ -726,6 +726,16 @@ def test_a_config_inside_a_git_work_tree_warns(healthy, tmp_path, monkeypatch):
     assert str(tmp_path / "repo") in check.detail
 
 
+def test_a_relative_config_path_that_steps_out_of_a_work_tree_does_not_warn(healthy):
+    """`fresh/../jh` is not inside `fresh`, even before it exists."""
+    from jarvis.config.store import ConfigStore
+
+    (Path("fresh") / ".git").mkdir(parents=True)
+    store = ConfigStore(Path("fresh/../jh"))
+
+    assert by_name(run_doctor_checks(healthy, store=store))["outside git"].ok
+
+
 def test_a_secret_written_into_config_toml_by_hand_warns(healthy):
     from jarvis.config.files import dump_toml, write_private
     from jarvis.config.store import ConfigStore
