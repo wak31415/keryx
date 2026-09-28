@@ -1,14 +1,16 @@
 # Shared helpers for the scripts in this directory. Source it; do not run it.
 #
-# Sourcing sets REPO, JARVIS_HOME_DIR, JARVIS_DIR and LOGS, and provides the scaffolding that
-# install-systemd.sh and install-launchd.sh each had their own copy of: argument parsing,
-# the configuration and PATH checks, template rendering, and the closing banner. What is left
-# in the installers is what is genuinely different — systemd units versus launchd agents.
+# Sourcing sets REPO, the RESOLVED_* paths (below), JARVIS_HOME_DIR, JARVIS_DIR and LOGS, and
+# provides the scaffolding that install-systemd.sh and install-launchd.sh each had their own
+# copy of: argument parsing, the configuration and PATH checks, template rendering, and the
+# closing banner. What is left in the installers is what is genuinely different — systemd
+# units versus launchd agents.
 #
-# Settings are read through `jarvis config get`, the way the service reads them — the store
-# in JARVIS_HOME, a legacy .env in the repository, the defaults — and never by grepping a
-# file. JARVIS_CLI says how to run jarvis (default `uv run --project "$REPO" jarvis`); the
-# tests point it at the interpreter running them.
+# Settings are read through `jarvis config get`, and where Jarvis keeps things through
+# `jarvis config path --shell` — the way the service reads them, from the store in
+# JARVIS_HOME and the defaults — and never by grepping a file or restating a default here.
+# JARVIS_CLI says how to run jarvis (default `uv run --project "$REPO" jarvis`); the tests
+# point it at the interpreter running them.
 #
 # Deliberately no `set -euo pipefail` here: this file is sourced, and a sourced file should
 # not change the shell options of whoever sourced it. Every script that needs them sets
@@ -18,10 +20,8 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 #: Set by `parse_install_args` when `--uninstall` was passed.
 UNINSTALL=0
 
-config_value() {
-  # config_value NAME — the value jarvis would use for NAME; empty when it has none. Run from
-  # the repository, the service's working directory, so a legacy .env there still counts.
-  # Never a secret: `jarvis config get` refuses those, and a config.toml that does not parse.
+jarvis_cli() {
+  # jarvis_cli ARGS... — run jarvis from the repository, the service's working directory.
   local -a cli
   if [[ -n "${JARVIS_CLI:-}" ]]; then
     read -r -a cli <<< "$JARVIS_CLI"  # a command line, split on purpose
@@ -31,29 +31,47 @@ config_value() {
     echo "uv is not on PATH (https://docs.astral.sh/uv/)" >&2
     return 1
   fi
-  (cd "$REPO" && "${cli[@]}" config get "$1")
+  (cd "$REPO" && "${cli[@]}" "$@")
 }
 
-resolve_data_dir() {
-  # resolve_data_dir — DATA_DIR the way the service resolves it: `~` expanded, a relative
-  # path taken from the repository. Everything the service writes, its logs included, is here.
-  local dir
-  dir="$(config_value DATA_DIR)" || return 1
-  dir="${dir:-~/.jarvis}"
-  case "$dir" in
-    "~") dir="$HOME" ;;
-    "~/"*) dir="$HOME/${dir#\~/}" ;;
-  esac
-  [[ "$dir" == /* ]] || dir="$REPO/$dir"
-  printf '%s' "${dir%/}"
+config_value() {
+  # config_value NAME — the value jarvis would use for NAME; empty when it has none.
+  # Never a secret: `jarvis config get` refuses those, and a config.toml that does not parse.
+  jarvis_cli config get "$1"
 }
 
+resolve_paths() {
+  # resolve_paths — set RESOLVED_<NAME> for every line of `jarvis config path --shell`:
+  # JARVIS_HOME, DATA_DIR, STATE_DIR, CACHE_DIR and the four XDG_*_HOME they came from.
+  # Prefixed, so that a DATA_DIR or XDG_STATE_HOME this shell exports is never reassigned
+  # and handed to every `jarvis` the script runs afterwards. Only NAME='value' lines are
+  # taken, each quoted by jarvis for exactly this eval.
+  local output line
+  output="$(jarvis_cli config path --shell)" || return 1
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[A-Z_]+= ]] && eval "RESOLVED_$line"
+  done <<< "$output"
+  [[ -n "${RESOLVED_STATE_DIR:-}" ]] || {
+    echo "jarvis did not say where it keeps things (jarvis config path --shell)" >&2
+    return 1
+  }
+}
+
+resolve_paths || true
 #: Where the configuration lives; rendered into the units so the service reads the same one.
-JARVIS_HOME_DIR="${JARVIS_HOME:-$HOME/.jarvis}"
-#: The resolved DATA_DIR. Not called DATA_DIR: if the caller's shell exports one, assigning
-#: it here would hand the value to every `jarvis` the script runs.
-JARVIS_DIR="$(resolve_data_dir)" || JARVIS_DIR="$HOME/.jarvis"
-LOGS="$JARVIS_DIR/logs"
+JARVIS_HOME_DIR="${RESOLVED_JARVIS_HOME:-}"
+#: The resolved DATA_DIR. Not called DATA_DIR, for the reason `resolve_paths` gives.
+JARVIS_DIR="${RESOLVED_DATA_DIR:-}"
+#: Where the service's logs go: STATE_DIR/logs, where `jarvis restart` reads them back.
+LOGS="${RESOLVED_STATE_DIR:+$RESOLVED_STATE_DIR/logs}"
+
+require_paths() {
+  # require_paths — exit unless `resolve_paths` found where Jarvis keeps things.
+  if [[ -z "$LOGS" ]]; then
+    echo "could not ask jarvis where it keeps things; run \`jarvis config path\` to see why" >&2
+    exit 1
+  fi
+}
 
 parse_install_args() {
   # parse_install_args "$@" — sets UNINSTALL=1 for `--uninstall`; exits 2 on anything else.
@@ -96,7 +114,8 @@ require_public_host() {
 
 make_dirs() {
   # make_dirs [DIR ...] — the log directory, plus wherever this platform's units live.
-  # Owner-only when it creates DATA_DIR itself, as `jarvis` would (config.secure_dir).
+  # Owner-only when it creates STATE_DIR itself, as `jarvis` would (config.secure_dir).
+  require_paths
   (umask 077 && mkdir -p "$LOGS")
   mkdir -p "$@"
 }

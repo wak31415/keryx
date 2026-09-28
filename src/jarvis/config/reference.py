@@ -8,8 +8,16 @@
 from pathlib import Path
 from typing import Any
 
+from jarvis.config.files import XDG_HOMES
 from jarvis.config.permissions import PROTECTED_KEYS
 from jarvis.config.settings import GROUPS, Settings, env_var_name, field_group, is_secret
+
+#: Defaults that depend on the machine, written as what they are derived from, so the
+#: generated file is the same on every machine that renders it.
+SYMBOLIC_DEFAULTS = {
+    f"{kind}_dir": f"`${XDG_HOMES[kind][0]}/jarvis` (`{XDG_HOMES[kind][1]}/jarvis`)"
+    for kind in ("data", "state", "cache")
+}
 
 INTRO = """\
 # Configuration
@@ -21,11 +29,14 @@ Every setting Jarvis reads, by the name you set it under. The usual way to set t
 `uv run jarvis config set KEY VALUE`; `uv run jarvis config list` shows each one with where
 its value came from.
 
-**Where they live.** `JARVIS_HOME` (default `~/.jarvis`) holds `config.toml` for the plain
-settings and `secrets.toml` for the credentials, both readable by you alone. A secret is
-never put on a command line: `jarvis config set KEY --stdin` reads it from standard input,
-and `--from-env VAR` from a variable. The PIN is not in either file: it lives in
-`DATA_DIR/pin`, written once (see `SECURITY.md`).
+**Where they live.** `JARVIS_HOME` (default `$XDG_CONFIG_HOME/jarvis`, which is
+`~/.config/jarvis`, on Linux and macOS alike) holds `config.toml` for the plain settings and
+`secrets.toml` for the credentials, both readable by you alone. A secret is never put on a
+command line: `jarvis config set KEY --stdin` reads it from standard input, and
+`--from-env VAR` from a variable. The PIN is not in either file: it lives beside them in
+`JARVIS_HOME/pin`, written once (see `SECURITY.md`). Keep that directory out of a
+dotfiles repository. What Jarvis keeps is in `DATA_DIR`, `STATE_DIR` and `CACHE_DIR`, the
+XDG data, state and cache directories below.
 
 **Which value wins**, first to last: the process environment (a systemd `Environment=`,
 say), `secrets.toml`, `config.toml`, a legacy `.env` in the working directory (read, never
@@ -66,9 +77,12 @@ def render() -> str:
         for name in names:
             info = Settings.model_fields[name]
             key = env_var_name(name)
-            default = "*required*" if info.is_required() else _default(
-                info.get_default(call_default_factory=True)
-            )
+            if name in SYMBOLIC_DEFAULTS:
+                default = SYMBOLIC_DEFAULTS[name]
+            elif info.is_required():
+                default = "*required*"
+            else:
+                default = _default(info.get_default(call_default_factory=True))
             if is_secret(name):
                 default = f"{default} (secret)".strip()
             extra = info.json_schema_extra if isinstance(info.json_schema_extra, dict) else {}

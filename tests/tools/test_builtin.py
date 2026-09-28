@@ -419,7 +419,8 @@ async def test_a_pin_file_that_is_not_a_pin_is_a_machine_only_its_owner_can_fix(
     """
     tools = make_tools()
     secure_dir(tools.settings.data_dir)
-    pin_file(tools.settings.data_dir).write_text("not-a-pin\n", encoding="utf-8")
+    tools.settings.config_dir.mkdir(parents=True, exist_ok=True)
+    pin_file(tools.settings.config_dir).write_text("not-a-pin\n", encoding="utf-8")
 
     result = await tools.call(
         "dispatch_task",
@@ -1345,7 +1346,8 @@ async def test_a_spoken_pin_on_a_machine_with_none_sends_them_to_the_keypad(make
 async def test_with_a_pin_file_nothing_can_read_there_is_nothing_to_check(make_tools):
     tools = make_tools()
     secure_dir(tools.settings.data_dir)
-    pin_file(tools.settings.data_dir).write_text("not-a-pin\n", encoding="utf-8")
+    tools.settings.config_dir.mkdir(parents=True, exist_ok=True)
+    pin_file(tools.settings.config_dir).write_text("not-a-pin\n", encoding="utf-8")
     tools.session.pin_result = {"status": "not_configured"}
 
     result = await tools.call("submit_pin", {"pin": "123456"})

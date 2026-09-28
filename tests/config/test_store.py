@@ -45,7 +45,7 @@ def test_the_home_is_jarvis_home(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "elsewhere"))
     assert jarvis_home() == tmp_path / "elsewhere"
     monkeypatch.delenv("JARVIS_HOME")
-    assert jarvis_home() == Path.home() / ".jarvis"
+    assert jarvis_home() == Path.home() / ".config" / "jarvis"
 
 
 def test_a_plain_setting_goes_in_config_and_a_secret_in_secrets(store):
@@ -205,7 +205,7 @@ def test_the_code_beats_everything(store):
 
 def test_the_pin_file_is_a_source_of_its_own(store, settings):
     assert store.source_of("JARVIS_PIN", settings) == FROM_DEFAULT
-    write_enrolled_pin(settings.data_dir, "482915")
+    write_enrolled_pin(settings.config_dir, "482915")
 
     assert store.source_of("JARVIS_PIN", settings) == FROM_PIN_FILE
 
@@ -321,26 +321,24 @@ def test_import_env_resolves_relative_paths_against_the_env_file(store, tmp_path
 
 
 def test_import_env_moves_the_pin_to_its_own_file(store, tmp_path):
-    data = tmp_path / "data"
-    env = write_env(tmp_path, f"JARVIS_PIN=482915\nDATA_DIR={data}\n")
+    env = write_env(tmp_path, f"JARVIS_PIN=482915\nDATA_DIR={tmp_path / 'data'}\n")
 
     report = store.import_env(env)
 
-    assert report.pin == "moved to DATA_DIR/pin"
-    assert pin_file(data).read_text().strip() == "482915"
+    assert report.pin == "moved to JARVIS_HOME/pin"
+    assert pin_file(store.home).read_text().strip() == "482915"
     assert "JARVIS_PIN" not in store.stored()
 
 
 def test_import_env_refuses_everything_over_a_different_enrolled_pin(store, tmp_path):
-    data = tmp_path / "data"
-    write_enrolled_pin(data, "111357")
-    env = write_env(tmp_path, f"JARVIS_PIN=482915\nOPENAI_VOICE=marin\nDATA_DIR={data}\n")
+    write_enrolled_pin(store.home, "111357")
+    env = write_env(tmp_path, "JARVIS_PIN=482915\nOPENAI_VOICE=marin\n")
 
     with pytest.raises(ConfigError, match="Nothing was imported"):
         store.import_env(env)
 
     assert env.exists() and store.stored() == {}
-    assert pin_file(data).read_text().strip() == "111357"
+    assert pin_file(store.home).read_text().strip() == "111357"
 
 
 def test_import_env_refuses_an_invalid_file_whole(store, tmp_path):
@@ -353,15 +351,14 @@ def test_import_env_refuses_an_invalid_file_whole(store, tmp_path):
 
 
 def test_import_env_copies_the_legacy_google_client_file(store, tmp_path):
-    data = tmp_path / "data"
-    env = write_env(tmp_path, f"DATA_DIR={data}\n")
+    env = write_env(tmp_path, f"DATA_DIR={tmp_path / 'data'}\n")
     client = env.parent / ".secrets" / "client_secret.json"
     client.parent.mkdir()
     client.write_text('{"installed": {"client_id": "id", "client_secret": "shh"}}')
 
     report = store.import_env(env)
 
-    assert report.client_file == data / "google_client_secret.json"
+    assert report.client_file == store.home / "google_client_secret.json"
     assert mode(report.client_file) == 0o600
     settings = Settings(_env_file=None, openai_api_key="x")
     assert settings.google_oauth_client() == ("id", "shh")
@@ -415,15 +412,17 @@ def test_import_env_is_the_owners_alone(store, tmp_path):
     assert env.exists() and store.stored() == {}
 
 
-def test_import_env_puts_the_pin_where_the_environment_says_data_lives(
+def test_import_env_puts_the_pin_beside_the_store_wherever_data_lives(
     store, tmp_path, monkeypatch
 ):
+    """Where the PIN is must not depend on a setting: `DATA_DIR` moves nothing of it."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "from-env"))
     env = write_env(tmp_path, f"JARVIS_PIN=482915\nDATA_DIR={tmp_path / 'from-dotenv'}\n")
 
     store.import_env(env)
 
-    assert read_enrolled_pin(tmp_path / "from-env") == "482915"
+    assert read_enrolled_pin(store.home) == "482915"
+    assert not (tmp_path / "from-env").exists()
     assert not (tmp_path / "from-dotenv").exists()
 
 

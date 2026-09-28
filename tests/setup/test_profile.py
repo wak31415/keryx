@@ -123,7 +123,7 @@ def test_json_reports_everything_a_call_will_carry_and_nothing_else(home):
 
 
 def test_json_says_whether_a_pin_exists_and_where_from_never_the_digits(home):
-    write_enrolled_pin(home.data_dir, "482915")
+    write_enrolled_pin(home.config_dir, "482915")
     enrolled = Settings(_env_file=None, openai_api_key="x", data_dir=home.data_dir)
 
     pin = setup_summary(enrolled)["pin"]
@@ -140,8 +140,8 @@ def test_the_pin_note_names_each_of_the_four_states(home):
     assert "jarvis setup" in pin_note(home)
     assert pin_note(home.model_copy(update={"pin": "482915"})) == PIN_NOTES["environment"]
 
-    (home.data_dir).mkdir(parents=True, exist_ok=True)
-    (home.data_dir / "pin").write_text("nope\n")
+    home.config_dir.mkdir(parents=True, exist_ok=True)
+    (home.config_dir / "pin").write_text("nope\n")
     sealed = Settings(_env_file=None, openai_api_key="x", data_dir=home.data_dir)
     assert "no call can set one" in pin_note(sealed)
 

@@ -32,7 +32,10 @@ from jarvis.config import (
     field_for,
     is_secret,
     load_settings,
+    secure_dir,
+    secure_file,
 )
+from jarvis.config.files import HOME_ENV, XDG_HOMES, xdg_home
 from jarvis.config.permissions import ACTOR_ENV, SERVICE, current_actor
 from jarvis.config.settings import ConfigFileError, tolerate_broken_files
 from jarvis.config.store import FROM_ENV, ConfigError, ConfigStore
@@ -233,9 +236,8 @@ def _configure_readonly(*, quiet: bool = True) -> Settings:
 
 
 def _add_file_logging(settings: Settings) -> None:
-    """Also log to `data_dir/logs/jarvis.log`, rotated, alongside the console handler."""
-    log_dir = settings.data_dir / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
+    """Also log to `state_dir/logs/jarvis.log`, rotated, alongside the console handler."""
+    log_dir = secure_dir(settings.state_dir / "logs")
     root = logging.getLogger()
     rotating = logging.handlers.RotatingFileHandler
     for existing in [h for h in root.handlers if isinstance(h, rotating)]:
@@ -321,10 +323,10 @@ async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
     """Run the phone server and/or the wake-word loop until one stops or ctrl-c."""
     # First, before anything can commit on top of us: the next restart compares against
     # this to say whether it loaded anything, and the checkout will have moved by then.
-    mark_running(settings.data_dir)
+    mark_running(settings.state_dir)
     # And before we log a line of our own: everything past here is this process's doing,
     # which is what the confirmation call should be reading. See `mark_startup_logs`.
-    mark_startup_logs(settings.data_dir)
+    mark_startup_logs(settings.state_dir)
     # Every running Codex turn parks threads in this executor; see `executor_workers`.
     install_default_executor(settings)
     state = build_app_state(settings)
@@ -454,7 +456,7 @@ def _run_on_signals(callback) -> None:
 
 
 def _restart_store(settings: Settings) -> RestartStore:
-    return RestartStore(settings.data_dir / RECORD_NAME)
+    return RestartStore(settings.state_dir / RECORD_NAME)
 
 
 @app.command()
@@ -502,8 +504,8 @@ def restart(
         number=number,
         origin_channel="cli",
         target=target.describe(),
-        version=loaded_version(settings.data_dir),
-        log_marks=log_marks(settings.data_dir),
+        version=loaded_version(settings.state_dir),
+        log_marks=log_marks(settings.state_dir),
     )
     if not store.save(record):
         typer.echo(f"could not write {store.path}: the restart would go unconfirmed")
@@ -566,7 +568,7 @@ def _echo_restart_status(store: RestartStore) -> None:
         typer.echo("no restart on record: the last one was confirmed, or there has not been one")
         return
     settings = _load_settings_optional()
-    found = errors_since(settings.data_dir, record.log_marks)
+    found = errors_since(settings.state_dir, record.log_marks)
     rows = [
         ("asked for", record.requested_at),
         ("reason", record.reason),
@@ -1158,12 +1160,41 @@ def config_unset(
 
 
 @config_app.command("path")
-def config_path() -> None:
-    """Print where the configuration lives."""
+def config_path(
+    shell: Annotated[
+        bool,
+        typer.Option("--shell", help="Print NAME='path' lines a shell can eval, and nothing else."),
+    ] = False,
+) -> None:
+    """Print where the configuration, the data, the state and the cache live."""
+    settings, problems = _load_settings_reporting()
+    if "config_file" in problems:  # a script must not be handed the defaults instead
+        typer.echo(problems["config_file"], err=True)
+        raise typer.Exit(1)
     store = ConfigStore()
-    typer.echo(f"JARVIS_HOME  {store.home}")
-    typer.echo(f"config       {store.config_path}")
-    typer.echo(f"secrets      {store.secrets_path}")
+    if shell:
+        # What the installers render into the service, so it resolves exactly these: the
+        # four directories, and the XDG base directories they were derived from.
+        paths = {
+            HOME_ENV: store.home,
+            "DATA_DIR": settings.data_dir,
+            "STATE_DIR": settings.state_dir,
+            "CACHE_DIR": settings.cache_dir,
+            **{variable: xdg_home(kind) for kind, (variable, _) in XDG_HOMES.items()},
+        }
+        for name, path in paths.items():
+            typer.echo(f"{name}={shlex.quote(str(path))}")
+        return
+    rows = [
+        (HOME_ENV, store.home),
+        ("config", store.config_path),
+        ("secrets", store.secrets_path),
+        ("data", settings.data_dir),
+        ("state", settings.state_dir),
+        ("cache", settings.cache_dir),
+    ]
+    for name, path in rows:
+        typer.echo(f"{name:<12} {path}")
 
 
 @config_app.command("import-env")
@@ -1317,14 +1348,15 @@ def approvals(
     it still works when the thing you want to stop is the thing you would have to ask.
     """
     settings = _configure_readonly()
-    state_dir = settings.data_dir / STATE_DIR_NAME
+    state_dir = settings.state_dir / STATE_DIR_NAME
     switch = state_dir / KILL_SWITCH_NAME
     if disable and enable:
         typer.echo("pick one of --disable and --enable")
         raise typer.Exit(code=2)
     if disable:
-        state_dir.mkdir(parents=True, exist_ok=True)
+        secure_dir(state_dir)
         switch.touch()
+        secure_file(switch)
         typer.echo(f"approval escalation is off ({switch})")
         return
     if enable:

@@ -12,7 +12,7 @@ loaded. `mark_running` stamps the version at process start, which is the one mom
 checkout and the running code are the same thing.
 
 All of it is decoration in the sense that nothing here is allowed to fail a restart: no
-`git`, no stamp, or an unwritable `data_dir` each cost one line of the spoken summary.
+`git`, no stamp, or an unwritable `state_dir` each cost one line of the spoken summary.
 """
 
 import json
@@ -20,11 +20,12 @@ import logging
 import subprocess
 from pathlib import Path
 
+from jarvis.config.files import write_private
 from jarvis.restart.logscan import marks
 
 log = logging.getLogger("jarvis.restart")
 
-#: Where `jarvis serve` stamps the version it imported, under `data_dir`. See `mark_running`.
+#: Where `jarvis serve` stamps the version it imported, under `state_dir`. See `mark_running`.
 RUNNING_NAME = "running-version"
 #: Where `jarvis serve` stamps how far the logs had got when it started. See `mark_startup_logs`.
 STARTUP_MARKS_NAME = "startup-log-marks.json"
@@ -48,7 +49,7 @@ def current_version(repo: Path | None = None) -> str | None:
     return done.stdout.strip() or None if done.returncode == 0 else None
 
 
-def mark_running(data_dir: Path, repo: Path | None = None) -> str | None:
+def mark_running(state_dir: Path, repo: Path | None = None) -> str | None:
     """Stamp the version this process imported. Called once, at the top of `jarvis serve`.
 
     The checkout keeps moving underneath a long-lived process. Reading it when a restart is
@@ -59,10 +60,9 @@ def mark_running(data_dir: Path, repo: Path | None = None) -> str | None:
     thing, so it is the only honest place to take the "before".
     """
     version = current_version(repo)
-    path = data_dir / RUNNING_NAME
+    path = state_dir / RUNNING_NAME
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"{version}\n" if version else "")
+        write_private(path, f"{version}\n" if version else "")
     except OSError:
         # Decoration, like `current_version` itself: a missing stamp costs one comparison,
         # and falling back to the checkout is no worse than what there was before.
@@ -70,25 +70,25 @@ def mark_running(data_dir: Path, repo: Path | None = None) -> str | None:
     return version
 
 
-def running_version(data_dir: Path) -> str | None:
+def running_version(state_dir: Path) -> str | None:
     """The version the live process stamped at startup, or None if it never got the chance."""
     try:
-        return (data_dir / RUNNING_NAME).read_text().strip() or None
+        return (state_dir / RUNNING_NAME).read_text().strip() or None
     except OSError:
         return None
 
 
-def loaded_version(data_dir: Path, repo: Path | None = None) -> str | None:
+def loaded_version(state_dir: Path, repo: Path | None = None) -> str | None:
     """What the service process is running: its own stamp, else the checkout as a guess.
 
     The guess is what a service too old to stamp anything falls back to, and it is wrong in
     exactly the way described in `mark_running` — but a wrong guess and no answer read the
     same over the phone, and the guess is at least right when nothing has been committed.
     """
-    return running_version(data_dir) or current_version(repo)
+    return running_version(state_dir) or current_version(repo)
 
 
-def mark_startup_logs(data_dir: Path) -> dict[str, int]:
+def mark_startup_logs(state_dir: Path) -> dict[str, int]:
     """Stamp how far the service logs had got when *this* process started.
 
     There are two questions about a restart and they want different starting points.
@@ -104,19 +104,18 @@ def mark_startup_logs(data_dir: Path) -> dict[str, int]:
     error in the log since" on the confirmation call for a restart that went perfectly.
     Every self-edit restart would have said it, which is the one case the check exists for.
     """
-    found = marks(data_dir)
+    found = marks(state_dir)
     try:
-        data_dir.mkdir(parents=True, exist_ok=True)
-        (data_dir / STARTUP_MARKS_NAME).write_text(json.dumps(found), encoding="utf-8")
+        write_private(state_dir / STARTUP_MARKS_NAME, json.dumps(found))
     except OSError:
-        log.warning("could not stamp the startup log marks in %s", data_dir)
+        log.warning("could not stamp the startup log marks in %s", state_dir)
     return found
 
 
-def startup_log_marks(data_dir: Path) -> dict[str, int] | None:
+def startup_log_marks(state_dir: Path) -> dict[str, int] | None:
     """What this process stamped at startup, or None if it never got the chance."""
     try:
-        found = json.loads((data_dir / STARTUP_MARKS_NAME).read_text(encoding="utf-8"))
+        found = json.loads((state_dir / STARTUP_MARKS_NAME).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
     return found if isinstance(found, dict) and found else None

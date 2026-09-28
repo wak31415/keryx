@@ -371,7 +371,7 @@ def _pin_check(settings: Settings, problem: str | None = None) -> Check:
     runnable when nothing else is. No PIN at all is a warning and not a dead end — `jarvis
     setup` or the first call can set one, and until then nothing of the owner's is read
     out on the phone. A PIN from the environment is simply set, and so is one in
-    `DATA_DIR/pin`, the PIN's own store. An unusable file is the one dead end left, and
+    `JARVIS_HOME/pin`, the PIN's own store. An unusable file is the one dead end left, and
     only the owner can clear it.
     """
     if problem is not None:
@@ -380,10 +380,10 @@ def _pin_check(settings: Settings, problem: str | None = None) -> Check:
         )
     if settings.pin_source == PIN_FROM_ENV:
         return Check(
-            "PIN", True, "set from the environment, which wins over DATA_DIR/pin",
+            "PIN", True, "set from the environment, which wins over JARVIS_HOME/pin",
             severity="soft", section="owner",
         )
-    path = pin_file(settings.data_dir)
+    path = pin_file(settings.config_dir)
     if settings.pin_source == PIN_FROM_FILE:
         return Check(
             "PIN",
@@ -594,13 +594,21 @@ def _data_dir_privacy_check(settings: Settings) -> Check:
 
 
 def private_paths(settings: Settings, store: ConfigStore) -> list[tuple[Path, int]]:
-    """Every path that holds a secret, with the mode it should have. Only those that exist."""
+    """Every path that holds a secret, with the mode it should have. Only those that exist.
+
+    All four of Jarvis's directories are here: the logs quote tool calls and the socket
+    beside them is what a keypad approval arrives through, so the state directory is no
+    less private than the data one.
+    """
     candidates: list[tuple[Path, int]] = [
         (store.home, DATA_DIR_MODE),
         (store.config_path, DATA_FILE_MODE),
         (store.secrets_path, DATA_FILE_MODE),
         (settings.data_dir, DATA_DIR_MODE),
-        (pin_file(settings.data_dir), DATA_FILE_MODE),
+        (settings.state_dir, DATA_DIR_MODE),
+        (settings.state_dir / "logs", DATA_DIR_MODE),
+        (settings.cache_dir, DATA_DIR_MODE),
+        (pin_file(settings.config_dir), DATA_FILE_MODE),
         (token_path(settings), DATA_FILE_MODE),
         (settings.data_dir / "report_secret", DATA_FILE_MODE),
     ]

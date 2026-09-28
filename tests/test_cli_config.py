@@ -2,7 +2,10 @@
 a coding agent sets Jarvis up with. The store is the test's own `JARVIS_HOME`."""
 
 import json
+import os
+import shlex
 import stat
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -197,10 +200,31 @@ def test_inside_a_task_set_is_the_service_and_lock_is_refused(home, monkeypatch)
     assert "PUBLIC_HOST" not in home.stored()
 
 
-def test_path_names_all_three(home):
+def test_path_names_every_directory(home):
     output = run("config", "path").output
 
     assert str(home.home) in output and "config.toml" in output and "secrets.toml" in output
+    rows = dict(line.split(None, 1) for line in output.splitlines())
+    assert rows["data"] == os.environ["DATA_DIR"]  # the fixture's
+    assert rows["state"] == str(Path.home() / ".local/state/jarvis")
+    assert rows["cache"] == str(Path.home() / ".cache/jarvis")
+
+
+def test_path_for_a_shell_is_every_directory_quoted_for_eval(home, monkeypatch):
+    monkeypatch.setenv("STATE_DIR", "/srv/jarvis state")
+
+    lines = run("config", "path", "--shell").output.splitlines()
+
+    assert dict(shlex.split(line)[0].split("=", 1) for line in lines) == {
+        "JARVIS_HOME": str(home.home),
+        "DATA_DIR": os.environ["DATA_DIR"],
+        "STATE_DIR": "/srv/jarvis state",
+        "CACHE_DIR": str(Path.home() / ".cache/jarvis"),
+        "XDG_CONFIG_HOME": str(Path.home() / ".config"),
+        "XDG_DATA_HOME": str(Path.home() / ".local/share"),
+        "XDG_STATE_HOME": str(Path.home() / ".local/state"),
+        "XDG_CACHE_HOME": str(Path.home() / ".cache"),
+    }
 
 
 def test_import_env_moves_a_legacy_file(home, tmp_path):
@@ -409,7 +433,7 @@ def test_import_env_says_where_the_pin_and_client_went(home, tmp_path):
 
     result = run("config", "import-env")
 
-    assert "PIN: moved to DATA_DIR/pin" in result.output
+    assert "PIN: moved to JARVIS_HOME/pin" in result.output
     assert "Google client file:" in result.output
     assert "left at their defaults: PORT" in result.output
 

@@ -19,8 +19,8 @@ def short_tmp_path():
     with the test's name and `jarvis/approvals.sock` on the end, comfortably exceeds the
     ~104-byte `sun_path` limit — so `ApprovalBroker.start()` returns False and every test
     fails on the fixture rather than on anything it was checking. Nothing about Jarvis
-    needs a long path: `~/.jarvis/approvals.sock` is thirty characters. Only the fixture
-    did, and this is where that gets fixed once for every file that binds a broker.
+    needs a long path: `~/.local/state/jarvis/approvals.sock` is forty-odd characters. Only
+    the fixture did, and this is where that gets fixed once for every file that binds one.
     """
     root = Path("/tmp") if os.access("/tmp", os.W_OK) else None
     with tempfile.TemporaryDirectory(prefix="jb", dir=root) as name:

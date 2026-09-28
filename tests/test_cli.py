@@ -5,6 +5,7 @@ import importlib.metadata
 import json
 import logging
 import shutil
+import stat
 import wave
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
@@ -404,7 +405,7 @@ def test_serve_writes_a_rotating_log_file(settings_stub, monkeypatch):
         if isinstance(handler, RotatingFileHandler)
     ]
     assert len(handlers) == 1  # re-running serve replaces the handler, it does not stack
-    assert Path(handlers[0].baseFilename) == settings_stub.data_dir / "logs" / "jarvis.log"
+    assert Path(handlers[0].baseFilename) == settings_stub.state_dir / "logs" / "jarvis.log"
     assert handlers[0].maxBytes == LOG_MAX_BYTES
     assert handlers[0].backupCount == LOG_BACKUP_COUNT
 
@@ -708,7 +709,7 @@ def test_restart_asks_the_service_manager_and_records_the_call_back(restart_sett
 
     assert result.exit_code == 0
     assert calls == [["systemctl", "--user", "restart", "jarvis.service"]]
-    record = RestartStore(restart_settings.data_dir / RECORD_NAME).load()
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
     assert record.reason == "new code"
     assert record.number == "+15550000001"
     assert record.origin_channel == "cli"
@@ -725,7 +726,7 @@ def test_a_quiet_restart_arms_no_watchdog(restart_settings, ran):
 
     runner.invoke(app, ["restart", "--no-callback"])
 
-    record = RestartStore(restart_settings.data_dir / RECORD_NAME).load()
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
     assert record.watchdog == ""
     assert calls == [["systemctl", "--user", "restart", "jarvis.service"]]
 
@@ -739,7 +740,7 @@ def test_restart_refuses_to_cut_off_a_live_call(restart_settings, ran, monkeypat
     assert result.exit_code == 1
     assert "cuts them off" in result.output
     assert calls == []
-    assert not (restart_settings.data_dir / RECORD_NAME).exists()
+    assert not (restart_settings.state_dir / RECORD_NAME).exists()
 
 
 def test_restart_force_goes_ahead_anyway(restart_settings, ran, monkeypatch):
@@ -785,7 +786,7 @@ def test_restart_no_callback_leaves_no_number(restart_settings, ran):
     result = runner.invoke(app, ["restart", "--no-callback"])
 
     assert result.exit_code == 0
-    assert RestartStore(restart_settings.data_dir / RECORD_NAME).load().number is None
+    assert RestartStore(restart_settings.state_dir / RECORD_NAME).load().number is None
     assert "no call back was asked for" in result.output
 
 
@@ -796,7 +797,7 @@ def test_a_restart_command_that_fails_says_so_and_keeps_the_record(restart_setti
     result = runner.invoke(app, ["restart"])
 
     assert result.exit_code == 1
-    record = RestartStore(restart_settings.data_dir / RECORD_NAME).load()
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
     assert record.state == "failed"
     assert "exited 3" in record.error
 
@@ -809,7 +810,7 @@ def test_restart_status_with_nothing_on_record(restart_settings):
 
 
 def test_restart_status_reads_back_a_failure(restart_settings):
-    store = RestartStore(restart_settings.data_dir / RECORD_NAME)
+    store = RestartStore(restart_settings.state_dir / RECORD_NAME)
     store.save(
         RestartRecord(
             requested_at="2026-08-24T10:00:00+00:00",
@@ -981,7 +982,7 @@ def test_serve_refuses_to_start_on_a_malformed_pin(monkeypatch, tmp_path):
 
 
 def _audit(settings, *entries) -> None:
-    path = settings.data_dir / STATE_DIR_NAME / AUDIT_NAME
+    path = settings.state_dir / STATE_DIR_NAME / AUDIT_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n")
 
@@ -1011,7 +1012,7 @@ def test_approvals_prints_the_audit_trail(settings_stub):
 
 
 def test_approvals_ignores_a_corrupt_audit_line_rather_than_failing(settings_stub):
-    path = settings_stub.data_dir / STATE_DIR_NAME / AUDIT_NAME
+    path = settings_stub.state_dir / STATE_DIR_NAME / AUDIT_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('not json\n{"ts": "2026-09-02T14:05:00Z", "event": "raised"}\n')
 
@@ -1035,10 +1036,11 @@ def test_approvals_limit_shows_only_the_tail(settings_stub):
 
 
 def test_the_kill_switch_is_a_file_so_it_needs_no_restart(settings_stub):
-    switch = settings_stub.data_dir / STATE_DIR_NAME / KILL_SWITCH_NAME
+    switch = settings_stub.state_dir / STATE_DIR_NAME / KILL_SWITCH_NAME
 
     assert runner.invoke(app, ["approvals", "--disable"]).exit_code == 0
     assert switch.exists()
+    assert stat.S_IMODE(switch.stat().st_mode) == 0o600
     assert "OFF (kill switch)" in runner.invoke(app, ["approvals"]).output
 
     assert runner.invoke(app, ["approvals", "--enable"]).exit_code == 0

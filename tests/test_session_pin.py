@@ -397,7 +397,8 @@ async def test_keypad_digits_are_ignored_when_a_pin_exists_that_cannot_be_read(
     """
     session = make_session(phone, provider, pin=None)
     secure_dir(session._settings.data_dir)
-    pin_file(session._settings.data_dir).write_text("not-a-pin\n", encoding="utf-8")
+    session._settings.config_dir.mkdir(parents=True, exist_ok=True)
+    pin_file(session._settings.config_dir).write_text("not-a-pin\n", encoding="utf-8")
 
     async with running(session):
         await press(phone, "4242#")
@@ -577,7 +578,7 @@ NEW_PIN = "135790"
 
 
 def enrolled(session: VoiceSession) -> Path:
-    return pin_file(session._settings.data_dir)
+    return pin_file(session._settings.config_dir)
 
 
 async def test_the_first_call_may_key_a_pin_in(make_session, phone, provider, tmp_path):

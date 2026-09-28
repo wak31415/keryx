@@ -77,8 +77,8 @@ def test_owner_name_numbers_and_a_pin_chosen_now(make_ctx):
     assert stored["OWNER_NAME"] == "Ada"
     assert stored["ALLOWED_CALLERS"] == ["+15551234567", "+15557654321"]
     assert stored["OWNER_NUMBER"] == "+15551234567"
-    path = pin_file(ctx.settings.data_dir)
-    assert read_enrolled_pin(ctx.settings.data_dir) == "482915"
+    path = pin_file(ctx.settings.config_dir)
+    assert read_enrolled_pin(ctx.settings.config_dir) == "482915"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert "JARVIS_PIN" not in stored
     assert "482915" not in " ".join(ctx.ui.lines())
@@ -91,7 +91,7 @@ def test_the_first_call_may_be_left_to_set_the_pin(make_ctx):
 
     sections.run_owner(ctx)
 
-    assert not pin_file(ctx.settings.data_dir).exists()
+    assert not pin_file(ctx.settings.config_dir).exists()
     assert ctx.settings.pin_enrolment_open
 
 
@@ -109,18 +109,18 @@ def test_a_mistyped_second_pin_asks_again(make_ctx):
     sections.run_owner(ctx)
 
     assert ctx.ui.lines("error") == ["Those were not the same."]
-    assert read_enrolled_pin(ctx.settings.data_dir) == "482915"
+    assert read_enrolled_pin(ctx.settings.config_dir) == "482915"
 
 
 def test_a_pin_in_its_file_is_left_alone_outside_a_review(make_ctx):
     ctx = make_ctx([])
-    write_enrolled_pin(ctx.settings.data_dir, "482915")
+    write_enrolled_pin(ctx.settings.config_dir, "482915")
     ctx.refresh()
 
     sections.run_pin(ctx)
 
     assert ctx.ui.asked == []
-    assert read_enrolled_pin(ctx.settings.data_dir) == "482915"
+    assert read_enrolled_pin(ctx.settings.config_dir) == "482915"
 
 
 def test_replacing_a_pin_takes_the_new_one_twice_and_two_yeses(make_ctx):
@@ -129,12 +129,12 @@ def test_replacing_a_pin_takes_the_new_one_twice_and_two_yeses(make_ctx):
          ("Replace the PIN", True)],
         review=True,
     )
-    write_enrolled_pin(ctx.settings.data_dir, "482915")
+    write_enrolled_pin(ctx.settings.config_dir, "482915")
     ctx.refresh()
 
     sections.run_pin(ctx)
 
-    assert read_enrolled_pin(ctx.settings.data_dir) == "739104"
+    assert read_enrolled_pin(ctx.settings.config_dir) == "739104"
 
 
 def test_stopping_before_the_last_yes_leaves_the_old_pin(make_ctx):
@@ -145,12 +145,12 @@ def test_stopping_before_the_last_yes_leaves_the_old_pin(make_ctx):
          ("Replace the PIN", False)],
         review=True,
     )
-    write_enrolled_pin(ctx.settings.data_dir, "482915")
+    write_enrolled_pin(ctx.settings.config_dir, "482915")
     ctx.refresh()
 
     sections.run_pin(ctx)
 
-    assert read_enrolled_pin(ctx.settings.data_dir) == "482915"
+    assert read_enrolled_pin(ctx.settings.config_dir) == "482915"
 
 
 def test_a_pin_in_the_environment_is_never_touched(make_ctx, monkeypatch):
@@ -160,18 +160,19 @@ def test_a_pin_in_the_environment_is_never_touched(make_ctx, monkeypatch):
     sections.run_pin(ctx)
 
     assert ctx.ui.asked == []
-    assert not pin_file(ctx.settings.data_dir).exists()
+    assert not pin_file(ctx.settings.config_dir).exists()
 
 
 def test_an_unusable_pin_file_is_replaced_after_asking(make_ctx):
     ctx = make_ctx([("New PIN", "739104"), ("same PIN", "739104"), ("Replace the PIN", True)])
     ctx.settings.data_dir.mkdir(parents=True)
-    pin_file(ctx.settings.data_dir).write_text("oops\n")
+    ctx.settings.config_dir.mkdir(parents=True, exist_ok=True)
+    pin_file(ctx.settings.config_dir).write_text("oops\n")
     ctx.refresh()
 
     sections.run_pin(ctx)
 
-    assert read_enrolled_pin(ctx.settings.data_dir) == "739104"
+    assert read_enrolled_pin(ctx.settings.config_dir) == "739104"
 
 
 def test_a_pin_that_appears_meanwhile_is_never_overwritten(make_ctx, monkeypatch):
@@ -339,7 +340,7 @@ def test_the_import_reports_the_pin_the_client_and_what_it_left(make_ctx, tmp_pa
     sections.run_import(ctx)
 
     said = " ".join(ctx.ui.lines())
-    assert "the PIN: moved to DATA_DIR/pin" in said
+    assert "the PIN: moved to JARVIS_HOME/pin" in said
     assert "the Google client file" in said and "WHO" in said
 
 
@@ -403,17 +404,17 @@ def test_three_mismatched_pins_give_up_and_set_nothing(make_ctx):
 
     sections.run_pin(ctx)
 
-    assert not pin_file(ctx.settings.data_dir).exists()
+    assert not pin_file(ctx.settings.config_dir).exists()
 
 
 def test_a_replacement_declined_at_the_first_question_changes_nothing(make_ctx):
     ctx = make_ctx([("Choose a new PIN", False)], review=True)
-    write_enrolled_pin(ctx.settings.data_dir, "482915")
+    write_enrolled_pin(ctx.settings.config_dir, "482915")
     ctx.refresh()
 
     sections.run_pin(ctx)
 
-    assert read_enrolled_pin(ctx.settings.data_dir) == "482915"
+    assert read_enrolled_pin(ctx.settings.config_dir) == "482915"
 
 
 def test_slack_and_billing_already_set_ask_nothing(make_ctx):
@@ -495,7 +496,7 @@ def test_a_replacement_that_fails_to_write_leaves_the_old_pin(make_ctx, monkeypa
          ("Replace the PIN", True)],
         review=True,
     )
-    write_enrolled_pin(ctx.settings.data_dir, "482915")
+    write_enrolled_pin(ctx.settings.config_dir, "482915")
     ctx.refresh()
 
     def disk_full(*args):
@@ -506,7 +507,7 @@ def test_a_replacement_that_fails_to_write_leaves_the_old_pin(make_ctx, monkeypa
     with pytest.raises(OSError):
         sections.run_pin(ctx)
 
-    assert read_enrolled_pin(ctx.settings.data_dir) == "482915"
+    assert read_enrolled_pin(ctx.settings.config_dir) == "482915"
 
 
 def test_a_new_pin_says_a_running_jarvis_needs_a_restart(make_ctx):

@@ -91,6 +91,7 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
     values = {
         "openai_api_key": "test",
         "data_dir": tmp_path / "jarvis",
+        "state_dir": tmp_path / "state",
         "owner_number_explicit": OWNER,
     }
     values.update(overrides)
@@ -100,7 +101,7 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
 
 
 def write_log(settings: Settings, name: str, text: str) -> None:
-    directory = log_dir(settings.data_dir)
+    directory = log_dir(settings.state_dir)
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / name).open("a", encoding="utf-8") as handle:
         handle.write(text)
@@ -123,7 +124,7 @@ class Harness:
 
     def __init__(self, settings: Settings, *, live: int | None = None, twilio=None) -> None:
         self.settings = settings
-        self.store = RestartStore(settings.data_dir / RECORD_NAME)
+        self.store = RestartStore(settings.state_dir / RECORD_NAME)
         self.twilio = twilio or FakeTwilioOut()
         self.clock = FakeClock()
         self.live = live
@@ -226,7 +227,7 @@ async def test_the_alert_call_is_spoken_and_needs_nothing_of_ours_to_answer(harn
 async def test_the_alert_carries_the_error_the_logs_have(harness):
     """This is the answer to "did the update work", and it is the only one there is."""
     write_log(harness.settings, "jarvis.log", "old news\n")
-    harness.store.save(pending(log_marks=log_marks(harness.settings.data_dir)))
+    harness.store.save(pending(log_marks=log_marks(harness.settings.state_dir)))
     write_log(harness.settings, "jarvis.err.log", TRACEBACK)
 
     await harness.run()
@@ -268,7 +269,7 @@ async def test_the_alert_marks_the_record_so_a_late_start_does_not_ring_about_it
 
 
 async def test_a_text_is_one_message(harness):
-    harness.store.save(pending(reason="x" * 4000, log_marks=log_marks(harness.settings.data_dir)))
+    harness.store.save(pending(reason="x" * 4000, log_marks=log_marks(harness.settings.state_dir)))
 
     await harness.run()
 

@@ -1,10 +1,17 @@
-"""The PIN's own store: `data_dir/pin`, written once and never replaced.
+"""The PIN's own store: `JARVIS_HOME/pin`, written once and never replaced.
 
-`JARVIS_PIN` in the process environment still wins over it (`Settings.pin`), and so does a
-legacy `.env`; with neither, this file is the PIN. It is written in exactly two places —
-a first call keying one in (`session._enrol_keypad_pin`), and the owner choosing one at
-the keyboard in `jarvis setup` — and both go through `enrol`, so both go through the same
-`O_CREAT | O_EXCL`.
+`JARVIS_PIN` in the process environment still wins over it (`Settings.pin`); without it,
+this file is the PIN.
+
+It sits in the configuration directory, beside `secrets.toml`, and not in `DATA_DIR`,
+because where the PIN is must not depend on a setting. Were it `DATA_DIR/pin`, pointing
+`DATA_DIR` at an empty directory would find no PIN — and no PIN is an open enrolment door.
+`JARVIS_HOME` is an environment variable only, never a setting. The PIN is still not a
+*setting* either: a file of its own, written once, and never a key in `config.toml`.
+
+It is written in exactly two places — a first call keying one in
+(`session._enrol_keypad_pin`), and the owner choosing one at the keyboard in `jarvis setup`
+— and both go through `enrol`, so both go through the same `O_CREAT | O_EXCL`.
 """
 
 import logging
@@ -31,22 +38,22 @@ PIN_MAX_DIGITS = 8
 #: digits.
 PIN_FROM_ENV = "environment"
 PIN_FROM_FILE = "enrolled"
-#: The enrolled PIN's file name under `data_dir` (`read_enrolled_pin` / `write_enrolled_pin`).
+#: The enrolled PIN's file name in `JARVIS_HOME` (`read_enrolled_pin` / `write_enrolled_pin`).
 PIN_FILE_NAME = "pin"
 
 
-def pin_file(data_dir: Path) -> Path:
-    """Where the PIN lives. `JARVIS_PIN` outranks it (`Settings.pin`)."""
-    return data_dir / PIN_FILE_NAME
+def pin_file(home: Path) -> Path:
+    """Where the PIN lives, in the configuration directory `home`. `JARVIS_PIN` outranks it."""
+    return home / PIN_FILE_NAME
 
 
-def read_enrolled_pin(data_dir: Path) -> str | None:
-    """The PIN in `data_dir/pin`, or None when there is none worth having.
+def read_enrolled_pin(home: Path) -> str | None:
+    """The PIN in `home/pin`, or None when there is none worth having.
 
     **The digits, not a hash, and that is deliberate.** Six digits fall to any hash in
     microseconds, so hashing would buy nothing and imply a protection that is not there.
-    The protection is the file mode: 0600 inside a 0700 `data_dir`, beside `memory.md` and
-    every call transcript, which are no less private. Do not "improve" this into a hash.
+    The protection is the file mode: 0600 inside a 0700 `JARVIS_HOME`, beside
+    `secrets.toml`, which is no less private. Do not "improve" this into a hash.
 
     A file that is there and does not hold 6-8 digits is *not* the same as no file: it is
     no PIN, and it still seals the door, because `write_enrolled_pin` cannot replace it.
@@ -54,13 +61,13 @@ def read_enrolled_pin(data_dir: Path) -> str | None:
     `jarvis setup`.
     """
     try:
-        value = pin_file(data_dir).read_text(encoding="utf-8").strip()
+        value = pin_file(home).read_text(encoding="utf-8").strip()
     except OSError:
         return None
     return value if PIN_PATTERN.fullmatch(value) else None
 
 
-def write_enrolled_pin(data_dir: Path, digits: str) -> bool:
+def write_enrolled_pin(home: Path, digits: str) -> bool:
     """Write the first PIN this machine has had. True when it was written, False when
     one was already there.
 
@@ -77,9 +84,9 @@ def write_enrolled_pin(data_dir: Path, digits: str) -> bool:
     """
     if not PIN_PATTERN.fullmatch(digits):
         raise ValueError(PIN_RULE)
-    path = pin_file(data_dir)
+    path = pin_file(home)
     try:
-        secure_dir(data_dir)
+        secure_dir(home)
         handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, DATA_FILE_MODE)
     except FileExistsError:
         log.warning("a PIN is already enrolled at %s, and an enrolled PIN is never replaced", path)
@@ -100,7 +107,7 @@ def write_enrolled_pin(data_dir: Path, digits: str) -> bool:
     return True
 
 
-def replace_pin_at_keyboard(data_dir: Path, digits: str) -> None:
+def replace_pin_at_keyboard(home: Path, digits: str) -> None:
     """The owner, at a terminal, putting a new PIN in place of the one there. `jarvis setup`
     only, after two yeses — never a tool, never a command a subagent could run for itself.
 
@@ -110,8 +117,8 @@ def replace_pin_at_keyboard(data_dir: Path, digits: str) -> None:
     """
     if not PIN_PATTERN.fullmatch(digits):
         raise ValueError(PIN_RULE)
-    write_private(pin_file(data_dir), f"{digits}\n")
-    log.info("the PIN at %s was replaced at the keyboard", pin_file(data_dir))
+    write_private(pin_file(home), f"{digits}\n")
+    log.info("the PIN at %s was replaced at the keyboard", pin_file(home))
 
 
 def is_trivial_pin(digits: str) -> bool:

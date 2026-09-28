@@ -11,7 +11,7 @@ Four rules hold the whole design up:
 
 - **A Unix socket, never an HTTP route.** `cloudflared` forwards the whole of port 8080 to
   the public internet, so a `/approvals` endpoint would be reachable by anyone. A socket at
-  `data_dir/approvals.sock`, mode 0600, is unreachable through the tunnel by construction,
+  `state_dir/approvals.sock`, mode 0600, is unreachable through the tunnel by construction,
   and filesystem permissions are the right authorization for a thing whose only legitimate
   client is a process already running as them.
 - **Failure is always "do nothing".** Every path that is not an explicit, PIN-gated,
@@ -39,7 +39,7 @@ from pathlib import Path
 
 from jarvis.approvals.models import ApprovalRequest, Kind, Outcome, Verdict, input_digest
 from jarvis.approvals.policy import classify
-from jarvis.config import Settings
+from jarvis.config import Settings, secure_dir, secure_file
 from jarvis.notify.deliver import announce_to_live_sessions
 from jarvis.notify.twilio_out import TwilioOut, stream_twiml
 from jarvis.session import SessionRegistry
@@ -59,8 +59,8 @@ MARKER_NAME = "PENDING"
 KILL_SWITCH_NAME = "DISABLED"
 
 #: The `sun_path` limit for an `AF_UNIX` socket — 108 bytes on Linux, 104 on macOS, and
-#: the *whole* path counts. `~/.jarvis/approvals.sock` is nowhere near it; a `DATA_DIR`
-#: nested somewhere deep is, and the bare `OSError: AF_UNIX path too long` it produces
+#: the *whole* path counts. `~/.local/state/jarvis/approvals.sock` is nowhere near it; a
+#: `STATE_DIR` nested somewhere deep is, and the bare `OSError: AF_UNIX path too long` it produces
 #: says nothing anyone can act on. Checked here so the log line names the fix instead.
 MAX_SOCKET_PATH_BYTES = 100
 
@@ -166,11 +166,11 @@ class ApprovalBroker:
 
     @property
     def state_dir(self) -> Path:
-        return self._settings.data_dir / STATE_DIR_NAME
+        return self._settings.state_dir / STATE_DIR_NAME
 
     @property
     def socket_path(self) -> Path:
-        return self._settings.data_dir / SOCKET_NAME
+        return self._settings.state_dir / SOCKET_NAME
 
     @property
     def disabled(self) -> bool:
@@ -187,16 +187,14 @@ class ApprovalBroker:
         if not self._settings.approvals_enabled:
             log.info("the approval bridge is off (APPROVALS_ENABLED)")
             return False
-        self.state_dir.mkdir(parents=True, exist_ok=True)
-        with contextlib.suppress(OSError):
-            os.chmod(self.state_dir, 0o700)
+        secure_dir(self.state_dir)
         self._clear_marker()
 
         path = self.socket_path
         if len(str(path).encode()) > MAX_SOCKET_PATH_BYTES:
             log.error(
                 "%s is %d bytes, too long for a unix socket (the limit is about %d); the "
-                "approval bridge is off — put DATA_DIR somewhere shorter",
+                "approval bridge is off — put STATE_DIR somewhere shorter",
                 path,
                 len(str(path).encode()),
                 MAX_SOCKET_PATH_BYTES,
@@ -582,6 +580,7 @@ class ApprovalBroker:
         try:
             if self._pending:
                 marker.touch()
+                secure_file(marker)
             else:
                 marker.unlink(missing_ok=True)
         except OSError:
@@ -604,7 +603,7 @@ class ApprovalBroker:
         line.update({key: value for key, value in extra.items() if value is not None})
         path = self.state_dir / AUDIT_NAME
         try:
-            self.state_dir.mkdir(parents=True, exist_ok=True)
+            secure_dir(self.state_dir)
             existed = path.exists()
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(line, default=str) + "\n")

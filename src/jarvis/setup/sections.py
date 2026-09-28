@@ -259,7 +259,7 @@ def pin_problem(digits: str) -> str | None:
 def run_pin(ctx: SetupContext) -> None:
     """Set the PIN here, or leave it to the first call; replace one only on two yeses."""
     ui, settings = ctx.ui, ctx.settings
-    path = pin_file(settings.data_dir)
+    path = pin_file(settings.config_dir)
     if settings.pin_source == PIN_FROM_ENV:
         ui.success("PIN: set by JARVIS_PIN in your environment, which wins over anything here")
         return
@@ -295,8 +295,8 @@ def run_pin(ctx: SetupContext) -> None:
     if replacing:
         if not ui.confirm(f"Replace the PIN in {path} with the new one?", default=False):
             return
-        replace_pin_at_keyboard(settings.data_dir, digits)
-    elif not write_enrolled_pin(settings.data_dir, digits):
+        replace_pin_at_keyboard(settings.config_dir, digits)
+    elif not write_enrolled_pin(settings.config_dir, digits):
         ui.error(f"A PIN appeared in {path} meanwhile; it was left alone.")
         return
     ctx.refresh()

@@ -344,7 +344,7 @@ def test_a_pin_from_the_environment_says_so(healthy):
 
 
 def test_a_pin_in_its_own_file_says_when_and_where(healthy):
-    """`DATA_DIR/pin` is the PIN's store now, whoever wrote it — setup or a first call."""
+    """`JARVIS_HOME/pin` is the PIN's store now, whoever wrote it — setup or a first call."""
     settings = healthy.model_copy(update={"pin": None})
     assert settings.enrol_pin("987654") is True
 
@@ -352,7 +352,7 @@ def test_a_pin_in_its_own_file_says_when_and_where(healthy):
 
     assert check.ok is True
     assert check.detail.startswith("set on ")
-    assert str(pin_file(settings.data_dir)) in check.detail
+    assert str(pin_file(settings.config_dir)) in check.detail
     assert "987654" not in check.detail
 
 
@@ -369,13 +369,14 @@ def test_the_environment_wins_over_the_same_digits_in_the_file(healthy):
 
 def test_a_pin_file_that_is_not_a_pin_is_reported_as_the_dead_end_it_is(healthy):
     settings = healthy.model_copy(update={"pin": None})
-    pin_file(settings.data_dir).write_text("not-a-pin\n", encoding="utf-8")
+    settings.config_dir.mkdir(parents=True, exist_ok=True)
+    pin_file(settings.config_dir).write_text("not-a-pin\n", encoding="utf-8")
 
     checks = run_doctor_checks(settings, probe_mic=False)
     check = by_name(checks)["PIN"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert str(pin_file(settings.data_dir)) in check.detail
+    assert str(pin_file(settings.config_dir)) in check.detail
     assert "no call can set one" in check.detail
     assert has_hard_failure(checks) is False
 

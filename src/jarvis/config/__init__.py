@@ -3,7 +3,7 @@
 - `settings` — `Settings`, every field with its description, group and default permission;
 - `store` — `JARVIS_HOME/config.toml` and `secrets.toml`, the only code that writes them;
 - `permissions` — which keys the running service may change (`PROTECTED_KEYS` never);
-- `pin` — `DATA_DIR/pin`, the PIN's own store, written once;
+- `pin` — `JARVIS_HOME/pin`, the PIN's own store, written once;
 - `files` — the directory, the modes and the atomic writes under all of them.
 
 Everything the rest of Jarvis imported from the old `jarvis.config` module is re-exported

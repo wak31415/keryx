@@ -66,12 +66,14 @@ FROM_ENV = "environment"
 FROM_SECRETS = "secrets.toml"
 FROM_CONFIG = "config.toml"
 FROM_LEGACY = ".env (legacy)"
-FROM_PIN_FILE = "DATA_DIR/pin"
+FROM_PIN_FILE = "JARVIS_HOME/pin"
 FROM_DEFAULT = "default"
 
 #: Settings whose value is a path: a legacy `.env` meant them relative to the directory
 #: the service ran in, which is the `.env`'s own, so an import resolves them there.
-PATH_KEYS = frozenset({"DATA_DIR", "PROJECTS_ROOT", "SKILLS_DIR", "CLUSTER_SSH_GUARD"})
+PATH_KEYS = frozenset(
+    {"DATA_DIR", "STATE_DIR", "CACHE_DIR", "PROJECTS_ROOT", "SKILLS_DIR", "CLUSTER_SSH_GUARD"}
+)
 
 
 class ConfigError(ValueError):
@@ -231,7 +233,7 @@ class ConfigStore:
             raw = dotenv_values(legacy)
             if (raw.get(key) or "").strip():
                 return FROM_LEGACY
-        if key == "JARVIS_PIN" and settings is not None and pin_file(settings.data_dir).exists():
+        if key == "JARVIS_PIN" and settings is not None and pin_file(settings.config_dir).exists():
             return FROM_PIN_FILE
         return FROM_DEFAULT
 
@@ -373,11 +375,11 @@ class ConfigStore:
 
         Settings still at their defaults are not copied, so a `.env` made from the old
         example file does not pin sixty defaults for ever. `JARVIS_PIN` goes to
-        `DATA_DIR/pin`, the PIN's own store — unless a *different* PIN is already there, in
-        which case nothing at all is written: until now the `.env` one was in use, and
+        `JARVIS_HOME/pin`, the PIN's own store — unless a *different* PIN is already there,
+        in which case nothing at all is written: until now the `.env` one was in use, and
         silently switching to the other would lock the owner out of their own phone. The
         Google client file (`GOOGLE_CLIENT_SECRETS_FILE`, or `.secrets/client_secret.json`
-        beside the `.env`) is copied to `DATA_DIR/google_client_secret.json`.
+        beside the `.env`) is copied to `JARVIS_HOME/google_client_secret.json`.
         """
         if actor != permissions.OWNER:
             # It writes protected settings and the PIN by its nature: the owner's alone.
@@ -408,17 +410,6 @@ class ConfigStore:
             else:
                 report.imported.append(key)
         keep = {key: cleaned[key] for key in report.imported}
-
-        # The data directory the service will use after the import, found the way it finds
-        # it: the environment first, then the store as it will be, then the default.
-        data_dir = Path(
-            os.environ.get("DATA_DIR", "").strip()
-            or keep.get("DATA_DIR")
-            or stored.get("DATA_DIR")
-            or default_value("DATA_DIR")
-        ).expanduser()
-        if not data_dir.is_absolute():
-            data_dir = path.parent / data_dir
         client = Path(client_raw).expanduser() if client_raw else LEGACY_GOOGLE_CLIENT_FILE
         client = client if client.is_absolute() else path.parent / client
         client_text = client.read_text(encoding="utf-8") if client.is_file() else None
@@ -429,29 +420,29 @@ class ConfigStore:
                 raise ConfigError(f"{client} is not a Google OAuth client file: {error}") from None
         # Everything that can refuse has been asked; from here on it is only writing.
         if pin is not None:
-            report.pin = self._import_pin(data_dir, pin)
+            report.pin = self._import_pin(self.home, pin)
         if client_text is not None:
-            report.client_file = write_private(data_dir / GOOGLE_CLIENT_FILE, client_text)
+            report.client_file = write_private(self.home / GOOGLE_CLIENT_FILE, client_text)
         self._write(keep)
         report.renamed_to = _rename_aside(path, today or date.today())
         return report
 
     @staticmethod
-    def _import_pin(data_dir: Path, pin: str) -> str:
+    def _import_pin(home: Path, pin: str) -> str:
         if not PIN_PATTERN.fullmatch(pin):
             raise ConfigError(f"JARVIS_PIN {PIN_RULE}")
-        existing = read_enrolled_pin(data_dir)
-        if pin_file(data_dir).exists() and existing != pin:
+        existing = read_enrolled_pin(home)
+        if pin_file(home).exists() and existing != pin:
             raise ConfigError(
-                f"the .env's JARVIS_PIN is not the PIN in {pin_file(data_dir)}. The .env one "
+                f"the .env's JARVIS_PIN is not the PIN in {pin_file(home)}. The .env one "
                 "has been the PIN in use; to keep it, delete that file and import again. "
                 "Nothing was imported."
             )
         if existing == pin:
             return "already there"
-        if not write_enrolled_pin(data_dir, pin):
-            raise ConfigError(f"could not write the PIN to {pin_file(data_dir)}")
-        return "moved to DATA_DIR/pin"
+        if not write_enrolled_pin(home, pin):
+            raise ConfigError(f"could not write the PIN to {pin_file(home)}")
+        return "moved to JARVIS_HOME/pin"
 
 
 def _rename_aside(path: Path, today: date) -> Path:

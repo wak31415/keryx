@@ -108,31 +108,37 @@ def systemd_unquote(value: str) -> str:
     return re.sub(r"\\(.)|%%", lambda m: m.group(1) or "%", value[1:-1])
 
 
-# --- DATA_DIR ---------------------------------------------------------------
+# --- where things are --------------------------------------------------------
 
 
-def test_logs_default_to_the_data_dir_jarvis_uses(machine):
-    assert lib(machine, 'printf %s "$LOGS"') == f"{machine['home']}/.jarvis/logs"
+def test_logs_default_to_the_state_dir_jarvis_uses(machine):
+    assert lib(machine, 'printf %s "$LOGS"') == f"{machine['home']}/.local/state/jarvis/logs"
 
 
-@pytest.mark.parametrize(
-    ("configured", "expected"),
-    [
-        ("/srv/jarvis", "/srv/jarvis"),
-        ("state", "{repo}/state"),  # relative to the service's working directory
-    ],
-)
-def test_logs_follow_data_dir_from_the_configuration(machine, configured, expected):
-    configure(machine, DATA_DIR=configured)
+def test_logs_follow_state_dir_from_the_configuration(machine):
+    configure(machine, STATE_DIR="/srv/jarvis state")
 
-    logs = lib(machine, 'printf %s "$LOGS"')
+    assert lib(machine, 'printf %s "$LOGS"') == "/srv/jarvis state/logs"
 
-    assert logs == expected.format(repo=machine["repo"]) + "/logs"
+
+def test_logs_follow_the_xdg_state_directory(machine):
+    machine["env"]["XDG_STATE_HOME"] = str(machine["home"] / "xdg state")
+
+    assert lib(machine, 'printf %s "$LOGS"') == f"{machine['home']}/xdg state/jarvis/logs"
+
+
+def test_every_path_comes_from_jarvis_and_none_is_reassigned(machine):
+    """The resolved paths are prefixed, so an exported DATA_DIR is left exactly as it was."""
+    machine["env"]["DATA_DIR"] = "/srv/data"
+
+    out = lib(machine, 'printf "%s|%s|%s" "$DATA_DIR" "$JARVIS_DIR" "$RESOLVED_CACHE_DIR"')
+
+    assert out == f"/srv/data|/srv/data|{machine['home']}/.cache/jarvis"
 
 
 def test_a_legacy_env_in_the_repository_is_still_read(machine):
     configure(machine)
-    (machine["repo"] / ".env").write_text("DATA_DIR=/srv/from-dotenv\n")
+    (machine["repo"] / ".env").write_text("STATE_DIR=/srv/from-dotenv\n")
 
     assert lib(machine, 'printf %s "$LOGS"') == "/srv/from-dotenv/logs"
 
@@ -161,15 +167,15 @@ def test_render_inserts_values_literally(machine, tmp_path):
 # --- systemd ------------------------------------------------------------------
 
 
-def test_the_systemd_units_carry_this_shell_path_and_data_dir(machine):
+def test_the_systemd_units_carry_this_shell_path_and_state_dir(machine):
     configure(
-        machine, PUBLIC_HOST="jarvis.example.com", DATA_DIR=str(machine["home"] / "jarvis-data")
+        machine, PUBLIC_HOST="jarvis.example.com", STATE_DIR=str(machine["home"] / "jarvis-state")
     )
 
     run("install-systemd.sh", machine)
 
     units = machine["home"] / ".config" / "systemd" / "user"
-    logs = machine["home"] / "jarvis-data" / "logs"
+    logs = machine["home"] / "jarvis-state" / "logs"
     for name, log in (("jarvis", "jarvis"), ("cloudflared", "cloudflared")):
         text = (units / f"{name}.service").read_text()
         assert not PLACEHOLDER.search(text), text
@@ -194,14 +200,14 @@ def test_the_systemd_units_carry_this_shell_path_and_data_dir(machine):
 # --- launchd ------------------------------------------------------------------
 
 
-def test_the_launch_agents_carry_this_shell_path_and_data_dir(machine, tmp_path):
-    data_dir = tmp_path / "data <&> more"
-    configure(machine, PUBLIC_HOST="jarvis.example.com", DATA_DIR=str(data_dir))
+def test_the_launch_agents_carry_this_shell_path_and_state_dir(machine, tmp_path):
+    state_dir = tmp_path / "state <&> more"
+    configure(machine, PUBLIC_HOST="jarvis.example.com", STATE_DIR=str(state_dir))
 
     run("install-launchd.sh", machine)
 
     agents = machine["home"] / "Library" / "LaunchAgents"
-    logs = f"{data_dir}/logs"
+    logs = f"{state_dir}/logs"
     for label, log in (("dev.jarvis.agent", "jarvis"), ("dev.jarvis.tunnel", "ngrok")):
         raw = (agents / f"{label}.plist").read_bytes()
         assert not PLACEHOLDER.search(raw.decode()), raw
@@ -223,36 +229,42 @@ def hook_commands(machine) -> dict[str, str]:
     }
 
 
-def test_the_hook_needs_no_data_dir_when_it_is_the_default(machine):
+def test_the_hook_is_always_told_where_the_state_dir_is(machine):
+    """Even at the default: the hook never reads the configuration, and one that guessed
+    differently from the broker would leave every prompt unescalated."""
     run("install-claude-hook.sh", machine)
 
     commands = hook_commands(machine)
     target = machine["home"] / ".claude" / "hooks" / "jarvis_approval.py"
-    assert commands["PermissionRequest"] == f"python3 {target}"
-    assert "JARVIS_DATA_DIR" not in commands["PostToolUse"]
+    state_dir = f"{machine['home']}/.local/state/jarvis"
+    assert shlex.split(commands["PermissionRequest"]) == [
+        "env",
+        f"JARVIS_STATE_DIR={state_dir}",
+        "python3",
+        str(target),
+    ]
+    assert f"[ -e {state_dir}/approvals/PENDING ]" in shlex.split(commands["PostToolUse"])[2]
 
 
-def test_the_hook_is_pointed_at_a_data_dir_set_in_the_configuration(machine):
-    """The hook reads JARVIS_DATA_DIR, never the configuration; the broker's socket is not
-    in ~/.jarvis when DATA_DIR says otherwise, and every prompt would go unescalated."""
-    configure(machine, DATA_DIR=str(machine["home"] / "jarvis data"))
+def test_the_hook_is_pointed_at_a_state_dir_set_in_the_configuration(machine):
+    configure(machine, STATE_DIR=str(machine["home"] / "jarvis state"))
 
     run("install-claude-hook.sh", machine)
 
-    data_dir = f"{machine['home']}/jarvis data"
+    state_dir = f"{machine['home']}/jarvis state"
     commands = hook_commands(machine)
     assert shlex.split(commands["PermissionRequest"])[:2] == [
         "env",
-        f"JARVIS_DATA_DIR={data_dir}",
+        f"JARVIS_STATE_DIR={state_dir}",
     ]
     shell = shlex.split(commands["PostToolUse"])
     assert shell[:2] == ["sh", "-c"]
-    assert f"[ -e '{data_dir}/approvals/PENDING' ]" in shell[2]
+    assert f"[ -e '{state_dir}/approvals/PENDING' ]" in shell[2]
     assert f"exec {commands['PermissionRequest']};" in shell[2]
 
 
 def test_the_resolve_command_still_runs_when_nothing_is_pending(machine):
-    configure(machine, DATA_DIR=str(machine["home"] / "jarvis data"))
+    configure(machine, STATE_DIR=str(machine["home"] / "jarvis state"))
     run("install-claude-hook.sh", machine)
 
     result = subprocess.run(

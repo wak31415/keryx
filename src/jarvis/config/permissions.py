@@ -60,6 +60,8 @@ PROTECTED_PATTERNS = (
     "PORT",
     "CLOUDFLARE_TUNNEL",
     "DATA_DIR",
+    "STATE_DIR",
+    "CACHE_DIR",
     "SERVICE_*",
     "CLUSTER*",
     "SKILLS_DIR",

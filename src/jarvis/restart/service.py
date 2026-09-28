@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jarvis.config import Settings
+from jarvis.config.files import HOME_ENV, XDG_HOMES
 
 log = logging.getLogger("jarvis.restart")
 
@@ -48,7 +49,7 @@ PROBE_TIMEOUT_S = 5.0
 #: The transient unit the watchdog runs as, suffixed with the pid that armed it so a
 #: second restart during a crash loop does not collide with the watch still running.
 WATCH_UNIT_PREFIX = "jarvis-restart-watch"
-#: Where the watchdog's own output goes, under `data_dir/logs`.
+#: Where the watchdog's own output goes, under `state_dir/logs`.
 WATCH_LOG_NAME = "restart-watch.log"
 
 #: What `jarvis restart` prints when there is no service manager to ask.
@@ -221,12 +222,32 @@ class WatchPlan:
     redirect: bool
 
 
+def location_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The variables that say where Jarvis keeps things, as this process has them.
+
+    A transient unit starts with the *user manager's* environment, not ours, so without
+    these the watchdog could resolve a different `JARVIS_HOME` or XDG directory from the
+    service it watches — read another restart record, or none, and ring nobody. The
+    directory settings go too, for a service that was handed one in its environment.
+    """
+    env = os.environ if environ is None else environ
+    names = (
+        HOME_ENV,
+        *(variable for variable, _ in XDG_HOMES.values()),
+        "DATA_DIR",
+        "STATE_DIR",
+        "CACHE_DIR",
+    )
+    return {name: env[name] for name in names if env.get(name, "").strip()}
+
+
 def watch_command(
     settings: Settings,
     target: ServiceTarget,
     *,
     which: Callable[[str], str | None] | None = None,
     pid: int | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> WatchPlan | None:
     """How to start the watchdog *outside* this service, or None when nothing can be.
 
@@ -258,6 +279,7 @@ def watch_command(
             f"--property=WorkingDirectory={Path.cwd()}",
             f"--property=StandardOutput=append:{log_path}",
             f"--property=StandardError=append:{log_path}",
+            *(f"--setenv={name}={value}" for name, value in location_env(environ).items()),
             "--",
             *inner,
         ],
@@ -268,7 +290,7 @@ def watch_command(
 
 def watch_log_path(settings: Settings) -> Path:
     """Where the watchdog writes; it has no other way to be heard if it fails itself."""
-    return settings.data_dir / "logs" / WATCH_LOG_NAME
+    return settings.state_dir / "logs" / WATCH_LOG_NAME
 
 
 def spawn_watchdog(plan: WatchPlan, settings: Settings) -> int:

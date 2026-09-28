@@ -356,7 +356,7 @@ def install_client_file(settings: Settings, source: Path) -> Path:
         parse_google_client(text)
     except ValueError as exc:
         raise GoogleSetupError(f"{path} is not a Google OAuth client file: {exc}") from None
-    return write_private(settings.data_dir / GOOGLE_CLIENT_FILE, text)
+    return write_private(settings.config_dir / GOOGLE_CLIENT_FILE, text)
 
 
 # --- Gmail, read-only, for check_email ------------------------------------------------------
