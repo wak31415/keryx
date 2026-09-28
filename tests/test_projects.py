@@ -109,3 +109,35 @@ def test_the_briefs_together_are_capped_and_what_is_left_out_is_logged(tmp_path,
     assert "short" in kept  # a brief that still fits is not dropped for coming late
     assert "project-9" not in kept
     assert "project-9" in caplog.text
+
+
+# --- setup's summaries --------------------------------------------------------------
+
+
+def test_a_summary_stands_in_for_a_missing_brief_and_a_repo_brief_wins(settings, tmp_path):
+    from jarvis.projects import summaries_dir
+
+    for name in ("orchard", "weather", "quiet"):
+        (settings.projects_root / name).mkdir(parents=True)
+    (settings.projects_root / "orchard" / ".jarvis-brief.md").write_text("The repo's own.")
+    written = summaries_dir(settings)
+    written.mkdir(parents=True)
+    (written / "orchard.md").write_text("Setup's draft.")
+    (written / "weather.md").write_text("Forecasts.")
+    (written / "stranger.md").write_text("Not a project here.")
+
+    briefs = discover_briefs(discover_projects(settings), summaries=written)
+
+    assert {brief.name: brief.text for brief in briefs} == {
+        "orchard": "The repo's own.",
+        "weather": "Forecasts.",
+    }
+
+
+def test_without_a_summaries_directory_only_repo_briefs_count(settings):
+    (settings.projects_root / "weather").mkdir(parents=True)
+    written = settings.data_dir / "projects"
+    written.mkdir(parents=True)
+    (written / "weather.md").write_text("Forecasts.")
+
+    assert discover_briefs(discover_projects(settings)) == []

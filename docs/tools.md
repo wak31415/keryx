@@ -1,6 +1,6 @@
 # The tools the voice model can call
 
-There are nineteen, and they fall into two groups that you should treat very differently.
+There are twenty, and they fall into two groups that you should treat very differently.
 
 **The core is the machinery of a call** — dispatching work, following it, and getting off
 the phone. It is the same for everybody and it is not where you should be making changes:
@@ -23,6 +23,7 @@ the digest at the top of your next call depends on it.
 | `request_callback` | call back when a task lands |
 | `web_search` | answer a small factual question on the spot, through the Responses API |
 | `restart_service` | restart Jarvis (after the call ends) |
+| `set_config` | change one of Jarvis's own settings — only those the running service may (`jarvis config list`); saved, applied at the next restart |
 | `submit_pin` | check a spoken PIN |
 | `end_session` | hang up |
 
@@ -30,7 +31,7 @@ the digest at the top of your next call depends on it.
 because they are worked examples of the shape rather than because you need them.
 `cluster_stats` reads Slurm clusters through an ssh guard you write yourself, and is not
 offered at all until `CLUSTERS` and `CLUSTER_SSH_GUARD` are set;
-`check_billing` reads an API bill; `check_email` needs `jarvis setup-gmail` (read-only) and the
+`check_billing` reads an API bill; `check_email` needs `jarvis auth login gmail` (read-only) and the
 `claude` extra, and waits behind the PIN; the approval pair is for someone who uses Claude Code
 on the same machine. Read them for the pattern, then delete them and write your own.
 

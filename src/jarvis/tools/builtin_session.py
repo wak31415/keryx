@@ -1,4 +1,5 @@
-"""The tools about the call itself: the approval bridge, the PIN, and hanging up.
+"""The tools about the call itself: the approval bridge, the PIN, Jarvis's own settings, and
+hanging up.
 
 `answer_approval` is the one to read carefully, and what matters is what it *cannot* do.
 It cannot answer anything. The most it does is read the pending question out and put the
@@ -15,18 +16,26 @@ PIN used to cost four spoken turns on a real call and carry one fact; the messag
 what not to say as firmly as what to say.
 """
 
+import asyncio
+
 from jarvis.approvals.broker import ApprovalBroker
 from jarvis.config import Settings
+from jarvis.config.permissions import SERVICE, writable_keys
+from jarvis.config.store import ConfigError, ConfigStore
 from jarvis.tools.builtin_common import (
     APPROVAL_KEYPAD_MESSAGE,
     APPROVAL_NONE_MESSAGE,
     APPROVAL_PHONE_ONLY_MESSAGE,
+    CONFIG_REFUSED_MESSAGE,
+    CONFIG_SET_MESSAGE,
     ENDING_MESSAGE,
+    PIN_ENROL_MESSAGE,
     PIN_INVALID_MESSAGE,
     PIN_LOCKED_MESSAGE,
     PIN_NOT_CONFIGURED_MESSAGE,
     PIN_OK_MESSAGE,
     _small_int,
+    pin_gate,
     possession_gate,
 )
 from jarvis.tools.registry import ToolContext, ToolRegistry
@@ -46,8 +55,10 @@ def register_session_tools(
     *,
     settings: Settings,
     approvals: ApprovalBroker | None = None,
+    store: ConfigStore | None = None,
 ) -> None:
-    """Register the approval tools (only with a broker), `submit_pin` and `end_session`."""
+    """Register the approval tools (only with a broker), `set_config`, `submit_pin` and
+    `end_session`."""
     # --- submit_pin / end_session ------------------------------------------
 
     # --- approvals ---------------------------------------------------------
@@ -118,6 +129,45 @@ def register_session_tools(
             answer_approval,
         )
 
+    # --- set_config --------------------------------------------------------
+
+    config = store or ConfigStore()
+    # Read once, at registration: what the model is told it may change is what the owner had
+    # allowed when this process started. A later `jarvis config lock` still wins at write
+    # time, because the store checks again.
+    writable = writable_keys(config.overrides())
+
+    async def set_config(ctx: ToolContext, arguments: dict) -> dict:
+        if (refusal := pin_gate(ctx, settings)) is not None:
+            return refusal
+        key = str(arguments.get("key") or "").strip().upper()
+        value = str(arguments.get("value") or "").strip()
+        try:
+            await asyncio.to_thread(
+                config.set, {key: value or None}, actor=SERVICE, settings=settings
+            )
+        except ConfigError as error:
+            return {"status": "refused", "message": CONFIG_REFUSED_MESSAGE.format(why=error)}
+        return {"status": "set", "key": key, "message": CONFIG_SET_MESSAGE}
+
+    registry.register(
+        "set_config",
+        "Change one of Jarvis's own settings when they ask — the voice, how long it waits "
+        "before answering, which model does the work. Only these can be changed: "
+        f"{', '.join(writable) or 'none'}. A blank value puts one back to its default. "
+        "It is saved, not applied: it takes effect after a restart, which you say in one "
+        "sentence. Needs the PIN.",
+        {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string", "enum": writable or [""]},
+                "value": {"type": "string", "description": "The new value, as text."},
+            },
+            "required": ["key", "value"],
+        },
+        set_config,
+    )
+
     # --- submit_pin --------------------------------------------------------
 
     async def submit_pin(ctx: ToolContext, arguments: dict) -> dict:
@@ -127,7 +177,12 @@ def register_session_tools(
         A `message` the session already set wins, so nothing here can talk over it.
         """
         result = await ctx.session.submit_pin(str(arguments.get("pin") or ""))
-        message = PIN_MESSAGES.get(str(result.get("status")))
+        status = str(result.get("status"))
+        message = PIN_MESSAGES.get(status)
+        if status == "not_configured" and settings.pin_enrolment_open:
+            # Not "there is nothing to check" but "there is nothing *yet*": the keypad can
+            # set one on this call, and a spoken PIN is the one thing that cannot.
+            message = PIN_ENROL_MESSAGE
         if message is not None:
             result.setdefault("message", message)
         return result

@@ -253,8 +253,9 @@ def render_subagent_suffix(
 def google_mcp_server_config(settings: Settings) -> dict[str, Any]:
     """The `workspace-mcp` stdio server config for Gmail + Calendar (spec §4).
 
-    Public because `jarvis setup-google` runs the very same server once, by hand, to walk
-    through the browser OAuth flow that leaves credentials behind for later tasks.
+    Public because `jarvis auth login google-workspace` runs the very same server once, by
+    hand, to walk through the browser OAuth flow that leaves credentials behind for later
+    tasks.
     """
     client = settings.google_oauth_client()
     env = {

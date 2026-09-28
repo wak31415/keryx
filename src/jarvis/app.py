@@ -129,7 +129,7 @@ def build_app_state(settings: Settings) -> AppState:
         # None, and so no tool, until clusters are configured and the ssh guard is on
         # disk: which clusters exist is one machine's setup, never a default.
         cluster=build_cluster_stats(settings),
-        # None, and so no tool, until `jarvis setup-gmail` has signed in and the claude
+        # None, and so no tool, until `jarvis auth login gmail` has signed in and the claude
         # CLI is installed.
         email=build_email_reader(settings),
         restarter=restart,

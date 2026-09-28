@@ -47,7 +47,10 @@ Prerequisites the owner supplies (in `.env`): `OPENAI_API_KEY`, subagent auth (t
 CLI subscription login by default; `ANTHROPIC_API_KEY` is the pay-per-token override —
 amended 2026-08-24, was: the Agent SDK cannot use the subscription login), Twilio account
 SID / auth token / number, a Cloudflare-routed hostname for the tunnel, Google Cloud
-OAuth client (Gmail + Calendar scopes).
+OAuth client (Gmail + Calendar scopes). *Amended 2026-09-27: supplied through `jarvis setup`
+(a person) or `jarvis config` / `jarvis auth` (a coding agent), and kept in
+`JARVIS_HOME/config.toml` and a 0600 `secrets.toml` rather than a hand-edited `.env`, which
+is still read below them (§3.4).*
 
 ## 3. Architecture
 
@@ -71,7 +74,8 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 
 | Module | Responsibility |
 |---|---|
-| `config.py` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails |
+| `config/` | `Settings` (pydantic-settings): keys, Twilio numbers, allowlist, PIN, public host, projects, voice/model names, timeouts, concurrency, guardrails. A package since 2026-09-27: `settings` (each field with a description, a group and a default `service_writable`), `store` (`config.toml`/`secrets.toml`, the only writer), `permissions` (`PROTECTED_KEYS`), `pin` (`data_dir/pin`), `files`, `reference` (generates `docs/configuration.md`); the package re-exports the old names |
+| `setup/` | `jarvis setup` (the wizard: `wizard`, `sections`, `agents`, `phone`, `google`, `profile`, `project_context`, `ui`, `context`) and `jarvis auth` (`auth`); `guides/*.md` are rendered by the wizard and linked from the README (added 2026-09-27, replacing `agent_setup.py`, `onboarding.py`, `google_setup.py` and `gmail_setup.py`) |
 | `projects.py` | `discover_projects` (configured projects plus `projects_root` subdirectories, shared by `TaskManager` and the voice prompt) and `discover_briefs` (each project's own `.jarvis-brief.md`, `MAX_BRIEF_CHARS` each and `MAX_BRIEFS_CHARS` together) |
 | `continuity/transcripts.py` | `read_tail`: the end of an earlier call, read back out of `data_dir/calls/<session_id>.log` for a call-back's opening context |
 | `continuity/briefing.py` | `Briefer`/`Briefing`: what a call opens knowing — the digest of finished-but-unreported tasks, and the memory it reads back through `continuity.memory`. Grouped with the four around it under `continuity/` 2026-09-08 |
@@ -135,8 +139,7 @@ Mac mic ── openWakeWord "hey jarvis" ──▶ LocalAudioDevice / LocalTrans
 | `prompts/first_call.md` | the memory's stand-in on a trusted session that has none: a short get-to-know-you introduction, dropped the moment work or a refusal arrives (added 2026-09-19) |
 | `prompts/subagent_suffix.md` | appended to Agent SDK system prompt: autonomous, ends with `SPOKEN_SUMMARY:` block |
 | `prompts/memory_update.md` | the internal memory subagent's prompt: merge this call's transcript into `memory.md`, keep the structure (rendered from `memory_skeleton` into `{structure}`), stay under budget |
-| `onboarding.py` | `run_init` and `setup_report`, behind `jarvis init`: a name and a first `memory.md` through `seed_memory`, and a report of what every call will carry (added 2026-09-16; `setup_summary` and the `--json` report, 2026-09-19) |
-| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory`, `init`, `forget`, `approvals`, `setup-google`, `doctor`, `restart`, `restart-watch` (hidden; armed by a restart, not run by hand) |
+| `cli.py` | `jarvis serve`, `loopback`, `download-models`, `tasks list|show`, `memory [seed]`, `forget`, `approvals`, `setup`, `config …`, `auth login|status`, `doctor`, `restart`, `restart-watch` (hidden; armed by a restart, not run by hand). `init`, `setup-agent`, `setup-google` and `setup-gmail` were removed 2026-09-27 |
 
 ### 3.2 Binding interfaces
 
@@ -612,7 +615,14 @@ class SessionRegistry:
   is the keyboard session that drives it for an owner whose own agent is doing the setup: it
   drafts a `.jarvis-brief.md` for the projects they pick **after seeing the list**, proposes
   `~/.claude/CLAUDE.md` lines, and pipes the agreed facts into `jarvis init --from - --yes` —
-  writing neither `memory.md` nor `.env` itself.*
+  writing neither `memory.md` nor `.env` itself.* *Amended 2026-09-27: `jarvis init` is gone.
+  The keyboard half is `jarvis setup`'s "About you" section (`setup/profile.py`); the agent
+  half is `jarvis memory seed --file - [--json]`, with the same statuses and exit codes; and
+  the skill is `skills/jarvis-setup`, which starts from `jarvis setup --agent-instructions`.
+  A project's brief may also be a summary in `data_dir/projects/<name>.md`, drafted by a
+  read-only task (`prompts/setup_project_context.md`) and kept only when the owner accepts
+  it; a repository's own `.jarvis-brief.md` still wins. `add_standing_facts` puts accepted
+  facts into the memory, through the same skeleton.*
 - **The voice prompt only promises what this machine does (added 2026-09-16).** Its clock
   carries the time zone. Words naming a tool only some machines offer are spliced in with
   `OPTIONAL_TOOL_PHRASES`, as whole paragraphs are with `OPTIONAL_TOOL_PROMPTS` ("the cluster"
@@ -657,6 +667,25 @@ class SessionRegistry:
   busy `<Say>`, and the media socket counts again after the token. `jarvis serve` refuses
   the phone channel with `DEBUG_SKIP_TWILIO_VALIDATION` on and `PUBLIC_HOST` set.
   *Amended 2026-09-16:* the gate is on every tool but five, not only on dispatch — see the next ruling.
+  *Amended 2026-09-24:* `JARVIS_PIN` is no longer the only source. With it unset,
+  `Settings.pin` resolves from `data_dir/pin` — the PIN a first call enrolled — so every
+  existing reader of `settings.pin` sees one field with two sources, and the environment
+  always wins. **Enrolment is a one-way door.** While no PIN exists anywhere
+  (`Settings.pin_enrolment_open`), the keypad *sets* a PIN rather than giving one: six to
+  eight digits, keyed twice and compared, never spoken — `submit_pin` cannot enrol, because
+  transcription mishears digits and a mis-set PIN nothing can change is the worst outcome
+  here — and never shown to the model, the transcript or a log line.
+  `config.write_enrolled_pin` creates the file with `O_CREAT | O_EXCL`, so the *kernel* and
+  not a policy check is what makes a second write impossible; there is deliberately no
+  setter in any tool or CLI command, and an enrolled PIN changes only by the owner deleting
+  the file or setting `JARVIS_PIN`. Any `data_dir/pin` shuts the door, usable or not (an
+  unusable one is no PIN *and* no enrolment, and `jarvis doctor` says so). Three unusable
+  entries drop enrolment for the rest of the call — a cap, not a lockout: nothing has been
+  set, so `PinGuard` counts nothing and the next call may still enrol. A successful one
+  authorizes the call and re-renders the prompt exactly as an accepted PIN does, so the
+  briefing it was not allowed to hear arrives on the same turn. `Settings.enrol_pin` also
+  adopts the PIN in the process that wrote it, because `jarvis serve` holds one `Settings`
+  from startup. The accepted risk is the owner's ruling and is in §5.
 - **Trust has three levels (added 2026-09-19).** One bit — `authorized`, earned only by the
   PIN — was both too coarse and wrong about direction, and this ruling amends the one below
   it rather than replacing it. `jarvis/trust.py` has `TrustLevel.NONE` (an inbound call
@@ -687,6 +716,14 @@ class SessionRegistry:
      tell the model its instructions are incomplete — whatever the model is told has to match
      what it was handed, in either direction. *Was:* the digest alone moved, and the memory,
      briefs and skills stayed behind the PIN as the map of the owner's world.
+     *Amended 2026-09-24: the ruling presumes a PIN exists.* It trades a read against a
+     keypad entry, and on a machine that has never had a PIN there is no entry to make and
+     no authentication on the phone at all, so an allowed caller would have been handed the
+     memory, the digest and the project names on every call for ever. The predicate is
+     therefore `Settings.reads_before_pin` (`briefing_before_pin and bool(pin)`), asked by
+     the prompt, the session's briefing and `read_gate` alike; the `withheld` rendering is
+     reused unchanged, with one substitution — a call that may *enrol* is told that instead
+     of being told to wait for a PIN nobody has set.
      `announce(text, needs=…)` carries the same split: a finished task
      needs `NONE`, a prompt waiting on their screen needs a call that could answer it.
      `Announced.delivered` (was `on_phone`) requires `POSSESSION`, because a stranger hearing
@@ -777,7 +814,23 @@ class SessionRegistry:
 - **Guardrails**: `MAX_CALL_SECONDS` (default 1800), `SUBAGENT_MAX_TURNS`, `SUBAGENT_MAX_BUDGET_USD`,
   `DAILY_TASK_CAP`.
 
-### 3.4 Configuration (`.env` names → `Settings` fields)
+### 3.4 Configuration (names → `Settings` fields)
+
+*Amended 2026-09-27.* Values come from, first to last: the code, the process environment,
+`JARVIS_HOME/secrets.toml`, `JARVIS_HOME/config.toml` (default `~/.jarvis`), a legacy `.env`
+in the working directory (read, never written; `jarvis config import-env` moves it in), the
+default. Every `repr=False` field is stored in `secrets.toml` (0600) and never printed; the
+rest in `config.toml`. The PIN is neither: it stays in `data_dir/pin`. Only
+`config/store.py` writes the two files, every write is validated against `Settings`, and a
+secret is never taken from argv. Each field declares whether the running service
+(`set_config`, or `jarvis config set` inside a task — `JARVIS_ACTOR=service`) may change it;
+the owner overrides that with `jarvis config lock|unlock`, and `permissions.PROTECTED_KEYS`
+(every secret; trust, approvals, spending, deletion, network, debug) can never be unlocked.
+`docs/configuration.md`, generated from `Settings`, is the complete and current list; the
+table below is kept for its rulings. New since: `CLOUDFLARE_TUNNEL` (`cloudflare_tunnel`,
+default `jarvis`, read by the scripts through `jarvis config get`), and
+`GOOGLE_CLIENT_SECRETS_FILE` now defaults to blank — `data_dir/google_client_secret.json`,
+where `jarvis setup` puts the downloaded client, else the old `.secrets/client_secret.json`.
 
 | Env | Field | Default |
 |---|---|---|
@@ -809,7 +862,7 @@ class SessionRegistry:
 | `ALLOWED_CALLERS` | `allowed_callers: list[str]` (comma-separated E.164) | `[]` |
 | `OWNER_NUMBER` | `owner_number` | first of `allowed_callers` |
 | `OWNER_NAME` | `owner_name` (what the prompts call the owner; read through `owner_label`) | `None` → "the owner" (added 2026-09-16) |
-| `JARVIS_PIN` | `pin` (**6-8 digits** when set; refused otherwise) | `None` (every dispatch refused on phone if unset) |
+| `JARVIS_PIN` | `pin` (**6-8 digits** when set; refused otherwise). Always wins over `data_dir/pin`, the PIN a first call enrolled (§3.3, amended 2026-09-24); `pin_source` says which, and never the digits | `None` → `data_dir/pin` if one was enrolled, else no PIN: nothing of the owner's is read out on the phone and every dispatch is refused |
 | `BRIEFING_BEFORE_PIN` | `briefing_before_pin` (is an inbound call handed its standing briefing before the PIN — the unheard results, the memory, the project names, the briefs, the skills — and with it the four read-only voice tools over the same material) | `true` (added 2026-09-19 as `DIGEST_BEFORE_PIN`, widened and renamed the same day) |
 | `PIN_FAILURE_LIMIT` / `PIN_FAILURE_WINDOW_HOURS` / `PIN_LOCKOUT_MINUTES` | `pin_failure_limit` / `pin_failure_window_hours` / `pin_lockout_minutes` (wrong PINs across calls before PIN entry locks, how long each counts, how long it locks) | `10` / `24` / `60` (added 2026-09-16) |
 | `PUBLIC_HOST` | `public_host` (the tunnel's hostname, e.g. `jarvis.example.com`) | `None` |
@@ -844,6 +897,10 @@ Data layout under `data_dir`: `tasks.db`, `tasks/<id>.log` (agent transcript),
 `tasks/<id>.md` (final report), `calls/<session_id>.log` (voice transcript),
 `report_secret`, `restart.json` (0600; the pending restart's call-back, its log marks and
 its watchdog), `pin-failures.json` (0600; wrong PINs across calls and the lock they set),
+`pin` (0600; the PIN a first call or `jarvis setup` wrote, written once and never replaced),
+`google_client_secret.json` (0600; the Google OAuth client `jarvis setup` was handed),
+`gmail_token.json` (0600; the read-only Gmail sign-in), `projects/<name>.md` (the project
+summaries setup kept),
 `memory.md` (what Jarvis remembers between calls), `logs/jarvis.log` (our own
 rotated handler) alongside the `jarvis.out.log`/`jarvis.err.log` the service unit appends to
 and `logs/restart-watch.log` (the watchdog's own output), `google/` (MCP credentials).
@@ -1007,6 +1064,25 @@ line is reading versus acting, and reads happen before the PIN
 hears the standing briefing. The invariant that does not move: such a call may not *write*, and
 `SessionEnded.authorized` stays `FULL`-only, so it reads the memory and never rewrites it.
 `recall` is the one read that stays at `FULL`, because it is unbounded and the caller steers it.
+
+**Enrolling the first PIN (2026-09-24).** `JARVIS_PIN` is set at the keyboard, and until it
+is there is no authentication on the phone at all — so nothing of the owner's is read out
+(§3.3) and every dispatch is refused, which makes it the one setup step the thing being set
+up cannot do for itself. The owner's ruling: the first call may key a PIN in, accepting that
+whoever calls first sets it, "because you will be doing this within fifteen minutes of setup
+and nobody is going to spoof your number in that time" — the caller must still be on
+`ALLOWED_CALLERS` to reach the model at all. The condition on that acceptance is that Jarvis
+must never be able to *change* it afterwards, which is why the door is `O_CREAT | O_EXCL` at
+the syscall rather than a policy check, and why no tool or command sets a PIN. The residual
+risk, written down: a subagent runs as the owner with `bypassPermissions`, so it can delete
+`data_dir/pin` exactly as it can edit `.env`. It cannot rewrite an enrolled PIN, so the worst
+case is a lockout plus a fresh enrolment window for the next caller — loud, and visible in
+`jarvis doctor` — and not a silent swap. The answer is to move the PIN into `.env`, where the
+environment wins for ever after; `doctor` says so on every run that finds an enrolled one. A
+privileged "config setter" Jarvis could call is **not** the answer and is ruled out here: any
+sudoers rule that lets Jarvis run one without a password lets a subagent run it too, handing
+back exactly the ability the `O_EXCL` write exists to remove. A root-owned setter the *owner*
+runs with their own sudo password is fine; Jarvis having a privileged way to invoke it is not.
 
 **Three levels of trust (2026-09-19).** The other change to the paragraph above, the owner's
 ruling (§3.3, "Trust has three levels"). A call *Jarvis placed* to `OWNER_NUMBER` is

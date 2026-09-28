@@ -21,6 +21,10 @@ log = logging.getLogger("jarvis.projects")
 #: the wrong thing to paste here — thousands of tokens of build detail that the subagent
 #: reads for itself anyway, and that would drown a receptionist's prompt.
 BRIEF_FILE = ".jarvis-brief.md"
+#: Where `jarvis setup` keeps the summaries it drafted, one `<project>.md` each, under
+#: `data_dir`: for the projects whose repository carries no brief of its own. A repository's
+#: own `BRIEF_FILE` always wins — it travels with the code and is somebody's decision.
+SUMMARIES_DIR = "projects"
 MAX_BRIEF_CHARS = 1500
 #: All the briefs together. They ride in the system prompt of every call, re-sent to the
 #: realtime provider each time, so a projects root with forty briefed repositories would
@@ -76,8 +80,18 @@ def discover_projects(settings: "Settings") -> dict[str, Path]:
     return candidates
 
 
-def discover_briefs(projects: dict[str, Path]) -> list[ProjectBrief]:
-    """The brief of every project that wrote one; the rest simply have none.
+def summaries_dir(settings: "Settings") -> Path:
+    """`data_dir/projects`, where setup's project summaries live."""
+    return settings.data_dir / SUMMARIES_DIR
+
+
+def discover_briefs(
+    projects: dict[str, Path], *, summaries: Path | None = None
+) -> list[ProjectBrief]:
+    """The brief of every project that has one; the rest simply have none.
+
+    A project's brief is its own `BRIEF_FILE`, else `summaries/<name>.md` when a directory
+    of summaries is given.
 
     Taken in discovery order (configured projects first) until `MAX_BRIEFS_CHARS`: a brief
     that would go past it is left out whole, and named in a warning, rather than cut off
@@ -88,6 +102,8 @@ def discover_briefs(projects: dict[str, Path]) -> list[ProjectBrief]:
     total = 0
     for name, path in projects.items():
         brief = path / BRIEF_FILE
+        if not brief.is_file() and summaries is not None:
+            brief = summaries / f"{name}.md"
         try:
             if not brief.is_file():
                 continue

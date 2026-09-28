@@ -72,31 +72,31 @@ and also need Twilio and a Cloudflare tunnel.
 git clone https://github.com/wak31415/jarvis-voice-agent.git
 cd jarvis-voice-agent
 uv sync                                        # every coding agent; for one: see below
-cp .env.example .env
+uv run jarvis setup
 ```
+
+`jarvis setup` asks only for what is still missing and saves as it goes: the OpenAI key
+(checked with OpenAI before it is kept), which coding agent does the work and its sign-in
+(skipped for an agent that is already signed in), your name, your numbers and the phone PIN,
+then — each optional — Twilio, Google, Slack, billing, a first memory, short summaries of your
+projects, and the background service. Run it again at any time: it walks what is left, or
+everything with `--all`. `uv run jarvis doctor` says what is still missing.
+
+**Using a coding agent to set Jarvis up?** Point it at
+`uv run jarvis setup --agent-instructions`: every step is a `jarvis config`, `jarvis auth`
+or `jarvis memory` command it can run, and it hands you `jarvis setup` for what only you can
+do. Claude Code
+users can copy `skills/jarvis-setup` into `~/.claude/skills/` for the same thing as a skill.
+
+Settings live in `~/.jarvis/config.toml`, and every key and token in `~/.jarvis/secrets.toml`
+beside it, readable by you alone. `uv run jarvis config list` shows them all;
+[`docs/configuration.md`](docs/configuration.md) describes each one. An existing `.env` is
+still read, and `jarvis setup` offers to move it in.
 
 `uv sync` installs both coding agents. Each bundles a large CLI, so on a tight disk install
 only the one you use: `uv sync --no-group agents --extra codex` (or `--extra claude`). With
 pip, name it: `pip install '.[all]'`, `'.[claude]'` or `'.[codex]'` — plain `pip install .`
 installs neither.
-
-Add `OPENAI_API_KEY` to `.env`, then set up the coding agent. This finds what is installed,
-runs the sign-in that is missing, proves it with one real task, and prints the lines to add
-to `.env` (see [Choosing your coding agent](#choosing-your-coding-agent)):
-
-```bash
-uv run jarvis setup-agent
-```
-
-Check the rest of your setup with:
-
-```bash
-uv run jarvis doctor
-```
-
-Optionally, tell Jarvis about yourself before the first call with `uv run jarvis init`, or
-let Claude Code interview you with the skill in `skills/jarvis-onboard` (copy it into
-`~/.claude/skills/`). Otherwise the first call opens with a short introduction.
 
 ### Talk locally on a Mac
 
@@ -110,25 +110,13 @@ Settings when prompted.
 
 ### Call Jarvis by phone
 
-1. Add your Twilio credentials, phone number, allowed callers, PIN, and public hostname to
-   `.env` (see [Configuration](#configuration)).
-2. Install `cloudflared` and create a tunnel for a hostname in a Cloudflare-managed domain:
-
-   ```bash
-   cloudflared tunnel login
-   cloudflared tunnel create jarvis
-   cloudflared tunnel route dns jarvis jarvis.example.com
-   ```
-
-   Set `PUBLIC_HOST=jarvis.example.com` in `.env`, using your own hostname.
-3. In Twilio, set the number's incoming voice webhook to `https://<PUBLIC_HOST>/twilio/voice`
-   and its call-status webhook to `https://<PUBLIC_HOST>/twilio/status`. Use HTTP POST for
-   both.
-4. Run `uv run jarvis doctor --no-mic` on a machine without a microphone, then start the
-   server and tunnel with `scripts/dev.sh`.
-
-For a setup that starts automatically after a reboot, see the
-[wiki](https://github.com/wak31415/jarvis-voice-agent/wiki).
+`jarvis setup`'s phone section does all of it: it checks your Twilio credentials and lists
+your numbers, walks you through the tunnel ([Cloudflare Tunnel](src/jarvis/setup/guides/tunnel.md)
+on Linux, ngrok on macOS), and — after showing you both addresses and asking — points the
+number's webhooks at `https://<PUBLIC_HOST>/twilio/voice` and `/twilio/status`. Then start
+the server and tunnel with `scripts/dev.sh`, or install them as a service with
+`scripts/install-systemd.sh` (Linux) or `scripts/install-launchd.sh` (macOS), which setup
+also offers. The step-by-step: [Twilio](src/jarvis/setup/guides/twilio.md).
 
 ## Choosing your coding agent
 
@@ -146,7 +134,7 @@ three ways, and the first one set wins:
 `uv sync` installs both: each SDK bundles its own CLI (Codex's is about 350 MB), and
 [Quick start](#quick-start) says how to install just one. Both do
 the same work here: voice dispatch, follow-ups, progress, projects, Slack, and Gmail and
-Calendar (for Codex through `GOOGLE_WORKSPACE_MCP` and `jarvis setup-google`), and both
+Calendar (for Codex, by connecting Google for agents in `jarvis setup`), and both
 record the tokens a task spent. A follow-up reaches Codex in the turn it is running; Claude
 takes it when the turn ends. Claude also has a per-task dollar figure and cap. The approval
 bridge stays Claude Code only. [`docs/agents.md`](docs/agents.md) has the full comparison.
@@ -172,11 +160,23 @@ details.
 
 ## Configuration
 
-`.env.example` lists all available settings. For phone calls, set `TWILIO_ACCOUNT_SID`,
-`TWILIO_AUTH_TOKEN`, `TWILIO_NUMBER`, `ALLOWED_CALLERS`, `JARVIS_PIN`, and `PUBLIC_HOST`.
-Use a 6–8 digit PIN and list allowed callers in E.164 format. You can also set `PROJECTS`
-to give your repositories names you can say aloud. Texting is off until you set
-`SMS_ENABLED=true`, since many Twilio accounts can't send SMS in every region.
+`uv run jarvis config list` shows every setting and where its value came from; `jarvis
+config set KEY VALUE` changes one, and a secret goes in with `--stdin` so it never lands in
+your shell history. [`docs/configuration.md`](docs/configuration.md) is the full list. With
+no PIN set, the first call may key one in, once; it is then written to `~/.jarvis/pin` and
+nothing in Jarvis can change it ([SECURITY.md](SECURITY.md#setting-the-first-pin-on-the-first-call)).
+Texting is off until you turn it on, since many Twilio accounts can't send SMS in every
+region.
+
+Jarvis can change a few of its own settings when you ask on a call — its voice, how long it
+waits before answering, which model does the work — and nothing else: credentials, who may
+call, the PIN and every other line of defence are protected. `jarvis config lock KEY` and
+`unlock KEY` move the rest.
+
+Google is optional and set up from `jarvis setup` too: one Google Cloud client of your own
+([the steps](src/jarvis/setup/guides/google.md)), then a read-only Gmail sign-in so Jarvis can
+answer questions about your email on a call, and — if you want it — a second one so agents
+can send mail and manage your calendar.
 
 Tasks run with your user account's access to files and the network. Keep the caller list
 narrow and the PIN enabled. Read the wiki's

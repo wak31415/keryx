@@ -10,12 +10,19 @@ Realtime API and Claude Agent SDK subagents.
 - Run tests: `uv run pytest -q` (coverage: `uv run pytest -q --cov`, floor 96%)
 - Lint: `uv run ruff check src tests`
 - Run the CLI: `uv run jarvis --help`
-- Check the machine's setup: `uv run jarvis doctor` (`--no-mic` where there is none)
-- Choose and sign in the coding agent: `uv run jarvis setup-agent [--default claude|codex]
-  [--enable NAME]… [--no-smoke] [--yes] [--json]` (runs the missing login on the terminal,
-  smoke-tests each chosen agent with one real task, prints `AGENT_BACKEND=` /
-  `AGENTS_ENABLED=`; never reads or writes `.env`). `--json` needs `--yes`; exit 1 is a
-  chosen agent that cannot run a task, 2 a wrong command line
+- Set a machine up: `uv run jarvis setup [--all]` (the wizard: walks only the sections still
+  missing, saves as it goes; needs a terminal). A coding agent: `uv run jarvis setup
+  --agent-instructions`, which prints the command-line path below
+- Check the machine's setup: `uv run jarvis doctor [--json] [--fix] [--no-mic]` (`--fix`
+  only tightens secret files to 0600/0700; `--json` carries each check's `section` and
+  `state`: ok / missing / failed)
+- Settings: `uv run jarvis config list [--json] [--group G]`, `config get KEY… [--shell]`
+  (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
+  `--from-env VAR`), `config unset KEY…`, `config path`, `config import-env [PATH]`,
+  `config lock|unlock KEY` (what the running service may change)
+- Sign-ins: `uv run jarvis auth login claude|codex|gmail|google-workspace [--headless]
+  [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
+  the browser landed on), `uv run jarvis auth status [--json] [--smoke]`
 - Run the agent: `uv run jarvis serve` (`--no-phone` / `--no-wakeword` /
   `--fake-agents` / `--host` / `--port`); `scripts/dev.sh` adds the Cloudflare tunnel
 - Approval bridge: `uv run jarvis approvals` (`--limit N`, `--disable` / `--enable` for
@@ -23,20 +30,18 @@ Realtime API and Claude Agent SDK subagents.
 - Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N] [--internal]`,
   `uv run jarvis tasks show <id>` (the `TOLD` column is `NO` until Jarvis has said it)
 - Read what Jarvis remembers between calls: `uv run jarvis memory` (`--path` for the file)
-- Start that memory before any call has: `uv run jarvis init [--name NAME] [--fact TEXT]…
-  [--from FILE|-] [--force] [--yes] [--json]` (writes `memory.md` only, never `.env`; prints
-  the `OWNER_NAME=` line and what every call will carry). `--json` is the same report for an
-  agent, needs `--yes`, and exits 1 only when a memory was wanted and not written, 2 on a
-  wrong command line; `skills/jarvis-onboard` is the keyboard session that drives it
+- Start that memory before any call has: `uv run jarvis memory seed --file FILE|- [--force]
+  [--json]` (one fact per line; exits 1 only when a memory was wanted and not written, 2 on
+  a wrong command line); `skills/jarvis-setup` is the agent session that drives the whole
+  command-line path
 - Delete transcripts and finished task rows: `uv run jarvis forget [--older-than N]`
   (`--transcripts-only` / `--tasks-only` / `--yes`)
 - Restart the service: `uv run jarvis restart [--reason …] [--force] [--no-callback]`
   (it phones back when it is up again, and rings with a plain spoken alert — texting too,
   when `SMS_ENABLED` is on — if it never comes back);
   `uv run jarvis restart --status` for the last one, including what the logs said
-- One-off setup: `uv run jarvis download-models`, `uv run jarvis setup-google`,
-  `uv run jarvis setup-gmail` (read-only sign-in for `check_email`; prints a link, then
-  `--finish '<redirect URL>'`, so it works with no browser on the machine)
+- One-off: `uv run jarvis download-models`; regenerate `docs/configuration.md` with
+  `uv run python -m jarvis.config.reference > docs/configuration.md`
 - Background service: `scripts/install-systemd.sh [--uninstall]` on Linux,
   `scripts/install-launchd.sh [--uninstall]` on macOS
 
@@ -44,14 +49,14 @@ Realtime API and Claude Agent SDK subagents.
 
 Source lives under `src/jarvis/` (installable package, `src/` layout). Tests
 live under `tests/`, mirroring the package structure. `cli.py` stays argument
-parsing plus wiring: the `doctor` checks live in `jarvis/doctor.py`, the `init` flow in
-`jarvis/onboarding.py` and the Google OAuth bootstrap in `jarvis/google_setup.py`. Service
+parsing plus wiring: the `doctor` checks live in `jarvis/doctor.py`, everything behind
+`jarvis setup` and `jarvis auth` in `jarvis/setup/`, and the settings in `jarvis/config/`. Service
 templates are in `ops/systemd/` (Linux) and `ops/launchd/` (macOS), rendered by the matching
 `scripts/install-*.sh`; `scripts/lib.sh` holds the scaffolding those scripts share
-(argument parsing, the env-file and PATH checks, `render`), so an installer is only
-its platform-specific half.
+(argument parsing, `config_value` — every setting read through `jarvis config get`, never a
+grep — the PATH checks, `render`), so an installer is only its platform-specific half.
 
-Six groups are named here because the file you want is rarely the one whose name you
+Eight groups are named here because the file you want is rarely the one whose name you
 remember:
 
 - **agents** — `agents/` is one module per coding agent (`claude`, `codex`) behind the
@@ -84,6 +89,19 @@ remember:
 - **integrations** — `integrations/` is one module per outside service (`billing`,
   `cluster`, `gmail`, `slack`, `web_search`), each behind exactly one voice tool. The tool's
   *registration* goes in `tools/builtin_<domain>.py`; its *client* goes here.
+- **config** — `config/` is the settings and where they live: `settings` (every field with
+  a `description`, a `group` and a default `service_writable`, declared with `setting(...)`),
+  `store` (`JARVIS_HOME/config.toml` and `secrets.toml`, the only writer of either),
+  `permissions` (what the running service may change; `PROTECTED_KEYS`), `pin`
+  (`DATA_DIR/pin`), `files` (modes and atomic writes) and `reference` (generates
+  `docs/configuration.md`). The package re-exports the old `jarvis.config` names.
+- **setup** — `setup/` is `jarvis setup` and `jarvis auth`: `wizard` (section order, what is
+  left, the closing summary), one module per large section (`agents`, `phone`, `google`,
+  `profile`, `project_context`) and `sections` for the small ones, `context` (the
+  `SetupContext` every section gets, and `Probes` — everything that reaches the network, a
+  login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
+  rich/questionary one), `auth`, and `guides/*.md`, which the wizard renders and the README
+  links, so each set of instructions is written once.
 - **continuity** — `continuity/` is what survives the end of a call: `briefing`, `memory`
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
   `retention`, which prunes exactly those artefacts.
@@ -155,12 +173,17 @@ Four rulings, and `SECURITY.md` is the threat model:
   number — that only makes the tier fail silently on the owner's other phone.
 - **The PIN is the line between reading and acting, not between private and not.** The
   owner's ruling, and the reasoning is why it is written down: the threat case is somebody
-  who has the machine, and they have `.env`, which has `JARVIS_PIN` — so gating reads buys
+  who has the machine, and they have `secrets.toml` and `DATA_DIR/pin` — so gating reads buys
   nothing against them. It only ever defended against a phone-side caller-id spoofer, and it
   charged that defence to every ordinary call. So the whole standing briefing comes before
   the PIN (`BRIEFING_BEFORE_PIN`, default on): the digest, the memory, the project names, the
   briefs, the skills. `false` restores the older silence exactly, and the `withheld`
-  machinery in `prompts/__init__.py` exists for that — do not delete it. `announce(text,
+  machinery in `prompts/__init__.py` exists for that — do not delete it. **The ruling
+  presumes a PIN exists**, so the predicate is `Settings.reads_before_pin`, never
+  `briefing_before_pin` itself: on a machine that has never had one there is no keypad
+  entry to trade a read against, and an allowed caller would hear the memory for ever with
+  no way to gate it, so everything is withheld until a PIN exists (see "Working
+  agreements"). `announce(text,
   needs=…)` says which kind each announcement is: news needs nothing, an approval needs a
   call that could answer it. `Announced.delivered` still takes `POSSESSION`, because a
   stranger hearing the news is not the owner having been told, so the text and the call-back
@@ -209,7 +232,8 @@ Jarvis knows at the top of a call is assembled every time by
   and `sms_sent` only say a delivery was attempted, and neither survives a call they missed.
   Until `reported_at` is stamped, the task rides at the top of the next call — from the
   greeting, PIN or no PIN, along with the rest of the standing briefing
-  (`BRIEFING_BEFORE_PIN`; see "Trust has three levels"). Exactly one
+  (`reads_before_pin`; see "Trust has three levels" — a machine with no PIN at all is
+  handed none of it). Exactly one
   thing stamps it: the voice model's `mark_reported` tool, after it has spoken the result.
   Do not stamp it from a delivery path — hearing something twice is recoverable, never
   hearing it is not.
@@ -219,7 +243,8 @@ Jarvis knows at the top of a call is assembled every time by
   next call reads it back through `briefing`. Its headings are nested one level when
   embedded, so its sections cannot be mistaken for instructions. `memory_skeleton(owner)` is
   the only place its sections are written down — the update prompt renders it, and
-  `seed_memory` (behind `jarvis init`) fills it; never restate the structure elsewhere.
+  `seed_memory` (behind `jarvis setup` and `jarvis memory seed`) fills it, and
+  `add_standing_facts` adds to it; never restate the structure elsewhere.
   Its *absence* is the marker of a first call: a trusted session with no memory renders
   `prompts/first_call.md` in place of it and opens as a short introduction instead of an
   ordinary call. That is the only record of "has been onboarded" — do not add a second one,
@@ -241,6 +266,46 @@ it edited `src/jarvis/**` (`git describe --dirty` flips on any open edit). Honou
 task that succeeded, never on an internal one. The Notifier then hands that task's call-back
 to the restart's confirmation, which carries both halves — what the work came to, and whether
 it is running. Do not make a subagent restart Jarvis itself; it is inside the cgroup.
+
+## Settings live in a store, and the service may change only some
+
+`jarvis setup`, `jarvis config` and `jarvis auth` replace a hand-edited `.env`. Four rulings:
+
+- **Secrets in a 0600 file, not a keyring.** Plain settings in `JARVIS_HOME/config.toml`,
+  every `repr=False` field in `secrets.toml`, both 0600 in an 0700 directory and replaced
+  atomically (`files.write_private`). A keyring cannot be unlocked by a headless systemd
+  unit, and the split is the one Claude Code and Codex make. Precedence is code → process
+  environment → `secrets.toml` → `config.toml` → a legacy cwd `.env` (read, never written;
+  `doctor` says so) → default. `JARVIS_HOME` is an environment variable only, since it is
+  what says where the settings are.
+- **A secret never on argv.** `jarvis config set` refuses one given as a value; it takes
+  `--stdin` or `--from-env`. `config get` and `config list` never print one, and a refused
+  value is never quoted back (`hide_input_in_errors`).
+- **Two actors.** The owner at a terminal may write anything but the PIN. The *service* —
+  the voice model's `set_config` (behind `pin_gate`), or any subagent, since `jarvis serve`
+  sets `JARVIS_ACTOR=service` for everything it starts — may write only a service-writable
+  key: the field's default, overridden by `jarvis config lock|unlock` under
+  `[service_writable]`. `PROTECTED_KEYS` (every secret, the PIN, trust, approvals, spending,
+  deletion, the network, the debug switches) can never be unlocked, and a hand edit that
+  tries is ignored and reported by `doctor`. The service may tune a limit in
+  `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
+  against the whole store, so nothing it saves can stop `jarvis serve` from starting. The
+  commands that write what the service may not — `config import-env`, `auth login`,
+  `memory seed`, `setup`, `config lock|unlock` — refuse outright under
+  `JARVIS_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
+  context) run as the service. This binds Jarvis's own tools; it is not a
+  sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
+  `tests/config/test_permissions.py` names the writable set.
+- **The PIN is not a setting.** It stays in `DATA_DIR/pin`; `config set JARVIS_PIN` is
+  refused, `import-env` moves a `.env` PIN there — and refuses the whole import when a
+  different PIN is already enrolled, because silently switching would lock the owner out.
+
+`jarvis setup` reads `doctor`'s checks to decide what is left (each has a `section`, and is
+`missing` or `failed`), walks only that, and remembers what it has walked
+(`[setup] walked`) so an optional section left for later is not asked about on every run.
+It never assumes what the machine lacks: an agent that is signed in is not asked how to pay.
+The one write it makes outside the machine — the Twilio webhooks — comes after showing both
+addresses and a yes.
 
 ## Restarts are three halves
 
@@ -408,9 +473,10 @@ scope, so the test suite can run on a machine with no mic.
 
 ## Working agreements
 
-- Only scripts read the env file; never print or paste its contents. `.env.example` is a
-  different thing — tracked, secret-free, and the one place every setting is listed; keep
-  it in step with `Settings` (`tests/test_docs_sync.py` enforces that).
+- Only `config/store.py` writes the configuration, and a secret is never on argv, in a log
+  or in output. Never print or paste `secrets.toml` or a legacy `.env`. `docs/configuration.md`
+  is generated from `Settings` (`python -m jarvis.config.reference`); a new field gets a
+  description and a group, and `tests/test_docs_sync.py` fails until the doc is regenerated.
 - The database runs ahead of the code. `_migrate` upgrades `tasks.db` from whichever process
   opens it first, and `jarvis serve` holds the `Task` it imported at startup, so a new column
   reaches the file while the service is still a build behind. `Task.from_row` drops columns it
@@ -440,6 +506,19 @@ scope, so the test suite can run on a machine with no mic.
 - `data_dir` is 0700 and the files under it 0600 (`config.secure_dir` / `secure_file`).
   Anything new that writes there goes through them.
 - A configured `JARVIS_PIN` is 6-8 digits and `jarvis serve` refuses to start otherwise.
+  With none set anywhere, **the first call may enrol one** and that is the only way the
+  phone ever sets a PIN: `Settings.pin` resolves environment-then-`data_dir/pin`,
+  `pin_enrolment_open` is the door, and `config.write_enrolled_pin` shuts it with
+  `O_CREAT | O_EXCL` — the kernel refusing a second write is the whole guarantee, which is
+  why there is no setter in any tool or CLI command and why you must not add one. The one
+  keyboard path is `jarvis setup` at a terminal, which sets a PIN the same way when there is
+  none and replaces one only after two explicit yeses, with the new digits already typed
+  twice, by an atomic rename (`pin.replace_pin_at_keyboard`) so no failure leaves no PIN.
+  A running service keeps the PIN it started with until it restarts, and setup says so. The
+  digits are keyed twice and compared (`session._enrol_keypad_pin`), never spoken: a
+  mishearing here is unfixable. Any `data_dir/pin` shuts the door, usable or not, and only
+  the owner at the keyboard re-opens it. Until a PIN exists nothing of theirs is read out
+  (`reads_before_pin`), and SECURITY.md carries the accepted risk.
   Wrong PINs also count across calls (`jarvis/pin_guard.py`): while that has PIN entry locked
   the right PIN is refused before it is compared, and nothing resets the count early — not
   the lock lifting, not a right PIN. That a spoofed caller can keep the owner's PIN locked is the

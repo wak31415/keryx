@@ -59,7 +59,7 @@ Install the service first (it is what starts Jarvis again after it stops):
   scripts/install-systemd.sh    # Linux
   scripts/install-launchd.sh    # macOS
 
-Or set SERVICE_MANAGER / SERVICE_UNIT in .env if the unit is named something else. To
+Or `jarvis config set SERVICE_MANAGER … SERVICE_UNIT …` if the unit is named something else. To
 restart by hand instead, stop the process and start `jarvis serve` again — nothing else
 will do it for you."""
 

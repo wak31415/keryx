@@ -7,11 +7,14 @@ the transcript or the log — so most of these tests end by checking what was *n
 
 import asyncio
 import logging
+import stat
+from pathlib import Path
 
 import pytest
 from fakes import TIMEOUT, FakeProvider, FakeTransport, eventually
 from test_session import make_settings, running
 
+from jarvis.config import pin_file, secure_dir
 from jarvis.events import EventBus, PinLockedOut, SessionEnded
 from jarvis.pin_guard import PinGuard
 from jarvis.realtime.base import (
@@ -21,6 +24,13 @@ from jarvis.realtime.base import (
     SpeechStarted,
 )
 from jarvis.session import (
+    ENROL_CONFIRM_MESSAGE,
+    ENROL_DONE_MESSAGE,
+    ENROL_FAILED_MESSAGE,
+    ENROL_GAVE_UP_MESSAGE,
+    ENROL_LENGTH_MESSAGE,
+    ENROL_MAX_ATTEMPTS,
+    ENROL_MISMATCH_MESSAGE,
     OPENING_MESSAGE,
     PIN_ACCEPTED_MESSAGE,
     PIN_LOCKOUT_MESSAGE,
@@ -31,6 +41,7 @@ from jarvis.session import (
 )
 from jarvis.tools import ToolRegistry
 from jarvis.transports.base import Dtmf
+from jarvis.trust import TrustLevel
 
 PIN = "424242"
 WRONG = "111111"
@@ -376,10 +387,17 @@ async def test_a_keypad_lockout_ends_the_call_without_a_goodbye_too(
     assert_nothing_spoken_had_digits(provider)
 
 
-async def test_keypad_digits_are_ignored_when_no_pin_is_configured(
-    make_session, phone, provider
+async def test_keypad_digits_are_ignored_when_a_pin_exists_that_cannot_be_read(
+    make_session, phone, provider, tmp_path
 ):
+    """No PIN to check and no enrolment either: the file is there, so the door is shut.
+
+    Only `jarvis doctor` gets the owner out of this — delete the file, or set `JARVIS_PIN`
+    — and in the meantime the keypad does nothing at all.
+    """
     session = make_session(phone, provider, pin=None)
+    secure_dir(session._settings.data_dir)
+    pin_file(session._settings.data_dir).write_text("not-a-pin\n", encoding="utf-8")
 
     async with running(session):
         await press(phone, "4242#")
@@ -545,3 +563,180 @@ async def test_the_lockout_the_owner_has_not_heard_about_is_published_once(
 
     assert len(lockouts) == 1  # already told
     assert PIN_PAUSED_MESSAGE in texts(second_provider)
+
+
+# --- enrolling the first PIN (the one-way door) -----------------------------
+#
+# A new owner has to set `JARVIS_PIN` at the keyboard before the phone is any use, which
+# is the one setup step the phone cannot do for them. So the first call may key one in —
+# open while no PIN exists, sealed for ever the moment one does. The digits are keyed,
+# never spoken, so they take the same path as an ordinary keyed PIN: never to the model,
+# never to the transcript, never to a log line.
+
+NEW_PIN = "135790"
+
+
+def enrolled(session: VoiceSession) -> Path:
+    return pin_file(session._settings.data_dir)
+
+
+async def test_the_first_call_may_key_a_pin_in(make_session, phone, provider, tmp_path):
+    session = make_session(phone, provider, pin=None)
+
+    async with running(session):
+        await press(phone, f"{NEW_PIN}#")
+        await eventually(lambda: ENROL_CONFIRM_MESSAGE in texts(provider))
+        assert session.authorized is False  # one entry proves nothing
+
+        await press(phone, f"{NEW_PIN}#")
+        await eventually(lambda: ENROL_DONE_MESSAGE in texts(provider))
+
+    assert session.authorized is True
+    assert enrolled(session).read_text(encoding="utf-8").strip() == NEW_PIN
+    assert stat.S_IMODE(enrolled(session).stat().st_mode) == 0o600
+    assert session._settings.pin == NEW_PIN  # live in this process, without a restart
+    assert_nothing_spoken_had_digits(provider)
+    assert NEW_PIN not in session.transcript_path.read_text()
+
+
+async def test_the_enrolment_is_said_once_and_only_at_the_end(make_session, phone, provider):
+    """One action is one sentence: the confirmation asked for is the second entry, not a
+    second announcement of the same fact."""
+    session = make_session(phone, provider, pin=None)
+
+    async with running(session):
+        await press(phone, f"{NEW_PIN}#")
+        await eventually(lambda: ENROL_CONFIRM_MESSAGE in texts(provider))
+        await press(phone, f"{NEW_PIN}#")
+        await eventually(lambda: ENROL_DONE_MESSAGE in texts(provider))
+        await asyncio.sleep(0.05)
+
+    assert texts(provider).count(ENROL_DONE_MESSAGE) == 1
+    assert texts(provider) == [OPENING_MESSAGE, ENROL_CONFIRM_MESSAGE, ENROL_DONE_MESSAGE]
+
+
+async def test_an_eight_digit_entry_submits_itself(make_session, phone, provider):
+    """No configured length to measure against, so the entry runs to the longest a PIN is."""
+    session = make_session(phone, provider, pin=None)
+
+    async with running(session):
+        await press(phone, "13579024")
+        await eventually(lambda: ENROL_CONFIRM_MESSAGE in texts(provider))
+        await press(phone, "13579024")
+        await eventually(lambda: ENROL_DONE_MESSAGE in texts(provider))
+
+    assert enrolled(session).read_text(encoding="utf-8").strip() == "13579024"
+
+
+async def test_the_two_entries_have_to_match(make_session, phone, provider):
+    """A mis-keyed PIN nobody can change afterwards is the worst outcome here."""
+    session = make_session(phone, provider, pin=None)
+
+    async with running(session):
+        await press(phone, f"{NEW_PIN}#")
+        await eventually(lambda: ENROL_CONFIRM_MESSAGE in texts(provider))
+        await press(phone, "975310#")
+        await eventually(lambda: ENROL_MISMATCH_MESSAGE in texts(provider))
+
+    assert session.authorized is False
+    assert not enrolled(session).exists()
+    assert_nothing_spoken_had_digits(provider)
+
+
+async def test_an_entry_that_is_not_a_pin_asks_again(make_session, phone, provider):
+    session = make_session(phone, provider, pin=None)
+
+    async with running(session):
+        await press(phone, "1234#")
+        await eventually(lambda: ENROL_LENGTH_MESSAGE in texts(provider))
+        await press(phone, f"{NEW_PIN}#")
+        await eventually(lambda: ENROL_CONFIRM_MESSAGE in texts(provider))
+
+    assert not enrolled(session).exists()
+
+
+async def test_giving_up_leaves_the_call_at_none_and_the_door_open(
+    make_session, phone, provider
+):
+    """A cap, not a lockout: nothing is set, so there is nothing to guess at."""
+    session = make_session(phone, provider, pin=None)
+
+    async with running(session):
+        for _ in range(ENROL_MAX_ATTEMPTS):
+            await press(phone, "1234#")
+        await eventually(lambda: ENROL_GAVE_UP_MESSAGE in texts(provider))
+        await press(phone, f"{NEW_PIN}#")  # and the keypad is done for this call
+        await asyncio.sleep(0.05)
+
+    assert session.trust is TrustLevel.NONE
+    assert not enrolled(session).exists()
+    assert texts(provider).count(ENROL_LENGTH_MESSAGE) == ENROL_MAX_ATTEMPTS - 1
+    assert session._settings.pin_enrolment_open is True  # the next call may still set one
+
+
+async def test_an_enrolled_pin_is_never_re_enrolled(make_session, phone, provider, tmp_path):
+    """The door closed on the first call; the keypad is back to checking, not setting."""
+    session = make_session(phone, provider, pin=None)
+    assert session._settings.enrol_pin(NEW_PIN) is True
+
+    async with running(session):
+        await press(phone, "975310#")
+        await eventually(lambda: PIN_REJECTED_MESSAGE in texts(provider))
+        assert session.authorized is False
+
+        await press(phone, NEW_PIN)
+        await eventually(lambda: session.authorized)
+
+    assert enrolled(session).read_text(encoding="utf-8").strip() == NEW_PIN
+    assert ENROL_CONFIRM_MESSAGE not in texts(provider)
+
+
+async def test_a_pin_from_the_environment_leaves_no_door_to_open(make_session, phone, provider):
+    session = make_session(phone, provider)  # JARVIS_PIN is set
+
+    async with running(session):
+        await press(phone, f"{NEW_PIN}#")
+        await eventually(lambda: PIN_REJECTED_MESSAGE in texts(provider))
+
+    assert ENROL_CONFIRM_MESSAGE not in texts(provider)
+    assert not enrolled(session).exists()
+
+
+async def test_a_spoken_pin_cannot_enrol_one(make_session, phone, provider):
+    """The keypad sets it, never the transcription: a mishearing is unfixable here."""
+    session = make_session(phone, provider, pin=None)
+
+    async with running(session):
+        assert await session.submit_pin(NEW_PIN) == {"status": "not_configured"}
+
+    assert session.authorized is False
+    assert not enrolled(session).exists()
+
+
+async def test_the_enrolled_digits_never_reach_a_log_line(make_session, phone, provider, caplog):
+    session = make_session(phone, provider, pin=None)
+
+    with caplog.at_level(logging.DEBUG, logger="jarvis.session"):
+        async with running(session):
+            await press(phone, f"{NEW_PIN}#")
+            await press(phone, f"{NEW_PIN}#")
+            await eventually(lambda: session.authorized)
+
+    assert NEW_PIN not in caplog.text
+
+
+async def test_a_write_that_fails_changes_nothing_and_says_so(
+    make_session, phone, provider, monkeypatch
+):
+    monkeypatch.setattr(
+        "jarvis.config.settings.write_enrolled_pin", lambda *_args, **_kwargs: False
+    )
+    session = make_session(phone, provider, pin=None)
+
+    async with running(session):
+        await press(phone, f"{NEW_PIN}#")
+        await press(phone, f"{NEW_PIN}#")
+        await eventually(lambda: ENROL_FAILED_MESSAGE in texts(provider))
+
+    assert session.authorized is False
+    assert session._settings.pin is None

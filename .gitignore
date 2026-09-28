@@ -15,7 +15,6 @@ htmlcov/
 # Secrets & local state
 .env
 .env.*
-!.env.example
 *.pem
 credentials/
 .secrets/

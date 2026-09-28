@@ -8,6 +8,27 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Added
 
+- **`jarvis setup`**, a wizard that asks only for what is still missing and saves as it
+  goes: the voice key (checked with OpenAI), the coding agents and their sign-ins (never
+  asked of an agent that can already run), your name, numbers and PIN, then — each optional —
+  Twilio (numbers listed from your account; the webhooks set only after you say yes),
+  Google, Slack, billing, a first memory, project summaries a coding agent drafts for you to
+  accept, and the background service. `--all` reviews everything.
+- **A configuration store.** Settings live in `~/.jarvis/config.toml` and every secret in a
+  0600 `secrets.toml`; `jarvis config list|get|set|unset|path|import-env|lock|unlock` reads
+  and changes them, and a secret is only ever taken from `--stdin` or `--from-env`.
+  `docs/configuration.md` describes every setting, generated from the code.
+- **`jarvis auth login claude|codex|gmail|google-workspace`** and `jarvis auth status`: every
+  sign-in in one place. `--client-file` takes the Google client JSON the console downloads.
+- **`jarvis setup --agent-instructions`**: how a coding agent sets Jarvis up from the command
+  line; `skills/jarvis-setup` is the same as a Claude Code skill.
+- **`set_config`**: ask Jarvis on a call to change its own voice, turn-taking or model. It
+  may change only what the running service is allowed to; credentials, the PIN, who may call
+  and every other line of defence are protected and cannot be unlocked.
+- `jarvis doctor --json` and `--fix` (tightens loose secret files), and checks that secrets
+  are private, outside git, not in `config.toml`, and that the Twilio webhook points here.
+- `jarvis memory seed --file -` writes a first memory from standing facts.
+
 - **`jarvis init`** starts the memory before the first call: it asks what Jarvis should call
   you and a few things it should know, shows the `memory.md` it will write (owner-only), and
   reports what every call will carry to the realtime provider — memory, project briefs,
@@ -68,6 +89,24 @@ surface — a removed or renamed setting or command is a major bump.
   `list_projects`) answer without it too. The trade-off is that a caller who spoofs one of
   your `ALLOWED_CALLERS` hears it; `false` restores the old silence and puts those four
   tools back behind the PIN with it.
+
+- **The first call can set the PIN.** `JARVIS_PIN` is set at the keyboard, and until it is
+  the phone is no use to you — the one setup step Jarvis cannot do for itself. So while
+  there is no PIN at all, the first call may key one in: six to eight digits and hash,
+  keyed a second time to confirm, written to `~/.jarvis/pin` (owner-only) and used from
+  then on, briefing and all. It is a one-way door, held shut by the kernel: the file is
+  created with `O_EXCL`, no tool or command anywhere can change an enrolled PIN, and only
+  you can — in `.env`, which always wins, or by deleting the file. A spoken PIN cannot
+  enrol one; the digits are keyed, checked twice and never reach the model, the transcript
+  or a log line. The risk you accept is that whoever calls first sets it: the window is a
+  few minutes long and closes on first use, and
+  [SECURITY.md](SECURITY.md#setting-the-first-pin-on-the-first-call) has it in full,
+  including what a subagent can still do to the file and what it cannot.
+- **`jarvis init` suggests a PIN**: a `JARVIS_PIN=` line with six cryptographically random
+  digits beside the `OWNER_NAME=` one, to paste or ignore — it still never edits `.env` and
+  never sets a PIN itself. `--json` gains a `pin` block saying whether one is set, where it
+  came from and where the file lives, and never the digits. `jarvis doctor` reports the same
+  four states, and tells you to copy an enrolled PIN into `.env` to make it permanent.
 
 ### Changed
 
@@ -133,8 +172,26 @@ surface — a removed or renamed setting or command is a major bump.
   counts as having told *you* unless the call proved at least that much, so the text and
   the call-back still go out to a call that has not.
 
+- **Before a PIN exists at all, nothing of yours is read out.** `BRIEFING_BEFORE_PIN`
+  trades a read against a keypad entry, and that presumed there was an entry to make: on a
+  machine that had never had a PIN there is no authentication on the phone, so an allowed
+  caller heard the memory, the unheard results and your project names on every call, for
+  ever, with no way to gate it. The briefing is withheld and the four read-only voice tools
+  are refused until a PIN exists, whatever the setting says — which also makes `JARVIS_PIN`
+  optional in `.env.example` rather than required.
+
+### Removed
+
+- `jarvis init`, `setup-agent`, `setup-google` and `setup-gmail`: `jarvis setup`, `jarvis auth`
+  and `jarvis memory seed` do what they did. `.env.example` is gone; an existing `.env` is
+  still read below the store until `jarvis config import-env` moves it in.
+
 ### Fixed
 
+- `jarvis doctor` died with a pydantic traceback when `JARVIS_PIN` was set to something
+  that is not 6–8 digits — the one state it exists to explain, since `jarvis serve` will
+  not load at all. The fallback it has for that matched the field name and never the
+  `JARVIS_PIN` the error actually carries.
 - `uv run jarvis serve` crashed on Linux unless given `--no-wakeword`; it now says the wake
   word needs macOS and serves the phone channel.
 - A spoken PIN was written into call transcripts, where `recall` could read it back. It is

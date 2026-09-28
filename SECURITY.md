@@ -14,8 +14,8 @@ makes that cheap. So the allowlist is not authentication; the PIN is, and a phon
 spoofer is the whole of what it stands between you and.
 
 It is **not** a defence against a compromised machine, and it was never going to be.
-Anyone who can read your files has `.env`, and `.env` has `JARVIS_PIN` — along with the
-API keys, the Twilio token and everything else. Against that attacker the PIN is worth
+Anyone who can read your files has `~/.jarvis/secrets.toml` and `~/.jarvis/pin` — the API
+keys, the Twilio token, the PIN and everything else. Against that attacker the PIN is worth
 nothing, and `~/.jarvis` is already theirs to read directly.
 
 That is why **reads happen before the PIN**. Gating them bought nothing against the
@@ -24,6 +24,12 @@ trade is deliberate, and the line it draws is **reading versus acting**: before 
 on an inbound call, you can hear what Jarvis knows, and nothing the caller says or does
 changes anything or outlives the call.
 
+- **Until a PIN exists, none of this happens.** The trade above is a read against a keypad
+  entry, and it presumes there is an entry to make: on a machine that has never had a PIN
+  a phone call cannot authenticate at all, so an allowed caller would otherwise hear the
+  memory read out on every call for ever. Until one is set — by `jarvis setup`, or on the
+  first call — the briefing is withheld whatever `BRIEFING_BEFORE_PIN` says, and the read-only
+  tools over the same material are refused with it.
 - **A call opens knowing what Jarvis knows.** The results you have not been told about,
   what Jarvis remembers about you (`memory.md`), your project names, your project briefs
   and your installed skills all reach the session at the greeting
@@ -57,6 +63,104 @@ changes anything or outlives the call.
 - **A spoken PIN is never written down.** Transcript lines are redacted as they are
   written, in digits or in words, and everything that reads a transcript back to a model
   redacts again, because logs from before this still hold it. No log line carries it.
+
+## Setting the first PIN, on the first call
+
+`JARVIS_PIN` is set at the keyboard, and until it is, the phone is no use to you: every
+dispatch is refused, and nothing of yours is read out at all (above). That is the one
+setup step the thing being set up cannot do for itself — so **the first call may key a PIN
+in**, and that is the only way a PIN is ever set from the phone.
+
+**It is a one-way door.** While no PIN exists anywhere — none in the environment, no
+`DATA_DIR/pin` — a caller keys six to eight digits, is asked to key the same digits again,
+and once the two match that is the PIN from then on. The moment a PIN exists the door is
+shut, and it is shut by the write itself rather than by a check: `DATA_DIR/pin` is created
+with `O_CREAT | O_EXCL`, so a second write fails in the kernel. There is deliberately no
+setter anywhere — no voice tool, no `jarvis config set` — that can change an enrolled PIN.
+`jarvis setup`, at a terminal, is the owner at the keyboard: it writes a first PIN the same
+way, and replaces one only after two explicit yeses, with the new digits already typed
+twice, by an atomic rename, so a failure part way leaves the old PIN in place. A Jarvis
+already running keeps the PIN it started with until `jarvis restart`.
+
+**The accepted risk: whoever calls first sets it.** The window is the few minutes between
+starting Jarvis and making the first call, it closes on first use, and nobody is going to
+spoof your number inside it; the caller still has to be on `ALLOWED_CALLERS` to reach the
+voice model at all. If you would rather not take that bet, choose the PIN in `jarvis setup`
+before the first call, and there is then no window to close. `jarvis doctor` says where the
+PIN in use came from, never what it is.
+
+**The digits are keyed, never spoken.** Saying a PIN out loud cannot enrol one, because
+transcription mishears digits and a mis-set PIN that nothing can change is the worst
+outcome here; the keyed digits take the same path as any other keyed PIN and never reach
+the model, the transcript or a log line. Three unusable entries leave the PIN for the rest
+of that call — a cap, not a lockout: nothing has been set, so there is nothing to guess
+at, and the next call may still enrol. An enrolled PIN is stored as digits rather than a
+hash, in a 0600 file inside a 0700 `~/.jarvis`: six digits fall to any hash in
+microseconds, so hashing would imply a protection that is not there, and the file sits
+beside your call transcripts and `memory.md`, which are no less private.
+
+**What a subagent can do to it, and what it cannot.** A subagent runs as you with
+`bypassPermissions`, so it can delete `DATA_DIR/pin` exactly as it can edit any of your files. What
+it cannot do is *rewrite* an enrolled PIN — that is what `O_EXCL` buys — so there is no
+silent swap. Deleting the file is a lockout plus a fresh enrolment window for whoever
+calls next: loud, and visible in `jarvis doctor`, rather than a PIN quietly becoming
+somebody else's. If that worries you, set `JARVIS_PIN` in the service's own environment
+(the unit's `Environment=`), which always wins over the file.
+
+**Why there is no "config setter script Jarvis can call"**, so that nobody proposes one
+later: any sudoers rule that lets Jarvis run a setter without a password lets a subagent
+run it too, which hands straight back the ability the `O_EXCL` write exists to remove. A
+root-owned setter that *you* run with your own sudo password is fine — the point is only
+that Jarvis must have no privileged way to invoke it.
+
+## Where secrets live
+
+Every key, token and password is in `~/.jarvis/secrets.toml` (`JARVIS_HOME` moves it),
+created 0600 inside an 0700 directory and replaced atomically, so there is no moment at
+which it exists with looser permissions. The plain settings are in `config.toml` beside it,
+and the PIN in `DATA_DIR/pin`. Not a keyring, on purpose: a service started by systemd at
+boot, with nobody logged in, cannot unlock one — the same reason Claude Code and Codex keep
+their credentials in a file of their own. `jarvis doctor` warns when any of these is readable
+by anyone else (`--fix` tightens it and changes nothing else), when one sits inside a git
+work tree, when a secret has been written into `config.toml` by hand, and while a legacy
+`.env` or an imported copy of one is still on disk.
+
+A secret is never put on a command line, where `ps` and your shell history keep it:
+`jarvis config set KEY --stdin` reads it from standard input and `--from-env VAR` from a
+variable, and the command refuses one given as a plain argument. Nothing prints one back —
+not `jarvis config get`, not `config list`, not an error message.
+
+## What Jarvis may change about itself
+
+Jarvis can change some of its own settings: the voice model's `set_config` tool, when you
+ask on a call (it needs the PIN), and any subagent that runs `jarvis config set` inside a
+task, since everything `jarvis serve` starts is marked as the running service. It may
+change only a *service-writable* setting — by default the ones you would plausibly ask for
+out loud: the voice, turn-taking, which model, a few timeouts and limits, quiet hours, the
+monthly budget figure, the log level. A limit it may tune it may never switch off — the
+subagent timeout, the call length and the local silence timeout all mean "no limit" at 0,
+and that is a spending decision — and no value it saves can stop Jarvis starting again. `jarvis config lock KEY` and `unlock KEY` move the
+rest, and `jarvis config list` shows where each one stands.
+
+Some can never be unlocked: every credential, the PIN, who may call and which number is
+yours, `BRIEFING_BEFORE_PIN`, the approval bridge's switch and allowlist, the spending cap,
+the daily task cap, retention, texting, the network settings, where data lives, the cluster
+settings and every debug switch. Each is either a secret or a line of defence, and Jarvis's
+own tools must not be able to lower their own guard because somebody asked nicely on the
+phone.
+
+Be clear about what this is: **a rule Jarvis's own tools obey, not a sandbox.** A subagent
+runs as you with a shell, and can edit `config.toml` directly, exactly as it can edit any
+other file of yours. What the rule buys is that the ordinary paths — the tool the voice
+model is handed, the command a subagent reaches for — refuse, and say so: `jarvis config
+set` holds it to the service-writable keys, and `config import-env`, `auth login`,
+`memory seed`, `setup` and `config lock|unlock` refuse it outright.
+
+`jarvis setup`'s project summaries are drafted by a coding agent reading the folders you
+chose, which means it reads whatever a README in them says. So nothing it writes is kept
+until you accept it, the path of each project is shown beside its summary, and a project is
+only added to `PROJECTS` when its path is inside a folder you chose: projects widen where a
+keypad approval may write files.
 
 ## Calls Jarvis places itself
 
@@ -102,8 +206,9 @@ it is not. Also in scope: an announcement beyond what the call could hear at the
 `recall`, or any comparable unbounded search, answering without the PIN; anything private
 that the briefing does *not* already carry being read out without it; anything that
 confers possession on a call Jarvis did not place, or on one it placed to a number other
-than `OWNER_NUMBER`; and, with `BRIEFING_BEFORE_PIN=false`, anything of yours reaching such
-a call at all.
+than `OWNER_NUMBER`; **anything that sets or replaces a PIN while one already exists**, from
+the phone or from a subagent, or that reads an enrolled PIN back out anywhere; and, with
+`BRIEFING_BEFORE_PIN=false`, anything of yours reaching such a call at all.
 
 Out of scope, because it is the design rather than a flaw in it: **a caller with the PIN,
 or any content that reaches a subagent, effectively has a shell as you.** The subagents run
@@ -223,7 +328,9 @@ without the PIN is very much in scope.
   So is a subagent's credential reaching its command line, a log or a spoken error: it is
   handed over in the environment only, and what a refused key is quoted back as is redacted.
 - **Anything that requires the host account already.** Someone who can read
-  `~/.jarvis` or write `~/.claude/settings.json` is already you. Text that reaches a
+  `~/.jarvis` or write `~/.claude/settings.json` is already you — deleting
+  `DATA_DIR/pin` is that, and it re-opens enrolment for the next caller rather than
+  changing the PIN in place (above). Text that reaches a
   Claude Code session on the host — an issue, a pull request, a web page it reads — is
   not that: a way for it to get the approval bridge to ring you about one command and
   run another, or to run something the policy should never have offered, is in scope.

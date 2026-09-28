@@ -322,3 +322,53 @@ def test_seeding_refuses_more_than_a_call_reads(settings):
         seed_memory(settings.data_dir, owner="Ada", facts=["x" * MAX_MEMORY_CHARS])
 
     assert not memory_path(settings.data_dir).exists()
+
+
+# --- add_standing_facts --------------------------------------------------------------
+
+
+def test_standing_facts_are_added_under_their_heading_whatever_came_after(tmp_path):
+    from jarvis.continuity.memory import add_standing_facts
+
+    seed_memory(tmp_path, owner="Ada", facts=["Works nights."])
+    path = memory_path(tmp_path)
+    path.write_text(path.read_text() + "\n- Talked about the orchard.\n")
+
+    add_standing_facts(tmp_path, owner="Ada", facts=["• Writes Rust.", " "])
+
+    lines = path.read_text().splitlines()
+    standing = lines.index("## Standing facts")
+    threads = lines.index("## Ongoing threads")
+    assert lines[standing + 1 : threads] == ["", "- Works nights.", "- Writes Rust.", ""]
+    assert "- Talked about the orchard." in lines[threads:]
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_standing_facts_start_a_memory_when_there_is_none(tmp_path):
+    from jarvis.continuity.memory import add_standing_facts
+
+    add_standing_facts(tmp_path, owner="Ada", facts=["Writes Rust."])
+
+    assert "- Writes Rust." in memory_path(tmp_path).read_text()
+
+
+def test_a_heading_edited_out_by_hand_comes_back(tmp_path):
+    from jarvis.continuity.memory import add_standing_facts
+
+    memory_path(tmp_path).write_text("# Notes\n\nfree text\n")
+
+    add_standing_facts(tmp_path, owner="Ada", facts=["Writes Rust."])
+
+    assert memory_path(tmp_path).read_text().endswith("## Standing facts\n\n- Writes Rust.\n")
+
+
+def test_standing_facts_past_what_a_call_reads_are_refused(tmp_path):
+    from jarvis.continuity.memory import add_standing_facts
+
+    seed_memory(tmp_path, owner="Ada", facts=["Works nights."])
+    before = memory_path(tmp_path).read_text()
+
+    with pytest.raises(ValueError, match="a call reads"):
+        add_standing_facts(tmp_path, owner="Ada", facts=["x" * MAX_MEMORY_CHARS])
+
+    assert memory_path(tmp_path).read_text() == before

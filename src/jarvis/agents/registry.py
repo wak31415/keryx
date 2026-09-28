@@ -2,7 +2,7 @@
 
 A backend is a name, a runner factory, the model names that can be said for it out loud,
 where its credentials come from, and where it keeps its instructions and skills. The
-router, the manager, the voice tools, `doctor` and `setup-agent` read this table and
+router, the manager, the voice tools, `doctor` and `jarvis setup` read this table and
 nothing else (see docs/agents.md, "Adding a third agent").
 
 Each agent's SDK is an optional extra of the same name (`uv sync --extra codex`), so an
@@ -64,10 +64,6 @@ class BackendSpec:
     headless_login_command: tuple[str, ...]
     #: The CLI's version, for `doctor`, when the agent's package says what it is.
     cli_version: Callable[[], str | None] = lambda: None
-    #: What `setup-agent` adds after a headless login, when the login leaves a step to do.
-    headless_login_note: str | None = None
-    #: The `Settings` field naming the agent's default model, printed as a `.env` line.
-    model_setting: str | None = None
 
 
 BACKENDS: dict[str, BackendSpec] = {
@@ -88,10 +84,6 @@ BACKENDS: dict[str, BackendSpec] = {
         skills_dir=lambda settings: settings.skills_dir,
         login_commands=(("claude", "/login"),),
         headless_login_command=("claude", "setup-token"),
-        headless_login_note=(
-            "claude setup-token prints a token: add it to your .env as "
-            "CLAUDE_CODE_OAUTH_TOKEN= (setup-agent never edits it)."
-        ),
     ),
     "codex": BackendSpec(
         name="codex",
@@ -110,7 +102,6 @@ BACKENDS: dict[str, BackendSpec] = {
         login_commands=(("codex", "login"),),
         headless_login_command=("codex", "login", "--device-auth"),
         cli_version=codex_cli_version,
-        model_setting="codex_model",
     ),
 }
 

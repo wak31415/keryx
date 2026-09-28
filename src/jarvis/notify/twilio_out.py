@@ -1,4 +1,5 @@
-"""Everything Jarvis sends *out* through Twilio: one SMS, one outbound call (spec §4).
+"""Everything Jarvis sends *out* through Twilio: one SMS, one outbound call (spec §4) —
+plus `TwilioAdmin`, the account calls `jarvis setup` and `jarvis doctor` make.
 
 The Twilio helper library is synchronous, so every REST call goes through
 `asyncio.to_thread` — a text or a call-back must never stall the event loop that is
@@ -15,7 +16,8 @@ import asyncio
 import logging
 import re
 from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Protocol
 
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse
@@ -127,3 +129,68 @@ class TwilioOut:
             return await asyncio.to_thread(create, to=to, **kwargs)
         except Exception as error:
             raise TwilioError(_without_numbers(str(error), to)) from None
+
+
+# --- the account, for `jarvis setup` and `jarvis doctor` ----------------------------------
+
+
+@dataclass(frozen=True)
+class TwilioNumber:
+    """One number on the account, and where its calls go now."""
+
+    sid: str
+    phone_number: str
+    voice_url: str | None
+    status_callback: str | None
+
+
+class TwilioAdmin(Protocol):
+    """The three account calls setup makes: who you are, your numbers, and one update."""
+
+    def account_name(self) -> str: ...
+    def numbers(self) -> list[TwilioNumber]: ...
+    def set_webhooks(self, number_sid: str, *, voice_url: str, status_url: str) -> None: ...
+
+
+class RestTwilioAdmin:
+    """`TwilioAdmin` over the Twilio REST client. Synchronous: setup and doctor are.
+
+    Reads, apart from `set_webhooks`, which `jarvis setup` calls only after the owner has
+    said yes to exactly the two URLs it is about to write.
+    """
+
+    def __init__(self, account_sid: str, auth_token: str, client: Any | None = None) -> None:
+        self._client = client or Client(account_sid, auth_token)
+        self._sid = account_sid
+
+    def account_name(self) -> str:
+        try:
+            return str(self._client.api.accounts(self._sid).fetch().friendly_name)
+        except Exception as error:
+            raise TwilioError(_without_numbers(str(error), "")) from None
+
+    def numbers(self) -> list[TwilioNumber]:
+        try:
+            listed = self._client.incoming_phone_numbers.list(limit=50)
+        except Exception as error:
+            raise TwilioError(_without_numbers(str(error), "")) from None
+        return [
+            TwilioNumber(
+                sid=number.sid,
+                phone_number=number.phone_number,
+                voice_url=number.voice_url or None,
+                status_callback=number.status_callback or None,
+            )
+            for number in listed
+        ]
+
+    def set_webhooks(self, number_sid: str, *, voice_url: str, status_url: str) -> None:
+        try:
+            self._client.incoming_phone_numbers(number_sid).update(
+                voice_url=voice_url,
+                voice_method="POST",
+                status_callback=status_url,
+                status_callback_method="POST",
+            )
+        except Exception as error:
+            raise TwilioError(_without_numbers(str(error), "")) from None

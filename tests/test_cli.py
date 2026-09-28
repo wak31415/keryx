@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from fakes import FakeProvider
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from jarvis.app import TASK_DB_NAME
@@ -67,56 +68,13 @@ def test_help_lists_the_commands():
         "download-models",
         "tasks",
         "doctor",
-        "setup-google",
+        "setup",
+        "config",
+        "auth",
+        "memory",
         "restart",
-        "init",
     ):
         assert command in result.output
-
-
-def test_setup_agent_is_a_command_with_its_switches():
-    assert "setup-agent" in runner.invoke(app, ["--help"]).output
-    result = runner.invoke(app, ["setup-agent", "--help"])
-
-    assert result.exit_code == 0
-    for option in ("--default", "--enable", "--no-smoke", "--yes", "--json"):
-        assert option in result.output
-
-
-def test_setup_agent_json_cannot_ask_so_it_needs_yes(settings_stub):
-    result = runner.invoke(app, ["setup-agent", "--json"])
-
-    assert result.exit_code == 2
-    assert "add --yes" in result.output
-
-
-def test_setup_agent_hands_its_flags_over_and_exits_with_the_result(settings_stub, monkeypatch):
-    seen: dict = {}
-
-    def fake(settings, **kw):
-        seen.update(kw)
-        return 1
-
-    monkeypatch.setattr("jarvis.cli.run_setup_agent", fake)
-
-    result = runner.invoke(
-        app, ["setup-agent", "--default", " Codex ", "--enable", "CLAUDE", "--no-smoke", "-y"]
-    )
-
-    assert result.exit_code == 1
-    assert (seen["default"], seen["enable"], seen["smoke"], seen["yes"]) == (
-        "codex",
-        ["claude"],
-        False,
-        True,
-    )
-
-
-def test_setup_agent_refuses_an_agent_it_does_not_know(settings_stub):
-    result = runner.invoke(app, ["setup-agent", "--default", "gemini", "--yes", "--no-smoke"])
-
-    assert result.exit_code == 2
-    assert "no agent called 'gemini'" in result.output
 
 
 def test_version_prints_the_installed_package_version():
@@ -969,6 +927,38 @@ def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path, w
     assert "allowed callers" in result.output
 
 
+def test_doctor_explains_a_malformed_pin_set_the_way_a_person_sets_one(
+    monkeypatch, tmp_path, wakeword_models
+):
+    """The same, through the real loader rather than a stub that stands in for it.
+
+    `pydantic` reports a field's *alias* when it has one, so a value refused under
+    `JARVIS_PIN` arrives as `JARVIS_PIN` and not as `pin`. A fallback that matched only the
+    field name never fired, and `doctor` died with a traceback in the one state it exists
+    to explain.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
+    (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
+    for name, value in {
+        "OPENAI_API_KEY": "sk-test",
+        "JARVIS_PIN": "1234",
+        "DATA_DIR": str(tmp_path / "jarvis"),
+        "PROJECTS_ROOT": str(tmp_path / "projects"),
+        "SKILLS_DIR": str(tmp_path / "skills"),
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    result = runner.invoke(app, ["doctor", "--no-mic"])
+
+    assert not isinstance(result.exception, ValidationError), result.exception
+    assert result.exit_code == 1, result.output
+    assert "JARVIS_PIN is set but unusable" in result.output
+    assert "6 to 8 digits" in result.output
+    assert "allowed callers" in result.output  # the rest was still checked
+
+
 def test_serve_refuses_to_start_on_a_malformed_pin(monkeypatch, tmp_path):
     """The strict gate. A bad PIN must stop the thing that answers the phone."""
     monkeypatch.chdir(tmp_path)
@@ -1120,48 +1110,6 @@ def test_doctor_help_documents_no_mic():
     assert "--no-mic" in result.output
 
 
-# --- setup-google ----------------------------------------------------------
-
-
-def test_setup_google_refuses_without_an_oauth_client(settings_stub, monkeypatch):
-    spawned: list[object] = []
-    # Recorded, not raised: an exception here would *also* exit 1 and hide the difference
-    # between "refused" and "started a server and then blew up".
-    monkeypatch.setattr(
-        "jarvis.google_setup.subprocess.Popen",
-        lambda argv, **kwargs: spawned.append(argv),
-    )
-
-    result = runner.invoke(app, ["setup-google"])
-
-    assert result.exit_code == 1
-    assert "GOOGLE_OAUTH_CLIENT_ID" in result.output
-    assert spawned == []  # no workspace-mcp server was ever started
-
-
-def test_setup_google_runs_the_flow_and_prints_what_it_says(settings_stub, monkeypatch):
-    seen: list[Settings] = []
-
-    def fake_setup(settings, *, echo, **kwargs):
-        seen.append(settings)
-        echo("open this: https://accounts.google.com/o/oauth2/auth")
-        return True
-
-    monkeypatch.setattr("jarvis.cli.run_google_setup", fake_setup)
-
-    result = runner.invoke(app, ["setup-google"])
-
-    assert result.exit_code == 0, result.output
-    assert seen == [settings_stub]
-    assert "https://accounts.google.com/o/oauth2/auth" in result.output
-
-
-def test_setup_google_help():
-    result = runner.invoke(app, ["setup-google", "--help"])
-
-    assert result.exit_code == 0
-
-
 def test_download_models_help():
     result = runner.invoke(app, ["download-models", "--help"])
 
@@ -1275,33 +1223,3 @@ def test_memory_path_prints_only_the_path(settings_stub):
     assert result.exit_code == 0, result.output
     assert result.output.strip() == str(memory_path(settings_stub.data_dir))
 
-
-def test_setup_gmail_prints_a_link_then_finishes_with_the_url(settings_stub, monkeypatch):
-    monkeypatch.setattr("jarvis.cli.start_signin", lambda settings: "https://accounts.example/x")
-    finished: list[str] = []
-    monkeypatch.setattr(
-        "jarvis.cli.finish_signin",
-        lambda settings, url: finished.append(url) or settings.data_dir / "gmail_token.json",
-    )
-
-    started = runner.invoke(app, ["setup-gmail"])
-    done = runner.invoke(app, ["setup-gmail", "--finish", "http://localhost:1/?code=x"])
-
-    assert started.exit_code == 0 and "https://accounts.example/x" in started.output
-    assert "--finish" in started.output
-    assert done.exit_code == 0 and "signed in" in done.output
-    assert finished == ["http://localhost:1/?code=x"]
-
-
-def test_setup_gmail_failing_says_why_and_exits_1(settings_stub, monkeypatch):
-    from jarvis.gmail_setup import GmailSetupError
-
-    def refuse(settings):
-        raise GmailSetupError("no Google OAuth client")
-
-    monkeypatch.setattr("jarvis.cli.start_signin", refuse)
-
-    result = runner.invoke(app, ["setup-gmail"])
-
-    assert result.exit_code == 1
-    assert "no Google OAuth client" in result.output

@@ -1,6 +1,6 @@
-# Template: scripts/install-systemd.sh fills in __UV__ and __REPO__, plus its own PATH and
-# the log directory under DATA_DIR, and writes the result to
-# ~/.config/systemd/user/jarvis.service. Do not enable this file directly. (Those last two
+# Template: scripts/install-systemd.sh fills in __UV__ and __REPO__, plus its own PATH,
+# JARVIS_HOME and the log directory under DATA_DIR, and writes the result to
+# ~/.config/systemd/user/jarvis.service. Do not enable this file directly. (Those last three
 # are not named here as placeholders: a value rendered into a comment that ended in a
 # backslash would carry the comment onto the next line.)
 #
@@ -12,13 +12,15 @@ Description=Jarvis voice agent (phone channel)
 
 [Service]
 Type=simple
-# `jarvis serve` reads .env from the working directory.
+# The checkout: `jarvis restart` reads its version, and a legacy .env here is still read.
 WorkingDirectory=__REPO__
 ExecStart=__UV__ run --project __REPO__ jarvis serve --no-wakeword
 # The user manager's PATH is bare, so the installer's own is rendered here: subagents find
 # what a terminal finds (nvm/npx, pixi, conda, cargo, ~/.local/bin). Re-run the installer
 # after changing it.
 Environment="PATH=__PATH__"
+# Where the settings are (config.toml, secrets.toml): the installer's, rendered here.
+Environment="JARVIS_HOME=__JARVIS_HOME__"
 # Restart covers a crash and the "started before the network was up" case at boot.
 Restart=always
 RestartSec=5

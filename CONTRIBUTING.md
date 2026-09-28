@@ -16,9 +16,10 @@ uv run ruff check src tests
 uv run jarvis doctor --no-mic      # what this machine is still missing
 ```
 
-You do **not** need a `.env`, an API key, Twilio, or a microphone to run the tests. If you
-do have a `.env`, the suite still ignores it — see the fixture in `tests/conftest.py`, and
-do not weaken it.
+You do **not** need an API key, Twilio, or a microphone to run the tests. The suite never
+reads your own configuration — `~/.jarvis/config.toml`, `secrets.toml` or a legacy `.env` —
+and never reaches the network: see the fixtures in `tests/conftest.py`, and do not weaken
+them.
 
 To run the thing itself without spending Claude tokens:
 
@@ -64,7 +65,7 @@ There is no package index in this story. Jarvis is installed from a clone, so a 
 a tag and a set of notes, not an upload.
 
 1. Bump `version` in `pyproject.toml` by hand. Semantic versioning, and the only public
-   contract it describes is the CLI plus `.env`: a removed or renamed setting or command is
+   contract it describes is the CLI plus the settings: a removed or renamed setting or command is
    a major bump, a new one is a minor bump, everything else is a patch.
 2. Add the entry to `CHANGELOG.md` under the new version, with the date.
 3. Commit (`chore: release vX.Y.Z`), tag it `vX.Y.Z`, and push both.

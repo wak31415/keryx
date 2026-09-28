@@ -4,8 +4,9 @@ The provider keeps no history across sockets, so every call opens blank unless s
 writes down what happened in the last one. That is this: on `SessionEnded`, Jarvis
 dispatches a subagent to itself whose whole job is to fold the call that just ended into
 `data_dir/memory.md`, which `jarvis.continuity.briefing` reads back into the next call's
-prompt. The only other writer is `jarvis init`, which `seed_memory`s a first draft before
-any call has happened; `memory_skeleton` is the structure the two share.
+prompt. The only other writer is `jarvis setup` (and `jarvis memory seed`), which
+`seed_memory`s a first draft before any call has happened and `add_standing_facts` to it;
+`memory_skeleton` is the structure they share.
 
 It is a real subagent rather than a summarising API call because the memory is worth more
 when whoever writes it can go and look: open the report of the task that call dispatched,
@@ -30,7 +31,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from jarvis.config import Settings, secure_dir, secure_file
+from jarvis.config import Settings, secure_dir, secure_file, write_private
 from jarvis.continuity.transcripts import transcript_path
 from jarvis.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
 from jarvis.prompts import render_prompt
@@ -104,7 +105,7 @@ def memory_skeleton(owner: str) -> str:
     """The memory document's structure, and the one place it is written down.
 
     The update prompt shows it to the subagent that keeps the file, and `compose_memory`
-    fills it in for a first memory typed at `jarvis init`: a section renamed here is renamed
+    fills it in for a first memory typed at `jarvis setup`: a section renamed here is renamed
     for both.
     """
     headings = "\n".join(f"## {section}" for section in _SECTIONS)
@@ -153,6 +154,42 @@ def seed_memory(
     secure_file(path)
     log.info("seeded %s with %d characters", path, len(text))
     return True
+
+
+def add_standing_facts(data_dir: Path, *, owner: str, facts: Iterable[str]) -> None:
+    """Add `facts` to the memory's standing facts; a first memory when there is none.
+
+    The bullets go at the end of the "Standing facts" section, whatever calls have written
+    since, and the section is added when a hand edit took it out. Raises `ValueError` past
+    `MAX_MEMORY_CHARS`, for the same reason `seed_memory` does.
+    """
+    path = memory_path(data_dir)
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except OSError:
+        existing = ""
+    if not existing.strip():
+        seed_memory(data_dir, owner=owner, facts=facts, force=True)
+        return
+    cleaned = (_BULLET.sub("", " ".join(fact.split())) for fact in facts)
+    bullets = [f"- {fact}" for fact in cleaned if fact]
+    lines = existing.rstrip("\n").splitlines()
+    heading = f"## {_SECTIONS[0]}"
+    if heading in lines:
+        end = lines.index(heading) + 1
+        while end < len(lines) and not lines[end].startswith("## "):
+            end += 1
+        while end > 0 and not lines[end - 1].strip():
+            end -= 1
+        lines[end:end] = bullets
+    else:
+        lines += ["", heading, "", *bullets]
+    text = "\n".join(lines) + "\n"
+    if len(text) > MAX_MEMORY_CHARS:
+        raise ValueError(
+            f"that memory would be {len(text)} characters, and a call reads {MAX_MEMORY_CHARS}"
+        )
+    write_private(path, text)
 
 
 def trim_memory(data_dir: Path, *, max_chars: int = MAX_MEMORY_FILE_CHARS) -> bool:
