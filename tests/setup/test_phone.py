@@ -13,6 +13,12 @@ from .fakes import DEFAULT, FakeTwilioAdmin
 TWILIO = [("Account SID", "AC123"), ("Auth token", "tok"), ("Which number", "+15550001111")]
 
 
+@pytest.fixture
+def linux(monkeypatch):
+    """The tunnel's name is asked only where it is a Cloudflare tunnel, which is Linux."""
+    monkeypatch.setattr(phone.sys, "platform", "linux")
+
+
 def test_skipping_asks_nothing_else(make_ctx):
     ctx = make_ctx([("Set up phone calls", "skip")])
 
@@ -21,7 +27,7 @@ def test_skipping_asks_nothing_else(make_ctx):
     assert ctx.ui.done() and ConfigStore().stored() == {}
 
 
-def test_the_whole_phone_with_the_webhooks_set_on_a_yes(make_ctx, world):
+def test_the_whole_phone_with_the_webhooks_set_on_a_yes(make_ctx, world, linux):
     ctx = make_ctx(
         [
             ("Set up phone calls", "setup"),
@@ -47,7 +53,7 @@ def test_the_whole_phone_with_the_webhooks_set_on_a_yes(make_ctx, world):
     assert "SMS_ENABLED" not in stored
 
 
-def test_the_webhook_is_left_alone_on_a_no(make_ctx, world):
+def test_the_webhook_is_left_alone_on_a_no(make_ctx, world, linux):
     ctx = make_ctx(
         [
             ("Set up phone calls", "setup"),
@@ -65,7 +71,7 @@ def test_the_webhook_is_left_alone_on_a_no(make_ctx, world):
     assert any("console.twilio.com" in line for line in ctx.ui.lines("note"))
 
 
-def test_a_webhook_already_pointed_here_is_not_asked_about(make_ctx, world):
+def test_a_webhook_already_pointed_here_is_not_asked_about(make_ctx, world, linux):
     voice, status = webhook_urls("jarvis.example.com")
     world.twilio_admin.numbers_ = [TwilioNumber("PN1", "+15550001111", voice, status)]
     ctx = make_ctx(
@@ -82,6 +88,26 @@ def test_a_webhook_already_pointed_here_is_not_asked_about(make_ctx, world):
 
     assert world.twilio_admin.updates == []
     assert ctx.ui.done()
+
+
+def test_a_mac_is_not_asked_for_a_tunnel_name(make_ctx, world, monkeypatch):
+    monkeypatch.setattr(phone.sys, "platform", "darwin")
+    ctx = make_ctx(
+        [
+            ("Set up phone calls", "setup"),
+            *TWILIO,
+            ("Public hostname", "jarvis.example.com"),
+            ("Point +15550001111", False),
+            ("send you texts", False),
+        ]
+    )
+
+    phone.run_section(ctx)
+
+    assert ctx.ui.done()
+    stored = ConfigStore().stored()
+    assert stored["PUBLIC_HOST"] == "jarvis.example.com"
+    assert "CLOUDFLARE_TUNNEL" not in stored
 
 
 def test_credentials_twilio_refuses_stop_the_section_and_store_nothing(make_ctx, world):
