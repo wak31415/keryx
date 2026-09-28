@@ -1,7 +1,8 @@
 # CLAUDE.md
 
-Jarvis: a Twilio phone + local wake-word voice agent, backed by the OpenAI
-Realtime API and Claude Agent SDK subagents.
+Jarvis: a Twilio phone voice agent, backed by the OpenAI Realtime API and Claude Agent SDK
+subagents. The local wake-word channel is developed on `feat/local-wakeword` and is not part
+of `main`.
 
 ## Commands
 
@@ -446,11 +447,9 @@ rulings, and the first is the one with a scar behind it:
 
 ## Platforms
 
-macOS runs both channels; Linux runs the phone channel only, because openwakeword
-needs `tflite-runtime`, which has no cp312 wheel. `sounddevice`, `openwakeword` and
-`onnxruntime` are therefore `sys_platform == 'darwin'` dependencies, and on a Linux host
-`jarvis serve` finds them missing (`wakeword_unavailable`, which imports nothing), says so in
-one line and serves the phone alone — one more reason every import of them stays lazy.
+`main` runs the phone channel, on macOS and Linux alike. The local wake-word channel lives on
+`feat/local-wakeword` until it is ready: it is macOS-only, because openwakeword needs
+`tflite-runtime`, which has no cp312 wheel.
 
 The coding agents are optional the same way, by choice rather than platform: each SDK is an
 extra (`claude`, `codex`, `all`), because each bundles a CLI of hundreds of megabytes. So

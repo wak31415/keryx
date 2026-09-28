@@ -28,7 +28,6 @@ otherwise be asked here. -->
 
 - OS and version:
 - `uv run jarvis --version` or the commit:
-- Channel: phone / local wake word / both
 
 **Anything from the logs**
 

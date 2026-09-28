@@ -18,8 +18,7 @@ an experiment, then hang up. It keeps working, lets you check in or add instruct
 and can call you back or text you the report when it's done.
 
 Jarvis uses the OpenAI Realtime API for conversation and coding agents on your machine for
-the work. Call it from a phone or a watch that can place calls, or say "hey jarvis" at your
-Mac.
+the work. Call it from a phone or a watch that can place calls.
 
 ## What Jarvis adds
 
@@ -65,8 +64,8 @@ again with the training results.
 
 You need Python 3.12, [uv](https://docs.astral.sh/uv/), an OpenAI API key with Realtime
 access, and a coding agent to do the work: Claude Code or Codex, signed in with a
-subscription or an API key. The wake word runs on macOS; phone calls work on macOS or Linux
-and also need Twilio and a Cloudflare tunnel.
+subscription or an API key. Phone calls work on macOS or Linux and need Twilio and a tunnel
+(Cloudflare Tunnel or ngrok).
 
 ```bash
 git clone https://github.com/wak31415/jarvis-voice-agent.git
@@ -98,15 +97,10 @@ only the one you use: `uv sync --no-group agents --extra codex` (or `--extra cla
 pip, name it: `pip install '.[all]'`, `'.[claude]'` or `'.[codex]'` — plain `pip install .`
 installs neither.
 
-### Talk locally on a Mac
+### Talking locally on a Mac
 
-```bash
-uv run jarvis download-models
-uv run jarvis serve --no-phone
-```
-
-Say "hey jarvis" to start a session. Give your terminal microphone access in macOS System
-Settings when prompted.
+Saying "hey jarvis" at your Mac, with no phone involved, is in development on the
+[`feat/local-wakeword`](https://github.com/wak31415/jarvis-voice-agent/tree/feat/local-wakeword) branch and is not part of `main` yet.
 
 ### Call Jarvis by phone
 

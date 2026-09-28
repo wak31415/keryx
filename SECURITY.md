@@ -247,7 +247,7 @@ history, not separately supported lines.
 | `main` | ✅ |
 | tagged releases | ❌ — update to `main` |
 
-## PIN, brute force and the wake word
+## PIN and brute force
 
 Caller ID is spoofable, so anyone who knows an allowed number can reach a phone session, and
 from there `JARVIS_PIN` is the only thing between them and a subagent with your access. This
@@ -308,14 +308,10 @@ about a tenth, and with the cross-call count it buys nothing close to a guess; c
 changes how the owner keys the PIN in, so it is tracked rather than rushed. The media socket
 also accepts a connection before the stream token authenticates it, for at most five seconds.
 
-**The wake word has no PIN.** A local session is authorized from its first word, on the
-ruling that whoever can speak in the room is you. That means *anything* that reaches the
-Mac's microphone and says "hey jarvis" — a video call, a video, a phone on speaker, a
-television — can dispatch a subagent running with `bypassPermissions`. That is a property
-of the design, documented here rather than hidden; if the machine's microphone hears rooms
-or audio you do not control, run `jarvis serve --no-wakeword`. Sound reaching the microphone
-and being obeyed is this ruling working as written; a way to authorize a *phone* session
-without the PIN is very much in scope.
+A way to authorize a phone session without the PIN is very much in scope. (The local
+wake-word channel, developed on `feat/local-wakeword` and not part of `main`, carries its
+own ruling: a session there is authorized from its first word. That is documented on the
+branch, and it does not apply to a release built from `main`.)
 
 ## Out of scope
 
