@@ -23,6 +23,7 @@ from jarvis.config import (
     secure_dir,
     secure_file,
 )
+from jarvis.config.files import config_file, dump_toml, write_private
 
 
 def test_allowed_callers_parses_comma_separated_env(monkeypatch, tmp_path):
@@ -403,15 +404,13 @@ def test_fake_agents_env(monkeypatch, tmp_path):
 # --- blank optional settings count as unset (spec §3.3 PIN gate) -------------
 
 
-def test_a_legacy_env_file_of_blanks_leaves_every_optional_setting_unset(tmp_path):
-    """The old `.env.example` shipped every setting blank, and `.env` files copied from it
-    are still read; not one blank may become an empty string."""
-    env_file = tmp_path / ".env"
-    env_file.write_text("".join(f"{env_var_name(name)}=\n" for name in Settings.model_fields))
+def test_a_config_file_of_blanks_leaves_every_optional_setting_unset(tmp_path):
+    """The old `.env.example` shipped every setting blank, and a store imported or edited
+    from one may too; not one blank may become an empty string."""
+    blanks = {env_var_name(name): "" for name in Settings.model_fields}
+    write_private(config_file(), dump_toml(blanks))
 
-    settings = Settings(
-        _env_file=env_file, openai_api_key="test", data_dir=tmp_path / "jarvis"
-    )
+    settings = Settings(openai_api_key="test", data_dir=tmp_path / "jarvis")
 
     for name in OPTIONAL_STR_FIELDS:
         assert getattr(settings, name) is None, name
@@ -749,6 +748,48 @@ def test_a_pin_file_that_cannot_be_read_is_no_pin(tmp_path):
     pin_file(jarvis_home()).mkdir()
 
     assert make(tmp_path).pin is None
+
+
+def test_an_install_from_before_the_xdg_layout_may_not_start(tmp_path):
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(parents=True)
+    for name in ("tasks.db", "calls", "memory.md", "pin"):
+        (legacy / name).touch()
+
+    refusal = make(tmp_path).storage_refusal()
+
+    assert refusal is not None and "jarvis migrate" in refusal
+    assert "calls, memory.md, pin, …" in refusal
+
+
+def test_what_is_not_jarviss_in_the_old_home_stops_nothing(tmp_path):
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(parents=True)
+    (legacy / "restart-after-task7.sh").touch()
+
+    assert make(tmp_path).storage_refusal() is None
+
+
+def test_an_old_home_still_named_on_purpose_is_in_use_not_legacy(tmp_path):
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(parents=True)
+    (legacy / "tasks.db").touch()
+
+    in_use = Settings(_env_file=None, openai_api_key="test", data_dir=legacy)
+
+    assert in_use.storage_refusal() is None
+
+
+@pytest.mark.parametrize("name", [".env", ".secrets/client_secret.json"])
+def test_configuration_in_the_working_directory_may_not_be_started_beside(name, tmp_path):
+    working = tmp_path / "checkout"
+    (working / name).parent.mkdir(parents=True, exist_ok=True)
+    (working / name).write_text("{}")
+
+    refusal = make(tmp_path).storage_refusal(working)
+
+    assert refusal is not None and name in refusal and "jarvis migrate" in refusal
+    assert make(tmp_path).storage_refusal(tmp_path / "elsewhere") is None
 
 
 def test_moving_data_dir_neither_loses_the_pin_nor_opens_the_door(tmp_path):

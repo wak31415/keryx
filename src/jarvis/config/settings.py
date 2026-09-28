@@ -13,9 +13,11 @@ A value is taken from the first of these that has one (`settings_customise_sourc
 1. what the code passed in (the CLI's `--port`, a test);
 2. the process environment (`JARVIS_PIN=… jarvis serve`, a systemd `Environment=`);
 3. `JARVIS_HOME/secrets.toml`, then `JARVIS_HOME/config.toml` (`jarvis config set`);
-4. a legacy `.env` in the working directory — read, never written, and `jarvis doctor`
-   says so while one is there (`jarvis config import-env` moves it into the store);
-5. the default below.
+4. the default below.
+
+Nothing is read from the working directory. A `.env` there used to be a fifth source, and a
+checkout is the one place a secret must never live; `jarvis migrate` moves one into the
+store, and `storage_refusal` keeps `jarvis serve` from starting while one is still there.
 """
 
 import json
@@ -43,6 +45,7 @@ from jarvis.config.files import (
     default_data_dir,
     default_state_dir,
     jarvis_home,
+    legacy_entries,
     legacy_home,
     read_toml,
     secrets_file,
@@ -142,9 +145,11 @@ GOOGLE_CLIENT_FILE = "google_client_secret.json"
 #: would be resolved against whatever directory a process happened to start in, and the
 #: service, the CLI and the installers would each find a different one.
 DIRECTORY_FIELDS = ("data_dir", "state_dir", "cache_dir")
-#: Where the client file used to be expected, relative to the working directory. Still
-#: read when nothing else is configured, so an install from before the store keeps working.
-LEGACY_GOOGLE_CLIENT_FILE = Path(".secrets/client_secret.json")
+#: What a working directory held when it was configuration: never read now, and `serve`
+#: refuses to start while either is there (`storage_refusal`), until `jarvis migrate`.
+LEGACY_ENV_FILE = Path(".env")
+LEGACY_CLIENT_FILE = Path(".secrets") / "client_secret.json"
+LEGACY_WORKING_FILES = (LEGACY_ENV_FILE, LEGACY_CLIENT_FILE)
 
 
 def setting(
@@ -207,8 +212,6 @@ class Settings(BaseSettings):
     """Jarvis runtime configuration. See spec §3.4, and `docs/configuration.md`."""
 
     model_config = SettingsConfigDict(
-        # Legacy: read from the working directory, below the store, never written.
-        env_file=".env",
         extra="ignore",
         populate_by_name=True,
         env_ignore_empty=True,
@@ -233,7 +236,6 @@ class Settings(BaseSettings):
             env_settings,
             _TomlLayer(settings_cls, secrets_file(home)),
             _TomlLayer(settings_cls, config_file(home)),
-            dotenv_settings,
             file_secret_settings,
         )
 
@@ -971,13 +973,11 @@ class Settings(BaseSettings):
     # --- derived -------------------------------------------------------------------------
 
     def google_client_file(self) -> Path | None:
-        """The OAuth client JSON in use: the setting, else setup's copy, else the legacy one."""
+        """The OAuth client JSON in use: the setting, else setup's copy beside the store."""
         if self.google_client_secrets_file is not None:
             return self.google_client_secrets_file
-        for path in (self.config_dir / GOOGLE_CLIENT_FILE, LEGACY_GOOGLE_CLIENT_FILE):
-            if path.is_file():
-                return path
-        return None
+        path = self.config_dir / GOOGLE_CLIENT_FILE
+        return path if path.is_file() else None
 
     def google_oauth_client(self) -> tuple[str, str] | None:
         """The OAuth client as `(id, secret)`: the configured pair if set, else the JSON file.
@@ -1040,6 +1040,33 @@ class Settings(BaseSettings):
                 "DEBUG_SKIP_TWILIO_VALIDATION is on while PUBLIC_HOST is set, so anyone who "
                 "can reach the tunnel could pose as Twilio — turn it off, or serve --no-phone"
             )
+        return None
+
+    def storage_refusal(self, working_dir: Path | None = None) -> str | None:
+        """Why `jarvis serve` must not start until `jarvis migrate` has run; None if it may.
+
+        Two states, both of an install from before the XDG layout. `~/.jarvis` still holding
+        what Jarvis put there, while neither `JARVIS_HOME` nor `DATA_DIR` names it: started
+        now, the service would find an empty data directory — no tasks, no memory, and no
+        PIN, which is an open enrolment door. Or a `.env` or `.secrets/client_secret.json`
+        in the working directory: configuration this build never reads, so it would start
+        without it.
+
+        The signal is the old files being there, never the new directory being missing:
+        `ensure_dirs` creates that on the first command of any kind.
+        """
+        legacy = legacy_home()
+        found = legacy_entries(legacy)
+        if found and legacy not in (self.config_dir, self.data_dir):
+            shown = ", ".join(found[:3]) + (", …" if len(found) > 3 else "")
+            return f"{legacy} still holds Jarvis's files ({shown}) — run `jarvis migrate`"
+        working = Path.cwd() if working_dir is None else working_dir
+        for name in LEGACY_WORKING_FILES:
+            if (working / name).is_file():
+                return (
+                    f"{working / name} is configuration Jarvis no longer reads — run "
+                    "`jarvis migrate`"
+                )
         return None
 
     @property

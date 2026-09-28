@@ -38,7 +38,7 @@ from jarvis.config.files import (
 from jarvis.config.pin import PIN_PATTERN, PIN_RULE, pin_file, read_enrolled_pin, write_enrolled_pin
 from jarvis.config.settings import (
     GOOGLE_CLIENT_FILE,
-    LEGACY_GOOGLE_CLIENT_FILE,
+    LEGACY_CLIENT_FILE,
     META_TABLES,
     NOT_STORED,
     PLACEHOLDER_KEY,
@@ -65,7 +65,6 @@ FROM_INIT = "command line"
 FROM_ENV = "environment"
 FROM_SECRETS = "secrets.toml"
 FROM_CONFIG = "config.toml"
-FROM_LEGACY = ".env (legacy)"
 FROM_PIN_FILE = "JARVIS_HOME/pin"
 FROM_DEFAULT = "default"
 
@@ -132,12 +131,6 @@ def default_value(key: str) -> Any:
         return None
     value = info.get_default(call_default_factory=True)
     return validate({key: value})[key] if value is not None else None
-
-
-def legacy_env_file() -> Path | None:
-    """The `.env` `Settings` still reads, or None (the tests switch it off)."""
-    configured = Settings.model_config.get("env_file")
-    return Path(configured) if isinstance(configured, str | Path) else None
 
 
 @dataclass
@@ -228,11 +221,6 @@ class ConfigStore:
                 return FROM_SECRETS
             if key in self._config():
                 return FROM_CONFIG
-        legacy = legacy_env_file()
-        if legacy is not None and legacy.is_file():
-            raw = dotenv_values(legacy)
-            if (raw.get(key) or "").strip():
-                return FROM_LEGACY
         if key == "JARVIS_PIN" and settings is not None and pin_file(settings.config_dir).exists():
             return FROM_PIN_FILE
         return FROM_DEFAULT
@@ -461,7 +449,7 @@ def _read_env(path: Path) -> _EnvFile:
         candidate = Path(raw[key]).expanduser()
         raw[key] = str(candidate if candidate.is_absolute() else path.parent / candidate)
     cleaned = validate(raw)
-    client = Path(client_raw).expanduser() if client_raw else LEGACY_GOOGLE_CLIENT_FILE
+    client = Path(client_raw).expanduser() if client_raw else LEGACY_CLIENT_FILE
     client = client if client.is_absolute() else path.parent / client
     client_text = client.read_text(encoding="utf-8") if client.is_file() else None
     if client_text is not None:

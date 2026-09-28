@@ -13,10 +13,8 @@ from jarvis.config import Settings, jarvis_home, pin_file, read_enrolled_pin, wr
 from jarvis.config.files import dump_toml, read_toml, write_private
 from jarvis.config.settings import ConfigFileError
 from jarvis.config.store import (
-    FROM_CONFIG,
     FROM_DEFAULT,
     FROM_ENV,
-    FROM_LEGACY,
     FROM_PIN_FILE,
     FROM_SECRETS,
     ConfigError,
@@ -183,18 +181,14 @@ def test_the_environment_beats_both_files_and_secrets_beat_config(store, monkeyp
     assert store.source_of("OPENAI_VOICE") == FROM_ENV
 
 
-def test_the_store_beats_a_legacy_env_file_which_beats_the_default(store, tmp_path, monkeypatch):
-    legacy = tmp_path / "legacy.env"
-    legacy.write_text("OPENAI_VOICE=from-dotenv\nPORT=7000\n")
-    monkeypatch.setitem(Settings.model_config, "env_file", str(legacy))
-    store.set({"OPENAI_VOICE": "from-config"})
+def test_a_env_in_the_working_directory_is_never_read(store):
+    """A checkout is the one place a secret must never live; `jarvis migrate` moves it."""
+    Path(".env").write_text("OPENAI_VOICE=from-dotenv\nPORT=7000\n")
 
     settings = Settings(openai_api_key="x")
 
-    assert (settings.openai_voice, settings.port) == ("from-config", 7000)
-    assert store.source_of("OPENAI_VOICE") == FROM_CONFIG
-    assert store.source_of("PORT") == FROM_LEGACY
-    assert store.source_of("HOST") == FROM_DEFAULT
+    assert (settings.openai_voice, settings.port) == ("cedar", 8080)
+    assert store.source_of("PORT") == FROM_DEFAULT
 
 
 def test_the_code_beats_everything(store):

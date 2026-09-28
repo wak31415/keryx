@@ -136,11 +136,11 @@ def test_every_path_comes_from_jarvis_and_none_is_reassigned(machine):
     assert out == f"/srv/data|/srv/data|{machine['home']}/.cache/jarvis"
 
 
-def test_a_legacy_env_in_the_repository_is_still_read(machine):
+def test_a_env_in_the_repository_is_never_read(machine):
     configure(machine)
     (machine["repo"] / ".env").write_text("STATE_DIR=/srv/from-dotenv\n")
 
-    assert lib(machine, 'printf %s "$LOGS"') == "/srv/from-dotenv/logs"
+    assert lib(machine, 'printf %s "$LOGS"') == f"{machine['home']}/.local/state/jarvis/logs"
 
 
 def test_no_public_host_says_how_to_set_one(machine):

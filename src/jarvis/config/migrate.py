@@ -56,7 +56,7 @@ from jarvis.config.files import (
     xdg_home,
 )
 from jarvis.config.pin import PIN_FILE_NAME, read_enrolled_pin
-from jarvis.config.settings import GOOGLE_CLIENT_FILE
+from jarvis.config.settings import GOOGLE_CLIENT_FILE, LEGACY_CLIENT_FILE, LEGACY_ENV_FILE
 from jarvis.config.store import ConfigError, ConfigStore
 
 #: Where each name in `LEGACY_NAMES` belongs now, by directory.
@@ -96,9 +96,8 @@ CATEGORIES: dict[str, str] = {
 SOCKET_NAME = "approvals.sock"
 assert set(CATEGORIES) | {SOCKET_NAME} == LEGACY_NAMES
 
-#: The working-directory files that were configuration.
-ENV_NAME = ".env"
-LEGACY_CLIENT_FILE = Path(".secrets") / "client_secret.json"
+#: The working-directory `.env` that was configuration (`LEGACY_CLIENT_FILE` the other).
+ENV_NAME = LEGACY_ENV_FILE.name
 TASK_DB = "tasks.db"
 #: How long the service may take to stop before the migration gives up, untouched.
 STOP_TIMEOUT_S = 30.0

@@ -39,8 +39,9 @@ dotfiles repository. What Jarvis keeps is in `DATA_DIR`, `STATE_DIR` and `CACHE_
 XDG data, state and cache directories below.
 
 **Which value wins**, first to last: the process environment (a systemd `Environment=`,
-say), `secrets.toml`, `config.toml`, a legacy `.env` in the working directory (read, never
-written; `jarvis config import-env` moves it into the store), and the default below.
+say), `secrets.toml`, `config.toml`, and the default below. Nothing is read from the
+working directory: an install that still has a `.env` there, or its files in `~/.jarvis`,
+moves them with `jarvis migrate`, and `jarvis serve` refuses to start until it has.
 
 **What the running service may change.** Jarvis can change some of its own settings — the
 voice model's `set_config` tool, or a subagent running `jarvis config set` in a task — and

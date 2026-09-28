@@ -161,6 +161,39 @@ def test_serve_refuses_a_default_agent_whose_extra_is_not_installed(settings_stu
     assert "config" not in built
 
 
+def test_serve_refuses_until_the_old_files_are_migrated(settings_stub, monkeypatch):
+    """Started now it would find no tasks, no memory, and no PIN: an open enrolment door."""
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    Path(".env").write_text("OPENAI_API_KEY=sk-old\n")
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 2, result.output
+    assert "jarvis migrate" in result.output
+    assert "config" not in built
+    assert not (settings_stub.state_dir / "logs" / "jarvis.log").exists()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [["tasks", "list"], ["tasks", "show", "1"], ["memory"], ["forget", "--yes"], ["approvals"],
+     ["restart", "--status"], ["auth", "status"]],
+)
+def test_what_reads_the_data_waits_for_the_migration_too(settings_stub, command):
+    """It would answer from an empty directory, and `tasks` would make a `tasks.db` there for
+    the migration to trip over."""
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(parents=True)
+    (legacy / "tasks.db").touch()
+
+    result = runner.invoke(app, command)
+
+    assert result.exit_code == 2, result.output
+    assert "jarvis migrate" in result.output
+    assert not (settings_stub.data_dir / "tasks.db").exists()
+
+
 def test_serve_without_the_phone_does_not_care_about_signature_checks(
     settings_stub, monkeypatch
 ):
@@ -864,7 +897,6 @@ def test_doctor_passes_on_a_complete_install(
     monkeypatch, tmp_path, wakeword_models, every_agent_installed
 ):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
     (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     settings = Settings(
@@ -894,7 +926,6 @@ def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path, w
     so if it stopped `doctor` too there would be nothing left to diagnose it with.
     """
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
     (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
 
@@ -939,7 +970,6 @@ def test_doctor_explains_a_malformed_pin_set_the_way_a_person_sets_one(
     to explain.
     """
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n")
     (wakeword_models / "hey_jarvis_v0.1.onnx").write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     for name, value in {

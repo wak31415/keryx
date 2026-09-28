@@ -21,26 +21,6 @@ def _settings_env_var_names() -> set[str]:
     return names
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _no_dotenv():
-    """Make the developer's real `.env` unreachable for the whole suite.
-
-    `_isolated_env` strips the ambient environment, but `Settings` also reads
-    `env_file=".env"` relative to the working directory, so any `Settings(...)` built
-    without an explicit `_env_file=None` — including ones deep inside the code under test —
-    picks up whatever credentials are on the machine. That once printed a live
-    `OPENAI_ADMIN_KEY` into pytest output. Blanking the setting on the class closes it for
-    every construction and needs no cwd juggling; an explicit `_env_file=` argument still
-    wins, so the tests that point at a fixture `.env` are unaffected.
-    """
-    original = Settings.model_config.get("env_file")
-    Settings.model_config["env_file"] = None
-    try:
-        yield
-    finally:
-        Settings.model_config["env_file"] = original
-
-
 @pytest.fixture(autouse=True)
 def _plain_cli_output(monkeypatch):
     """Render CLI output the same way on every machine — colour and width included.
@@ -78,7 +58,8 @@ def _isolated_env(monkeypatch, tmp_path):
     part in a test — nor be written by one. `JARVIS_ACTOR` goes because a suite run by a
     subagent of the live service inherits `service`, and would be refused as one.
 
-    `HOME` and every `XDG_*_HOME` move into the test's own directory as well. Every default
+    `HOME`, every `XDG_*_HOME` and the working directory move into the test's own
+    directory as well. Every default
     Jarvis has for where it keeps things is derived from them, and one check looks for a
     legacy `~/.jarvis` — which on a developer's machine really is there, holding every call
     they ever made.
@@ -91,6 +72,11 @@ def _isolated_env(monkeypatch, tmp_path):
         monkeypatch.setenv(name, str(home / relative))
     monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "jarvis-home"))
     monkeypatch.delenv("JARVIS_ACTOR", raising=False)
+    # And the working directory: a `.env` in the checkout the suite runs from is what
+    # `jarvis serve` refuses to start beside, and what `jarvis migrate` would import.
+    working = tmp_path / "cwd"
+    working.mkdir()
+    monkeypatch.chdir(working)
 
 
 @pytest.fixture

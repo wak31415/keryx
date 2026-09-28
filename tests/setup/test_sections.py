@@ -240,33 +240,25 @@ def test_the_checklist_locks_and_unlocks_what_changed(make_ctx):
 # --- import --------------------------------------------------------------------------------
 
 
-def test_a_legacy_env_is_imported_on_a_yes(make_ctx, tmp_path, monkeypatch):
+def test_files_from_before_the_xdg_layout_point_at_migrate(make_ctx, tmp_path):
+    """Not moved from here: a migration stops the service, and wants a plan read first."""
     (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-old\nOWNER_NAME=Ada\n")
-    monkeypatch.setitem(Settings.model_config, "env_file", ".env")
-    ctx = make_ctx([("Import it now", True)])
+    ctx = make_ctx([])
 
     sections.run_import(ctx)
 
-    assert ConfigStore().stored() == {"OPENAI_API_KEY": "sk-old", "OWNER_NAME": "Ada"}
-    assert not (tmp_path / ".env").exists()
-    assert ctx.settings.owner_name == "Ada"
-
-
-def test_an_import_that_is_refused_says_why_and_keeps_the_file(make_ctx, tmp_path, monkeypatch):
-    (tmp_path / ".env").write_text("PORT=eighty\n")
-    monkeypatch.setitem(Settings.model_config, "env_file", ".env")
-    ctx = make_ctx([("Import it now", True)])
-
-    sections.run_import(ctx)
-
+    assert ctx.ui.asked == []
+    assert ConfigStore().stored() == {}
     assert (tmp_path / ".env").exists()
-    assert any("PORT" in line for line in ctx.ui.lines("error"))
+    assert any(".env" in line for line in ctx.ui.lines("warn"))
+    assert any("jarvis migrate" in line for line in ctx.ui.lines("note"))
 
 
-def test_no_legacy_env_asks_nothing(make_ctx):
+def test_nothing_from_before_asks_nothing(make_ctx):
     ctx = make_ctx([])
     sections.run_import(ctx)
     assert ctx.ui.asked == []
+    assert ctx.ui.lines("success") == ["everything is where Jarvis looks for it"]
 
 
 # --- slack and billing ----------------------------------------------------------------------
@@ -325,32 +317,6 @@ def test_the_service_installer_runs_on_a_yes(make_ctx, world, tmp_path, monkeypa
 
 
 # --- the paths the walks above do not take ------------------------------------------------
-
-
-def test_the_import_reports_the_pin_the_client_and_what_it_left(make_ctx, tmp_path, monkeypatch):
-    data = tmp_path / "jarvis"
-    (tmp_path / ".env").write_text(f"JARVIS_PIN=482915\nDATA_DIR={data}\nWHO=me\n")
-    (tmp_path / ".secrets").mkdir()
-    (tmp_path / ".secrets" / "client_secret.json").write_text(
-        '{"installed": {"client_id": "i", "client_secret": "s"}}'
-    )
-    monkeypatch.setitem(Settings.model_config, "env_file", ".env")
-    ctx = make_ctx([("Import it now", True)])
-
-    sections.run_import(ctx)
-
-    said = " ".join(ctx.ui.lines())
-    assert "the PIN: moved to JARVIS_HOME/pin" in said
-    assert "the Google client file" in said and "WHO" in said
-
-
-def test_an_import_declined_changes_nothing(make_ctx, tmp_path, monkeypatch):
-    (tmp_path / ".env").write_text("OWNER_NAME=Ada\n")
-    monkeypatch.setitem(Settings.model_config, "env_file", ".env")
-
-    sections.run_import(make_ctx([("Import it now", False)]))
-
-    assert (tmp_path / ".env").exists()
 
 
 def test_three_refused_keys_and_no_keep_leave_nothing_saved(make_ctx, world):

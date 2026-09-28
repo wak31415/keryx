@@ -225,14 +225,23 @@ def _load_settings_optional() -> Settings:
     return _load_settings_reporting()[0]
 
 
-def _configure_readonly(*, quiet: bool = True) -> Settings:
+def _configure_readonly(*, quiet: bool = True, migrated: bool = True) -> Settings:
     """`_configure` for the read-only commands (no `OPENAI_API_KEY` required).
 
     `quiet` because these print an answer, and `LOG_LEVEL` is the service's setting: the
     INFO lines it wants in `jarvis.log` (a schema created, a migration run) are noise above
     a table. Warnings still show, and `LOG_LEVEL=DEBUG` still means everything.
+
+    `migrated` refuses, like `serve`, while `jarvis migrate` has yet to run: before it, the
+    data these commands read is still in the old place, so they would answer from an empty
+    one — and `jarvis tasks list` would create a new `tasks.db` for the migration to trip
+    over. The restart watchdog, which must report whatever it finds, passes False, and so
+    does `setup`, whose wizard says it in its own words.
     """
     settings = _load_settings_optional()
+    if migrated and (refusal := settings.storage_refusal()):
+        typer.echo(f"jarvis cannot do that yet: {refusal}", err=True)
+        raise typer.Exit(2)
     settings.ensure_dirs()
     level = logging.getLevelNamesMapping().get(settings.log_level.upper(), logging.INFO)
     if quiet and level != logging.DEBUG:
@@ -289,7 +298,7 @@ def serve(
     ] = None,
 ) -> None:
     """Run Jarvis: the Twilio phone server and the local "hey jarvis" listener."""
-    # Only pass overrides that were actually asked for, so the .env path stays untouched.
+    # Only pass overrides that were actually asked for; everything else is the store's.
     overrides: dict[str, object] = {}
     if fake_agents:
         overrides["fake_agents"] = True
@@ -302,6 +311,9 @@ def serve(
         typer.echo(f"jarvis cannot start: {refusal}", err=True)
         raise typer.Exit(2)
     if refusal := settings.agent_refusal():
+        typer.echo(f"jarvis cannot start: {refusal}", err=True)
+        raise typer.Exit(2)
+    if refusal := settings.storage_refusal():
         typer.echo(f"jarvis cannot start: {refusal}", err=True)
         raise typer.Exit(2)
     _add_file_logging(settings)
@@ -552,7 +564,7 @@ def restart_watch() -> None:
     own "the restart never came back" into `jarvis.log` would leave the next restart
     scanning that line back as a fault of Jarvis's.
     """
-    settings = _configure_readonly(quiet=False)
+    settings = _configure_readonly(quiet=False, migrated=False)
     typer.echo(asyncio.run(watch(settings)))
 
 
@@ -969,7 +981,7 @@ def setup(
     Everything it saves goes to JARVIS_HOME as you go, so stopping part way loses nothing.
     A coding agent setting Jarvis up uses the commands instead: --agent-instructions.
     """
-    settings = _configure_readonly()
+    settings = _configure_readonly(migrated=False)  # the wizard says so, in its own words
     if instructions:
         typer.echo(agent_instructions(settings, ConfigStore()))
         return

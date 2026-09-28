@@ -17,7 +17,7 @@ from importlib import resources
 
 from jarvis.agents.registry import BACKENDS
 from jarvis.config import Settings
-from jarvis.config.store import ConfigStore, legacy_env_file
+from jarvis.config.store import ConfigStore
 from jarvis.doctor import Check, format_check, run_doctor_checks
 from jarvis.projects import MAX_BRIEF_CHARS, MAX_BRIEFS_CHARS, summaries_dir
 from jarvis.setup import agents, google, phone, profile, project_context, sections
@@ -38,7 +38,7 @@ class Section:
 
 
 SECTIONS: tuple[Section, ...] = (
-    Section("import", "Import a .env", sections.run_import),
+    Section("import", "Move to the XDG directories", sections.run_import),
     Section("voice", "Voice", sections.run_voice, required=True),
     Section("agents", "Coding agents", agents.run_section, required=True),
     Section("settings", "Settings", sections.run_settings),
@@ -60,8 +60,7 @@ def statuses(ctx: SetupContext, checks: list[Check]) -> dict[str, str]:
     for section in SECTIONS:
         key = section.key
         if key == "import":
-            legacy = legacy_env_file()
-            if legacy is not None and legacy.is_file():
+            if settings.storage_refusal() is not None:
                 found[key] = MISSING
             continue
         if key == "settings":
@@ -108,6 +107,13 @@ def run_wizard(ctx: SetupContext, *, review_all: bool = False) -> int:
         "Jarvis setup",
         f"Saved in {ctx.store.home} as you go. Ctrl-C stops at any question.",
     )
+    if (refusal := ctx.settings.storage_refusal()) is not None:
+        # Before anything is saved: what setup would write lands where `jarvis migrate`
+        # is about to move the old files, and would stand in its way.
+        ui.error(refusal)
+        ui.outro("Run `jarvis migrate` first (`--dry-run` shows what it would move), then "
+                 "`jarvis setup` again.")
+        return 1
     checks = run_doctor_checks(ctx.settings, probe_mic=False, store=ctx.store)
     found = statuses(ctx, checks)
     ui.table(

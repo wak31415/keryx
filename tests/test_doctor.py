@@ -100,20 +100,31 @@ def test_the_mic_probe_never_raises_without_a_device(healthy, monkeypatch):
 # --- individual failures ---------------------------------------------------
 
 
-def test_a_legacy_env_file_is_still_read_and_says_how_to_move_it(healthy, tmp_path, monkeypatch):
-    (tmp_path / ".env").write_text("OPENAI_VOICE=marin\n")
-    monkeypatch.setitem(Settings.model_config, "env_file", ".env")
+def test_files_left_in_the_old_home_are_a_migration_still_to_run(healthy):
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(parents=True)
+    (legacy / "tasks.db").touch()
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["configuration"]
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["storage"]
 
-    assert (check.ok, check.severity, check.state) == (False, "soft", "missing")
-    assert "jarvis config import-env" in check.detail
+    assert (check.ok, check.severity, check.state) == (False, "hard", "missing")
+    assert "jarvis migrate" in check.detail and str(legacy) in check.detail
     assert check.section == "import"
 
 
-def test_no_legacy_env_file_is_fine(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["configuration"]
-    assert check.ok is True
+def test_a_env_in_the_working_directory_is_a_migration_still_to_run(healthy):
+    Path(".env").write_text("OPENAI_VOICE=marin\n")
+
+    check = by_name(run_doctor_checks(healthy, probe_mic=False))["storage"]
+
+    assert check.ok is False and "jarvis migrate" in check.detail
+
+
+def test_nothing_legacy_is_fine(healthy):
+    checks = by_name(run_doctor_checks(healthy, probe_mic=False))
+
+    assert checks["storage"].ok is True
+    assert checks["configuration"].ok is True
 
 
 def test_a_missing_openai_key_is_reported_not_raised(healthy, monkeypatch):
