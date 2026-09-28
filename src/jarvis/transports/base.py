@@ -1,4 +1,4 @@
-"""Transport interfaces shared by the phone and local channels (spec §3.2).
+"""Transport interfaces shared by the phone and local channels.
 
 A transport is the audio pipe of one session: it yields inbound events (caller audio,
 DTMF digits, hangup) and accepts outbound audio. The voice session is written against

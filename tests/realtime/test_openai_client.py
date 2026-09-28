@@ -1,4 +1,4 @@
-"""Tests for the OpenAI Realtime provider (spec §3.2 interfaces, §4 GA wire schema).
+"""Tests for the OpenAI Realtime provider.
 
 Every test drives a `FakeWS`: no network, no real websockets. Server events come from
 JSON fixtures under `tests/fixtures/realtime/` so the payload shapes stay honest.
@@ -130,7 +130,7 @@ async def connect():
         await harness.events.aclose()
 
 
-# --- session.update payload (spec §4) ---------------------------------------
+# --- session.update payload -------------------------------------------------
 
 
 def test_build_session_update_matches_ga_schema_for_the_phone_path():

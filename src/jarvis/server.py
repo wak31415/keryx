@@ -1,4 +1,4 @@
-"""The HTTP/websocket face of Jarvis: Twilio's webhooks and the media socket (spec §3.3).
+"""The HTTP/websocket face of Jarvis: Twilio's webhooks and the media socket.
 
 One inbound call touches three of these routes:
 
@@ -12,10 +12,10 @@ One inbound call touches three of these routes:
 3. `POST /twilio/status` — call-progress callbacks, logged and acknowledged.
 
 `GET /reports/{id}?t=…` is the fourth public route: the link the Notifier texts, guarded
-by the HMAC token in `t` rather than by a signature (spec §5).
+by the HMAC token in `t` rather than by a signature.
 
-The ngrok tunnel makes these the only publicly reachable surface of the machine
-(spec §5), so every handler here validates before it does anything else, and the
+The ngrok tunnel makes these the only publicly reachable surface of the machine,
+so every handler here validates before it does anything else, and the
 route bodies stay thin enough to read in one go — the checks live in helpers below.
 """
 
@@ -111,7 +111,7 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/twilio/status")
     async def twilio_status(request: Request) -> Response:
-        """Log a call-progress callback (spec §4 `status_callback`)."""
+        """Log a call-progress callback."""
         form = await request.form()
         if not verify_twilio_request(request, form, settings):
             raise HTTPException(status_code=403, detail="invalid Twilio signature")
@@ -135,7 +135,7 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/reports/{task_id}")
     async def report(task_id: int, t: str = "") -> Response:
-        """Serve one task report to whoever holds its token (spec §5).
+        """Serve one task report to whoever holds its token.
 
         The token is checked *before* the task is looked up, so a wrong token tells the
         holder nothing about which task ids exist.
@@ -216,7 +216,7 @@ async def _open_session(
         state.settings,
         state.registry,
         state.bus,
-        authorized=False,  # the phone channel earns authorization with the PIN (spec §5)
+        authorized=False,  # the phone channel earns authorization with the PIN
         possession=possession,
         opening_context=token_info.extra.get("opening_context"),
         opening_task_id=token_info.extra.get("task_id"),
@@ -247,7 +247,7 @@ async def _read_report(state: AppState, task_id: int) -> str | None:
 
 
 def verify_twilio_request(request: Request, form: FormData, settings: Settings) -> bool:
-    """True if `request` really came from Twilio (spec §4, §5).
+    """True if `request` really came from Twilio.
 
     The signature is computed over the URL Twilio actually called, which is not the URL
     that reaches us: ngrok terminates TLS and forwards to localhost, so the public scheme

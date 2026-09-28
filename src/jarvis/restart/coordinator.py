@@ -1,4 +1,4 @@
-"""Restarting the service, and phoning back once it is up again (spec §3.3).
+"""Restarting the service, and phoning back once it is up again.
 
 A restart is the one job Jarvis cannot see through inside one process: the process that
 runs `systemctl restart` is the process the service manager then kills. The flow is

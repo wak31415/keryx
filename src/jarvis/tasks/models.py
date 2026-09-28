@@ -1,4 +1,4 @@
-"""Task state and persistence value objects (spec §3.2 `tasks/models.py`).
+"""Task state and persistence value objects.
 
 `Task.to_row()` / `Task.from_row()` convert between the dataclass and the flat
 string-keyed representation `TaskStore` reads/writes to SQLite: enums <-> their string
@@ -116,11 +116,11 @@ def _warn_unknown_columns(names: Iterable[str]) -> None:
 
 @dataclass
 class Task:
-    """One dispatched unit of subagent work (spec §3.2 `tasks/models.py`).
+    """One dispatched unit of subagent work.
 
     Required fields come first (`id`, `kind`, `description`) so `Task(id=None,
     kind=TaskKind.AGENT, description="...")` works positionally; every remaining field
-    is defaulted, in the order the spec lists them. `kind` survives the collapse to a
+    is defaulted, in the order they were first defined. `kind` survives the collapse to a
     single kind because the column does: old rows still carry the old words.
     """
 
@@ -159,7 +159,7 @@ class Task:
     #: any of the delivery flags above: `announced` means a session spoke the completion
     #: into the room, `sms_sent` means a text went out. Neither survives a call they missed
     #: or a text they never read, so an unreported task keeps coming back at the top of the
-    #: next call until Jarvis has said it and called `mark_reported` (spec §3.3).
+    #: next call until Jarvis has said it and called `mark_reported`.
     reported_at: datetime | None = None
     #: Housekeeping Jarvis dispatched to itself — the per-call memory update. Real work is
     #: what they asked for; this is not, so it stays out of the spoken task lists, out of the

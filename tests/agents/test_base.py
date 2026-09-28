@@ -263,8 +263,8 @@ def test_the_subagent_suffix_says_whom_the_work_is_for():
     assert "dispatched on the owner's behalf" in render_subagent_suffix(task)
 
 
-def test_the_spec_names_are_still_importable_from_tasks_agent_runner():
-    """Spec §3.2 puts the runner in `tasks/agent_runner.py`; the move keeps those names."""
+def test_the_original_names_are_still_importable_from_tasks_agent_runner():
+    """The runner started in `tasks/agent_runner.py`; the move keeps those names."""
     from jarvis.agents import base, claude
     from jarvis.tasks import agent_runner
 

@@ -145,7 +145,7 @@ def register_task_tools(
         wait = _clamp_wait(arguments.get("wait_seconds"), settings)
         if wait > 0:
             # Marked for as long as we hold the line, so the notifier does not announce
-            # into this session what the tool result below is about to say (spec §3.3).
+            # into this session what the tool result below is about to say.
             with inline_waits.holding(ctx.session.session_id, task.id):
                 task = await manager.wait_for(task.id, wait)
 
@@ -343,7 +343,7 @@ def register_task_tools(
         },
         mark_reported,
         # Silent: it is called *after* the result has been spoken, and a turn generated
-        # over its answer is a turn spent saying that result a second time (spec §3.3).
+        # over its answer is a turn spent saying that result a second time.
         silent=True,
     )
 

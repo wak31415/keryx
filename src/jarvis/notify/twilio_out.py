@@ -1,4 +1,4 @@
-"""Everything Jarvis sends *out* through Twilio: one SMS, one outbound call (spec §4) —
+"""Everything Jarvis sends *out* through Twilio: one SMS, one outbound call —
 plus `TwilioAdmin`, the account calls `jarvis setup` and `jarvis doctor` make.
 
 The Twilio helper library is synchronous, so every REST call goes through
@@ -45,7 +45,7 @@ def _without_numbers(text: str, number: str) -> str:
 def stream_twiml(public_host: str, params: dict[str, str]) -> str:
     """`<Connect><Stream>` TwiML with one `<Parameter>` per entry in `params`.
 
-    The same shape the inbound webhook answers with (spec §3.3): the media-stream URL
+    The same shape the inbound webhook answers with: the media-stream URL
     cannot carry a query string, so anything the socket needs travels as a parameter.
     """
     response = VoiceResponse()

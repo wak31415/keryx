@@ -1,4 +1,4 @@
-"""Tests for the per-call memory update (spec §3.3).
+"""Tests for the per-call memory update.
 
 The job is a real dispatch through a real `TaskManager`, with a `FakeAgentRunner` behind
 it — so what these assert on is the task that gets created: that it is internal, that it

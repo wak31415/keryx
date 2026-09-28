@@ -1,4 +1,4 @@
-"""How much one call has proved about who is on it (spec §3.3, §5).
+"""How much one call has proved about who is on it.
 
 There used to be one bit — `VoiceSession.authorized`, earned only by the PIN — and it was
 both too coarse and wrong about direction. Too coarse, because "may hear a result that is

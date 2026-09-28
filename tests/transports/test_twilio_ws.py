@@ -17,7 +17,7 @@ TIMEOUT = 2.0
 
 
 def start_message(**custom: str) -> dict:
-    """The `start` frame Twilio sends once the media stream is up (spec §4)."""
+    """The `start` frame Twilio sends once the media stream is up."""
     return {
         "event": "start",
         "sequenceNumber": "1",

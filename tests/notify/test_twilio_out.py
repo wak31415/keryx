@@ -1,4 +1,4 @@
-"""Tests for the outbound Twilio wrapper (spec §4).
+"""Tests for the outbound Twilio wrapper.
 
 No REST client is ever built here: every test either injects a fake one or asserts on
 the credentials the lazy constructor would have been handed.

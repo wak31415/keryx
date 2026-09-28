@@ -1,4 +1,4 @@
-"""Tests for what a call opens knowing (spec §3.3).
+"""Tests for what a call opens knowing.
 
 The digest and the memory are assembled before the provider is connected, so everything
 here is about two questions: does the right thing reach the prompt, and does a broken

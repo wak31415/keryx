@@ -1,4 +1,4 @@
-"""The tools the voice model calls to get real work done (spec §3.2, §3.3).
+"""The tools the voice model calls to get real work done.
 
 Everything here is written for a model that is *speaking*: descriptions say when to
 reach for a tool, ids are small integers, lists are short by default, and long text is

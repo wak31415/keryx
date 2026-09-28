@@ -1,4 +1,4 @@
-"""Tests for the restart flow: schedule one, then confirm it afterwards (spec §3.3).
+"""Tests for the restart flow: schedule one, then confirm it afterwards.
 
 Nothing here starts a process, opens a socket or waits on a clock. The service manager is
 a fake `spawn`, Twilio is a fake, and `sleep` is a double that returns at once — and that

@@ -1,4 +1,4 @@
-"""Tests for the PIN gate on a real `VoiceSession` (spec §3.3, §5).
+"""Tests for the PIN gate on a real `VoiceSession`.
 
 Two ways in: the caller says the PIN (the model calls `submit_pin`) or keys it in on the
 phone. The keypad path is the sensitive one — those digits must never reach the model,

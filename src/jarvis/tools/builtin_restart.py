@@ -23,7 +23,7 @@ def register_restart_tools(
     if restarter is not None:
 
         async def restart_service(ctx: ToolContext, arguments: dict) -> dict:
-            """Restart the service, and let it phone back when it is up (spec §3.3)."""
+            """Restart the service, and let it phone back when it is up."""
             refusal = pin_gate(ctx, settings)
             if refusal is not None:
                 return refusal

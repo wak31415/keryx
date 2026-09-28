@@ -1,8 +1,8 @@
-"""The subagent runner's spec §3.2 names, kept where the spec puts them.
+"""The subagent runner's original names, kept where they were first defined.
 
 The runners themselves live in `jarvis.agents` now — one module per coding agent, with
 what they share in `jarvis.agents.base`. These names stay importable from here because
-§3.2 keeps them stable.
+they are a stable interface.
 """
 
 from jarvis.agents.base import (

@@ -1,4 +1,4 @@
-"""Looking something up in what has already happened (spec §3.3).
+"""Looking something up in what has already happened.
 
 The briefing tells Jarvis what it should volunteer at the start of a call. This answers
 the other half — "what did we decide about the Orchard sync?" — without spending a

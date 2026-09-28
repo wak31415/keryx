@@ -75,7 +75,7 @@ PLACEHOLDER_KEY = "unset"
 OWNER_FALLBACK = "the owner"
 
 #: Every optional string setting. A blank one means *not configured*, never the empty
-#: string — an empty PIN would otherwise be a PIN that `submit_pin("")` matches (spec §3.3).
+#: string — an empty PIN would otherwise be a PIN that `submit_pin("")` matches.
 OPTIONAL_STR_FIELDS = (
     "anthropic_api_key",
     "claude_code_oauth_token",
@@ -209,7 +209,7 @@ class _TomlLayer(PydanticBaseSettingsSource):
 
 
 class Settings(BaseSettings):
-    """Jarvis runtime configuration. See spec §3.4, and `docs/configuration.md`."""
+    """Jarvis runtime configuration. See `docs/configuration.md`."""
 
     model_config = SettingsConfigDict(
         extra="ignore",
@@ -831,7 +831,7 @@ class Settings(BaseSettings):
     @field_validator("pin", mode="after")
     @classmethod
     def _pin_is_six_to_eight_digits(cls, value: str | None) -> str | None:
-        """A configured PIN must conform, or Jarvis does not start (spec §5).
+        """A configured PIN must conform, or Jarvis does not start.
 
         Blank is handled upstream by `_blank_is_unset` and stays "no PIN", which is a
         different and safe thing: it refuses every dispatch from the phone. What this
@@ -883,7 +883,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _resolve_pin(self) -> "Settings":
-        """Fill `pin` from `JARVIS_HOME/pin` when the environment set none (spec §5).
+        """Fill `pin` from `JARVIS_HOME/pin` when the environment set none.
 
         Two sources, one field, resolved once here so that every existing reader of
         `settings.pin` — the session's compare, the gates, the transcript redaction — keeps

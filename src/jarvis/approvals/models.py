@@ -47,8 +47,8 @@ class Verdict:
     """What the hook prints back to the Claude CLI, or None for "say nothing".
 
     `behavior` is the CLI's own vocabulary: `allow` runs the tool, `deny` carries `message`
-    back to Claude as feedback — which is how a *question* is answered (spec note: a plain
-    `allow` falls through to the on-screen picker for tools that need interaction, so the
+    back to Claude as feedback — which is how a *question* is answered (a plain `allow`
+    falls through to the on-screen picker for tools that need interaction, so the
     answer has to ride on a denial).
     """
 

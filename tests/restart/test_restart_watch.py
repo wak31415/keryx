@@ -1,4 +1,4 @@
-"""Tests for the watchdog that outlives the restart (spec §3.3).
+"""Tests for the watchdog that outlives the restart.
 
 The whole point of the module is a process that survives being killed, so nothing here
 starts one: the clock only moves when the code sleeps, the health probe is a lambda, and

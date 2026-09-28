@@ -399,7 +399,7 @@ def test_fake_agents_env(monkeypatch, tmp_path):
     assert settings.fake_agents is True
 
 
-# --- blank optional settings count as unset (spec §3.3 PIN gate) -------------
+# --- blank optional settings count as unset ----------------------------------
 
 
 def test_a_config_file_of_blanks_leaves_every_optional_setting_unset(tmp_path):
@@ -443,7 +443,7 @@ def test_optional_str_fields_covers_every_optional_string_field():
     assert set(OPTIONAL_STR_FIELDS) == optional
 
 
-# --- the PIN is strictly 6-8 digits (spec §5) --------------------------------
+# --- the PIN is strictly 6-8 digits ------------------------------------------
 
 
 @pytest.mark.parametrize("pin", ["123456", "1234567", "12345678"])

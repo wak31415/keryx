@@ -1,4 +1,4 @@
-"""Tests for the tokenized report endpoint, `GET /reports/{id}?t=…` (spec §5).
+"""Tests for the tokenized report endpoint, `GET /reports/{id}?t=…`.
 
 The HMAC token is the only thing standing between a task report and the public internet,
 so these tests care about the failure modes as much as the happy path: a wrong token, a

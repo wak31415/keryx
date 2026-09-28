@@ -73,7 +73,7 @@ remember:
   else reads (a third agent is an adapter and a connector in one module, one entry, its
   `AgentName`, its settings and a `docs/agents.md` column), `agents/auth.py` the three auth
   tiers both share, `agents/router.py` opens each task on `task.agent`.
-  `tasks/agent_runner.py` only re-exports the spec §3.2 names. `docs/agents.md` is the parity
+  `tasks/agent_runner.py` only re-exports the original runner names. `docs/agents.md` is the parity
   matrix, and `tests/test_docs_sync.py` wants a column in it for every backend.
 
 - **restart** — `restart/` is the whole subsystem: `coordinator`, `service`, `store`,
@@ -532,9 +532,10 @@ inside functions, not imported at module scope, so the suite runs without them.
   `~/.local/share/jarvis/calls/`; read a few before editing any of it. They may contain a
   spoken PIN and other personal details, so nothing from them is ever copied into code,
   tests, docs or commit messages — describe the pattern, never quote the call.
-- Spec §3.2 interface names and signatures stay stable (extra optional keyword
-  arguments are fine). §3.3/§4 hold rulings: follow them, and amend the spec in a
-  docs commit when one changes.
+- The interface names `tasks/agent_runner.py` re-exports, and the `list` methods on the
+  task store and manager, keep their names and signatures (extra optional keyword
+  arguments are fine). The rulings in this file bind: follow them, and amend this file in
+  the same commit when one changes.
 - Conventional commits (`feat:`/`fix:`/`chore:`/`docs:`) with the Co-Authored-By
   Claude trailer. A subagent Jarvis dispatched adds `Jarvis-Task: <id>` as well, so
   `git log --grep '^Jarvis-Task:'` is everything the owner asked for out loud rather than
@@ -569,5 +570,7 @@ inside functions, not imported at module scope, so the suite runs without them.
 
 ## Reference docs
 
-- Design spec: `docs/superpowers/specs/2026-08-18-jarvis-voice-agent-design.md`
-- Implementation plan: `docs/superpowers/plans/2026-08-18-jarvis-voice-agent-plan.md`
+The original design spec and implementation plan are the owner's notes, kept out of git in
+`.superpowers/` (`specs/2026-08-18-jarvis-voice-agent-design.md`,
+`plans/2026-08-18-jarvis-voice-agent-plan.md`). A fresh clone does not have them. Where they
+are present they are background; this file and `SECURITY.md` are what binds.

@@ -1,4 +1,4 @@
-"""SQLite-backed persistence for `Task` (spec §3.2 `tasks/store.py`).
+"""SQLite-backed persistence for `Task`.
 
 One `sqlite3.Connection`, opened eagerly in `__init__` with `check_same_thread=False`
 and autocommit (`isolation_level=None`), guarded by a `threading.Lock` since a single
@@ -117,7 +117,7 @@ _V6_COLUMNS = ("input_tokens INTEGER", "output_tokens INTEGER", "cost_usd REAL")
 
 
 class TaskStore:
-    """Task persistence (spec §3.2 `tasks/store.py`). `":memory:"` is accepted for tests."""
+    """Task persistence. `":memory:"` is accepted for tests."""
 
     def __init__(self, path: Path | str) -> None:
         self._path = str(path)
@@ -396,7 +396,7 @@ class TaskStore:
             ).fetchall()
         return [Task.from_row(row) for row in rows]
 
-    # NOTE: this method is named `list` per spec §3.2, so it must be defined *after*
+    # NOTE: this method is named `list` (a stable interface name), so it must be defined *after*
     # every other annotation in this class that uses the builtin `list[...]` — once
     # `list` is bound as a class attribute, later annotations evaluated in the class
     # body would resolve to this method instead of the builtin.

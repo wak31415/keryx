@@ -1,4 +1,4 @@
-"""The part of a restart that runs *through* the death of the process (spec §3.3).
+"""The part of a restart that runs *through* the death of the process.
 
 `RestartCoordinator` has two halves, and both of them are inside Jarvis: one asks for the
 restart, the other confirms it on the far side. That covers every failure except the one

@@ -1,4 +1,4 @@
-"""Getting a finished task to the user, by whatever route is open (spec §3.3).
+"""Getting a finished task to the user, by whatever route is open.
 
 Three stages, in order, on every `TaskCompleted` / `TaskFailed`:
 

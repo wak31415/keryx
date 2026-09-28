@@ -1,4 +1,4 @@
-"""Task lifecycle: queue, run, follow up, cancel (spec §3.2 `tasks/manager.py`).
+"""Task lifecycle: queue, run, follow up, cancel.
 
 `dispatch()` writes a `queued` row and hands the work to an `asyncio.Task` running
 `_run`, which waits on a `max_concurrent_tasks` semaphore before it opens a subagent
@@ -15,7 +15,7 @@ state, so a late waiter returns immediately.
 A follow-up to a *running* task goes straight into its turn when the agent can take it
 (`AgentSession.send`, Codex). When it cannot — Claude, or a turn that has just ended — the
 text is queued and becomes the prompt of an immediate resumed run inside the same semaphore
-slot (spec §3.3). Only the last run of that chain is published, so one request stays one
+slot. Only the last run of that chain is published, so one request stays one
 announcement. A per-task lock (`_locks`) makes taking a follow-up in and closing the row out
 one at a time, so a follow-up can never land in a queue nobody will read again.
 
@@ -422,7 +422,7 @@ class TaskManager:
             return
 
     async def _run_live_followups(self, task: Task, result: RunResult) -> RunResult:
-        """Re-run `task` for the follow-ups that arrived while it was running (spec §3.3).
+        """Re-run `task` for the follow-ups that arrived while it was running.
 
         Each round resumes the session the last run left behind — on the task's own agent,
         which is the only one that can — so the agent keeps its context, and stays inside
@@ -592,7 +592,7 @@ class TaskManager:
         return await self._store.get(task_id)
 
     async def unreported(self, *, limit: int = MAX_UNREPORTED) -> list[Task]:
-        """Finished tasks Jarvis still owes them a word about, oldest first (spec §3.3)."""
+        """Finished tasks Jarvis still owes them a word about, oldest first."""
         return await self._store.list_unreported(limit=limit)
 
     async def count_unreported(self) -> int:
@@ -631,7 +631,7 @@ class TaskManager:
         """Ask for an outbound call to `number` when `task_id` finishes.
 
         `note` is what the call-back should remind them of — the call it was arranged on is
-        long over by then. Only records the wish; the notifier places the call (spec §3.3).
+        long over by then. Only records the wish; the notifier places the call.
         Raises `KeyError` if the task does not exist.
         """
         fields: dict[str, object] = {"callback_requested": True, "callback_number": number}
@@ -805,7 +805,7 @@ class TaskManager:
         """Every known project as `(name, path)`, configured ones first."""
         return list(self._candidates().items())
 
-    # NOTE: this method is named `list` per spec §3.2, so — exactly as in `TaskStore` —
+    # NOTE: this method is named `list` (a stable interface name), so — exactly as in `TaskStore` —
     # it must be defined after every annotation in this class body that uses the builtin
     # `list[...]`, which would otherwise resolve to this method.
     async def list(

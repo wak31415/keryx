@@ -1,4 +1,4 @@
-"""Tests for the Notifier: announce, then SMS, then call back (spec §3.3 "Task completion").
+"""Tests for the Notifier: announce, then SMS, then call back.
 
 Everything outbound is a fake: no REST client, no socket, no real session. The store is a
 real in-memory `TaskStore` and the token store is the real one, because what the tests

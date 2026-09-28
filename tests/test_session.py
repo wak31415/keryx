@@ -1,4 +1,4 @@
-"""Tests for the voice session core (spec §3.2 `session.py`, §3.3 key behaviors).
+"""Tests for the voice session core.
 
 Every test drives a `FakeTransport` and a `FakeProvider`: no socket, no mic, no model.
 Waiting is always bounded — `eventually()` polls with a deadline and `running()` fails
@@ -365,7 +365,7 @@ async def test_an_ordinary_tool_result_asks_for_the_turn_that_speaks_about_it(
 async def test_a_silent_tool_result_does_not_buy_another_spoken_turn(
     make_session, phone, provider, tools
 ):
-    """`mark_reported` is called *after* the result was spoken (spec §3.3).
+    """`mark_reported` is called *after* the result was spoken.
 
     Asking for a response over its answer is what made a call-back greet them, say the
     result, and then say the whole greeting over again.

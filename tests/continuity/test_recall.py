@@ -1,4 +1,4 @@
-"""Tests for looking something up in what has already happened (spec §3.3).
+"""Tests for looking something up in what has already happened.
 
 Recall reads real transcript files and a real store, so these tests write both. The
 matching is deliberately literal — every assertion here is about it staying that way,

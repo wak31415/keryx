@@ -1,4 +1,4 @@
-"""Provider-agnostic realtime interfaces: session config, typed events, protocol (spec §3.2).
+"""Provider-agnostic realtime interfaces: session config, typed events, protocol.
 
 These are the names the voice session is written against; a provider implementation
 (currently `jarvis.realtime.openai`) translates its wire protocol into these events.

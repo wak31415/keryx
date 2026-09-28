@@ -1,4 +1,4 @@
-"""Restarting the service across the death of the process that asks for it (spec §3.3).
+"""Restarting the service across the death of the process that asks for it.
 
 Six modules, three of them halves of one flow: `coordinator` asks and phones back,
 `service` talks to systemd/launchd, `store` is the `restart.json` handover between the

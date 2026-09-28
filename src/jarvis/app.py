@@ -15,7 +15,7 @@ binds a Unix socket and two processes cannot both own that.
 
 `build_app_state` also starts the Notifier, which is what turns a finished task into
 something the user actually hears: an announcement into the live sessions, a text, or a
-call back (spec §3.3), and builds the `RestartCoordinator` that does the same for a
+call back, and builds the `RestartCoordinator` that does the same for a
 restart of the service itself.
 
 It starts the `MemoryWriter` on the same bus, which is the other half of continuity: the

@@ -1,4 +1,4 @@
-"""What every builtin tool module shares (spec §3.2, §3.3).
+"""What every builtin tool module shares.
 
 Split out of `builtin.py` (2026-09-02), where it had accumulated at the top of one very
 long function. Three kinds of thing live here.
@@ -360,7 +360,7 @@ async def _report_excerpt(task: Task) -> str | None:
 
 
 def pin_gate(ctx: ToolContext, settings: Settings) -> dict | None:
-    """The refusal a phone caller gets before the PIN, if any (spec §3.3, §5).
+    """The refusal a phone caller gets before the PIN, if any.
 
     Called first, before a task number is even looked up, so a refusal says nothing about
     what exists. Reaching into a running task opens the same bypassPermissions subagent

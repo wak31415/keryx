@@ -1,4 +1,4 @@
-"""Which voice session is holding the line for which task (spec §3.3).
+"""Which voice session is holding the line for which task.
 
 `dispatch_task(wait_seconds=…)` blocks inside the tool call while a task finishes, and
 hands the summary back as the tool result. The task manager publishes `TaskCompleted`

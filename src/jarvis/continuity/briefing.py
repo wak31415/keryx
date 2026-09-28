@@ -1,4 +1,4 @@
-"""What Jarvis knows before the first word of a call (spec §3.3).
+"""What Jarvis knows before the first word of a call.
 
 A realtime session starts with no history: the provider keeps nothing across sockets, so
 without help every call opens as if it were the first one ever. Two things fix that, and
@@ -8,7 +8,7 @@ both are assembled here, once, at session start:
    and `sms_sent` record that a *delivery* was attempted; neither survives a call they
    missed or a text they never read. `reported_at` records that Jarvis actually said it,
    and until it is stamped the task comes back at the top of the next call. The voice
-   model stamps it with `mark_reported` once it has told them (spec §3.3 ruling).
+   model stamps it with `mark_reported` once it has told them.
 2. **The memory.** `data_dir/memory.md`, rewritten after every call by the subagent
    `jarvis.continuity.memory` dispatches, and read back through its `read_memory`.
    Standing facts and what recent calls were about, so "the thing we talked about

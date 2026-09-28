@@ -1,4 +1,4 @@
-"""OpenAI Realtime (GA) provider: websocket client + event translation (spec §4).
+"""OpenAI Realtime (GA) provider: websocket client + event translation.
 
 Wire details that matter and are easy to get wrong:
 `wss://api.openai.com/v1/realtime?model=…` with `Authorization: Bearer …` and **no**
@@ -41,7 +41,7 @@ logger = logging.getLogger("jarvis.realtime.openai")
 REALTIME_URL = "wss://api.openai.com/v1/realtime"
 
 #: Sample rate declared for `audio/pcm` sessions — the local mic/speaker path
-#: (16-bit LE mono 24 kHz, spec §3.2).
+#: (16-bit LE mono 24 kHz).
 PCM_SAMPLE_RATE = 24000
 
 # How long each part of this socket may take, said out loud rather than inherited. All
@@ -154,7 +154,7 @@ def turn_detection_block(config: SessionConfig) -> dict:
 
 
 def build_session_update(config: SessionConfig) -> dict:
-    """Build the `session.update` client event for `config` (spec §4).
+    """Build the `session.update` client event for `config`.
 
     The model is selected by the connection URL, so it is deliberately absent here.
     """

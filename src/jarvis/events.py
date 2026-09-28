@@ -1,4 +1,4 @@
-"""In-process event bus and the event dataclasses shared across Jarvis (spec §3.2)."""
+"""In-process event bus and the event dataclasses shared across Jarvis."""
 
 import inspect
 import logging

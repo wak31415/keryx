@@ -1,7 +1,7 @@
 **What this changes, and why**
 
 <!-- The why matters more than the what — the diff already says what. If it changes a
-ruling in CLAUDE.md or the design spec, say which one and amend the spec in the same PR. -->
+ruling in CLAUDE.md or SECURITY.md, say which one and amend it in the same PR. -->
 
 **Checklist**
 
@@ -10,7 +10,7 @@ ruling in CLAUDE.md or the design spec, say which one and amend the spec in the 
 - [ ] New behaviour has a test; a bug fix has one that fails without the fix
 - [ ] No network, hardware or real subagent in any test — fakes behind the `Protocol`s
 - [ ] Conventional commit subject (`feat:` / `fix:` / `chore:` / `docs:` / `ci:`)
-- [ ] Docs updated where they would otherwise be wrong (README, `docs/configuration.md` via `python -m jarvis.config.reference`, the spec)
+- [ ] Docs updated where they would otherwise be wrong (README, `docs/configuration.md` via `python -m jarvis.config.reference`, CLAUDE.md)
 
 **Anything a reviewer should look at twice**
 

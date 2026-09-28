@@ -1,4 +1,4 @@
-"""Tests for the tools the voice model calls (spec §3.2 `tools/registry.py`, §3.3).
+"""Tests for the tools the voice model calls.
 
 Everything runs against a real `TaskManager` with a `FakeAgentRunner` and an in-memory
 `TaskStore`, so the dicts asserted on here are the dicts the model would really see.
@@ -334,7 +334,7 @@ async def test_a_conflict_with_an_unknown_agent_still_reads(make_tools):
     assert result["error"].startswith("opus runs on Claude, not gemini")
 
 
-# --- dispatch_task: the PIN gate (spec §3.3) -------------------------------
+# --- dispatch_task: the PIN gate -------------------------------------------
 
 
 async def test_local_sessions_dispatch_destructive_work_without_a_pin(make_tools):
@@ -1081,7 +1081,7 @@ async def test_cancel_task_stops_a_running_task(make_tools):
     assert result == {"task_id": 1, "status": "cancelled"}
 
 
-# --- send_followup / cancel_task: the PIN gate (spec §3.3) -----------------
+# --- send_followup / cancel_task: the PIN gate -----------------------------
 
 
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])

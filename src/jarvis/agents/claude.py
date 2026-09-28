@@ -256,7 +256,7 @@ class ClaudeAdapter:
 
 
 class ClaudeAgentSession(AdapterSession):
-    """A `ClaudeSDKClient` conversation as an `AgentSession` (spec §3.2 name)."""
+    """A `ClaudeSDKClient` conversation as an `AgentSession`."""
 
     def __init__(self, client: SdkClient) -> None:
         super().__init__(ClaudeAdapter(client))

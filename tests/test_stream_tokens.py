@@ -1,4 +1,4 @@
-"""Tests for the one-time media-stream tokens that guard `WS /twilio/media` (spec §3.3)."""
+"""Tests for the one-time media-stream tokens that guard `WS /twilio/media`."""
 
 from jarvis.stream_tokens import (
     StreamTokenStore,

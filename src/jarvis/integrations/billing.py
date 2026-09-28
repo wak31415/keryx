@@ -1,4 +1,4 @@
-"""What the month has cost so far, read back to the voice model (spec §3.2 `billing.py`).
+"""What the month has cost so far, read back to the voice model.
 
 Strictly read-only: every request this module makes is a `GET`, and `_get` refuses to
 build anything else. Nothing here can change a plan, a limit or a key.

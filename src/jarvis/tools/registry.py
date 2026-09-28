@@ -1,4 +1,4 @@
-"""The tool layer the model calls into (spec §3.2 `tools/registry.py`).
+"""The tool layer the model calls into.
 
 A tool is a name + an OpenAI function schema + an async handler. The registry is the
 only thing the voice session knows about tools: it hands the schemas to the provider at

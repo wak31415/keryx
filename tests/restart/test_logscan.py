@@ -1,4 +1,4 @@
-"""Tests for reading the service's logs back after a restart (spec §3.3).
+"""Tests for reading the service's logs back after a restart.
 
 Everything here is a real file in a tmp directory: the point of the module is byte offsets
 into files that other processes append to, and a fake filesystem would test the fake.

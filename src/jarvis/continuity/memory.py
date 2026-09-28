@@ -1,4 +1,4 @@
-"""Keeping a memory of what has been said, one call at a time (spec §3.3).
+"""Keeping a memory of what has been said, one call at a time.
 
 The provider keeps no history across sockets, so every call opens blank unless something
 writes down what happened in the last one. That is this: on `SessionEnded`, Jarvis

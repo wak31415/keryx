@@ -1,4 +1,4 @@
-"""Tests for the tool registry and tool context (spec §3.2 `tools/registry.py`)."""
+"""Tests for the tool registry and tool context."""
 
 import logging
 

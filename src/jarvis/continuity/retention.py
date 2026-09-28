@@ -1,4 +1,4 @@
-"""Deleting what is no longer worth keeping (spec §3.3).
+"""Deleting what is no longer worth keeping.
 
 Everything Jarvis writes down accumulated forever. `jarvis.log` rotates; nothing else did.
 `data_dir/calls/<session_id>.log` is one file per call holding every word of it, `tasks.db`

@@ -3,8 +3,8 @@
 `<Stream url="…">` cannot carry a query string and the websocket handshake carries no
 Twilio signature, so the media socket has no authentication of its own. Instead the
 signature-validated `POST /twilio/voice` mints a short-lived random token, hands it to
-Twilio as a `<Parameter>`, and the websocket must present it back exactly once (spec
-§3.3, §5). Anything else — replayed, unknown or stale — never reaches a session.
+Twilio as a `<Parameter>`, and the websocket must present it back exactly once.
+Anything else — replayed, unknown or stale — never reaches a session.
 
 The store is in-memory on purpose: a token outliving the process it was minted by would
 be a liability, not a feature.
@@ -15,7 +15,7 @@ exists; a number Jarvis dialled on the way out is not, because reaching it means
 that phone. `outbound_extra()` records both halves — that Jarvis placed the call, and the
 number it dialled — and `confers_possession()` is the one place the rule is applied: the
 dialled number has to be one of `Settings.owner_numbers`, and never Twilio's own
-`From`/`To` form fields, which the caller's carrier supplies (spec §5, `jarvis.trust`).
+`From`/`To` form fields, which the caller's carrier supplies.
 """
 
 import logging

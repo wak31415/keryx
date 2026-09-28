@@ -1,4 +1,4 @@
-"""What survives the end of a call, and how the next one gets it back (spec §3.3).
+"""What survives the end of a call, and how the next one gets it back.
 
 A realtime session starts blank — the provider keeps nothing across sockets — so
 everything Jarvis knows at the top of a call is assembled from disk, every time. Five

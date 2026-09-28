@@ -1,4 +1,4 @@
-"""The transport-agnostic voice session (spec §3.2, §3.3).
+"""The transport-agnostic voice session.
 
 `VoiceSession` is the heart of Jarvis: it owns one conversation, whether that
 conversation arrives over a phone call or the Mac's microphone. It knows nothing about
@@ -161,7 +161,7 @@ class Keypad(Protocol):
     def armed(self, session_id: str) -> bool: ...  # pragma: no cover
 
 
-# How many PINs a caller may get wrong before the call ends (spec §3.3).
+# How many PINs a caller may get wrong before the call ends.
 PIN_MAX_ATTEMPTS = 3
 #: How many times a caller may key something that is not a PIN, or a confirmation that
 #: does not match, before enrolment is dropped for the rest of the call. Not a lockout:
@@ -434,7 +434,7 @@ class VoiceSession:
             self._append_transcript(AUTHORIZED_MARKER)
 
     async def submit_pin(self, pin: str) -> dict:
-        """Check a PIN and authorize the session if it matches (spec §3.3, §5).
+        """Check a PIN and authorize the session if it matches.
 
         The one place a PIN is ever compared, whether it was spoken or typed. Returns
         `not_configured` / `authorized` / `invalid` (with the attempts left) / `locked`;
@@ -488,7 +488,7 @@ class VoiceSession:
         return {"status": "invalid", "attempts_left": PIN_MAX_ATTEMPTS - self._pin_attempts}
 
     async def _lock_out(self, message: str = PIN_LOCKOUT_MESSAGE) -> None:
-        """Ask for a goodbye, then end the call once it has been spoken (spec §3.3).
+        """Ask for a goodbye, then end the call once it has been spoken.
 
         `request_end()` on the spot would hang up mid-word: the injected `response.create`
         has not round-tripped yet, so nothing is "speaking" and teardown would run
@@ -619,7 +619,7 @@ class VoiceSession:
         self._end_reason = self._end_reason or "transport closed"
 
     def _on_dtmf(self, digit: str) -> None:
-        """Collect keypad digits into the PIN buffer (spec §3.3).
+        """Collect keypad digits into the PIN buffer.
 
         The digit is deliberately neither logged nor forwarded to the model: DTMF is how
         the PIN is entered, and it must never reach the transcript. A buffer older than
@@ -682,7 +682,7 @@ class VoiceSession:
         self._spawn_task(self._check_keypad_pin(entered), name="pin")
 
     def _enrolling(self) -> bool:
-        """Whether this call may still *set* the first PIN this machine has had (spec §5).
+        """Whether this call may still *set* the first PIN this machine has had.
 
         Only where there is no PIN at all — none in the environment, none enrolled by an
         earlier call — because the door is open exactly once and closes on the first PIN
@@ -1100,7 +1100,7 @@ class VoiceSession:
 
 
 class SessionRegistry:
-    """The sessions that are currently live, for announcements (spec §3.3)."""
+    """The sessions that are currently live, for announcements."""
 
     def __init__(self) -> None:
         self._sessions: list[VoiceSession] = []

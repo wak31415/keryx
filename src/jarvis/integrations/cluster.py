@@ -1,4 +1,4 @@
-"""What the Slurm clusters are doing right now, read back to the voice model (spec §3.2).
+"""What the Slurm clusters are doing right now, read back to the voice model.
 
 **A worked example, not a feature.** It is one person's answer to "what's free on the
 cluster?" and "am I still running?" — one-sentence questions that were costing a whole

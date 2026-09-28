@@ -1,4 +1,4 @@
-"""What a phone caller can reach before the PIN (spec §3.3, §5; SECURITY.md).
+"""What a phone caller can reach before the PIN.
 
 Caller id is spoofable, so a caller on an allowed number has proved nothing. The line these
 tests hold is **reading versus acting**: before the PIN a call is handed the standing

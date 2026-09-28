@@ -1,4 +1,4 @@
-"""A Twilio Media Stream as a transport (spec §3.2, §4 "Twilio media streams").
+"""A Twilio Media Stream as a transport.
 
 Twilio dials in over one websocket per call and speaks JSON: `connected`, then `start`
 (the only frame carrying the stream/call SIDs and the `<Parameter>`s from the TwiML),

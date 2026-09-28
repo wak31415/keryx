@@ -39,10 +39,9 @@ never at module scope, so the suite runs with neither installed.
 **TDD, and the tests are the contract.** A refactor that needs a test changed beyond its
 imports is not a refactor; stop and re-read what the test was protecting.
 
-**Rulings live in the spec.** `docs/superpowers/specs/2026-08-18-jarvis-voice-agent-design.md`
-§3.3 and §5 record decisions and *why*, including several that look like bugs until you know
-them. Changing one means amending the spec in the same change. `CLAUDE.md` is the short
-version, written for an agent working in this repository.
+**Rulings live in `CLAUDE.md`.** It records decisions and *why*, including several that look
+like bugs until you know them, and `SECURITY.md` is the threat model. Changing a ruling means
+amending the file that holds it in the same change.
 
 **Conventional commits**, with a body that explains the why:
 

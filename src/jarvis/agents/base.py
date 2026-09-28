@@ -1,4 +1,4 @@
-"""What every coding-agent backend shares (spec §3.2 `tasks/agent_runner.py`).
+"""What every coding-agent backend shares.
 
 A backend is an `AgentRunner` whose `open()` hands back an `AgentSession`; everything
 above that seam — the task manager, the notifier, the voice tools — sees only a
@@ -97,7 +97,7 @@ class TokenUsage:
 
 @dataclass
 class RunResult:
-    """The outcome of one subagent turn (spec §3.2)."""
+    """The outcome of one subagent turn."""
 
     ok: bool
     final_text: str = ""
@@ -132,7 +132,7 @@ class AgentSession(Protocol):
         ...
 
     async def send(self, text: str) -> None:
-        """Put a follow-up into the turn that is running now (spec §3.3).
+        """Put a follow-up into the turn that is running now.
 
         `SteerUnavailable` means it was refused and nothing was delivered — the agent has
         no live steer (Claude), or its turn has just ended — and the task manager re-runs
@@ -251,7 +251,7 @@ def render_subagent_suffix(
 
 
 def google_mcp_server_config(settings: Settings) -> dict[str, Any]:
-    """The `workspace-mcp` stdio server config for Gmail + Calendar (spec §4).
+    """The `workspace-mcp` stdio server config for Gmail + Calendar.
 
     Public because `jarvis auth login google-workspace` runs the very same server once, by
     hand, to walk through the browser OAuth flow that leaves credentials behind for later
