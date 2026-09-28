@@ -208,6 +208,8 @@ for name in ("claude_agent_sdk", "openai_codex", "codex_cli_bin"):
     sys.modules[name] = None
 import jarvis
 for module in pkgutil.walk_packages(jarvis.__path__, "jarvis."):
+    if module.name.endswith(("local_audio", "wakeword")):
+        continue  # macOS-only, and imported only on macOS
     importlib.import_module(module.name)
 from jarvis.agents.registry import BACKENDS, installed
 assert not any(installed(name) for name in BACKENDS)

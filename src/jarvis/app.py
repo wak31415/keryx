@@ -1,6 +1,6 @@
 """The wiring every entry point shares: one `AppState` per process.
 
-The phone server, the loopback harness and the task manager all need the same handful
+The phone server, the wake-word runner and the task manager all need the same handful
 of long-lived objects — settings, the event bus, the live-session registry, the tool
 registry, a way to make a realtime provider, the stream-token store, and the task store
 and manager behind the tools. Bundling them here keeps `create_app` and the CLI free of

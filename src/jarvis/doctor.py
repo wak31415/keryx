@@ -2,7 +2,9 @@
 
 `run_doctor_checks` is a pure function over `Settings` (plus the filesystem, `PATH`, the
 configuration store and, when one is handed in, a Twilio client) returning a list of
-`Check`s, so the CLI is left with printing and an exit code.
+`Check`s, so the CLI is left with printing and an exit code. Hardware and heavy imports
+(`sounddevice`, `openwakeword`) are reached through the small `_query_*` helpers below —
+guarded imports inside functions, swappable in tests, never at module scope.
 
 Each check belongs to a `section`, named after the `jarvis setup` section that would fix
 it, so the wizard can read this list to decide what is left to do. And each one that is
@@ -48,6 +50,7 @@ from jarvis.integrations import slack
 from jarvis.integrations.gmail import token_path
 from jarvis.logging_util import mask_number
 from jarvis.restart.service import INSTALLERS, candidate_target, resolve_target
+from jarvis.wakeword import missing_models, models_dir
 
 Severity = Literal["hard", "soft"]
 
@@ -107,6 +110,7 @@ def has_hard_failure(checks: list[Check]) -> bool:
 def run_doctor_checks(
     settings: Settings,
     *,
+    probe_mic: bool = True,
     config_problems: Mapping[str, str] | None = None,
     store: ConfigStore | None = None,
     twilio: Any | None = None,
@@ -137,6 +141,11 @@ def run_doctor_checks(
         _allowed_callers_check(settings),
         _pin_check(settings, problems.get("pin")),
         _owner_name_check(settings),
+        _wakeword_check(settings),
+    ]
+    if probe_mic:
+        checks.append(_microphone_check())
+    checks += [
         service_manager_check(settings),
         _data_dir_check(settings),
         _data_dir_privacy_check(settings),
@@ -445,6 +454,62 @@ def _tunnel_check() -> Check:
         section="phone",
         unset=True,
     )
+
+
+def _wakeword_models_dir(settings: Settings) -> Path:
+    """Where `jarvis download-models` puts the `.onnx` models. Raises if openWakeWord is
+    not installed, which is the question asked first."""
+    import openwakeword  # noqa: F401 - whether it is there
+
+    return models_dir(settings.cache_dir)
+
+
+def _wakeword_check(settings: Settings) -> Check:
+    """Has `jarvis download-models` been run for the configured wake word?"""
+    model = settings.wakeword_model
+    try:
+        directory = _wakeword_models_dir(settings)
+        missing = missing_models(directory, model)
+    except ImportError:
+        # openwakeword is a macOS-only dependency (see pyproject): on a Linux host the
+        # wake-word channel is simply absent, which narrows Jarvis rather than breaking it.
+        return Check(
+            "wake-word model",
+            False,
+            "openwakeword is not installed — the wake word needs macOS, so `jarvis serve` "
+            "runs the phone channel alone",
+            severity="soft",
+            section="local",
+        )
+    except Exception as exc:
+        return Check("wake-word model", False, f"openwakeword is unusable: {exc}", section="local")
+    if missing:
+        return Check(
+            "wake-word model",
+            False,
+            f"no {', '.join(missing)} in {directory} — run `jarvis download-models`",
+            section="local",
+        )
+    found = sorted(directory.glob(f"{model}*.onnx"))
+    return Check("wake-word model", True, ", ".join(path.name for path in found), section="local")
+
+
+def _query_input_device() -> Any:
+    """The default input device, via sounddevice. Raises when there is no mic (or no PortAudio)."""
+    import sounddevice
+
+    return sounddevice.query_devices(kind="input")
+
+
+def _microphone_check() -> Check:
+    """Warn-only: a machine with no mic can still take phone calls."""
+    try:
+        device = _query_input_device()
+    except Exception as exc:
+        return Check("microphone", False, f"no input device: {exc}", severity="soft",
+                     section="local")
+    name = device.get("name") if isinstance(device, dict) else str(device)
+    return Check("microphone", True, str(name), severity="soft", section="local")
 
 
 def service_manager_check(settings: Settings) -> Check:

@@ -317,6 +317,15 @@ class Settings(BaseSettings):
         group="voice",
         service_writable=True,
     )
+    wakeword_model: str = setting(
+        "hey_jarvis", "The openWakeWord model the local channel listens for (macOS).",
+        group="voice",
+    )
+    wakeword_threshold: float = setting(
+        0.5, "How sure the wake-word model must be before a session opens (0 to 1).",
+        group="voice",
+        ge=0, le=1,
+    )
 
     # --- coding agents -----------------------------------------------------------------
 
@@ -732,7 +741,7 @@ class Settings(BaseSettings):
         default_factory=default_state_dir,
     )
     cache_dir: Path = setting(
-        description="Where what can be downloaded again is kept.",
+        description="Where what can be downloaded again is kept: the wake-word models.",
         group="service",
         default_factory=default_cache_dir,
     )
@@ -1029,7 +1038,7 @@ class Settings(BaseSettings):
         if self.debug_skip_twilio_validation and self.public_host:
             return (
                 "DEBUG_SKIP_TWILIO_VALIDATION is on while PUBLIC_HOST is set, so anyone who "
-                "can reach the tunnel could pose as Twilio — turn it off"
+                "can reach the tunnel could pose as Twilio — turn it off, or serve --no-phone"
             )
         return None
 

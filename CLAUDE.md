@@ -14,7 +14,7 @@ of `main`.
 - Set a machine up: `uv run jarvis setup [--all]` (the wizard: walks only the sections still
   missing, saves as it goes; needs a terminal). A coding agent: `uv run jarvis setup
   --agent-instructions`, which prints the command-line path below
-- Check the machine's setup: `uv run jarvis doctor [--json] [--fix]` (`--fix`
+- Check the machine's setup: `uv run jarvis doctor [--json] [--fix] [--no-mic]` (`--fix`
   only tightens secret files to 0600/0700; `--json` carries each check's `section` and
   `state`: ok / missing / failed)
 - Settings: `uv run jarvis config list [--json] [--group G]`, `config get KEY… [--shell]`
@@ -27,8 +27,8 @@ of `main`.
 - Sign-ins: `uv run jarvis auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
   the browser landed on), `uv run jarvis auth status [--json] [--smoke]`
-- Run the agent: `uv run jarvis serve` (`--fake-agents` / `--host` / `--port`; a hidden
-  `--no-wakeword` is accepted and ignored, for units installed before it left `main`); `scripts/dev.sh` adds the Cloudflare tunnel
+- Run the agent: `uv run jarvis serve` (`--no-phone` / `--no-wakeword` /
+  `--fake-agents` / `--host` / `--port`); `scripts/dev.sh` adds the Cloudflare tunnel
 - Approval bridge: `uv run jarvis approvals` (`--limit N`, `--disable` / `--enable` for
   the kill switch); install the Claude hook with `scripts/install-claude-hook.sh`
 - Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N] [--internal]`,
@@ -44,7 +44,7 @@ of `main`.
   (it phones back when it is up again, and rings with a plain spoken alert — texting too,
   when `SMS_ENABLED` is on — if it never comes back);
   `uv run jarvis restart --status` for the last one, including what the logs said
-- Regenerate `docs/configuration.md` with
+- One-off: `uv run jarvis download-models`; regenerate `docs/configuration.md` with
   `uv run python -m jarvis.config.reference > docs/configuration.md`
 - Background service: `scripts/install-systemd.sh [--uninstall]` on Linux,
   `scripts/install-launchd.sh [--uninstall]` on macOS
@@ -325,8 +325,7 @@ relative one ignored as the specification says (`config/files.py::xdg_home`):
   `projects/`, `workspace/`, the sign-in tokens, `codex/`, and `pin-failures.json`.
 - `~/.local/state/jarvis` — `STATE_DIR`: `logs/`, `restart.json`, the version stamps,
   `approvals/` and `approvals.sock` together, so the hook needs one directory.
-- `~/.cache/jarvis` — `CACHE_DIR`: what can be downloaded again (on `feat/local-wakeword`,
-  the wake-word models).
+- `~/.cache/jarvis` — `CACHE_DIR`: the wake-word models, loaded by path.
 
 Four rulings:
 
@@ -489,8 +488,7 @@ rulings, and the first is the one with a scar behind it:
 
 `main` runs the phone channel, on macOS and Linux alike. The local wake-word channel lives on
 `feat/local-wakeword` until it is ready: it is macOS-only, because openwakeword needs
-`tflite-runtime`, which has no cp312 wheel. The `local` session channel and its `FULL`
-trust stay on `main`, because `jarvis loopback` (the WAV harness) runs through it.
+`tflite-runtime`, which has no cp312 wheel.
 
 The coding agents are optional the same way, by choice rather than platform: each SDK is an
 extra (`claude`, `codex`, `all`), because each bundles a CLI of hundreds of megabytes. So
@@ -502,13 +500,14 @@ its SDK, and a test that is not about installation asks for `every_agent_install
 
 ## Testing rule
 
-No network or hardware access in tests. OpenAI, Twilio, the Claude Agent SDK and the
-Codex SDK are always accessed through an
+No network or hardware access in tests. OpenAI, Twilio, sounddevice,
+openwakeword, the Claude Agent SDK and the Codex SDK are always accessed through an
 injectable interface (a `Protocol`) with a fake/test double used in tests —
 never the real network or hardware, and never a real `codex` process: the Codex
 tests replay `tests/agents/fixtures/codex_app_*.jsonl`, recorded from the bundled
-app-server, into the SDK's own typed models. Heavy imports (an agent's SDK) are guarded
-inside functions, not imported at module scope, so the suite runs without them.
+app-server, into the SDK's own typed models. Heavy/hardware imports (`sounddevice`,
+`openwakeword`) must be guarded inside functions, not imported at module
+scope, so the test suite can run on a machine with no mic.
 
 ## Working agreements
 

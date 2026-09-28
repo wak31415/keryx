@@ -47,6 +47,7 @@ from jarvis.continuity.memory import memory_path, read_memory
 from jarvis.continuity.retention import cutoff_for, prune, prune_with
 from jarvis.doctor import fix_permissions, format_check, has_hard_failure, run_doctor_checks
 from jarvis.events import EventBus
+from jarvis.local_runner import LocalRunner
 from jarvis.logging_util import mask_number
 from jarvis.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from jarvis.realtime.openai import OpenAIRealtimeClient
@@ -76,7 +77,14 @@ from jarvis.tasks.manager import install_default_executor
 from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolRegistry
+from jarvis.transports.local_audio import LocalAudioDevice
 from jarvis.transports.wav import WavTransport
+from jarvis.wakeword import (
+    OpenWakeWordDetector,
+    WakeWordListener,
+    models_dir,
+    wakeword_unavailable,
+)
 
 app = typer.Typer(help="Jarvis voice agent.")
 tasks_app = typer.Typer(help="Inspect the tasks handed to subagents.")
@@ -182,8 +190,8 @@ def _configure(**overrides: object) -> Settings:
 def _load_settings_reporting() -> tuple[Settings, dict[str, str]]:
     """Settings for the read-only commands, plus why any field had to be given up on.
 
-    `doctor` has to run *because* the install is incomplete, and `tasks` never talks to
-    OpenAI at all — so a field in `DOCTOR_FALLBACKS` is replaced rather than
+    `doctor` has to run *because* the install is incomplete, and `tasks`/`download-models`
+    never talk to OpenAI at all — so a field in `DOCTOR_FALLBACKS` is replaced rather than
     allowed to raise. Each replacement is recorded against its field name, because "not
     set" and "set to something unusable" are different problems and `doctor` has to be
     able to tell them apart. Anything else still raises: an unreportable error beats a
@@ -262,12 +270,31 @@ def _add_file_logging(settings: Settings) -> None:
     root.addHandler(handler)
 
 
+@app.command("download-models")
+def download_models() -> None:
+    """Download the configured wake-word model via openwakeword."""
+    why = wakeword_unavailable()
+    if why is not None:
+        typer.echo(f"{why}: there is no wake-word model to download on this machine", err=True)
+        raise typer.Exit(1)
+    import openwakeword.utils
+
+    settings = _load_settings_optional()
+    target = models_dir(settings.cache_dir)
+    secure_dir(target)
+    openwakeword.utils.download_models(
+        model_names=[settings.wakeword_model], target_directory=str(target)
+    )
+    typer.echo(f"{settings.wakeword_model}: {target}")
+
+
 @app.command()
 def serve(
+    no_phone: Annotated[
+        bool, typer.Option("--no-phone", help="Skip the Twilio phone server.")
+    ] = False,
     no_wakeword: Annotated[
-        # Accepted and ignored: service units installed before the wake word left `main`
-        # still pass it, and a restart must not fail on an unknown option.
-        bool, typer.Option("--no-wakeword", hidden=True)
+        bool, typer.Option("--no-wakeword", help="Skip the local wake-word listener.")
     ] = False,
     fake_agents: Annotated[
         bool,
@@ -280,7 +307,7 @@ def serve(
         int | None, typer.Option("--port", help="Override PORT for the phone server.")
     ] = None,
 ) -> None:
-    """Run Jarvis: the Twilio phone server."""
+    """Run Jarvis: the Twilio phone server and the local "hey jarvis" listener."""
     # Only pass overrides that were actually asked for; everything else is the store's.
     overrides: dict[str, object] = {}
     if fake_agents:
@@ -290,7 +317,7 @@ def serve(
     if port is not None:
         overrides["port"] = port
     settings = _configure(**overrides)
-    if refusal := settings.phone_refusal():
+    if not no_phone and (refusal := settings.phone_refusal()):
         typer.echo(f"jarvis cannot start: {refusal}", err=True)
         raise typer.Exit(2)
     if refusal := settings.agent_refusal():
@@ -300,14 +327,28 @@ def serve(
         typer.echo(f"jarvis cannot start: {refusal}", err=True)
         raise typer.Exit(2)
     _add_file_logging(settings)
+    if no_phone and no_wakeword:
+        typer.echo("nothing to run: both the phone server and the wake word are disabled")
+        return
+    wakeword = not no_wakeword
+    # Asked before anything starts, not discovered after the phone server is up: off macOS
+    # the wake word's packages are not installed at all, and that is the platform rather
+    # than a fault — so the phone channel serves on its own, and says so once.
+    why = wakeword_unavailable() if wakeword else None
+    if why is not None:
+        if no_phone:
+            typer.echo(f"nothing to run: {why}, and --no-phone turned the phone off", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"{why}; serving the phone channel only")
+        wakeword = False
     # Everything this process starts — every subagent — is the service, not the owner, when
     # it runs `jarvis config set` (jarvis.config.permissions).
     os.environ[ACTOR_ENV] = SERVICE
-    asyncio.run(_serve(settings))
+    asyncio.run(_serve(settings, phone=not no_phone, wakeword=wakeword))
 
 
-async def _serve(settings: Settings) -> None:
-    """Run the phone server until it stops or ctrl-c."""
+async def _serve(settings: Settings, *, phone: bool, wakeword: bool) -> None:
+    """Run the phone server and/or the wake-word loop until one stops or ctrl-c."""
     # First, before anything can commit on top of us: the next restart compares against
     # this to say whether it loaded anything, and the checkout will have moved by then.
     mark_running(settings.state_dir)
@@ -327,37 +368,51 @@ async def _serve(settings: Settings) -> None:
     # a failure to bind is logged and the bridge simply stays off (jarvis/approvals).
     if state.approvals is not None:
         await state.approvals.start()
-    server = _build_server(state)
-    server_task = asyncio.create_task(server.serve(), name="phone-server")
-    typer.echo(f"phone server on http://{settings.host}:{settings.port}")
+    server = _build_server(state) if phone else None
+    server_task = None
+    runner_task = None
+
+    if server is not None:
+        server_task = asyncio.create_task(server.serve(), name="phone-server")
+        typer.echo(f"phone server on http://{settings.host}:{settings.port}")
+    if wakeword:
+        runner_task = asyncio.create_task(_build_local_runner(state).run(), name="local-runner")
+        typer.echo('listening — say "hey jarvis" (ctrl-c to quit)')
 
     # If this process is the far side of a restart, confirm it — by itself, once the phone
     # server is really listening. It is deliberately not one of the `tasks` below: finishing
     # is what it does, and that must not bring the server down with it.
+    ready = (lambda: wait_until_serving(server)) if server is not None else None
     callback_task = asyncio.create_task(
-        _confirm_then_drain(state, ready=lambda: wait_until_serving(server)),
-        name="restart-callback",
+        _confirm_then_drain(state, ready=ready, wakeword=wakeword), name="restart-callback"
     )
 
     def shutdown() -> None:
-        """Stop the server; uvicorn asks for `should_exit`."""
-        server.should_exit = True
+        """Stop everything; uvicorn asks for `should_exit`, the runner for a cancel."""
+        if server is not None:
+            server.should_exit = True
+        if runner_task is not None:
+            runner_task.cancel()
 
     _run_on_signals(shutdown)
+    tasks = [task for task in (server_task, runner_task) if task is not None]
     try:
-        await server_task
-    except Exception:
-        log.exception("the phone server failed")
+        # Whichever half stops first (a crash, or ctrl-c) takes the other one with it.
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     finally:
         shutdown()
-        callback_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await callback_task
+        if callback_task is not None:
+            callback_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await callback_task
+        for result in await asyncio.gather(*tasks, return_exceptions=True):
+            if isinstance(result, Exception):
+                log.error("serve task failed", exc_info=result)
         # Subagents outlive a session but not the process: stop them and close the store.
         await shutdown_app_state(state)
 
 
-async def _confirm_then_drain(state: AppState, *, ready) -> None:
+async def _confirm_then_drain(state: AppState, *, ready, wakeword: bool) -> None:
     """Confirm the restart, then pick up the work the last process never got to.
 
     In that order, and never the other way round: the confirmation counts what was left
@@ -366,7 +421,7 @@ async def _confirm_then_drain(state: AppState, *, ready) -> None:
     with it, so both are guarded here rather than left to the caller.
     """
     if state.restart is not None:
-        await state.restart.resume(wait_ready=ready)
+        await state.restart.resume(wait_ready=ready, wakeword=wakeword)
     if state.manager is None:
         return
     try:
@@ -393,6 +448,24 @@ def _build_server(state: AppState) -> uvicorn.Server:
         lifespan="off",
     )
     return uvicorn.Server(config)
+
+
+def _build_local_runner(state: AppState) -> LocalRunner:
+    """The wake-word loop, sharing every registry with the phone server."""
+    listener = WakeWordListener(
+        OpenWakeWordDetector(state.settings.wakeword_model, models_dir(state.settings.cache_dir)),
+        threshold=state.settings.wakeword_threshold,
+    )
+    return LocalRunner(
+        state.settings,
+        LocalAudioDevice(),
+        listener,
+        provider_factory=state.provider_factory,
+        registry=state.registry,
+        bus=state.bus,
+        sessions=state.sessions,
+        briefer=state.briefer,
+    )
 
 
 def _run_on_signals(callback) -> None:
@@ -856,6 +929,9 @@ def _twilio_admin(settings: Settings) -> TwilioAdmin | None:
 
 @app.command()
 def doctor(
+    no_mic: Annotated[
+        bool, typer.Option("--no-mic", help="Skip the microphone probe (headless machines).")
+    ] = False,
     as_json: Annotated[
         bool, typer.Option("--json", help="Print every check as JSON and nothing else.")
     ] = False,
@@ -873,6 +949,7 @@ def doctor(
                 typer.echo(f"fix: {line}")
     checks = run_doctor_checks(
         settings,
+        probe_mic=not no_mic,
         config_problems=problems,
         store=store,
         twilio=_twilio_admin(settings),

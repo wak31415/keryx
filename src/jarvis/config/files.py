@@ -11,7 +11,7 @@ git and neovim use; `~/Library` is deliberately not it), each honouring its `XDG
   and never a setting, because it is what says where the settings are;
 - `~/.local/share/jarvis` — `DATA_DIR`: tasks, transcripts, memory, sign-in tokens;
 - `~/.local/state/jarvis` — `STATE_DIR`: logs, the restart record, the approval socket;
-- `~/.cache/jarvis` — `CACHE_DIR`: what can be downloaded again.
+- `~/.cache/jarvis` — `CACHE_DIR`: what can be downloaded again (the wake-word models).
 
 Every file written here goes through `write_private`: a temporary file created 0600 next
 to the target, filled, flushed to disk and renamed over it. The rename is the only moment

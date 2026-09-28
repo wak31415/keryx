@@ -17,7 +17,7 @@ tokens and reproduces most things that are not provider-specific. -->
 
 **`jarvis doctor`**
 
-<!-- Paste `uv run jarvis doctor`. It never prints a secret — it says "set" or
+<!-- Paste `uv run jarvis doctor --no-mic`. It never prints a secret — it says "set" or
 "not set" — so it is safe to include, and it answers half of the questions that would
 otherwise be asked here. -->
 

@@ -19,7 +19,7 @@ Shape of a session:
 - **Ending** is deliberately unhurried: `request_end()` only marks the session as ending;
   the run loop tears down once the response that is speaking has finished (or after
   `END_GRACE_SECONDS`), so a goodbye is never cut off mid-word. Every wait is bounded,
-  because a session that never ends holds its channel open for nobody: the silence
+  because a local session that never ends leaves the wake-word runner deaf: the silence
   timer is armed from session start (not just from the first response), the goodbye it
   asks for is itself backstopped, and an opening that cannot even be sent ends the
   session on the spot.

@@ -66,6 +66,7 @@ def test_help_lists_the_commands():
     for command in (
         "serve",
         "loopback",
+        "download-models",
         "tasks",
         "doctor",
         "setup",
@@ -93,9 +94,8 @@ def test_serve_help_documents_its_switches():
     result = runner.invoke(app, ["serve", "--help"])
 
     assert result.exit_code == 0
-    for option in ("--fake-agents", "--host", "--port"):
+    for option in ("--no-phone", "--no-wakeword", "--fake-agents", "--host", "--port"):
         assert option in result.output
-    assert "--no-phone" not in result.output and "--no-wakeword" not in result.output
 
 
 def test_loopback_help_documents_its_switches():
@@ -109,15 +109,11 @@ def test_loopback_help_documents_its_switches():
 # --- serve -----------------------------------------------------------------
 
 
-def test_serve_still_accepts_no_wakeword_from_an_older_unit(settings_stub, monkeypatch):
-    """Units installed before the wake word left `main` pass it; a restart must not fail."""
-    built: dict = {}
-    stub_uvicorn(monkeypatch, built)
+def test_serve_with_nothing_to_run_says_so(settings_stub):
+    result = runner.invoke(app, ["serve", "--no-phone", "--no-wakeword"])
 
-    result = runner.invoke(app, ["serve", "--no-wakeword"])
-
-    assert result.exit_code == 0, result.output
-    assert built["served"] is True
+    assert result.exit_code == 0
+    assert "nothing to run" in result.output.lower()
 
 
 def test_serve_refuses_to_answer_the_phone_without_signature_checks_behind_a_tunnel(
@@ -128,7 +124,7 @@ def test_serve_refuses_to_answer_the_phone_without_signature_checks_behind_a_tun
     monkeypatch.setattr(settings_stub, "debug_skip_twilio_validation", True)
     monkeypatch.setattr(settings_stub, "public_host", "jarvis.example")
 
-    result = runner.invoke(app, ["serve"])
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
 
     assert result.exit_code == 2, result.output
     assert "DEBUG_SKIP_TWILIO_VALIDATION" in result.output
@@ -142,7 +138,7 @@ def test_serve_refuses_a_default_agent_that_is_not_enabled(settings_stub, monkey
     monkeypatch.setattr(settings_stub, "agents_enabled", ["claude"])
     monkeypatch.setattr(settings_stub, "agent_backend", "codex")
 
-    result = runner.invoke(app, ["serve"])
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
 
     assert result.exit_code == 2, result.output
     assert "AGENT_BACKEND is codex" in result.output
@@ -156,7 +152,7 @@ def test_serve_refuses_a_default_agent_whose_extra_is_not_installed(settings_stu
 
     monkeypatch.setattr(registry, "installed", lambda agent: agent != "claude")
 
-    result = runner.invoke(app, ["serve"])
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
 
     assert result.exit_code == 2, result.output
     assert "AGENT_BACKEND is claude, which is not installed — uv sync --extra claude" in (
@@ -171,7 +167,7 @@ def test_serve_refuses_until_the_old_files_are_migrated(settings_stub, monkeypat
     stub_uvicorn(monkeypatch, built)
     Path(".env").write_text("OPENAI_API_KEY=sk-old\n")
 
-    result = runner.invoke(app, ["serve"])
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
 
     assert result.exit_code == 2, result.output
     assert "jarvis migrate" in result.output
@@ -198,6 +194,50 @@ def test_what_reads_the_data_waits_for_the_migration_too(settings_stub, command)
     assert not (settings_stub.data_dir / "tasks.db").exists()
 
 
+def test_serve_without_the_phone_does_not_care_about_signature_checks(
+    settings_stub, monkeypatch
+):
+    built: dict = {}
+    stub_local_runner(monkeypatch, built)
+    monkeypatch.setattr(settings_stub, "debug_skip_twilio_validation", True)
+    monkeypatch.setattr(settings_stub, "public_host", "jarvis.example")
+
+    result = runner.invoke(app, ["serve", "--no-phone"])
+
+    assert result.exit_code == 0, result.output
+    assert built["ran"] is True
+
+
+def stub_local_runner(monkeypatch, built: dict, *, run=None) -> None:
+    """Replace the mic, the wake-word model and the runner with recording stubs."""
+
+    class StubDevice:
+        def __init__(self, **kwargs):
+            built["device"] = self
+
+    class StubDetector:
+        def __init__(self, model_name, directory):
+            built["model"] = model_name
+            built["models"] = directory
+
+    class StubRunner:
+        def __init__(self, settings, device, listener, **kwargs):
+            built["runner"] = (settings, device, listener, kwargs)
+
+        async def run(self):
+            built["ran"] = True
+            executor = asyncio.get_running_loop()._default_executor
+            built["executor_workers"] = executor._max_workers if executor else 0
+            if run is not None:
+                await run()
+
+    monkeypatch.setattr("jarvis.cli.LocalAudioDevice", StubDevice)
+    monkeypatch.setattr("jarvis.cli.OpenWakeWordDetector", StubDetector)
+    monkeypatch.setattr("jarvis.cli.LocalRunner", StubRunner)
+    # As if on a Mac with its packages installed, whatever host runs the suite.
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: None)
+
+
 def stub_uvicorn(monkeypatch, built: dict) -> None:
     """Replace `uvicorn.Server` with a stub that records its config instead of listening."""
 
@@ -209,28 +249,76 @@ def stub_uvicorn(monkeypatch, built: dict) -> None:
 
         async def serve(self):
             built["served"] = True
-            executor = asyncio.get_running_loop()._default_executor
-            built["executor_workers"] = executor._max_workers if executor else 0
 
     monkeypatch.setattr("jarvis.cli.uvicorn.Server", StubServer)
 
 
-def test_serve_prepares_its_directories_and_executor(settings_stub, monkeypatch):
+def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
+    built: dict = {}
+    stub_local_runner(monkeypatch, built)
+
+    result = runner.invoke(app, ["serve", "--no-phone"])
+
+    assert result.exit_code == 0, result.output
+    assert built["ran"] is True
+    assert built["model"] == settings_stub.wakeword_model
+    assert built["models"] == settings_stub.cache_dir / "models"
+    settings, device, _listener, kwargs = built["runner"]
+    assert settings is settings_stub
+    assert device is built["device"]
+    assert kwargs["sessions"] is not None
+    assert (settings_stub.data_dir / "calls").is_dir()  # ensure_dirs() ran
+    assert built["executor_workers"] >= 32  # room for every running turn's reader
+
+
+def test_serve_where_the_wake_word_cannot_run_serves_the_phone_alone(
+    settings_stub, monkeypatch
+):
+    """`jarvis serve` on Linux: one line saying so, not a traceback after the server is up."""
     built: dict = {}
     stub_uvicorn(monkeypatch, built)
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+    monkeypatch.setattr(
+        "jarvis.cli.OpenWakeWordDetector",
+        lambda *a, **k: pytest.fail("the wake word was started anyway"),
+    )
 
     result = runner.invoke(app, ["serve"])
 
     assert result.exit_code == 0, result.output
-    assert (settings_stub.data_dir / "calls").is_dir()  # ensure_dirs() ran
-    assert built["executor_workers"] >= 32  # room for every running turn's reader
+    assert "the wake word needs macOS; serving the phone channel only" in result.output
+    assert built["served"] is True
+    assert "Traceback" not in result.output
+
+
+def test_serve_with_no_phone_where_the_wake_word_cannot_run_has_nothing_to_run(
+    settings_stub, monkeypatch
+):
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+
+    result = runner.invoke(app, ["serve", "--no-phone"])
+
+    assert result.exit_code == 1
+    assert "nothing to run" in result.output
+    assert "the wake word needs macOS" in result.output
+
+
+def test_serve_no_wakeword_does_not_mention_the_platform(settings_stub, monkeypatch):
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
+
+    assert result.exit_code == 0, result.output
+    assert "macOS" not in result.output
 
 
 def test_serve_runs_the_phone_server_on_the_configured_address(settings_stub, monkeypatch):
     built: dict = {}
     stub_uvicorn(monkeypatch, built)
 
-    result = runner.invoke(app, ["serve"])
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
 
     assert result.exit_code == 0, result.output
     assert built["served"] is True
@@ -244,7 +332,7 @@ def test_serve_takes_the_address_from_the_command_line(settings_stub, monkeypatc
     built: dict = {}
     stub_uvicorn(monkeypatch, built)
 
-    result = runner.invoke(app, ["serve", "--host", "0.0.0.0", "--port", "9999"])
+    result = runner.invoke(app, ["serve", "--no-wakeword", "--host", "0.0.0.0", "--port", "9999"])
 
     assert result.exit_code == 0, result.output
     config = built["config"]
@@ -252,11 +340,39 @@ def test_serve_takes_the_address_from_the_command_line(settings_stub, monkeypatc
     assert (settings_stub.host, settings_stub.port) == ("127.0.0.1", 8080)  # loaded settings intact
 
 
+def test_serve_runs_the_phone_server_and_the_wake_word_on_one_shared_state(
+    settings_stub, monkeypatch
+):
+    built: dict = {}
+
+    async def run_forever():
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            built["cancelled"] = True
+            raise
+
+    stub_local_runner(monkeypatch, built, run=run_forever)
+    stub_uvicorn(monkeypatch, built)
+
+    result = runner.invoke(app, ["serve"])  # the stub server returns straight away
+
+    assert result.exit_code == 0, result.output
+    assert built["served"] is True
+    assert built["cancelled"] is True  # the runner is stopped when the server stops
+    _settings, _device, _listener, kwargs = built["runner"]
+    state = built["config"].app.state.jarvis
+    assert kwargs["sessions"] is state.sessions
+    assert kwargs["registry"] is state.registry
+    assert kwargs["bus"] is state.bus
+    assert kwargs["provider_factory"] is state.provider_factory
+
+
 def test_serve_wires_the_task_stack_into_the_shared_state(settings_stub, monkeypatch):
     built: dict = {}
     stub_uvicorn(monkeypatch, built)
 
-    result = runner.invoke(app, ["serve"])
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
 
     assert result.exit_code == 0, result.output
     state = built["config"].app.state.jarvis
@@ -270,7 +386,7 @@ def test_fake_agents_swaps_the_subagent_runner(settings_stub, monkeypatch):
     built: dict = {}
     stub_uvicorn(monkeypatch, built)
 
-    result = runner.invoke(app, ["serve", "--fake-agents"])
+    result = runner.invoke(app, ["serve", "--no-wakeword", "--fake-agents"])
 
     assert result.exit_code == 0, result.output
     state = built["config"].app.state.jarvis
@@ -315,7 +431,7 @@ def test_serve_writes_a_rotating_log_file(settings_stub, monkeypatch):
     built: dict = {}
     stub_uvicorn(monkeypatch, built)
 
-    result = runner.invoke(app, ["serve"])
+    result = runner.invoke(app, ["serve", "--no-wakeword"])
 
     assert result.exit_code == 0, result.output
     handlers = [
@@ -751,8 +867,17 @@ def test_restart_status_reads_back_a_failure(restart_settings):
 # --- doctor ----------------------------------------------------------------
 
 
-def test_doctor_fails_when_the_install_is_incomplete(settings_stub):
-    result = runner.invoke(app, ["doctor"])
+@pytest.fixture
+def wakeword_models(monkeypatch, tmp_path):
+    """Point the wake-word check at a directory instead of importing openwakeword."""
+    models = tmp_path / "models"
+    models.mkdir()
+    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: models)
+    return models
+
+
+def test_doctor_fails_when_the_install_is_incomplete(settings_stub, wakeword_models):
+    result = runner.invoke(app, ["doctor", "--no-mic"])
 
     assert result.exit_code == 1
     assert "❌" in result.output
@@ -760,20 +885,22 @@ def test_doctor_fails_when_the_install_is_incomplete(settings_stub):
 
 
 def test_doctor_reports_a_missing_openai_key_instead_of_crashing(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, wakeword_models
 ):
     optional_key_loader(monkeypatch, tmp_path, [])
 
-    result = runner.invoke(app, ["doctor"])
+    result = runner.invoke(app, ["doctor", "--no-mic"])
 
     assert result.exit_code == 1
     assert "OPENAI_API_KEY" in result.output
 
 
 def test_doctor_passes_on_a_complete_install(
-    monkeypatch, tmp_path, every_agent_installed
+    monkeypatch, tmp_path, wakeword_models, every_agent_installed
 ):
     monkeypatch.chdir(tmp_path)
+    for name in ("hey_jarvis_v0.1.onnx", "melspectrogram.onnx", "embedding_model.onnx"):
+        (wakeword_models / name).write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     settings = Settings(
         _env_file=None,
@@ -789,19 +916,21 @@ def test_doctor_passes_on_a_complete_install(
     )
     monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
 
-    result = runner.invoke(app, ["doctor"])
+    result = runner.invoke(app, ["doctor", "--no-mic"])
 
     assert result.exit_code == 0, result.output
     assert "❌" not in result.output
 
 
-def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path):
+def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path, wakeword_models):
     """`doctor` is the command that has to work when nothing else does.
 
     A `JARVIS_PIN` that breaks the 6-8 digit rule stops `jarvis serve` from loading at all,
     so if it stopped `doctor` too there would be nothing left to diagnose it with.
     """
     monkeypatch.chdir(tmp_path)
+    for name in ("hey_jarvis_v0.1.onnx", "melspectrogram.onnx", "embedding_model.onnx"):
+        (wakeword_models / name).write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
 
     def load(**overrides):
@@ -823,7 +952,7 @@ def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path):
 
     monkeypatch.setattr("jarvis.cli.load_settings", load)
 
-    result = runner.invoke(app, ["doctor"])
+    result = runner.invoke(app, ["doctor", "--no-mic"])
 
     assert result.exit_code == 1, result.output
     assert "JARVIS_PIN" in result.output
@@ -835,7 +964,7 @@ def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path):
 
 
 def test_doctor_explains_a_malformed_pin_set_the_way_a_person_sets_one(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, wakeword_models
 ):
     """The same, through the real loader rather than a stub that stands in for it.
 
@@ -845,6 +974,8 @@ def test_doctor_explains_a_malformed_pin_set_the_way_a_person_sets_one(
     to explain.
     """
     monkeypatch.chdir(tmp_path)
+    for name in ("hey_jarvis_v0.1.onnx", "melspectrogram.onnx", "embedding_model.onnx"):
+        (wakeword_models / name).write_bytes(b"")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     for name, value in {
         "OPENAI_API_KEY": "sk-test",
@@ -855,7 +986,7 @@ def test_doctor_explains_a_malformed_pin_set_the_way_a_person_sets_one(
     }.items():
         monkeypatch.setenv(name, value)
 
-    result = runner.invoke(app, ["doctor"])
+    result = runner.invoke(app, ["doctor", "--no-mic"])
 
     assert not isinstance(result.exception, ValidationError), result.exception
     assert result.exit_code == 1, result.output
@@ -873,7 +1004,7 @@ def test_serve_refuses_to_start_on_a_malformed_pin(monkeypatch, tmp_path):
 
     monkeypatch.setattr("jarvis.cli.load_settings", load)
 
-    result = runner.invoke(app, ["serve"])
+    result = runner.invoke(app, ["serve", "--no-phone", "--no-wakeword"])
 
     assert result.exit_code == 2, result.output
     assert "JARVIS_PIN" in result.output
@@ -1007,6 +1138,53 @@ def test_forget_keeps_a_window_when_one_is_given(settings_stub):
 
     assert result.exit_code == 0, result.output
     assert (settings_stub.data_dir / "calls" / "today.log").exists()
+
+
+def test_doctor_help_documents_no_mic():
+    result = runner.invoke(app, ["doctor", "--help"])
+
+    assert result.exit_code == 0
+    assert "--no-mic" in result.output
+
+
+def test_download_models_help():
+    result = runner.invoke(app, ["download-models", "--help"])
+
+    assert result.exit_code == 0
+
+
+def test_download_models_where_the_wake_word_cannot_run_says_so_in_one_line(
+    settings_stub, monkeypatch
+):
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: "the wake word needs macOS")
+
+    result = runner.invoke(app, ["download-models"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)  # a clean exit, not a traceback
+    assert result.output.strip().count("\n") == 0
+    assert "the wake word needs macOS" in result.output
+
+
+def test_download_models_fetches_into_the_cache(settings_stub, monkeypatch):
+    import sys
+    import types
+
+    fetched: dict = {}
+    utils = types.ModuleType("openwakeword.utils")
+    utils.download_models = lambda **kwargs: fetched.update(kwargs)
+    package = types.ModuleType("openwakeword")
+    package.utils = utils
+    monkeypatch.setitem(sys.modules, "openwakeword", package)
+    monkeypatch.setitem(sys.modules, "openwakeword.utils", utils)
+    monkeypatch.setattr("jarvis.cli.wakeword_unavailable", lambda: None)
+
+    result = runner.invoke(app, ["download-models"])
+
+    assert result.exit_code == 0, result.output
+    target = settings_stub.cache_dir / "models"
+    assert fetched == {"model_names": ["hey_jarvis"], "target_directory": str(target)}
+    assert stat.S_IMODE(target.stat().st_mode) == 0o700
 
 
 # --- housekeeping and the memory -------------------------------------------

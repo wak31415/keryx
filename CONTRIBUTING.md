@@ -10,13 +10,13 @@ Security problems do **not** go in an issue — see [SECURITY.md](SECURITY.md).
 ## Getting set up
 
 ```bash
-uv sync                            # Python 3.12
+uv sync                            # Python 3.12; macOS also pulls the wake-word extras
 uv run pytest -q                   # must be green, with no warnings
 uv run ruff check src tests
-uv run jarvis doctor               # what this machine is still missing
+uv run jarvis doctor --no-mic      # what this machine is still missing
 ```
 
-You do **not** need an API key or Twilio to run the tests. The suite never
+You do **not** need an API key, Twilio, or a microphone to run the tests. The suite never
 reads your own configuration or data — each test has its own `HOME`, XDG directories,
 `JARVIS_HOME` and working directory, so neither `~/.config/jarvis` nor a `.env` in your
 checkout takes part — and never reaches the network: see the fixtures in
@@ -25,16 +25,17 @@ checkout takes part — and never reaches the network: see the fixtures in
 To run the thing itself without spending Claude tokens:
 
 ```bash
-uv run jarvis serve --fake-agents
+uv run jarvis serve --no-phone --fake-agents
 uv run jarvis loopback --wav sample.wav --out reply.wav
 ```
 
 ## The rules that are not negotiable
 
 **No network, no hardware, no real subagent in a test.** OpenAI, Twilio, Slack, the Claude
-Agent SDK and the Codex SDK are all reached through an injectable `Protocol`
-with a fake in `tests/`, and a coding agent's SDK is imported only where an agent runs,
-never at module scope, so the suite runs with neither installed.
+Agent SDK, `sounddevice` and openWakeWord are all reached through an injectable `Protocol`
+with a fake in `tests/`. Heavy or platform-specific imports (`sounddevice`, `openwakeword`)
+live inside functions, never at module scope, so the suite runs on a machine with no
+microphone — which is exactly what the Linux CI leg proves every run.
 
 **TDD, and the tests are the contract.** A refactor that needs a test changed beyond its
 imports is not a refactor; stop and re-read what the test was protecting.
@@ -86,6 +87,11 @@ does not fail CI while real erosion does. Raise it when the measured number has 
 do not lower it to make a branch pass. `pytest --cov` fails below it, and CI prints the
 per-module table into the run summary.
 
+Two modules are deliberately not measured, and neither omission flatters the number:
+`transports/local_audio.py` and `wakeword.py` are macOS-only and sit behind lazy imports
+precisely so the suite runs on a machine with no microphone. Neither CI leg can drive a
+real one.
+
 The modules that sit below the floor, and why, as of 2026-09-02:
 
 | Module | | What is uncovered |
@@ -118,15 +124,16 @@ Dependabot opens weekly PRs for `uv` (manifest and lock together, which is what 
 from) and for the GitHub Actions themselves. CI is the gate: a bump that fails `uv sync
 --locked`, ruff or the suite does not land.
 
-**Licence review** (2026-09-02, 68 distributions on Linux; the macOS-only audio packages
-left with the wake word on 2026-09-28). Everything is permissive — MIT, BSD, Apache-2.0,
-PSF, ISC — with two exceptions
+**Licence review** (2026-09-02, 68 distributions on Linux plus 11 more that only resolve on
+macOS). Everything is permissive — MIT, BSD, Apache-2.0, PSF, ISC — with three exceptions
 worth knowing about:
 
 | Package | Licence | Why it is fine |
 |---|---|---|
 | `soxr` | **LGPL-2.1-or-later** | The only copyleft dependency, and a direct one: it is the resampler, and it is native code. Jarvis imports it as an ordinary installed library — nothing is vendored, nothing is statically linked, and no combined binary is distributed — so the LGPL's relink condition is satisfied by pip being able to replace it. Do not vendor it into a bundle without revisiting this. |
 | `certifi` | MPL-2.0 | Weak, file-level copyleft on an unmodified dependency. Nothing here modifies it. |
+| `tqdm` | MPL-2.0 AND MIT | Same, and macOS-only — it arrives under `openwakeword`. |
 
-Redo this review when
+`onnxruntime` (MIT), `openwakeword` (Apache-2.0) and `sounddevice` (MIT) were checked
+specifically because they pull native code; all three are permissive. Redo this review when
 a direct dependency is added, and record the result here.
