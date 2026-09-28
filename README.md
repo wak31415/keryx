@@ -71,9 +71,7 @@ You need Python 3.12, [uv](https://docs.astral.sh/uv/), an OpenAI API key with R
 access, a Twilio number, and Claude Code or Codex.
 
 ```bash
-git clone https://github.com/wak31415/jarvis-voice-agent.git
-cd jarvis-voice-agent
-uv sync
+git clone https://github.com/wak31415/jarvis-voice-agent.git && cd jarvis-voice-agent
 uv run jarvis setup
 ```
 
