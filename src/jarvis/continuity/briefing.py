@@ -18,7 +18,7 @@ both are assembled here, once, at session start:
 versus acting, not private versus not. Gating reads only ever defended against a
 phone-side caller-id spoofer, and it charged that defence to every ordinary call; against
 the threat the owner actually worries about — somebody who has the machine — it buys
-nothing at all, because that somebody has `.env`, and `.env` has `JARVIS_PIN`. So the
+nothing at all, because that somebody has `secrets.toml` and the PIN file. So the
 whole standing briefing comes before the PIN, along with the rest of what the prompt is
 handed (the project names, their briefs, the skills: `jarvis.prompts`). The accepted price
 is that a caller who has spoofed an allowed number hears it too.

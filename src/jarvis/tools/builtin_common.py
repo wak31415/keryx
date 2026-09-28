@@ -13,7 +13,7 @@ that gets read down a phone is worth reviewing in one place.
 an argument into something a task store can take, without ever raising.
 
 **The gates.** Since 2026-09-19 the line they draw is **reading versus acting**, not
-private versus not: whoever has the machine has `.env`, which has the PIN, so gating
+private versus not: whoever has the machine has the PIN file, so gating
 reads only ever defended against a phone-side caller-id spoofer, and it charged that
 defence to every ordinary call.
 

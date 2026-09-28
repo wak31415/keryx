@@ -36,10 +36,10 @@ jobs:
         with:
           enable-cache: true
 
-      # Deliberately no `.env` is written, here or anywhere in this workflow. The suite
-      # must be hermetic: `Settings` reads `env_file=".env"` from the working directory,
-      # and a green run on a runner that has none is the standing regression test for
-      # that leak (#25).
+      # Deliberately no configuration is written, here or anywhere in this workflow. The
+      # suite must be hermetic: it points HOME and the XDG directories at a temporary
+      # directory, and a green run on a runner with no Jarvis settings at all is the
+      # standing regression test for the leak in #25.
       - name: Install the locked dependencies
         run: uv sync --locked
 

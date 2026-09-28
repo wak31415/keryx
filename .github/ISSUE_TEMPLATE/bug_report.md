@@ -31,7 +31,7 @@ otherwise be asked here. -->
 
 **Anything from the logs**
 
-<!-- `~/.jarvis/logs/jarvis.log`. Please check for phone numbers and keys before pasting;
+<!-- `~/.local/state/jarvis/logs/jarvis.log` (`STATE_DIR/logs`). Please check for phone numbers and keys before pasting;
 numbers are masked to their last four digits in the log, but transcripts are not. -->
 
 > **Do not open a security issue here.** Use the Security tab → Report a vulnerability.
