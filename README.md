@@ -91,7 +91,7 @@ Codex do it" on a call. [docs/agents.md](docs/agents.md) compares the two.
 
 ## Documentation
 
-- [Setup](https://github.com/wak31415/jarvis-voice-agent/wiki/Setup): phone, Google, the PIN, where files live, upgrading, costs
+- [Setup](https://github.com/wak31415/jarvis-voice-agent/wiki/Setup): phone, Google, the PIN, where files live, costs
 - [Configuration](docs/configuration.md): every setting
 - [Coding agents](docs/agents.md): signing in, installing only one, what each can do
 - [Tools](docs/tools.md): what the voice model can do, and how to add a tool
