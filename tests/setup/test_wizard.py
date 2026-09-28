@@ -7,7 +7,7 @@ from jarvis.agents import registry
 from jarvis.agents.registry import BACKENDS
 from jarvis.config.store import ConfigStore
 from jarvis.setup import wizard
-from jarvis.setup.ui import Aborted
+from jarvis.setup.ui import Aborted, Back
 from jarvis.setup.wizard import DONE, FAILED, MISSING, pending, run_wizard, statuses
 
 from .fakes import DEFAULT
@@ -50,8 +50,8 @@ FIRST_RUN = [
     ("fact", "Works nights."),
     ("fact", ""),
     ("Write it?", True),
-    # Project context: no folders
-    ("Folders to look through", ""),
+    # Project context: not now
+    ("explore your projects", "no"),
 ]
 
 
@@ -73,6 +73,36 @@ def test_a_first_run_walks_everything_and_a_second_asks_nothing(make_ctx, claude
     assert run_wizard(again) == 0
     assert again.ui.done()
     assert again.ui.lines("section") == []
+
+
+def test_esc_goes_back_a_question_and_the_key_is_not_asked_for_twice(
+    make_ctx, claude_signed_in, world
+):
+    ctx = make_ctx(
+        [
+            ("What next?", Back()),  # nothing before it: asked again
+            ("What next?", "left"),
+            ("OpenAI API key", "sk-live"),
+            ("sensible default", Back()),  # back into Voice: the key is typed again
+            ("OpenAI API key", "sk-other"),
+            ("sensible default", "recommended"),
+            ("call you", "Ada"),
+            ("mobile numbers", Back()),  # the name again, offered as it was answered
+            ("call you", DEFAULT),
+            ("mobile numbers", "+15551234567"),
+            ("Set the PIN", Aborted()),
+        ]
+    )
+
+    with pytest.raises(Aborted):
+        run_wizard(ctx)
+
+    assert ctx.ui.done()
+    settings = ctx.refresh()
+    assert settings.owner_name == "Ada" and settings.openai_api_key == "sk-other"
+    assert [call for call in world.calls if call[0] == "openai"] == [
+        ("openai", "sk-live"), ("openai", "sk-other")
+    ]
 
 
 def test_the_opening_table_marks_each_section(make_ctx, claude_signed_in):

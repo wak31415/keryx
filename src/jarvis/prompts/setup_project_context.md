@@ -5,9 +5,8 @@ and accept, edit or drop before any of it is kept:
 
 {folders}
 
-A project is a directory directly inside one of those folders (or the folder itself, when
-it is a repository). Skip anything that is plainly not a project: caches, virtual
-environments, downloads, dotfiles.
+{where} Skip anything that is plainly not a project: caches, virtual environments,
+downloads, dotfiles.
 
 Rules, and they are not preferences:
 

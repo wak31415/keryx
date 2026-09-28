@@ -105,8 +105,10 @@ remember:
   `profile`, `project_context`) and `sections` for the small ones, `context` (the
   `SetupContext` every section gets, and `Probes` — everything that reaches the network, a
   login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
-  rich/questionary one), `auth`, and `guides/*.md`, which the wizard renders and the
-  wiki links, so each set of instructions is written once.
+  rich/questionary one, one question to a screen), `rewind` (Esc goes back a question by
+  running the section again from a record of its answers and probe results, so no probe
+  runs twice), `auth`, and `guides/*.md`, which the wizard renders and the wiki links, so
+  each set of instructions is written once.
 - **continuity** — `continuity/` is what survives the end of a call: `briefing`, `memory`
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
   `retention`, which prunes exactly those artefacts.

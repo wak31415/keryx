@@ -9,6 +9,9 @@ everything", walks them all and asks again about what is set.
 
 Nothing here assumes what the machine lacks: every section looks first and asks only about
 what it did not find.
+
+Esc at any question goes back one (`walk`, through `jarvis.setup.rewind`): to the one
+before in the same section, or to the last one a section before it asked.
 """
 
 from collections.abc import Callable
@@ -22,7 +25,8 @@ from jarvis.doctor import Check, format_check, run_doctor_checks
 from jarvis.projects import MAX_BRIEF_CHARS, MAX_BRIEFS_CHARS, summaries_dir
 from jarvis.setup import agents, google, phone, profile, project_context, sections
 from jarvis.setup.context import SetupContext
-from jarvis.setup.ui import Choice
+from jarvis.setup.rewind import Entry, Recorder, rewind
+from jarvis.setup.ui import Back, Choice
 
 DONE, MISSING, FAILED = "done", "missing", "failed"
 MARKS = {DONE: "✓", MISSING: "○", FAILED: "✗"}
@@ -134,17 +138,55 @@ def run_wizard(ctx: SetupContext, *, review_all: bool = False) -> int:
             names = ", ".join(section.title for section in left)
             options.insert(0, Choice("left", f"Set up what is left ({len(left)})", hint=names))
         message = "What next?" if left else "Everything is set up."
-        choice = ui.select(message, options, default=options[0].value)
+        choice = _first_question(ctx, message, options)
         if choice == "exit":
             ui.outro("Nothing changed.")
             return 0
         walk = left if choice == "left" else visible
         ctx.review = choice == "review"
-    for section in walk:
-        ui.section(section.title)
-        section.run(ctx)
-        ctx.store.mark_walked(section.key)
+    run_walk(ctx, walk)
     return summary(ctx)
+
+
+def _first_question(ctx: SetupContext, message: str, options: list[Choice]) -> str:
+    while True:
+        try:
+            return ctx.ui.select(message, options, default=options[0].value)
+        except Back:
+            continue  # there is nothing before it
+
+
+def run_walk(ctx: SetupContext, walk: list[Section]) -> None:
+    """Run `walk` in order, going back a question on every Esc.
+
+    Each section runs behind a `Recorder`, and what it answered is kept by section. Going
+    back runs the section it lands in again, in review mode, from its record.
+    """
+    records: dict[str, list[Entry]] = {}
+    hints: dict[str, Entry] = {}
+    keys = [section.key for section in walk]
+    review, ui, probes = ctx.review, ctx.ui, ctx.probes
+    index = 0
+    while index < len(walk):
+        section = walk[index]
+        hint = hints.pop(section.key, None)
+        recorder = Recorder(ui, records.pop(section.key, []), hint)
+        ui.section(section.title, step=(index + 1, len(walk)))
+        ctx.ui, ctx.probes = recorder, recorder.probes(probes)
+        # Going back to a question means asking it again, even about what is set now.
+        ctx.review = review or hint is not None
+        try:
+            section.run(ctx)
+        except Back:
+            records[section.key] = recorder.log
+            index = rewind(keys, index, records, hints)
+            continue
+        finally:
+            ctx.ui, ctx.probes, ctx.review = ui, probes, review
+        recorder.stop_replaying()
+        records[section.key] = recorder.log
+        ctx.store.mark_walked(section.key)
+        index += 1
 
 
 def summary(ctx: SetupContext) -> int:

@@ -33,7 +33,7 @@ class ScriptedPrompter:
     def intro(self, title: str, subtitle: str = "") -> None:
         self._say("intro", f"{title} {subtitle}")
 
-    def section(self, title: str) -> None:
+    def section(self, title: str, step=None) -> None:
         self._say("section", title)
 
     def note(self, text: str) -> None:
@@ -82,6 +82,8 @@ class ScriptedPrompter:
     def select(self, message, choices, *, default=None) -> str:
         self.choices[message] = list(choices)
         answer = self._answer("select", message)
+        if answer is DEFAULT and default is None:
+            raise AssertionError(f"{message!r} has no default to take")
         return default if answer is DEFAULT else answer
 
     def checkbox(self, message, choices) -> list[str]:

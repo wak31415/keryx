@@ -102,8 +102,8 @@ def test_the_owner_accepts_edits_and_drops_and_only_that_is_kept(make_ctx, world
     )
     ctx = make_ctx(
         [
+            ("explore your projects", "folders"),
             ("Folders to look through", f"{root}, {tmp_path / 'elsewhere'}"),
-            ("May Claude look through", True),
             ("summary of orchard", "accept"),
             ("summary of weather", "drop"),
             ("summary of thesis", "edit"),
@@ -133,24 +133,86 @@ def test_the_owner_accepts_edits_and_drops_and_only_that_is_kept(make_ctx, world
 
 
 def test_nothing_is_read_without_permission(make_ctx, world, root):
-    ctx = make_ctx([("Folders", DEFAULT), ("May Claude look through", False)])
+    ctx = make_ctx([("explore your projects", "no")])
 
     project_context.run_section(ctx)
 
     assert not [call for call in world.calls if call[0] == "task"]
 
 
-def test_a_folder_that_is_not_there_is_refused(make_ctx, world, tmp_path):
-    ctx = make_ctx([("Folders", str(tmp_path / "nope"))])
+def test_whether_to_explore_has_no_answer_assumed(make_ctx, world, root):
+    ctx = make_ctx([("explore your projects", DEFAULT)])
+
+    with pytest.raises(AssertionError, match="no default"):
+        project_context.run_section(ctx)
+
+    [question] = ctx.ui.choices
+    assert [choice.label for choice in ctx.ui.choices[question]] == [
+        "Yes", "Yes, only in folders I name", "No"
+    ]
+
+
+def test_named_folders_must_be_there_and_at_least_one(tmp_path):
+    assert "Not a folder" in project_context._folders_problem(f"{tmp_path}, {tmp_path / 'nope'}")
+    assert "at least one" in project_context._folders_problem(" , ")
+    assert project_context._folders_problem(str(tmp_path)) is None
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+def test_exploring_starts_from_home_alone(make_ctx, world, home):
+    work = home / "code" / "radio"
+    work.mkdir(parents=True)
+    world.task_result = RunResult(
+        ok=True, final_text=answer([{"name": "radio", "path": str(work), "summary": "A radio."}])
+    )
+    ctx = make_ctx([("explore your projects", "explore"), ("summary of radio", "accept")])
 
     project_context.run_section(ctx)
 
-    assert any("Not a folder" in line for line in ctx.ui.lines("error"))
+    [(_, _, prompt)] = [call for call in world.calls if call[0] == "task"]
+    assert [line for line in prompt.splitlines() if line.startswith("- /")] == [f"- {home}"]
+    assert "where to start, not a list of projects" in prompt
+    assert ConfigStore().stored()["PROJECTS"] == {"radio": str(work)}
+
+
+def test_named_folders_offer_nothing_to_start_from(make_ctx, world, root):
+    ctx = make_ctx([("explore", "folders"), ("Folders", DEFAULT)])
+
+    with pytest.raises(AssertionError, match="refused ''"):
+        project_context.run_section(ctx)
+
+
+def test_named_folders_are_not_told_to_explore(tmp_path):
+    prompt = build_prompt("Ada", [tmp_path])
+
+    assert "directly inside one of those folders" in prompt
+    assert "where to start" not in prompt
+
+
+def test_a_hidden_directory_never_becomes_a_project(make_ctx, world, home):
+    """Exploring from home puts `~/.ssh` inside the folders it may read; it is still nobody's
+    project, and a keypad approval may not write there."""
+    (home / ".ssh").mkdir()
+    world.task_result = RunResult(
+        ok=True, final_text=answer([{"name": "keys", "path": str(home / ".ssh"), "summary": "."}])
+    )
+    ctx = make_ctx([("explore your projects", "explore"), ("summary of keys", "accept")])
+
+    project_context.run_section(ctx)
+
+    assert "PROJECTS" not in ConfigStore().stored()
 
 
 def test_a_task_that_fails_says_why(make_ctx, world, root):
     world.task_result = RunResult(ok=False, error="rate limited")
-    ctx = make_ctx([("Folders", DEFAULT), ("May Claude", True)])
+    ctx = make_ctx([("explore", "folders"), ("Folders", str(root))])
 
     project_context.run_section(ctx)
 
@@ -172,7 +234,7 @@ def test_a_repeated_project_is_kept_once():
 
 def test_an_answer_that_cannot_be_read_says_so(make_ctx, world, root):
     world.task_result = RunResult(ok=True, final_text="no json here")
-    ctx = make_ctx([("Folders", DEFAULT), ("May Claude", True)])
+    ctx = make_ctx([("explore", "folders"), ("Folders", str(root))])
 
     project_context.run_section(ctx)
 
@@ -186,7 +248,7 @@ def test_dropped_projects_are_named_and_an_edit_to_nothing_keeps_nothing(make_ct
         final_text=answer([{"name": f"p{i}", "path": "", "summary": big} for i in range(5)]),
     )
     ctx = make_ctx(
-        [("Folders", DEFAULT), ("May Claude", True)]
+        [("explore", "folders"), ("Folders", str(root))]
         + [(f"summary of p{i}", "drop") for i in range(3)]
         + [("summary of p3", "edit"), ("Summary", "")]
     )
@@ -200,22 +262,16 @@ def test_dropped_projects_are_named_and_an_edit_to_nothing_keeps_nothing(make_ct
 
 def test_no_facts_kept_and_a_memory_too_full_are_both_quiet_failures(make_ctx, world, root):
     world.task_result = RunResult(ok=True, final_text=answer([], ["A fact."]))
-    none_kept = make_ctx([("Folders", DEFAULT), ("May Claude", True), ("remember", [])])
+    none_kept = make_ctx([("explore", "folders"), ("Folders", str(root)), ("remember", [])])
     project_context.run_section(none_kept)
     assert not (none_kept.settings.data_dir / "memory.md").exists()
 
     from jarvis.continuity.memory import MAX_MEMORY_CHARS
 
     world.task_result = RunResult(ok=True, final_text=answer([], ["x" * MAX_MEMORY_CHARS]))
-    too_full = make_ctx([("Folders", DEFAULT), ("May Claude", True), ("remember", ["0"])])
+    too_full = make_ctx([("explore", "folders"), ("Folders", str(root)), ("remember", ["0"])])
     project_context.run_section(too_full)
     assert any("a call reads" in line for line in too_full.ui.lines("error"))
-
-
-def test_blank_folders_skip_the_section(make_ctx, world):
-    project_context.run_section(make_ctx([("Folders", "")]))
-
-    assert not [call for call in world.calls if call[0] == "task"]
 
 
 def test_a_path_outside_the_chosen_folders_never_becomes_a_project(make_ctx, world, root, tmp_path):
@@ -226,7 +282,9 @@ def test_a_path_outside_the_chosen_folders_never_becomes_a_project(make_ctx, wor
     world.task_result = RunResult(
         ok=True, final_text=answer([{"name": "home", "path": str(home), "summary": "Hi."}])
     )
-    ctx = make_ctx([("Folders", DEFAULT), ("May Claude", True), ("summary of home", "accept")])
+    ctx = make_ctx(
+        [("explore", "folders"), ("Folders", str(root)), ("summary of home", "accept")]
+    )
 
     project_context.run_section(ctx)
 
