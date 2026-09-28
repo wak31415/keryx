@@ -68,7 +68,9 @@ again with the training results.
 ## Quick start
 
 You need Python 3.12, [uv](https://docs.astral.sh/uv/), an OpenAI API key with Realtime
-access, a Twilio number, and Claude Code or Codex.
+access, a Twilio number, and Claude Code or Codex. Install it on a machine that stays on,
+such as a desktop or home server where your projects live: Jarvis answers your calls, keeps
+working after you hang up and calls you back, and none of that happens while it sleeps.
 
 ```bash
 git clone https://github.com/wak31415/jarvis-voice-agent.git && cd jarvis-voice-agent
