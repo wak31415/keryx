@@ -72,6 +72,8 @@ def _isolated_env(monkeypatch, tmp_path):
         monkeypatch.setenv(name, str(home / relative))
     monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "jarvis-home"))
     monkeypatch.delenv("JARVIS_ACTOR", raising=False)
+    # The Claude CLI's own directory is derived from `HOME` unless this moves it.
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     # And the working directory: a `.env` in the checkout the suite runs from is what
     # `jarvis serve` refuses to start beside, and what `jarvis migrate` would import.
     working = tmp_path / "cwd"

@@ -29,6 +29,8 @@ from typing import Any
 
 #: The environment variable that moves the configuration out of `~/.config/jarvis`.
 HOME_ENV = "JARVIS_HOME"
+#: The environment variable that moves the Claude CLI's configuration out of `~/.claude`.
+CLAUDE_CONFIG_ENV = "CLAUDE_CONFIG_DIR"
 #: What each directory is called inside its XDG base directory.
 APP_NAME = "jarvis"
 CONFIG_NAME = "config.toml"
@@ -106,6 +108,25 @@ def jarvis_home() -> Path:
     """The configuration directory: `JARVIS_HOME`, else `$XDG_CONFIG_HOME/jarvis`."""
     raw = os.environ.get(HOME_ENV, "").strip()
     return Path(raw).expanduser() if raw else xdg_home("config") / APP_NAME
+
+
+def claude_config_dir() -> Path:
+    """Where the Claude CLI keeps its own configuration: `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
+
+    Not one of Jarvis's directories, but read from several places (the skills, the stored
+    login, `CLAUDE.md`, the approval hook), and the CLI moves all of it together.
+    """
+    raw = os.environ.get(CLAUDE_CONFIG_ENV, "").strip()
+    return Path(raw).expanduser() if raw else Path("~/.claude").expanduser()
+
+
+def claude_user_config() -> Path:
+    """The Claude CLI's user-scope config, where its MCP servers are: `~/.claude.json`.
+
+    With `CLAUDE_CONFIG_DIR` set, the CLI keeps it inside that directory instead.
+    """
+    raw = os.environ.get(CLAUDE_CONFIG_ENV, "").strip()
+    return Path(raw).expanduser() / ".claude.json" if raw else Path("~/.claude.json").expanduser()
 
 
 def default_data_dir() -> Path:

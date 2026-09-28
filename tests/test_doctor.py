@@ -607,11 +607,12 @@ def test_half_a_slack_route_warns(healthy):
 def test_a_slack_mcp_server_counts_when_its_config_carries_the_route(
     healthy, tmp_path, monkeypatch
 ):
-    config = tmp_path / "claude.json"
+    config = tmp_path / "claude" / ".claude.json"
+    config.parent.mkdir()
     config.write_text(
         '{"mcpServers": {"chat": {"env": {"SLACK_BOT_TOKEN": "x", "SLACK_CHANNEL_ID": "D1"}}}}'
     )
-    monkeypatch.setattr("jarvis.integrations.slack.CLAUDE_CONFIG", config)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config.parent))
     settings = healthy.model_copy(update={"slack_mcp_server": "chat"})
 
     check = by_name(run_doctor_checks(settings))["Slack"]
@@ -622,7 +623,7 @@ def test_a_slack_mcp_server_counts_when_its_config_carries_the_route(
 def test_a_slack_mcp_server_without_a_route_still_reaches_subagents(
     healthy, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr("jarvis.integrations.slack.CLAUDE_CONFIG", tmp_path / "missing.json")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "missing"))
     settings = healthy.model_copy(update={"slack_mcp_server": "chat"})
 
     check = by_name(run_doctor_checks(settings))["Slack"]

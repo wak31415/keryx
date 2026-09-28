@@ -132,7 +132,7 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 |---|---|---|---|
 | `PROJECTS` |  | no | Spoken project names for repositories outside `PROJECTS_ROOT`, as `{"name": "/path"}`. |
 | `PROJECTS_ROOT` | `~/projects` | no | Where a task with no project starts; each subdirectory is a project you can name. Never created: without it, such a task starts in `DATA_DIR/workspace`. |
-| `SKILLS_DIR` | `~/.claude/skills` | never | Where the Claude CLI keeps its skills; listed in the voice prompt so Jarvis knows what the subagents are good at. |
+| `SKILLS_DIR` | `$CLAUDE_CONFIG_DIR/skills` (`~/.claude/skills`) | never | Where the Claude CLI keeps its skills; listed in the voice prompt so Jarvis knows what the subagents are good at. |
 
 ## The approval bridge
 

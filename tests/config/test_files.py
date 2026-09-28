@@ -8,6 +8,8 @@ import pytest
 
 from jarvis.config.files import (
     XDG_HOMES,
+    claude_config_dir,
+    claude_user_config,
     default_cache_dir,
     default_data_dir,
     default_state_dir,
@@ -57,6 +59,29 @@ def test_jarvis_home_outranks_the_config_directory(monkeypatch, tmp_path):
 
     monkeypatch.setenv("JARVIS_HOME", "  ")
     assert jarvis_home() == tmp_path / "xdg" / "jarvis"
+
+
+def test_the_claude_directories_are_in_home_by_default():
+    assert claude_config_dir() == Path.home() / ".claude"
+    assert claude_user_config() == Path.home() / ".claude.json"
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_an_empty_claude_config_dir_is_ignored(value, monkeypatch):
+    """Not the working directory: an empty value would put the CLI's files wherever a
+    process happened to start."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", value)
+
+    assert claude_config_dir() == Path.home() / ".claude"
+    assert claude_user_config() == Path.home() / ".claude.json"
+
+
+def test_claude_config_dir_moves_the_directory_and_the_user_config(monkeypatch, tmp_path):
+    """The CLI keeps `.claude.json` inside the moved directory, not beside it."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+
+    assert claude_config_dir() == tmp_path / "claude"
+    assert claude_user_config() == tmp_path / "claude" / ".claude.json"
 
 
 def test_legacy_entries_are_only_the_names_jarvis_wrote(tmp_path):

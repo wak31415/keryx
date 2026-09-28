@@ -40,6 +40,7 @@ from pydantic_settings import (
 )
 
 from jarvis.config.files import (
+    claude_config_dir,
     config_file,
     default_cache_dir,
     default_data_dir,
@@ -621,10 +622,10 @@ class Settings(BaseSettings):
         group="projects",
     )
     skills_dir: Path = setting(
-        Path("~/.claude/skills"),
-        "Where the Claude CLI keeps its skills; listed in the voice prompt so Jarvis knows "
-        "what the subagents are good at.",
+        description="Where the Claude CLI keeps its skills; listed in the voice prompt so "
+        "Jarvis knows what the subagents are good at.",
         group="projects",
+        default_factory=lambda: claude_config_dir() / "skills",
     )
 
     # --- the approval bridge -------------------------------------------------------------

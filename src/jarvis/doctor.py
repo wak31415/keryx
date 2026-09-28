@@ -40,6 +40,7 @@ from jarvis.config import (
     env_var_name,
     pin_file,
 )
+from jarvis.config.files import claude_user_config
 from jarvis.config.permissions import is_protected
 from jarvis.config.settings import LEGACY_ENV_FILE
 from jarvis.config.store import ConfigStore
@@ -874,12 +875,11 @@ def _slack_check(settings: Settings) -> Check:
         settings.slack_bot_token,
         settings.slack_channel_id,
         server=server,
-        config_path=slack.CLAUDE_CONFIG,
     )
     subagents = f"; subagents use the {server} MCP server" if server else ""
     if route is None:
         missing = (
-            f"{server} has no bot token and channel in {slack.CLAUDE_CONFIG}"
+            f"{server} has no bot token and channel in {claude_user_config()}"
             if server
             else f"{token} and {channel} are both needed"
         )
