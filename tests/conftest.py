@@ -60,6 +60,15 @@ def _plain_cli_output(monkeypatch):
     monkeypatch.setenv("COLUMNS", "200")
 
 
+#: The XDG base directories Jarvis resolves its own from, each moved into the test's home.
+XDG_HOMES = {
+    "XDG_CONFIG_HOME": ".config",
+    "XDG_DATA_HOME": ".local/share",
+    "XDG_STATE_HOME": ".local/state",
+    "XDG_CACHE_HOME": ".cache",
+}
+
+
 @pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch, tmp_path):
     """Strip ambient env vars `Settings` reads so tests are hermetic on any machine/CI.
@@ -68,9 +77,18 @@ def _isolated_env(monkeypatch, tmp_path):
     `config.toml` and `secrets.toml` from it, and the developer's real ones must never take
     part in a test — nor be written by one. `JARVIS_ACTOR` goes because a suite run by a
     subagent of the live service inherits `service`, and would be refused as one.
+
+    `HOME` and every `XDG_*_HOME` move into the test's own directory as well. Every default
+    Jarvis has for where it keeps things is derived from them, and one check looks for a
+    legacy `~/.jarvis` — which on a developer's machine really is there, holding every call
+    they ever made.
     """
     for name in _settings_env_var_names():
         monkeypatch.delenv(name, raising=False)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    for name, relative in XDG_HOMES.items():
+        monkeypatch.setenv(name, str(home / relative))
     monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "jarvis-home"))
     monkeypatch.delenv("JARVIS_ACTOR", raising=False)
 
