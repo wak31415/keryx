@@ -45,7 +45,7 @@ def status(
     settings: Settings, store: ConfigStore, *, smoke: bool = False, smoke_test=None
 ) -> dict[str, dict[str, Any]]:
     """`{name: {"state", "detail", …}}` for every sign-in; `smoke` also runs one task each."""
-    checks = run_doctor_checks(settings, probe_mic=False, store=store)
+    checks = run_doctor_checks(settings, store=store)
     report: dict[str, dict[str, Any]] = {}
     for name, prefixes in SIGN_INS.items():
         found = [check for check in checks if check.name.startswith(prefixes)]

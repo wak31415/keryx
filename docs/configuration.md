@@ -43,8 +43,6 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 | `VAD_THRESHOLD` | `0.5` | yes | Server mode only: how loud counts as speech (0 to 1). |
 | `VAD_PREFIX_MS` | `300` | yes | Server mode only: audio kept from before speech was detected, so the first syllable is not clipped. |
 | `NOISE_REDUCTION` | `auto` | yes | Background-noise suppression on what the model hears; `auto` picks `near_field` for a phone and `far_field` for a microphone across the room. Mostly about barge-in: noise mistaken for speech is noise that cuts Jarvis off. |
-| `WAKEWORD_MODEL` | `hey_jarvis` | no | The openWakeWord model the local channel listens for (macOS). |
-| `WAKEWORD_THRESHOLD` | `0.5` | no | How sure the wake-word model must be before a session opens (0 to 1). |
 
 ## Coding agents
 
@@ -167,7 +165,7 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 |---|---|---|---|
 | `DATA_DIR` | `$XDG_DATA_HOME/jarvis` (`~/.local/share/jarvis`) | never | Where tasks, transcripts, memory and sign-in tokens are kept, owner-only (0700, files 0600). |
 | `STATE_DIR` | `$XDG_STATE_HOME/jarvis` (`~/.local/state/jarvis`) | never | Where the logs, the restart record and the approval bridge's socket are kept, owner-only. |
-| `CACHE_DIR` | `$XDG_CACHE_HOME/jarvis` (`~/.cache/jarvis`) | never | Where what can be downloaded again is kept: the wake-word models. |
+| `CACHE_DIR` | `$XDG_CACHE_HOME/jarvis` (`~/.cache/jarvis`) | never | Where what can be downloaded again is kept. |
 | `SERVICE_MANAGER` | `auto` | never | What `jarvis restart` asks to restart this process: `auto` is systemd or launchd, but only for a process actually running under it; `none` refuses. |
 | `SERVICE_UNIT` |  | never | The systemd unit or launchd label; blank is the installed default (`jarvis.service`, `dev.jarvis.agent`). |
 | `REPORT_SECRET` | (secret) | never | Signs the `/reports/{id}` links texted to you; blank generates one into `DATA_DIR/report_secret`. |

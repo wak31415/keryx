@@ -250,7 +250,7 @@ def test_import_env_that_is_refused_exits_1(home, tmp_path):
 
 
 def test_doctor_json_is_one_document_with_sections_and_states(home):
-    result = run("doctor", "--json", "--no-mic")
+    result = run("doctor", "--json")
 
     document = json.loads(result.output)
     assert result.exit_code == (0 if document["ok"] else 1)
@@ -262,7 +262,7 @@ def test_doctor_fix_tightens_a_loose_secrets_file(home):
     run("config", "set", "OPENAI_API_KEY", "--stdin", input="sk-live")
     home.secrets_path.chmod(0o644)
 
-    result = run("doctor", "--fix", "--no-mic")
+    result = run("doctor", "--fix")
 
     assert f"fix: {home.secrets_path}: 0644 → 0600" in result.output
     assert stat.S_IMODE(home.secrets_path.stat().st_mode) == 0o600
@@ -375,7 +375,7 @@ def test_doctor_asks_twilio_only_with_credentials_and_a_host(
 
 
 def test_doctor_fix_with_nothing_loose_says_so(home):
-    result = run("doctor", "--fix", "--no-mic")
+    result = run("doctor", "--fix")
 
     assert "fix: nothing to tighten" in result.output
 
@@ -490,7 +490,7 @@ def test_serve_refuses_a_config_that_does_not_parse_in_one_line(home):
     home.home.mkdir(parents=True, exist_ok=True)
     home.config_path.write_text("PORT = \n")
 
-    result = run("serve", "--no-phone", "--no-wakeword")
+    result = run("serve")
 
     assert result.exit_code == 2
     assert "jarvis cannot start" in result.output and "Traceback" not in result.output
@@ -500,7 +500,7 @@ def test_doctor_reports_a_config_that_does_not_parse_rather_than_crashing(home):
     home.home.mkdir(parents=True, exist_ok=True)
     home.config_path.write_text("PORT = \n")
 
-    result = run("doctor", "--json", "--no-mic")
+    result = run("doctor", "--json")
 
     document = json.loads(result.output)
     check = next(c for c in document["checks"] if c["name"] == "config.toml")

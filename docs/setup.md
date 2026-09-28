@@ -93,7 +93,7 @@ honours each `XDG_*_HOME`. `uv run jarvis config path` prints them all:
 | `~/.config/jarvis` (`JARVIS_HOME`) | `config.toml`, `secrets.toml`, the PIN, the Google client file |
 | `~/.local/share/jarvis` (`DATA_DIR`) | tasks and their reports, call transcripts, the memory, sign-in tokens |
 | `~/.local/state/jarvis` (`STATE_DIR`) | logs, the restart record, the approval bridge's socket |
-| `~/.cache/jarvis` (`CACHE_DIR`) | the wake-word models |
+| `~/.cache/jarvis` (`CACHE_DIR`) | what can be downloaded again |
 
 Every directory is readable by you alone. `~/.config/jarvis` holds `secrets.toml` and `pin`,
 so keep it out of a dotfiles repository.

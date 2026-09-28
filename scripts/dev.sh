@@ -2,8 +2,7 @@
 # Dev loop for the phone channel: the Cloudflare tunnel plus `jarvis serve`.
 #
 # Point the Twilio number's voice webhook at https://$PUBLIC_HOST/twilio/voice and call in.
-# The wake word is off here (the tunnel, not the mic, is what we are exercising); pass
-# extra flags straight through, e.g. `scripts/dev.sh --no-phone`.
+# Extra flags go straight through to `jarvis serve`, e.g. `scripts/dev.sh --fake-agents`.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -27,4 +26,4 @@ trap 'kill "$TUNNEL_PID" 2>/dev/null || true' EXIT
 echo "tunnel:  https://$PUBLIC_HOST -> http://localhost:$PORT  (log: $TUNNEL_LOG)"
 echo "webhook: https://$PUBLIC_HOST/twilio/voice"
 
-uv run jarvis serve --no-wakeword "$@"
+uv run jarvis serve "$@"

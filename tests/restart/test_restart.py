@@ -843,10 +843,10 @@ async def test_the_summary_says_what_changed(tmp_path):
     harness = Harness(make_settings(tmp_path))
     record = pending(version="v0-old0000")
 
-    summary = await harness.coordinator.status_summary(record, phone_up=True, wakeword=True)
+    summary = await harness.coordinator.status_summary(record, phone_up=True)
 
     assert f"now on {VERSION}, was v0-old0000" in summary
-    assert "phone and wake word listening" in summary
+    assert "phone listening" in summary
     assert "no tasks were lost" in summary
 
 

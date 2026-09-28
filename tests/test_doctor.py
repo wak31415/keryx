@@ -18,7 +18,6 @@ from jarvis.doctor import (
 )
 from jarvis.integrations.gmail import token_path
 from jarvis.logging_util import mask_number
-from jarvis.wakeword import FEATURE_MODELS
 
 
 @pytest.fixture
@@ -26,11 +25,6 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
     """Settings + environment where every check passes, so tests can break one at a time."""
     monkeypatch.chdir(tmp_path)
 
-    models = tmp_path / "models"
-    models.mkdir()
-    for name in ("hey_jarvis_v0.1.onnx", *FEATURE_MODELS):
-        (models / name).write_bytes(b"")
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: models)
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     # The service is installed. Asked of a fake: the real question goes to `systemctl`.
     monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target: True)
@@ -74,32 +68,11 @@ def by_name(checks: list[Check]) -> dict[str, Check]:
 
 
 def test_a_fully_configured_install_passes_every_check(healthy):
-    checks = run_doctor_checks(healthy, probe_mic=False)
+    checks = run_doctor_checks(healthy)
 
     failed = [check.name for check in checks if not check.ok]
     assert failed == []
     assert has_hard_failure(checks) is False
-
-
-def test_the_mic_probe_is_skipped_when_asked(healthy):
-    names = {check.name for check in run_doctor_checks(healthy, probe_mic=False)}
-
-    assert not any("mic" in name for name in names)
-
-
-def test_the_mic_probe_never_raises_without_a_device(healthy, monkeypatch):
-    def explode(**kwargs):
-        raise OSError("no input device")
-
-    monkeypatch.setattr("jarvis.doctor._query_input_device", explode)
-
-    mic = [check for check in run_doctor_checks(healthy) if "mic" in check.name]
-    assert len(mic) == 1
-    assert mic[0].ok is False
-    assert mic[0].severity == "soft"  # a headless Mac is not a hard failure
-
-
-# --- individual failures ---------------------------------------------------
 
 
 def test_files_left_in_the_old_home_are_a_migration_still_to_run(healthy):
@@ -107,7 +80,7 @@ def test_files_left_in_the_old_home_are_a_migration_still_to_run(healthy):
     legacy.mkdir(parents=True)
     (legacy / "tasks.db").touch()
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["storage"]
+    check = by_name(run_doctor_checks(healthy))["storage"]
 
     assert (check.ok, check.severity, check.state) == (False, "hard", "missing")
     assert "jarvis migrate" in check.detail and str(legacy) in check.detail
@@ -117,13 +90,13 @@ def test_files_left_in_the_old_home_are_a_migration_still_to_run(healthy):
 def test_a_env_in_the_working_directory_is_a_migration_still_to_run(healthy):
     Path(".env").write_text("OPENAI_VOICE=marin\n")
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["storage"]
+    check = by_name(run_doctor_checks(healthy))["storage"]
 
     assert check.ok is False and "jarvis migrate" in check.detail
 
 
 def test_nothing_legacy_is_fine(healthy):
-    checks = by_name(run_doctor_checks(healthy, probe_mic=False))
+    checks = by_name(run_doctor_checks(healthy))
 
     assert checks["storage"].ok is True
     assert checks["configuration"].ok is True
@@ -134,7 +107,7 @@ def test_a_missing_openai_key_is_reported_not_raised(healthy, monkeypatch):
 
     settings = healthy.model_copy(update={"openai_api_key": doctor.PLACEHOLDER_KEY})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["OPENAI_API_KEY"]
+    check = by_name(run_doctor_checks(settings))["OPENAI_API_KEY"]
     assert (check.ok, check.severity) == (False, "hard")
 
 
@@ -156,7 +129,7 @@ def with_agent(monkeypatch, name, *, cli="/bin/agent", login=True):
 
 
 def test_an_api_key_satisfies_the_default_agent(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))[CLAUDE]
+    check = by_name(run_doctor_checks(healthy))[CLAUDE]
     assert (check.ok, "pay per token" in check.detail) == (True, True)
 
 
@@ -165,7 +138,7 @@ def test_an_oauth_token_satisfies_the_default_agent(healthy):
         update={"anthropic_api_key": None, "claude_code_oauth_token": "tok"}
     )
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))[CLAUDE]
+    check = by_name(run_doctor_checks(settings))[CLAUDE]
     assert (check.ok, "subscription" in check.detail) == (True, True)
 
 
@@ -173,7 +146,7 @@ def test_a_stored_login_satisfies_the_default_agent(healthy, monkeypatch):
     with_agent(monkeypatch, "claude", login=True)
     settings = healthy.model_copy(update={"anthropic_api_key": None})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))[CLAUDE]
+    check = by_name(run_doctor_checks(settings))[CLAUDE]
     assert (check.ok, "login" in check.detail) == (True, True)
 
 
@@ -182,7 +155,7 @@ def test_a_default_agent_with_no_auth_at_all_is_a_hard_failure(healthy, monkeypa
     with_agent(monkeypatch, "claude", login=False)
     settings = healthy.model_copy(update={"anthropic_api_key": None})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))[CLAUDE]
+    check = by_name(run_doctor_checks(settings))[CLAUDE]
     assert (check.ok, check.severity) == (False, "hard")
     assert "claude setup-token" in check.detail
 
@@ -190,7 +163,7 @@ def test_a_default_agent_with_no_auth_at_all_is_a_hard_failure(healthy, monkeypa
 def test_a_default_agent_that_is_not_installed_says_how_to_install_it(healthy, monkeypatch):
     with_agent(monkeypatch, "claude", cli=None)
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))[CLAUDE]
+    check = by_name(run_doctor_checks(healthy))[CLAUDE]
     assert (check.ok, check.severity) == (False, "hard")
     assert "uv sync" in check.detail
 
@@ -198,7 +171,7 @@ def test_a_default_agent_that_is_not_installed_says_how_to_install_it(healthy, m
 def test_the_agents_cli_is_named_when_it_is_there(healthy, monkeypatch):
     with_agent(monkeypatch, "claude", cli="/opt/claude")
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))[CLAUDE]
+    check = by_name(run_doctor_checks(healthy))[CLAUDE]
     assert check.detail.startswith("/opt/claude; ")
 
 
@@ -206,7 +179,7 @@ def test_an_agent_that_is_not_installed_says_which_extra_installs_it(healthy, mo
     monkeypatch.setattr("jarvis.doctor.installed", lambda agent: agent != "codex")
     settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Codex agent"]
+    check = by_name(run_doctor_checks(settings))["Codex agent"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert check.detail == (
@@ -219,7 +192,7 @@ def test_codex_is_named_by_its_bundled_binary_and_version(healthy, monkeypatch):
     with_agent(monkeypatch, "codex", cli="/venv/codex_cli_bin/bin/codex")
     settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Codex agent"]
+    check = by_name(run_doctor_checks(settings))["Codex agent"]
 
     assert check.detail.startswith("/venv/codex_cli_bin/bin/codex (codex-cli 0.157.1); ")
 
@@ -228,7 +201,7 @@ def test_a_second_agent_that_is_not_ready_is_only_a_warning(healthy, monkeypatch
     with_agent(monkeypatch, "codex", login=False)
     settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
 
-    checks = by_name(run_doctor_checks(settings, probe_mic=False))
+    checks = by_name(run_doctor_checks(settings))
     assert (checks["Codex agent"].ok, checks["Codex agent"].severity) == (False, "soft")
     assert "codex login" in checks["Codex agent"].detail
     assert checks[CLAUDE].ok is True
@@ -240,7 +213,7 @@ def test_a_default_agent_that_is_not_enabled_is_a_hard_failure(healthy):
         update={"agents_enabled": ["claude"], "agent_backend": "codex"}
     )
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["coding agents"]
+    check = by_name(run_doctor_checks(settings))["coding agents"]
     assert (check.ok, check.severity) == (False, "hard")
 
 
@@ -248,7 +221,7 @@ def test_codex_without_workspace_mcp_has_no_mailbox_and_says_so(healthy, monkeyp
     with_agent(monkeypatch, "codex")
     settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Google for agents"]
+    check = by_name(run_doctor_checks(settings))["Google for agents"]
     assert (check.ok, check.severity, check.state) == (False, "soft", "missing")
     assert "not set up (optional)" in check.detail and "jarvis setup" in check.detail
 
@@ -256,7 +229,7 @@ def test_codex_without_workspace_mcp_has_no_mailbox_and_says_so(healthy, monkeyp
 def test_cloudflared_satisfies_the_tunnel_check(healthy, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: None if name == "ngrok" else "/bin/" + name)
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["tunnel"]
+    check = by_name(run_doctor_checks(healthy))["tunnel"]
     assert (check.ok, check.detail) == (True, "/bin/cloudflared")
 
 
@@ -266,7 +239,7 @@ def test_ngrok_still_counts_as_a_tunnel(healthy, monkeypatch):
         "shutil.which", lambda name: None if name == "cloudflared" else "/bin/" + name
     )
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["tunnel"]
+    check = by_name(run_doctor_checks(healthy))["tunnel"]
     assert (check.ok, check.detail) == (True, "/bin/ngrok")
 
 
@@ -275,7 +248,7 @@ def test_no_tunnel_binary_at_all_is_a_hard_failure(healthy, monkeypatch):
         "shutil.which", lambda name: None if name in {"cloudflared", "ngrok"} else "/bin/" + name
     )
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["tunnel"]
+    check = by_name(run_doctor_checks(healthy))["tunnel"]
     assert (check.ok, check.severity) == (False, "hard")
     assert "cloudflared" in check.detail
 
@@ -283,7 +256,7 @@ def test_no_tunnel_binary_at_all_is_a_hard_failure(healthy, monkeypatch):
 def test_incomplete_twilio_credentials_name_what_is_missing(healthy):
     settings = healthy.model_copy(update={"twilio_auth_token": None, "twilio_number": None})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Twilio credentials"]
+    check = by_name(run_doctor_checks(settings))["Twilio credentials"]
     assert check.ok is False
     assert "TWILIO_AUTH_TOKEN" in check.detail
     assert "TWILIO_NUMBER" in check.detail
@@ -293,19 +266,19 @@ def test_incomplete_twilio_credentials_name_what_is_missing(healthy):
 def test_a_missing_public_host_is_a_hard_failure(healthy):
     settings = healthy.model_copy(update={"public_host": None})
 
-    assert by_name(run_doctor_checks(settings, probe_mic=False))["PUBLIC_HOST"].ok is False
+    assert by_name(run_doctor_checks(settings))["PUBLIC_HOST"].ok is False
 
 
 def test_an_empty_caller_allowlist_is_a_hard_failure(healthy):
     settings = healthy.model_copy(update={"allowed_callers": []})
 
-    assert by_name(run_doctor_checks(settings, probe_mic=False))["allowed callers"].ok is False
+    assert by_name(run_doctor_checks(settings))["allowed callers"].ok is False
 
 
 def test_skipping_signature_checks_behind_a_public_host_is_a_hard_failure(healthy):
     settings = healthy.model_copy(update={"debug_skip_twilio_validation": True})
 
-    checks = run_doctor_checks(settings, probe_mic=False)
+    checks = run_doctor_checks(settings)
     check = by_name(checks)["Twilio signatures"]
     assert (check.ok, check.severity) == (False, "hard")
     assert "DEBUG_SKIP_TWILIO_VALIDATION" in check.detail
@@ -317,17 +290,17 @@ def test_skipping_signature_checks_without_a_public_host_only_warns(healthy):
         update={"debug_skip_twilio_validation": True, "public_host": None}
     )
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Twilio signatures"]
+    check = by_name(run_doctor_checks(settings))["Twilio signatures"]
     assert (check.ok, check.severity) == (False, "soft")
 
 
 def test_signature_checks_left_on_pass(healthy):
-    assert by_name(run_doctor_checks(healthy, probe_mic=False))["Twilio signatures"].ok is True
+    assert by_name(run_doctor_checks(healthy))["Twilio signatures"].ok is True
 
 
 def test_the_numbers_doctor_prints_are_masked(healthy):
     """A terminal is somewhere a number gets written down too (`logging_util`)."""
-    checks = by_name(run_doctor_checks(healthy, probe_mic=False))
+    checks = by_name(run_doctor_checks(healthy))
 
     assert checks["allowed callers"].detail == mask_number("+15551234567")
     assert checks["Twilio credentials"].detail == mask_number("+15550000000")
@@ -338,7 +311,7 @@ def test_a_missing_pin_only_warns_and_says_the_first_call_can_set_one(healthy):
     machine reads nothing of theirs out loud."""
     settings = healthy.model_copy(update={"pin": None})
 
-    checks = run_doctor_checks(settings, probe_mic=False)
+    checks = run_doctor_checks(settings)
     check = by_name(checks)["PIN"]
     assert (check.ok, check.severity) == (False, "soft")
     assert "no PIN yet" in check.detail
@@ -349,7 +322,7 @@ def test_a_missing_pin_only_warns_and_says_the_first_call_can_set_one(healthy):
 
 
 def test_a_pin_from_the_environment_says_so(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["PIN"]
+    check = by_name(run_doctor_checks(healthy))["PIN"]
 
     assert check.ok is True
     assert check.detail.startswith("set from the environment")
@@ -361,7 +334,7 @@ def test_a_pin_in_its_own_file_says_when_and_where(healthy):
     settings = healthy.model_copy(update={"pin": None})
     assert settings.enrol_pin("987654") is True
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["PIN"]
+    check = by_name(run_doctor_checks(settings))["PIN"]
 
     assert check.ok is True
     assert check.detail.startswith("set on ")
@@ -375,7 +348,7 @@ def test_the_environment_wins_over_the_same_digits_in_the_file(healthy):
     copied = healthy.model_copy(update={"pin": None})
     assert copied.enrol_pin("123456") is True  # the digits `healthy` has in its environment
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["PIN"]
+    check = by_name(run_doctor_checks(healthy))["PIN"]
 
     assert check.detail.startswith("set from the environment")
 
@@ -385,7 +358,7 @@ def test_a_pin_file_that_is_not_a_pin_is_reported_as_the_dead_end_it_is(healthy)
     settings.config_dir.mkdir(parents=True, exist_ok=True)
     pin_file(settings.config_dir).write_text("not-a-pin\n", encoding="utf-8")
 
-    checks = run_doctor_checks(settings, probe_mic=False)
+    checks = run_doctor_checks(settings)
     check = by_name(checks)["PIN"]
 
     assert (check.ok, check.severity) == (False, "soft")
@@ -394,68 +367,8 @@ def test_a_pin_file_that_is_not_a_pin_is_reported_as_the_dead_end_it_is(healthy)
     assert has_hard_failure(checks) is False
 
 
-def test_an_undownloaded_wake_word_model_points_at_download_models(healthy, monkeypatch, tmp_path):
-    empty = tmp_path / "empty-models"
-    empty.mkdir()
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: empty)
-
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["wake-word model"]
-    assert check.ok is False
-    assert "download-models" in check.detail
-
-
-def test_a_wake_word_without_its_feature_models_cannot_load(healthy, monkeypatch, tmp_path):
-    partial = tmp_path / "partial"
-    partial.mkdir()
-    (partial / "hey_jarvis_v0.1.onnx").write_bytes(b"")
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", lambda settings: partial)
-
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["wake-word model"]
-
-    assert check.ok is False
-    assert "melspectrogram.onnx, embedding_model.onnx" in check.detail
-
-
-def test_the_models_are_looked_for_in_the_cache(settings, monkeypatch):
-    """Not inside the installed package, which the next `uv sync` replaces."""
-    import sys
-    import types
-
-    from jarvis import doctor
-
-    monkeypatch.setitem(sys.modules, "openwakeword", types.ModuleType("openwakeword"))
-
-    assert doctor._wakeword_models_dir(settings) == settings.cache_dir / "models"
-
-
-def test_an_uninstalled_openwakeword_only_warns(healthy, monkeypatch):
-    """openwakeword is macOS-only, so a Linux phone-only host is not a broken install."""
-
-    def explode(settings):
-        raise ImportError("no openwakeword here")
-
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", explode)
-
-    checks = run_doctor_checks(healthy, probe_mic=False)
-    check = by_name(checks)["wake-word model"]
-    assert (check.ok, check.severity) == (False, "soft")
-    assert "phone channel alone" in check.detail
-    assert has_hard_failure(checks) is False
-
-
-def test_a_broken_openwakeword_install_is_reported_not_raised(healthy, monkeypatch):
-    def explode(settings):
-        raise OSError("resources are gone")
-
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", explode)
-
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["wake-word model"]
-    assert check.ok is False
-    assert "openwakeword" in check.detail
-
-
 def test_an_installed_service_is_reported(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["service manager"]
+    check = by_name(run_doctor_checks(healthy))["service manager"]
 
     assert check.ok is True
     assert check.detail.split()[0] in {"systemd", "launchd"}
@@ -465,7 +378,7 @@ def test_a_service_manager_with_nothing_installed_is_not_a_tick(healthy, monkeyp
     """`systemctl` on PATH used to be enough for a ✅ naming a unit that did not exist."""
     monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target: False)
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["service manager"]
+    check = by_name(run_doctor_checks(healthy))["service manager"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "not installed" in check.detail
@@ -477,7 +390,7 @@ def test_nothing_supervising_the_process_is_a_warning_that_says_what_is_lost(hea
     """`SERVICE_MANAGER=none` is a supported way to run; the consequence is just silent."""
     settings = healthy.model_copy(update={"service_manager": "none"})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["service manager"]
+    check = by_name(run_doctor_checks(settings))["service manager"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "restart_service" in check.detail
@@ -486,7 +399,7 @@ def test_nothing_supervising_the_process_is_a_warning_that_says_what_is_lost(hea
 def test_no_service_manager_at_all_says_so_rather_than_naming_a_unit(healthy, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: None)
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["service manager"]
+    check = by_name(run_doctor_checks(healthy))["service manager"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert check.detail.startswith("no service manager on this machine")
@@ -496,7 +409,7 @@ def test_a_missing_git_is_reported_next_to_the_service_manager(healthy, monkeypa
     """Version reporting degrades quietly without it, which is worth saying once."""
     monkeypatch.setattr("shutil.which", lambda name: None if name == "git" else f"/bin/{name}")
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["service manager"]
+    check = by_name(run_doctor_checks(healthy))["service manager"]
 
     assert check.ok is True
     assert "no git on PATH" in check.detail
@@ -505,7 +418,7 @@ def test_a_missing_git_is_reported_next_to_the_service_manager(healthy, monkeypa
 def test_an_unwritable_data_dir_is_a_hard_failure(healthy, tmp_path):
     settings = healthy.model_copy(update={"data_dir": Path("/dev/null/nope")})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["data dir writable"]
+    check = by_name(run_doctor_checks(settings))["data dir writable"]
     assert (check.ok, check.severity) == (False, "hard")
 
 
@@ -513,7 +426,7 @@ def test_a_world_readable_data_dir_only_warns(healthy):
     """A shared host is where this matters; a single-user one is not worth refusing over."""
     healthy.data_dir.chmod(0o755)
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["data dir private"]
+    check = by_name(run_doctor_checks(healthy))["data dir private"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "0755" in check.detail
@@ -523,13 +436,13 @@ def test_a_world_readable_data_dir_only_warns(healthy):
 def test_a_group_readable_data_dir_is_reported_too(healthy):
     healthy.data_dir.chmod(0o740)
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["data dir private"]
+    check = by_name(run_doctor_checks(healthy))["data dir private"]
 
     assert check.ok is False
 
 
 def test_an_owner_only_data_dir_passes(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["data dir private"]
+    check = by_name(run_doctor_checks(healthy))["data dir private"]
 
     assert (check.ok, check.detail) == (True, "0700 (owner only)")
 
@@ -538,7 +451,7 @@ def test_doctor_creates_a_missing_data_dir_owner_only(healthy, tmp_path):
     """The write probe creates the directory; it must not leave a loose one behind."""
     settings = healthy.model_copy(update={"data_dir": tmp_path / "never-created"})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["data dir private"]
+    check = by_name(run_doctor_checks(settings))["data dir private"]
 
     assert (check.ok, check.detail) == (True, "0700 (owner only)")
 
@@ -550,7 +463,7 @@ def test_a_data_dir_that_cannot_be_read_is_reported_not_raised(healthy):
 
 
 def test_google_is_reported_as_unused_while_workspace_mcp_is_off(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["Google for agents"]
+    check = by_name(run_doctor_checks(healthy))["Google for agents"]
 
     assert (check.ok, check.severity) == (True, "soft")
     assert "connectors" in check.detail
@@ -561,7 +474,7 @@ def test_google_credentials_only_warn_when_the_oauth_client_is_configured(health
     for path in (tmp_path / "jarvis" / "google").iterdir():
         path.unlink()
 
-    checks = run_doctor_checks(healthy, probe_mic=False)
+    checks = run_doctor_checks(healthy)
     check = by_name(checks)["Google for agents"]
     assert (check.ok, check.severity) == (False, "soft")
     assert "jarvis auth login google-workspace" in check.detail
@@ -577,7 +490,7 @@ def test_google_is_reported_as_not_configured_without_an_oauth_client(healthy):
         }
     )
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Google for agents"]
+    check = by_name(run_doctor_checks(settings))["Google for agents"]
     assert (check.ok, check.severity, check.state) == (False, "soft", "failed")
     assert "no OAuth client" in check.detail
 
@@ -592,20 +505,20 @@ def test_google_is_reported_as_not_configured_without_an_oauth_client(healthy):
 def test_no_owner_name_only_warns(healthy):
     settings = healthy.model_copy(update={"owner_name": None})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["owner name"]
+    check = by_name(run_doctor_checks(settings))["owner name"]
     assert (check.ok, check.severity) == (False, "soft")
     assert "OWNER_NAME" in check.detail and "the owner" in check.detail
 
 
 def test_an_owner_name_is_reported(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["owner name"]
+    check = by_name(run_doctor_checks(healthy))["owner name"]
     assert (check.ok, check.detail) == (True, "Sam")
 
 
 def test_an_empty_memory_points_at_setup(healthy):
     memory_path(healthy.data_dir).unlink()
 
-    checks = run_doctor_checks(healthy, probe_mic=False)
+    checks = run_doctor_checks(healthy)
     check = by_name(checks)["memory"]
     assert (check.ok, check.severity) == (False, "soft")
     assert "jarvis setup" in check.detail
@@ -613,7 +526,7 @@ def test_an_empty_memory_points_at_setup(healthy):
 
 
 def test_a_seeded_memory_says_how_much_every_call_carries(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["memory"]
+    check = by_name(run_doctor_checks(healthy))["memory"]
     assert check.ok is True
     assert "characters" in check.detail
 
@@ -621,7 +534,7 @@ def test_a_seeded_memory_says_how_much_every_call_carries(healthy):
 def test_a_missing_projects_root_only_warns_and_says_where_tasks_go(healthy):
     healthy.projects_root.rmdir()
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["projects root"]
+    check = by_name(run_doctor_checks(healthy))["projects root"]
     assert (check.ok, check.severity) == (False, "soft")
     assert "PROJECTS_ROOT" in check.detail
     assert "workspace" in check.detail
@@ -629,7 +542,7 @@ def test_a_missing_projects_root_only_warns_and_says_where_tasks_go(healthy):
 
 
 def test_no_cluster_configured_says_why_the_tool_is_missing_without_warning(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["cluster stats"]
+    check = by_name(run_doctor_checks(healthy))["cluster stats"]
     assert (check.ok, check.severity) == (True, "soft")
     assert "cluster_stats is not offered" in check.detail
 
@@ -639,7 +552,7 @@ def test_clusters_without_their_guard_warn(healthy, tmp_path):
         update={"clusters": {"alpha": "gpu"}, "cluster_ssh_guard": tmp_path / "missing.sh"}
     )
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["cluster stats"]
+    check = by_name(run_doctor_checks(settings))["cluster stats"]
     assert (check.ok, check.severity) == (False, "soft")
     assert "CLUSTER_SSH_GUARD" in check.detail
 
@@ -649,7 +562,7 @@ def test_a_guard_without_clusters_warns(healthy, tmp_path):
     guard.write_text("#!/bin/sh\n")
     settings = healthy.model_copy(update={"cluster_ssh_guard": guard})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["cluster stats"]
+    check = by_name(run_doctor_checks(settings))["cluster stats"]
     assert (check.ok, check.severity) == (False, "soft")
     assert "CLUSTERS" in check.detail
 
@@ -661,13 +574,13 @@ def test_configured_clusters_are_named(healthy, tmp_path):
         update={"clusters": {"alpha": "gpu", "beta": "gpu"}, "cluster_ssh_guard": guard}
     )
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["cluster stats"]
+    check = by_name(run_doctor_checks(settings))["cluster stats"]
     assert check.ok is True
     assert "alpha, beta" in check.detail
 
 
 def test_no_slack_says_why_the_tool_is_missing_without_warning(healthy):
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["Slack"]
+    check = by_name(run_doctor_checks(healthy))["Slack"]
     assert (check.ok, check.severity) == (True, "soft")
     assert "send_to_slack is not offered" in check.detail
 
@@ -677,7 +590,7 @@ def test_a_slack_token_and_channel_offer_the_tool(healthy):
         update={"slack_bot_token": "xoxb-test", "slack_channel_id": "D123"}
     )
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Slack"]
+    check = by_name(run_doctor_checks(settings))["Slack"]
     assert check.ok is True
     assert "send_to_slack is offered" in check.detail
     assert "xoxb-test" not in check.detail
@@ -686,7 +599,7 @@ def test_a_slack_token_and_channel_offer_the_tool(healthy):
 def test_half_a_slack_route_warns(healthy):
     settings = healthy.model_copy(update={"slack_bot_token": "xoxb-test"})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Slack"]
+    check = by_name(run_doctor_checks(settings))["Slack"]
     assert (check.ok, check.severity) == (False, "soft")
     assert "SLACK_CHANNEL_ID" in check.detail
 
@@ -701,7 +614,7 @@ def test_a_slack_mcp_server_counts_when_its_config_carries_the_route(
     monkeypatch.setattr("jarvis.integrations.slack.CLAUDE_CONFIG", config)
     settings = healthy.model_copy(update={"slack_mcp_server": "chat"})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Slack"]
+    check = by_name(run_doctor_checks(settings))["Slack"]
     assert check.ok is True
     assert "chat" in check.detail
 
@@ -712,7 +625,7 @@ def test_a_slack_mcp_server_without_a_route_still_reaches_subagents(
     monkeypatch.setattr("jarvis.integrations.slack.CLAUDE_CONFIG", tmp_path / "missing.json")
     settings = healthy.model_copy(update={"slack_mcp_server": "chat"})
 
-    check = by_name(run_doctor_checks(settings, probe_mic=False))["Slack"]
+    check = by_name(run_doctor_checks(settings))["Slack"]
     assert (check.ok, check.severity) == (False, "soft")
     assert "send_to_slack is not offered" in check.detail
     assert "subagents" in check.detail
@@ -736,7 +649,7 @@ def test_a_formatted_check_carries_its_name_and_detail():
 
 def test_email_not_signed_in_is_optional_and_says_how(healthy):
     token_path(healthy).unlink()
-    checks = run_doctor_checks(healthy, probe_mic=False)
+    checks = run_doctor_checks(healthy)
     check = by_name(checks)["email"]
 
     assert (check.ok, check.state) == (False, "missing")
@@ -752,7 +665,7 @@ def test_email_signed_in_is_offered_with_its_model(healthy, monkeypatch):
     token_path(healthy).write_text("{}")
     with_agent(monkeypatch, "claude", cli="/bin/claude")
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["email"]
+    check = by_name(run_doctor_checks(healthy))["email"]
 
     assert check.ok is True
     assert check.detail == "check_email is offered (claude-opus-5-5, low effort)"
@@ -764,7 +677,7 @@ def test_email_signed_in_without_the_claude_cli_is_a_warning(healthy, monkeypatc
     token_path(healthy).write_text("{}")
     with_agent(monkeypatch, "claude", cli=None)
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["email"]
+    check = by_name(run_doctor_checks(healthy))["email"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "uv sync --extra claude" in check.detail
@@ -783,7 +696,7 @@ def test_a_loose_secret_file_is_named_and_fix_tightens_only_modes(healthy):
     token_path(healthy).chmod(0o640)
     before = store.secrets_path.read_text()
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False, store=store))[
+    check = by_name(run_doctor_checks(healthy, store=store))[
         "secret files private"
     ]
     assert (check.ok, check.severity) == (False, "soft")
@@ -795,7 +708,7 @@ def test_a_loose_secret_file_is_named_and_fix_tightens_only_modes(healthy):
     assert store.secrets_path.stat().st_mode & 0o777 == 0o600
     assert token_path(healthy).stat().st_mode & 0o777 == 0o600
     assert store.secrets_path.read_text() == before
-    assert by_name(run_doctor_checks(healthy, probe_mic=False, store=store))[
+    assert by_name(run_doctor_checks(healthy, store=store))[
         "secret files private"
     ].ok
 
@@ -806,7 +719,7 @@ def test_a_config_inside_a_git_work_tree_warns(healthy, tmp_path, monkeypatch):
     (tmp_path / "repo" / ".git").mkdir(parents=True)
     store = ConfigStore(tmp_path / "repo" / "jarvis-home")
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False, store=store))["outside git"]
+    check = by_name(run_doctor_checks(healthy, store=store))["outside git"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert str(tmp_path / "repo") in check.detail
@@ -819,7 +732,7 @@ def test_a_secret_written_into_config_toml_by_hand_warns(healthy):
     store = ConfigStore()
     write_private(store.config_path, dump_toml({"TWILIO_AUTH_TOKEN": "tok"}))
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False, store=store))["config.toml"]
+    check = by_name(run_doctor_checks(healthy, store=store))["config.toml"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "TWILIO_AUTH_TOKEN" in check.detail and "tok" not in check.detail
@@ -832,7 +745,7 @@ def test_a_protected_key_unlocked_by_hand_is_reported(healthy):
     store = ConfigStore()
     write_private(store.config_path, dump_toml({"service_writable": {"PORT": True}}))
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False, store=store))[
+    check = by_name(run_doctor_checks(healthy, store=store))[
         "protected settings"
     ]
 
@@ -844,7 +757,7 @@ def test_an_imported_env_left_behind_is_reported(healthy, tmp_path, monkeypatch)
     monkeypatch.setitem(Settings.model_config, "env_file", str(tmp_path / ".env"))
     (tmp_path / ".env.imported-2026-09-27").write_text("OPENAI_API_KEY=sk\n")
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False))["old .env"]
+    check = by_name(run_doctor_checks(healthy))["old .env"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert ".env.imported-2026-09-27" in check.detail
@@ -867,13 +780,13 @@ class FakeTwilio:
 
 
 def test_the_webhook_is_checked_only_when_a_client_is_given(healthy):
-    assert "Twilio webhook" not in by_name(run_doctor_checks(healthy, probe_mic=False))
+    assert "Twilio webhook" not in by_name(run_doctor_checks(healthy))
 
 
 def test_a_webhook_pointed_here_passes(healthy):
     twilio = FakeTwilio("https://jarvis.example.com/twilio/voice")
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False, twilio=twilio))["Twilio webhook"]
+    check = by_name(run_doctor_checks(healthy, twilio=twilio))["Twilio webhook"]
 
     assert check.ok is True
 
@@ -881,7 +794,7 @@ def test_a_webhook_pointed_here_passes(healthy):
 def test_a_webhook_pointed_elsewhere_is_a_warning_that_says_setup_fixes_it(healthy):
     twilio = FakeTwilio("https://old.example.com/voice")
 
-    check = by_name(run_doctor_checks(healthy, probe_mic=False, twilio=twilio))["Twilio webhook"]
+    check = by_name(run_doctor_checks(healthy, twilio=twilio))["Twilio webhook"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "old.example.com" in check.detail and "jarvis setup" in check.detail
@@ -889,7 +802,7 @@ def test_a_webhook_pointed_elsewhere_is_a_warning_that_says_setup_fixes_it(healt
 
 def test_twilio_down_is_a_warning_not_a_crash(healthy):
     check = by_name(
-        run_doctor_checks(healthy, probe_mic=False, twilio=FakeTwilio(fail=True))
+        run_doctor_checks(healthy, twilio=FakeTwilio(fail=True))
     )["Twilio webhook"]
 
     assert (check.ok, check.severity) == (False, "soft")
@@ -899,7 +812,7 @@ def test_a_number_not_on_the_account_is_a_failure(healthy):
     settings = healthy.model_copy(update={"twilio_number": "+15559999999"})
 
     check = by_name(
-        run_doctor_checks(settings, probe_mic=False, twilio=FakeTwilio("x"))
+        run_doctor_checks(settings, twilio=FakeTwilio("x"))
     )["Twilio webhook"]
 
     assert (check.ok, check.severity) == (False, "hard")
@@ -907,6 +820,6 @@ def test_a_number_not_on_the_account_is_a_failure(healthy):
 
 
 def test_every_check_has_a_section_and_a_state(healthy):
-    for check in run_doctor_checks(healthy, probe_mic=False):
+    for check in run_doctor_checks(healthy):
         assert check.section
         assert check.as_dict()["state"] in {"ok", "missing", "failed"}

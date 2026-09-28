@@ -199,66 +199,6 @@ class DrainingFakeTransport(FakeTransport):
         return True
 
 
-class FakeAudioDevice:
-    """The slice of `LocalAudioDevice` that `LocalRunner` and `LocalTransport` use."""
-
-    def __init__(self) -> None:
-        self.started = False
-        self.stops = 0
-        self.chimes = 0
-        self.played: list[bytes] = []
-        self.wake_sink = None
-        self.mic_sink = None
-        self.idle_waits: list[float] = []
-
-    def start(self) -> None:
-        self.started = True
-
-    def stop(self) -> None:
-        self.started = False
-        self.stops += 1
-
-    def set_wake_sink(self, sink) -> None:
-        self.wake_sink = sink
-
-    def set_mic_sink(self, sink) -> None:
-        self.mic_sink = sink
-
-    def chime(self) -> None:
-        self.chimes += 1
-
-    def play(self, data: bytes) -> None:
-        self.played.append(data)
-
-    def clear_playback(self) -> None:
-        self.played.clear()
-
-    async def wait_until_idle(self, timeout: float = 5.0, *, poll_s: float = 0.01) -> bool:
-        self.idle_waits.append(timeout)
-        return True
-
-    def wake(self, frame: bytes = b"wake") -> None:
-        """Deliver one wake-word frame the way the PortAudio callback would."""
-        assert self.wake_sink is not None, "no wake sink installed"
-        self.wake_sink(frame)
-
-
-class FakeWakeListener:
-    """A `WakeWordListener` stand-in: every frame equal to `wake_frame` is a detection."""
-
-    def __init__(self, wake_frame: bytes = b"wake") -> None:
-        self.wake_frame = wake_frame
-        self.frames: list[bytes] = []
-        self.resets = 0
-
-    def feed(self, frame: bytes) -> bool:
-        self.frames.append(frame)
-        return frame == self.wake_frame
-
-    def reset(self) -> None:
-        self.resets += 1
-
-
 class FakeVoiceSession:
     """The slice of `VoiceSession` the notifier and the session registry touch.
 

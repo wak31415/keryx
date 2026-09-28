@@ -342,8 +342,6 @@ def test_defaults_match_spec_table():
     assert settings.max_call_seconds == 1800
     assert settings.daily_task_cap == 50
     assert settings.max_phone_sessions == 2
-    assert settings.wakeword_model == "hey_jarvis"
-    assert settings.wakeword_threshold == 0.5
     assert settings.log_level == "INFO"
     assert settings.debug_skip_twilio_validation is False
     assert settings.fake_agents is False

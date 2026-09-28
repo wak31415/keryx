@@ -114,7 +114,7 @@ def run_wizard(ctx: SetupContext, *, review_all: bool = False) -> int:
         ui.outro("Run `jarvis migrate` first (`--dry-run` shows what it would move), then "
                  "`jarvis setup` again.")
         return 1
-    checks = run_doctor_checks(ctx.settings, probe_mic=False, store=ctx.store)
+    checks = run_doctor_checks(ctx.settings, store=ctx.store)
     found = statuses(ctx, checks)
     ui.table(
         ("", "Section", "Status"),
@@ -150,12 +150,13 @@ def run_wizard(ctx: SetupContext, *, review_all: bool = False) -> int:
 def summary(ctx: SetupContext) -> int:
     """The closing panel: what is still not right, and how to start Jarvis.
 
-    A machine with no phone at all runs `jarvis serve --no-phone`, so the phone's checks
-    stop nothing there and are not counted against it; half a phone is still counted.
+    A machine with no phone at all has left that section for later, so the phone's checks
+    are not counted against it — but the phone is the only way to talk to Jarvis, so the
+    closing line says that rather than how to start it. Half a phone is still counted.
     """
     ui = ctx.ui
     settings = ctx.refresh()
-    checks = run_doctor_checks(settings, probe_mic=False, store=ctx.store)
+    checks = run_doctor_checks(settings, store=ctx.store)
     phone = bool(
         settings.twilio_account_sid or settings.twilio_number or settings.public_host
     )
@@ -170,9 +171,12 @@ def summary(ctx: SetupContext) -> int:
     if hard:
         ui.outro(f"{len(hard)} thing(s) still stop Jarvis from starting — `jarvis setup` again.")
         return 1
-    start = "scripts/dev.sh" if phone else "uv run jarvis serve --no-phone"
     agent = BACKENDS[settings.agent_backend].label
-    ui.outro(f"Ready. Start Jarvis with `{start}`; {agent} will do the work.")
+    if not phone:
+        ui.outro(f"Everything but the phone is set up, and the phone is how you talk to "
+                 f"Jarvis: run `jarvis setup` again to set up calls; {agent} will do the work.")
+        return 0
+    ui.outro(f"Ready. Start Jarvis with `scripts/dev.sh`; {agent} will do the work.")
     return 0
 
 

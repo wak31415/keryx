@@ -23,10 +23,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS carries the wake-word channel (`sounddevice`, `openwakeword`,
-        # `onnxruntime` are `sys_platform == 'darwin'` dependencies); Linux runs the
-        # phone channel only. Both legs must stay green — the suite is meant to run on a
-        # machine with no microphone, and only the Linux leg proves that.
+        # Jarvis runs on both, and the service installers differ (systemd, launchd):
+        # both legs must stay green.
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

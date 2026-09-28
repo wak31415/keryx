@@ -251,7 +251,8 @@ def test_the_dev_loop_logs_the_tunnel_beside_the_services_logs(machine):
     logs = machine["home"] / ".local" / "state" / "jarvis" / "logs"
     assert (logs / "cloudflared.log").exists()
     assert not (machine["repo"] / ".cloudflared.log").exists()
-    assert "uv run jarvis serve --no-wakeword" in machine["calls"].read_text()
+    assert "uv run jarvis serve" in machine["calls"].read_text()
+    assert "--no-wakeword" not in machine["calls"].read_text()
 
 
 # --- the approval hook -----------------------------------------------------------

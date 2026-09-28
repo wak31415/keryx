@@ -1,7 +1,7 @@
 [project]
 name = "jarvis"
 version = "0.1.0"
-description = "Jarvis voice agent: Twilio phone + local wake word -> OpenAI Realtime -> Claude Agent SDK subagents"
+description = "Jarvis voice agent: Twilio phone -> OpenAI Realtime -> Claude Agent SDK subagents"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "Apache-2.0"
@@ -14,7 +14,6 @@ keywords = [
     "twilio",
     "openai-realtime",
     "claude-agent-sdk",
-    "wake-word",
     "speech-to-speech",
 ]
 classifiers = [
@@ -49,12 +48,6 @@ dependencies = [
     "pydantic-settings>=2.15.0,<3",
     "numpy>=2.5.2,<3",
     "soxr>=1.1.0,<2",
-    # The wake-word channel is macOS-only: openwakeword 0.6.0 requires tflite-runtime on
-    # Linux, whose newest release (2.14.0) has no cp312 wheel. A Linux host therefore runs
-    # the phone channel only (`jarvis serve --no-wakeword`); every import of these is lazy.
-    "sounddevice>=0.5.6,<1.0; sys_platform == 'darwin'",
-    "openwakeword>=0.6.0,<1.0; sys_platform == 'darwin'",
-    "onnxruntime>=1.29.0,<2; sys_platform == 'darwin'",
     "typer>=0.27.2,<1.0",
     # `jarvis setup`, the wizard a person walks: rich draws it, questionary asks (select,
     # checkbox, hidden input). Both are imported only by `jarvis.setup.ui`, and every test
@@ -93,7 +86,7 @@ Issues = "https://github.com/wak31415/jarvis-voice-agent/issues"
 jarvis = "jarvis.cli:app"
 
 [tool.uv]
-# macOS (phone + wake word) and Linux (phone only, see the wake-word note above).
+# macOS and Linux, the two platforms the service installers support.
 environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
 default-groups = ["dev", "agents"]
 
@@ -151,14 +144,6 @@ filterwarnings = ["error"]
 [tool.coverage.run]
 source = ["src/jarvis"]
 branch = true
-# Not measured, and each for a reason rather than to flatter the number:
-omit = [
-    # macOS-only, and guarded behind lazy imports precisely so the Linux suite can run
-    # without `sounddevice`/`openwakeword` installed at all. The macOS CI leg imports them;
-    # neither leg can drive a real microphone.
-    "src/jarvis/transports/local_audio.py",
-    "src/jarvis/wakeword.py",
-]
 
 [tool.coverage.report]
 show_missing = true

@@ -374,7 +374,6 @@ class RestartCoordinator:
         self,
         *,
         wait_ready: Callable[[], Awaitable[bool]] | None = None,
-        wakeword: bool = False,
     ) -> None:
         """Deliver the confirmation for a pending restart, if there is one. Never raises.
 
@@ -383,7 +382,7 @@ class RestartCoordinator:
         to, so the confirmation goes out as a text instead.
         """
         try:
-            await self._resume(wait_ready=wait_ready, wakeword=wakeword)
+            await self._resume(wait_ready=wait_ready)
         except Exception:
             log.exception("the restart call-back failed")
 
@@ -391,7 +390,6 @@ class RestartCoordinator:
         self,
         *,
         wait_ready: Callable[[], Awaitable[bool]] | None,
-        wakeword: bool,
     ) -> None:
         record = self._store.load()
         if record is None or record.state != "pending":
@@ -414,7 +412,7 @@ class RestartCoordinator:
         self._store.save(record)
 
         phone_up = bool(wait_ready and await wait_ready())
-        status = await self.status_summary(record, phone_up=phone_up, wakeword=wakeword)
+        status = await self.status_summary(record, phone_up=phone_up)
         log.info("restart confirmed: %s", status)
         await self._deliver(record, status, phone_up=phone_up)
 
@@ -423,7 +421,6 @@ class RestartCoordinator:
         record: RestartRecord,
         *,
         phone_up: bool,
-        wakeword: bool = False,
         now: datetime | None = None,
     ) -> str:
         """The one line the call-back leads with: did it work, and what is it running.
@@ -458,8 +455,7 @@ class RestartCoordinator:
                 "not have landed"
             )
 
-        channels = [name for name, up in (("phone", phone_up), ("wake word", wakeword)) if up]
-        parts.append(f"{' and '.join(channels)} listening" if channels else "no channel listening")
+        parts.append("phone listening" if phone_up else "no channel listening")
 
         interrupted, queued = await self._task_counts()
         if interrupted:

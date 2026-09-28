@@ -67,7 +67,7 @@ def test_a_first_run_walks_everything_and_a_second_asks_nothing(make_ctx, claude
     assert settings.owner_name == "Ada"
     assert settings.pin_source == "enrolled"
     [outro] = ctx.ui.lines("outro")
-    assert "uv run jarvis serve --no-phone" in outro
+    assert "the phone is how you talk to Jarvis" in outro
 
     again = make_ctx([("Everything is set up", "exit")])
     assert run_wizard(again) == 0
@@ -94,7 +94,7 @@ def test_a_section_that_failed_is_walked_even_after_it_was_walked(make_ctx, clau
     ConfigStore().mark_walked("agents")
     ctx = make_ctx([])
 
-    found = statuses(ctx, wizard.run_doctor_checks(ctx.settings, probe_mic=False))
+    found = statuses(ctx, wizard.run_doctor_checks(ctx.settings))
 
     assert found["agents"] == FAILED
     assert "agents" in [section.key for section in pending(ctx, found)]
@@ -114,7 +114,7 @@ def test_the_voice_key_is_asked_until_it_is_there(make_ctx, claude_signed_in):
     ConfigStore().mark_walked("voice")
     ctx = make_ctx([])
 
-    found = statuses(ctx, wizard.run_doctor_checks(ctx.settings, probe_mic=False))
+    found = statuses(ctx, wizard.run_doctor_checks(ctx.settings))
 
     assert found["voice"] == MISSING
     assert "voice" in [section.key for section in pending(ctx, found)]
