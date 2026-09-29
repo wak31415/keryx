@@ -16,6 +16,7 @@ from jarvis.events import EventBus
 from jarvis.session import (
     PIN_ENTRY_CANCELLED_MESSAGE,
     PIN_ENTRY_MESSAGE,
+    PIN_SHORT_MESSAGE,
     VoiceSession,
 )
 from jarvis.tools import ToolRegistry
@@ -334,3 +335,52 @@ async def test_the_model_is_told_the_keypad_changed_hands_and_asked_for_nothing(
 
     assert switched[0] == PIN_ENTRY_MESSAGE and switched[1] is False
     assert back[0] == PIN_ENTRY_CANCELLED_MESSAGE and back[1] is False
+
+
+async def test_a_short_entry_does_not_hand_the_keypad_back(phone, provider, keypad, tmp_path):
+    """Hash too early costs no attempt and leaves the keypad on the PIN, as a wrong one does."""
+    keypad.waiting = True
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("*"))
+        for digit in "42#":
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: any(text == PIN_SHORT_MESSAGE for text, *_ in provider.injected))
+        for digit in PIN:
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: session.authorized)
+
+    assert keypad.digits == []
+
+
+async def test_star_after_a_short_entry_still_hands_the_keypad_back(
+    phone, provider, keypad, tmp_path
+):
+    keypad.waiting = True
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("*"))
+        for digit in "42#":
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: any(text == PIN_SHORT_MESSAGE for text, *_ in provider.injected))
+        phone.feed(Dtmf("*"))
+        phone.feed(Dtmf("1"))
+        await eventually(lambda: keypad.digits)
+
+    assert keypad.digits == [(session.session_id, "1")]
+    assert session.authorized is False
+
+
+async def test_a_pin_said_in_groups_needs_no_star_while_a_menu_is_armed(
+    phone, provider, keypad, tmp_path
+):
+    """The spoken way through never touches the keypad, so the menu keeps every digit."""
+    keypad.waiting = True
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        assert await session.submit_pin("424-242") == {"status": "authorized"}
+        phone.feed(Dtmf("1"))
+        await eventually(lambda: keypad.digits)
+
+    assert keypad.digits == [(session.session_id, "1")]
+    assert session.trust is TrustLevel.FULL

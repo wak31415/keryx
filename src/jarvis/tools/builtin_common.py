@@ -85,6 +85,14 @@ PIN_INVALID_MESSAGE = (
     "many attempts are left. Never repeat a digit back, and do not explain why a phone "
     "line mishears digits — they know."
 )
+#: A spoken PIN that was not six to eight digits even once read back to them: the line cut
+#: it off, or the model heard a word in it. Not a wrong PIN and not counted, so nothing in
+#: the sentence may sound like one.
+PIN_INCOMPLETE_MESSAGE = (
+    "That was not a whole PIN, so it was not checked and cost no attempt. Ask them in one "
+    "short sentence to say all of it again, digit by digit, or to key it in. Do not call "
+    "it wrong, do not mention attempts, and never repeat a digit back."
+)
 PIN_LOCKED_MESSAGE = (
     "Too many wrong attempts and the call is ending. Say one short goodbye and nothing "
     "else; you have already been told this, so do not say it twice."

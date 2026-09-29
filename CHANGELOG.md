@@ -267,6 +267,14 @@ surface — a removed or renamed setting or command is a major bump.
   calls an earlier answer stopped, and the audit log gains `waited_s` and `escalation` on
   `settled`, plus `resolve_unmatched` and `resolve_fallback` lines. It needs a restart and
   no change to the installed hook.
+- A spoken PIN said the way people say one was refused. `submit_pin` compared the
+  model's argument to the PIN character for character, so the right PIN written down
+  grouped ("424-242", "424 242") or in words was refused, and each refusal counted against
+  the PIN lockout; the keypad, which only ever sends bare digits, was unaffected. Spaces,
+  dashes, commas, stops and digit words are now read back to the digits first
+  (`config.spoken_digits`), and an entry that is not six to eight digits even then — half a
+  PIN the line clipped, hash pressed too early on the keypad — is `incomplete`: not compared, and not
+  counted on the call or across calls, since it cannot be the PIN.
 - `jarvis doctor` died with a pydantic traceback when `JARVIS_PIN` was set to something
   that is not 6–8 digits — the one state it exists to explain, since `jarvis serve` will
   not load at all. The fallback it has for that matched the field name and never the

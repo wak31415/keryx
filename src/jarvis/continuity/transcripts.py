@@ -20,6 +20,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+from jarvis.config.pin import BETWEEN_DIGITS, DIGIT_WORDS
 from jarvis.logging_util import mask_number
 
 #: The transcripts' directory under `data_dir`.
@@ -38,22 +39,6 @@ _UNAUTHORIZED_FLAG = " authorized=no"
 
 #: What a PIN is written down as, wherever it was said.
 PIN_REDACTED = "[PIN]"
-#: Each digit as transcription may render it: the numeral, or the word ("oh" and a bare "o"
-#: for zero too, which is how a phone number is read out).
-_DIGIT_WORDS = {
-    "0": ("zero", "oh", "o", "nought"),
-    "1": ("one",),
-    "2": ("two",),
-    "3": ("three",),
-    "4": ("four",),
-    "5": ("five",),
-    "6": ("six",),
-    "7": ("seven",),
-    "8": ("eight",),
-    "9": ("nine",),
-}
-#: What may sit between two digits of a PIN said or typed: spaces, commas, dashes, stops.
-_BETWEEN_DIGITS = r"[\s,.\-]*"
 
 
 @lru_cache(maxsize=4)
@@ -63,8 +48,8 @@ def _pin_pattern(pin: str) -> re.Pattern[str]:
     Not anchored to digit boundaries on purpose: the PIN inside a longer run is still
     redacted, because the other direction lets a stray digit smuggle the rest out.
     """
-    digits = (rf"(?:{digit}|\b(?:{'|'.join(_DIGIT_WORDS[digit])})\b)" for digit in pin)
-    return re.compile(_BETWEEN_DIGITS.join(digits), re.IGNORECASE)
+    digits = (rf"(?:{digit}|\b(?:{'|'.join(DIGIT_WORDS[digit])})\b)" for digit in pin)
+    return re.compile(BETWEEN_DIGITS.join(digits), re.IGNORECASE)
 
 
 def redact_pin(text: str, pin: str | None) -> str:

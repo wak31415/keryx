@@ -301,7 +301,11 @@ from there `JARVIS_PIN` is the only thing between them and a subagent with your 
 section is what stands behind that PIN and what it costs you.
 
 **Per call.** Three wrong PINs, spoken or keyed, end the call, and a call that has locked
-takes no further PIN — not even the right one.
+takes no further PIN — not even the right one. A spoken PIN is read back to its digits
+before it is compared (a dash, a space or a word between them is how people say one, not
+a different PIN), and anything that is not six to eight digits even then — half a PIN the
+line clipped, a hash pressed too early — is refused without being compared and counted
+nowhere, here or below. It cannot be the PIN, so it is no guess at it.
 
 **Across calls.** A per-call limit alone was worth little: three guesses a call is roughly
 167,000 calls for a 6-digit PIN, about a day and a half at twenty in parallel. So every wrong

@@ -85,6 +85,7 @@ def test_a_call_back_never_carries_a_pin_an_older_transcript_still_holds(tmp_pat
         "1 2 3 4 5 6",
         "12 34 56",
         "123-456",
+        "123\u2013456",
         "1, 2, 3, 4, 5, 6",
         "1. 2. 3. 4. 5. 6",
         "one two three four five six",
