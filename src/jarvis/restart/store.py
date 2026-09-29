@@ -55,6 +55,11 @@ class RestartRecord:
     #: How the out-of-process watchdog was started, or why it was not — the only thing that
     #: notices a service that never came back at all. See `jarvis.restart.watchdog`.
     watchdog: str = ""
+    #: `jarvis restart --no-callback`: nobody is waiting to be told, so coming back up is
+    #: the whole of it — confirmed in the log and cleared, never a call, a text or a
+    #: `failed` record. Not the same as having no `number`: a restart asked for on the
+    #: local channel has none either, and is still announced.
+    quiet: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> "RestartRecord":

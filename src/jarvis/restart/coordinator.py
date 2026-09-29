@@ -431,6 +431,9 @@ class RestartCoordinator:
         phone_up = bool(wait_ready and await wait_ready())
         status = await self.status_summary(record, phone_up=phone_up)
         log.info("restart confirmed: %s", status)
+        if record.quiet:
+            self._store.clear()
+            return
         await self._deliver(record, status, phone_up=phone_up)
 
     async def status_summary(

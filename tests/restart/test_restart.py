@@ -1151,6 +1151,29 @@ async def test_a_confirmation_that_cannot_be_delivered_at_all_is_kept(harness):
     assert "could not confirm the restart" in record.error
 
 
+async def test_a_quiet_restart_is_confirmed_in_the_log_and_cleared(harness, caplog):
+    """`--no-callback`: nobody asked to be told, so a restart that worked is not `failed`."""
+    harness.store.save(pending(number=None, quiet=True))
+
+    with caplog.at_level("INFO", logger="jarvis.restart"):
+        await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert harness.record() is None
+    assert harness.twilio.calls == [] and harness.twilio.sms == []
+    assert "restart confirmed" in caplog.text
+
+
+async def test_a_quiet_restart_is_not_announced_into_a_live_call(harness):
+    session = FakeVoiceSession(channel="phone")
+    harness.sessions.add(session)
+    harness.store.save(pending(number=None, quiet=True))
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert session.announced == []
+    assert harness.record() is None
+
+
 async def test_a_failed_record_is_not_retried(harness):
     harness.store.save(pending(state="failed", error="whatever"))
 
