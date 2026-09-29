@@ -203,6 +203,75 @@ async def test_count_created_since_converts_non_utc_to_utc(store):
     assert count == 1
 
 
+# --- usage_by_project ------------------------------------------------------
+
+
+async def test_usage_is_summed_per_project_most_expensive_first(store):
+    await store.create(_task(project="orchard", input_tokens=100, output_tokens=10, cost_usd=0.5))
+    await store.create(_task(project="orchard", input_tokens=50, output_tokens=5, cost_usd=0.25))
+    await store.create(_task(project="beehive", input_tokens=900, output_tokens=90, cost_usd=2.0))
+
+    groups = await store.usage_by_project()
+
+    assert [(g.project, g.tasks, g.input_tokens, g.output_tokens, g.cost_usd) for g in groups] == [
+        ("beehive", 1, 900, 90, 2.0),
+        ("orchard", 2, 150, 15, 0.75),
+    ]
+
+
+async def test_usage_keeps_unnamed_work_apart_from_housekeeping(store):
+    await store.create(_task(cost_usd=1.0, input_tokens=10, output_tokens=1))
+    # Housekeeping is housekeeping whatever it named: it is not the project's work.
+    await store.create(_task(internal=True, project="orchard", cost_usd=0.5))
+
+    groups = await store.usage_by_project()
+
+    assert [(g.project, g.internal, g.tasks) for g in groups] == [
+        (None, False, 1),
+        (None, True, 1),
+    ]
+
+
+async def test_usage_never_turns_unknown_into_zero(store):
+    await store.create(_task(project="orchard"))  # from before tasks recorded their spend
+    await store.create(_task(project="orchard", input_tokens=40, output_tokens=4))  # Codex
+    await store.create(_task(project="beehive"))
+
+    groups = {g.project: g for g in await store.usage_by_project()}
+
+    assert groups["orchard"].tasks == 2
+    assert groups["orchard"].measured == 1
+    assert groups["orchard"].priced == 0
+    assert groups["orchard"].cost_usd is None
+    assert groups["beehive"].input_tokens == 0 and groups["beehive"].measured == 0
+
+
+async def test_an_unpriced_group_sorts_after_every_priced_one(store):
+    for _ in range(3):
+        await store.create(_task(project="busy"))
+    await store.create(_task(project="cheap", cost_usd=0.01))
+
+    groups = await store.usage_by_project()
+
+    assert [g.project for g in groups] == ["cheap", "busy"]
+
+
+async def test_usage_counts_only_tasks_created_since(store):
+    now = datetime.now(UTC)
+    await store.create(_task(project="orchard", cost_usd=5.0, created_at=now - timedelta(days=40)))
+    await store.create(_task(project="orchard", cost_usd=1.0, created_at=now - timedelta(days=1)))
+
+    recent = await store.usage_by_project(since=now - timedelta(days=30))
+    ever = await store.usage_by_project()
+
+    assert [(g.tasks, g.cost_usd) for g in recent] == [(1, 1.0)]
+    assert [(g.tasks, g.cost_usd) for g in ever] == [(2, 6.0)]
+
+
+async def test_usage_of_an_empty_store_is_empty(store):
+    assert await store.usage_by_project() == []
+
+
 # --- close -----------------------------------------------------------------
 
 

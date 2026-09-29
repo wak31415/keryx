@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 
 from jarvis.tasks import models
-from jarvis.tasks.models import Task, TaskKind, TaskStatus
+from jarvis.tasks.models import ProjectUsage, Task, TaskKind, TaskStatus
 
 # --- enums -------------------------------------------------------------
 
@@ -251,3 +251,37 @@ def test_short_status_line_does_not_truncate_at_exactly_80_chars():
 
     assert line == f"task 1 (queued): {'x' * 80}"
     assert "…" not in line
+
+
+def _usage(project, *, internal=False, cost=None, tasks=1) -> ProjectUsage:
+    return ProjectUsage(
+        project=project,
+        internal=internal,
+        tasks=tasks,
+        measured=tasks,
+        priced=tasks if cost is not None else 0,
+        input_tokens=100 * tasks,
+        output_tokens=10 * tasks,
+        cost_usd=cost,
+    )
+
+
+def test_project_usage_adds_up_to_a_total():
+    total = _usage("orchard", cost=1.5, tasks=2) + _usage(None, internal=True, cost=0.25)
+
+    assert total == ProjectUsage(
+        project=None,
+        internal=False,
+        tasks=3,
+        measured=3,
+        priced=3,
+        input_tokens=300,
+        output_tokens=30,
+        cost_usd=1.75,
+    )
+
+
+def test_project_usage_total_keeps_a_price_nobody_reported_unknown():
+    assert (_usage("orchard") + _usage("beehive")).cost_usd is None
+    assert (_usage("orchard") + _usage("beehive", cost=0.5)).cost_usd == 0.5
+    assert (_usage("orchard") + _usage("orchard")).project == "orchard"

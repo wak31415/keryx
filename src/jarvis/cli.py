@@ -12,8 +12,9 @@ import shlex
 import signal
 import subprocess
 import sys
+import textwrap
 from collections.abc import AsyncIterator, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
@@ -75,7 +76,7 @@ from jarvis.setup.sections import repo_root
 from jarvis.setup.ui import Aborted
 from jarvis.setup.wizard import agent_instructions, run_wizard
 from jarvis.tasks.manager import install_default_executor
-from jarvis.tasks.models import Task, TaskStatus
+from jarvis.tasks.models import ProjectUsage, Task, TaskStatus
 from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolRegistry
 from jarvis.tools.builtin import BUILTIN_TOOL_NAMES
@@ -713,6 +714,77 @@ def tasks_show(task_id: Annotated[int, typer.Argument(help="The task id to show.
 
     if task.report_path:
         _echo_report(Path(task.report_path))
+
+
+#: What `tasks usage` calls the two groups that carry no project name of their own.
+NO_PROJECT_LABEL = "(no project)"
+HOUSEKEEPING_LABEL = "(housekeeping)"
+#: Printed under the table, because every column in it is easy to over-read.
+USAGE_FOOTNOTE = (
+    "Attributed by the project each task was dispatched with; \"(no project)\" is work "
+    "started in the projects folder, which may still have touched one. COST is what the "
+    "agent reported: Claude's list-price estimate, which a subscription login is not "
+    "billed per token, and nothing for Codex. PRICED counts the tasks that reported one. "
+    "Voice calls are not tasks and are not here; check_billing has the provider's total."
+)
+
+
+async def _read_usage(settings: Settings, since: datetime | None) -> list[ProjectUsage]:
+    async with _open_store(settings) as store:
+        return await store.usage_by_project(since=since)
+
+
+def _usage_label(usage: ProjectUsage) -> str:
+    if usage.internal:
+        return HOUSEKEEPING_LABEL
+    return usage.project or NO_PROJECT_LABEL
+
+
+def _usage_line(label: str, usage: ProjectUsage) -> str:
+    cost = "-" if usage.cost_usd is None else f"${usage.cost_usd:,.2f}"
+    tokens = usage.measured > 0
+    return (
+        f"{_shorten(label, 28):<28}  {usage.tasks:>5}  {f'{usage.priced}/{usage.tasks}':>7}  "
+        f"{f'{usage.input_tokens:,}' if tokens else '-':>13}  "
+        f"{f'{usage.output_tokens:,}' if tokens else '-':>11}  {cost:>9}"
+    )
+
+
+@tasks_app.command("usage")
+def tasks_usage(
+    days: Annotated[
+        int,
+        typer.Option("--days", min=0, help="Tasks created in the last N days; 0 for all of them."),
+    ] = 30,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+) -> None:
+    """What the tasks spent, per project: tokens and the agents' own cost estimates."""
+    settings = _configure_readonly()
+    since = datetime.now(UTC) - timedelta(days=days) if days else None
+    groups = asyncio.run(_read_usage(settings, since))
+    if as_json:
+        typer.echo(json.dumps({
+            "since": since.isoformat() if since else None,
+            "projects": [
+                {"label": _usage_label(usage), **dataclasses.asdict(usage)} for usage in groups
+            ],
+        }, indent=2))
+        return
+    window = f"in the last {days} day{'s' if days != 1 else ''}" if days else "ever"
+    if not groups:
+        typer.echo(f"no tasks created {window}")
+        return
+
+    typer.echo(f"Tasks created {window}, by project:\n")
+    typer.echo(
+        f"{'PROJECT':<28}  {'TASKS':>5}  {'PRICED':>7}  {'INPUT TOK':>13}  "
+        f"{'OUTPUT TOK':>11}  {'COST':>9}"
+    )
+    for usage in groups:
+        typer.echo(_usage_line(_usage_label(usage), usage))
+    typer.echo(_usage_line("total", sum(groups[1:], groups[0])))
+    typer.echo("")
+    typer.echo(textwrap.fill(USAGE_FOOTNOTE, width=88))
 
 
 def _echo_report(path: Path) -> None:

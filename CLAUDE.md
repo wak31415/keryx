@@ -33,6 +33,9 @@ of `main`.
   the kill switch); install the Claude hook with `scripts/install-claude-hook.sh`
 - Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N] [--internal]`,
   `uv run jarvis tasks show <id>` (the `TOLD` column is `NO` until Jarvis has said it)
+- What the tasks spent, per project: `uv run jarvis tasks usage [--days N] [--json]` (by the
+  project each was dispatched with; the dollars are the agents' own estimates, and the
+  voice calls are not tasks)
 - Read what Jarvis remembers between calls: `uv run jarvis memory` (`--path` for the file)
 - The plugins (Slack, email, billing, cluster stats): `uv run jarvis plugins [list] [--json]`,
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
