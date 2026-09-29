@@ -200,6 +200,25 @@ def test_inside_a_task_set_is_the_service_and_lock_is_refused(home, monkeypatch)
     assert "PUBLIC_HOST" not in home.stored()
 
 
+@pytest.mark.parametrize(("key", "value"), [("ISSUE_REPORTING", "true"),
+                                            ("ISSUE_REPO", "someone/else")])
+def test_jarvis_cannot_turn_issue_reports_on_or_point_them_elsewhere(home, monkeypatch, key,
+                                                                    value):
+    """An issue is public: the owner turns it on by hand, and nothing unlocks it for Jarvis."""
+    unlocking = run("config", "unlock", key)
+    monkeypatch.setenv("JARVIS_ACTOR", "service")
+    refused = run("config", "set", key, value)
+
+    assert unlocking.exit_code == 1 and "protected" in unlocking.output
+    assert refused.exit_code == 1 and "protected" in refused.output
+    assert key not in home.stored()
+
+
+def test_the_owner_turns_issue_reports_on_by_hand(home):
+    assert run("config", "set", "ISSUE_REPORTING", "true").exit_code == 0
+    assert home.stored()["ISSUE_REPORTING"] is True
+
+
 def test_path_names_every_directory(home):
     output = run("config", "path").output
 

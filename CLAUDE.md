@@ -325,8 +325,8 @@ ignored where it is left, named by `doctor`, and moved by `jarvis plugins instal
   the voice model's `set_config` (behind `pin_gate`), or any subagent, since `jarvis serve`
   sets `JARVIS_ACTOR=service` for everything it starts — may write only a service-writable
   key: the field's default, overridden by `jarvis config lock|unlock` under
-  `[service_writable]`. `PROTECTED_KEYS` (every secret, the PIN, trust, approvals, spending,
-  deletion, the network, the debug switches) can never be unlocked, and a hand edit that
+  `[service_writable]`. `PROTECTED_KEYS` (every secret, the PIN, trust, approvals, publishing
+  issues, spending, deletion, the network, the debug switches) can never be unlocked, and a hand edit that
   tries is ignored and reported by `doctor`. The service may tune a limit in
   `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
   against the whole store, so nothing it saves can stop `jarvis serve` from starting. The
@@ -537,7 +537,10 @@ subagent at `skills/jarvis-report-issue`, read from that checkout. The voice pro
 paragraph names feature requests as well as bugs, because a model left to itself files the
 bug and hears the wish as chat. Four rulings:
 
-- **Off until the owner says yes** (`ISSUE_REPORTING`), because it publishes. The wizard's
+- **Off until the owner turns it on by hand**, because it publishes. `ISSUE_*` is in
+  `PROTECTED_KEYS`: neither the service nor a subagent may set `ISSUE_REPORTING` or
+  `ISSUE_REPO`, nothing unlocks them, and the setup agent hands the question to
+  `jarvis setup` rather than answering it. The wizard's
   Issue reports section counts as left until it has been walked, whatever `doctor` says —
   off passes `doctor` — and it checks `gh` (`issues.gh_status`, a `Probes` field) and offers
   `gh auth login` on the terminal. Nothing else in Jarvis signs `gh` in.

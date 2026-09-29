@@ -580,7 +580,7 @@ class Settings(BaseSettings):
     issue_reporting: bool = setting(
         False,
         "Whether a bug or a feature request for Jarvis, said on a call, may be filed as a "
-        "GitHub issue by a subagent, with `gh`. `jarvis setup` asks.",
+        "GitHub issue by a subagent, with `gh`. `jarvis setup` asks; only you can turn it on.",
         group="projects",
     )
     issue_repo: str = setting(
