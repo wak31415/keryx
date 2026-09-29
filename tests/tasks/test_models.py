@@ -40,7 +40,7 @@ def test_task_positional_construction_with_defaults():
     assert task.status == TaskStatus.QUEUED
     assert task.project is None
     assert task.cwd is None
-    assert task.model == "claude-opus-5"
+    assert task.model == "claude-opus-5-5"
     assert task.claude_session_id is None
     assert task.summary is None
     assert task.report_path is None

@@ -115,11 +115,11 @@ class FakeSdkClient:
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("opus", "claude-opus-5"),
-        ("sonnet", "claude-sonnet-5"),
-        ("fable", "claude-fable-5"),
+        ("opus", "claude-opus-5-5"),
+        ("sonnet", "claude-sonnet-5-5"),
+        ("fable", "claude-fable-5-1"),
         ("haiku", "claude-haiku-4-5-20251001"),
-        (" Opus ", "claude-opus-5"),
+        (" Opus ", "claude-opus-5-5"),
         ("claude-3-5-haiku-20241022", "claude-3-5-haiku-20241022"),
     ],
 )
@@ -145,7 +145,7 @@ def test_build_options_sets_the_shared_agent_configuration(settings):
     assert options.setting_sources == ["user", "project"]
     assert options.max_turns == 42
     assert options.max_budget_usd == 2.5
-    assert options.model == "claude-opus-5"
+    assert options.model == "claude-opus-5-5"
     assert options.resume is None
     assert options.include_partial_messages is False
 
@@ -237,7 +237,7 @@ def test_build_options_prefers_the_api_key_over_the_oauth_token(settings):
 def test_build_options_resolves_the_task_model(settings):
     options = build_options(make_task(model="sonnet"), settings)
 
-    assert options.model == "claude-sonnet-5"
+    assert options.model == "claude-sonnet-5-5"
 
 
 def test_build_options_never_restricts_the_built_in_tools(settings):

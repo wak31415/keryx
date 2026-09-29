@@ -365,7 +365,7 @@ class Settings(BaseSettings):
         repr=False,
     )
     subagent_model: str = setting(
-        "claude-opus-5", "The model a Claude task runs on when none is named.",
+        "claude-opus-5-5", "The model a Claude task runs on when none is named.",
         group="agents", service_writable=True,
     )
     subagent_max_turns: int = setting(

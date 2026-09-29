@@ -54,9 +54,9 @@ log = logging.getLogger("jarvis.agents.claude")
 
 #: The model names that can be said out loud, and the Claude ids they mean.
 CLAUDE_MODELS = {
-    "opus": "claude-opus-5",
-    "sonnet": "claude-sonnet-5",
-    "fable": "claude-fable-5",
+    "opus": "claude-opus-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "fable": "claude-fable-5-1",
     "haiku": "claude-haiku-4-5-20251001",
 }
 

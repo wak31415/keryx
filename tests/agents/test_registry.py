@@ -25,7 +25,7 @@ from jarvis.agents.router import RoutingAgentRunner
 
 @pytest.mark.parametrize(
     ("name", "expected"),
-    [("opus", "claude-opus-5"), (" Sonnet ", "claude-sonnet-5"), ("claude-x-1", "claude-x-1")],
+    [("opus", "claude-opus-5-5"), (" Sonnet ", "claude-sonnet-5-5"), ("claude-x-1", "claude-x-1")],
 )
 def test_a_claude_alias_resolves_and_an_id_passes_through(settings, name, expected):
     assert resolve_model("claude", name, settings) == expected
