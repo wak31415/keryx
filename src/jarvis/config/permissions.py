@@ -63,7 +63,6 @@ PROTECTED_PATTERNS = (
     "STATE_DIR",
     "CACHE_DIR",
     "SERVICE_*",
-    "CLUSTER*",
     "SKILLS_DIR",
     # Development switches, every one of which turns a check off.
     "DEBUG_*",

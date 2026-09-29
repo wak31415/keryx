@@ -592,7 +592,6 @@ class VoiceSession:
                 opening_context=self._opening_context,
                 pending=self._briefing.pending,
                 memory=self._briefing.memory,
-                tool_names={schema["name"] for schema in schemas},
                 agents=_dispatch_agents(schemas),
             ),
             tools=schemas,

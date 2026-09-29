@@ -15,16 +15,16 @@ import subprocess
 
 import pytest
 
-from jarvis.config import Settings
 from jarvis.integrations.cluster import (
     MARK,
     READ_ONLY,
     ClusterError,
     ClusterSpec,
+    ControlMasterSsh,
     GuardedSsh,
     SlurmClusterStats,
-    build_cluster_stats,
     build_script,
+    cluster_specs,
     gpu_count,
     parse_duration,
     parse_my_jobs,
@@ -437,54 +437,107 @@ def test_every_failure_has_a_sentence_to_say():
         assert ClusterError(code).spoken
 
 
-# --- configuration ----------------------------------------------------------
+# --- the built-in guard ------------------------------------------------------
 #
-# Which clusters exist is one person's setup, so it is configuration with an empty default,
-# and a tool that could only ever answer "not set up" is not offered at all.
+# What nobody has to write: `ssh -O check` on the local socket before anything, and a read
+# over the live master with nothing that could prompt. Nothing here spawns a real ssh.
 
 
-def cluster_settings(tmp_path, **overrides) -> Settings:
-    return Settings(
-        _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", **overrides
-    )
+def scripted_ssh(monkeypatch, *answers):
+    """Stand in for `subprocess.run` with one `(returncode, stdout)` per call, in order."""
+    calls: list[list[str]] = []
+    queue = list(answers)
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        answer = queue.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        code, out = answer
+        return subprocess.CompletedProcess(argv, code, out, "")
+
+    monkeypatch.setattr("jarvis.integrations.cluster.subprocess.run", run)
+    return calls
 
 
-def test_nothing_is_configured_out_of_the_box(tmp_path):
-    """A fresh clone knows no clusters and no guard, and so builds no querier."""
-    settings = cluster_settings(tmp_path)
+async def test_a_dead_master_is_auth_expired_and_no_second_ssh_runs(monkeypatch):
+    """The check touches the local socket only; with no master, nothing dials out."""
+    calls = scripted_ssh(monkeypatch, (255, ""))
 
-    assert settings.clusters == {}
-    assert settings.cluster_ssh_guard is None
-    assert build_cluster_stats(settings) is None
+    with pytest.raises(ClusterError) as caught:
+        await ControlMasterSsh().run("alpha", "sinfo")
 
-
-def test_clusters_without_a_guard_build_nothing(tmp_path):
-    settings = cluster_settings(tmp_path, clusters={"alpha": "shared"})
-
-    assert build_cluster_stats(settings) is None
+    assert caught.value.code == "auth_expired"
+    assert calls == [["ssh", "-O", "check", "alpha"]]
 
 
-def test_a_guard_that_is_not_on_disk_builds_nothing(tmp_path):
-    settings = cluster_settings(
-        tmp_path, clusters={"alpha": "shared"}, cluster_ssh_guard=tmp_path / "missing.sh"
-    )
+async def test_a_live_master_runs_the_read_in_batch_mode(monkeypatch):
+    calls = scripted_ssh(monkeypatch, (0, ""), (0, "out"))
 
-    assert build_cluster_stats(settings) is None
+    assert await ControlMasterSsh().run("alpha", "sinfo -N") == "out"
 
-
-def test_a_guard_with_no_clusters_builds_nothing(tmp_path, guard):
-    settings = cluster_settings(tmp_path, cluster_ssh_guard=guard)
-
-    assert build_cluster_stats(settings) is None
+    assert calls[1] == [
+        "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "alpha", "sinfo -N"
+    ]
 
 
-def test_a_guard_and_clusters_build_a_querier_for_exactly_those(tmp_path, guard):
-    settings = cluster_settings(
-        tmp_path, clusters={"alpha": "shared", "beta": "gpu"}, cluster_ssh_guard=guard
-    )
+async def test_a_master_that_died_during_the_read_is_auth_expired(monkeypatch):
+    calls = scripted_ssh(monkeypatch, (0, ""), (255, ""), (255, ""))
 
-    querier = build_cluster_stats(settings)
+    with pytest.raises(ClusterError) as caught:
+        await ControlMasterSsh().run("alpha", "sinfo")
 
-    assert querier is not None
+    assert caught.value.code == "auth_expired"
+    assert len(calls) == 3
+
+
+async def test_a_failed_read_over_a_live_master_is_unavailable(monkeypatch):
+    scripted_ssh(monkeypatch, (0, ""), (1, ""), (0, ""))
+
+    with pytest.raises(ClusterError) as caught:
+        await ControlMasterSsh().run("alpha", "sinfo")
+
+    assert caught.value.code == "unavailable"
+
+
+async def test_a_read_that_hangs_is_a_timeout(monkeypatch):
+    scripted_ssh(monkeypatch, (0, ""), subprocess.TimeoutExpired("ssh", 20))
+
+    with pytest.raises(ClusterError) as caught:
+        await ControlMasterSsh(timeout_s=20).run("alpha", "sinfo")
+
+    assert caught.value.code == "timeout"
+
+
+async def test_no_ssh_at_all_is_not_configured(monkeypatch):
+    scripted_ssh(monkeypatch, (0, ""), FileNotFoundError("ssh"))
+
+    with pytest.raises(ClusterError) as caught:
+        await ControlMasterSsh().run("alpha", "sinfo")
+
+    assert caught.value.code == "not_configured"
+
+
+async def test_a_check_that_cannot_run_is_a_dead_master(monkeypatch):
+    scripted_ssh(monkeypatch, FileNotFoundError("ssh"))
+
+    assert await ControlMasterSsh().master_alive("alpha") is False
+
+
+async def test_the_built_in_guard_refuses_a_host_that_is_not_a_bare_word(monkeypatch):
+    calls = scripted_ssh(monkeypatch)
+
+    with pytest.raises(ClusterError) as caught:
+        await ControlMasterSsh().run("alpha; rm -rf /", "sinfo")
+
+    assert caught.value.code == "unknown_cluster"
+    assert calls == []
+
+
+def test_the_configured_names_are_the_whole_of_what_can_be_asked():
+    specs = cluster_specs({"alpha": "shared", "beta": "gpu"})
+
+    querier = SlurmClusterStats(ControlMasterSsh(), specs)
+
     assert querier.known() == ["alpha", "beta"]
     assert querier.resolve("Beta") == ClusterSpec("beta", "beta", "gpu", "Beta")

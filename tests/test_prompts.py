@@ -312,37 +312,24 @@ def test_the_digest_is_not_part_of_what_is_held_back(owners_world, trust):
 # quietly starts messaging them again. These pin the rule to the prompt text instead.
 
 
-def test_voice_prompt_makes_slack_something_they_have_to_ask_for(unwrapped):
-    text = unwrapped(load_prompt("voice_system.md"))
-
-    assert "they have to ask for it first" in text
-    assert "Never send unasked" in text
-
-
 def test_voice_prompt_does_not_send_search_results_unasked(unwrapped):
     """The web_search branch used to end with 'send_to_slack it as well'."""
     text = unwrapped(load_prompt("voice_system.md"))
 
     assert "send_to_slack it as well" not in text
-    assert "do not put it on Slack unless they asked for it in writing" in text
+    assert "do not send it anywhere in writing unless they asked for that" in text
 
 
-def test_voice_prompt_offers_slack_rather_than_sending_it(unwrapped):
-    """The escape hatch for something unspeakable is an offer, not a send."""
-    text = unwrapped(load_prompt("voice_system.md"))
+def test_the_prompt_names_no_plugin_because_each_describes_itself(settings, unwrapped):
+    """A plugin is on some machines and not others; the prompt describing one that is not
+    there invites a call to a tool that does not exist. Their descriptions carry it all."""
+    from jarvis.plugins import PLUGINS
 
-    assert "send it only once they say yes" in text
-    assert "never volunteer a written copy of something you have already said" in text
+    text = unwrapped(_rendered(settings))
 
-
-def test_voice_prompt_sends_what_it_just_said_when_that_is_what_they_ask_for(unwrapped):
-    """The unasked-copy ban once read as a ban on asked-for copies too, and "Slack me that"
-    went to a subagent. Asked for, the copy is sent here, with the tool, by the voice."""
-    text = unwrapped(load_prompt("voice_system.md"))
-
-    assert "when they ask for what you just said in writing, that is exactly what to send" in text
-    assert "call send_to_slack yourself" in text
-    assert '"Slack me that"' in text
+    assert not [name for name in PLUGINS if name in text]
+    assert "that description is all there is" in text
+    assert "{" not in text and "}" not in text
 
 
 def test_voice_prompt_does_not_promise_slack_as_a_delivery_route(settings, unwrapped):
@@ -432,19 +419,6 @@ def test_the_prompt_sends_questions_about_the_past_to_recall(unwrapped):
 
     assert "recall searches what was said in earlier calls" in flat
     assert "if it comes back empty, say you have nothing on it rather than guessing" in flat
-
-
-def test_the_cluster_paragraph_is_only_there_when_the_tool_is(settings):
-    """A machine with no clusters configured has no `cluster_stats`; describing one anyway is
-    an invitation to call a tool that does not exist."""
-    without = _rendered(settings)
-    other_tools = _rendered(settings, tool_names=["web_search", "dispatch_task"])
-    with_it = _rendered(settings, tool_names=["web_search", "cluster_stats"])
-
-    assert "cluster_stats" not in without
-    assert "cluster_stats" not in other_tools
-    assert "- cluster_stats is what" in with_it
-    assert "{" not in with_it and "}" not in with_it
 
 
 def test_the_memorys_own_headings_are_nested_under_the_section(settings):
@@ -584,19 +558,6 @@ def test_the_clock_carries_the_time_zone(settings):
     time_line = next(line for line in _rendered(settings).splitlines() if "- Time:" in line)
 
     assert zone and time_line.endswith(f" {zone}")
-
-
-def test_the_cluster_is_only_a_slow_thing_when_there_is_a_cluster_tool(settings, unwrapped):
-    """Naming the cluster as a wait, or as PIN-free, invites a call to a tool that is not
-    there."""
-    without = unwrapped(_rendered(settings))
-    with_it = unwrapped(_rendered(settings, tool_names=["cluster_stats"]))
-
-    assert "the cluster" not in without
-    assert "a dispatch, a search, the bill" in without
-    assert "the bill, a web search and hanging up" in without
-    assert "a dispatch, a search, the cluster, the bill" in with_it
-    assert "the bill, the cluster, a web search and hanging up" in with_it
 
 
 def test_without_texting_the_prompt_promises_no_text(settings, unwrapped):
@@ -865,12 +826,3 @@ def test_the_skills_of_every_enabled_agent_are_listed(settings, tmp_path, monkey
     assert "mermaid: Does mermaid." in both and "review: Does review." in both
 
 
-def test_the_email_paragraph_is_only_there_when_the_tool_is(settings):
-    without = render_voice_prompt(settings, channel="phone", caller=None, skills=[])
-    with_it = render_voice_prompt(
-        settings, channel="phone", caller=None, skills=[], tool_names={"check_email"}
-    )
-
-    assert "check_email" not in without
-    assert "check_email answers a question about the owner's email" in with_it
-    assert "{" not in with_it and "}" not in with_it

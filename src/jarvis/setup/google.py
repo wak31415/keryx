@@ -3,8 +3,8 @@
 Everything Google in Jarvis is optional, and it is two separate things that happen to share
 one Google Cloud client:
 
-- **Email answers on a call** (`check_email`). A read-only Gmail sign-in with PKCE, in two
-  steps, because the machine Jarvis runs on usually has no browser: `start_signin` makes
+- **Email answers on a call** (the `check_email` plugin). A read-only Gmail sign-in with PKCE,
+  in two steps, because the machine Jarvis runs on usually has no browser: `start_signin` makes
   the consent link, which can be opened on any device; approving it lands the browser on
   `http://localhost:1/?…`, which does not load, and `finish_signin` takes that address,
   checks its `state`, and exchanges its one-time `code` (with the verifier, which never
@@ -19,8 +19,10 @@ one Google Cloud client:
 
 The client is `Settings.google_oauth_client()` for both — the id/secret pair, else the
 downloaded JSON — and `install_client_file` is how that JSON gets to
-`JARVIS_HOME/google_client_secret.json`. `run_section` is the wizard's screen for all of it,
-reading its instructions from `guides/google.md` so the wiki can link the same steps.
+`JARVIS_HOME/google_client_secret.json`. `run_section` is the wizard's screen for the agents'
+half; the email half is the `check_email` plugin's step (`jarvis.setup.plugins`), which
+calls `_ensure_client` and `_sign_in_email` here. Both read their instructions from
+`guides/google.md`, so the wiki can link the same steps.
 
 The MCP stdio framing is newline-delimited JSON-RPC: `initialize` (request),
 `notifications/initialized` (notification), then `tools/call`. Anything the server writes
@@ -51,7 +53,6 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
-from jarvis.agents import registry
 from jarvis.agents.base import google_mcp_server_config
 from jarvis.config import GOOGLE_CLIENT_FILE, Settings, parse_google_client, write_private
 from jarvis.integrations.gmail import SCOPE, TOKEN_URL, HttpGmail, token_path
@@ -487,8 +488,6 @@ async def gmail_address(settings: Settings) -> str:
 
 # --- the wizard section -------------------------------------------------------------------
 
-EMAIL = "email"
-AGENTS = "agents"
 GUIDE = "google.md"
 
 
@@ -498,51 +497,28 @@ def guide() -> str:
 
 
 def run_section(ctx: "SetupContext") -> None:
-    """One question, one set of instructions, then a sign-in and a read for each choice."""
+    """Agents that send mail and manage the calendar: the client, then a sign-in and a read.
+
+    Email answers on a call are the `check_email` plugin, in the Plugins section, which
+    reuses `_ensure_client` and `_sign_in_email` from here.
+    """
     from jarvis.setup.ui import Choice
 
     ui, settings = ctx.ui, ctx.settings
-    ui.note(
-        "Jarvis can answer questions about your email on a call, and agents can send mail "
-        "and manage your calendar."
-    )
+    ui.note("Agents can send mail and manage your calendar through workspace-mcp. Email "
+            "answers on a call are a plugin, in the Plugins section.")
     if "claude" in settings.enabled_agents:
         ui.note("Claude's own claude.ai Gmail and Calendar connectors already reach its agents.")
     if ui.select(
-        "Connect Google?",
-        [Choice("skip", "Skip for now"), Choice("setup", "Set up")],
-        default="skip",
+        "Let agents send email and manage your calendar?",
+        [Choice("skip", "Skip for now"), Choice("setup", "Set up", hint="workspace-mcp")],
+        default="setup" if "codex" in settings.enabled_agents else "skip",
     ) == "skip":
         ui.note("Left for later: `jarvis setup --all` comes back to it.")
         return
-
-    claude_ready = registry.installed("claude")
-    wants = ui.checkbox(
-        "What should Jarvis be able to do?",
-        [
-            Choice(
-                EMAIL,
-                "Answer questions about your email on a call",
-                hint="read-only and fast",
-                checked=claude_ready,
-                disabled=None if claude_ready else "needs the Claude extra: uv sync --extra claude",
-            ),
-            Choice(
-                AGENTS,
-                "Let agents send email and manage your calendar",
-                hint="workspace-mcp",
-                checked="codex" in settings.enabled_agents,
-            ),
-        ],
-    )
-    if not wants:
+    if not _ensure_client(ctx, calendar=True):
         return
-    if not _ensure_client(ctx, calendar=AGENTS in wants):
-        return
-    if EMAIL in wants:
-        _sign_in_email(ctx)
-    if AGENTS in wants:
-        _sign_in_agents(ctx)
+    _sign_in_agents(ctx)
 
 
 def _ensure_client(ctx: "SetupContext", *, calendar: bool) -> bool:

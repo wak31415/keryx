@@ -20,7 +20,9 @@ The directory is read afresh at the top of every call (`ToolRegistry.for_call`),
 or edited tool is there from the next call, with no restart. Everything that can go wrong
 with a file costs that file and is logged — never the call, and never another tool:
 
-- a file that will not import, or defines nothing, is skipped;
+- a file that will not import, or defines nothing, is skipped; one that raises
+  `ToolUnavailable` while it loads is skipped with the reason it gave (a plugin that is
+  missing a sign-in says which);
 - a name that is already taken — by any built-in tool, offered on this machine or not, or
   by an earlier file — is refused, so an owner's tool can never stand in for
   `dispatch_task` or `submit_pin`;
@@ -37,6 +39,11 @@ decision an owner can check at a glance.
 
 `jarvis tools` prints what the directory holds and what was refused, which is how a
 subagent checks its work before saying it is done.
+
+The plugins (`jarvis.plugins`) are files of exactly this kind, written by `jarvis plugins
+install`: a line that calls into the package, and a TOML file of settings beside it. While a
+file loads, `LOADING_SETTINGS` holds the settings of whoever is loading it — the running
+service, or the command asking — so a plugin reads the same configuration they do.
 """
 
 import asyncio
@@ -49,6 +56,7 @@ import re
 import stat
 import sys
 from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -68,6 +76,17 @@ _NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _MODULE_PREFIX = "jarvis_custom_tools"
 
 CustomHandler = Callable[[ToolContext, dict], Awaitable[Any] | Any]
+
+#: The settings of whoever is loading the directory, while a file loads; None outside a load.
+LOADING_SETTINGS: ContextVar[Settings | None] = ContextVar("loading_settings", default=None)
+
+
+class ToolUnavailable(Exception):
+    """Raised while a tool file loads to refuse it, with the reason as the whole message.
+
+    For a file that is fine but cannot answer on this machine yet — not signed in, nothing
+    configured — so `jarvis tools` says what to do rather than printing a traceback.
+    """
 
 
 @dataclass(frozen=True)
@@ -121,12 +140,23 @@ class Loaded:
     errors: list[tuple[Path, str]]
 
 
-def load_custom_tools(directory: Path, taken: Iterable[str] = ()) -> Loaded:
+def load_custom_tools(
+    directory: Path, taken: Iterable[str] = (), *, settings: Settings | None = None
+) -> Loaded:
     """Every tool the `*.py` files in `directory` define, in file order.
 
     `taken` is the names already in use; a tool that wants one is refused. Files whose
     name starts with `_` are left alone, so a helper or a draft can sit beside the tools.
+    `settings` is what `LOADING_SETTINGS` holds while the files load.
     """
+    token = LOADING_SETTINGS.set(settings)
+    try:
+        return _load_directory(directory, taken)
+    finally:
+        LOADING_SETTINGS.reset(token)
+
+
+def _load_directory(directory: Path, taken: Iterable[str]) -> Loaded:
     tools: list[tuple[Path, CustomTool]] = []
     errors: list[tuple[Path, str]] = []
     if not directory.is_dir():
@@ -140,6 +170,9 @@ def load_custom_tools(directory: Path, taken: Iterable[str] = ()) -> Loaded:
             continue
         try:
             found = _load_file(path)
+        except ToolUnavailable as exc:
+            errors.append((path, str(exc)))
+            continue
         except Exception as exc:  # a broken file costs that file
             errors.append((path, f"{type(exc).__name__}: {exc}"))
             continue
@@ -157,7 +190,7 @@ def load_custom_tools(directory: Path, taken: Iterable[str] = ()) -> Loaded:
 def register_custom_tools(registry: ToolRegistry, settings: Settings) -> None:
     """Read `DATA_DIR/tools` into `registry`, beside whatever it already holds."""
     taken = BUILTIN_TOOL_NAMES.union(registry.names())
-    loaded = load_custom_tools(settings.custom_tools_dir, taken=taken)
+    loaded = load_custom_tools(settings.custom_tools_dir, taken=taken, settings=settings)
     for path, problem in loaded.errors:
         log.warning("custom tool %s refused: %s", path.name, problem)
     for _, tool in loaded.tools:

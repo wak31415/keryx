@@ -18,6 +18,7 @@ from fakes import FakeProvider
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
+from jarvis import plugins
 from jarvis.app import TASK_DB_NAME
 from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from jarvis.cli import (
@@ -28,6 +29,7 @@ from jarvis.cli import (
     app,
 )
 from jarvis.config import PLACEHOLDER_KEY, Settings
+from jarvis.config.store import ConfigStore
 from jarvis.continuity.memory import memory_path
 from jarvis.realtime.base import AudioDelta, Transcript
 from jarvis.restart.service import ServiceTarget
@@ -214,6 +216,22 @@ def stub_uvicorn(monkeypatch, built: dict) -> None:
             built["executor_workers"] = executor._max_workers if executor else 0
 
     monkeypatch.setattr("jarvis.cli.uvicorn.Server", StubServer)
+
+
+def test_serve_names_settings_a_plugin_replaced_and_starts_anyway(
+    settings_stub, monkeypatch, caplog
+):
+    store = ConfigStore()
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text('SLACK_MCP_SERVER = "chat"\n')
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+
+    with caplog.at_level("WARNING", logger="jarvis.cli"):
+        result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 0, result.output
+    assert "SLACK_MCP_SERVER" in caplog.text and "--from-settings" in caplog.text
 
 
 def test_serve_prepares_its_directories_and_executor(settings_stub, monkeypatch):
@@ -1142,12 +1160,173 @@ def test_tools_lists_each_tool_and_exits_1_on_anything_refused(settings_stub):
 
 
 def test_tools_refuses_a_built_in_name_this_machine_does_not_offer(settings_stub):
-    write_tool(settings_stub, "gpus.py", MOON_TOOL.replace("moon_phase", "cluster_stats"))
+    write_tool(settings_stub, "restart.py", MOON_TOOL.replace("moon_phase", "restart_service"))
 
     result = runner.invoke(app, ["tools"])
 
     assert result.exit_code == 1
-    assert "'cluster_stats' is already a tool's name" in result.output
+    assert "'restart_service' is already a tool's name" in result.output
+
+
+# --- plugins -------------------------------------------------------------------------
+
+
+def test_plugins_lists_all_four_off_on_a_fresh_machine(settings_stub):
+    result = runner.invoke(app, ["plugins", "--json"])
+
+    assert result.exit_code == 0, result.output
+    found = json.loads(result.output)["plugins"]
+    assert [(one["name"], one["on"]) for one in found] == [
+        ("send_to_slack", False), ("check_email", False),
+        ("check_billing", False), ("cluster_stats", False),
+    ]
+
+
+def test_plugins_install_with_values_turns_one_on(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "check_billing",
+                                 "--set", "monthly_budget=40"])
+
+    assert result.exit_code == 0, result.output
+    assert "check_billing is on, from the next call" in result.output
+    assert plugins.read_config(settings_stub, "check_billing")["monthly_budget"] == 40
+    listed = runner.invoke(app, ["plugins"]).output
+    assert "check_billing    on" in listed and "monthly_budget=40" in listed
+
+
+def test_plugins_install_never_takes_a_secret(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "send_to_slack",
+                                 "--set", "SLACK_BOT_TOKEN=xoxb-secret"])
+
+    assert result.exit_code == 1
+    assert "jarvis config set SLACK_BOT_TOKEN --stdin" in result.output
+    assert "xoxb-secret" not in result.output
+    assert not plugins.config_path(settings_stub, "send_to_slack").exists()
+
+
+def test_plugins_install_says_when_it_is_installed_but_refused(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "send_to_slack",
+                                 "--set", "channel_id=D123"])
+
+    assert result.exit_code == 1
+    assert "send_to_slack is installed but refused" in result.output
+    assert "SLACK_BOT_TOKEN --stdin" in result.output
+
+
+def test_plugins_install_takes_the_clusters_and_the_guard(settings_stub, tmp_path):
+    guard = tmp_path / "guard.sh"
+    guard.write_text("#!/bin/sh\n")
+
+    result = runner.invoke(app, ["plugins", "install", "cluster_stats",
+                                 "--cluster", "Alpha=gpu", "--cluster", "beta=pli",
+                                 "--guard", str(guard)])
+
+    assert result.exit_code == 0, result.output
+    values = plugins.read_config(settings_stub, "cluster_stats")
+    assert values["clusters"] == {"alpha": "gpu", "beta": "pli"}
+    assert values["guard"] == str(guard)
+
+
+def test_the_cluster_flags_are_only_for_cluster_stats(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "check_billing", "--cluster", "a=b"])
+
+    assert result.exit_code == 1 and "for cluster_stats" in result.output
+
+
+def test_a_template_is_written_off_and_activated_once_edited(settings_stub):
+    written = runner.invoke(app, ["plugins", "install", "cluster_stats", "--template"])
+    path = plugins.config_path(settings_stub, "cluster_stats")
+
+    assert written.exit_code == 0 and str(path) in written.output
+    assert "then `jarvis plugins install cluster_stats`" in written.output
+    early = runner.invoke(app, ["plugins", "install", "cluster_stats"])
+    assert early.exit_code == 1 and "names no host" in early.output
+
+    path.write_text(path.read_text().replace("[clusters]\n", '[clusters]\nalpha = "gpu"\n'))
+    activated = runner.invoke(app, ["plugins", "install", "cluster_stats"])
+
+    assert activated.exit_code == 0, activated.output
+    assert not plugins.draft_path(settings_stub, "cluster_stats").exists()
+
+
+def test_from_settings_moves_what_was_offered_and_drops_the_old_keys(settings_stub):
+    store = ConfigStore()
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text(
+        'OPENAI_VOICE = "cedar"\nBILLING_MONTHLY_BUDGET = 55.0\n\n[CLUSTERS]\nalpha = "gpu"\n'
+    )
+
+    result = runner.invoke(app, ["plugins", "install", "--from-settings"])
+
+    assert result.exit_code == 0, result.output
+    assert "check_billing: settings in" in result.output
+    assert "cluster_stats is on, from the next call" in result.output
+    assert plugins.read_config(settings_stub, "check_billing")["monthly_budget"] == 55
+    assert plugins.retired_in(store) == {}
+
+
+def test_from_settings_with_nothing_old_says_so(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "--from-settings"])
+
+    assert result.exit_code == 0
+    assert "nothing to move" in result.output
+
+
+@pytest.mark.parametrize("argv", [["install"], ["install", "send_fax"], ["remove", "send_fax"]])
+def test_plugins_needs_a_plugin_it_knows(settings_stub, argv):
+    result = runner.invoke(app, ["plugins", *argv, "--yes"] if argv[0] == "remove" else
+                           ["plugins", *argv])
+
+    assert result.exit_code in (1, 2)
+    assert "which plugin" in result.output or "no plugin called" in result.output
+
+
+def test_plugins_remove_turns_one_off_and_keeps_its_settings(settings_stub):
+    runner.invoke(app, ["plugins", "install", "check_billing", "--set", "monthly_budget=9"])
+
+    result = runner.invoke(app, ["plugins", "remove", "check_billing", "--yes"])
+    again = runner.invoke(app, ["plugins", "remove", "check_billing", "--yes"])
+
+    assert "check_billing is off from the next call" in result.output
+    assert "was not on" in again.output
+    assert plugins.read_config(settings_stub, "check_billing")["monthly_budget"] == 9
+
+
+@pytest.mark.parametrize("argv", [["install", "check_billing"], ["remove", "check_billing"]])
+def test_the_service_may_not_turn_plugins_on_or_off(settings_stub, monkeypatch, argv):
+    monkeypatch.setenv("JARVIS_ACTOR", "service")
+
+    result = runner.invoke(app, ["plugins", *argv, "--yes"] if argv[0] == "remove" else
+                           ["plugins", *argv])
+
+    assert result.exit_code == 1
+    assert "only the owner" in result.output
+    assert not plugins.tool_path(settings_stub, "check_billing").exists()
+
+
+def test_plugins_hosts_lists_what_ssh_says_and_whose_master_is_up(settings_stub, monkeypatch):
+    from jarvis.plugins.ssh_hosts import SshHost
+
+    monkeypatch.setattr("jarvis.cli.ssh_hosts.discover", lambda: [
+        SshHost("alpha", "login.alpha.example", "me", True, "/tmp/cm"),
+        SshHost("beta", "beta.example", "", False, ""),
+    ])
+    monkeypatch.setattr("jarvis.cli.ssh_hosts.master_alive", lambda alias: alias == "alpha")
+
+    as_json = runner.invoke(app, ["plugins", "hosts", "--json"])
+    text = runner.invoke(app, ["plugins", "hosts"])
+
+    hosts = json.loads(as_json.output)["hosts"]
+    assert [(h["alias"], h["control_master"], h["master_alive"]) for h in hosts] == [
+        ("alpha", True, True), ("beta", False, False),
+    ]
+    assert "me@login.alpha.example" in text.output and "ControlMaster: up" in text.output
+    assert "ControlMaster: none" in text.output
+
+
+def test_plugins_hosts_with_no_ssh_config_says_so(settings_stub, monkeypatch):
+    monkeypatch.setattr("jarvis.cli.ssh_hosts.discover", lambda: [])
+
+    assert "no hosts in" in runner.invoke(app, ["plugins", "hosts"]).output
 
 
 def test_tools_leaves_a_running_service_alone(settings_stub):

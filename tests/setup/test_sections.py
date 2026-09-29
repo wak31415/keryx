@@ -261,34 +261,6 @@ def test_nothing_from_before_asks_nothing(make_ctx):
     assert ctx.ui.lines("success") == ["everything is where Jarvis looks for it"]
 
 
-# --- slack and billing ----------------------------------------------------------------------
-
-
-def test_slack_is_skipped_by_default_and_set_up_on_request(make_ctx):
-    skipped = make_ctx([("Set up Slack", DEFAULT)])
-    sections.run_slack(skipped)
-    assert ConfigStore().stored() == {}
-
-    ctx = make_ctx([("Set up Slack", "setup"), ("Bot token", "xoxb-1"), ("channel id", "D123")])
-    sections.run_slack(ctx)
-
-    assert ConfigStore().stored() == {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_CHANNEL_ID": "D123"}
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1"}
-
-
-def test_billing_stores_an_admin_key_and_a_budget(make_ctx):
-    ctx = make_ctx(
-        [("spending questions", "openai"), ("admin key", "sk-admin"), ("monthly budget", "50")]
-    )
-
-    sections.run_billing(ctx)
-
-    stored = ConfigStore().stored()
-    assert stored["OPENAI_ADMIN_KEY"] == "sk-admin"
-    assert stored["BILLING_MONTHLY_BUDGET"] == 50.0
-    assert stored["BILLING_PROVIDER"] == "openai"
-
-
 # --- the service -----------------------------------------------------------------------------
 
 
@@ -381,31 +353,6 @@ def test_a_replacement_declined_at_the_first_question_changes_nothing(make_ctx):
     sections.run_pin(ctx)
 
     assert read_enrolled_pin(ctx.settings.config_dir) == "482915"
-
-
-def test_slack_and_billing_already_set_ask_nothing(make_ctx):
-    ConfigStore().set(
-        {"SLACK_BOT_TOKEN": "xoxb", "SLACK_CHANNEL_ID": "D1", "ANTHROPIC_ADMIN_KEY": "k"}
-    )
-    ctx = make_ctx([])
-
-    sections.run_slack(ctx)
-    sections.run_billing(ctx)
-
-    assert ctx.ui.asked == []
-
-
-def test_billing_without_a_budget_stores_no_budget(make_ctx):
-    ctx = make_ctx([("spending", "anthropic"), ("admin key", "k"), ("monthly budget", "")])
-
-    sections.run_billing(ctx)
-
-    assert "BILLING_MONTHLY_BUDGET" not in ConfigStore().stored()
-
-
-def test_billing_skipped_stores_nothing(make_ctx):
-    sections.run_billing(make_ctx([("spending", DEFAULT)]))
-    assert ConfigStore().stored() == {}
 
 
 def test_an_installed_service_is_said_and_nothing_asked(make_ctx, monkeypatch):

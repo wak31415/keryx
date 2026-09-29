@@ -164,6 +164,11 @@ class FakeWorld:
     script_code: int = 0
     headless: bool = False
     gmail: str = "sam@example.com"
+    #: `~/.ssh/config` as `plugins.ssh_hosts.discover` would read it, whose masters are up
+    #: now, and what Slurm would say its partitions are.
+    ssh_hosts: list = field(default_factory=list)
+    masters_up: set = field(default_factory=set)
+    partitions: dict = field(default_factory=dict)
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
@@ -207,4 +212,9 @@ class FakeWorld:
             gmail_address=gmail_address,
             workspace_signin=workspace,
             http_post=post,
+            ssh_hosts=lambda: self.calls.append(("ssh_hosts",)) or list(self.ssh_hosts),
+            ssh_master_alive=lambda alias: self.calls.append(("master", alias))
+            or alias in self.masters_up,
+            cluster_partitions=lambda alias: self.calls.append(("partitions", alias))
+            or list(self.partitions.get(alias, [])),
         )

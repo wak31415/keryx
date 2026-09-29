@@ -4,7 +4,8 @@
 `Prompter`, saves through the store as the owner, and reads a fresh `Settings` after every
 save, so a later section sees what an earlier one wrote. Everything that reaches the
 network, a login or a subagent is a field of `Probes`, which the tests replace wholesale:
-nothing in the wizard can call OpenAI, Twilio, Google or a coding agent unless a probe does.
+nothing in the wizard can call OpenAI, Twilio, Google, ssh or a coding agent unless a probe
+does.
 """
 
 import subprocess
@@ -73,6 +74,24 @@ def _workspace(settings: Settings, echo: Callable[[str], None]) -> bool:
     return run_google_setup(settings, echo=echo)
 
 
+def _ssh_hosts() -> list:
+    from jarvis.plugins.ssh_hosts import discover
+
+    return discover()
+
+
+def _master_alive(alias: str) -> bool:
+    from jarvis.plugins.ssh_hosts import master_alive
+
+    return master_alive(alias)
+
+
+def _partitions(alias: str) -> list[str]:
+    from jarvis.plugins.ssh_hosts import partitions
+
+    return partitions(alias)
+
+
 def _headless() -> bool:
     from jarvis.setup.agents import is_headless
 
@@ -93,6 +112,10 @@ class Probes:
     gmail_address: Callable[[Settings], Awaitable[str]] = _gmail_address
     workspace_signin: Callable[[Settings, Callable[[str], None]], bool] = _workspace
     http_post: Callable[..., Any] = httpx.post
+    #: `~/.ssh/config`, read locally (`plugins.ssh_hosts`): never a connection.
+    ssh_hosts: Callable[[], list] = _ssh_hosts
+    ssh_master_alive: Callable[[str], bool] = _master_alive
+    cluster_partitions: Callable[[str], list[str]] = _partitions
 
 
 @dataclass

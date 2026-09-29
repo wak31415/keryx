@@ -6,7 +6,7 @@ import json
 import stat
 from urllib.parse import parse_qs, urlparse
 
-from jarvis.agents import registry
+from jarvis import plugins
 from jarvis.config.store import ConfigStore
 from jarvis.integrations.gmail import token_path
 from jarvis.setup import google
@@ -34,24 +34,31 @@ class Post:
 
 
 def test_skip_is_the_default_and_touches_nothing(make_ctx):
-    ctx = make_ctx([("Connect Google", DEFAULT)])
+    ctx = make_ctx([("Let agents send email", DEFAULT)])
 
     google.run_section(ctx)
 
     assert ctx.ui.done() and ConfigStore().stored() == {}
 
 
+def email_step(make_ctx, tmp_path, answers):
+    """The email half, which is the `check_email` plugin's step now."""
+    from jarvis.setup import plugins as plugins_section
+
+    ctx = make_ctx(answers)
+    plugins_section.run_email(ctx)
+    return ctx
+
+
 def test_email_answers_end_to_end(make_ctx, world, tmp_path):
+    from jarvis.setup import plugins as plugins_section
+
     source = client_file(tmp_path)
     post = Post()
 
     ctx = make_ctx([])
     ctx.probes = dataclasses.replace(ctx.probes, http_post=post)
-    ctx.ui.answers = [
-        ("Connect Google", "setup"),
-        ("What should Jarvis be able to do", [google.EMAIL]),
-        ("Path to the downloaded client JSON", f"'{source}'"),
-    ]
+    ctx.ui.answers = [("Path to the downloaded client JSON", f"'{source}'")]
     original = ctx.ui.text
 
     def text(message, **kwargs):
@@ -65,7 +72,7 @@ def test_email_answers_end_to_end(make_ctx, world, tmp_path):
 
     ctx.ui.text = text
 
-    google.run_section(ctx)
+    plugins_section.run_email(ctx)
 
     installed = ctx.settings.config_dir / "google_client_secret.json"
     assert json.loads(installed.read_text()) == CLIENT
@@ -75,41 +82,38 @@ def test_email_answers_end_to_end(make_ctx, world, tmp_path):
     assert token_path(ctx.settings).is_file()
     assert ctx.settings.user_google_email == "sam@example.com"
     assert "email answers: signed in as sam@example.com" in ctx.ui.lines("success")
+    assert plugins.tool_path(ctx.settings, "check_email").is_file()
 
 
 def test_the_guide_is_shown_only_when_there_is_no_client(make_ctx, tmp_path):
-    ctx = make_ctx(
-        [("Connect Google", "setup"), ("What should", [google.EMAIL]),
-         ("Path to the downloaded", "")]
-    )
-
-    google.run_section(ctx)
+    ctx = email_step(make_ctx, tmp_path, [("Path to the downloaded", "")])
 
     [guide] = ctx.ui.lines("markdown")
     assert "console.cloud.google.com/projectcreate" in guide
     assert "Publish app" in guide
-    assert "Calendar API" not in guide  # only the email box was ticked
+    assert "Calendar API" not in guide  # email alone needs no calendar
+    assert not plugins.tool_path(ctx.settings, "check_email").exists()
 
 
 def test_a_wrong_client_file_is_refused_and_asked_again(make_ctx, tmp_path):
     bad = client_file(tmp_path, {"nope": 1})
     ctx = make_ctx(
-        [("Connect Google", "setup"), ("What should", [google.EMAIL]),
-         ("Path to the downloaded", str(bad)), ("Path to the downloaded", "")]
+        [("Let agents send email", "setup"), ("Path to the downloaded", str(bad)),
+         ("Path to the downloaded", "")]
     )
 
     google.run_section(ctx)
 
     assert any("not a Google OAuth client file" in line for line in ctx.ui.lines("error"))
     assert not (ctx.settings.config_dir / "google_client_secret.json").exists()
+    assert "Calendar API" in ctx.ui.lines("markdown")[0]
 
 
 def test_agents_turn_on_workspace_mcp_and_sign_it_in(make_ctx, world, tmp_path):
     source = client_file(tmp_path)
     ctx = make_ctx(
         [
-            ("Connect Google", "setup"),
-            ("What should", [google.AGENTS]),
+            ("Let agents send email", "setup"),
             ("Path to the downloaded", str(source)),
             ("Your Google address", "sam@example.com"),
         ]
@@ -122,16 +126,14 @@ def test_agents_turn_on_workspace_mcp_and_sign_it_in(make_ctx, world, tmp_path):
     assert any("ssh -L 8000:localhost:8000" in line for line in ctx.ui.lines("panel"))
 
 
-def test_codex_preselects_agents_and_no_claude_extra_disables_email(make_ctx, monkeypatch):
-    monkeypatch.setattr(registry, "installed", lambda agent: agent != "claude")
-    ConfigStore().set({"AGENT_BACKEND": "codex"})
-    ctx = make_ctx([("Connect Google", "setup"), ("What should", [])])
+def test_codex_makes_setting_it_up_the_default(make_ctx, monkeypatch, tmp_path):
+    ConfigStore().set({"AGENT_BACKEND": "codex", "AGENTS_ENABLED": "codex"})
+    ctx = make_ctx([("Let agents send email", DEFAULT), ("Path to the downloaded", "")])
 
     google.run_section(ctx)
 
-    email, agents = ctx.ui.choices["What should Jarvis be able to do?"]
-    assert email.disabled and "uv sync --extra claude" in email.disabled
-    assert agents.checked is True
+    assert ctx.ui.done()
+    assert "Email answers on a call are a plugin" in ctx.ui.lines("note")[0]
 
 
 def test_install_client_file_refuses_what_it_cannot_read(settings, tmp_path):

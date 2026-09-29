@@ -19,12 +19,13 @@ defence to every ordinary call.
 
 `pin_gate` is the refusal a call gets below `FULL` (`jarvis.trust`), and it is on
 everything that *acts*: what opens a subagent (`dispatch_task`, `cancel_task`), what takes
-the phone off the air or runs a command (`restart_service`), what writes as the owner
-(`send_to_slack`) — and on `recall`, which reads far past anything the call was handed.
-`read_gate` is the second refusal, on the four tools that only read back what the standing
-briefing already carries; it follows `BRIEFING_BEFORE_PIN`. `check_billing`,
-`cluster_stats`, `web_search`, `submit_pin` and `end_session` answer at any level whatever
-that setting says.
+the phone off the air or runs a command (`restart_service`), what writes something down
+(`set_config`) — and on `recall`, which reads far past anything the call was handed. The
+owner's own tools and the plugins (`jarvis.tools.custom`, `jarvis.plugins`) get it too,
+unless they declare `needs_pin=False`. `read_gate` is the second refusal, on the four
+tools that only read back what the standing briefing already carries; it follows
+`BRIEFING_BEFORE_PIN`. `web_search`, `submit_pin` and `end_session` answer at any level
+whatever that setting says.
 
 `possession_gate` is the second, for the handful a call *Jarvis placed* may use:
 `send_followup` and `request_callback`, which are how the owner answers the question
@@ -43,28 +44,19 @@ the caller said straight to the session, which is the only thing that compares i
 import asyncio
 import logging
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 from jarvis.agents.registry import BACKENDS
 from jarvis.config import Settings
 from jarvis.continuity.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
 from jarvis.continuity.recall import MAX_LIMIT as MAX_RECALL_LIMIT
-from jarvis.integrations.billing import BillingReader
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import Task, TaskStatus
 from jarvis.tools.registry import ToolContext
 from jarvis.trust import TrustLevel
 
 log = logging.getLogger("jarvis.tools.builtin")
-
-#: How `check_billing` gets a reader: a provider name (or None for the configured
-#: default) in, a `BillingReader` out, `BillingError` when there is no credential for it.
-#: A factory rather than a reader, because the model may name either provider per call.
-BillingFactory = Callable[[str | None], BillingReader]
-
-#: What `cluster_stats` answers for when they do not name one: everything it knows.
-ALL_CLUSTERS = ("both", "all", "everything")
 
 #: How much of a task description a spoken list may carry.
 MAX_DESCRIPTION_CHARS = 120
@@ -154,7 +146,6 @@ STILL_RUNNING_MESSAGE = (
     "Nothing about what the answer will contain — you do not know yet."
 )
 SEARCH_FAILED_MESSAGE = "the search came back empty; say so, or offer to put Claude on it"
-SLACK_FAILED_MESSAGE = "Slack would not take the message; tell them it did not go through"
 RECALL_EMPTY_MESSAGE = (
     "nothing on record about that; say so plainly and offer to put Claude on it"
 )
@@ -364,7 +355,7 @@ def pin_gate(ctx: ToolContext, settings: Settings) -> dict | None:
 
     Called first, before a task number is even looked up, so a refusal says nothing about
     what exists. Reaching into a running task opens the same bypassPermissions subagent
-    that dispatching one would; a note, a stamp or a Slack message outlives the call; and
+    that dispatching one would; a note, a stamp or a message sent outlives the call; and
     `recall` reads far past what this call was handed. See the module docstring for what
     skips it, and `read_gate` for what only follows the briefing.
     """

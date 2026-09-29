@@ -6,8 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from jarvis import plugins
 from jarvis.agents.registry import BACKENDS
 from jarvis.config import Settings, pin_file
+from jarvis.config.store import ConfigStore
 from jarvis.continuity.memory import memory_path, seed_memory
 from jarvis.doctor import (
     Check,
@@ -51,12 +53,25 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
         google_oauth_client_secret="client-secret",
         owner_name="Sam",
         projects_root=tmp_path / "projects",
+        slack_bot_token="xoxb-test",
+        openai_admin_key="sk-admin-test",
     )
     # As every entry point does before running anything — it is what makes `data_dir`
     # owner-only, which the privacy check then looks at.
     settings.ensure_dirs()
     settings.projects_root.mkdir()
     seed_memory(settings.data_dir, owner="Sam", facts=["Works nights."])
+    # Every plugin on: loading them contacts nothing (Slack posts, Gmail reads, ssh runs
+    # only when a tool is called).
+    with_agent(monkeypatch, "claude", cli="/bin/claude")
+    for name, values in {
+        "send_to_slack": {"channel_id": "D123"},
+        "check_email": {},
+        "check_billing": {"monthly_budget": 40},
+        "cluster_stats": {"clusters": {"alpha": "gpu"}},
+    }.items():
+        plugins.write_config(settings, name, values)
+        plugins.install(settings, name)
     return settings
 
 
@@ -541,95 +556,74 @@ def test_a_missing_projects_root_only_warns_and_says_where_tasks_go(healthy):
     assert not healthy.projects_root.exists()  # reported, never created
 
 
-def test_no_cluster_configured_says_why_the_tool_is_missing_without_warning(healthy):
-    check = by_name(run_doctor_checks(healthy))["cluster stats"]
-    assert (check.ok, check.severity) == (True, "soft")
-    assert "cluster_stats is not offered" in check.detail
+def test_every_plugin_on_names_what_it_does(healthy):
+    checks = by_name(run_doctor_checks(healthy))
+
+    assert checks["send_to_slack"].detail == "on — posts to D123"
+    assert checks["check_email"].detail == "on — claude-opus-5-5, low effort"
+    assert checks["check_billing"].detail == "on — auto, budget $40"
+    assert checks["cluster_stats"].detail == "on — alpha through the built-in guard"
+    assert all(checks[name].section == "plugins" for name in plugins.PLUGINS)
+    assert "xoxb-test" not in str(checks)
 
 
-def test_clusters_without_their_guard_warn(healthy, tmp_path):
-    settings = healthy.model_copy(
-        update={"clusters": {"alpha": "gpu"}, "cluster_ssh_guard": tmp_path / "missing.sh"}
-    )
+def test_a_plugin_that_is_off_is_optional_and_says_how(healthy):
+    plugins.remove(healthy, "cluster_stats")
+    checks = run_doctor_checks(healthy)
+    check = by_name(checks)["cluster_stats"]
 
-    check = by_name(run_doctor_checks(settings))["cluster stats"]
+    assert (check.ok, check.state, check.severity) == (False, "missing", "soft")
+    assert "jarvis plugins install cluster_stats" in check.detail
+    assert format_check(check).startswith("○")
+    assert has_hard_failure(checks) is False
+
+
+def test_a_plugin_that_is_on_and_refused_says_why(healthy):
+    plugins.config_path(healthy, "cluster_stats").write_text("[clusters]\n")
+
+    check = by_name(run_doctor_checks(healthy))["cluster_stats"]
+
+    assert (check.ok, check.state) == (False, "failed")
+    assert "names no host" in check.detail
+
+
+@pytest.mark.parametrize(
+    ("name", "says"),
+    [
+        ("send_to_slack", "SLACK_BOT_TOKEN is set but send_to_slack is off, so PIN-lockout "
+                          "alerts are not going to Slack"),
+        ("check_billing", "OPENAI_ADMIN_KEY is set but check_billing is off"),
+        ("check_email", "a Gmail sign-in is set but check_email is off"),
+    ],
+)
+def test_a_secret_set_for_a_plugin_that_is_off_is_a_warning(healthy, name, says):
+    plugins.remove(healthy, name)
+
+    check = by_name(run_doctor_checks(healthy))[name]
+
+    assert (check.ok, check.state, check.severity) == (False, "failed", "soft")
+    assert says in check.detail
+    assert f"jarvis plugins install {name}" in check.detail
+
+
+def test_email_signed_in_without_the_claude_cli_is_refused_with_how(healthy, monkeypatch):
+    with_agent(monkeypatch, "claude", cli=None)
+
+    check = by_name(run_doctor_checks(healthy))["check_email"]
+
     assert (check.ok, check.severity) == (False, "soft")
-    assert "CLUSTER_SSH_GUARD" in check.detail
+    assert "uv sync --extra claude" in check.detail
 
 
-def test_a_guard_without_clusters_warns(healthy, tmp_path):
-    guard = tmp_path / "guard.sh"
-    guard.write_text("#!/bin/sh\n")
-    settings = healthy.model_copy(update={"cluster_ssh_guard": guard})
+def test_settings_a_plugin_replaced_point_at_the_one_command(healthy):
+    ConfigStore().config_path.parent.mkdir(parents=True, exist_ok=True)
+    ConfigStore().config_path.write_text('SLACK_MCP_SERVER = "chat"\n\n[CLUSTERS]\na = "b"\n')
 
-    check = by_name(run_doctor_checks(settings))["cluster stats"]
-    assert (check.ok, check.severity) == (False, "soft")
-    assert "CLUSTERS" in check.detail
+    check = by_name(run_doctor_checks(healthy))["retired settings"]
 
-
-def test_configured_clusters_are_named(healthy, tmp_path):
-    guard = tmp_path / "guard.sh"
-    guard.write_text("#!/bin/sh\n")
-    settings = healthy.model_copy(
-        update={"clusters": {"alpha": "gpu", "beta": "gpu"}, "cluster_ssh_guard": guard}
-    )
-
-    check = by_name(run_doctor_checks(settings))["cluster stats"]
-    assert check.ok is True
-    assert "alpha, beta" in check.detail
-
-
-def test_no_slack_says_why_the_tool_is_missing_without_warning(healthy):
-    check = by_name(run_doctor_checks(healthy))["Slack"]
-    assert (check.ok, check.severity) == (True, "soft")
-    assert "send_to_slack is not offered" in check.detail
-
-
-def test_a_slack_token_and_channel_offer_the_tool(healthy):
-    settings = healthy.model_copy(
-        update={"slack_bot_token": "xoxb-test", "slack_channel_id": "D123"}
-    )
-
-    check = by_name(run_doctor_checks(settings))["Slack"]
-    assert check.ok is True
-    assert "send_to_slack is offered" in check.detail
-    assert "xoxb-test" not in check.detail
-
-
-def test_half_a_slack_route_warns(healthy):
-    settings = healthy.model_copy(update={"slack_bot_token": "xoxb-test"})
-
-    check = by_name(run_doctor_checks(settings))["Slack"]
-    assert (check.ok, check.severity) == (False, "soft")
-    assert "SLACK_CHANNEL_ID" in check.detail
-
-
-def test_a_slack_mcp_server_counts_when_its_config_carries_the_route(
-    healthy, tmp_path, monkeypatch
-):
-    config = tmp_path / "claude" / ".claude.json"
-    config.parent.mkdir()
-    config.write_text(
-        '{"mcpServers": {"chat": {"env": {"SLACK_BOT_TOKEN": "x", "SLACK_CHANNEL_ID": "D1"}}}}'
-    )
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config.parent))
-    settings = healthy.model_copy(update={"slack_mcp_server": "chat"})
-
-    check = by_name(run_doctor_checks(settings))["Slack"]
-    assert check.ok is True
-    assert "chat" in check.detail
-
-
-def test_a_slack_mcp_server_without_a_route_still_reaches_subagents(
-    healthy, tmp_path, monkeypatch
-):
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "missing"))
-    settings = healthy.model_copy(update={"slack_mcp_server": "chat"})
-
-    check = by_name(run_doctor_checks(settings))["Slack"]
-    assert (check.ok, check.severity) == (False, "soft")
-    assert "send_to_slack is not offered" in check.detail
-    assert "subagents" in check.detail
+    assert (check.ok, check.severity, check.section) == (False, "soft", "plugins")
+    assert "CLUSTERS, SLACK_MCP_SERVER" in check.detail
+    assert "jarvis plugins install --from-settings" in check.detail
 
 
 # --- formatting ------------------------------------------------------------
@@ -648,42 +642,6 @@ def test_a_formatted_check_carries_its_name_and_detail():
     assert "/usr/local/bin/cloudflared" in line
 
 
-def test_email_not_signed_in_is_optional_and_says_how(healthy):
-    token_path(healthy).unlink()
-    checks = run_doctor_checks(healthy)
-    check = by_name(checks)["email"]
-
-    assert (check.ok, check.state) == (False, "missing")
-    assert "not set up (optional)" in check.detail
-    assert "jarvis auth login gmail" in check.detail
-    assert format_check(check).startswith("○")
-    assert has_hard_failure(checks) is False
-
-
-def test_email_signed_in_is_offered_with_its_model(healthy, monkeypatch):
-    from jarvis.integrations.gmail import token_path
-
-    token_path(healthy).write_text("{}")
-    with_agent(monkeypatch, "claude", cli="/bin/claude")
-
-    check = by_name(run_doctor_checks(healthy))["email"]
-
-    assert check.ok is True
-    assert check.detail == "check_email is offered (claude-opus-5-5, low effort)"
-
-
-def test_email_signed_in_without_the_claude_cli_is_a_warning(healthy, monkeypatch):
-    from jarvis.integrations.gmail import token_path
-
-    token_path(healthy).write_text("{}")
-    with_agent(monkeypatch, "claude", cli=None)
-
-    check = by_name(run_doctor_checks(healthy))["email"]
-
-    assert (check.ok, check.severity) == (False, "soft")
-    assert "uv sync --extra claude" in check.detail
-
-
 # --- where the secrets are ----------------------------------------------------
 
 
@@ -694,7 +652,6 @@ def test_a_loose_secret_file_is_named_and_fix_tightens_only_modes(healthy):
     store = ConfigStore()
     store.set({"OPENAI_API_KEY": "sk-1"})
     store.secrets_path.chmod(0o644)
-    token_path(healthy).chmod(0o640)
     before = store.secrets_path.read_text()
 
     check = by_name(run_doctor_checks(healthy, store=store))[
@@ -702,6 +659,8 @@ def test_a_loose_secret_file_is_named_and_fix_tightens_only_modes(healthy):
     ]
     assert (check.ok, check.severity) == (False, "soft")
     assert str(store.secrets_path) in check.detail and "0644" in check.detail
+    # After the checks: loading the email plugin tightens its token by itself.
+    token_path(healthy).chmod(0o640)
 
     changed = fix_permissions(healthy, store)
 

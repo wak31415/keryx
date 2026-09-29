@@ -925,22 +925,24 @@ async def test_the_briefing_reaches_the_system_prompt(make_session, phone, provi
     assert briefer.builds == 1  # once per session, before the provider is connected
 
 
-async def test_the_prompt_describes_the_optional_tools_this_session_actually_has(
+async def test_an_optional_tool_is_described_by_its_own_schema_not_the_prompt(
     make_session, phone, provider, tools
 ):
-    """The cluster paragraph follows the registry, so the model is never told about a tool
-    it was not given."""
+    """A plugin says everything about itself in its description; the prompt names none, so
+    it never tells the model about a tool it was not given."""
 
     async def handler(ctx, arguments):
         return {}
 
-    tools.register("cluster_stats", "d", {"type": "object", "properties": {}}, handler)
+    tools.register("cluster_stats", "What the cluster is doing.",
+                   {"type": "object", "properties": {}}, handler)
     session = make_session(phone, provider)
 
     async with running(session):
         await eventually(lambda: provider.config is not None)
 
-    assert "- cluster_stats is what" in provider.config.instructions
+    assert "cluster_stats" in {schema["name"] for schema in provider.config.tools}
+    assert "cluster_stats" not in provider.config.instructions
 
 
 async def test_unreported_work_is_pushed_at_the_opening_message_too(

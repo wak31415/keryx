@@ -12,9 +12,9 @@ fills in) or **failed** (something is configured and does not work).
 Severity: a `hard` failure means Jarvis will not work and `doctor` exits non-zero; a
 `soft` one is a warning (no mic on this machine, no PIN, no Google) that merely narrows what
 Jarvis can do. The last few checks are about what Jarvis knows and offers rather than
-whether it runs — the owner's name, the memory, the projects root, and whether
-`cluster_stats` and `send_to_slack` are offered — so somebody who did not write it can find
-out why a tool is missing without reading the source. The `security` ones look at where
+whether it runs — the owner's name, the memory, the projects root, and which plugins are on
+and whether each loads — so somebody who did not write it can find out why a tool is missing
+without reading the source. The `security` ones look at where
 secrets live and who can read them; `jarvis doctor --fix` tightens a mode and does nothing
 else.
 """
@@ -28,7 +28,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from jarvis.agents.registry import BACKENDS, auth_status, install_command, installed
+from jarvis import plugins
+from jarvis.agents.registry import BACKENDS, auth_status, installed
 from jarvis.config import (
     DATA_DIR_MODE,
     DATA_FILE_MODE,
@@ -40,12 +41,10 @@ from jarvis.config import (
     env_var_name,
     pin_file,
 )
-from jarvis.config.files import claude_user_config
 from jarvis.config.permissions import is_protected
 from jarvis.config.settings import LEGACY_ENV_FILE
 from jarvis.config.store import ConfigStore
 from jarvis.continuity.memory import memory_path, read_memory
-from jarvis.integrations import slack
 from jarvis.integrations.gmail import token_path
 from jarvis.logging_util import mask_number
 from jarvis.restart.service import INSTALLERS, candidate_target, resolve_target
@@ -147,11 +146,10 @@ def run_doctor_checks(
         _unlocked_check(store),
         _imported_env_check(),
         _google_check(settings),
-        _email_check(settings),
         _memory_check(settings),
         _projects_root_check(settings),
-        _cluster_check(settings),
-        _slack_check(settings),
+        *plugin_checks(settings),
+        _retired_check(store),
     ]
     return checks
 
@@ -745,34 +743,6 @@ def _google_check(settings: Settings) -> Check:
                  section="google")
 
 
-def _email_check(settings: Settings) -> Check:
-    """Is `check_email` offered: the same condition as `integrations.gmail.build_email_reader`.
-
-    Not signed in is optional, not a warning. Signed in with no claude CLI to summarise with
-    is the one half-done state worth one.
-    """
-    if not token_path(settings).is_file():
-        return Check(
-            "email",
-            False,
-            "not set up (optional) — check_email is not offered (`jarvis auth login gmail`)",
-            severity="soft",
-            section="google",
-            unset=True,
-        )
-    if not installed("claude") or BACKENDS["claude"].find_cli() is None:
-        return Check(
-            "email",
-            False,
-            f"signed in, but the claude CLI is missing — `{install_command('claude')}`",
-            severity="soft",
-            section="google",
-        )
-    model = f"{settings.email_model}, {settings.email_effort} effort"
-    return Check("email", True, f"check_email is offered ({model})", severity="soft",
-                 section="google")
-
-
 def _memory_check(settings: Settings) -> Check:
     """Warn-only: a Jarvis with no memory opens every call knowing nothing about its owner.
 
@@ -815,85 +785,96 @@ def _projects_root_check(settings: Settings) -> Check:
     return Check("projects root", True, str(root), severity="soft", section="projects")
 
 
-def _cluster_check(settings: Settings) -> Check:
-    """Is `cluster_stats` offered, and if half of it is configured, which half is missing.
+# --- plugins ---------------------------------------------------------------------
 
-    The same condition as `integrations.cluster.build_cluster_stats`. Nothing configured is
-    a tick, not a warning: the tool is a worked example most machines have no use for.
+
+#: What turning each plugin on does not reach while it is off, when its secret is set anyway.
+_UNUSED_SECRET = {
+    "send_to_slack": "PIN-lockout alerts are not going to Slack",
+    "check_billing": "nothing reads it",
+    "check_email": "questions about your email are dispatched as tasks instead",
+}
+
+
+def _secret_without_plugin(settings: Settings, name: str) -> str | None:
+    """The secret (or sign-in) this plugin uses that is there while the plugin is off."""
+    if name == "send_to_slack" and settings.slack_bot_token:
+        return env_var_name("slack_bot_token")
+    if name == "check_billing":
+        for field in ("openai_admin_key", "anthropic_admin_key"):
+            if getattr(settings, field):
+                return env_var_name(field)
+    if name == "check_email" and token_path(settings).is_file():
+        return "a Gmail sign-in"
+    return None
+
+
+def _plugin_detail(status: plugins.Status) -> str:
+    values = status.values or {}
+    if status.name == "send_to_slack":
+        where = values.get("channel_id") or "the MCP server's channel"
+        server = values.get("mcp_server")
+        return f"posts to {where}" + (f"; subagents use the {server} MCP server" if server else "")
+    if status.name == "check_email":
+        return f"{values.get('model')}, {values.get('effort')} effort"
+    if status.name == "check_billing":
+        budget = values.get("monthly_budget")
+        return f"{values.get('provider')}" + (f", budget ${budget:g}" if budget else "")
+    guard = values.get("guard") or "the built-in guard"
+    return f"{', '.join(values.get('clusters') or {})} through {guard}"
+
+
+def plugin_checks(settings: Settings) -> list[Check]:
+    """One soft check per plugin: does it load. Off is optional, not a failure.
+
+    The same load a call makes (`plugins.status`), so a plugin whose file is refused — not
+    signed in, a TOML that does not validate — says why here. A secret set for a plugin
+    that is off is the one half-done state worth a warning: somebody meant to use it.
     """
-    clusters = env_var_name("clusters")
-    guard_name = env_var_name("cluster_ssh_guard")
-    guard = settings.cluster_ssh_guard
-    if not settings.clusters and guard is None:
-        return Check(
-            "cluster stats",
-            True,
-            f"not configured — cluster_stats is not offered ({clusters}, {guard_name})",
-            severity="soft",
-            section="extras",
-        )
-    if not settings.clusters:
-        return Check(
-            "cluster stats",
-            False,
-            f"{guard_name} is set but {clusters} is empty — cluster_stats is not offered",
-            severity="soft",
-            section="extras",
-        )
-    if guard is None or not guard.is_file():
-        where = "is not set" if guard is None else f"is not a file at {guard}"
-        return Check(
-            "cluster stats",
-            False,
-            f"{clusters} is set but {guard_name} {where} — cluster_stats is not offered",
-            severity="soft",
-            section="extras",
-        )
-    return Check(
-        "cluster stats",
-        True,
-        f"cluster_stats is offered for {', '.join(settings.clusters)}",
-        severity="soft",
-        section="extras",
-    )
+    try:
+        statuses = plugins.status(settings)
+    except Exception as exc:  # the owner's own files are loaded too; never take doctor down
+        return [Check("plugins", False, f"could not load {settings.custom_tools_dir}: {exc}",
+                      severity="soft", section="plugins")]
+    checks = []
+    for status in statuses:
+        name = status.name
+        if status.on:
+            checks.append(Check(name, True, f"on — {_plugin_detail(status)}", severity="soft",
+                                section="plugins"))
+        elif status.installed:
+            checks.append(Check(name, False, f"on but refused: {status.refused}",
+                                severity="soft", section="plugins"))
+        elif (secret := _secret_without_plugin(settings, name)) is not None:
+            checks.append(Check(
+                name, False,
+                f"{secret} is set but {name} is off, so {_UNUSED_SECRET[name]} — "
+                f"`jarvis plugins install {name}`",
+                severity="soft", section="plugins",
+            ))
+        else:
+            checks.append(Check(
+                name, False,
+                f"off (optional) — `jarvis setup` → Plugins, or `jarvis plugins install {name}`",
+                severity="soft", section="plugins", unset=True,
+            ))
+    return checks
 
 
-def _slack_check(settings: Settings) -> Check:
-    """Is `send_to_slack` offered, and are subagents told about a Slack server.
-
-    The same resolution the application uses (`integrations.slack.slack_credentials`), so
-    a route that only exists in the named MCP server's own config counts. Nothing configured
-    is a tick, not a warning; half a route is a warning, because somebody meant to set it.
-    """
-    token, channel = env_var_name("slack_bot_token"), env_var_name("slack_channel_id")
-    server = settings.slack_mcp_server
-    if not (settings.slack_bot_token or settings.slack_channel_id or server):
+def _retired_check(store: ConfigStore) -> Check:
+    """Settings a plugin replaced, still in `config.toml`: ignored, and so a plugin that is
+    off without its owner knowing. The upgrade path is one command."""
+    try:
+        leftover = plugins.retired_in(store)
+    except Exception:  # a config.toml that does not parse is `_config_check`'s to report
+        leftover = {}
+    if leftover:
         return Check(
-            "Slack",
-            True,
-            f"not configured — send_to_slack is not offered ({token}, {channel} or "
-            f"{env_var_name('slack_mcp_server')})",
-            severity="soft",
-            section="slack",
-        )
-    route = slack.slack_credentials(
-        settings.slack_bot_token,
-        settings.slack_channel_id,
-        server=server,
-    )
-    subagents = f"; subagents use the {server} MCP server" if server else ""
-    if route is None:
-        missing = (
-            f"{server} has no bot token and channel in {claude_user_config()}"
-            if server
-            else f"{token} and {channel} are both needed"
-        )
-        return Check(
-            "Slack",
+            "retired settings",
             False,
-            f"{missing} — send_to_slack is not offered{subagents}",
+            f"{', '.join(leftover)} are plugin settings now and nothing reads them — "
+            "`jarvis plugins install --from-settings`",
             severity="soft",
-            section="slack",
+            section="plugins",
         )
-    return Check("Slack", True, f"send_to_slack is offered{subagents}", severity="soft",
-                 section="slack")
+    return Check("retired settings", True, "none", severity="soft", section="plugins")

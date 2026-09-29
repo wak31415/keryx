@@ -20,6 +20,11 @@ data, not Jarvis's code:
   git checkout and should not become one.
 - **No restart.** Every call reads the directory afresh when it starts, so a new or edited
   tool is offered from the next call. Do not write a `RESTART_REQUIRED:` line for it.
+- **Plugin files are custom tools too.** `send_to_slack.py`, `check_email.py`,
+  `check_billing.py` and `cluster_stats.py` there are Jarvis's plugins, each a line calling
+  into Jarvis with its settings in the `.toml` beside it: change a setting in the TOML (its
+  comments say what each is), never by editing the `.py`; turning one on or off is the
+  owner's, at their terminal (`jarvis plugins`). Do not name a tool of your own after one.
 
 ## The file
 

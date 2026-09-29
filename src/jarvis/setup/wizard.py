@@ -25,7 +25,7 @@ from jarvis.config import Settings
 from jarvis.config.store import ConfigStore
 from jarvis.doctor import Check, format_check, run_doctor_checks
 from jarvis.projects import MAX_BRIEF_CHARS, MAX_BRIEFS_CHARS, summaries_dir
-from jarvis.setup import agents, google, phone, profile, project_context, sections
+from jarvis.setup import agents, google, phone, plugins, profile, project_context, sections
 from jarvis.setup.context import SetupContext
 from jarvis.setup.rewind import ASK, Entry, Recorder, rewind
 from jarvis.setup.ui import Back, Choice, Forward, heading
@@ -51,8 +51,7 @@ SECTIONS: tuple[Section, ...] = (
     Section("owner", "Owner and PIN", sections.run_owner),
     Section("phone", "Phone", phone.run_section),
     Section("google", "Google", google.run_section),
-    Section("slack", "Slack", sections.run_slack),
-    Section("billing", "Billing", sections.run_billing),
+    Section("plugins", "Plugins", plugins.run_section),
     Section("profile", "About you", profile.run_section),
     Section("projects", "Project context", project_context.run_section),
     Section("service", "Background service", sections.run_service),
@@ -71,11 +70,6 @@ def statuses(ctx: SetupContext, checks: list[Check]) -> dict[str, str]:
             continue
         if key == "settings":
             found[key] = DONE if key in ctx.store.walked_sections() else MISSING
-        elif key == "slack":
-            found[key] = DONE if settings.slack_bot_token and settings.slack_channel_id else MISSING
-        elif key == "billing":
-            configured = settings.openai_admin_key or settings.anthropic_admin_key
-            found[key] = DONE if configured else MISSING
         elif key == "projects":
             written = summaries_dir(settings)
             has = written.is_dir() and any(written.glob("*.md"))

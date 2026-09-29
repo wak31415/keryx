@@ -18,6 +18,7 @@ from claude_agent_sdk.types import (
     UserMessage,
 )
 
+from jarvis import plugins
 from jarvis.agents.base import AgentOpenError, RunResult, SteerUnavailable, TokenUsage
 from jarvis.agents.claude import (
     SUBAGENT_MAX_BUFFER_BYTES,
@@ -28,7 +29,15 @@ from jarvis.agents.claude import (
     resolve_model,
 )
 from jarvis.agents.session import AdapterSession
+from jarvis.plugins.slack import slack_route
 from jarvis.tasks.models import Task, TaskKind
+
+
+def turn_on_slack(settings, server: str) -> None:
+    """The `send_to_slack` plugin on, naming `server` as the subagents' Slack."""
+    settings.ensure_dirs()
+    plugins.write_config(settings, "send_to_slack", {"mcp_server": server})
+    plugins.install(settings, "send_to_slack")
 
 
 def make_task(**overrides) -> Task:
@@ -543,7 +552,7 @@ async def test_session_interrupt_and_close_swallow_client_errors():
 
 def test_the_subagent_suffix_makes_slack_opt_in(settings, unwrapped):
     """Subagents reach Slack through the MCP server the owner names; the suffix is the leash."""
-    settings.slack_mcp_server = "team-slack"
+    turn_on_slack(settings, "team-slack")
     options = build_options(make_task(description="review the diff"), settings)
     append = unwrapped(options.system_prompt["append"])
 
@@ -559,7 +568,7 @@ def test_without_a_slack_server_the_suffix_says_nothing_about_slack(settings, un
     options = build_options(make_task(description="review the diff"), settings)
     append = unwrapped(options.system_prompt["append"])
 
-    assert settings.slack_mcp_server is None
+    assert slack_route(settings) is None
     assert "Slack" not in append
     assert "offers to send it" not in append
     assert "{" not in append and "}" not in append
