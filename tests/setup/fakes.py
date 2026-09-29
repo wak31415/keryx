@@ -24,6 +24,8 @@ class ScriptedPrompter:
         self.said: list[tuple[str, str]] = []
         self.asked: list[tuple[str, str]] = []
         self.choices: dict[str, list[Choice]] = {}
+        #: What each secret question offered to keep.
+        self.currents: dict[str, str] = {}
 
     # --- saying ----------------------------------------------------------------------
 
@@ -100,8 +102,13 @@ class ScriptedPrompter:
             raise AssertionError(f"{message!r} refused {answer!r}: {problem}")
         return answer
 
-    def secret(self, message, *, validate=None) -> str:
+    def secret(self, message, *, validate=None, current="") -> str:
+        self.currents[message] = current
         answer = self._answer("secret", message)
+        if answer is DEFAULT:
+            if not current:
+                raise AssertionError(f"{message!r} has nothing to keep")
+            return current
         if validate is not None and (problem := validate(answer)):
             raise AssertionError(f"{message!r} refused a secret: {problem}")
         return answer

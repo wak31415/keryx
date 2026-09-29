@@ -7,7 +7,7 @@ import pytest
 from rich.console import Console
 
 from jarvis.setup import ui
-from jarvis.setup.ui import KEYS_HINT, Aborted, Back, Choice, RichPrompter
+from jarvis.setup.ui import KEYS_HINT, Aborted, Back, Choice, Forward, RichPrompter, heading
 
 
 @pytest.fixture
@@ -165,9 +165,10 @@ def test_a_question_left_with_back_starts_the_next_screen_empty(prompter, monkey
     assert "before" not in screens()[-1]
 
 
+@pytest.mark.parametrize("key, leaves", [("\x1b", Back), ("\t", Forward)])
 @pytest.mark.parametrize("kind", ["select", "checkbox", "text", "password", "confirm"])
-def test_escape_is_back_on_every_kind_of_question(kind):
-    """The real questionary, on a pipe: Esc leaves with `Back`, not an answer."""
+def test_esc_and_tab_leave_every_kind_of_question(kind, key, leaves):
+    """The real questionary, on a pipe: Esc leaves with `Back`, Tab with `Forward`."""
     import questionary
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
@@ -176,8 +177,8 @@ def test_escape_is_back_on_every_kind_of_question(kind):
         options = {"choices": ["a", "b"]} if kind in ("select", "checkbox") else {}
         question = getattr(questionary, kind)("m", input=keys, output=DummyOutput(), **options)
         ui._bind_back(question.application)
-        keys.send_text("\x1b")
-        with pytest.raises(Back):
+        keys.send_text(key)
+        with pytest.raises(leaves):
             question.unsafe_ask()
 
 
@@ -192,3 +193,39 @@ def test_a_multiline_box_keeps_escape_for_submitting(prompter, questionary, monk
     assert bound == []
     prompter.text("Name")
     assert len(bound) == 1
+
+
+def test_a_secret_given_before_is_masked_and_enter_keeps_it(prompter, questionary):
+    answers, recorded = questionary
+    answers.update(password="")
+    key = "sk-proj-" + "a" * 20 + "WXYZ"
+
+    required = lambda v: None if v.strip() else "Required."  # noqa: E731
+    assert prompter.secret("OpenAI API key", validate=required, current=key) == key
+
+    [(_, (message,), kwargs)] = recorded
+    assert message == "OpenAI API key (***WXYZ — Enter keeps it)"
+    assert key not in message
+    assert kwargs["validate"]("") is True  # blank is keeping it, not refused
+
+
+def test_typing_over_a_secret_replaces_it_and_is_still_checked(prompter, questionary):
+    answers, recorded = questionary
+    answers.update(password=" new ")
+
+    assert prompter.secret("Key", validate=lambda v: "bad" if v == "x" else None,
+                           current="old") == "new"
+    assert recorded[0][2]["validate"]("x") == "bad"
+
+
+def test_a_short_secret_shows_none_of_itself():
+    assert ui.mask("482915") == "***"
+    assert ui.mask("xoxb-1234567890-abcd") == "***abcd"
+
+
+def test_a_heading_is_a_line_that_cannot_be_picked():
+    import questionary
+
+    line = ui._choice(heading("Configured"))
+    assert isinstance(line, questionary.Separator) and "Configured" in line.title
+    assert isinstance(ui._choice(heading("")), questionary.Separator)

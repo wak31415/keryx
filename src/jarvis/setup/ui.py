@@ -12,7 +12,10 @@ lead up to this question — so the history of the walk is in the scrollback, no
 
 A person pressing ctrl-c at any question raises `Aborted`. Every section saves as it goes,
 so stopping part way loses only the question that was being asked. Esc raises `Back`,
-which the wizard turns into the question before (`jarvis.setup.rewind`).
+which the wizard turns into the question before, and Tab `Forward`, which it turns into
+the first question not yet answered (`jarvis.setup.rewind`). A secret is never shown
+back: one already given is offered as `***` and its last four characters, and Enter
+keeps it.
 """
 
 import contextlib
@@ -32,6 +35,10 @@ class Back(Exception):
     """The person asked for the question before this one (Esc)."""
 
 
+class Forward(Exception):
+    """The person asked to skip to the first question not yet answered (Tab)."""
+
+
 @dataclass(frozen=True)
 class Choice:
     """One option in a `select` or `checkbox`."""
@@ -42,6 +49,18 @@ class Choice:
     checked: bool = False
     #: Why it cannot be picked, shown beside it; None when it can.
     disabled: str | None = None
+    #: A heading between options, never picked (`heading`).
+    separator: bool = False
+
+
+def heading(label: str) -> Choice:
+    """A line in a `select` that groups the options under it."""
+    return Choice("", label, separator=True)
+
+
+def mask(secret: str) -> str:
+    """How a secret already given is shown: its last four characters, when that is safe."""
+    return f"***{secret[-4:]}" if len(secret) >= 16 else "***"
 
 
 class Prompter(Protocol):
@@ -70,13 +89,17 @@ class Prompter(Protocol):
         validate: Validator | None = None,
         multiline: bool = False,
     ) -> str: ...
-    def secret(self, message: str, *, validate: Validator | None = None) -> str: ...
+    def secret(
+        self, message: str, *, validate: Validator | None = None, current: str = ""
+    ) -> str: ...
     def confirm(self, message: str, *, default: bool = True) -> bool: ...
     def spinner(self, message: str) -> contextlib.AbstractContextManager[None]: ...
 
 
 #: Under each section's header: the two keys that are not answers.
-KEYS_HINT = "esc goes back a question · ctrl-c stops (what is answered is saved)"
+KEYS_HINT = (
+    "esc goes back · tab skips to what is unanswered · ctrl-c stops (answers are saved)"
+)
 
 
 class RichPrompter:
@@ -181,7 +204,8 @@ class RichPrompter:
     # --- asking ------------------------------------------------------------------------
 
     def _ask(self, question, *, back: bool = True) -> object:
-        """Ask on a fresh screen; Esc is `Back` (not in a multiline box, where it submits)."""
+        """Ask on a fresh screen; Esc is `Back` and Tab `Forward` (not in a multiline box,
+        where Esc submits and Tab is typed)."""
         self._redraw()
         if back:
             _bind_back(question.application)
@@ -243,16 +267,22 @@ class RichPrompter:
             )
         ).strip()
 
-    def secret(self, message: str, *, validate: Validator | None = None) -> str:
+    def secret(
+        self, message: str, *, validate: Validator | None = None, current: str = ""
+    ) -> str:
         import questionary
 
-        return str(
+        if current:
+            message = f"{message} ({mask(current)} — Enter keeps it)"
+            validate = _or_blank(validate)
+        answer = str(
             self._ask(
                 questionary.password(
                     message, validate=_validator(validate), qmark="◇", style=_style()
                 )
             )
         ).strip()
+        return answer or current
 
     def confirm(self, message: str, *, default: bool = True) -> bool:
         import questionary
@@ -267,8 +297,14 @@ class RichPrompter:
             yield
 
 
+def _or_blank(validate: Validator | None) -> Validator | None:
+    if validate is None:
+        return None
+    return lambda value: None if not value.strip() else validate(value)
+
+
 def _bind_back(application) -> None:
-    """Esc leaves the question with `Back` instead of an answer."""
+    """Esc leaves the question with `Back`, and Tab with `Forward`, instead of an answer."""
     from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 
     keys = KeyBindings()
@@ -276,6 +312,10 @@ def _bind_back(application) -> None:
     @keys.add("escape", eager=True)
     def _back(event) -> None:
         event.app.exit(exception=Back())
+
+    @keys.add("tab")
+    def _forward(event) -> None:
+        event.app.exit(exception=Forward())
 
     own = application.key_bindings
     application.key_bindings = merge_key_bindings([own, keys]) if own is not None else keys
@@ -298,6 +338,8 @@ def _validator(validate: Validator | None):
 def _choice(choice: Choice):
     import questionary
 
+    if choice.separator:
+        return questionary.Separator(f"  {choice.label}" if choice.label else " ")
     title = [("", choice.label)]
     if choice.hint:
         title.append(("class:hint", f"  {choice.hint}"))

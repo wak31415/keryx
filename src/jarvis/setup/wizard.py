@@ -1,7 +1,8 @@
 """`jarvis setup`: the sections in order, which of them are left, and the closing summary.
 
-It opens with a table of every section's status, read from `jarvis doctor` — ✓ done,
-○ missing, ✗ failed — and by default walks only what is left: a section that failed, one
+It opens on an overview of every section's status, read from `jarvis doctor` — ✓ done,
+○ missing, ✗ failed — grouped into not yet configured and configured, any of which can be
+walked on its own; "set up what is left" walks only what is left: a section that failed, one
 that is required and missing (the voice key, a coding agent), and one that is missing and
 has not been walked before. Walking a section is remembered (`ConfigStore.mark_walked`), so
 Google left for later is not asked about on every run; `--all`, or choosing "Review
@@ -10,8 +11,9 @@ everything", walks them all and asks again about what is set.
 Nothing here assumes what the machine lacks: every section looks first and asks only about
 what it did not find.
 
-Esc at any question goes back one (`walk`, through `jarvis.setup.rewind`): to the one
-before in the same section, or to the last one a section before it asked.
+Esc at any question goes back one (`run_walk`, through `jarvis.setup.rewind`): to the one
+before in the same section, to the last one a section before it asked, or to the overview.
+Tab skips forward past everything already answered.
 """
 
 from collections.abc import Callable
@@ -25,8 +27,8 @@ from jarvis.doctor import Check, format_check, run_doctor_checks
 from jarvis.projects import MAX_BRIEF_CHARS, MAX_BRIEFS_CHARS, summaries_dir
 from jarvis.setup import agents, google, phone, profile, project_context, sections
 from jarvis.setup.context import SetupContext
-from jarvis.setup.rewind import Entry, Recorder, rewind
-from jarvis.setup.ui import Back, Choice
+from jarvis.setup.rewind import ASK, Entry, Recorder, rewind
+from jarvis.setup.ui import Back, Choice, Forward, heading
 
 DONE, MISSING, FAILED = "done", "missing", "failed"
 MARKS = {DONE: "✓", MISSING: "○", FAILED: "✗"}
@@ -105,7 +107,13 @@ def pending(ctx: SetupContext, found: dict[str, str]) -> list[Section]:
 
 
 def run_wizard(ctx: SetupContext, *, review_all: bool = False) -> int:
-    """The whole of `jarvis setup`; returns the exit code (0 unless a hard check fails)."""
+    """The whole of `jarvis setup`; returns the exit code (0 unless a hard check fails).
+
+    The home screen is the overview: every section, not yet configured ones first, each of
+    which can be walked on its own and comes back here; "set up what is left" and "review
+    everything" walk several and end with the summary. Esc at the first question of a walk
+    comes back here too.
+    """
     ui = ctx.ui
     ui.intro(
         "Jarvis setup",
@@ -118,75 +126,129 @@ def run_wizard(ctx: SetupContext, *, review_all: bool = False) -> int:
         ui.outro("Run `jarvis migrate` first (`--dry-run` shows what it would move), then "
                  "`jarvis setup` again.")
         return 1
-    checks = run_doctor_checks(ctx.settings, store=ctx.store)
-    found = statuses(ctx, checks)
-    ui.table(
-        ("", "Section", "Status"),
-        [
-            (MARKS[status], section.title, status)
-            for section in SECTIONS
-            if (status := found.get(section.key)) is not None
-        ],
-    )
-    left = pending(ctx, found)
-    visible = [section for section in SECTIONS if section.key in found]
+    records: dict[str, list[Entry]] = {}
+    walked = False
     if review_all:
-        walk, ctx.review = visible, True
-    else:
-        options = [Choice("review", "Review everything"), Choice("exit", "Exit")]
-        if left:
-            names = ", ".join(section.title for section in left)
-            options.insert(0, Choice("left", f"Set up what is left ({len(left)})", hint=names))
-        message = "What next?" if left else "Everything is set up."
-        choice = _first_question(ctx, message, options)
+        ctx.review, walked = True, True
+        if run_walk(ctx, _visible(ctx), records):
+            return summary(ctx)
+    while True:
+        ctx.refresh()
+        found = statuses(ctx, run_doctor_checks(ctx.settings, store=ctx.store))
+        left = pending(ctx, found)
+        ui.section(HOME)
+        choice = _home(ctx, found, left)
         if choice == "exit":
+            if walked:
+                return summary(ctx)
             ui.outro("Nothing changed.")
             return 0
-        walk = left if choice == "left" else visible
-        ctx.review = choice == "review"
-    run_walk(ctx, walk)
-    return summary(ctx)
+        walked = True
+        if choice in ("left", "review"):
+            ctx.review = choice == "review"
+            if run_walk(ctx, left if choice == "left" else _visible(ctx), records):
+                return summary(ctx)
+            continue
+        [section] = [section for section in SECTIONS if section.key == choice]
+        # One already configured is walked to change it: ask again what is set.
+        ctx.review = found[section.key] == DONE
+        run_walk(ctx, [section], records)
 
 
-def _first_question(ctx: SetupContext, message: str, options: list[Choice]) -> str:
+#: The home screen's header.
+HOME = "Overview"
+
+
+def _visible(ctx: SetupContext) -> list[Section]:
+    found = statuses(ctx, run_doctor_checks(ctx.settings, store=ctx.store))
+    return [section for section in SECTIONS if section.key in found]
+
+
+def home_choices(found: dict[str, str], left: list[Section]) -> list[Choice]:
+    """The overview: what is left, then every section grouped by whether it is configured."""
+    options = []
+    if left:
+        options.append(Choice("left", f"Set up what is left ({len(left)})"))
+    shown = [section for section in SECTIONS if section.key in found]
+    for title, wanted in (("Not yet configured", (MISSING, FAILED)), ("Configured", (DONE,))):
+        group = [section for section in shown if found[section.key] in wanted]
+        if group:
+            options.append(heading(title))
+        for section in group:
+            status = found[section.key]
+            options.append(Choice(section.key, f"{MARKS[status]}  {section.title}",
+                                  hint="failed" if status == FAILED else ""))
+    options += [heading(""), Choice("review", "Review everything"), Choice("exit", "Exit")]
+    return options
+
+
+def _home(ctx: SetupContext, found: dict[str, str], left: list[Section]) -> str:
+    message = "What next?" if left else "Everything is set up. What next?"
+    options = home_choices(found, left)
     while True:
         try:
             return ctx.ui.select(message, options, default=options[0].value)
-        except Back:
-            continue  # there is nothing before it
+        except (Back, Forward):
+            continue  # there is nothing before it, and nowhere to skip to
 
 
-def run_walk(ctx: SetupContext, walk: list[Section]) -> None:
-    """Run `walk` in order, going back a question on every Esc.
+def run_walk(ctx: SetupContext, walk: list[Section], records: dict[str, list[Entry]]) -> bool:
+    """Run `walk` in order, going back a question on Esc and skipping forward on Tab.
 
-    Each section runs behind a `Recorder`, and what it answered is kept by section. Going
-    back runs the section it lands in again, in review mode, from its record.
+    Each section runs behind a `Recorder`, and what it answered is kept in `records`, by
+    section. Going back runs the section it lands in again, in review mode, replaying its
+    record up to that question; skipping forward replays whole records, from this section
+    on, until a question comes up that none of them answers. False when Esc was pressed at
+    the walk's first question, which leaves it.
     """
-    records: dict[str, list[Entry]] = {}
-    hints: dict[str, Entry] = {}
     keys = [section.key for section in walk]
     review, ui, probes = ctx.review, ctx.ui, ctx.probes
+    cuts: dict[str, int] = {}
+    forwarding = False
+
+    def asked_live() -> None:
+        nonlocal forwarding
+        forwarding = False
+
     index = 0
     while index < len(walk):
         section = walk[index]
-        hint = hints.pop(section.key, None)
-        recorder = Recorder(ui, records.pop(section.key, []), hint)
+        record = records.get(section.key, [])
+        if section.key in cuts:
+            cut = cuts.pop(section.key)
+            recorder = Recorder(ui, record[:cut], record[cut:], on_live=asked_live)
+            # Going back to a question means asking it again, even about what is set now.
+            ctx.review = True
+        elif forwarding:
+            recorder = Recorder(ui, record, on_live=asked_live)
+        else:
+            recorder = Recorder(ui, (), record, on_live=asked_live)
         ui.section(section.title, step=(index + 1, len(walk)))
         ctx.ui, ctx.probes = recorder, recorder.probes(probes)
-        # Going back to a question means asking it again, even about what is set now.
-        ctx.review = review or hint is not None
         try:
             section.run(ctx)
         except Back:
-            records[section.key] = recorder.log
-            index = rewind(keys, index, records, hints)
+            records[section.key] = recorder.record()
+            target = rewind(keys, index, records, before=len(recorder.log))
+            if target is None:
+                return False
+            index, cut = target
+            cuts[keys[index]] = cut
+            continue
+        except Forward:
+            records[section.key] = recorder.record()
+            forwarding = True
             continue
         finally:
             ctx.ui, ctx.probes, ctx.review = ui, probes, review
         recorder.stop_replaying()
-        records[section.key] = recorder.log
+        # A run that asked nothing (all of it set already) keeps the record it had, so Esc
+        # from the next section still has its answers to go back to.
+        if any(entry.what == ASK for entry in recorder.log) or section.key not in records:
+            records[section.key] = recorder.log
         ctx.store.mark_walked(section.key)
         index += 1
+    return True
 
 
 def summary(ctx: SetupContext) -> int:

@@ -1,18 +1,23 @@
-"""Going back a question in `jarvis setup`: run the section again, answering from the record.
+"""Going back and forward in `jarvis setup`: run the section again, answering from a record.
 
 A section is ordinary code — it asks, looks at the answer, saves, reaches the network — so
-there is no list of questions to step back through. Instead a `Recorder` stands between
-the section and the terminal and writes down every answer and every probe's result as it
-runs. Esc (`Back`) drops the last answer, and the wizard runs the section again in review
-mode behind a `Recorder` handed the rest: it answers each question from the record, and
-hands back each probe's recorded result without running it — so no sign-in, no agent task
-and no key check happens twice — until the record runs out. The question after it is asked
-on the terminal again, with the dropped answer as its default.
+there is no list of questions to step through. Instead a `Recorder` stands between the
+section and the terminal and writes down every answer and every probe's result as it runs,
+and the wizard keeps each section's record for the whole walk.
 
-A replay stops at the first question that is not the one recorded (an earlier save changed
-what the section asks) and asks from there, so going back may land a question early, never
-late, and never skips one. Nothing said while replaying is shown, except what leads up to
-the question the replay stops at.
+- **Esc** (`Back`) runs the section again in review mode, answering from its record up to
+  the question before (`script`), and asks that one on the terminal. Nothing after it is
+  thrown away: the rest of the record (`future`) offers each later question its last
+  answer as the default, and a secret as `***` and its last four characters.
+- **Tab** (`Forward`) runs the section again from its whole record, and every section
+  after it from theirs, until a question comes up that the record has no answer for —
+  the first one not yet answered — which is asked on the terminal.
+
+A replayed probe hands back its recorded result without running, so no sign-in, no agent
+task and no key check happens twice. A replay passes over what the record has that the
+section no longer asks (an earlier save made it unnecessary), and stops at the first
+question or probe the record does not have. Nothing said while replaying is shown, except
+what leads up to where it stops.
 """
 
 import contextlib
@@ -23,7 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from jarvis.setup.context import Probes
-from jarvis.setup.ui import Choice, Prompter, Validator
+from jarvis.setup.ui import Choice, Forward, Prompter, Validator
 
 ASK, PROBE = "ask", "probe"
 
@@ -40,17 +45,37 @@ class Entry:
     awaited: bool = False
 
 
-_NO_HINT = object()
+def _take(entries: list[Entry], what: str, name: str, message: str = "") -> Entry | None:
+    """The first entry in `entries` that is this one, and everything before it, taken out."""
+    for index, entry in enumerate(entries):
+        if (entry.what, entry.name, entry.message) == (what, name, message):
+            del entries[: index + 1]
+            return entry
+    return None
 
 
 class Recorder:
-    """A `Prompter` that answers from `script` while it lasts, and records everything."""
+    """A `Prompter` that answers from `script` while it lasts, and records everything.
 
-    def __init__(self, ui: Prompter, script: Sequence[Entry] = (), hint: Entry | None = None):
+    Once it asks on the terminal, `future` is what the section answered before, beyond this
+    run: each question found there offers that answer as its default.
+    """
+
+    def __init__(
+        self,
+        ui: Prompter,
+        script: Sequence[Entry] = (),
+        future: Sequence[Entry] = (),
+        *,
+        on_live: Callable[[], None] | None = None,
+    ):
         self.ui = ui
         self.script = list(script)
+        self.future = list(future)
         self.log: list[Entry] = []
-        self.hint = hint
+        self.on_live = on_live
+        #: The recorded answer the question on the terminal was offered, until answered.
+        self._offered: Entry | None = None
         #: What was said since the last replayed answer, shown if the replay stops here.
         self._held: list[tuple[Callable[..., None], tuple, dict]] = []
 
@@ -58,12 +83,10 @@ class Recorder:
     def replaying(self) -> bool:
         return bool(self.script)
 
-    def _next(self, what: str, name: str, message: str = "") -> Entry | None:
-        """The next recorded entry, taken, when it is this one; else None."""
-        if self.script and (self.script[0].what, self.script[0].name,
-                            self.script[0].message) == (what, name, message):
-            return self.script.pop(0)
-        return None
+    def record(self) -> list[Entry]:
+        """Everything this section has answered: this run, and what lay beyond it."""
+        offered = [self._offered] if self._offered is not None else []
+        return [*self.log, *offered, *self.future]
 
     def stop_replaying(self) -> None:
         """Show what was held, and ask everything from here on the terminal."""
@@ -121,28 +144,38 @@ class Recorder:
 
     # --- asking: from the script, else from the terminal ---------------------------------
 
-    def _ask(self, kind: str, message: str, ask: Callable[[Any], Any]) -> Any:
-        if (step := self._next(ASK, kind, message)) is not None:
+    def _ask(self, kind: str, message: str, ask: Callable[[Entry | None], Any]) -> Any:
+        if self.script and (step := _take(self.script, ASK, kind, message)) is not None:
             self._held.clear()
             answer = step.value
         else:
             self.stop_replaying()
-            previous = _NO_HINT
-            if self.hint is not None and (self.hint.name, self.hint.message) == (kind, message):
-                previous, self.hint = self.hint.value, None
-            answer = ask(previous)
+            if self.on_live is not None:
+                self.on_live()
+            self._offered = _take(self.future, ASK, kind, message)
+            while True:
+                try:
+                    answer = ask(self._offered)
+                    break
+                except Forward:
+                    if self._offered is not None:
+                        raise
+                    # Not answered before: already where Tab would have gone.
+            self._offered = None
         self.log.append(Entry(ASK, kind, message, answer))
         return answer
 
     def select(self, message: str, choices: Sequence[Choice], *, default: str | None = None) -> str:
-        return self._ask("select", message, lambda previous: self.ui.select(
-            message, choices, default=default if previous is _NO_HINT else previous
+        return self._ask("select", message, lambda offered: self.ui.select(
+            message, choices, default=default if offered is None else offered.value
         ))
 
     def checkbox(self, message: str, choices: Sequence[Choice]) -> list[str]:
-        def ask(previous: Any) -> list[str]:
-            if previous is not _NO_HINT:
-                choices_ = [dataclasses.replace(c, checked=c.value in previous) for c in choices]
+        def ask(offered: Entry | None) -> list[str]:
+            if offered is not None:
+                choices_ = [
+                    dataclasses.replace(c, checked=c.value in offered.value) for c in choices
+                ]
                 return self.ui.checkbox(message, choices_)
             return self.ui.checkbox(message, choices)
 
@@ -156,20 +189,21 @@ class Recorder:
         validate: Validator | None = None,
         multiline: bool = False,
     ) -> str:
-        return self._ask("text", message, lambda previous: self.ui.text(
+        return self._ask("text", message, lambda offered: self.ui.text(
             message,
-            default=default if previous is _NO_HINT else previous,
+            default=default if offered is None else offered.value,
             validate=validate,
             multiline=multiline,
         ))
 
-    def secret(self, message: str, *, validate: Validator | None = None) -> str:
-        # Never prefilled: a key typed again is typed again.
-        return self._ask("secret", message, lambda _: self.ui.secret(message, validate=validate))
+    def secret(self, message: str, *, validate: Validator | None = None, current: str = "") -> str:
+        return self._ask("secret", message, lambda offered: self.ui.secret(
+            message, validate=validate, current=current if offered is None else offered.value
+        ))
 
     def confirm(self, message: str, *, default: bool = True) -> bool:
-        return self._ask("confirm", message, lambda previous: self.ui.confirm(
-            message, default=default if previous is _NO_HINT else previous
+        return self._ask("confirm", message, lambda offered: self.ui.confirm(
+            message, default=default if offered is None else offered.value
         ))
 
     # --- the outside world: recorded, and replayed without running -----------------------
@@ -183,10 +217,13 @@ class Recorder:
 
     def _probe(self, name: str, call: Callable[..., Any]) -> Callable[..., Any]:
         def run(*args: Any, **kwargs: Any) -> Any:
-            if (step := self._next(PROBE, name)) is not None:
+            if self.script and (step := _take(self.script, PROBE, name)) is not None:
                 self.log.append(step)
                 return _resolved(step.value) if step.awaited else step.value
+            # A probe that runs is seen running, never hidden in a replay; and what it
+            # answered last time is spent.
             self.stop_replaying()
+            _take(self.future, PROBE, name)
             result = call(*args, **kwargs)
             if inspect.isawaitable(result):
                 return self._recorded(name, result)
@@ -206,21 +243,18 @@ async def _resolved(value: Any) -> Any:
     return value
 
 
-def rewind(keys: Sequence[str], index: int, records: dict[str, list[Entry]],
-           hints: dict[str, Entry]) -> int:
-    """Where Esc at section `keys[index]` goes: the index of the section to run again.
-
-    `records` holds what each section answered (this one's up to the Esc); the last answer
-    before the Esc is dropped from its section's record and becomes its hint. A section
-    that asked nothing is passed over. With nothing answered at all, this section runs
-    again from its start.
+def rewind(
+    keys: Sequence[str], index: int, records: dict[str, list[Entry]], before: int
+) -> tuple[int, int] | None:
+    """Where Esc goes from section `keys[index]`, whose first `before` entries were answered
+    ahead of the question it was pressed at: the section to run again, and how much of its
+    record to replay. A section that asked nothing is passed over; None when nothing before
+    was asked at all.
     """
     for back in range(index, -1, -1):
         entries = records.get(keys[back], [])
-        asked = [number for number, entry in enumerate(entries) if entry.what == ASK]
+        limit = before if back == index else len(entries)
+        asked = [number for number, entry in enumerate(entries[:limit]) if entry.what == ASK]
         if asked:
-            records[keys[back]] = entries[: asked[-1]]
-            hints[keys[back]] = entries[asked[-1]]
-            return back
-        records.pop(keys[back], None)
-    return index
+            return back, asked[-1]
+    return None

@@ -131,6 +131,10 @@ class SetupContext:
             self.warn_if_overridden(key)
         return True
 
+    def current(self, key: str) -> str:
+        """What `key` is set to now, for a question that offers to keep it; "" when unset."""
+        return str(getattr(self.settings, key.lower(), None) or "")
+
     def warn_if_overridden(self, key: str) -> bool:
         """Say so when the environment sets `key`: it wins over anything saved here."""
         if self.store.source_of(key, self.settings) != FROM_ENV:

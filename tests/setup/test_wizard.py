@@ -72,7 +72,7 @@ def test_a_first_run_walks_everything_and_a_second_asks_nothing(make_ctx, claude
     again = make_ctx([("Everything is set up", "exit")])
     assert run_wizard(again) == 0
     assert again.ui.done()
-    assert again.ui.lines("section") == []
+    assert again.ui.lines("section") == ["Overview"]  # and no section walked
 
 
 def test_esc_goes_back_a_question_and_the_key_is_not_asked_for_twice(
@@ -105,15 +105,39 @@ def test_esc_goes_back_a_question_and_the_key_is_not_asked_for_twice(
     ]
 
 
-def test_the_opening_table_marks_each_section(make_ctx, claude_signed_in):
+def test_the_overview_puts_what_is_not_configured_first(make_ctx, claude_signed_in):
     ctx = make_ctx([("What next?", "exit")])
 
     run_wizard(ctx)
 
-    table = ctx.ui.lines("table")
-    assert "○ | Voice | missing" in table
-    assert "✓ | Coding agents | done" in table
-    assert not any("Import" in row for row in table)
+    labels = [choice.label for choice in ctx.ui.choices["What next?"]]
+    assert labels[0].startswith("Set up what is left")
+    todo, done = labels.index("Not yet configured"), labels.index("Configured")
+    assert todo < labels.index("○  Voice") < done < labels.index("✓  Coding agents")
+    assert labels[-2:] == ["Review everything", "Exit"]
+    assert not any("XDG" in label for label in labels)
+
+
+def test_a_section_picked_from_the_overview_is_walked_alone_and_comes_back(
+    make_ctx, claude_signed_in, world
+):
+    ConfigStore().set({"OPENAI_API_KEY": "sk-saved-key-0123456789"})
+    ctx = make_ctx([
+        ("What next?", "voice"),
+        ("OpenAI API key", DEFAULT),        # configured: offered, and kept with Enter
+        ("What next?", "owner"),
+        ("call you", Back()),               # Esc at the first question: the overview
+        ("What next?", "exit"),
+    ])
+
+    run_wizard(ctx)
+
+    assert ctx.ui.done()
+    assert ctx.ui.currents["OpenAI API key"] == "sk-saved-key-0123456789"
+    assert not [call for call in world.calls if call[0] == "openai"]  # nothing to check
+    assert ctx.ui.lines("section") == ["Overview", "Voice", "Overview", "Owner and PIN",
+                                       "Overview"]
+    assert ctx.ui.lines("panel")  # something was walked, so the summary closes it
 
 
 def test_a_section_that_failed_is_walked_even_after_it_was_walked(make_ctx, claude_signed_in):
@@ -200,7 +224,9 @@ def test_nothing_left_offers_a_review(make_ctx, claude_signed_in, monkeypatch):
     ctx = make_ctx([("Everything is set up", "exit")])
 
     assert run_wizard(ctx) == 0
-    assert [c.value for c in ctx.ui.choices["Everything is set up."]] == ["review", "exit"]
+    [options] = ctx.ui.choices.values()
+    values = [choice.value for choice in options if not choice.separator]
+    assert "left" not in values and values[-2:] == ["review", "exit"]
 
 
 def test_ctrl_c_propagates_and_what_was_saved_stays(make_ctx, claude_signed_in):

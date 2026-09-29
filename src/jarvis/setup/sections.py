@@ -80,8 +80,13 @@ def run_voice(ctx: SetupContext) -> None:
     if settings.openai_api_key not in ("", "unset") and not ctx.review:
         ui.success("OPENAI_API_KEY is set")
         return
+    current = settings.openai_api_key if settings.openai_api_key != "unset" else ""
     for _ in range(3):
-        key = ui.secret("OpenAI API key", validate=lambda v: None if v.strip() else "Required.")
+        key = ui.secret("OpenAI API key", validate=lambda v: None if v.strip() else "Required.",
+                        current=current)
+        if current and key == current:
+            ui.success("OPENAI_API_KEY kept")
+            return
         with ui.spinner("Checking the key with OpenAI…"):
             problem = ctx.probes.openai_key_problem(key)
         if problem is None:
@@ -318,8 +323,10 @@ def run_slack(ctx: SetupContext) -> None:
         "4. Open a DM with the app in Slack; its channel id is in the conversation's details."
     )
     token = ui.secret("Bot token (xoxb-…)",
-                      validate=lambda v: None if v.strip().startswith("xox") else "It starts xox.")
-    channel = ui.text("DM channel id", validate=lambda v: None if v.strip() else "Required.")
+                      validate=lambda v: None if v.strip().startswith("xox") else "It starts xox.",
+                      current=ctx.current("SLACK_BOT_TOKEN"))
+    channel = ui.text("DM channel id", default=ctx.current("SLACK_CHANNEL_ID"),
+                      validate=lambda v: None if v.strip() else "Required.")
     ctx.save({"SLACK_BOT_TOKEN": token, "SLACK_CHANNEL_ID": channel})
 
 
@@ -341,7 +348,8 @@ def run_billing(ctx: SetupContext) -> None:
     )
     if which == "skip":
         return
-    key = ui.secret(f"{which.capitalize()} admin key", validate=_required)
+    key = ui.secret(f"{which.capitalize()} admin key", validate=_required,
+                    current=ctx.current(f"{which.upper()}_ADMIN_KEY"))
     budget = ui.text("Your monthly budget in dollars (optional)",
                      default=_display(settings.billing_monthly_budget))
     values: dict[str, Any] = {f"{which.upper()}_ADMIN_KEY": key, "BILLING_PROVIDER": which}
