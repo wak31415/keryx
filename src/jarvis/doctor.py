@@ -46,6 +46,7 @@ from jarvis.config.settings import LEGACY_ENV_FILE
 from jarvis.config.store import ConfigStore
 from jarvis.continuity.memory import memory_path, read_memory
 from jarvis.integrations.gmail import token_path
+from jarvis.issues import GH_INSTALL_URL, SKILL, gh_status
 from jarvis.logging_util import mask_number
 from jarvis.restart.service import INSTALLERS, candidate_target, resolve_target
 
@@ -150,6 +151,7 @@ def run_doctor_checks(
         _projects_root_check(settings),
         *plugin_checks(settings),
         _retired_check(store),
+        _issues_check(settings),
     ]
     return checks
 
@@ -878,3 +880,42 @@ def _retired_check(store: ConfigStore) -> Check:
             section="plugins",
         )
     return Check("retired settings", True, "none", severity="soft", section="plugins")
+
+
+def _issues_check(settings: Settings) -> Check:
+    """Whether a bug or feature request said on a call can become an issue: off, or `gh`.
+
+    Soft: without it a report is still written up, into the task's own report. A token in
+    the keyring is named rather than failed, because whether a background service can open
+    it depends on the desktop, and `gh` says so itself when it cannot.
+    """
+    name = "issue reports"
+    if not settings.issue_reporting:
+        return Check(name, True, "off — `jarvis setup` turns them on", severity="soft",
+                     section="issues")
+    checkout = settings.checkout
+    if checkout is None or not (checkout / SKILL).is_file():
+        return Check(
+            name,
+            False,
+            "no Jarvis checkout with the skill in it — set JARVIS_CHECKOUT to a clone",
+            severity="soft",
+            section="issues",
+            unset=True,
+        )
+    status = gh_status()
+    if not status.installed:
+        detail = f"gh is not installed ({GH_INSTALL_URL}); until it is, reports are not filed"
+        return Check(name, False, detail, severity="soft", section="issues", unset=True)
+    if not status.signed_in:
+        return Check(name, False, "gh is not signed in to GitHub — `gh auth login`",
+                     severity="soft", section="issues", unset=True)
+    detail = f"filed on {settings.issue_repo}" + (
+        f" as {status.account}" if status.account else ""
+    )
+    if status.keyring:
+        detail += (
+            "; gh keeps its token in the keyring, which the background service may not open "
+            "(`gh auth login --insecure-storage` keeps it in a private file instead)"
+        )
+    return Check(name, True, detail, severity="soft", section="issues")

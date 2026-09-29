@@ -22,6 +22,7 @@ store, and `storage_refusal` keeps `jarvis serve` from starting while one is sti
 
 import json
 import logging
+import re
 import secrets
 import tomllib
 from contextvars import ContextVar
@@ -139,6 +140,12 @@ DIRECTORY_FIELDS = ("data_dir", "state_dir", "cache_dir")
 LEGACY_ENV_FILE = Path(".env")
 LEGACY_CLIENT_FILE = Path(".secrets") / "client_secret.json"
 LEGACY_WORKING_FILES = (LEGACY_ENV_FILE, LEGACY_CLIENT_FILE)
+#: Where a problem with Jarvis is filed unless `ISSUE_REPO` says otherwise: its own tracker.
+UPSTREAM_REPO = "wak31415/jarvis-voice-agent"
+#: `owner/name`, as GitHub spells a repository.
+REPO_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+#: The repository root of the running code: `src/jarvis/config/settings.py`, three up.
+SOURCE_ROOT = Path(__file__).resolve().parents[3]
 
 
 def setting(
@@ -564,6 +571,23 @@ class Settings(BaseSettings):
         group="projects",
         default_factory=lambda: claude_config_dir() / "skills",
     )
+    jarvis_checkout: Path | None = setting(
+        None,
+        "The Jarvis repository on this machine, which a subagent reads when it reports a "
+        "problem with Jarvis. Unset: the checkout Jarvis runs from, when it runs from one.",
+        group="projects",
+    )
+    issue_reporting: bool = setting(
+        False,
+        "Whether a bug or a feature request for Jarvis, said on a call, may be filed as a "
+        "GitHub issue by a subagent, with `gh`. `jarvis setup` asks.",
+        group="projects",
+    )
+    issue_repo: str = setting(
+        UPSTREAM_REPO,
+        "The GitHub repository (`owner/name`) those issues are filed on.",
+        group="projects",
+    )
 
     # --- the approval bridge -------------------------------------------------------------
 
@@ -779,7 +803,7 @@ class Settings(BaseSettings):
             return value
         raise ValueError(PIN_RULE)
 
-    @field_validator("google_client_secrets_file", mode="before")
+    @field_validator("google_client_secrets_file", "jarvis_checkout", mode="before")
     @classmethod
     def _blank_path_is_unset(cls, value: object) -> object:
         """A blank path is no path, not the current directory."""
@@ -792,18 +816,28 @@ class Settings(BaseSettings):
         "projects_root",
         "skills_dir",
         "google_client_secrets_file",
+        "jarvis_checkout",
         mode="after",
     )
     @classmethod
     def _expand_path(cls, value: Path | None) -> Path | None:
         return value.expanduser() if value is not None else None
 
-    @field_validator(*DIRECTORY_FIELDS, mode="after")
+    @field_validator(*DIRECTORY_FIELDS, "jarvis_checkout", mode="after")
     @classmethod
-    def _directory_is_absolute(cls, value: Path) -> Path:
+    def _directory_is_absolute(cls, value: Path | None) -> Path | None:
         """One place resolves a directory setting, and it resolves no relative one."""
-        if not value.is_absolute():
+        if value is not None and not value.is_absolute():
             raise ValueError("must be an absolute path (or start with ~)")
+        return value
+
+    @field_validator("issue_repo", mode="after")
+    @classmethod
+    def _repo_is_owner_slash_name(cls, value: str) -> str:
+        """`owner/name`: it is handed to `gh --repo` as it is."""
+        value = value.strip()
+        if not REPO_PATTERN.fullmatch(value):
+            raise ValueError("must be a GitHub repository as owner/name")
         return value
 
     @model_validator(mode="after")
@@ -1026,6 +1060,17 @@ class Settings(BaseSettings):
     def custom_tools_dir(self) -> Path:
         """`DATA_DIR/tools`: the owner's own voice tools (`jarvis.tools.custom`)."""
         return self.data_dir / "tools"
+
+    @property
+    def checkout(self) -> Path | None:
+        """The Jarvis repository: `JARVIS_CHECKOUT`, else the one this code runs from.
+
+        None when neither is one — an install from a wheel, with no setting pointing at a
+        clone — because then there is no source tree to read and no skills beside it.
+        """
+        if self.jarvis_checkout is not None:
+            return self.jarvis_checkout
+        return SOURCE_ROOT if (SOURCE_ROOT / "pyproject.toml").is_file() else None
 
     def ensure_dirs(self) -> None:
         """Create `data_dir` (`tasks`, `calls`, `tools`) and `state_dir` (`logs`, `approvals`).

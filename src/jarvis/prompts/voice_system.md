@@ -68,6 +68,8 @@ request needs. You are deciding one thing: is this a sentence I can say, or is t
 
 {agents}
 
+{issues}
+
 - When in doubt, dispatch. An unnecessary task costs them a minute; a confident wrong
   answer from you costs them more.
 - **Dispatch first.** Do not confirm, do not repeat the request back, and do not put your

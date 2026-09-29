@@ -8,6 +8,18 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Added
 
+- **Bug reports and feature requests for Jarvis, by saying so.** "That's a bug, report it"
+  or "suggest that Jarvis should be able to…" is dispatched like any other work, and the
+  subagent files it as an issue on Jarvis's repository with `gh`, following the new
+  `skills/jarvis-report-issue` skill: about ten tool calls of looking (the logs, the call it
+  came from, a grep of the code), no tests run and nothing fixed or built, the repository's
+  own issue templates, and nothing of yours in it — no numbers, names, quotes or project
+  details. A security problem is never filed in public, and one already filed is not filed
+  twice. Off until you turn it on: `jarvis setup` has an Issue reports section that asks,
+  checks that `gh` is signed in and offers `gh auth login`, and `jarvis doctor` checks it
+  too. `ISSUE_REPORTING` turns it on, `ISSUE_REPO` says where (the upstream repository by
+  default), and `JARVIS_CHECKOUT` says where the code is when Jarvis does not run from a
+  checkout of its own.
 - **Plugins: the optional voice tools, on only when you want them.** `send_to_slack`,
   `check_email`, `check_billing` and `cluster_stats` are no longer registered from Jarvis's
   own source. Each is two files in `~/.local/share/jarvis/tools/` — a one-line `.py` that

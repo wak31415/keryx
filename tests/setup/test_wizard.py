@@ -42,6 +42,8 @@ FIRST_RUN = [
     # Phone and plugins left for later (Google is done: Claude's connectors carry it)
     ("Set up phone calls", "skip"),
     ("Which plugins", []),
+    # Issue reports: on, and gh (the fake) is already signed in
+    ("bug reports and feature requests", True),
     # About you
     ("mostly use Jarvis for", ["coding"]),
     ("Anything else", ""),
@@ -62,6 +64,7 @@ def test_a_first_run_walks_everything_and_a_second_asks_nothing(make_ctx, claude
     assert code == 0, ctx.ui.lines("panel")[-1]
     settings = ctx.refresh()
     assert settings.openai_api_key == "sk-live"
+    assert settings.issue_reporting is True
     assert settings.owner_name == "Ada"
     assert settings.pin_source == "enrolled"
     [outro] = ctx.ui.lines("outro")
@@ -209,7 +212,7 @@ def test_review_walks_every_section_and_asks_again(make_ctx, claude_signed_in, m
     run_wizard(ctx, review_all=True)
 
     assert [key for key, _ in walked] == [
-        "voice", "agents", "settings", "owner", "phone", "google", "plugins",
+        "voice", "agents", "settings", "owner", "phone", "google", "plugins", "issues",
         "profile", "projects", "service",
     ]
     assert all(review for _, review in walked)
