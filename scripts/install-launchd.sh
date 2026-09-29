@@ -23,10 +23,6 @@ source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 TEMPLATES="$REPO/ops/launchd"
 AGENTS="$HOME/Library/LaunchAgents"
 LABELS=(dev.jarvis.agent dev.jarvis.tunnel)
-# Labels these agents used before 2026-09-02. They are booted out on install as well as on
-# --uninstall, so an install predating the rename does not survive as a second copy of the
-# same service, with KeepAlive, fighting over the same port.
-LEGACY_LABELS=(com.william.jarvis com.william.ngrok)
 
 remove_agents() {
   # remove_agents LABEL... — unload and delete each one that is actually installed.
@@ -40,7 +36,7 @@ remove_agents() {
 
 parse_install_args "$@"
 if (( UNINSTALL )); then
-  remove_agents "${LABELS[@]}" "${LEGACY_LABELS[@]}"
+  remove_agents "${LABELS[@]}"
   exit 0
 fi
 
@@ -49,7 +45,6 @@ require_command UV uv "https://docs.astral.sh/uv/"
 require_command NGROK ngrok "brew install ngrok"
 
 make_dirs "$AGENTS"
-remove_agents "${LEGACY_LABELS[@]}"
 
 for label in "${LABELS[@]}"; do
   plist="$AGENTS/$label.plist"
