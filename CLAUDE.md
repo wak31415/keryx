@@ -614,7 +614,12 @@ inside functions, not imported at module scope, so the suite runs without them.
   the right PIN is refused before it is compared, and nothing resets the count early — not
   the lock lifting, not a right PIN. That a spoofed caller can keep the owner's PIN locked is the
   accepted price (SECURITY.md); do not buy it back with a reset-on-success or a per-caller
-  count, both of which hand a guesser a fresh budget. `serve` also refuses the phone channel
+  count, both of which hand a guesser a fresh budget. What is not a PIN at all is not a
+  wrong one: a spoken PIN is read back to its digits (`config.spoken_digits`: separators and
+  digit words only), and anything that is not 6-8 digits after that is `incomplete`,
+  compared with nothing and counted nowhere, since it cannot match. Do not grow
+  `spoken_digits` into picking digits out of a sentence — a stray word makes it no PIN.
+  `serve` also refuses the phone channel
   with `DEBUG_SKIP_TWILIO_VALIDATION` on behind a `PUBLIC_HOST`.
 
 ## Reference docs

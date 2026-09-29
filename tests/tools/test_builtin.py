@@ -29,6 +29,7 @@ from jarvis.tools.builtin_common import (
     CONFIG_SET_MESSAGE,
     KEYPRESS_REQUIRED_MESSAGE,
     PIN_ENROL_MESSAGE,
+    PIN_INCOMPLETE_MESSAGE,
     PIN_INVALID_MESSAGE,
     PIN_MISSING_MESSAGE,
     PIN_NOT_CONFIGURED_MESSAGE,
@@ -1308,6 +1309,17 @@ async def test_an_accepted_pin_is_not_something_to_announce(tools):
     assert result["status"] == "authorized"
     assert result["message"] == PIN_OK_MESSAGE
     assert "Say nothing about the PIN" in result["message"]
+
+
+async def test_half_a_pin_is_not_called_wrong(tools):
+    """Clipped by the line, it cost no attempt; the sentence must not sound like one did."""
+    tools.session.pin_result = {"status": "incomplete"}
+
+    result = await tools.call("submit_pin", {"pin": "4242"})
+
+    assert result["message"] == PIN_INCOMPLETE_MESSAGE
+    assert "cost no attempt" in result["message"]
+    assert "Do not call it wrong" in result["message"]
 
 
 async def test_a_spoken_pin_on_a_machine_with_none_sends_them_to_the_keypad(make_tools):
