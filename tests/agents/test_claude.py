@@ -603,7 +603,7 @@ def test_the_claude_cli_is_the_one_the_sdk_bundles(monkeypatch, tmp_path):
 def test_a_stored_login_is_the_credentials_file_or_the_keychain(monkeypatch, tmp_path):
     from jarvis.agents import claude as claude_module
 
-    monkeypatch.setattr(claude_module.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
     calls: list[list[str]] = []
 
     def keychain(code):
@@ -627,3 +627,15 @@ def test_a_stored_login_is_the_credentials_file_or_the_keychain(monkeypatch, tmp
     calls.clear()
     assert claude_module.claude_stored_login() is True
     assert calls == []  # the file answers; the keychain is never asked
+
+
+def test_a_stored_login_follows_claude_config_dir(monkeypatch, tmp_path):
+    from jarvis.agents import claude as claude_module
+
+    moved = tmp_path / "elsewhere"
+    moved.mkdir()
+    (moved / ".credentials.json").write_text("{}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(moved))
+    monkeypatch.setattr(claude_module.subprocess, "run", lambda *a, **k: 1 / 0)
+
+    assert claude_module.claude_stored_login() is True

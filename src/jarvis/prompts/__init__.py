@@ -46,7 +46,10 @@ _DELIVERY = {
 
 #: With the zone, because the host's clock is the model's only clock and a server keeping
 #: UTC would otherwise have it tell the owner the wrong hour with confidence.
-_TIME_FORMAT = "%A %d %B %Y, %H:%M %Z"
+_TIME_FORMATS = {
+    "24h": "%A %d %B %Y, %H:%M %Z",
+    "12h": "%A %d %B %Y, %-I:%M %p %Z",
+}
 _OPENING_HEADING = "## Why this session opened"
 #: Both of these sections carry their own heading so that an empty one disappears from the
 #: prompt entirely, rather than leaving a heading with nothing under it for the model to
@@ -322,7 +325,7 @@ def render_voice_prompt(
     template = _name_the_agent(load_prompt(VOICE_SYSTEM_PROMPT), spoken)
     values = dict(
         owner=settings.owner_label,
-        now=datetime.now().astimezone().strftime(_TIME_FORMAT),
+        now=datetime.now().astimezone().strftime(_TIME_FORMATS[settings.clock_format]),
         channel=channel,
         caller=caller or "unknown",
         trust=_TRUST_LABEL[trust],

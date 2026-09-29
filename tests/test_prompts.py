@@ -44,6 +44,21 @@ def test_render_fills_every_placeholder(settings):
     assert "jarvis, orchard" in rendered
 
 
+@pytest.mark.parametrize(
+    ("clock", "pattern"),
+    [("24h", r"- Time: \w+ \d{2} \w+ \d{4}, \d{2}:\d{2} "),
+     ("12h", r"- Time: \w+ \d{2} \w+ \d{4}, \d{1,2}:\d{2} [AP]M ")],
+)
+def test_the_clock_is_written_the_way_the_owner_reads_one(settings, clock, pattern):
+    settings.clock_format = clock
+    rendered = render_voice_prompt(
+        settings, channel="phone", caller=None, trust=TrustLevel.FULL, projects=[],
+        opening_context=None,
+    )
+
+    assert re.search(pattern, rendered)
+
+
 def test_render_uses_placeholders_for_an_unknown_caller(settings):
     rendered = render_voice_prompt(
         settings,

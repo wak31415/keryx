@@ -40,6 +40,7 @@ from jarvis.config import (
     env_var_name,
     pin_file,
 )
+from jarvis.config.files import claude_user_config
 from jarvis.config.permissions import is_protected
 from jarvis.config.settings import LEGACY_ENV_FILE
 from jarvis.config.store import ConfigStore
@@ -612,7 +613,12 @@ def _file_modes_check(settings: Settings, store: ConfigStore) -> Check:
 
 
 def _inside_git(path: Path) -> Path | None:
-    """The work tree `path` is inside, found by looking for `.git` upwards. No subprocess."""
+    """The work tree `path` is inside, found by looking for `.git` upwards. No subprocess.
+
+    Resolved first, existing or not: `fresh/../jh` has `fresh` among its lexical parents
+    and is not inside it.
+    """
+    path = path.resolve()
     for parent in [path, *path.parents]:
         if (parent / ".git").exists():
             return parent
@@ -622,7 +628,7 @@ def _inside_git(path: Path) -> Path | None:
 def _git_check(settings: Settings, store: ConfigStore) -> Check:
     """A secret under version control is one `git add .` from being pushed somewhere."""
     for path in (store.home, settings.data_dir):
-        tree = _inside_git(path.resolve() if path.exists() else path)
+        tree = _inside_git(path)
         if tree is not None:
             return Check(
                 "outside git",
@@ -874,12 +880,11 @@ def _slack_check(settings: Settings) -> Check:
         settings.slack_bot_token,
         settings.slack_channel_id,
         server=server,
-        config_path=slack.CLAUDE_CONFIG,
     )
     subagents = f"; subagents use the {server} MCP server" if server else ""
     if route is None:
         missing = (
-            f"{server} has no bot token and channel in {slack.CLAUDE_CONFIG}"
+            f"{server} has no bot token and channel in {claude_user_config()}"
             if server
             else f"{token} and {channel} are both needed"
         )

@@ -325,6 +325,8 @@ def test_defaults_match_spec_table():
     assert settings.openai_realtime_model == "gpt-realtime-2.1"
     assert settings.openai_voice == "cedar"
     assert settings.openai_transcription_model == "gpt-4o-mini-transcribe"
+    assert settings.transcription_language == ""
+    assert settings.clock_format == "24h"
     assert settings.anthropic_api_key is None
     assert settings.subagent_model == "claude-opus-5"
     assert settings.subagent_max_turns == 200
@@ -897,3 +899,15 @@ def test_a_write_that_cannot_finish_leaves_no_usable_pin_and_says_so(tmp_path, m
     assert read_enrolled_pin(jarvis_home()) is None
     assert pin_file(jarvis_home()).exists()  # left exactly where it fell
     assert make(tmp_path).pin_enrolment_open is False
+
+
+@pytest.mark.parametrize("value", ["English", "EN", "e", "en-US", "de "])
+def test_a_transcription_language_is_a_bare_iso_code(value):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, openai_api_key="k", transcription_language=value)
+
+
+@pytest.mark.parametrize("value", ["", "en", "de", "yue"])
+def test_a_transcription_language_may_be_empty_or_a_code(value):
+    settings = Settings(_env_file=None, openai_api_key="k", transcription_language=value)
+    assert settings.transcription_language == value

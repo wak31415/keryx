@@ -68,6 +68,7 @@ from jarvis.agents.session import (
     ToolCall,
 )
 from jarvis.config import Settings, secure_dir, secure_file
+from jarvis.config.files import claude_user_config
 from jarvis.integrations.slack import mcp_server_config
 from jarvis.tasks.models import Task
 
@@ -244,7 +245,9 @@ def mcp_servers(settings: Settings) -> dict[str, Mapping[str, Any]]:
         if slack is not None:
             servers[settings.slack_mcp_server] = slack
         else:
-            log.warning("SLACK_MCP_SERVER %s is not in ~/.claude.json", settings.slack_mcp_server)
+            log.warning(
+                "SLACK_MCP_SERVER %s is not in %s", settings.slack_mcp_server, claude_user_config()
+            )
     return servers
 
 

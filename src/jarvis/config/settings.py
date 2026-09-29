@@ -40,6 +40,7 @@ from pydantic_settings import (
 )
 
 from jarvis.config.files import (
+    claude_config_dir,
     config_file,
     default_cache_dir,
     default_data_dir,
@@ -268,6 +269,22 @@ class Settings(BaseSettings):
         "Transcribes what the caller says, for the call log.",
         group="voice",
     )
+    transcription_language: str = setting(
+        "",
+        "The language you speak on a call, as an ISO-639-1 code (`en`, `de`, `fr`), for the "
+        "call log's transcription — which `recall` and the memory read. Empty lets the "
+        "transcriber guess each turn. The voice model itself hears the audio either way.",
+        group="voice",
+        service_writable=True,
+        pattern=r"^([a-z]{2,3})?$",
+    )
+    clock_format: Literal["24h", "12h"] = setting(
+        "24h",
+        "How the voice prompt writes the time of day (`14:05` or `2:05 PM`), and so how "
+        "Jarvis tends to say it.",
+        group="voice",
+        service_writable=True,
+    )
     openai_web_search_model: str = setting(
         "gpt-5.4-mini",
         "Answers the voice model's own `web_search` tool, through the Responses API (the "
@@ -368,7 +385,8 @@ class Settings(BaseSettings):
         ge=1,
     )
     subagent_max_budget_usd: float = setting(
-        10.0, "Dollars one Claude task may spend.", group="agents",
+        10.0, "Dollars one Claude task may spend: a runaway cap. On a subscription it is "
+        "the SDK's estimate of what the task would have cost, not a charge.", group="agents",
         gt=0,
     )
     # Codex. The same order: CODEX_API_KEY > CODEX_ACCESS_TOKEN (logged in once into
@@ -621,10 +639,10 @@ class Settings(BaseSettings):
         group="projects",
     )
     skills_dir: Path = setting(
-        Path("~/.claude/skills"),
-        "Where the Claude CLI keeps its skills; listed in the voice prompt so Jarvis knows "
-        "what the subagents are good at.",
+        description="Where the Claude CLI keeps its skills; listed in the voice prompt so "
+        "Jarvis knows what the subagents are good at.",
         group="projects",
+        default_factory=lambda: claude_config_dir() / "skills",
     )
 
     # --- the approval bridge -------------------------------------------------------------

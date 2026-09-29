@@ -29,6 +29,7 @@ from jarvis.agents.codex import (
 )
 from jarvis.agents.router import RoutingAgentRunner
 from jarvis.config import Settings
+from jarvis.config.files import claude_config_dir
 
 log = logging.getLogger("jarvis.agents.registry")
 
@@ -79,7 +80,7 @@ BACKENDS: dict[str, BackendSpec] = {
         auth=CLAUDE_AUTH,
         find_cli=claude_cli,
         install_hint="uv sync --extra claude (the Claude Agent SDK bundles the claude CLI)",
-        instructions_file=lambda: Path.home() / ".claude" / "CLAUDE.md",
+        instructions_file=lambda: claude_config_dir() / "CLAUDE.md",
         # `SKILLS_DIR`, which predates a second agent and is Claude's.
         skills_dir=lambda settings: settings.skills_dir,
         login_commands=(("claude", "/login"),),

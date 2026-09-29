@@ -17,7 +17,7 @@ from jarvis.config.settings import GROUPS, Settings, env_var_name, field_group, 
 SYMBOLIC_DEFAULTS = {
     f"{kind}_dir": f"`${XDG_HOMES[kind][0]}/jarvis` (`{XDG_HOMES[kind][1]}/jarvis`)"
     for kind in ("data", "state", "cache")
-}
+} | {"skills_dir": "`$CLAUDE_CONFIG_DIR/skills` (`~/.claude/skills`)"}
 
 INTRO = """\
 # Configuration

@@ -41,6 +41,8 @@ class SessionConfig:
     noise_reduction: Literal["near_field", "far_field"] | None = None
     interrupt_response: bool = True
     transcription_model: str | None = "gpt-4o-mini-transcribe"
+    #: An ISO-639-1 hint for the transcriber; None lets it guess.
+    transcription_language: str | None = None
 
 
 @dataclass

@@ -44,6 +44,7 @@ from jarvis.agents.session import (
     ToolCall,
 )
 from jarvis.config import Settings
+from jarvis.config.files import claude_config_dir
 from jarvis.tasks.models import Task
 
 if TYPE_CHECKING:
@@ -97,7 +98,7 @@ def claude_cli() -> str | None:
 
 def claude_stored_login() -> bool:
     """Best-effort: does the Claude CLI have a stored subscription login on this machine?"""
-    if (Path.home() / ".claude" / ".credentials.json").exists():
+    if (claude_config_dir() / ".credentials.json").exists():
         return True
     try:  # macOS stores the login in the Keychain instead of a file
         result = subprocess.run(

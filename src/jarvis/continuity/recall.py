@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from jarvis.continuity.transcripts import redact_pin, was_authorized
+from jarvis.continuity.transcripts import calls_dir, redact_pin, was_authorized
 from jarvis.tasks.manager import TaskManager
 
 log = logging.getLogger("jarvis.recall")
@@ -121,9 +121,8 @@ def _snippet(lines: list[str], index: int) -> str:
 
 def _call_files(data_dir: Path) -> list[Path]:
     """The call transcripts, newest first, capped at `MAX_CALL_FILES`."""
-    calls = data_dir / "calls"
     try:
-        files = [path for path in calls.iterdir() if path.suffix == ".log"]
+        files = [path for path in calls_dir(data_dir).iterdir() if path.suffix == ".log"]
     except OSError:
         return []
     files.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)

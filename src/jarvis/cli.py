@@ -35,7 +35,7 @@ from jarvis.config import (
     secure_dir,
     secure_file,
 )
-from jarvis.config.files import HOME_ENV, XDG_HOMES, xdg_home
+from jarvis.config.files import HOME_ENV, XDG_HOMES, claude_config_dir, xdg_home
 from jarvis.config.migrate import MigrationError, make_plan
 from jarvis.config.migrate import Report as MigrationReport
 from jarvis.config.migrate import Service as MigratingService
@@ -1286,9 +1286,9 @@ def _rerender(target) -> list[str]:
         installer = scripts / Path(INSTALLERS[target.manager]).name
         code = run_command([str(installer)])
         done.append(f"{installer.name}: {'done' if code == 0 else f'exited {code}, run it again'}")
-    claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
     try:
-        hooked = "jarvis_approval.py" in (claude / "settings.json").read_text(encoding="utf-8")
+        hooks = (claude_config_dir() / "settings.json").read_text(encoding="utf-8")
+        hooked = "jarvis_approval.py" in hooks
     except OSError:
         hooked = False
     if hooked:
@@ -1421,7 +1421,10 @@ def auth_status_command(
     else:
         width = max(map(len, report))
         for name, entry in report.items():
-            typer.echo(f"{name:<{width}}  {entry['state']:<8}  {entry['detail']}")
+            # An agent nobody chose is not a sign-in that is missing. The JSON keeps the
+            # state (and says `enabled`), so a script reading it sees no new value.
+            state = "off" if entry.get("enabled") is False else entry["state"]
+            typer.echo(f"{name:<{width}}  {state:<8}  {entry['detail']}")
     if any(entry["state"] == "failed" for entry in report.values()):
         raise typer.Exit(1)
 
