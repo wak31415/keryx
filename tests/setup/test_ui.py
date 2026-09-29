@@ -61,6 +61,7 @@ def questionary(monkeypatch):
 
     recorded: list = []
     answers: dict = {}
+    monkeypatch.setattr(ui, "_enter_ticks", lambda application: None)
     for kind in ("select", "checkbox", "text", "password", "confirm"):
         monkeypatch.setattr(
             real,
@@ -229,3 +230,61 @@ def test_a_heading_is_a_line_that_cannot_be_picked():
     line = ui._choice(heading("Configured"))
     assert isinstance(line, questionary.Separator) and "Configured" in line.title
     assert isinstance(ui._choice(heading("")), questionary.Separator)
+
+
+def ask_checkbox(keys: str, options=("a", "b")):
+    """The real questionary checkbox, as `RichPrompter` builds it, answering `keys`."""
+    import questionary
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    with create_pipe_input() as pipe:
+        question = questionary.checkbox(
+            "m",
+            choices=[*options, questionary.Separator(" "),
+                     questionary.Choice(title=ui.CONTINUE_TITLE, value=ui.CONTINUE)],
+            input=pipe,
+            output=DummyOutput(),
+        )
+        ui._enter_ticks(question.application)
+        pipe.send_text(keys)
+        return question.unsafe_ask(), question
+
+
+DOWN = "\x1b[B"
+
+
+@pytest.mark.parametrize(
+    "keys, ticked",
+    [
+        ("\r" + DOWN + DOWN + "\r", ["a"]),               # enter ticks, Continue moves on
+        (DOWN + "\r\r" + DOWN + "\r", []),               # enter again unticks
+        (" " + DOWN + " " + DOWN + "\r", ["a", "b"]),      # space ticks as well
+        ("ai" + DOWN + DOWN + "\r", []),                   # no select-all, no invert
+    ],
+)
+def test_enter_ticks_and_continue_moves_on(keys, ticked):
+    answer, _ = ask_checkbox(keys)
+
+    assert answer == ticked
+
+
+def test_continue_has_no_box_to_tick():
+    from questionary.prompts.common import InquirerControl
+
+    _, question = ask_checkbox("\r" + DOWN + "\r", options=("a",))
+    [control] = [window.content for window in question.application.layout.find_all_windows()
+                 if isinstance(window.content, InquirerControl)]
+    drawn = control.create_content(80, 10)  # what reaches the screen
+    tokens = [token for line in range(drawn.line_count) for token in drawn.get_line(line)]
+    before = tokens[tokens.index(ui.CONTINUE_TITLE[0]) - 1]
+    assert before[1].strip() == ""
+
+
+def test_continue_is_not_an_answer(prompter, questionary):
+    answers, recorded = questionary
+    answers.update(checkbox=["a", ui.CONTINUE])
+
+    assert prompter.checkbox("Which?", [Choice("a", "A")]) == ["a"]
+    labels = [choice.title for choice in recorded[0][2]["choices"]]
+    assert labels[-1] == ui.CONTINUE_TITLE

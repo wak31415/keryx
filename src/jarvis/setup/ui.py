@@ -233,15 +233,20 @@ class RichPrompter:
     def checkbox(self, message: str, choices: Sequence[Choice]) -> list[str]:
         import questionary
 
-        answer = self._ask(
-            questionary.checkbox(
-                message,
-                choices=[_choice(choice) for choice in choices],
-                qmark="◇",
-                style=_style(),
-            )
+        question = questionary.checkbox(
+            message,
+            choices=[
+                *(_choice(choice) for choice in choices),
+                questionary.Separator(" "),
+                questionary.Choice(title=CONTINUE_TITLE, value=CONTINUE),
+            ],
+            instruction="(enter ticks or unticks · Continue when done)",
+            qmark="◇",
+            style=_style(),
         )
-        return [str(value) for value in answer]  # type: ignore[union-attr]
+        _enter_ticks(question.application)
+        answer = self._ask(question)
+        return [str(value) for value in answer if value != CONTINUE]  # type: ignore[union-attr]
 
     def text(
         self,
@@ -295,6 +300,56 @@ class RichPrompter:
     def spinner(self, message: str) -> Iterator[None]:
         with self.console.status(f"[cyan]{_escape(message)}[/]", spinner="dots"):
             yield
+
+
+#: The last line of a checkbox, and the only way on from one.
+CONTINUE = "\0continue"
+CONTINUE_TITLE = [("class:continue", "Continue →")]
+
+
+def _enter_ticks(application) -> None:
+    """A checkbox where Enter (or Space) ticks the item under the pointer, and on the
+    Continue line at the bottom moves on — instead of questionary's Enter submitting at
+    once, and its `a` and `i` shortcuts."""
+    from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+    from questionary.prompts.common import InquirerControl
+
+    [control] = [
+        window.content
+        for window in application.layout.find_all_windows()
+        if isinstance(window.content, InquirerControl)
+    ]
+    keys = KeyBindings()
+
+    @keys.add("enter", eager=True)
+    @keys.add(" ", eager=True)
+    def _tick(event) -> None:
+        pointed = control.get_pointed_at().value
+        if pointed == CONTINUE:
+            control.is_answered = True
+            event.app.exit(result=[choice.value for choice in control.get_selected_values()])
+        elif pointed in control.selected_options:
+            control.selected_options.remove(pointed)
+        else:
+            control.selected_options.append(pointed)
+
+    @keys.add("a", eager=True)
+    @keys.add("i", eager=True)
+    def _ignore(event) -> None:
+        pass
+
+    application.key_bindings = merge_key_bindings([application.key_bindings, keys])
+
+    draw = control.text  # what the control renders, bound when it was made
+
+    def without_a_box_to_tick() -> list:
+        # Continue is a line to move on from, not an option: no ○ beside it.
+        tokens = draw()
+        at = tokens.index(CONTINUE_TITLE[0])
+        tokens[at - 1] = ("class:text", " " * len(tokens[at - 1][1]))
+        return tokens
+
+    control.text = without_a_box_to_tick
 
 
 def _or_blank(validate: Validator | None) -> Validator | None:
@@ -360,6 +415,7 @@ def _style():
             ("selected", "fg:ansigreen"),
             ("answer", "fg:ansicyan"),
             ("hint", "fg:ansibrightblack"),
+            ("continue", "bold"),
             ("disabled", "fg:ansibrightblack italic"),
         ]
     )
