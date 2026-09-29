@@ -1663,22 +1663,55 @@ def approvals(
     typer.echo(f"escalation: {"OFF (kill switch)" if switch.exists() else "on"}, "
                f"after {settings.approval_escalate_seconds:g}s, "
                f"at most {settings.approval_max_per_hour}/hour")
-    for line in _audit_lines(state_dir / AUDIT_NAME, limit):
+    entries = _audit_entries(state_dir / AUDIT_NAME)
+    summary = _escalation_summary(entries)
+    if summary:
+        typer.echo(summary)
+    for line in _audit_lines(entries, limit):
         typer.echo(line)
 
 
-def _audit_lines(path: Path, limit: int) -> list[str]:
-    """The tail of the audit log as table rows, or one line saying there is none."""
+def _audit_entries(path: Path) -> list[dict]:
+    """Every readable line of the audit log; a corrupt one is skipped, never fatal."""
     try:
         raw = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return [APPROVALS_EMPTY]
-    rows = [APPROVALS_HEADER]
-    for line in raw[-max(limit, 1):]:
+        return []
+    entries = []
+    for line in raw:
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries
+
+
+def _escalation_summary(entries: list[dict]) -> str | None:
+    """Whether settling a request stopped its call, over every line that records it.
+
+    The `escalation` field is what shows a prompt answered at the keyboard costing no
+    call (`cancelled`), apart from one they were rung about first (issue #56).
+    """
+    settled = [e for e in entries if e.get("event") == "settled" and e.get("escalation")]
+    if not settled:
+        return None
+    cancelled = sum(e["escalation"] == "cancelled" for e in settled)
+    late = sum(
+        e["escalation"] != "cancelled" and e.get("outcome") == "resolved_elsewhere"
+        for e in settled
+    )
+    return (
+        f"{cancelled} answered before the call was due (no call), "
+        f"{late} answered elsewhere after they were told"
+    )
+
+
+def _audit_lines(entries: list[dict], limit: int) -> list[str]:
+    """The tail of the audit log as table rows, or one line saying there is none."""
+    rows = [APPROVALS_HEADER]
+    for entry in entries[-max(limit, 1):]:
         when = str(entry.get("ts", ""))[:16].replace("T", " ")
         what = entry.get("summary") or entry.get("reason") or entry.get("answer") or ""
         rows.append(

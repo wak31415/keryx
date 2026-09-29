@@ -8,7 +8,7 @@ digit can run. Every "not eligible" assertion here is load-bearing.
 
 import pytest
 
-from jarvis.approvals.models import Kind
+from jarvis.approvals.models import Kind, input_digest, resolution_digest
 from jarvis.approvals.policy import classify
 from jarvis.config import Settings
 
@@ -497,6 +497,38 @@ def test_exit_plan_mode_is_a_question(settings):
     described = classify(request("ExitPlanMode", {"plan": "1. do the thing"}), settings)
     assert described["kind"] is Kind.QUESTION
     assert described["options"] == ["go ahead"]
+
+
+# --- matching the PostToolUse that resolves it (issue #56) -------------------
+
+QUESTION = {"questions": [{"question": "Red or blue?", "options": [{"label": "Red"}]}]}
+PLAN = {"plan": "1. do the thing", "planFilePath": "/home/me/.claude/plans/p.md"}
+
+
+def test_a_question_resolves_on_the_part_its_post_tool_use_keeps(settings):
+    """The CLI hands `AskUserQuestion` back with the answer added (measured on 2.1.284)."""
+    answered = {**QUESTION, "answers": {"Red or blue?": "Red"}, "annotations": {}}
+    described = classify(request("AskUserQuestion", QUESTION), settings)
+
+    assert described["input_sha"] != input_digest(answered)
+    assert described["resolve_sha"] == resolution_digest("AskUserQuestion", answered)
+
+
+def test_a_plan_resolves_although_its_post_tool_use_is_empty(settings):
+    """The CLI hands `ExitPlanMode` back as `{}` once the plan is approved."""
+    described = classify(request("ExitPlanMode", PLAN), settings)
+
+    assert described["resolve_sha"] == resolution_digest("ExitPlanMode", {})
+
+
+def test_every_other_tool_resolves_on_its_whole_input(settings, tmp_path):
+    tool_input = {"command": "git push"}
+    event = request("Bash", tool_input, cwd=str(tmp_path / "roots" / "myproject"))
+
+    described = classify(event, settings)
+
+    assert described["resolve_sha"] == described["input_sha"] == input_digest(tool_input)
+    assert resolution_digest("Bash", {"command": "git push --force"}) != described["resolve_sha"]
 
 
 def test_the_summary_is_bounded(settings):

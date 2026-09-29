@@ -457,7 +457,15 @@ Four rulings hold it up, and none of them is a preference:
 
 Pending is a fact to be re-checked, never assumed: the hook is *not* killed when they answer
 at the keyboard, so `PostToolUse`/`PermissionDenied`/`Stop`/`SessionEnd` cancel the
-escalation, and pending is re-read before dialling and again before any verdict is applied.
+escalation (settling a request cancels its sleeping timer), and pending is re-read before
+dialling and again before any verdict is applied. A `PostToolUse` is matched on
+`models.resolution_digest`, not the whole input, because the CLI hands the question tools
+back reshaped (`AskUserQuestion` with its answers added, `ExitPlanMode` as `{}`); matching
+the whole input rang the owner about every question they had already answered (#56). A
+rejection at the keyboard needs none of this: the CLI kills the hook, and the broker reads
+EOF. What it cannot see is a tool approved at the keyboard that is still running at the
+deadline: the CLI says nothing until it finishes, and the `settled` line's `escalation` field
+is how that shows up.
 A prompt that arrives while they are already on a call that could answer it is announced into
 that call rather than ringing them a second time. `uv run jarvis approvals` is the audit trail and
 `--disable` is the kill switch, which is a file so it works without a restart.
