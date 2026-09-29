@@ -71,7 +71,7 @@ FROM_DEFAULT = "default"
 #: Settings whose value is a path: a legacy `.env` meant them relative to the directory
 #: the service ran in, which is the `.env`'s own, so an import resolves them there.
 PATH_KEYS = frozenset(
-    {"DATA_DIR", "STATE_DIR", "CACHE_DIR", "PROJECTS_ROOT", "SKILLS_DIR", "CLUSTER_SSH_GUARD"}
+    {"DATA_DIR", "STATE_DIR", "CACHE_DIR", "PROJECTS_ROOT", "SKILLS_DIR"}
 )
 
 
@@ -323,6 +323,29 @@ class ConfigStore:
             names.append(section)
         table["walked"] = names
         write_private(self.config_path, dump_toml(config, CONFIG_HEADER))
+
+    def drop_retired(self, keys: Iterable[str]) -> list[str]:
+        """Remove settings that are no longer settings — `keys`, whichever file holds them.
+
+        No validation, because there is nothing left to validate them against: this is how a
+        setting a plugin replaced (`jarvis.plugins.RETIRED_KEYS`) leaves the store once its
+        value has moved into the plugin's own file. A key that is still a setting is refused.
+        Returns the ones that were there.
+        """
+        wanted = {key.strip().upper() for key in keys}
+        if live := sorted(key for key in wanted if field_for(key) is not None):
+            raise ConfigError(f"{', '.join(live)} are still settings: `jarvis config unset`")
+        dropped = []
+        files = ((self.config_path, CONFIG_HEADER), (self.secrets_path, SECRETS_HEADER))
+        for path, header in files:
+            data = read_toml(path)
+            gone = [key for key in data if key in wanted]
+            if gone:
+                write_private(path, dump_toml(
+                    {key: value for key, value in data.items() if key not in wanted}, header
+                ))
+                dropped += gone
+        return sorted(dropped)
 
     def _check_whole(self, cleaned: Mapping[str, Any]) -> None:
         """Refuse a write after which the store as a whole would not load.

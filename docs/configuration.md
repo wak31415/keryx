@@ -88,7 +88,7 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 | `HOST` | `127.0.0.1` | never | The address the phone server binds. |
 | `PORT` | `8080` | never | The port the phone server binds. |
 
-## Google and email
+## Google
 
 | Setting | Default | Service may change | What it is |
 |---|---|---|---|
@@ -97,36 +97,14 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 | `GOOGLE_CLIENT_SECRETS_FILE` |  | no | The OAuth client JSON the Google Cloud console downloads (desktop or web shape). Blank: `JARVIS_HOME/google_client_secret.json`, where `jarvis setup` puts it. |
 | `USER_GOOGLE_EMAIL` |  | no | The Google account agents act as; `jarvis setup` fills it in from the sign-in. |
 | `GOOGLE_WORKSPACE_MCP` | `false` | no | Give every subagent the workspace-mcp server (send mail, manage the calendar). Needed for Codex, which has no claude.ai connectors; Claude already has them. |
-| `EMAIL_MODEL` | `claude-opus-5-5` | yes | The model `check_email` answers with, through the bundled `claude` CLI. |
-| `EMAIL_EFFORT` | `low` | yes | How hard it thinks: `low` keeps the answer near five seconds, which is waited for inside a call. |
 
-## Slack
+## Plugin credentials
 
 | Setting | Default | Service may change | What it is |
 |---|---|---|---|
-| `SLACK_BOT_TOKEN` | (secret) | never | The bot token `send_to_slack` posts with. |
-| `SLACK_CHANNEL_ID` |  | no | The DM channel `send_to_slack` posts to. |
-| `SLACK_MCP_SERVER` |  | no | The user-scope MCP server in `~/.claude.json` that gives subagents Slack. Named, subagents are told to use it, and the token and channel above fall back to its config. |
-
-## Billing
-
-| Setting | Default | Service may change | What it is |
-|---|---|---|---|
-| `BILLING_PROVIDER` | `auto` | no | Whose bill `check_billing` reports: `auto` is OpenAI, the key the call runs on. |
-| `OPENAI_ADMIN_KEY` | (secret) | never | An OpenAI *admin* key; the ordinary key gets a 401 on the costs endpoint. |
-| `OPENAI_BILLING_PROJECT_ID` |  | no | Narrows the spend figure to one project (there is no finer filter). |
-| `OPENAI_BILLING_API_KEY_ID` |  | no | Narrows *token usage* (not spend) to one `key_…` id. |
-| `ANTHROPIC_ADMIN_KEY` | (secret) | never | An `sk-ant-admin…` key, for what the subagents have cost. |
-| `ANTHROPIC_BILLING_WORKSPACE_ID` |  | no | Narrows Anthropic spend to one workspace. |
-| `BILLING_MONTHLY_BUDGET` |  | yes | What you call a month's budget. Neither provider serves one over the API, so "…percent of the budget" is only as real as this number. |
-
-## Cluster stats
-
-| Setting | Default | Service may change | What it is |
-|---|---|---|---|
-| `CLUSTER_SSH_GUARD` |  | never | The ssh guard script every Slurm read goes through (its contract is in `jarvis/integrations/cluster.py`). Blank: no `cluster_stats`. |
-| `CLUSTERS` |  | never | The clusters `cluster_stats` may ask about, as `{"name": "partition"}`: the name is the ssh alias and the word you say. |
-| `CLUSTER_QUERY_TIMEOUT_S` | `20` | never | The whole wait, since every cluster is asked at once — inside a call. |
+| `SLACK_BOT_TOKEN` | (secret) | never | The bot token the `send_to_slack` plugin posts with (and the PIN-lockout alert). |
+| `OPENAI_ADMIN_KEY` | (secret) | never | An OpenAI *admin* key for the `check_billing` plugin; the ordinary key gets a 401 on the costs endpoint. |
+| `ANTHROPIC_ADMIN_KEY` | (secret) | never | An `sk-ant-admin…` key, for what the subagents have cost (`check_billing`). |
 
 ## Projects and skills
 

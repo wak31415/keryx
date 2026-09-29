@@ -7,7 +7,7 @@ they work the same from a wheel, an editable install or a zip. Templates use pla
 
 import logging
 import re
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
@@ -24,17 +24,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 log = logging.getLogger("jarvis.prompts")
 
 VOICE_SYSTEM_PROMPT = "voice_system.md"
-#: The "Your tools" paragraphs for tools only some machines offer, by tool name, and the
-#: placeholder each fills. A paragraph is spliced in only when the session actually has the
-#: tool: describing one it was not given is an invitation to call something that is not
-#: there.
-OPTIONAL_TOOL_PROMPTS = {
-    "cluster_stats": ("cluster_stats_tool", "voice_tool_cluster_stats.md"),
-    "check_email": ("check_email_tool", "voice_tool_check_email.md"),
-}
-#: The same rule inside a sentence: words that name a tool only some machines offer, by tool
-#: name, as the placeholder and what fills it when the session has the tool.
-OPTIONAL_TOOL_PHRASES = {"cluster_stats": ("cluster_phrase", "the cluster, ")}
 #: How the voice prompt says a result reaches the owner when nobody is on the line, by
 #: whether Jarvis can text (`TwilioOut.can_text`): the restart watchdog's alert, and where an
 #: answer turns up for somebody who would rather not be called. With texting off, the alert
@@ -91,7 +80,7 @@ _TRUST_NOTE = {
         "You have everything you need to talk to them: what they have not heard yet, what "
         "you remember, what they are working on, and their tasks. Answer from it. What is "
         "still behind the PIN is everything that *does* something — handing work to "
-        "Claude, searching their past calls, writing to Slack, cancelling, restarting — "
+        "Claude, searching their past calls, sending anything, cancelling, restarting — "
         "and those come back asking for the PIN, so call the tool and let it ask rather "
         "than predicting it."
     ),
@@ -247,7 +236,6 @@ def render_voice_prompt(
     opening_context: str | None = None,
     pending: str | None = None,
     memory: str | None = None,
-    tool_names: Collection[str] = (),
     can_text: bool | None = None,
     agents: Sequence[str] = (),
 ) -> str:
@@ -262,8 +250,8 @@ def render_voice_prompt(
     say) and is dropped from the prompt when there is none. `pending` and `memory` come
     from a `Briefing` (see `jarvis.continuity.briefing`) and are dropped the same way: a
     first call on a fresh machine renders neither section, rather than an empty heading.
-    `tool_names` is what the session was actually given, and decides which of the
-    `OPTIONAL_TOOL_PROMPTS` paragraphs and `OPTIONAL_TOOL_PHRASES` appear. `can_text`
+    The optional tools (the plugins, and the owner's own) say everything about themselves
+    in their descriptions, so nothing here depends on which the session has. `can_text`
     defaults to `TwilioOut.can_text`, and decides whether the prompt may promise a text.
     A `FULL` session with no memory is told it knows nothing about the owner yet.
     `agents` is what `dispatch_task` offers, the default first; with more than one, the
@@ -303,16 +291,6 @@ def render_voice_prompt(
         skill_lines = _format_skills(catalog)
         brief_blocks = _format_briefs(written)
     spoken = _spoken_name(settings.agent_backend)
-    optional = {
-        placeholder: _name_the_agent(load_prompt(template).strip(), spoken)
-        if tool in tool_names
-        else ""
-        for tool, (placeholder, template) in OPTIONAL_TOOL_PROMPTS.items()
-    }
-    optional |= {
-        placeholder: phrase if tool in tool_names else ""
-        for tool, (placeholder, phrase) in OPTIONAL_TOOL_PHRASES.items()
-    }
     texting = TwilioOut(settings).can_text if can_text is None else can_text
     if memory:
         remembered = f"{_MEMORY_HEADING}\n\n{_nest_headings(memory)}"
@@ -341,7 +319,6 @@ def render_voice_prompt(
         memory=remembered,
         agents=_agents_note(agents),
         **_DELIVERY[texting],
-        **optional,
     )
     return template.format_map(_Defaulting(values))
 

@@ -35,7 +35,6 @@ from jarvis.config.pin import (
     write_enrolled_pin,
 )
 from jarvis.config.settings import (
-    CLUSTER_WORD,
     GOOGLE_CLIENT_FILE,
     GROUPS,
     OPTIONAL_STR_FIELDS,
@@ -53,7 +52,6 @@ from jarvis.config.settings import (
 )
 
 __all__ = [
-    "CLUSTER_WORD",
     "DATA_DIR_MODE",
     "DATA_FILE_MODE",
     "GOOGLE_CLIENT_FILE",

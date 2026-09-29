@@ -147,11 +147,14 @@ class AgentContext:
         model: str | None,
         mcp_servers: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> "AgentContext":
+        from jarvis.plugins.slack import slack_route
+
+        slack = slack_route(settings)
         return cls(
             cwd=workspace_dir(task, settings),
             instructions=render_subagent_suffix(
                 task,
-                slack_mcp_server=settings.slack_mcp_server,
+                slack_mcp_server=slack.mcp_server if slack is not None else None,
                 owner=settings.owner_label,
                 tools_dir=settings.custom_tools_dir,
             ),

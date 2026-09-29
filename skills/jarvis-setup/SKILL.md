@@ -73,7 +73,28 @@ ones you were told or can see — a `PUBLIC_HOST` they named, `ALLOWED_CALLERS` 
 in E.164. A coding agent with no sign-in: `uv run jarvis auth login claude` (or `codex`)
 runs its own login, which opens a browser or prints a code — theirs to finish, not yours.
 
-## 3. Interview, briefly
+## 3. The plugins they want
+
+Four voice tools are plugins, off until they are turned on: `send_to_slack` and
+`check_email` (most people want both), `check_billing` and `cluster_stats`. Ask which they
+want; do not turn one on unasked.
+
+```bash
+uv run jarvis plugins --json            # each one: on or off, its files, why one is refused
+uv run jarvis plugins install check_billing --set monthly_budget=40
+uv run jarvis plugins hosts --json      # the ssh hosts cluster_stats could ask
+uv run jarvis plugins install cluster_stats --cluster HOST=PARTITION
+```
+
+A plugin's secret is never a `--set`: Slack's bot token and the billing admin keys are
+`jarvis config set KEY --stdin` (theirs to type, through `jarvis setup` if you do not have
+it), and email needs `jarvis auth login gmail` (the sign-ins step of the instructions). Offer
+`cluster_stats` only a host whose `control_master` is true — Jarvis never opens a
+connection of its own — and ask them which partition its GPUs are in rather than guessing.
+If `doctor` names retired settings, `uv run jarvis plugins install --from-settings` moves
+them. Every other setting of a plugin is in the TOML file `jarvis plugins` names.
+
+## 4. Interview, briefly
 
 Five questions, and stop:
 
@@ -86,7 +107,7 @@ Five questions, and stop:
 Keep their own words. Do not expand an answer into three facts, and do not invent a sixth
 question because the fifth was interesting.
 
-## 4. The projects they pick
+## 5. The projects they pick
 
 Show them the project names from `projects` in the memory report (`jarvis memory seed
 --file - --json < /dev/null` writes nothing and prints it) — the list, not the contents —
@@ -104,7 +125,7 @@ For each one, read its `README.md` and draft `~/.local/share/jarvis/projects/<na
 
 Show each draft in full and write it only once they say yes.
 
-## 5. Propose the subagents' own map
+## 6. Propose the subagents' own map
 
 The subagents are ordinary sessions of whichever agent runs them, so they read that agent's
 own instructions file: `~/.claude/CLAUDE.md` for Claude, `~/.codex/AGENTS.md` for Codex.
@@ -112,7 +133,7 @@ That file, not Jarvis's memory, is where "my repositories live under ~/code" bel
 the lines that are missing, for each agent in `subagent_memories` — the same lines in each,
 so the agents agree. Show every edit before you make it, and append rather than rewrite.
 
-## 6. Seed the memory
+## 7. Seed the memory
 
 Turn their answers into short standing facts, one per line, and show them the list. Then:
 
@@ -126,7 +147,7 @@ printf '%s\n' \
 
 Exit 1 means there was already a memory there, and that is theirs to decide about.
 
-## 7. Hand over
+## 8. Hand over
 
 `uv run jarvis doctor --json` once more, then tell them in a few lines:
 

@@ -22,6 +22,7 @@ import typer
 import uvicorn
 from pydantic import ValidationError
 
+from jarvis import plugins
 from jarvis.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from jarvis.config import (
@@ -49,6 +50,7 @@ from jarvis.doctor import fix_permissions, format_check, has_hard_failure, run_d
 from jarvis.events import EventBus
 from jarvis.logging_util import mask_number
 from jarvis.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
+from jarvis.plugins import ssh_hosts
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.restart.health import health_probe, wait_until_serving
 from jarvis.restart.logscan import errors_since
@@ -91,6 +93,10 @@ auth_app = typer.Typer(help="Sign in to what Jarvis needs: the coding agents and
 app.add_typer(auth_app, name="auth")
 memory_app = typer.Typer(help="What Jarvis remembers between calls.")
 app.add_typer(memory_app, name="memory")
+plugins_app = typer.Typer(
+    help="The optional voice tools (Slack, email, billing, cluster stats): on, off, set up."
+)
+app.add_typer(plugins_app, name="plugins")
 log = logging.getLogger("jarvis.cli")
 
 
@@ -302,6 +308,14 @@ def serve(
         typer.echo(f"jarvis cannot start: {refusal}", err=True)
         raise typer.Exit(2)
     _add_file_logging(settings)
+    if leftover := plugins.retired_in(ConfigStore()):
+        # Ignored, never fatal: they are plugin settings now, and the plugin is off until
+        # they are moved into its file.
+        log.warning(
+            "config.toml still holds %s, which are plugin settings now: "
+            "`jarvis plugins install --from-settings`",
+            ", ".join(leftover),
+        )
     # Everything this process starts — every subagent — is the service, not the owner, when
     # it runs `jarvis config set` (jarvis.config.permissions).
     os.environ[ACTOR_ENV] = SERVICE
@@ -819,6 +833,180 @@ def tools_command(
             typer.echo(f"refused {path.name}: {why}")
     if loaded.errors:
         raise typer.Exit(1)
+
+
+# --- plugins ---------------------------------------------------------------
+
+
+@plugins_app.callback(invoke_without_command=True)
+def plugins_command(
+    ctx: typer.Context,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """List the plugins: on or off, their two files, and why one is refused."""
+    if ctx.invoked_subcommand is None:
+        plugins_list(as_json)
+
+
+@plugins_app.command("list")
+def plugins_list(
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """List the plugins: on or off, their two files, and why one is refused."""
+    settings = _configure_readonly()
+    found = plugins.status(settings)
+    if as_json:
+        typer.echo(json.dumps({
+            "directory": str(settings.custom_tools_dir),
+            "plugins": [status.as_dict() for status in found],
+        }, indent=2))
+        return
+    typer.echo(f"# {settings.custom_tools_dir}")
+    for status in found:
+        spec = plugins.PLUGINS[status.name]
+        state = "on" if status.on else ("refused" if status.installed else "off")
+        typer.echo(f"{status.name:<16} {state:<8} {spec.summary}")
+        if status.refused:
+            typer.echo(f"{'':<16} {status.refused}")
+        if status.installed or status.config_file.exists():
+            shown = {key: (status.values or {}).get(key) for key in spec.important}
+            settings_line = ", ".join(f"{key}={_plain(value)}" for key, value in shown.items())
+            typer.echo(f"{'':<16} {status.config_file}" + (f"  ({settings_line})"
+                                                            if settings_line else ""))
+
+
+@plugins_app.command("hosts")
+def plugins_hosts(
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """The hosts in ~/.ssh/config that cluster_stats could ask, and whose master is up now.
+
+    Only hosts with a ControlMaster are offered: Jarvis rides a login you already have open,
+    and never opens its own. Nothing here reaches the network (`ssh -G`, `ssh -O check`).
+    """
+    _configure_readonly()
+    rows = []
+    for host in ssh_hosts.discover():
+        alive = host.control_master and ssh_hosts.master_alive(host.alias)
+        rows.append({**host.as_dict(), "master_alive": alive})
+    if as_json:
+        typer.echo(json.dumps({"hosts": rows}, indent=2))
+        return
+    if not rows:
+        typer.echo(f"no hosts in {ssh_hosts.default_config()}")
+    for row in rows:
+        master = ("up" if row["master_alive"] else "down") if row["control_master"] else "none"
+        who = f"{row['user']}@{row['hostname']}" if row["user"] else row["hostname"]
+        typer.echo(f"{row['alias']:<20} {who:<40} ControlMaster: {master}")
+
+
+@plugins_app.command("install")
+def plugins_install(
+    name: Annotated[str | None, typer.Argument(help="The plugin (`jarvis plugins`).")] = None,
+    assignments: Annotated[
+        list[str] | None,
+        typer.Option("--set", help="KEY=VALUE for one of its settings; repeat for more."),
+    ] = None,
+    clusters: Annotated[
+        list[str] | None,
+        typer.Option("--cluster", help="cluster_stats: ALIAS=PARTITION, the whole [clusters] "
+                     "table; repeat for more."),
+    ] = None,
+    guard: Annotated[
+        str | None, typer.Option("--guard", help="cluster_stats: a guard script of your own.")
+    ] = None,
+    from_settings: Annotated[
+        bool,
+        typer.Option("--from-settings", help="Move the settings it replaced into its file; "
+                     "with no NAME, every plugin that was offered before."),
+    ] = False,
+    template: Annotated[
+        bool,
+        typer.Option("--template", help="Write its settings file and a draft to edit, and "
+                     "leave it off until `jarvis plugins install NAME`."),
+    ] = False,
+) -> None:
+    """Turn a plugin on, from its settings file, the values given here, or the old settings.
+
+    With no values, a settings file already edited by hand (and a `--template` draft) is
+    what is turned on. A secret is never taken here: `jarvis config set KEY --stdin`, or
+    `jarvis auth login gmail`. It is offered from the next call; no restart.
+    """
+    _owner_only("install a plugin")
+    settings = _configure_readonly()
+    try:
+        if from_settings:
+            names = None if name is None else [plugins.plugin(name).name]
+            moved = plugins.move_from_settings(settings, ConfigStore(), names)
+            if not moved:
+                typer.echo("nothing to move: no plugin was set up in the old settings")
+            for one in moved:
+                typer.echo(f"{one.name}: settings in {one.config_file}")
+                if one.problem:
+                    typer.echo(f"  {one.problem}")
+            _echo_plugin_states(settings, [one.name for one in moved])
+            return
+        if name is None:
+            typer.echo("which plugin? (`jarvis plugins`)", err=True)
+            raise typer.Exit(2)
+        spec = plugins.plugin(name)
+        values = plugins.command_line_values(name, assignments or [])
+        if (clusters or guard is not None) and name != "cluster_stats":
+            raise plugins.PluginConfigError("--cluster and --guard are for cluster_stats")
+        if clusters:
+            values["clusters"] = dict(
+                plugins.parse_assignment(text, what="ALIAS=PARTITION") for text in clusters
+            )
+        if guard is not None:
+            values["guard"] = guard
+        if template:
+            path = plugins.write_template(settings, name, values)
+            typer.echo(f"edit {path}, then `jarvis plugins install {name}`")
+            return
+        if values:
+            plugins.write_config(settings, name, values)
+        plugins.install(settings, spec.name)
+    except plugins.PluginConfigError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+    _echo_plugin_states(settings, [name])
+
+
+def _echo_plugin_states(settings: Settings, names: list[str]) -> None:
+    """Whether each of `names` loads now, the way the next call will load it; exit 1 if not."""
+    refused = False
+    for status in plugins.status(settings):
+        if status.name not in names:
+            continue
+        if status.on:
+            typer.echo(f"{status.name} is on, from the next call")
+        elif status.installed:
+            refused = True
+            typer.echo(f"{status.name} is installed but refused: {status.refused}")
+    if refused:
+        raise typer.Exit(1)
+
+
+@plugins_app.command("remove")
+def plugins_remove(
+    name: Annotated[str, typer.Argument(help="The plugin.")],
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask first.")] = False,
+) -> None:
+    """Turn a plugin off. Its settings are set aside, so turning it on again keeps them."""
+    _owner_only("remove a plugin")
+    settings = _configure_readonly()
+    try:
+        plugins.plugin(name)
+    except plugins.PluginConfigError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+    if not yes:
+        typer.confirm(f"turn {name} off?", abort=True)
+    if plugins.remove(settings, name):
+        typer.echo(f"{name} is off from the next call; its settings are kept in "
+                   f"{plugins.off_path(settings, name)}")
+    else:
+        typer.echo(f"{name} was not on")
 
 
 @app.command()

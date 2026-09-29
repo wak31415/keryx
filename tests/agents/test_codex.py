@@ -23,6 +23,7 @@ from openai_codex import InternalRpcError, InvalidRequestError
 from openai_codex.generated.notification_registry import NOTIFICATION_MODELS
 from openai_codex.models import Notification
 
+from jarvis import plugins
 from jarvis.agents import codex as codex_module
 from jarvis.agents.base import AgentOpenError, SteerUnavailable, TokenUsage
 from jarvis.agents.codex import (
@@ -38,6 +39,14 @@ from jarvis.agents.codex import (
 )
 from jarvis.agents.session import AdapterSession
 from jarvis.tasks.models import Task, TaskKind
+
+
+def turn_on_slack(settings, server: str) -> None:
+    """The `send_to_slack` plugin on, naming `server` as the subagents' Slack."""
+    settings.ensure_dirs()
+    plugins.write_config(settings, "send_to_slack", {"mcp_server": server})
+    plugins.install(settings, "send_to_slack")
+
 
 FIXTURES = Path(__file__).parent / "fixtures"
 THREAD_ID = "01a0d55f-0000-7000-8000-000000000001"
@@ -468,7 +477,7 @@ async def test_google_is_handed_over_with_its_secrets_by_name(settings):
 
 
 async def test_the_slack_server_is_translated_from_the_claude_config(settings, monkeypatch):
-    settings.slack_mcp_server = "team-slack"
+    turn_on_slack(settings, "team-slack")
     monkeypatch.setattr(
         codex_module,
         "mcp_server_config",
@@ -495,7 +504,7 @@ async def test_the_slack_server_is_translated_from_the_claude_config(settings, m
 
 
 async def test_a_named_slack_server_that_is_not_configured_is_left_out(settings, monkeypatch):
-    settings.slack_mcp_server = "team-slack"
+    turn_on_slack(settings, "team-slack")
     monkeypatch.setattr(codex_module, "mcp_server_config", lambda name: None)
     codex = FakeCodex()
 
@@ -518,7 +527,7 @@ def test_mcp_servers_codex_cannot_spell_or_run_are_skipped():
 
 
 async def test_an_mcp_secret_is_kept_out_of_a_failed_turn(settings, monkeypatch):
-    settings.slack_mcp_server = "team-slack"
+    turn_on_slack(settings, "team-slack")
     token = "xoxb-0000000000-slack-bot-token"
     monkeypatch.setattr(
         codex_module,

@@ -37,15 +37,12 @@ from jarvis.continuity.memory import MemoryWriter
 from jarvis.continuity.recall import Recaller
 from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
-from jarvis.integrations.billing import build_billing_reader
-from jarvis.integrations.cluster import build_cluster_stats
-from jarvis.integrations.gmail import build_email_reader
-from jarvis.integrations.slack import SlackWebApi, slack_credentials
 from jarvis.integrations.web_search import OpenAIWebSearch
 from jarvis.notify.notifier import Notifier
 from jarvis.notify.pin_alert import PinLockoutAlerter
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.pin_guard import PinGuard
+from jarvis.plugins.slack import slack_sender
 from jarvis.realtime.base import ProviderFactory
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.restart.coordinator import RestartCoordinator
@@ -111,28 +108,12 @@ def build_app_state(settings: Settings) -> AppState:
     restart = RestartCoordinator(settings, sessions, twilio_out, stream_tokens, store)
     approvals = ApprovalBroker(settings, sessions, twilio_out, stream_tokens)
 
-    # No Slack app configured anywhere is not an error: the tool is simply not offered.
-    credentials = slack_credentials(
-        settings.slack_bot_token, settings.slack_channel_id, server=settings.slack_mcp_server
-    )
-    slack = SlackWebApi(*credentials) if credentials else None
     register_builtin_tools(
         registry,
         manager=manager,
         settings=settings,
         inline_waits=inline_waits,
         searcher=OpenAIWebSearch(settings.openai_api_key, settings.openai_web_search_model),
-        slack=slack,
-        # A factory, not a reader: the model may ask for either provider on any call, and
-        # "no admin key for that one" is a `BillingError` the tool speaks rather than a
-        # missing tool. Nothing is built or contacted until it is actually asked for.
-        billing=lambda provider: build_billing_reader(settings, provider),
-        # None, and so no tool, until clusters are configured and the ssh guard is on
-        # disk: which clusters exist is one machine's setup, never a default.
-        cluster=build_cluster_stats(settings),
-        # None, and so no tool, until `jarvis auth login gmail` has signed in and the claude
-        # CLI is installed.
-        email=build_email_reader(settings),
         restarter=restart,
         recaller=Recaller(settings.data_dir, manager, pin=settings.pin),
         approvals=approvals,
@@ -140,8 +121,9 @@ def build_app_state(settings: Settings) -> AppState:
         # under a running service, and `dispatch_task` names only those.
         agents=offered_agents(settings),
     )
-    # The owner's own tools, from `DATA_DIR/tools`: read again at the top of every call,
-    # so one written since the last call needs no restart.
+    # The owner's own tools, from `DATA_DIR/tools`, and the plugins they turned on, which
+    # are files of the same kind: read again at the top of every call, so one written
+    # since the last call needs no restart.
     registry.set_loader(lambda call_tools: register_custom_tools(call_tools, settings))
 
     state = AppState(
@@ -175,7 +157,10 @@ def build_app_state(settings: Settings) -> AppState:
     )
     state.notifier.start()
     state.pin_guard = PinGuard.for_settings(settings)
-    state.pin_alerts = PinLockoutAlerter(bus, sessions, twilio_out, settings, slack=slack)
+    # Asked at alert time, so Slack turned on (or off) since startup is honoured.
+    state.pin_alerts = PinLockoutAlerter(
+        bus, sessions, twilio_out, settings, slack=lambda: slack_sender(settings)
+    )
     state.pin_alerts.start()
     return state
 

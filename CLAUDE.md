@@ -34,6 +34,11 @@ of `main`.
 - Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N] [--internal]`,
   `uv run jarvis tasks show <id>` (the `TOLD` column is `NO` until Jarvis has said it)
 - Read what Jarvis remembers between calls: `uv run jarvis memory` (`--path` for the file)
+- The plugins (Slack, email, billing, cluster stats): `uv run jarvis plugins [list] [--json]`,
+  `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
+  [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
+  install [NAME] --from-settings` (moves the settings they replaced), `plugins remove NAME
+  [--yes]`; install and remove refuse the running service
 - The owner's own voice tools: `uv run jarvis tools [--json]` (what `DATA_DIR/tools` holds
   and what the next call would refuse; exits 1 while anything is)
 - Start that memory before any call has: `uv run jarvis memory seed --file FILE|- [--force]
@@ -62,7 +67,7 @@ templates are in `ops/systemd/` (Linux) and `ops/launchd/` (macOS), rendered by 
 (argument parsing, `config_value` — every setting read through `jarvis config get`, never a
 grep — the PATH checks, `render`), so an installer is only its platform-specific half.
 
-Eight groups are named here because the file you want is rarely the one whose name you
+Nine groups are named here because the file you want is rarely the one whose name you
 remember:
 
 - **agents** — `agents/` is one module per coding agent (`claude`, `codex`) behind the
@@ -81,8 +86,7 @@ remember:
 - **restart** — `restart/` is the whole subsystem: `coordinator`, `service`, `store`,
   `version`, `watchdog` and `logscan`. The directory listing is the index now.
 - **tools** — `tools/builtin.py` is a composition root; the registrations are in
-  `builtin_comms`, `builtin_billing`, `builtin_tasks`, `builtin_restart` and
-  `builtin_session`, with the wording, the parsing and the gates (`pin_gate`, `read_gate`,
+  `builtin_comms`, `builtin_tasks`, `builtin_restart` and `builtin_session`, with the wording, the parsing and the gates (`pin_gate`, `read_gate`,
   `possession_gate`, `get_task`) in `builtin_common`. **The order `builtin.py` calls them in is the order
   the tools are offered to the model.** A new tool goes in a domain module and the
   `docs/tools.md` table, or `tests/test_docs_sync.py` fails. A tool may also be registered `silent=True`
@@ -95,12 +99,26 @@ remember:
   never enter the repository. Each declares its gate (`needs_pin`, True by default), cannot
   take a built-in's name, and is refused if anyone else could write it;
   `skills/jarvis-custom-tools` is how a subagent writes one, and every subagent's prompt
-  points at it.
+  points at it. A file may raise `ToolUnavailable` while it loads to be refused with a
+  reason, and reads its loader's settings from `LOADING_SETTINGS`.
+- **plugins** — `plugins/` is the optional voice tools (`send_to_slack`, `check_email`,
+  `check_billing`, `cluster_stats`), none registered from the source tree. `PLUGINS` in
+  `plugins/__init__.py` is the table everything reads (its `important` keys are what the
+  wizard asks; `retired` the settings each replaced), with the file helpers (`install`,
+  `remove`, `write_config`, `status`, `move_from_settings`). One module per plugin builds its
+  tool (`<name>_tool(config_path, fake=…)`), `ssh_hosts` reads `~/.ssh/config`, and
+  `templates/` is data — a one-line `.py` and a commented `.toml` per plugin, copied into
+  `DATA_DIR/tools`, never imported from there. So a plugin *is* a custom tool: loaded per
+  call, gated by `needs_pin`, no restart. The logic stays here with its tests so a fix
+  reaches installed copies. The wizard's section is `setup/plugins.py`; `jarvis plugins`
+  is the command line.
 - **notify** — `notify/deliver.py` holds `announce_to_live_sessions` and `safe_send_sms`.
-  The `can_text` gate is asserted there and nowhere else.
+  The `can_text` gate is asserted there and nowhere else. Slack reaches the notifier (the
+  PIN-lockout alert) only through `plugins.slack.slack_route`, asked at alert time.
 - **integrations** — `integrations/` is one module per outside service (`billing`,
-  `cluster`, `gmail`, `slack`, `web_search`), each behind exactly one voice tool. The tool's
-  *registration* goes in `tools/builtin_<domain>.py`; its *client* goes here.
+  `cluster`, `gmail`, `slack`, `web_search`): the *clients*, each behind one voice tool —
+  `web_search` behind a built-in, the rest behind a plugin, which is where the tool is
+  built. Their builders take explicit values, never a plugin's file.
 - **config** — `config/` is the settings and where they live: `settings` (every field with
   a `description`, a `group` and a default `service_writable`, declared with `setting(...)`),
   `store` (`JARVIS_HOME/config.toml` and `secrets.toml`, the only writer of either),
@@ -110,7 +128,7 @@ remember:
   re-exports the old `jarvis.config` names.
 - **setup** — `setup/` is `jarvis setup` and `jarvis auth`: `wizard` (section order, what is
   left, the closing summary), one module per large section (`agents`, `phone`, `google`,
-  `profile`, `project_context`) and `sections` for the small ones, `context` (the
+  `plugins`, `profile`, `project_context`) and `sections` for the small ones, `context` (the
   `SetupContext` every section gets, and `Probes` — everything that reaches the network, a
   login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
   rich/questionary one, one question to a screen), `rewind` (Esc goes back a question and
@@ -284,7 +302,14 @@ it is running. Do not make a subagent restart Jarvis itself; it is inside the cg
 
 ## Settings live in a store, and the service may change only some
 
-`jarvis setup`, `jarvis config` and `jarvis auth` replaced a hand-edited `.env`. Four rulings:
+`jarvis setup`, `jarvis config` and `jarvis auth` replaced a hand-edited `.env`. A plugin's
+settings are the exception: every one but its secret lives in `DATA_DIR/tools/<name>.toml`
+beside it, written only by `jarvis.plugins` (validated, then quoted, so no value can add a
+key), and so out of `set_config`'s reach — the budget and the email model included, an
+accepted cost. Its secrets (`SLACK_BOT_TOKEN`, `OPENAI_ADMIN_KEY`, `ANTHROPIC_ADMIN_KEY`)
+stay protected in `secrets.toml`. A setting a plugin replaced (`plugins.RETIRED_KEYS`) is
+ignored where it is left, named by `doctor`, and moved by `jarvis plugins install
+--from-settings`, which only `ConfigStore.drop_retired` then removes. Four rulings:
 
 - **Secrets in a 0600 file, not a keyring.** Plain settings in `JARVIS_HOME/config.toml`,
   every `repr=False` field in `secrets.toml`, both 0600 in an 0700 directory and replaced
@@ -306,7 +331,7 @@ it is running. Do not make a subagent restart Jarvis itself; it is inside the cg
   `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
   against the whole store, so nothing it saves can stop `jarvis serve` from starting. The
   commands that write what the service may not — `config import-env`, `auth login`,
-  `memory seed`, `setup`, `config lock|unlock`, `migrate` — refuse outright under
+  `memory seed`, `setup`, `config lock|unlock`, `migrate`, `plugins install|remove` — refuse outright under
   `JARVIS_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Jarvis's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
@@ -332,7 +357,7 @@ relative one ignored as the specification says (`config/files.py::xdg_home`):
 - `~/.config/jarvis` — `JARVIS_HOME`: `config.toml`, `secrets.toml`, `pin`, the Google
   client file. Only the environment moves it.
 - `~/.local/share/jarvis` — `DATA_DIR`: `tasks.db`, `tasks/`, `calls/`, `memory.md`,
-  `projects/`, `workspace/`, `tools/` (the owner's own voice tools), the sign-in tokens,
+  `projects/`, `workspace/`, `tools/` (the owner's own voice tools and the plugins), the sign-in tokens,
   `codex/`, and `pin-failures.json`.
 - `~/.local/state/jarvis` — `STATE_DIR`: `logs/`, `restart.json`, the version stamps,
   `approvals/` and `approvals.sock` together, so the hook needs one directory.
@@ -440,8 +465,10 @@ that call rather than ringing them a second time. `uv run jarvis approvals` is t
 ## Billing reads, and only reads
 
 `jarvis/integrations/billing.py` answers "what am I spending" from the provider's own billing API,
-behind the voice model's `check_billing`. Four rulings, and the first two are the ones
-that bite:
+behind the `check_billing` plugin (`plugins/billing.py`), whose default provider, budget and
+scoping ids are in `check_billing.toml`; the admin keys are read from the store when it is
+asked, so one saved since startup needs no restart. Four rulings, and the first two are the
+ones that bite:
 
 - **Anthropic's amounts are decimal strings in cents.** `"123.45"` USD is `$1.2345`.
   Divide by a hundred; there is a test named after it. OpenAI's `amount.value` is a float
@@ -452,7 +479,7 @@ that bite:
   settings. With neither set we still *try* the ordinary key and report the 401, because
   a clear "that needs an admin key" beats a tool that is silently not registered.
 - **`GET` and nothing else.** `_get` takes no body and no method, so no caller can turn it
-  into a write. Keep it that way, and keep the tool un-PIN-gated: it is the one capability
+  into a write. Keep it that way, and keep the plugin `needs_pin=False`: it is the one capability
   in Jarvis that cannot change anything, and asking what a number is should not need a PIN.
 - **The spend figure is not per-key, and says so.** OpenAI's costs endpoint filters by
   `project_ids` and nothing finer; `BillingReport.scope` carries what the number actually
@@ -466,27 +493,30 @@ sentence written to be spoken, never a raised exception.
 ## Cluster stats read, and only read
 
 `jarvis/integrations/cluster.py` answers "what's free on the cluster" and "am I still running"
-from Slurm, behind the voice model's `cluster_stats`. It is a worked example, not a default:
-the clusters (`CLUSTERS`, `{"name": "partition"}`) and the guard (`CLUSTER_SSH_GUARD`) are
-both empty out of the box, and until both are set and the guard is on disk
-`build_cluster_stats` returns None, the tool is not registered, and the voice prompt's
-`voice_tool_cluster_stats.md` paragraph is not rendered. Never hardcode a cluster. Three
-rulings, and the first is the one with a scar behind it:
+from Slurm, behind the `cluster_stats` plugin (`plugins/cluster.py`). Nothing knows a
+cluster until the owner turns it on: its hosts are `[clusters]` in `cluster_stats.toml`
+(alias → partition), an empty table is refused, and the wizard and `jarvis plugins hosts`
+propose them from `~/.ssh/config`. Never hardcode a cluster. Three rulings, and the first is
+the one with a scar behind it:
 
 - **Never our own connection to the cluster.** Where auth is 2FA behind an ssh
   ControlMaster, no non-interactive process can answer the second factor: a direct attempt
   against a dead master *hangs*, and a storm of those retries is how an address gets banned
-  by the login nodes. Everything goes through the guard, which probes the local control
-  socket — no network, no auth attempt — and exits `42`. That `42` is terminal: nothing
-  retries it, and a guard gone missing is `not_configured`, never a fallback that dials out
-  by itself. `CLUSTER_SSH_NO_NOTIFY=1` is set because a guard may notify the owner some other way,
-  and they are on the phone, which is where the sentence belongs.
+  by the login nodes. The built-in guard is the guard (`ControlMasterSsh`): `ssh -O check`
+  on the local control socket before anything — no network, no auth attempt — and the read
+  only over that live master, in `BatchMode`; a dead master, or one that died mid-read, is
+  `auth_expired`, terminal, never retried. A host with no ControlMaster in `~/.ssh/config`
+  is never offered. A guard script of the owner's own (`guard` in the TOML, run by
+  `GuardedSsh`, exit `42` for expired) is still honoured, but nobody needs to write one; a
+  guard gone missing is refused, never a fallback that dials out by itself.
+  `CLUSTER_SSH_NO_NOTIFY=1` is set because a guard script may notify the owner some other
+  way, and they are on the phone, which is where the sentence belongs.
 - **Read-only by construction.** `build_script` assembles the remote command from module
   constants and refuses any command whose first word is not in `READ_ONLY` (`squeue`,
   `sinfo`); there is a test named after it. The only thing the model chooses is a cluster
   *name*, looked up in the configured set and refused when it is not there — no string
-  from the model reaches a shell, and `Settings` refuses a name or partition that is not a
-  bare word. Un-PIN-gated for the same reason as `check_billing`, and the payload is counts
+  from the model reaches a shell, and `plugins.clean` refuses a name or partition that is
+  not a bare word before either is written. Un-PIN-gated for the same reason as `check_billing`, and the payload is counts
   plus the owner's own job ids: no job name, no path, no other user.
 - **Idle, planned and down are three numbers, not one.** `sinfo` without `-N` aggregates by
   state line and its totals are silently wrong; a `planned` node is backfill holding

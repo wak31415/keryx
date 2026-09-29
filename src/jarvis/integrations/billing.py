@@ -5,8 +5,8 @@ build anything else. Nothing here can change a plan, a limit or a key.
 
 Two providers, because Jarvis spends on two accounts. **OpenAI is the default** — it is
 the key the voice agent itself runs on, the one paying for the call in progress —
-and Anthropic is what the subagents cost. `BILLING_PROVIDER` picks between them
-(`auto` → OpenAI); the voice tool can also ask for one by name.
+and Anthropic is what the subagents cost. The `check_billing` plugin's `provider` picks
+between them (`auto` → OpenAI); the voice tool can also ask for one by name.
 
 Both providers' month-to-date figures come from an *admin*-scoped credential, which is
 not the key the voice agent talks to the model with:
@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 
-from jarvis.config import PLACEHOLDER_KEY, Settings
+from jarvis.config import PLACEHOLDER_KEY
 
 log = logging.getLogger("jarvis.billing")
 
@@ -553,35 +553,43 @@ def _rfc3339(moment: datetime) -> str:
 # --- wiring ----------------------------------------------------------------
 
 
-def build_billing_reader(settings: Settings, provider: str | None = None) -> BillingReader:
-    """The reader for `provider`, or for `BILLING_PROVIDER` when the caller names none.
+def build_billing_reader(
+    provider: str | None = None,
+    *,
+    openai_admin_key: str | None = None,
+    openai_api_key: str | None = None,
+    anthropic_admin_key: str | None = None,
+    anthropic_api_key: str | None = None,
+    budget: float | None = None,
+    openai_project_id: str | None = None,
+    openai_api_key_id: str | None = None,
+    anthropic_workspace_id: str | None = None,
+) -> BillingReader:
+    """The reader for `provider` (`auto`, or None, is OpenAI), from explicit values.
 
-    Raises `BillingError("not_configured")` rather than returning None: "no credential"
-    is a sentence the voice model should say, not a tool that quietly does not exist.
-    Which key was used is logged redacted; none of it reaches the caller.
+    The `check_billing` plugin passes its own settings and the admin keys from the store.
+    Raises `BillingError("not_configured")` rather than returning None: "no credential" is
+    a sentence the voice model should say, not a tool that quietly does not exist. Which
+    key was used is logged redacted; none of it reaches the caller.
     """
-    chosen = (provider or settings.billing_provider or "auto").strip().lower()
+    chosen = (provider or "auto").strip().lower()
     if chosen == "auto":
         chosen = "openai"
     if chosen not in ("openai", "anthropic"):
         raise BillingError("not_configured", f"unknown billing provider {chosen!r}")
 
     if chosen == "anthropic":
-        key = settings.anthropic_admin_key or settings.anthropic_api_key
+        key = anthropic_admin_key or anthropic_api_key
         if not key:
             raise BillingError("not_configured", "ANTHROPIC_ADMIN_KEY is unset")
-        return AnthropicBilling(
-            key,
-            workspace_id=settings.anthropic_billing_workspace_id,
-            budget=settings.billing_monthly_budget,
-        )
+        return AnthropicBilling(key, workspace_id=anthropic_workspace_id or None, budget=budget)
 
-    key = settings.openai_admin_key or settings.openai_api_key
+    key = openai_admin_key or openai_api_key
     if not key or key == PLACEHOLDER_KEY:
         raise BillingError("not_configured", "OPENAI_ADMIN_KEY is unset")
     return OpenAIBilling(
         key,
-        project_id=settings.openai_billing_project_id,
-        api_key_id=settings.openai_billing_api_key_id,
-        budget=settings.billing_monthly_budget,
+        project_id=openai_project_id or None,
+        api_key_id=openai_api_key_id or None,
+        budget=budget,
     )

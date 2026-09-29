@@ -8,6 +8,18 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Added
 
+- **Plugins: the optional voice tools, on only when you want them.** `send_to_slack`,
+  `check_email`, `check_billing` and `cluster_stats` are no longer registered from Jarvis's
+  own source. Each is two files in `~/.local/share/jarvis/tools/` — a one-line `.py` that
+  calls into Jarvis, and a commented `.toml` of its settings — turned on with `jarvis setup`
+  → Plugins (Slack and email ticked the first time) or `jarvis plugins install NAME`, off
+  with `jarvis plugins remove NAME`, and changed without a restart. `jarvis plugins` lists
+  them and why one is refused; `jarvis doctor` has one check each.
+- **`cluster_stats` for anyone with an ssh ControlMaster.** A built-in guard (`ssh -O
+  check`, then a `BatchMode` read over the live master) replaces the guard script you had to
+  write; `jarvis plugins hosts` and the wizard read `~/.ssh/config`, offer only hosts with a
+  ControlMaster, and list each one's Slurm partitions. A guard of your own is still
+  accepted (`guard` in `cluster_stats.toml`).
 - **Your own voice tools.** A Python file in `~/.local/share/jarvis/tools/` defines a tool
   the voice model can call, with `@custom_tool` from `jarvis.tools.custom`; each call reads
   the directory afresh, so a new one needs no restart, and none of it lives in the
@@ -32,7 +44,7 @@ surface — a removed or renamed setting or command is a major bump.
   goes: the voice key (checked with OpenAI), the coding agents and their sign-ins (never
   asked of an agent that can already run), your name, numbers and PIN, then — each optional —
   Twilio (numbers listed from your account; the webhooks set only after you say yes),
-  Google, Slack, billing, a first memory, project summaries a coding agent drafts for you to
+  Google, the plugins (Slack, email, billing, cluster stats), a first memory, project summaries a coding agent drafts for you to
   accept, and the background service. `--all` reviews everything.
 - **A configuration store.** Settings live in `~/.jarvis/config.toml` and every secret in a
   0600 `secrets.toml`; `jarvis config list|get|set|unset|path|import-env|lock|unlock` reads
@@ -130,6 +142,17 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Changed
 
+- **Breaking: the four optional tools are plugins, and their settings moved into the
+  plugins' own files.** `CLUSTERS`, `CLUSTER_SSH_GUARD`, `CLUSTER_QUERY_TIMEOUT_S`,
+  `BILLING_PROVIDER`, `BILLING_MONTHLY_BUDGET`, `OPENAI_BILLING_PROJECT_ID`,
+  `OPENAI_BILLING_API_KEY_ID`, `ANTHROPIC_BILLING_WORKSPACE_ID`, `SLACK_CHANNEL_ID`,
+  `SLACK_MCP_SERVER`, `EMAIL_MODEL` and `EMAIL_EFFORT` are no longer settings: left in
+  `config.toml` they are ignored (`serve` logs one line, `doctor` names them), and until you
+  move them none of the four is offered — Slack stops receiving PIN-lockout alerts, and
+  subagents stop being told about the Slack server. Run `jarvis plugins install
+  --from-settings` (or `jarvis setup` → Plugins) once after upgrading, then restart.
+  `SLACK_BOT_TOKEN`, `OPENAI_ADMIN_KEY` and `ANTHROPIC_ADMIN_KEY` stay in `secrets.toml`.
+  The voice's `set_config` can no longer change the budget or the email model.
 - **Storage follows XDG, on Linux and macOS alike.** The configuration, the PIN and the
   Google client file are in `~/.config/jarvis` (`JARVIS_HOME`), the data in
   `~/.local/share/jarvis` (`DATA_DIR`), the state in `~/.local/state/jarvis` and the cache in

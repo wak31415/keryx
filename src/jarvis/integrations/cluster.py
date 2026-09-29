@@ -1,11 +1,9 @@
 """What the Slurm clusters are doing right now, read back to the voice model.
 
-**A worked example, not a feature.** It is one person's answer to "what's free on the
-cluster?" and "am I still running?" — one-sentence questions that were costing a whole
-subagent and thirty seconds of silence — kept because it shows how a voice tool reaches
-outside the machine safely. Nothing here knows any cluster: `CLUSTERS` names them and
-`CLUSTER_SSH_GUARD` names the guard, both are empty out of the box, and until both are set
-(and the guard is on disk) `build_cluster_stats` builds nothing and the tool is not offered.
+Behind the `cluster_stats` plugin (`jarvis.plugins.cluster`), which answers "what's free
+on the cluster?" and "am I still running?" — one-sentence questions that were costing a
+whole subagent and thirty seconds of silence. Nothing here knows any cluster: the plugin's
+`[clusters]` table names them, and the plugin is off until the owner turns it on.
 
 Read-only *by construction*, not by intention. `build_script` assembles the remote command
 out of module constants and refuses anything whose first word is not in `READ_ONLY`. The
@@ -19,23 +17,26 @@ Three rulings hold it up, and the first is not a preference:
   ControlMaster that lasts some hours, a non-interactive process cannot answer the second
   factor: a plain connection attempt against a dead master *hangs*, and a storm of those
   retries is how an address gets banned by the login nodes. So every command goes through
-  a guard script, which probes the *local* control socket first — no network, no auth
-  attempt — and exits 42 rather than dialling out. Exit 42 means stop, not try again:
-  nothing here retries it, and nothing here opens a connection of its own.
-- **It speaks, it does not write.** A guard may have its own way of telling the user the
-  login has expired. They are on the phone — that is where the sentence belongs — so
-  `CLUSTER_SSH_NO_NOTIFY=1` is set and the expiry comes back as a spoken status instead.
+  a guard, which probes the *local* control socket first — no network, no auth attempt —
+  and stops rather than dialling out. The built-in one is `ControlMasterSsh` (`ssh -O
+  check`, then `ssh -o BatchMode=yes` over the live master); an owner may name a script of
+  their own instead (`GuardedSsh`). An expired login is terminal: nothing here retries
+  it, and nothing here opens a connection of its own. That is also why the plugin offers
+  only hosts with a ControlMaster in `~/.ssh/config`.
+- **It speaks, it does not write.** A guard script may have its own way of telling the
+  user the login has expired. They are on the phone — that is where the sentence belongs —
+  so `CLUSTER_SSH_NO_NOTIFY=1` is set and the expiry comes back as a spoken status instead.
 - **Numbers, not work.** A report carries GPU counts, queue counts and their own job ids. It
   never carries a job *name*, a path, or another user's name, so the most anyone who got
   past the caller allowlist learns is how busy a machine is. That is also why the tool is
   not PIN-gated: like `check_billing`, it cannot change anything, and asking what a number
   is should not need a PIN.
 
-The guard's contract, for anyone writing one: it is run as `GUARD --host HOST SCRIPT` with
-no shell, where `HOST` is a configured cluster name used as an ssh alias; it runs `SCRIPT`
-on that host over the existing ControlMaster and prints its output; and when there is no
-live master it exits 42 (or writes `CONTROL_MASTER_EXPIRED` to stderr) *without* trying to
-authenticate.
+Nobody needs a guard script: the built-in one is the default. For an owner who wants their
+own, its contract: it is run as `GUARD --host HOST SCRIPT` with no shell, where `HOST` is a
+configured cluster name used as an ssh alias; it runs `SCRIPT` on that host over the
+existing ControlMaster and prints its output; and when there is no live master it exits 42
+(or writes `CONTROL_MASTER_EXPIRED` to stderr) *without* trying to authenticate.
 
 The arithmetic follows rules learned the hard way, because the obvious version of it is
 wrong: `sinfo` without `-N` aggregates by state line rather than by node (it has reported
@@ -598,6 +599,61 @@ class GuardedSsh:
         return proc.stdout or ""
 
 
+#: The ssh every built-in read goes through, and how long its local socket check may take.
+SSH = "ssh"
+CHECK_TIMEOUT_S = 5.0
+
+
+class ControlMasterSsh:
+    """The built-in guard: ssh over a ControlMaster the owner already has open, or nothing.
+
+    `ssh -O check HOST` asks the local control socket whether the master is alive, and
+    touches no network and no authentication. Only then does the read run, with
+    `BatchMode=yes` so that nothing could ever wait on a prompt. A master that is not
+    there is `auth_expired` at once — the same terminal answer a guard script's exit 42 is
+    — and a read that fails is checked against the master again, so a login that expired
+    mid-read is said as that rather than as "unavailable".
+    """
+
+    def __init__(self, *, timeout_s: float = QUERY_TIMEOUT_S, ssh: str = SSH) -> None:
+        self.timeout_s = timeout_s
+        self.ssh = ssh
+
+    def _run(self, argv: list[str], timeout_s: float) -> subprocess.CompletedProcess:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
+
+    async def master_alive(self, host: str) -> bool:
+        try:
+            proc = await asyncio.to_thread(
+                self._run, [self.ssh, "-O", "check", host], CHECK_TIMEOUT_S
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+        return proc.returncode == 0
+
+    async def run(self, host: str, script: str) -> str:
+        if not _SHELL_SAFE.match(host):
+            raise ClusterError("unknown_cluster", f"unsafe host {host!r}")
+        if not await self.master_alive(host):
+            # Deliberately terminal, exactly like a guard's 42: a retry cannot answer a
+            # second factor, and a storm of them is what gets an address banned.
+            raise ClusterError("auth_expired", f"no live ControlMaster for {host}")
+        argv = [self.ssh, "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, script]
+        try:
+            proc = await asyncio.to_thread(self._run, argv, self.timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            raise ClusterError(
+                "timeout", f"{host} did not answer in {self.timeout_s:.0f}s"
+            ) from exc
+        except OSError as exc:
+            raise ClusterError("not_configured", f"{type(exc).__name__} running ssh") from exc
+        if proc.returncode != 0:
+            if not await self.master_alive(host):
+                raise ClusterError("auth_expired", f"ControlMaster for {host} went away")
+            raise ClusterError("unavailable", f"{host} ssh exit {proc.returncode}")
+        return proc.stdout or ""
+
+
 class ClusterQuerier(Protocol):
     """What the voice tool holds: cluster names in, reports (or `ClusterError`) out."""
 
@@ -660,18 +716,3 @@ class SlurmClusterStats:
             queue_pending=pending,
             unparsed=len(unparsed),
         )
-
-
-def build_cluster_stats(settings) -> SlurmClusterStats | None:
-    """The production querier, or None when there is nothing it could answer for.
-
-    None unless clusters are configured *and* the guard named in settings is on disk: a
-    tool that could only ever say "not set up" is a tool the model should not be offered.
-    """
-    guard = settings.cluster_ssh_guard
-    if not settings.clusters or guard is None or not Path(guard).expanduser().is_file():
-        return None
-    return SlurmClusterStats(
-        GuardedSsh(guard, timeout_s=settings.cluster_query_timeout_s),
-        cluster_specs(settings.clusters),
-    )

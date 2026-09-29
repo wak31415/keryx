@@ -32,6 +32,7 @@ from jarvis.integrations.gmail import (
     build_query,
     collect,
     day_window,
+    email_problem,
     fold_search,
     fold_thread,
     search,
@@ -566,10 +567,11 @@ class FakeRun:
 
 async def test_the_summary_is_one_bare_cli_call_on_the_claude_sign_in(settings):
     settings.anthropic_api_key = "sk-ant-key"
-    settings.email_model = "claude-opus-5-5"
     run = FakeRun()
 
-    text = await ClaudeCliSummariser("/bin/claude", settings, run=run).summarise("sys", "mail")
+    text = await ClaudeCliSummariser(
+        "/bin/claude", settings, model="claude-opus-5-5", effort="low", run=run
+    ).summarise("sys", "mail")
 
     [(argv, stdin, env)] = run.calls
     assert text == "Ann needs the numbers."
@@ -596,7 +598,9 @@ async def test_a_failed_summary_is_model_failed_and_never_quotes_the_key(setting
     settings.anthropic_api_key = "sk-ant-key"
 
     with pytest.raises(EmailError) as raised:
-        await ClaudeCliSummariser("/bin/claude", settings, run=run).summarise("s", "p")
+        await ClaudeCliSummariser(
+            "/bin/claude", settings, model="m", effort="low", run=run
+        ).summarise("s", "p")
 
     assert raised.value.code == "model_failed"
     assert "sk-ant-key" not in raised.value.detail
@@ -625,7 +629,7 @@ async def test_a_cancelled_runner_kills_its_process():
 
 
 def test_no_sign_in_means_no_tool(settings):
-    assert build_email_reader(settings) is None
+    assert "jarvis auth login gmail" in email_problem(settings)
 
 
 def test_no_claude_cli_means_no_tool(settings, monkeypatch):
@@ -633,7 +637,7 @@ def test_no_claude_cli_means_no_tool(settings, monkeypatch):
     token_path(settings).write_text("{}")
     monkeypatch.setattr("jarvis.agents.registry.installed", lambda agent: False)
 
-    assert build_email_reader(settings) is None
+    assert "claude CLI is not installed" in email_problem(settings)
 
 
 def test_a_sign_in_and_a_cli_is_the_tool_with_its_token_kept_private(settings, monkeypatch):
@@ -644,7 +648,10 @@ def test_a_sign_in_and_a_cli_is_the_tool_with_its_token_kept_private(settings, m
     monkeypatch.setattr("jarvis.agents.registry.installed", lambda agent: True)
     spec = gmail_backend_with_cli(monkeypatch)
 
-    assert isinstance(build_email_reader(settings), EmailReader)
+    assert email_problem(settings) is None
+    reader = build_email_reader(settings, model="claude-opus-5-5", effort="medium")
+    assert isinstance(reader, EmailReader)
+    assert (reader._summariser._model, reader._summariser._effort) == ("claude-opus-5-5", "medium")
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert spec.find_cli() == "/bin/claude"
 

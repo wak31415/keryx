@@ -73,7 +73,7 @@ def event() -> PinLockedOut:
 def start(bus, settings, *, sessions=None, twilio=None, slack=None) -> PinLockoutAlerter:
     alerter = PinLockoutAlerter(
         bus, sessions or FakeSessions(), twilio or FakeTwilio(can_text=False), settings,
-        slack=slack,
+        slack=None if slack is None else (lambda: slack),
     )
     alerter.start()
     return alerter
@@ -114,6 +114,21 @@ async def test_it_goes_to_slack_when_slack_is_set_up(bus, settings):
     await bus.publish(event())
 
     await eventually(lambda: slack.sent)
+    assert slack.sent == [lockout_text(event(), settings)]
+
+
+async def test_slack_is_asked_for_at_alert_time_so_turning_it_on_needs_no_restart(
+    bus, settings
+):
+    slack, routes = FakeSlack(), [None]
+    alerter = PinLockoutAlerter(
+        bus, FakeSessions(), FakeTwilio(can_text=False), settings, slack=lambda: routes[-1]
+    )
+
+    await alerter.deliver(event())  # off: nowhere to post
+    routes.append(slack)  # the plugin is turned on while the service runs
+    await alerter.deliver(event())
+
     assert slack.sent == [lockout_text(event(), settings)]
 
 

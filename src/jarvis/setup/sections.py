@@ -1,6 +1,6 @@
-"""The smaller `jarvis setup` sections: import, voice, settings, owner and PIN, Slack,
-billing and the background service. The larger ones have modules of their own (`agents`,
-`phone`, `google`, `profile`, `project_context`).
+"""The smaller `jarvis setup` sections: import, voice, settings, owner and PIN, and the
+background service. The larger ones have modules of their own (`agents`, `phone`, `google`,
+`plugins`, `profile`, `project_context`).
 
 Each is a function of a `SetupContext`. None asks again for something already set unless
 the wizard is reviewing (`ctx.review`), and each saves as it goes.
@@ -302,64 +302,6 @@ def _new_pin(ctx: SetupContext) -> str | None:
             return first
         ctx.ui.error("Those were not the same.")
     return None
-
-
-# --- slack and billing -------------------------------------------------------------------
-
-
-def run_slack(ctx: SetupContext) -> None:
-    ui, settings = ctx.ui, ctx.settings
-    ui.note('"Send me that on Slack" posts a copy of what Jarvis said to your DM.')
-    if settings.slack_bot_token and settings.slack_channel_id and not ctx.review:
-        ui.success("Slack is set up")
-        return
-    if ui.select("Set up Slack?", [Choice("skip", "Skip for now"), Choice("setup", "Set up")],
-                 default="skip") == "skip":
-        return
-    ui.markdown(
-        "1. Create an app at <https://api.slack.com/apps> (from scratch, in your workspace).\n"
-        "2. Under **OAuth & Permissions**, add the bot scope `chat:write`, then **Install**.\n"
-        "3. Copy the **Bot User OAuth Token** (`xoxb-…`).\n"
-        "4. Open a DM with the app in Slack; its channel id is in the conversation's details."
-    )
-    token = ui.secret("Bot token (xoxb-…)",
-                      validate=lambda v: None if v.strip().startswith("xox") else "It starts xox.",
-                      current=ctx.current("SLACK_BOT_TOKEN"))
-    channel = ui.text("DM channel id", default=ctx.current("SLACK_CHANNEL_ID"),
-                      validate=lambda v: None if v.strip() else "Required.")
-    ctx.save({"SLACK_BOT_TOKEN": token, "SLACK_CHANNEL_ID": channel})
-
-
-def run_billing(ctx: SetupContext) -> None:
-    ui, settings = ctx.ui, ctx.settings
-    ui.note('"What am I spending this month?" reads your provider\'s billing API, which needs '
-            "an admin key rather than the one calls run on.")
-    if (settings.openai_admin_key or settings.anthropic_admin_key) and not ctx.review:
-        ui.success("a billing admin key is set")
-        return
-    which = ui.select(
-        "Set up spending questions?",
-        [
-            Choice("skip", "Skip for now"),
-            Choice("openai", "OpenAI", hint="platform.openai.com/settings/organization/admin-keys"),
-            Choice("anthropic", "Anthropic", hint="console.anthropic.com → Admin keys"),
-        ],
-        default="skip",
-    )
-    if which == "skip":
-        return
-    key = ui.secret(f"{which.capitalize()} admin key", validate=_required,
-                    current=ctx.current(f"{which.upper()}_ADMIN_KEY"))
-    budget = ui.text("Your monthly budget in dollars (optional)",
-                     default=_display(settings.billing_monthly_budget))
-    values: dict[str, Any] = {f"{which.upper()}_ADMIN_KEY": key, "BILLING_PROVIDER": which}
-    if budget:
-        values["BILLING_MONTHLY_BUDGET"] = budget
-    ctx.save(values)
-
-
-def _required(value: str) -> str | None:
-    return None if value.strip() else "Required."
 
 
 # --- the background service ---------------------------------------------------------------

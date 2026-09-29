@@ -232,14 +232,14 @@ def dump_toml(data: dict[str, Any], header: str = "") -> str:
     tables = {key: value for key, value in data.items() if isinstance(value, dict)}
     for key, value in data.items():
         if key not in tables:
-            lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
+            lines.append(f"{toml_key(key)} = {toml_value(value)}")
     for name, table in tables.items():
-        lines += ["", f"[{_toml_key(name)}]"]
-        lines += [f"{_toml_key(key)} = {_toml_value(value)}" for key, value in table.items()]
+        lines += ["", f"[{toml_key(name)}]"]
+        lines += [f"{toml_key(key)} = {toml_value(value)}" for key, value in table.items()]
     return "\n".join(lines).strip("\n") + "\n"
 
 
-def _toml_key(key: str) -> str:
+def toml_key(key: str) -> str:
     bare = key and all(char.isalnum() or char in "_-" for char in key) and key.isascii()
     return key if bare else _toml_string(key)
 
@@ -251,11 +251,15 @@ def _toml_string(value: str) -> str:
     return f'"{escaped}"'
 
 
-def _toml_value(value: Any) -> str:
+def toml_value(value: Any) -> str:
+    """One value as TOML: what `dump_toml` writes, and what a plugin's template is filled with.
+
+    Every string is quoted and escaped here, so nothing a value holds can end its line.
+    """
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int | float):
         return repr(value)
     if isinstance(value, list | tuple):
-        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+        return "[" + ", ".join(toml_value(item) for item in value) + "]"
     return _toml_string(str(value))

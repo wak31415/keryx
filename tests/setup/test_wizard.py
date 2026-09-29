@@ -39,11 +39,9 @@ FIRST_RUN = [
     ("Set the PIN", "now"),
     ("New PIN", "482915"),
     ("same PIN again", "482915"),
-    # Phone, Google, Slack, Billing: all left for later
+    # Phone and plugins left for later (Google is done: Claude's connectors carry it)
     ("Set up phone calls", "skip"),
-    ("Connect Google", DEFAULT),
-    ("Set up Slack", DEFAULT),
-    ("spending questions", DEFAULT),
+    ("Which plugins", []),
     # About you
     ("mostly use Jarvis for", ["coding"]),
     ("Anything else", ""),
@@ -156,12 +154,12 @@ def test_a_section_that_failed_is_walked_even_after_it_was_walked(make_ctx, clau
 
 def test_a_missing_optional_section_is_walked_once(make_ctx, claude_signed_in):
     ctx = make_ctx([])
-    found = statuses(ctx, [])
-    assert found["slack"] == MISSING and "slack" in [s.key for s in pending(ctx, found)]
+    found = statuses(ctx, wizard.run_doctor_checks(ctx.settings))
+    assert found["plugins"] == MISSING and "plugins" in [s.key for s in pending(ctx, found)]
 
-    ConfigStore().mark_walked("slack")
+    ConfigStore().mark_walked("plugins")
 
-    assert "slack" not in [s.key for s in pending(ctx, found)]
+    assert "plugins" not in [s.key for s in pending(ctx, found)]
 
 
 def test_the_voice_key_is_asked_until_it_is_there(make_ctx, claude_signed_in):
@@ -211,7 +209,7 @@ def test_review_walks_every_section_and_asks_again(make_ctx, claude_signed_in, m
     run_wizard(ctx, review_all=True)
 
     assert [key for key, _ in walked] == [
-        "voice", "agents", "settings", "owner", "phone", "google", "slack", "billing",
+        "voice", "agents", "settings", "owner", "phone", "google", "plugins",
         "profile", "projects", "service",
     ]
     assert all(review for _, review in walked)

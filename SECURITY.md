@@ -44,10 +44,12 @@ changes anything or outlives the call.
   steers, over every raw transcript Jarvis has ever written — a different quantity of
   exposure, and the one thing on the phone a spoofer could actually mine.
 - **Nothing that acts happens without it.** Every voice tool that hands work to Claude,
-  writes something down or changes anything answers `pin_required` first; only
-  `check_billing`, `cluster_stats`, `web_search`, `submit_pin` and `end_session` answer at
-  any level whatever the setting says. A test walks every registered tool, so a new one is
-  gated unless it is added to one of those lists on purpose.
+  writes something down or changes anything answers `pin_required` first; of the built-in
+  tools only `web_search`, `submit_pin` and `end_session` answer at any level whatever the
+  setting says. A test walks every registered tool, so a new one is gated unless it is
+  added to one of those lists on purpose. Of the plugins, `check_billing` and
+  `cluster_stats` declare `needs_pin=False` — they read a number and change nothing — and
+  `send_to_slack` and `check_email` keep the default, the PIN.
 - **Nothing is announced that it could not hear anyway.** A result that lands mid-call is
   announced under the same rule as the digest. Restart confirmations and approval
   escalations are not: they go only to a call that has proved something. A call that has
@@ -57,7 +59,7 @@ changes anything or outlives the call.
   read the memory out still cannot rewrite it, which is the invariant that matters most
   here: hearing what Jarvis believes about you is recoverable, editing it is not. No result
   can be marked as heard except the ones this call itself read out, no call-back or
-  call-back note can be arranged, and nothing is sent to Slack. Its transcript is kept on
+  call-back note can be arranged, and nothing is sent anywhere in writing. Its transcript is kept on
   disk, as the record of what was tried, but it is marked as never authorized and `recall`
   never reads it back to a model.
 - **A spoken PIN is never written down.** Transcript lines are redacted as they are
@@ -152,15 +154,16 @@ ask on a call (it needs the PIN), and any subagent that runs `jarvis config set`
 task, since everything `jarvis serve` starts is marked as the running service. It may
 change only a *service-writable* setting — by default the ones you would plausibly ask for
 out loud: the voice, turn-taking, which model, a few timeouts and limits, quiet hours, the
-monthly budget figure, the log level. A limit it may tune it may never switch off — the
+log level. A plugin's settings are in its own file (`DATA_DIR/tools/<name>.toml`), which
+`set_config` does not reach. A limit it may tune it may never switch off — the
 subagent timeout, the call length and the local silence timeout all mean "no limit" at 0,
 and that is a spending decision — and no value it saves can stop Jarvis starting again. `jarvis config lock KEY` and `unlock KEY` move the
 rest, and `jarvis config list` shows where each one stands.
 
 Some can never be unlocked: every credential, the PIN, who may call and which number is
 yours, `BRIEFING_BEFORE_PIN`, the approval bridge's switch and allowlist, the spending cap,
-the daily task cap, retention, texting, the network settings, where data lives, the cluster
-settings and every debug switch. Each is either a secret or a line of defence, and Jarvis's
+the daily task cap, retention, texting, the network settings, where data lives, and every
+debug switch. Each is either a secret or a line of defence, and Jarvis's
 own tools must not be able to lower their own guard because somebody asked nicely on the
 phone.
 
@@ -180,6 +183,24 @@ unread. That is the whole of it. A tool file can do anything you can, a subagent
 write one could equally edit Jarvis's source, and a tool that declares `needs_pin=False`
 answers every caller — so what a tool reads, and who may hear it, is decided by the file,
 and `jarvis tools` is where you see what each one says.
+
+The plugins (`jarvis plugins`) are files of exactly this kind, with the same gates: a
+one-line `.py` that `jarvis plugins install` copies in, 0600, and a TOML of settings beside
+it. Only the owner at a terminal installs or removes one (`jarvis plugins install` and
+`remove` refuse the running service), but a subagent can write into `DATA_DIR/tools` as
+it can write anything of yours, so they are held to nothing more than your own tools are.
+Every value written into a plugin's TOML is validated first and quoted, so no value can add
+a key of its own; `cluster_stats`'s hosts and partitions must be bare words, because both
+reach a remote shell.
+
+`cluster_stats` never opens a connection to a cluster of its own. Its built-in guard asks
+the ControlMaster's local socket (`ssh -O check HOST`, no network, no authentication)
+before anything, and runs the read only over that live master, in `BatchMode`, so nothing
+can wait on a prompt; a master that is not there is "the login has expired", said once and
+never retried, because where login is two-factor an unanswerable connection hangs, and a
+storm of them gets an address banned. The wizard and `jarvis plugins hosts` offer only
+hosts with a ControlMaster in `~/.ssh/config`. The remote command is assembled from
+constants and refuses anything but `squeue` and `sinfo`.
 
 `jarvis setup`'s project summaries are drafted by a coding agent reading the folders you
 chose, which means it reads whatever a README in them says. So nothing it writes is kept
@@ -302,7 +323,8 @@ guesser a fresh budget):
   an attacker a fresh ten.
 - **You are told once**, when it first locks, and again only if it is still locking a full
   window later: spoken into a call that has already given the PIN (never the one guessing),
-  posted to Slack if there is a Slack app, and texted only if `SMS_ENABLED` is on.
+  posted to Slack while the `send_to_slack` plugin is on, and texted only if `SMS_ENABLED`
+  is on.
 - **An unreadable count file** is treated as a lock that began when it was found: one
   cooldown, written back so a restart cannot extend it, and never longer. That is the one
   state where "nobody has guessed" and "someone has nearly used the budget up" look the same,

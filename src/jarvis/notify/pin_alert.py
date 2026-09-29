@@ -7,7 +7,8 @@ never hear about is a PIN being guessed that they cannot change:
 
 - **spoken** into a live session that is already *authorized* — them, on the phone past the
   PIN or at their own microphone. Never into one that is not: that is where the guessing is.
-- **Slack**, when there is a Slack app, which is their written channel.
+- **Slack**, while the `send_to_slack` plugin is on, which is their written channel —
+  asked for at alert time (`slack`), so turning it on needs no restart.
 - **a text**, only through `safe_send_sms` and so only when `TwilioOut.can_text`.
 
 Delivery runs beside the publisher rather than inside it: the publisher is the call being
@@ -16,6 +17,7 @@ locked out, which hangs up a few seconds later and would take a Slack post with 
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -49,7 +51,7 @@ class PinLockoutAlerter:
         twilio: Any,
         settings: Settings,
         *,
-        slack: SlackSender | None = None,
+        slack: Callable[[], SlackSender | None] | None = None,
     ) -> None:
         self._bus = bus
         self._sessions = sessions
@@ -82,11 +84,12 @@ class PinLockoutAlerter:
             live=lambda: [s for s in self._sessions.live() if getattr(s, "authorized", False)]
         )
         reached = bool(await announce_to_live_sessions(authorized, text))
-        if self._slack is not None:
-            try:
-                reached = await self._slack.send(text) or reached
-            except Exception:
-                log.exception("could not post the PIN lockout to Slack")
+        try:
+            sender = self._slack() if self._slack is not None else None
+            if sender is not None:
+                reached = await sender.send(text) or reached
+        except Exception:
+            log.exception("could not post the PIN lockout to Slack")
         reached = await safe_send_sms(self._twilio, self._settings.owner_number, text) or reached
         if not reached:
             log.warning(

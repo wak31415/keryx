@@ -1,10 +1,10 @@
 """Sending the owner something on Slack, from the voice model itself.
 
-The subagents can already have Slack: a Slack MCP server configured user-scope in the
-Claude CLI is inherited by every CLI the runner spawns, and `SLACK_MCP_SERVER` names it.
-The voice model has no such thing — it only has the tools this process registers — so this
-module gives it one, using the very same bot token and DM channel rather than a second
-Slack app.
+The client behind the `send_to_slack` plugin (`jarvis.plugins.slack`). The subagents can
+already have Slack: a Slack MCP server configured user-scope in the Claude CLI is inherited
+by every CLI the runner spawns, and the plugin's `mcp_server` names it. The voice model has
+no such thing — it only has the tools this process registers — so this module gives it
+one, using the very same bot token and DM channel rather than a second Slack app.
 
 `slack_credentials` reads the env pair first (so the process environment can override)
 and, when a server is named, falls back to that server's entry in the Claude CLI config,
