@@ -724,7 +724,8 @@ def test_restart_no_callback_leaves_no_number(restart_settings, ran):
     result = runner.invoke(app, ["restart", "--no-callback"])
 
     assert result.exit_code == 0
-    assert RestartStore(restart_settings.state_dir / RECORD_NAME).load().number is None
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
+    assert record.number is None and record.quiet is True
     assert "no call back was asked for" in result.output
 
 

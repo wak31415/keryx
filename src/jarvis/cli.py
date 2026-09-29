@@ -475,6 +475,7 @@ def restart(
         number=number,
         origin_channel="cli",
         target=target.describe(),
+        quiet=no_callback,
         version=loaded_version(settings.state_dir),
         log_marks=log_marks(settings.state_dir),
     )
