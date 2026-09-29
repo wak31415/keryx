@@ -86,8 +86,10 @@ skill. The full walkthrough is on the [wiki](https://github.com/wak31415/jarvis-
 
 Jarvis hands its work to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or
 [Codex](https://developers.openai.com/codex), signed in with a subscription or an API key.
-`jarvis setup` asks which one to use by default. If you enable both, you can say "have
-Codex do it" on a call. [docs/agents.md](docs/agents.md) compares the two.
+It is most extensively tested with Claude Code on a subscription; other agents are supported
+in principle, but may not have full feature parity. `jarvis setup` asks which one to use by
+default. If you enable both, you can say "have Codex do it" on a call.
+[docs/agents.md](docs/agents.md) compares the two.
 
 ## Documentation
 
