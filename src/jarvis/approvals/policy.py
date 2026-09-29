@@ -27,7 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from jarvis.approvals.models import Kind, input_digest
+from jarvis.approvals.models import Kind, input_digest, resolution_digest
 
 log = logging.getLogger("jarvis.approvals.policy")
 
@@ -202,7 +202,7 @@ def classify(event: dict, settings) -> dict | None:
 
     `event` is the raw `PermissionRequest` hook payload. The return is the keyword
     arguments an `ApprovalRequest` is built from — `kind`, `summary`, `options`,
-    `input_sha` — so the broker never has to look at `tool_input` itself.
+    `input_sha`, `resolve_sha` — so the broker never has to look at `tool_input` itself.
     """
     if event.get("hook_event_name") != "PermissionRequest":
         return None
@@ -238,6 +238,7 @@ def classify(event: dict, settings) -> dict | None:
         "summary": summary,
         "options": options,
         "input_sha": input_digest(tool_input),
+        "resolve_sha": resolution_digest(tool, tool_input),
     }
 
 

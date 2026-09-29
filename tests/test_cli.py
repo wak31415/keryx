@@ -946,6 +946,31 @@ def test_approvals_ignores_a_corrupt_audit_line_rather_than_failing(settings_stu
     assert "raised" in result.output
 
 
+def test_approvals_counts_the_calls_an_earlier_answer_stopped(settings_stub):
+    _audit(
+        settings_stub,
+        {"event": "settled", "outcome": "answered", "escalation": "call"},
+        {"event": "settled", "outcome": "resolved_elsewhere", "escalation": "cancelled"},
+        {"event": "settled", "outcome": "resolved_elsewhere", "escalation": "cancelled"},
+        {"event": "settled", "outcome": "resolved_elsewhere", "escalation": "call"},
+        {"event": "settled", "outcome": "resolved_elsewhere"},  # written before the field was
+    )
+
+    result = runner.invoke(app, ["approvals"])
+
+    assert result.exit_code == 0, result.output
+    assert "2 answered before the call was due (no call)" in result.output
+    assert "1 answered elsewhere after they were told" in result.output
+
+
+def test_approvals_has_no_summary_before_anything_records_one(settings_stub):
+    _audit(settings_stub, {"ts": "2026-09-02T14:05:00Z", "event": "settled", "request_id": 7})
+
+    result = runner.invoke(app, ["approvals"])
+
+    assert "answered before the call" not in result.output
+
+
 def test_approvals_limit_shows_only_the_tail(settings_stub):
     _audit(settings_stub, *[
         {"ts": f"2026-09-02T14:{index:02d}:00Z", "event": "raised", "request_id": index}

@@ -256,6 +256,17 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Fixed
 
+- **The approval bridge rang about questions already answered at the keyboard** (#56). An
+  `AskUserQuestion` or `ExitPlanMode` answered on screen was never matched to its pending
+  request, because Claude Code hands both back to `PostToolUse` in a different shape
+  (answers added, or the plan emptied). The request stayed pending until Claude's turn
+  ended, so Jarvis rang five minutes in whenever Claude was still working. The
+  production log had 81 prompts and not one cleared this way. They now match on the part
+  of the input both events carry, settling a request cancels its escalation timer, and
+  pending is checked once more just before dialling. `jarvis approvals` prints how many
+  calls an earlier answer stopped, and the audit log gains `waited_s` and `escalation` on
+  `settled`, plus `resolve_unmatched` and `resolve_fallback` lines. It needs a restart and
+  no change to the installed hook.
 - `jarvis doctor` died with a pydantic traceback when `JARVIS_PIN` was set to something
   that is not 6–8 digits — the one state it exists to explain, since `jarvis serve` will
   not load at all. The fallback it has for that matched the field name and never the

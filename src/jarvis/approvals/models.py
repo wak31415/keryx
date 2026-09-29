@@ -74,6 +74,9 @@ class ApprovalRequest:
     options: list[str]
     input_sha: str
     raised_at: float
+    #: What a `PostToolUse` for this same call hashes to (`resolution_digest`). None means
+    #: `input_sha`, which is what it is for every tool the CLI hands back unchanged.
+    resolve_sha: str | None = None
     outcome: Outcome = Outcome.PENDING
     escalated_at: float | None = None
     #: How they were told: "call", "announce", or "riding" (a call was already going out).
@@ -86,6 +89,11 @@ class ApprovalRequest:
     @property
     def pending(self) -> bool:
         return self.outcome is Outcome.PENDING
+
+    @property
+    def match_sha(self) -> str:
+        """The hash a resolving event is compared with."""
+        return self.resolve_sha or self.input_sha
 
     def menu(self) -> str:
         """The options as a spoken sentence: "press 1 to approve, 2 to reject…"."""
@@ -110,8 +118,9 @@ class ApprovalRequest:
 def input_digest(tool_input: object) -> str:
     """A stable SHA-256 of a tool input, so the same call can be recognised again.
 
-    `PostToolUse` hands back the same `tool_input` the request carried, which is how a
-    prompt answered at the keyboard is matched to the pending record it resolves. Keys are
+    `PostToolUse` hands back the same `tool_input` the request carried — for most tools;
+    `resolution_digest` covers the rest — which is how a prompt answered at the keyboard is
+    matched to the pending record it resolves. Keys are
     sorted and anything unserialisable is stringified, because a digest that raises would
     cost us the match — and the match is what stops a stale prompt being rung about.
     """
@@ -120,3 +129,26 @@ def input_digest(tool_input: object) -> str:
     except (TypeError, ValueError):  # pragma: no cover - `default=str` makes this unreachable
         canonical = repr(tool_input)
     return hashlib.sha256(canonical.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+#: The fields of a question tool's input that survive into its `PostToolUse`. The CLI
+#: rewrites both once they are answered — `AskUserQuestion` comes back with `answers` and
+#: `annotations` beside its `questions`, and `ExitPlanMode` comes back as `{}` (measured on
+#: 2.1.284, issue #56) — so a hash of the whole input never matched, and a question answered
+#: at the keyboard was rung about anyway.
+RESOLUTION_FIELDS: dict[str, tuple[str, ...]] = {
+    "AskUserQuestion": ("questions",),
+    "ExitPlanMode": (),
+}
+
+
+def resolution_digest(tool_name: str, tool_input: dict) -> str:
+    """The hash that `PermissionRequest` and `PostToolUse` agree on for one tool call.
+
+    For every tool the CLI hands back unchanged this is `input_digest` itself; for the ones
+    in `RESOLUTION_FIELDS` it is taken over only the fields both events carry.
+    """
+    fields = RESOLUTION_FIELDS.get(tool_name)
+    if fields is None:
+        return input_digest(tool_input)
+    return input_digest({key: tool_input[key] for key in fields if key in tool_input})
