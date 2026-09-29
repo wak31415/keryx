@@ -605,6 +605,7 @@ class VoiceSession:
             # itself: the mic is gated while it speaks and there is nothing to hear.
             interrupt_response=self.channel == "phone",
             transcription_model=self._settings.openai_transcription_model,
+            transcription_language=self._settings.transcription_language or None,
         )
 
     # --- transport -> provider --------------------------------------------

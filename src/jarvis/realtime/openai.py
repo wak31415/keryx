@@ -168,7 +168,10 @@ def build_session_update(config: SessionConfig) -> dict:
         # an absent field is how it is turned off.
         audio_input["noise_reduction"] = {"type": config.noise_reduction}
     if config.transcription_model is not None:
-        audio_input["transcription"] = {"model": config.transcription_model}
+        transcription = {"model": config.transcription_model}
+        if config.transcription_language:
+            transcription["language"] = config.transcription_language
+        audio_input["transcription"] = transcription
 
     return {
         "type": "session.update",

@@ -130,6 +130,7 @@ async def test_session_config_follows_the_phone_transport(make_session, phone, p
     assert config.interrupt_response is True
     assert config.voice == settings.openai_voice
     assert config.transcription_model == settings.openai_transcription_model
+    assert config.transcription_language is None  # unset: the transcriber guesses
     assert "Jarvis" in config.instructions
     assert "phone" in config.instructions
 

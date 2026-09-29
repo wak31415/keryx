@@ -79,6 +79,8 @@ def test_the_writable_defaults_are_the_ones_you_would_say_on_a_call():
         "VAD_THRESHOLD",
         "VAD_PREFIX_MS",
         "NOISE_REDUCTION",
+        "TRANSCRIPTION_LANGUAGE",
+        "CLOCK_FORMAT",
         "SUBAGENT_MODEL",
         "CODEX_MODEL",
         "EMAIL_MODEL",

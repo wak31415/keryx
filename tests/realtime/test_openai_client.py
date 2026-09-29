@@ -162,6 +162,16 @@ def test_build_session_update_matches_ga_schema_for_the_phone_path():
     }
 
 
+def test_a_transcription_language_is_passed_as_a_hint():
+    config = SessionConfig(
+        instructions="x", tools=[], voice="cedar", audio_format="audio/pcmu",
+        transcription_language="de",
+    )
+
+    transcription = build_session_update(config)["session"]["audio"]["input"]["transcription"]
+    assert transcription == {"model": "gpt-4o-mini-transcribe", "language": "de"}
+
+
 def test_build_session_update_for_the_local_path_omits_transcription_and_barge_in():
     config = SessionConfig(
         instructions="Local Jarvis.",
