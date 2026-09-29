@@ -274,7 +274,7 @@ class Settings(BaseSettings):
         service_writable=True,
     )
     openai_web_search_model: str = setting(
-        "gpt-5.4-mini",
+        "gpt-6-luna",
         "Answers the voice model's own `web_search` tool, through the Responses API (the "
         "Realtime API has no hosted search tool).",
         group="voice",
@@ -365,7 +365,7 @@ class Settings(BaseSettings):
         repr=False,
     )
     subagent_model: str = setting(
-        "claude-opus-5", "The model a Claude task runs on when none is named.",
+        "claude-opus-5-5", "The model a Claude task runs on when none is named.",
         group="agents", service_writable=True,
     )
     subagent_max_turns: int = setting(

@@ -38,7 +38,7 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 | `OPENAI_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | no | Transcribes what the caller says, for the call log. |
 | `TRANSCRIPTION_LANGUAGE` | `` | yes | The language you speak on a call, as an ISO-639-1 code (`en`, `de`, `fr`), for the call log's transcription — which `recall` and the memory read. Empty lets the transcriber guess each turn. The voice model itself hears the audio either way. |
 | `CLOCK_FORMAT` | `24h` | yes | How the voice prompt writes the time of day (`14:05` or `2:05 PM`), and so how Jarvis tends to say it. |
-| `OPENAI_WEB_SEARCH_MODEL` | `gpt-5.4-mini` | no | Answers the voice model's own `web_search` tool, through the Responses API (the Realtime API has no hosted search tool). |
+| `OPENAI_WEB_SEARCH_MODEL` | `gpt-6-luna` | no | Answers the voice model's own `web_search` tool, through the Responses API (the Realtime API has no hosted search tool). |
 | `VAD_MODE` | `semantic` | yes | How Jarvis decides you have finished: `semantic` waits on whether the sentence sounds finished, so a pause to think does not cut you off; `server` is a plain silence timer of `VAD_SILENCE_MS`. |
 | `VAD_EAGERNESS` | `medium` | yes | Semantic mode only: `low` waits longest, `high` jumps in soonest, `auto` is `medium`. |
 | `VAD_SILENCE_MS` | `1200` | yes | Server mode only: the silence, in milliseconds, that ends a turn. |
@@ -55,7 +55,7 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 | `SUBAGENT_TIMEOUT_S` | `10800` | yes | The longest one subagent run may take, on any agent, in seconds; 0 is no limit. |
 | `ANTHROPIC_API_KEY` | (secret) | never | Claude, paid per token. Set, it wins over the subscription. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | (secret) | never | Claude on your subscription, for a machine with no browser: the token `claude setup-token` prints. Blank uses the stored `claude` login. |
-| `SUBAGENT_MODEL` | `claude-opus-5` | yes | The model a Claude task runs on when none is named. |
+| `SUBAGENT_MODEL` | `claude-opus-5-5` | yes | The model a Claude task runs on when none is named. |
 | `SUBAGENT_MAX_TURNS` | `200` | no | Agent turns one Claude task may take. |
 | `SUBAGENT_MAX_BUDGET_USD` | `10` | never | Dollars one Claude task may spend: a runaway cap. On a subscription it is the SDK's estimate of what the task would have cost, not a charge. |
 | `CODEX_API_KEY` | (secret) | never | Codex, paid per token. Jarvis logs in with it once, into its own `CODEX_HOME`; `OPENAI_API_KEY` is never used for Codex. |

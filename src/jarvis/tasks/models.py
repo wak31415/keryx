@@ -130,7 +130,7 @@ class Task:
     status: TaskStatus = TaskStatus.QUEUED
     project: str | None = None
     cwd: str | None = None
-    model: str = "claude-opus-5"
+    model: str = "claude-opus-5-5"
     #: The coding agent this task runs on (`jarvis.agents.registry.BACKENDS`), fixed at
     #: dispatch. Every later run of it — a follow-up, a re-run — goes back to the same one,
     #: because only that agent can resume its session. Rows written before there was more

@@ -307,7 +307,7 @@ def test_defaults_match_spec_table():
     assert settings.transcription_language == ""
     assert settings.clock_format == "24h"
     assert settings.anthropic_api_key is None
-    assert settings.subagent_model == "claude-opus-5"
+    assert settings.subagent_model == "claude-opus-5-5"
     assert settings.subagent_max_turns == 200
     assert settings.subagent_max_budget_usd == 10.0
     assert settings.host == "127.0.0.1"
