@@ -8,7 +8,7 @@ import re
 import shutil
 import stat
 import wave
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -184,8 +184,8 @@ def test_serve_refuses_until_the_old_files_are_migrated(settings_stub, monkeypat
 
 @pytest.mark.parametrize(
     "command",
-    [["tasks", "list"], ["tasks", "show", "1"], ["memory"], ["forget", "--yes"], ["approvals"],
-     ["restart", "--status"], ["auth", "status"]],
+    [["tasks", "list"], ["tasks", "show", "1"], ["tasks", "usage"], ["memory"],
+     ["forget", "--yes"], ["approvals"], ["restart", "--status"], ["auth", "status"]],
 )
 def test_what_reads_the_data_waits_for_the_migration_too(settings_stub, command):
     """It would answer from an empty directory, and `tasks` would make a `tasks.db` there for
@@ -490,6 +490,74 @@ def test_tasks_show_tolerates_a_report_that_is_gone(settings_stub, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert "--- report ---" not in result.output
+
+
+def test_tasks_usage_prints_a_row_per_project_and_a_total(settings_stub):
+    seed_tasks(
+        settings_stub,
+        make_task(project="orchard", input_tokens=1200, output_tokens=30, cost_usd=1.25),
+        make_task(project="orchard"),
+        make_task(input_tokens=500, output_tokens=5, cost_usd=0.5),
+        make_task(internal=True, input_tokens=100, output_tokens=1, cost_usd=0.25),
+    )
+
+    result = runner.invoke(app, ["tasks", "usage"])
+
+    assert result.exit_code == 0, result.output
+    cells = [re.split(r"\s{2,}", line.strip()) for line in result.output.splitlines()]
+    rows = {row[0]: row[1:] for row in cells if len(row) == 6}
+    assert rows["orchard"] == ["2", "1/2", "1,200", "30", "$1.25"]
+    assert rows["(no project)"] == ["1", "1/1", "500", "5", "$0.50"]
+    assert rows["(housekeeping)"] == ["1", "1/1", "100", "1", "$0.25"]
+    assert rows["total"] == ["4", "3/4", "1,800", "36", "$2.00"]
+    assert "list-price estimate" in result.output  # the dollars are not a bill, and it says so
+
+
+def test_tasks_usage_shows_a_group_with_no_figures_as_unknown(settings_stub):
+    seed_tasks(settings_stub, make_task(project="orchard"))
+
+    result = runner.invoke(app, ["tasks", "usage"])
+
+    assert result.exit_code == 0, result.output
+    row = next(line for line in result.output.splitlines() if line.startswith("orchard"))
+    assert row.split()[1:] == ["1", "0/1", "-", "-", "-"]
+
+
+def test_tasks_usage_only_counts_the_window_asked_for(settings_stub):
+    old = datetime.now(UTC) - timedelta(days=45)
+    seed_tasks(
+        settings_stub,
+        make_task(project="orchard", cost_usd=9.0, created_at=old),
+        make_task(project="beehive", cost_usd=1.0),
+    )
+
+    recent = runner.invoke(app, ["tasks", "usage"])
+    ever = runner.invoke(app, ["tasks", "usage", "--days", "0"])
+
+    assert "orchard" not in recent.output and "beehive" in recent.output
+    assert "last 30 days" in recent.output
+    assert "orchard" in ever.output and "ever" in ever.output
+
+
+def test_tasks_usage_as_json(settings_stub):
+    seed_tasks(settings_stub, make_task(project="orchard", input_tokens=7, output_tokens=1))
+
+    result = runner.invoke(app, ["tasks", "usage", "--days", "1", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["since"] is not None
+    assert payload["projects"] == [{
+        "label": "orchard", "project": "orchard", "internal": False, "tasks": 1,
+        "measured": 1, "priced": 0, "input_tokens": 7, "output_tokens": 1, "cost_usd": None,
+    }]
+
+
+def test_tasks_usage_says_when_there_is_nothing(settings_stub):
+    result = runner.invoke(app, ["tasks", "usage", "--days", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert "no tasks created in the last 1 day" in result.output
 
 
 def test_tasks_show_rejects_an_unknown_id(settings_stub):
