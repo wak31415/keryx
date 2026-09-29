@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Keryx Mark Animated</title>
+<style>
+  :root { --bg:#f3f4f6; --card:#fff; --ink:#1f2937; --muted:#526171; --line:#e5e7eb; --accent:#6366f1; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#010409; --card:#0d1117; --ink:#e6edf3; --muted:#8b949e; --line:#21262d; } }
+  :root[data-theme="dark"] { --bg:#010409; --card:#0d1117; --ink:#e6edf3; --muted:#8b949e; --line:#21262d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 -apple-system,'Segoe UI',Arial,sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 40px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 18px; color: var(--muted); }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:16px; }
+  .seg { display:flex; flex-wrap:wrap; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--card); }
+  .seg button { font:inherit; color:var(--ink); background:none; border:0; padding:8px 14px; cursor:pointer; }
+  .seg button + button { border-left:1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background:var(--accent); color:#fff; }
+  .now { color:var(--muted); font-size:14px; min-width: 9em; }
+  .reduced { display:none; width:100%; font-size:14px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 12px; }
+  .reduced.on { display:block; }
+  .reduced button { font:inherit; margin-left:6px; padding:3px 10px; border-radius:7px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; }
+  .stage { display:grid; grid-template-columns: 1fr 1fr; border-radius:14px; overflow:hidden; border:1px solid var(--line); }
+  .panel { display:flex; align-items:flex-end; justify-content:center; gap:22px; padding:36px 12px; }
+  .panel.light { background:#fff; } .panel.dark { background:#0d1117; }
+  .panel svg.big { width: min(220px, 34vw); height: auto; }
+  @media (max-width: 560px) { .stage { grid-template-columns: 1fr; } }
+  ul.notes { color:var(--muted); padding-left: 18px; margin: 18px 0 0; }
+  ul.notes b { color: var(--ink); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Keryx mark, animated</h1>
+  <p class="sub">The mark in each state Keryx can be in. Three pieces and nothing else: they stay three distinct pieces in every state and morph between them.</p>
+  <div class="controls">
+    <div class="seg" role="group" aria-label="State">
+      <button data-state="demo" aria-pressed="true">Demo cycle</button>
+      <button data-state="idle">Idle</button>
+      <button data-state="listening">Listening</button>
+      <button data-state="speaking">Speaking</button>
+      <button data-state="working">Working</button>
+    </div>
+    <span class="now" id="now"></span>
+    <div class="reduced" id="reduced">Your device asks for reduced motion, so the looping motion is paused.<button id="motion">Play full motion</button></div>
+  </div>
+  <div class="stage">
+    <div class="panel light" id="light"></div>
+    <div class="panel dark" id="dark"></div>
+  </div>
+  <ul class="notes">
+    <li><b>Idle / speaking</b> — three vertical bars; while speaking they follow a speech-like level.</li>
+    <li><b>Listening</b> — the bars squash down into one line, then each stretches to its full length and thins; the three trace the same voice line slightly out of step, its swing fading to almost nothing towards the ends.</li>
+    <li><b>Working</b> — the three pieces bend into three arcs of a circle and spin, like a loader.</li>
+  </ul>
+</main>
+<script>
+const NS = "http://www.w3.org/2000/svg";
+// The mark's colours, as in keryx-mark.svg: [left, centre, right] on a light
+// background, and on a dark one.
+const COLOURS = { light: ["#f97316", "#db2777", "#7c3aed"], dark: ["#fb923c", "#f472b6", "#a78bfa"] };
+const W = 6, HW = W / 2;                  // stroke width, half of it
+const SIDE = 24, CAP = 10;                // outline points per side and per round end
+let reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+if (reduced) document.getElementById("reduced").classList.add("on");
+document.getElementById("motion").addEventListener("click", () => {
+  reduced = false; document.getElementById("reduced").classList.remove("on");
+});
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+// Each piece is a filled outline, so it can squash (get shorter and wider), not only turn.
+const marks = [];
+for (const id of ["light", "dark"]) {
+  const host = document.getElementById(id);
+  for (const [s, c] of [[220, "big"], [48], [24]]) {
+    const svg = el("svg", { viewBox: "0 0 64 64", width: s, height: s, role: "img", "aria-label": "Keryx" }, host);
+    if (c) svg.setAttribute("class", c);
+    const paths = [0, 1, 2].map(() => el("path", {}));
+    [0, 2, 1].forEach(i => svg.appendChild(paths[i]));   // the centre piece on top, so the line's joins stay clean
+    marks.push({ theme: id, paths });
+  }
+}
+
+for (const m of marks) m.paths.forEach((p, i) => p.setAttribute("fill", COLOURS[m.theme][i]));
+
+// ---- Outlines ---------------------------------------------------------------
+// A capsule around a centreline: one side out, the far round end, the other side
+// back, the near round end. Every shape uses this order, so any two can be blended
+// point for point.
+function capsule(centre, tangents, hw) {
+  const out = [], n = centre.length;
+  const nor = tangents.map(([dx, dy]) => [-dy, dx]);
+  for (let k = 0; k < n; k++) out.push([centre[k][0] + hw * nor[k][0], centre[k][1] + hw * nor[k][1]]);
+  const end = (P, D, Nn, sgn) => {
+    for (let j = 1; j < CAP; j++) {
+      const th = Math.PI * j / CAP;
+      out.push([P[0] + hw * sgn * (Math.cos(th) * Nn[0] + Math.sin(th) * D[0]),
+                P[1] + hw * sgn * (Math.cos(th) * Nn[1] + Math.sin(th) * D[1])]);
+    }
+  };
+  end(centre[n - 1], tangents[n - 1], nor[n - 1], 1);
+  for (let k = n - 1; k >= 0; k--) out.push([centre[k][0] - hw * nor[k][0], centre[k][1] - hw * nor[k][1]]);
+  end(centre[0], tangents[0], nor[0], -1);
+  return out;
+}
+// An upright rounded rectangle, centre (cx, cy), w by h. Taller than wide it runs
+// top to bottom; wider than tall, left to right — the same way its bar or line does.
+function roundRect(cx, cy, w, h) {
+  const r = Math.min(w, h) / 2, tall = h >= w, L = (tall ? h : w) - 2 * r;
+  const D = tall ? [0, 1] : [1, 0];
+  const c = Array.from({ length: SIDE }, (_, k) => {
+    const s = -L / 2 + L * k / (SIDE - 1);
+    return tall ? [cx, cy + s] : [cx + s, cy];
+  });
+  return capsule(c, c.map(() => D), r);
+}
+// One arc of the loader: lower left, top, lower right. Which way each arc runs is
+// chosen to match the shape it grows from, so nothing twists: the line curls up
+// clockwise; the bars bend with their tops staying up. Switching order while the
+// ring is whole changes no pixel.
+const CENTRES = [240, 0, 120], SPAN = 75, R = 15;
+const FROM_LINE = [1, 1, 1], FROM_BARS = [-1, 1, 1];
+let dirs = FROM_BARS;
+function arcBand(i, rot) {
+  const c0 = CENTRES[i] + rot, a0 = c0 - dirs[i] * SPAN / 2, a1 = c0 + dirs[i] * SPAN / 2;
+  const sg = Math.sign(a1 - a0), pts = [], tan = [];
+  for (let k = 0; k < SIDE; k++) {
+    const a = (a0 + (a1 - a0) * k / (SIDE - 1)) * Math.PI / 180;
+    pts.push([32 + R * Math.sin(a), 32 - R * Math.cos(a)]);
+    tan.push([sg * Math.cos(a), sg * Math.sin(a)]);
+  }
+  return capsule(pts, tan, HW);
+}
+const toPath = pts => "M " + pts.map(([x, y]) => x.toFixed(2) + " " + y.toFixed(2)).join(" L ") + " Z";
+
+// ---- The simulated voices ---------------------------------------------------
+// Rounded syllables in phrases. One drives the bars (the assistant speaking), the other
+// the line (the owner, heard while listening).
+function makeVoice() {
+  let syll = { start: 0, until: 0, amp: 0, pause: true }, phraseLeft = 0;
+  return t => {
+  if (t >= syll.until) {
+    if (phraseLeft <= 0) { phraseLeft = 3 + Math.floor(Math.random() * 6); syll = { start: t, until: t + 300 + Math.random() * 350, amp: 0, pause: true }; }
+    else { phraseLeft--; syll = { start: t, until: t + 170 + Math.random() * 150, amp: 0.5 + Math.random() * 0.5, pause: false }; }
+  }
+  if (syll.pause) return 0.08;
+  const ph = (t - syll.start) / (syll.until - syll.start);
+  return 0.3 + 0.7 * syll.amp * Math.sin(Math.PI * ph) ** 2;
+  };
+}
+const speechTarget = makeVoice(), heard = makeVoice();
+
+// ---- State ----------------------------------------------------------------
+const ease = (cur, tgt, k, dt) => cur + (tgt - cur) * (1 - Math.exp(-k * dt / 1000));
+// Springs: damping 1 settles without overshoot (the bars); below 1 gives a small
+// bounce (the squash, which lands a touch flatter than flat and springs back).
+const spring = (k, zeta = 1, x = 0) => ({ x, vel: 0, k, zeta });
+function step(s, tgt, dt) {
+  const h = dt / 1000, c = 2 * s.zeta * Math.sqrt(s.k);
+  s.vel += (s.k * (tgt - s.x) - c * s.vel) * h; s.x += s.vel * h; return s.x;
+}
+const DEMO = [["idle", 1600], ["listening", 4200], ["working", 3800], ["speaking", 5500]];
+let mode = "demo", state = "idle", demoAt = 0, demoIdx = 0;
+const flat = spring(60, 0.62), ring = spring(45, 0.9);
+const nowEl = document.getElementById("now");
+function setState(s) {
+  // Entering the loader: grow from whatever is showing. Leaving it: unbend toward
+  // what comes next (only while the ring is whole, when the reorder is invisible).
+  if (s === "working") dirs = flat.x > 0.5 ? FROM_LINE : FROM_BARS;
+  else if (ring.x > 0.97) dirs = s === "listening" ? FROM_LINE : FROM_BARS;
+  // Leaving the loader: it finishes its turn forward and comes to rest upright
+  // before it unfolds, so the pieces unbend where they bent.
+  if (state === "working" && s !== "working") {
+    const upright = Math.abs(rot - Math.round(rot / 360) * 360) < 1 && rotSpeed < 1;
+    homeAt = upright ? rot : Math.ceil((rot + 40) / 360) * 360;
+  }
+  if (s === "working") homeAt = null;
+  state = s; nowEl.textContent = mode === "demo" ? "now: " + s : ""; }
+document.querySelectorAll("[aria-label=State] button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("[aria-label=State] button").forEach(o => o.setAttribute("aria-pressed", o === b));
+  mode = b.dataset.state;
+  if (mode === "demo") { demoIdx = 0; demoAt = performance.now(); setState(DEMO[0][0]); }
+  else setState(mode);
+}));
+setState("idle"); demoAt = performance.now();
+
+// ---- Frame loop -------------------------------------------------------------
+const bars = [spring(100, 1, 0.5), spring(140, 1, 0.5), spring(85, 1, 0.5)];
+const heardS = spring(90), dom = spring(40, 0.85);
+let flatTarget = 0, homeAt = null, rot = 0, rotSpeed = 0, wigPhase = 0, last = performance.now();
+const smooth = (a, b, x) => { const u = Math.min(1, Math.max(0, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
+const lerp = (a, b, u) => a + (b - a) * u;
+
+function frame(t) {
+  const dt = Math.min(64, t - last); last = t;
+  if (mode === "demo" && t - demoAt > DEMO[demoIdx][1]) {
+    demoIdx = (demoIdx + 1) % DEMO.length; demoAt = t; setState(DEMO[demoIdx][0]);
+  }
+  // The line holds flat while it curls into the loader; it lets go once hidden.
+  if (state === "listening") flatTarget = 1;
+  else if (state !== "working" || ring.x > 0.97) flatTarget = 0;
+  const f = step(flat, flatTarget, dt);
+  // Into the loader from the line: the centre colour gives the line back first.
+  const ringOn = (state === "working" && (flat.x < 0.5 || dom.x < 0.08)) || homeAt !== null;
+  const g = Math.min(1, Math.max(0, step(ring, ringOn ? 1 : 0, dt)));
+
+  // Bars: the still mark when idle, the voice when speaking.
+  const speaking = state === "speaking" && !reduced;
+  const tgt = speaking ? speechTarget(t) : 0.5;
+  const wob = (ph, fr) => speaking ? 1 + 0.35 * Math.sin(t / fr + ph) : 1;
+  const lv = [step(bars[0], tgt * wob(0, 260), dt), step(bars[1], tgt, dt), step(bars[2], tgt * wob(2.1, 210), dt)];
+  const hC = Math.max(12, Math.min(44, 32 * (0.3 + 1.4 * lv[1])));
+  const hS = l => Math.max(6, Math.min(28, 0.8 * hC, 16 * (0.35 + 1.3 * l)));
+  const barH = [hS(lv[0]), hC, hS(lv[2])];
+
+  // Squash, then spread: height drops first, width follows a beat behind.
+  // The spring's overshoot (f > 1) presses the line a touch thinner than flat.
+  const sy = smooth(0, 0.7, f), sx = smooth(0.25, 1, f), press = Math.min(1.5, Math.max(0, f - 1) * 8);
+  // The line runs 11 to 53. It lands in even thirds (the side pieces running under
+  // the centre, so no seam opens), then every piece stretches to the whole length
+  // and thins, so the three lie on top of one another.
+  const dm = step(dom, state === "listening" && f > 0.85 ? 1 : 0, dt);
+  const LINE = [[lerp(21.5, 32, dm), lerp(21, 42, dm)], [32, lerp(14, 42, dm)], [lerp(42.5, 32, dm), lerp(21, 42, dm)]];
+  const lineH = lerp(W, 2.2, dm);
+
+  // Listening: the owner's voice sets the height of the voice line.
+  const lvl = step(heardS, state === "listening" && !reduced ? heard(t) : 0, dt);
+  wigPhase += dt / 1000;
+
+  // Working: the loader spins, then glides home so it unbends the way it bent.
+  const spin = state === "working" ? (!reduced && g > 0.85 ? 280 : 0)
+             : homeAt !== null ? Math.min(280, 3.5 * (homeAt - rot)) : 0;
+  rotSpeed = ease(rotSpeed, spin, 6, dt);
+  rot += rotSpeed * dt / 1000;
+  if (homeAt !== null && homeAt - rot < 1.5) { rot = homeAt; rotSpeed = 0; homeAt = null; }
+
+  for (let i = 0; i < 3; i++) {
+    const cx = lerp([20, 32, 44][i], LINE[i][0], sx);
+    const w = lerp(W, LINE[i][1], sx);
+    const h = lerp(barH[i] + W, lineH, sy) - press;
+    let pts = roundRect(cx, 32, w, h);
+    // A voice line: three sinusoids of different wavelengths, each swaying up and
+    // down at its own pace, added together. Its height decays with distance from
+    // the centre (a bell curve), so the ends barely move — nothing pins them. The
+    // voice sets the height, kept well below the bars' swing when speaking. Each
+    // piece runs the same line a little out of step with the others, so the three
+    // part and cross as it moves.
+    const k = 3.6 * Math.max(0, lvl) * Math.min(1, f), lag = (i - 1) * 1.6 * dm;
+    if (k > 0.01) {
+      const WAVES = [[30, 1.1, 1.0, 0], [21, 1.7, 0.7, 1.3], [15, 2.4, 0.45, 2.6]];   // wavelength, Hz, weight, offset
+      const sway = WAVES.map(([, hz, wt, ph]) => wt * Math.sin(2 * Math.PI * hz * wigPhase + ph + lag));
+      pts = pts.map(([x, y]) => {
+        let v = 0;
+        WAVES.forEach(([len, , , ph], j) => { v += sway[j] * Math.cos(2 * Math.PI * (x - 32) / len + ph); });
+        return [x, y - k * Math.exp(-(((x - 32) / 13) ** 2)) * v];
+      });
+    }
+    if (g > 0.001) { const a = arcBand(i, rot); pts = pts.map((p, k) => [lerp(p[0], a[k][0], g), lerp(p[1], a[k][1], g)]); }
+    const d = toPath(pts);
+    for (const m of marks) m.paths[i].setAttribute("d", d);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
