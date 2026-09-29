@@ -74,18 +74,58 @@ every skill you have installed. A tool only earns its place when the answer is n
 nothing while a subagent goes and looks is the thing a tool exists to avoid, and it is the
 only thing it buys you.
 
-## Writing your own
+## Your own tools
 
-The quickest way is to ask for one out loud:
+The quickest way to give Jarvis a new ability is to ask for one out loud:
 
-> *"In the jarvis project, add a tool called `next_train` that reads the departure board
-> for my station and tells me the next two trains. Same shape as `check_billing`."*
+> *"Give yourself a way to tell me the next two trains from my station."*
 
-That is an ordinary task. The subagent has the repository, the tests and this file, and
-`prompts/subagent_suffix.md` already tells it how work here is expected to end. It will
-need the PIN, like every dispatch from the phone, and a `.py` change needs a restart before
-the tool exists — say *"restart yourself"* when it is done and Jarvis will ring you back
-once it is up.
+That is an ordinary task (it needs the PIN, like every dispatch from the phone), and the
+tool it produces is **yours, not Jarvis's**: a Python file in `~/.local/share/jarvis/tools/`
+(`DATA_DIR/tools`), never in this repository and never committed. Every call reads that
+directory afresh when it starts, so the tool is there from your next call — no restart.
+
+```python
+from jarvis.tools.custom import custom_tool
+
+@custom_tool(
+    description="The next two trains from the owner's station. Say both times in one "
+                "sentence; do not read the platform or the operator.",
+    needs_pin=False,
+)
+def next_train(ctx, args):
+    ...
+    return {"trains": ["8:14", "8:31"]}
+```
+
+Every subagent is told where these go and is pointed at
+[`skills/jarvis-custom-tools/SKILL.md`](../skills/jarvis-custom-tools/SKILL.md), which is
+the whole contract: the file, the wording, credentials, and how to check it. In short:
+
+- **`needs_pin`** is the gate, and it defaults to `True`: the tool answers only once the
+  PIN is given. `needs_pin=False` answers anyone who rings, and is for what is public
+  anyway.
+- **A tool cannot take a built-in's name**, so nothing here can stand in for `submit_pin`
+  or `dispatch_task`; and a file or directory anyone but you could write is refused
+  unread, because loading it runs its code inside the service.
+- **A broken file costs that file.** It is logged and skipped; the call goes on with every
+  other tool. A handler that raises, or runs past its `timeout_s` (20 seconds by default),
+  hands the model an error it can say.
+- **`jarvis tools`** lists what the directory holds and what the next call would refuse,
+  and exits 1 while anything is refused.
+
+## Adding a built-in tool
+
+A tool that belongs in Jarvis for everyone — one you would send upstream — goes in the
+repository instead. Ask for it the same way, naming the project:
+
+> *"In the jarvis project, add a built-in tool called `next_train` … Same shape as
+> `check_billing`."*
+
+The subagent has the repository, the tests and this file, and
+`prompts/subagent_suffix.md` already tells it how work here is expected to end. A `.py`
+change needs a restart before the tool exists — say *"restart yourself"* when it is done
+and Jarvis will ring you back once it is up.
 
 What it will do, and what to check if you are writing it by hand:
 

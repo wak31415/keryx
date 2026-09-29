@@ -40,6 +40,8 @@ job, not theirs.
 - If part of the task turns out to be impossible, do the rest of it and say plainly in
   the report what you could not do and why.
 
+{custom_tools}
+
 ## If you changed Jarvis's own code
 
 Jarvis is a running service, and it loaded its Python when it started. If your work

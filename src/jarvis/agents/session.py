@@ -150,7 +150,10 @@ class AgentContext:
         return cls(
             cwd=workspace_dir(task, settings),
             instructions=render_subagent_suffix(
-                task, slack_mcp_server=settings.slack_mcp_server, owner=settings.owner_label
+                task,
+                slack_mcp_server=settings.slack_mcp_server,
+                owner=settings.owner_label,
+                tools_dir=settings.custom_tools_dir,
             ),
             model=model or None,
             auth=resolve_auth(auth, settings, probe=False),

@@ -181,6 +181,32 @@ async def test_session_config_carries_the_tool_schemas(make_session, phone, prov
     assert provider.config.tools == tools.schemas()
 
 
+async def test_each_call_offers_the_tools_on_disk_when_it_starts(
+    make_session, phone, provider, tools
+):
+    async def handler(ctx: ToolContext, args: dict) -> dict:
+        return {"pong": True}
+
+    loads: list[str] = []
+
+    def loader(call_tools: ToolRegistry) -> None:
+        loads.append("load")
+        call_tools.register("owners", "Theirs.", {"type": "object", "properties": {}}, handler)
+
+    tools.set_loader(loader)
+    session = make_session(phone, provider)
+
+    async with running(session):
+        await eventually(lambda: provider.config is not None)
+        provider.feed(FunctionCall(call_id="c1", name="owners", arguments={}))
+        await eventually(lambda: provider.tool_results)
+
+    assert [schema["name"] for schema in provider.config.tools] == ["owners"]
+    assert provider.tool_results[0][1] == {"pong": True}
+    assert loads == ["load"]
+    assert "owners" not in tools
+
+
 async def test_session_opens_with_a_greeting_request(make_session, phone, provider):
     session = make_session(phone, provider)
 

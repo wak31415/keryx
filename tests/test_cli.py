@@ -4,6 +4,7 @@ import asyncio
 import importlib.metadata
 import json
 import logging
+import re
 import shutil
 import stat
 import wave
@@ -1102,4 +1103,77 @@ def test_memory_path_prints_only_the_path(settings_stub):
 
     assert result.exit_code == 0, result.output
     assert result.output.strip() == str(memory_path(settings_stub.data_dir))
+
+
+# --- tools -----------------------------------------------------------------
+
+
+def write_tool(settings: Settings, name: str, source: str) -> None:
+    settings.ensure_dirs()
+    path = settings.custom_tools_dir / name
+    path.write_text(source, encoding="utf-8")
+    path.chmod(0o600)
+
+
+MOON_TOOL = (
+    "from jarvis.tools.custom import custom_tool\n\n"
+    "@custom_tool(description='The moon tonight.', needs_pin=False)\n"
+    "def moon_phase(ctx, args):\n    return {}\n"
+)
+
+
+def test_tools_says_so_when_there_are_none(settings_stub):
+    result = runner.invoke(app, ["tools"])
+
+    assert result.exit_code == 0, result.output
+    assert str(settings_stub.custom_tools_dir) in result.output
+    assert "no custom tools" in result.output
+
+
+def test_tools_lists_each_tool_and_exits_1_on_anything_refused(settings_stub):
+    write_tool(settings_stub, "moon.py", MOON_TOOL)
+    write_tool(settings_stub, "pin.py", MOON_TOOL.replace("moon_phase", "submit_pin"))
+
+    result = runner.invoke(app, ["tools"])
+
+    assert result.exit_code == 1, result.output
+    assert re.search(r"moon_phase\s+no PIN\s+moon.py", result.output)
+    assert "refused pin.py: 'submit_pin' is already a tool's name" in result.output
+
+
+def test_tools_refuses_a_built_in_name_this_machine_does_not_offer(settings_stub):
+    write_tool(settings_stub, "gpus.py", MOON_TOOL.replace("moon_phase", "cluster_stats"))
+
+    result = runner.invoke(app, ["tools"])
+
+    assert result.exit_code == 1
+    assert "'cluster_stats' is already a tool's name" in result.output
+
+
+def test_tools_leaves_a_running_service_alone(settings_stub):
+    """A subagent runs it inside the live service's environment: the bridge's socket stays."""
+    settings_stub.ensure_dirs()
+    socket = settings_stub.state_dir / "approvals.sock"
+    socket.write_text("")
+
+    result = runner.invoke(app, ["tools"])
+
+    assert result.exit_code == 0, result.output
+    assert socket.exists()
+
+
+def test_tools_json_is_one_document(settings_stub):
+    write_tool(settings_stub, "moon.py", MOON_TOOL)
+
+    result = runner.invoke(app, ["tools", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {
+        "directory": str(settings_stub.custom_tools_dir),
+        "tools": [
+            {"name": "moon_phase", "needs_pin": False, "file": "moon.py",
+             "description": "The moon tonight."}
+        ],
+        "refused": [],
+    }
 

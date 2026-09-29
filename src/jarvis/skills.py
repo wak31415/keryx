@@ -18,6 +18,10 @@ from pathlib import Path
 log = logging.getLogger("jarvis.skills")
 
 SKILL_FILE = "SKILL.md"
+#: The skills that ship in the Jarvis repository, beside `src/`.
+BUNDLED_SKILLS = Path(__file__).resolve().parents[2] / "skills"
+#: How to write the owner's own voice tools; its path is in every subagent's prompt.
+CUSTOM_TOOLS_SKILL = BUNDLED_SKILLS / "jarvis-custom-tools" / SKILL_FILE
 #: Descriptions are written for a reader with a screen; the prompt only needs the gist.
 MAX_DESCRIPTION_CHARS = 160
 

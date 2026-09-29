@@ -14,6 +14,7 @@ from pathlib import Path
 from jarvis.agents.registry import BACKENDS
 from jarvis.config import Settings, env_var_name
 from jarvis.config.reference import render as render_configuration
+from jarvis.tools.builtin import BUILTIN_TOOL_NAMES
 
 #: The repository root, so the test does not depend on the working directory pytest ran in.
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +59,11 @@ def test_the_configuration_reference_names_every_setting():
     )
 
     assert missing == set(), f"absent from docs/configuration.md: {sorted(missing)}"
+
+
+def test_the_reserved_names_are_exactly_the_tools_registered_in_the_source():
+    """The owner's tools may not take a built-in's name; this is the list they are held to."""
+    assert set(BUILTIN_TOOL_NAMES) == registered_tool_names()
 
 
 def test_docs_tools_documents_exactly_the_tools_that_are_registered():

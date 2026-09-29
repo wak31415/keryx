@@ -1097,14 +1097,19 @@ class Settings(BaseSettings):
             return self.noise_reduction
         return "near_field" if channel == "phone" else "far_field"
 
-    def ensure_dirs(self) -> None:
-        """Create `data_dir` (`tasks`, `calls`) and `state_dir` (`logs`, `approvals`), owner-only.
+    @property
+    def custom_tools_dir(self) -> Path:
+        """`DATA_DIR/tools`: the owner's own voice tools (`jarvis.tools.custom`)."""
+        return self.data_dir / "tools"
 
-        Existing directories are tightened in place, so an install made before this simply
-        becomes private the next time anything starts. The cache directory is made by what
-        downloads into it, when it does.
+    def ensure_dirs(self) -> None:
+        """Create `data_dir` (`tasks`, `calls`, `tools`) and `state_dir` (`logs`, `approvals`).
+
+        All owner-only. Existing directories are tightened in place, so an install made
+        before this simply becomes private the next time anything starts. The cache
+        directory is made by what downloads into it, when it does.
         """
-        for root, names in ((self.data_dir, ("tasks", "calls")),
+        for root, names in ((self.data_dir, ("tasks", "calls", "tools")),
                             (self.state_dir, ("logs", "approvals"))):
             secure_dir(root)
             for name in names:

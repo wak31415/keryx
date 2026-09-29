@@ -340,6 +340,9 @@ class VoiceSession:
     async def run(self) -> None:
         """Run the session to completion. Returns once the call has been torn down."""
         self._briefing = await self._load_briefing()
+        # The owner's own tools are read from disk here, once per call, so a tool written
+        # since the last call is offered without a restart (`jarvis.tools.custom`).
+        self._tools = await asyncio.to_thread(self._tools.for_call)
         config = self._build_config()
         try:
             await self._provider.connect(config)

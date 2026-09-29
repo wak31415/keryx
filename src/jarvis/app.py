@@ -55,6 +55,7 @@ from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolRegistry
 from jarvis.tools.builtin import register_builtin_tools
+from jarvis.tools.custom import register_custom_tools
 
 TASK_DB_NAME = "tasks.db"
 
@@ -139,6 +140,9 @@ def build_app_state(settings: Settings) -> AppState:
         # under a running service, and `dispatch_task` names only those.
         agents=offered_agents(settings),
     )
+    # The owner's own tools, from `DATA_DIR/tools`: read again at the top of every call,
+    # so one written since the last call needs no restart.
+    registry.set_loader(lambda call_tools: register_custom_tools(call_tools, settings))
 
     state = AppState(
         settings=settings,

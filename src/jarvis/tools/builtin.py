@@ -45,6 +45,18 @@ from jarvis.tools.builtin_session import register_session_tools
 from jarvis.tools.builtin_tasks import register_task_tools
 from jarvis.tools.registry import ToolRegistry
 
+#: Every name a built-in tool is ever registered under, offered on this machine or not. The
+#: owner's own tools may take none of them (`jarvis.tools.custom`), so configuring Slack or a
+#: cluster later can never collide with one of theirs. `tests/test_docs_sync.py` holds this
+#: to the `registry.register(...)` calls in the source.
+BUILTIN_TOOL_NAMES = frozenset({
+    "send_to_slack", "web_search", "check_email", "check_billing", "cluster_stats",
+    "dispatch_task", "list_tasks", "get_task_status", "get_task_result", "mark_reported",
+    "recall", "send_followup", "cancel_task", "list_projects", "request_callback",
+    "restart_service", "list_pending_approvals", "answer_approval", "set_config",
+    "submit_pin", "end_session",
+})
+
 
 def register_builtin_tools(
     registry: ToolRegistry,

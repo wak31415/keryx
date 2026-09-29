@@ -34,6 +34,8 @@ of `main`.
 - Inspect tasks: `uv run jarvis tasks list [--status …] [--limit N] [--internal]`,
   `uv run jarvis tasks show <id>` (the `TOLD` column is `NO` until Jarvis has said it)
 - Read what Jarvis remembers between calls: `uv run jarvis memory` (`--path` for the file)
+- The owner's own voice tools: `uv run jarvis tools [--json]` (what `DATA_DIR/tools` holds
+  and what the next call would refuse; exits 1 while anything is)
 - Start that memory before any call has: `uv run jarvis memory seed --file FILE|- [--force]
   [--json]` (one fact per line; exits 1 only when a memory was wanted and not written, 2 on
   a wrong command line); `skills/jarvis-setup` is the agent session that drives the whole
@@ -88,6 +90,12 @@ remember:
   because both are called *after* the thing worth saying has been said and the turn would
   only be spent saying it again. Only for those; anything the owner is waiting to hear keeps
   its turn.
+  The owner's *own* tools are not here: `tools/custom.py` loads `DATA_DIR/tools/*.py` into
+  each call's copy of the registry (`ToolRegistry.for_call`), so they need no restart and
+  never enter the repository. Each declares its gate (`needs_pin`, True by default), cannot
+  take a built-in's name, and is refused if anyone else could write it;
+  `skills/jarvis-custom-tools` is how a subagent writes one, and every subagent's prompt
+  points at it.
 - **notify** — `notify/deliver.py` holds `announce_to_live_sessions` and `safe_send_sms`.
   The `can_text` gate is asserted there and nowhere else.
 - **integrations** — `integrations/` is one module per outside service (`billing`,
@@ -324,7 +332,8 @@ relative one ignored as the specification says (`config/files.py::xdg_home`):
 - `~/.config/jarvis` — `JARVIS_HOME`: `config.toml`, `secrets.toml`, `pin`, the Google
   client file. Only the environment moves it.
 - `~/.local/share/jarvis` — `DATA_DIR`: `tasks.db`, `tasks/`, `calls/`, `memory.md`,
-  `projects/`, `workspace/`, the sign-in tokens, `codex/`, and `pin-failures.json`.
+  `projects/`, `workspace/`, `tools/` (the owner's own voice tools), the sign-in tokens,
+  `codex/`, and `pin-failures.json`.
 - `~/.local/state/jarvis` — `STATE_DIR`: `logs/`, `restart.json`, the version stamps,
   `approvals/` and `approvals.sock` together, so the hook needs one directory.
 - `~/.cache/jarvis` — `CACHE_DIR`: what can be downloaded again (on `feat/local-wakeword`,

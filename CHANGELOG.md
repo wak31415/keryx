@@ -8,6 +8,13 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Added
 
+- **Your own voice tools.** A Python file in `~/.local/share/jarvis/tools/` defines a tool
+  the voice model can call, with `@custom_tool` from `jarvis.tools.custom`; each call reads
+  the directory afresh, so a new one needs no restart, and none of it lives in the
+  repository. Ask for one out loud and the subagent writes it, following the new
+  `skills/jarvis-custom-tools` skill. Each tool is behind the PIN unless it says `needs_pin=False`,
+  cannot take a built-in's name, and is refused if anyone but you could write it.
+  `jarvis tools` lists them and what the next call would refuse.
 - **`jarvis migrate`** moves an install from `~/.jarvis`, and a `.env` or `.secrets/` in the
   checkout, to the XDG directories. `--dry-run` prints the plan, and a conflict stops it
   before anything is touched. It stops the service while it moves things, rewrites the

@@ -171,6 +171,16 @@ model is handed, the command a subagent reaches for — refuse, and say so: `jar
 set` holds it to the service-writable keys, and `config import-env`, `auth login`,
 `memory seed`, `setup` and `config lock|unlock` refuse it outright.
 
+Your own voice tools are code Jarvis runs. Every `.py` file in `DATA_DIR/tools` is imported
+inside the service at the start of each call (`jarvis.tools.custom`), and a subagent writes
+one there when you ask for a new ability on the phone. Each says whether it needs the PIN,
+and does by default; none can take a built-in tool's name, so none can stand in for `submit_pin` or
+`dispatch_task`; and a file or directory that anyone but you could write is refused
+unread. That is the whole of it. A tool file can do anything you can, a subagent that can
+write one could equally edit Jarvis's source, and a tool that declares `needs_pin=False`
+answers every caller — so what a tool reads, and who may hear it, is decided by the file,
+and `jarvis tools` is where you see what each one says.
+
 `jarvis setup`'s project summaries are drafted by a coding agent reading the folders you
 chose, which means it reads whatever a README in them says. So nothing it writes is kept
 until you accept it, the path of each project is shown beside its summary, and a project is

@@ -1,6 +1,7 @@
 """Tests for what every agent backend shares: summaries, restart markers, the suffix, the fake."""
 
 import asyncio
+import sys
 
 import pytest
 
@@ -15,6 +16,7 @@ from jarvis.agents.base import (
     extract_spoken_summary,
     render_subagent_suffix,
 )
+from jarvis.skills import CUSTOM_TOOLS_SKILL
 from jarvis.tasks.models import Task, TaskKind
 
 
@@ -261,6 +263,24 @@ def test_the_subagent_suffix_says_whom_the_work_is_for():
 
     assert "dispatched on Ada's behalf" in render_subagent_suffix(task, owner="Ada")
     assert "dispatched on the owner's behalf" in render_subagent_suffix(task)
+
+
+def test_the_subagent_suffix_says_where_the_owners_tools_go_and_how_to_check_them(
+    tmp_path, unwrapped
+):
+    """Their tools are their data: outside the repo, never committed, live without a restart."""
+    task = Task(id=1, kind=TaskKind.AGENT, description="give yourself a tide tool")
+
+    suffix = unwrapped(render_subagent_suffix(task, tools_dir=tmp_path / "tools"))
+
+    assert f"it goes in `{tmp_path / 'tools'}`" in suffix
+    assert "never in the Jarvis repository, and it is never committed" in suffix
+    assert f"Read `{CUSTOM_TOOLS_SKILL}`" in suffix
+    assert CUSTOM_TOOLS_SKILL.is_file()
+    assert f"`{sys.executable} -m jarvis tools`" in suffix
+    assert "needs no restart and no RESTART_REQUIRED: line" in suffix
+    assert "{custom_tools}" not in render_subagent_suffix(task)
+    assert "voice tool" not in render_subagent_suffix(task)
 
 
 def test_the_original_names_are_still_importable_from_tasks_agent_runner():
