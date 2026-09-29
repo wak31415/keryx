@@ -1,6 +1,6 @@
 """The smaller `jarvis setup` sections: import, voice, settings, owner and PIN, and the
 background service. The larger ones have modules of their own (`agents`, `phone`, `google`,
-`plugins`, `profile`, `project_context`).
+`plugins`, `issues`, `profile`, `project_context`).
 
 Each is a function of a `SetupContext`. None asks again for something already set unless
 the wizard is reviewing (`ctx.review`), and each saves as it goes.

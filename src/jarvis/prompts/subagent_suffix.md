@@ -42,6 +42,8 @@ job, not theirs.
 
 {custom_tools}
 
+{issues}
+
 ## If you changed Jarvis's own code
 
 Jarvis is a running service, and it loaded its Python when it started. If your work

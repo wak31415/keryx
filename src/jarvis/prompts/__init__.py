@@ -13,6 +13,7 @@ from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from jarvis.issues import IssueReporting
 from jarvis.notify.twilio_out import TwilioOut
 from jarvis.projects import ProjectBrief, discover_briefs, discover_projects, summaries_dir
 from jarvis.skills import Skill, discover_skills_in
@@ -161,6 +162,24 @@ _AGENTS_NOTE = (
     "do — \"have Codex do it\", \"ask Claude\" — pass agent on the dispatch, and say nothing "
     "more about it. A follow-up goes back to whichever agent ran the task by itself, so "
     "never name an agent for send_followup."
+)
+#: The paragraph that tells the voice model a bug or a wish about itself can become an
+#: issue. Only rendered while issue reports are on (`jarvis.issues`). The subagent's own
+#: instructions say how; all the voice model decides is that it is work — for a feature
+#: request as much as for a bug, which is the half a model left to itself files under
+#: small talk — and that nobody wants an offer to file one after every misheard word.
+_ISSUES_NOTE = (
+    "Something about you yourself is work like any other when they want it passed on to "
+    "whoever maintains you, and that goes for two kinds of thing. A bug: something you "
+    "got wrong, misheard, cut off or broke. And a feature request: something you cannot do "
+    "yet and they wish you could — \"you should be able to…\", \"it'd be nice if Jarvis…\", "
+    "\"suggest that…\". Dispatch either in their words, saying whether it is a bug report "
+    "or a feature request for Jarvis, and Claude files it as an issue on Jarvis's own "
+    "repository after a short look. If they want the thing built now rather than "
+    "suggested — \"give yourself a way to…\" — that is ordinary work, not an issue. Do not "
+    "offer to file anything after every stumble or passing wish; offer once, and only when "
+    "they are plainly fed up with something you did or keep asking for something you "
+    "cannot do."
 )
 #: A whole word "Claude" that is not "Claude Code" (which is the approval bridge's, and
 #: stays Claude's whoever does the dispatched work).
@@ -318,6 +337,9 @@ def render_voice_prompt(
         pending_tasks=f"{_PENDING_HEADING}\n\n{pending}" if pending else "",
         memory=remembered,
         agents=_agents_note(agents),
+        issues=_name_the_agent(_ISSUES_NOTE, spoken)
+        if IssueReporting.from_settings(settings) is not None
+        else "",
         **_DELIVERY[texting],
     )
     return template.format_map(_Defaulting(values))

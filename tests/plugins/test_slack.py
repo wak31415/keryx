@@ -9,6 +9,7 @@ from jarvis.agents.base import render_subagent_suffix
 from jarvis.agents.claude import CLAUDE_AUTH
 from jarvis.agents.session import AgentContext
 from jarvis.integrations.slack import SlackWebApi
+from jarvis.issues import IssueReporting
 from jarvis.plugins.slack import (
     FAILED_MESSAGE,
     send_to_slack_tool,
@@ -225,6 +226,7 @@ def test_the_subagent_hears_about_slack_only_through_the_route(slack_settings):
     assert on.instructions == render_subagent_suffix(
         task, slack_mcp_server="chat", owner=slack_settings.owner_label,
         tools_dir=slack_settings.custom_tools_dir,
+        issues=IssueReporting.from_settings(slack_settings),
     )
 
 

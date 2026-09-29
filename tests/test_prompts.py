@@ -826,3 +826,36 @@ def test_the_skills_of_every_enabled_agent_are_listed(settings, tmp_path, monkey
     assert "mermaid: Does mermaid." in both and "review: Does review." in both
 
 
+
+
+def _reporting(settings):
+    return settings.model_copy(update={"issue_reporting": True})
+
+
+def test_a_bug_or_a_wish_about_jarvis_is_work_it_can_file(settings, unwrapped):
+    """The voice model only has to know it is a dispatch; the subagent has the skill.
+
+    Feature requests by name: left to itself, a model files a bug and hears a wish as chat.
+    """
+    text = unwrapped(_rendered(_reporting(settings)))
+
+    assert "A bug: something you got wrong" in text
+    assert "And a feature request: something you cannot do yet and they wish you could" in text
+    assert "saying whether it is a bug report or a feature request for Jarvis" in text
+    assert "If they want the thing built now rather than suggested" in text
+    assert "Do not offer to file anything after every stumble or passing wish" in text
+
+
+def test_with_issue_reports_off_the_prompt_says_nothing_about_them(settings, unwrapped):
+    text = unwrapped(_rendered(settings))
+
+    assert "feature request" not in text
+    assert "{" not in text and "}" not in text
+
+
+def test_the_issues_paragraph_names_the_default_agent(settings, unwrapped):
+    codex = _reporting(settings).model_copy(update={"agent_backend": "codex"})
+
+    assert "and Codex files it as an issue on Jarvis's own repository" in unwrapped(
+        _rendered(codex)
+    )

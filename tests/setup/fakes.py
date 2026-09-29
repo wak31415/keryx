@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from jarvis.agents.base import RunResult
+from jarvis.issues import GhStatus
 from jarvis.notify.twilio_out import TwilioError, TwilioNumber
 from jarvis.setup.context import Probes
 from jarvis.setup.ui import Choice
@@ -169,6 +170,9 @@ class FakeWorld:
     ssh_hosts: list = field(default_factory=list)
     masters_up: set = field(default_factory=set)
     partitions: dict = field(default_factory=dict)
+    #: What `gh auth status` says, in order: the last one repeats.
+    gh: list = field(default_factory=lambda: [GhStatus(installed=True, signed_in=True,
+                                                     account="octocat")])
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
@@ -197,6 +201,10 @@ class FakeWorld:
         def post(*args, **kwargs):
             raise AssertionError("no token exchange in this test")
 
+        def gh_status():
+            self.calls.append(("gh",))
+            return self.gh.pop(0) if len(self.gh) > 1 else self.gh[0]
+
         def openai(key):
             self.calls.append(("openai", key))
             return self.openai_problem
@@ -217,4 +225,5 @@ class FakeWorld:
             or alias in self.masters_up,
             cluster_partitions=lambda alias: self.calls.append(("partitions", alias))
             or list(self.partitions.get(alias, [])),
+            gh_status=gh_status,
         )

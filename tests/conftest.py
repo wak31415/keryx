@@ -156,6 +156,15 @@ def _no_checkout_env(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_gh_from_doctor(monkeypatch):
+    """`jarvis doctor` runs `gh auth status` while issue reports are on, which asks GitHub.
+    Never from a test: `gh` is not installed, unless a test says what it answers."""
+    from jarvis.issues import GhStatus
+
+    monkeypatch.setattr("jarvis.doctor.gh_status", lambda: GhStatus(installed=False))
+
+
+@pytest.fixture(autouse=True)
 def _no_twilio_from_doctor(monkeypatch):
     """`jarvis doctor` asks Twilio where the number points when it has credentials. Never
     from a test: the doctor tests hand in a fake client of their own. Returns the real one,

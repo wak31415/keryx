@@ -128,9 +128,9 @@ remember:
   re-exports the old `jarvis.config` names.
 - **setup** — `setup/` is `jarvis setup` and `jarvis auth`: `wizard` (section order, what is
   left, the closing summary), one module per large section (`agents`, `phone`, `google`,
-  `plugins`, `profile`, `project_context`) and `sections` for the small ones, `context` (the
-  `SetupContext` every section gets, and `Probes` — everything that reaches the network, a
-  login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
+  `issues`, `plugins`, `profile`, `project_context`) and `sections` for the small ones,
+  `context` (the `SetupContext` every section gets, and `Probes` — everything that reaches
+  the network, a login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
   rich/questionary one, one question to a screen), `rewind` (Esc goes back a question and
   Tab skips to the first unanswered one, both by running the section again from a record
   of its answers and probe results, so no probe runs twice), `auth`, and `guides/*.md`, which the wizard renders and the wiki links, so
@@ -525,6 +525,29 @@ the one with a scar behind it:
   `tests/integrations/test_cluster.py` are synthetic but preserve the shapes of real cluster
   output, and the totals asserted on are worked out by hand from their rows. Do not collapse
   them to be brief.
+
+## Issue reports go out, and only the pattern goes with them
+
+"That's a bug, report it" and "suggest that Jarvis could…" are dispatches like any other;
+there is no voice tool and no task kind for them. `jarvis/issues.py::IssueReporting`
+resolves where they go (`ISSUE_REPO`, the upstream repository by default) and what the
+subagent may read (`Settings.checkout` — `JARVIS_CHECKOUT`, else the checkout the code runs
+from — its logs, and the call it came from), and `prompts/subagent_issues.md` points every
+subagent at `skills/jarvis-report-issue`, read from that checkout. The voice prompt's
+paragraph names feature requests as well as bugs, because a model left to itself files the
+bug and hears the wish as chat. Four rulings:
+
+- **Off until the owner says yes** (`ISSUE_REPORTING`), because it publishes. The wizard's
+  Issue reports section counts as left until it has been walked, whatever `doctor` says —
+  off passes `doctor` — and it checks `gh` (`issues.gh_status`, a `Probes` field) and offers
+  `gh auth login` on the terminal. Nothing else in Jarvis signs `gh` in.
+- **The owner does not pay for Jarvis's bugs.** The look is about ten tool calls: no tests,
+  no reproduction, no fix, no feature built, no edit to the checkout. The issue says the
+  look was brief.
+- **The repository is public.** No number, PIN, secret, name or project of the owner's, and
+  nothing quoted from a call, a task or the memory — the pattern, never the words. A
+  security problem is never filed there at all; it is pointed at the private advisory.
+- **A filing that fails lands in the report**, never in a retry loop or another channel.
 
 ## Platforms
 

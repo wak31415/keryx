@@ -19,6 +19,7 @@ from jarvis.doctor import (
     run_doctor_checks,
 )
 from jarvis.integrations.gmail import token_path
+from jarvis.issues import GhStatus
 from jarvis.logging_util import mask_number
 
 
@@ -793,3 +794,54 @@ def test_every_check_has_a_section_and_a_state(healthy):
     for check in run_doctor_checks(healthy):
         assert check.section
         assert check.as_dict()["state"] in {"ok", "missing", "failed"}
+
+
+# --- issue reports -----------------------------------------------------------
+
+
+def _reporting(settings, monkeypatch, status):
+    monkeypatch.setattr("jarvis.doctor.gh_status", lambda: status)
+    return by_name(run_doctor_checks(settings.model_copy(update={"issue_reporting": True})))[
+        "issue reports"
+    ]
+
+
+def test_issue_reports_off_pass_and_never_ask_gh(healthy, monkeypatch):
+    monkeypatch.setattr("jarvis.doctor.gh_status", lambda: pytest.fail("gh was asked"))
+
+    check = by_name(run_doctor_checks(healthy))["issue reports"]
+
+    assert check.ok and check.section == "issues" and "off" in check.detail
+
+
+def test_issue_reports_on_with_gh_signed_in(healthy, monkeypatch):
+    check = _reporting(healthy, monkeypatch, GhStatus(True, True, "octocat"))
+
+    assert check.ok
+    assert check.detail == f"filed on {healthy.issue_repo} as octocat"
+
+
+def test_a_token_in_the_keyring_is_named_not_failed(healthy, monkeypatch):
+    check = _reporting(healthy, monkeypatch, GhStatus(True, True, "octocat", keyring=True))
+
+    assert check.ok and "--insecure-storage" in check.detail
+
+
+@pytest.mark.parametrize(
+    ("status", "says"),
+    [(GhStatus(False), "gh is not installed"), (GhStatus(True, False), "`gh auth login`")],
+)
+def test_issue_reports_on_without_gh_are_missing_and_soft(healthy, monkeypatch, status, says):
+    check = _reporting(healthy, monkeypatch, status)
+
+    assert check.state == "missing" and check.severity == "soft"
+    assert says in check.detail
+
+
+def test_issue_reports_on_with_no_checkout_to_read(healthy, monkeypatch, tmp_path):
+    monkeypatch.setattr("jarvis.doctor.gh_status", lambda: pytest.fail("gh was asked"))
+    settings = healthy.model_copy(update={"issue_reporting": True, "jarvis_checkout": tmp_path})
+
+    check = by_name(run_doctor_checks(settings))["issue reports"]
+
+    assert check.state == "missing" and "JARVIS_CHECKOUT" in check.detail

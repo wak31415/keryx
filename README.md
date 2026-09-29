@@ -40,6 +40,7 @@ a voice agent you can use across calls:
 | Callbacks when you ask for one | — | — | ✅ |
 | Pro-actively calls you when it needs input from you | — | — | ✅ |
 | Ask it to add a feature during a call | — | — | ✅ |
+| Report a bug in Jarvis by voice, filed as a GitHub issue | — | — | ✅ |
 | Answer Claude Code prompts on your screen by phone | — | — | ✅ |
 
 For example:

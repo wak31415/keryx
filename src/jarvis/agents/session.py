@@ -37,6 +37,7 @@ from jarvis.agents.base import (
     workspace_dir,
 )
 from jarvis.config import Settings
+from jarvis.issues import IssueReporting
 from jarvis.tasks.models import Task
 
 log = logging.getLogger("jarvis.agents.session")
@@ -157,6 +158,7 @@ class AgentContext:
                 slack_mcp_server=slack.mcp_server if slack is not None else None,
                 owner=settings.owner_label,
                 tools_dir=settings.custom_tools_dir,
+                issues=IssueReporting.from_settings(settings),
             ),
             model=model or None,
             auth=resolve_auth(auth, settings, probe=False),

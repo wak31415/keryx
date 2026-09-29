@@ -19,6 +19,7 @@ from jarvis.agents.base import RunResult
 from jarvis.config import Settings
 from jarvis.config.permissions import OWNER
 from jarvis.config.store import FROM_ENV, ConfigError, ConfigStore
+from jarvis.issues import GhStatus, gh_status
 from jarvis.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from jarvis.setup.ui import Prompter
 
@@ -116,6 +117,8 @@ class Probes:
     ssh_hosts: Callable[[], list] = _ssh_hosts
     ssh_master_alive: Callable[[str], bool] = _master_alive
     cluster_partitions: Callable[[str], list[str]] = _partitions
+    #: `gh auth status`, for the issue reports section (`jarvis.issues.gh_status`).
+    gh_status: Callable[[], GhStatus] = gh_status
 
 
 @dataclass
