@@ -94,14 +94,11 @@ connection of its own — and ask them which partition its GPUs are in rather th
 If `doctor` names retired settings, `uv run jarvis plugins install --from-settings` moves
 them. Every other setting of a plugin is in the TOML file `jarvis plugins` names.
 
-Ask one more thing here: whether Jarvis may file bug reports and feature requests about
-itself — something they tell it on a call — as issues on its GitHub repository. It is off
-until they say yes, because an issue is public. If they do:
-
-```bash
-uv run jarvis config set ISSUE_REPORTING true
-gh auth status                          # must pass; `gh auth login` is theirs to run
-```
+Jarvis can also file bug reports and feature requests about itself — something they tell
+it on a call — as issues on its GitHub repository. That one is not yours to turn on, even
+if they ask you to: an issue is public, so it is off until they turn it on themselves in
+`jarvis setup` (the Issue reports section, which also signs `gh` in). Never set
+`ISSUE_REPORTING` or `ISSUE_REPO`; say in the hand-over that the section is waiting.
 
 ## 4. Interview, briefly
 

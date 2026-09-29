@@ -27,9 +27,9 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    ControlMaster); its secret is never a `--set`, but `jarvis config set KEY --stdin` or
    `jarvis auth login gmail`. Settings from before plugins: `jarvis plugins install
    --from-settings`.
-   Ask too whether Jarvis may file bug reports and feature requests about itself as
-   GitHub issues; if yes, `jarvis config set ISSUE_REPORTING true`, and `gh auth status`
-   must pass — `gh auth login` is theirs, at the terminal.
+   Filing bug reports and feature requests about Jarvis as GitHub issues is not yours to
+   turn on: it is theirs, in `jarvis setup` (Issue reports), and you never set
+   `ISSUE_REPORTING` or `ISSUE_REPO`.
 5. **About them, with their permission.** Ask before you read their folders. If they agree,
    draft one summary per project into `{projects}/<name>.md` — written to be heard, at
    most {max_brief} characters each and {max_total} in all, and nothing from `.env` files,

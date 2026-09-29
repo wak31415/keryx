@@ -47,8 +47,8 @@ moves them with `jarvis migrate`, and `jarvis serve` refuses to start until it h
 voice model's `set_config` tool, or a subagent running `jarvis config set` in a task — and
 only those marked *yes* below, until you say otherwise with `jarvis config unlock KEY` or
 `jarvis config lock KEY`. The ones marked *never* are protected: every credential, and
-every setting that is a line of defence (who may call, the approval allowlist, spending
-caps, deletion, the network, the debug switches). Nothing unlocks them.
+every setting that is a line of defence (who may call, the approval allowlist, filing
+issues in public, spending caps, deletion, the network, the debug switches). Nothing unlocks them.
 """
 
 

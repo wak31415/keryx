@@ -15,7 +15,8 @@ surface — a removed or renamed setting or command is a major bump.
   came from, a grep of the code), no tests run and nothing fixed or built, the repository's
   own issue templates, and nothing of yours in it — no numbers, names, quotes or project
   details. A security problem is never filed in public, and one already filed is not filed
-  twice. Off until you turn it on: `jarvis setup` has an Issue reports section that asks,
+  twice. Off until you turn it on, and only you can — Jarvis and its subagents can never
+  set `ISSUE_REPORTING` or `ISSUE_REPO`: `jarvis setup` has an Issue reports section that asks,
   checks that `gh` is signed in and offers `gh auth login`, and `jarvis doctor` checks it
   too. `ISSUE_REPORTING` turns it on, `ISSUE_REPO` says where (the upstream repository by
   default), and `JARVIS_CHECKOUT` says where the code is when Jarvis does not run from a

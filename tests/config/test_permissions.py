@@ -47,6 +47,8 @@ def test_nothing_protected_defaults_to_writable():
         "APPROVALS_ENABLED",
         "APPROVAL_BASH_ALLOW",
         "APPROVAL_ROOTS",
+        "ISSUE_REPORTING",
+        "ISSUE_REPO",
         "SUBAGENT_MAX_BUDGET_USD",
         "DAILY_TASK_CAP",
         "TRANSCRIPT_RETENTION_DAYS",

@@ -161,7 +161,8 @@ and that is a spending decision — and no value it saves can stop Jarvis starti
 rest, and `jarvis config list` shows where each one stands.
 
 Some can never be unlocked: every credential, the PIN, who may call and which number is
-yours, `BRIEFING_BEFORE_PIN`, the approval bridge's switch and allowlist, the spending cap,
+yours, `BRIEFING_BEFORE_PIN`, the approval bridge's switch and allowlist, whether and where
+Jarvis files issues about itself (an issue is public), the spending cap,
 the daily task cap, retention, texting, the network settings, where data lives, and every
 debug switch. Each is either a secret or a line of defence, and Jarvis's
 own tools must not be able to lower their own guard because somebody asked nicely on the
