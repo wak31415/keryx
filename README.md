@@ -21,8 +21,8 @@ place calls.
 
 > [!NOTE]
 > Keryx is pre-1.0. It's self-hosted: it runs on your own machine with your own API keys.
-> While it only answers calls from your own numbers, and asks for your PIN before
-> it does anything on your behalf in case someone spoofs one of them, please review
+> While it only answers calls from your own phone number, and asks for your PIN before it
+> does anything on your behalf in case someone spoofs it, please review
 > [SECURITY.md](SECURITY.md) before deploying it.
 
 <p align="center">
