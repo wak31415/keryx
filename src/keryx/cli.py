@@ -38,7 +38,7 @@ from keryx.config import (
     secure_file,
 )
 from keryx.config.files import HOME_ENV, XDG_HOMES, claude_config_dir, xdg_home
-from keryx.config.migrate import MigrationError, make_plan
+from keryx.config.migrate import MigrationError, make_plan, old_target, retire_old_units
 from keryx.config.migrate import Report as MigrationReport
 from keryx.config.migrate import Service as MigratingService
 from keryx.config.migrate import run as run_migration
@@ -59,6 +59,7 @@ from keryx.restart.logscan import marks as log_marks
 from keryx.restart.service import (
     INSTALLERS,
     UNSUPPORTED_HINT,
+    candidate_target,
     resolve_target,
     spawn_watchdog,
     watch_command,
@@ -1508,11 +1509,13 @@ def migrate(
     ] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Do not ask before starting.")] = False,
 ) -> None:
-    """Move Keryx's files from ~/.jarvis, and a .env here, to the XDG directories.
+    """Move a Jarvis install to Keryx's directories: ~/.config/jarvis and its siblings, or
+    ~/.jarvis and a .env here.
 
     Stops the service while it moves things, re-renders it and the approval hook, and
-    starts it again. Run it from the checkout the service runs in. Nothing is deleted:
-    ~/.jarvis is renamed aside with whatever is left in it.
+    starts it again; Jarvis's unit is retired, and Keryx's installed in its place. Run it
+    from the checkout the service runs in. Nothing is deleted: ~/.jarvis is renamed aside
+    with whatever is left in it.
     """
     _owner_only("migrate Keryx's files")
     plan = make_plan([Path.cwd(), repo_root()])
@@ -1523,7 +1526,12 @@ def migrate(
         typer.echo(line)
     settings = _load_settings_optional()
     target = resolve_target(settings, from_outside=True)
-    if target is not None:
+    predecessor = old_target(candidate_target(settings))
+    if predecessor is not None:
+        target = target or candidate_target(settings)
+        typer.echo(f"  {predecessor.describe()}: stopped first, and retired once everything "
+                   f"has moved; {target.describe()} installed and started in its place")
+    elif target is not None:
         typer.echo(f"  {target.describe()}: stopped first, re-rendered, and started again")
     if plan.conflicts:
         typer.echo("\nNothing can move until these are settled:", err=True)
@@ -1543,9 +1551,12 @@ def migrate(
         if not typer.confirm("\nGo ahead?", default=False):
             raise typer.Exit(1)
     try:
+        stopping = predecessor or target
         report = run_migration(
             plan,
-            service=MigratingService(target) if target is not None else None,
+            service=MigratingService(stopping) if stopping is not None else None,
+            successor=MigratingService(target) if predecessor and target else None,
+            retire=(lambda: retire_old_units(predecessor.manager)) if predecessor else list,
             fix_permissions=lambda: fix_permissions(_load_settings_optional(), ConfigStore()),
             rerender=lambda: _rerender(target),
             echo=typer.echo,
@@ -1554,6 +1565,11 @@ def migrate(
         typer.echo(f"keryx migrate: {error}", err=True)
         raise typer.Exit(1) from None
     _echo_migration(report)
+
+
+#: The approval hook's file name, and what it was called before the service was Keryx: a
+#: settings file naming either has the hook installed, and the installer replaces both.
+HOOK_NAMES = ("keryx_approval.py", "jarvis_approval.py")
 
 
 def _rerender(target) -> list[str]:
@@ -1566,7 +1582,7 @@ def _rerender(target) -> list[str]:
         done.append(f"{installer.name}: {'done' if code == 0 else f'exited {code}, run it again'}")
     try:
         hooks = (claude_config_dir() / "settings.json").read_text(encoding="utf-8")
-        hooked = "keryx_approval.py" in hooks
+        hooked = any(name in hooks for name in HOOK_NAMES)
     except OSError:
         hooked = False
     if hooked:

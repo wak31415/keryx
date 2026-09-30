@@ -15,6 +15,9 @@ claude_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 settings="${claude_dir}/settings.json"
 hooks_dir="${claude_dir}/hooks"
 target="${hooks_dir}/keryx_approval.py"
+# What the hook was called before the service was Keryx: replaced, never left beside it,
+# or every prompt would reach the broker twice (and the old one never at all).
+old_target="${hooks_dir}/jarvis_approval.py"
 uninstall=0
 [[ "${1:-}" == "--uninstall" ]] && uninstall=1
 # Where the broker listens: STATE_DIR, as the service resolves it (lib.sh). The hook reads
@@ -29,6 +32,7 @@ else
   echo '{}' > "${settings}"
 fi
 
+rm -f "${old_target}"
 if (( uninstall )); then
   rm -f "${target}"
 else
@@ -68,7 +72,11 @@ for event, timeout in WANTED.items():
     groups = hooks.setdefault(event, [])
     groups[:] = [
         group for group in groups
-        if not any("keryx_approval.py" in str(h.get("command", "")) for h in group.get("hooks", []))
+        if not any(
+            name in str(h.get("command", ""))
+            for h in group.get("hooks", [])
+            for name in ("keryx_approval.py", "jarvis_approval.py")
+        )
     ]
     if not uninstall:
         command = raise_command if event == "PermissionRequest" else resolve_command

@@ -47,10 +47,12 @@ from keryx.config.files import (
     default_cache_dir,
     default_data_dir,
     default_state_dir,
+    holds_files,
     keryx_home,
     legacy_entries,
     legacy_home,
     read_toml,
+    renamed_dirs,
     secrets_file,
     secure_dir,
     stray_legacy_home_env,
@@ -1060,6 +1062,13 @@ class Settings(BaseSettings):
                 f"{LEGACY_HOME_ENV}={stray} is set and {HOME_ENV} is not — Keryx reads only "
                 f"{HOME_ENV}, so rename it"
             )
+        in_use = (self.config_dir, self.data_dir, self.state_dir, self.cache_dir)
+        for old in renamed_dirs().values():
+            if old not in in_use and holds_files(old):
+                return (
+                    f"{old} still holds Keryx's files from when it was Jarvis — run "
+                    "`keryx migrate`"
+                )
         legacy = legacy_home()
         found = legacy_entries(legacy)
         if found and legacy not in (self.config_dir, self.data_dir):

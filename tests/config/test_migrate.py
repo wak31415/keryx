@@ -80,14 +80,14 @@ def machine(tmp_path, monkeypatch) -> Machine:
         secure_dir(legacy / directory)
     (legacy / "tasks" / "1.md").write_text("the report")
     (legacy / "calls" / "abc.log").write_text("user: hello")
-    (legacy / "memory.md").write_text("# What Keryx knows\n")
+    (legacy / "memory.md").write_text("# What Jarvis knows\n")
     (legacy / "google" / "creds.json").write_text("{}")
     (legacy / "approvals" / "audit.jsonl").write_text("{}\n")
     (legacy / "approvals.sock").touch()
     (legacy / "logs").mkdir(mode=0o775)
     (legacy / "logs").chmod(0o775)
-    (legacy / "logs" / "keryx.log").write_text("INFO started\n")
-    (legacy / "logs" / "keryx.log").chmod(0o664)
+    (legacy / "logs" / "jarvis.log").write_text("INFO started\n")
+    (legacy / "logs" / "jarvis.log").chmod(0o664)
     for name in ("pin-failures.json", "report_secret", "gmail_token.json", "running-version",
                  "startup-log-marks.json"):
         (legacy / name).write_text(name)
@@ -167,7 +167,7 @@ def test_everything_lands_where_it_belongs(machine):
     for name in ("memory.md", "workspace", "google", "pin-failures.json", "report_secret",
                  "gmail_token.json", "tasks.db"):
         assert (machine.data / name).exists(), name
-    for name in ("logs/keryx.log", "approvals/audit.jsonl", "running-version",
+    for name in ("logs/jarvis.log", "approvals/audit.jsonl", "running-version",
                  "startup-log-marks.json"):
         assert (machine.state / name).exists(), name
     assert not (machine.state / "approvals.sock").exists()
@@ -234,7 +234,7 @@ def test_everything_moved_is_owner_only(machine):
     report = migrate(machine)
 
     assert mode(machine.state / "logs") == 0o700
-    assert mode(machine.state / "logs" / "keryx.log") == 0o600
+    assert mode(machine.state / "logs" / "jarvis.log") == 0o600
     for directory in (machine.config, machine.data, machine.state):
         assert mode(directory) == 0o700
     assert any("logs" in line for line in report.tightened)
@@ -775,3 +775,278 @@ def test_the_service_may_not_migrate(machine, command, monkeypatch):
 
     assert result.exit_code == 1 and "only the owner" in result.output
     assert machine.legacy.is_dir()
+
+
+# --- from Jarvis's XDG directories -----------------------------------------------------
+
+
+@dataclass
+class OldInstall:
+    home: Path
+
+    def old(self, kind: str) -> Path:
+        return {
+            "config": self.home / ".config",
+            "data": self.home / ".local" / "share",
+            "state": self.home / ".local" / "state",
+            "cache": self.home / ".cache",
+        }[kind] / "jarvis"
+
+    def new(self, kind: str) -> Path:
+        return self.old(kind).with_name("keryx")
+
+
+OWN_TOOL = """\
+# Written for Jarvis, and it still says so.
+from pathlib import Path
+
+from jarvis.tools.custom import custom_tool
+import jarvis.plugins as plugins_too
+"""
+
+
+@pytest.fixture
+def jarvis(monkeypatch) -> OldInstall:
+    """A Jarvis install in its XDG directories, and the empty ones a `keryx` command made."""
+    monkeypatch.delenv("KERYX_HOME")
+    install = OldInstall(Path.home())
+    config, data, state, cache = (
+        secure_dir(install.old(kind)) for kind in ("config", "data", "state", "cache")
+    )
+    (config / "config.toml").write_text(dump_toml({"OWNER_NAME": "Ada"}))
+    (config / "secrets.toml").write_text(dump_toml({"OPENAI_API_KEY": "sk-old"}))
+    (config / "pin").write_text(f"{PIN}\n")
+    store = TaskStore(data / "tasks.db")
+    add_task(store, status=TaskStatus.DONE, claude_session_id="s1",
+             cwd=str(data / "workspace"), report_path=str(data / "tasks" / "1.md"))
+    add_task(store, status=TaskStatus.DONE, claude_session_id="s2", cwd="/projects/orchard")
+    store._close_sync()
+    for directory in ("tasks", "calls", "workspace", "tools", "transit"):
+        secure_dir(data / directory)
+    (data / "tasks" / "1.md").write_text("the report")
+    (data / "memory.md").write_text("# What Jarvis knows about Ada\n")
+    (data / "tools" / "trains.py").write_text(OWN_TOOL)
+    (data / "tools" / "notes.md").write_text("from jarvis.tools import nothing\n")
+    (data / "transit" / "cache.json").write_text("{}")
+    secure_dir(state / "logs")
+    secure_dir(state / "approvals")
+    (state / "logs" / "jarvis.log").write_text("INFO started\n")
+    (state / "approvals" / "audit.jsonl").write_text("{}\n")
+    (state / "approvals.sock").touch()
+    (cache / "models").mkdir()
+    (cache / "models" / "m.bin").write_text("weights")
+    Settings(_env_file=None, openai_api_key="test").ensure_dirs()  # any keryx command
+    return install
+
+
+def test_each_old_directory_moves_whole_and_the_plan_touches_nothing(jarvis):
+    before = listing(jarvis.home)
+
+    plan = make_plan([])
+
+    assert not plan.conflicts and listing(jarvis.home) == before
+    moves = {step.source: step.destination for step in plan.steps if step.action == "move"}
+    assert moves == {jarvis.old(kind): jarvis.new(kind) for kind in ("config", "data", "state",
+                                                                         "cache")}
+    assert [step.source.name for step in plan.steps if step.action == "remove"] == [
+        "approvals.sock"
+    ]
+    assert plan.old_data_dirs == [jarvis.old("data")]
+    assert plan.old_imports == ["trains.py"] and plan.pin_tunnel
+    assert "  ~/.config/jarvis  →  ~/.config/keryx" in plan.describe()
+
+
+def test_a_jarvis_install_lands_whole_and_keryx_reads_it(jarvis):
+    report = run(make_plan([]), service=None, fix_permissions=lambda: [], today=TODAY)
+
+    for kind in ("config", "data", "state", "cache"):
+        assert not jarvis.old(kind).exists()
+    data = jarvis.new("data")
+    assert (data / "transit" / "cache.json").is_file()  # what no list of names had
+    assert (jarvis.new("state") / "approvals" / "audit.jsonl").is_file()
+    assert not (jarvis.new("state") / "approvals.sock").exists()
+    assert (jarvis.new("cache") / "models" / "m.bin").is_file()
+    settings = Settings(_env_file=None)
+    assert (settings.owner_name, settings.openai_api_key, settings.pin) == ("Ada", "sk-old", PIN)
+    assert settings.cloudflare_tunnel == "jarvis"
+    assert settings.storage_refusal() is None
+    assert rows(data / "tasks.db")[1]["cwd"] == str(data / "workspace")
+    assert rows(data / "tasks.db")[1]["report_path"] == str(data / "tasks" / "1.md")
+    assert rows(data / "tasks.db")[1]["claude_session_id"] is None
+    assert rows(data / "tasks.db")[2]["claude_session_id"] == "s2"
+    assert report.lost_sessions == [(1, "done", "d")]
+    tool = (data / "tools" / "trains.py").read_text()
+    assert tool == OWN_TOOL.replace("from jarvis.", "from keryx.").replace(
+        "import jarvis.", "import keryx."
+    )
+    assert "Written for Jarvis" in tool and mode(data / "tools" / "trains.py") == 0o600
+    assert (data / "tools" / "notes.md").read_text().startswith("from jarvis")
+    assert "tools/trains.py: imports keryx now" in report.notes
+
+
+def test_a_jarvis_migration_run_twice_has_nothing_left_to_do(jarvis):
+    run(make_plan([]), service=None, fix_permissions=lambda: [], today=TODAY)
+
+    plan = make_plan([])
+
+    assert plan.empty and not plan.conflicts and not plan.pin_tunnel
+
+
+def test_a_tunnel_they_named_is_kept(jarvis):
+    config = jarvis.old("config") / "config.toml"
+    config.write_text(dump_toml({"OWNER_NAME": "Ada", "CLOUDFLARE_TUNNEL": "home"}))
+
+    plan = make_plan([])
+    run(plan, service=None, fix_permissions=lambda: [], today=TODAY)
+
+    assert plan.pin_tunnel is False
+    assert Settings(_env_file=None).cloudflare_tunnel == "home"
+
+
+def test_a_file_already_in_the_new_directory_is_a_conflict(jarvis):
+    (jarvis.new("data") / "tasks.db").write_text("somebody's")
+
+    plan = make_plan([])
+
+    assert any("both hold files" in conflict for conflict in plan.conflicts)
+    with pytest.raises(MigrationError):
+        run(plan, service=None, fix_permissions=lambda: [])
+    assert (jarvis.old("data") / "tasks.db").is_file()
+
+
+def test_both_kinds_of_old_install_at_once_is_a_conflict(jarvis):
+    legacy = secure_dir(jarvis.home / ".jarvis")
+    (legacy / "memory.md").write_text("an older memory")
+
+    assert any("~/.jarvis" in conflict for conflict in make_plan([]).conflicts)
+
+
+def test_the_old_home_variable_stops_the_plan(jarvis, monkeypatch):
+    monkeypatch.setenv("JARVIS_HOME", str(jarvis.old("config")))
+
+    assert any("JARVIS_HOME" in conflict for conflict in make_plan([]).conflicts)
+
+
+def test_keryx_will_not_start_beside_jarvis_files(jarvis):
+    refusal = Settings(_env_file=None, openai_api_key="x").storage_refusal()
+
+    assert refusal is not None and "keryx migrate" in refusal and "jarvis" in refusal
+
+
+def test_empty_directories_an_old_command_left_stop_nothing(jarvis):
+    run(make_plan([]), service=None, fix_permissions=lambda: [], today=TODAY)
+    secure_dir(jarvis.old("data") / "tasks")  # a stale `jarvis` checkout ran once
+
+    assert Settings(_env_file=None).storage_refusal() is None
+
+
+def test_an_old_directory_named_on_purpose_is_in_use_not_moved(jarvis):
+    config = jarvis.old("config") / "config.toml"
+    config.write_text(dump_toml({"OWNER_NAME": "Ada", "DATA_DIR": str(jarvis.old("data"))}))
+
+    plan = make_plan([])
+
+    assert jarvis.old("data") not in [step.source for step in plan.steps]
+    assert plan.data_dir == jarvis.old("data")
+
+
+class Units:
+    """systemd with Jarvis's unit and Keryx's: which runs, and every command, in order."""
+
+    def __init__(self, install: OldInstall) -> None:
+        self.install = install
+        self.running = {"jarvis.service"}
+        self.log: list[list[str]] = []
+
+    def __call__(self, argv, **kwargs):
+        self.log.append(list(argv))
+        verb, unit = argv[2], argv[-1]
+        if verb in ("stop", "disable"):
+            self.running.discard(unit)
+        elif verb == "start":
+            self.running.add(unit)
+        up = unit in self.running
+        out = "active\n" if up else "inactive\n"
+        return subprocess.CompletedProcess(argv, 0 if up else 3, out, "")
+
+
+def test_jarvis_unit_is_stopped_first_and_retired_for_keryxs(jarvis):
+    units = Units(jarvis)
+    unit_dir = secure_dir(jarvis.home / ".config" / "systemd" / "user")
+    (unit_dir / "jarvis.service").write_text("[Service]\n")
+    old = Service(ServiceTarget("systemd", "jarvis.service"), run=units, sleep=lambda _: None)
+    new = Service(ServiceTarget("systemd", "keryx.service"), run=units, sleep=lambda _: None)
+    order: list[str] = []
+
+    def retire():
+        order.append("retire")
+        return migration.retire_old_units("systemd", run=units)
+
+    report = run(
+        make_plan([]), service=old, successor=new, retire=retire, fix_permissions=lambda: [],
+        rerender=lambda: order.append("install") or ["install-systemd.sh: done"], today=TODAY,
+    )
+
+    assert units.log[1] == ["systemctl", "--user", "stop", "jarvis.service"]
+    assert order == ["retire", "install"]
+    assert ["systemctl", "--user", "disable", "--now", "jarvis.service"] in units.log
+    assert ["systemctl", "--user", "daemon-reload"] in units.log
+    assert not (unit_dir / "jarvis.service").exists()
+    assert units.running == {"keryx.service"} and report.started is True
+    assert report.rerendered == ["jarvis.service: retired", "install-systemd.sh: done"]
+
+
+def test_launchd_retires_the_agent_and_its_tunnel(tmp_path):
+    agents = Path.home() / "Library" / "LaunchAgents"
+    agents.mkdir(parents=True)
+    for label in ("dev.jarvis.agent", "dev.jarvis.tunnel", "dev.keryx.agent"):
+        (agents / f"{label}.plist").write_text("<plist/>")
+    ran: list[list[str]] = []
+
+    done = migration.retire_old_units(
+        "launchd", run=lambda argv, **_: ran.append(argv) or subprocess.CompletedProcess(argv, 0)
+    )
+
+    assert [argv[:2] for argv in ran] == [["launchctl", "bootout"]] * 2
+    assert [argv[2].rsplit("/", 1)[1] for argv in ran] == ["dev.jarvis.agent", "dev.jarvis.tunnel"]
+    assert sorted(path.name for path in agents.iterdir()) == ["dev.keryx.agent.plist"]
+    assert done == ["dev.jarvis.agent.plist: retired", "dev.jarvis.tunnel.plist: retired"]
+
+
+def test_the_old_unit_is_found_only_for_the_default_one(monkeypatch):
+    from keryx.restart import service as services
+
+    monkeypatch.setattr(services, "is_installed", lambda target: target.unit == "jarvis.service")
+
+    old = migration.old_target(ServiceTarget("systemd", "keryx.service"))
+
+    assert old == ServiceTarget("systemd", "jarvis.service")
+    assert migration.old_target(ServiceTarget("systemd", "mine.service")) is None
+    assert migration.old_target(None) is None
+    monkeypatch.setattr(services, "is_installed", lambda target: False)
+    assert migration.old_target(ServiceTarget("systemd", "keryx.service")) is None
+
+
+def test_the_command_hands_jarvis_unit_over_to_keryx(jarvis, monkeypatch):
+    units = Units(jarvis)
+    ran: list[list[str]] = []
+    monkeypatch.setattr(cli, "run_command", lambda argv: ran.append(argv) or 0)
+    monkeypatch.setattr(cli, "health_probe", lambda settings: None)
+    monkeypatch.setattr(cli, "resolve_target", lambda settings, **_: None)
+    monkeypatch.setattr(cli, "candidate_target",
+                        lambda settings: ServiceTarget("systemd", "keryx.service"))
+    monkeypatch.setattr(cli, "old_target",
+                        lambda target: ServiceTarget("systemd", "jarvis.service"))
+    monkeypatch.setattr(cli, "retire_old_units",
+                        lambda manager: migration.retire_old_units(manager, run=units))
+    monkeypatch.setattr(cli, "MigratingService",
+                        lambda target: Service(target, run=units, sleep=lambda _: None))
+
+    result = runner.invoke(cli.app, ["migrate", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "systemd jarvis.service: stopped first, and retired" in result.output
+    assert [Path(argv[0]).name for argv in ran] == ["install-systemd.sh"]
+    assert "jarvis.service: retired" in result.output
+    assert units.running == {"keryx.service"}
+    assert "the service is running again" in result.output

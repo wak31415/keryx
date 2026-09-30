@@ -37,6 +37,9 @@ LEGACY_HOME_ENV = "JARVIS_HOME"
 CLAUDE_CONFIG_ENV = "CLAUDE_CONFIG_DIR"
 #: What each directory is called inside its XDG base directory.
 APP_NAME = "keryx"
+#: What each was called before the service was Keryx: `keryx migrate` moves them, and
+#: `serve` refuses to start while one still holds anything.
+LEGACY_APP_NAME = "jarvis"
 CONFIG_NAME = "config.toml"
 SECRETS_NAME = "secrets.toml"
 
@@ -146,6 +149,21 @@ def default_state_dir() -> Path:
 def default_cache_dir() -> Path:
     """`CACHE_DIR` when nothing sets it: `$XDG_CACHE_HOME/keryx`."""
     return xdg_home("cache") / APP_NAME
+
+
+def renamed_dirs() -> dict[str, Path]:
+    """Where each XDG directory was when the service was Jarvis, by kind."""
+    return {kind: xdg_home(kind) / LEGACY_APP_NAME for kind in XDG_HOMES}
+
+
+def holds_files(path: Path) -> bool:
+    """Anything in `path` but directories: what `ensure_dirs` makes is empty directories.
+
+    Stops at the first file, so a data directory full of repositories costs one look.
+    """
+    if not path.is_dir() or path.is_symlink():
+        return path.exists() or path.is_symlink()
+    return any(entry.is_symlink() or not entry.is_dir() for entry in path.rglob("*"))
 
 
 def stray_legacy_home_env() -> str | None:

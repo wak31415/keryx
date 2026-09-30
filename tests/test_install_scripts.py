@@ -282,6 +282,30 @@ def test_the_hook_is_always_told_where_the_state_dir_is(machine):
     assert f"[ -e {state_dir}/approvals/PENDING ]" in shlex.split(commands["PostToolUse"])[2]
 
 
+def test_the_hook_from_before_the_rename_is_replaced_not_joined(machine):
+    """Two hooks would hand every prompt to the broker twice, and the old one's socket is
+    gone; somebody else's hook on the same event is left alone."""
+    claude = machine["home"] / ".claude"
+    (claude / "hooks").mkdir(parents=True)
+    old = claude / "hooks" / "jarvis_approval.py"
+    old.write_text("# the old hook\n")
+    theirs = {"hooks": [{"type": "command", "command": "their-own-hook"}]}
+    old_command = f"env JARVIS_STATE_DIR=/x python3 {old}"
+    old_group = {"hooks": [{"type": "command", "command": old_command}]}
+    (claude / "settings.json").write_text(
+        json.dumps({"hooks": {"PermissionRequest": [theirs, old_group], "Stop": [old_group]}})
+    )
+
+    run("install-claude-hook.sh", machine)
+
+    settings = json.loads((claude / "settings.json").read_text())
+    text = json.dumps(settings)
+    assert "jarvis_approval.py" not in text and not old.exists()
+    assert settings["hooks"]["PermissionRequest"][0] == theirs
+    assert "keryx_approval.py" in settings["hooks"]["PermissionRequest"][1]["hooks"][0]["command"]
+    assert len(settings["hooks"]["Stop"]) == 1
+
+
 def test_the_hook_is_pointed_at_a_state_dir_set_in_the_configuration(machine):
     configure(machine, STATE_DIR=str(machine["home"] / "keryx state"))
 

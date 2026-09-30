@@ -1,10 +1,16 @@
-"""`keryx migrate`: move an install from `~/.jarvis` (and a working-directory `.env`) to the
-XDG directories, with the service stopped while it does.
+"""`keryx migrate`: move an install to where Keryx keeps things, with the service stopped
+while it does. Two kinds of install are moved, and a machine may have either:
 
-Everything used to live in one directory — configuration, secrets, the PIN, data, logs and
-the approval socket — and on many machines the live configuration was still a `.env` in the
-checkout. This moves each known entry to where it belongs now (`keryx.config.files`), in
-three phases:
+- **Jarvis's XDG directories** (`~/.config/jarvis` and its three siblings), from before
+  the service was renamed Keryx. Each moves whole to its Keryx twin — whole, because what
+  is inside has grown past any list of names (`tools/`, the owner's own tools' data, the
+  approval audit) — and the unit Jarvis ran as is retired for Keryx's.
+- **`~/.jarvis`** (and a working-directory `.env`), from before the XDG layout. Everything
+  lived in one directory — configuration, secrets, the PIN, data, logs and the approval
+  socket — and on many machines the live configuration was still a `.env` in the checkout.
+  Each known entry moves to where it belongs now (`keryx.config.files`).
+
+In three phases:
 
 1. **The plan** (`make_plan`) reads and never writes. It finds the sources — `~/.jarvis`, a
    `DATA_DIR` the legacy store or the `.env` recorded, the `.env` and `.secrets/` in the
@@ -12,11 +18,12 @@ three phases:
    would have to overwrite something is a *conflict*, and a plan with one is never run: the
    owner decides which copy is the real one, not this.
 2. **The run** (`run`): stop the service, checkpoint `tasks.db`, move, rewrite the paths the
-   database holds, import the `.env`, unset a `DATA_DIR` that named the old directory,
-   tighten modes, and rename `~/.jarvis` aside with whatever is left in it. Nothing is ever
-   deleted but a stale socket and a directory `ensure_dirs` made empty.
-3. **Afterwards**: re-render the service and the approval hook, whose files name the old
-   paths, and start the service again.
+   database holds and the imports of the tools in `DATA_DIR/tools`, import the `.env`, unset
+   a `DATA_DIR` that named the old directory, pin the Cloudflare tunnel the machine has been
+   running, tighten modes, and rename `~/.jarvis` aside with whatever is left in it. Nothing
+   is ever deleted but a stale socket and directories `ensure_dirs` made empty.
+3. **Afterwards**: retire Jarvis's unit, re-render the service and the approval hook, whose
+   files name the old paths, and start the service again.
 
 Every step can be run twice. An entry already at its destination and gone from its source
 is simply not in the next plan, so a migration that stopped half way finishes on a second
@@ -30,6 +37,7 @@ signal is the legacy data still being there, never the new directory existing, b
 import contextlib
 import errno
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -46,13 +54,19 @@ from keryx.config.files import (
     DATA_DIR_MODE,
     DATA_FILE_MODE,
     HOME_ENV,
+    LEGACY_APP_NAME,
+    LEGACY_HOME_ENV,
     LEGACY_NAMES,
     default_data_dir,
     default_state_dir,
+    holds_files,
     keryx_home,
     legacy_home,
     read_toml,
+    renamed_dirs,
     secure_dir,
+    stray_legacy_home_env,
+    write_private,
     xdg_home,
 )
 from keryx.config.pin import PIN_FILE_NAME, read_enrolled_pin
@@ -107,6 +121,18 @@ TASK_DB = "tasks.db"
 #: How long the service may take to stop before the migration gives up, untouched.
 STOP_TIMEOUT_S = 30.0
 STOP_POLL_S = 0.5
+#: The tunnel `CLOUDFLARE_TUNNEL` meant when it was left unset on a Jarvis install.
+TUNNEL_KEY = "CLOUDFLARE_TUNNEL"
+#: Where the owner's own voice tools live in `DATA_DIR`, and an import of the old package
+#: in one of them (`from jarvis.tools.custom import custom_tool`), which no longer loads.
+TOOLS_DIR = "tools"
+OLD_IMPORT = re.compile(rf"^(\s*(?:from|import)\s+){LEGACY_APP_NAME}(?=[.\s]|$)", re.MULTILINE)
+#: What the service was installed as before it was Keryx, by manager: stopped before
+#: anything moves, and removed once everything has. The first is the one to stop.
+OLD_UNITS = {
+    "systemd": ("jarvis.service",),
+    "launchd": ("dev.jarvis.agent", "dev.jarvis.tunnel"),
+}
 #: What an entry is going to have done to it.
 MOVE = "move"
 REMOVE = "remove"
@@ -156,6 +182,10 @@ class Plan:
     retire: bool = False
     #: Directories whose leftovers are worth listing afterwards (`.secrets/`).
     working_dirs: list[Path] = field(default_factory=list)
+    #: The tools in `DATA_DIR/tools` whose imports name the old package, by file name.
+    old_imports: list[str] = field(default_factory=list)
+    #: Whether `CLOUDFLARE_TUNNEL` is pinned to the tunnel a Jarvis install ran by default.
+    pin_tunnel: bool = False
 
     @property
     def empty(self) -> bool:
@@ -179,8 +209,15 @@ class Plan:
         if self.old_data_dirs:
             olds = ", ".join(_tilde(path) for path in self.old_data_dirs)
             lines.append(f"  tasks.db: paths under {olds} rewritten to {_tilde(self.data_dir)}")
+        for name in self.old_imports:
+            lines.append(f"  {TOOLS_DIR}/{name}: its `{LEGACY_APP_NAME}` imports say `keryx`")
         if self.unset_data_dir:
             lines.append(f"  DATA_DIR in the store names {_tilde(self.legacy)}: unset")
+        if self.pin_tunnel:
+            lines.append(
+                f"  {TUNNEL_KEY}: set to {LEGACY_APP_NAME}, the tunnel this machine has been "
+                "running (the default is keryx now)"
+            )
         if self.retire:
             lines.append(
                 f"  {_tilde(self.legacy)}: renamed {_tilde(self.legacy)}.migrated-<date>, "
@@ -204,6 +241,9 @@ def make_plan(
     legacy = legacy_home()
     config_dir = keryx_home()
     new_store = ConfigStore(config_dir)
+    renamed = renamed_dirs()
+    # Jarvis's store, still in its old directory: until it has moved, it is the settings.
+    old_config = _read_quietly(renamed["config"] / "config.toml")
     legacy_config = _read_quietly(legacy / "config.toml")
     working = list(dict.fromkeys(path.resolve() for path in working_dirs))
     env_files = [path / ENV_NAME for path in working if (path / ENV_NAME).is_file()]
@@ -213,19 +253,39 @@ def make_plan(
     # a file that names the legacy directory is about to be unset, so it means the default;
     # one in the environment cannot be, and keeps the legacy directory in use.
     from_env = bool(env.get("DATA_DIR", "").strip())
-    configured = _recorded_data_dir(env, new_store, legacy_config, env_files, working)
+    stores = (_stored_quietly(new_store), old_config, legacy_config)
+    configured = _recorded_data_dir(env, stores, env_files, working)
     unset = configured == legacy and not from_env
     data_dir = default_data_dir() if configured is None or unset else configured
-    state_dir = _setting_dir("STATE_DIR", env, new_store) or default_state_dir()
-    cache_dir = _setting_dir("CACHE_DIR", env, new_store) or xdg_home("cache") / "keryx"
+    state_dir = _setting_dir("STATE_DIR", env, stores) or default_state_dir()
+    cache_dir = _setting_dir("CACHE_DIR", env, stores) or xdg_home("cache") / "keryx"
     plan = Plan(legacy, config_dir, data_dir, state_dir, cache_dir, env_files=env_files,
                 working_dirs=working, unset_data_dir=unset)
 
     targets = {CONFIG: config_dir, DATA: data_dir, STATE: state_dir}
+    twins = {"config": config_dir, "data": data_dir, "state": state_dir, "cache": cache_dir}
+    claimed: dict[Path, Path] = {}
+    moving = [kind for kind, old in renamed.items() if old != twins[kind] and holds_files(old)]
+    for kind in moving:
+        old = renamed[kind]
+        if (old / SOCKET_NAME).exists() or (old / SOCKET_NAME).is_symlink():
+            plan.steps.append(Step(old / SOCKET_NAME, None, REMOVE))
+        _add_tree(plan, claimed, old, twins[kind])
+        if kind == "data":
+            plan.old_data_dirs.append(old)
+            plan.old_imports = _old_imports(old / TOOLS_DIR)
+    if moving and _entries(legacy):
+        plan.conflicts.append(
+            f"both {_tilde(legacy)} and {_tilde(renamed[moving[0]])} hold Jarvis's files; "
+            "keep one and move the other out of the way"
+        )
+    if stray := stray_legacy_home_env():
+        plan.conflicts.append(
+            f"{LEGACY_HOME_ENV}={stray} is set: rename it to {HOME_ENV} (or unset it) first"
+        )
     # The legacy directory, and a DATA_DIR kept elsewhere: its data stays where it is, and
     # the PIN, the logs and the restart record in it move out.
     sources = list(dict.fromkeys([legacy, data_dir]))
-    claimed: dict[Path, Path] = {}
     for source in dict.fromkeys(sources):
         moved_data = False
         for name in _entries(source):
@@ -252,6 +312,10 @@ def make_plan(
             plan.conflicts.append(f"{env_file}: {error}")
     in_use = legacy in (config_dir, data_dir, state_dir)
     plan.retire = legacy.is_dir() and not in_use
+    tunnel_named = env.get(TUNNEL_KEY, "").strip() or any(
+        str(store.get(TUNNEL_KEY, "")).strip() for store in stores
+    ) or any(dotenv_values(path).get(TUNNEL_KEY) for path in env_files)
+    plan.pin_tunnel = bool(plan.steps) and not tunnel_named
     if in_use and legacy.is_dir():
         plan.conflicts.append(
             f"{_tilde(legacy)} is still where {_naming(legacy, config_dir, data_dir, state_dir)}"
@@ -281,6 +345,35 @@ def _add(plan: Plan, claimed: dict[Path, Path], source: Path, destination: Path)
     plan.steps.append(Step(source, destination))
 
 
+def _add_tree(plan: Plan, claimed: dict[Path, Path], source: Path, destination: Path) -> None:
+    """One directory moved whole, or the conflict it would be: anything in `destination`
+    but the empty directories `ensure_dirs` makes would be overwritten or mixed in."""
+    claimed[destination] = source
+    if holds_files(destination):
+        plan.conflicts.append(
+            f"{_tilde(source)} and {_tilde(destination)} both hold files; keep one and move "
+            "the other out of the way"
+        )
+        return
+    plan.steps.append(Step(source, destination))
+
+
+def _old_imports(tools: Path) -> list[str]:
+    """The tools in `tools` that import the old package by name, by file name."""
+    try:
+        files = sorted(path for path in tools.glob("*.py") if path.is_file())
+    except OSError:
+        return []
+    return [path.name for path in files if OLD_IMPORT.search(_text_quietly(path))]
+
+
+def _text_quietly(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
 def _check_pins(plan: Plan, env_files: list[Path], sources: Iterable[Path]) -> None:
     """A `.env` PIN that differs from an enrolled one would lock the owner out: refused here,
     before anything moves, rather than half way through (`ConfigStore._import_pin`)."""
@@ -302,8 +395,7 @@ def _check_pins(plan: Plan, env_files: list[Path], sources: Iterable[Path]) -> N
 
 def _recorded_data_dir(
     env: dict[str, str],
-    store: ConfigStore,
-    legacy_config: dict[str, Any],
+    stores: Sequence[dict[str, Any]],
     env_files: list[Path],
     working: list[Path],
 ) -> Path | None:
@@ -315,8 +407,7 @@ def _recorded_data_dir(
     base = working[0] if working else Path.cwd()
     candidates = [
         (env.get("DATA_DIR", ""), base),
-        (_stored_quietly(store).get("DATA_DIR", ""), base),
-        (legacy_config.get("DATA_DIR", ""), base),
+        *[(store.get("DATA_DIR", ""), base) for store in stores],
         *[(dotenv_values(path).get("DATA_DIR") or "", path.parent) for path in env_files],
     ]
     for value, relative_to in candidates:
@@ -326,8 +417,11 @@ def _recorded_data_dir(
     return None
 
 
-def _setting_dir(key: str, env: dict[str, str], store: ConfigStore) -> Path | None:
-    value = env.get(key, "").strip() or str(_stored_quietly(store).get(key, "")).strip()
+def _setting_dir(
+    key: str, env: dict[str, str], stores: Sequence[dict[str, Any]]
+) -> Path | None:
+    values = [env.get(key, ""), *(str(store.get(key, "")) for store in stores)]
+    value = next((text.strip() for text in values if text.strip()), "")
     return Path(value).expanduser() if value else None
 
 
@@ -451,6 +545,8 @@ def run(
     service: Service | None,
     fix_permissions: Callable[[], list[str]],
     rerender: Callable[[], list[str]] = lambda: [],
+    successor: Service | None = None,
+    retire: Callable[[], list[str]] = lambda: [],
     today: date | None = None,
     echo: Callable[[str], None] = lambda line: None,
 ) -> Report:
@@ -458,6 +554,9 @@ def run(
 
     `fix_permissions` is doctor's, over the settings as they are once everything has
     moved; `rerender` re-installs the service and the approval hook and names what it did.
+    `service` is what is stopped first and started last — unless it is Jarvis's unit, in
+    which case `retire` removes it once everything has moved, before `rerender` installs
+    `successor`, Keryx's, which is the one started.
     """
     if plan.conflicts:
         raise MigrationError("the plan has conflicts; nothing was done")
@@ -483,6 +582,9 @@ def run(
     report.rewritten, report.lost_sessions = rewrite_task_paths(
         plan.data_dir / TASK_DB, plan.old_data_dirs
     )
+    for name in plan.old_imports:
+        if rewrite_imports(plan.data_dir / TOOLS_DIR / name):
+            report.notes.append(f"{TOOLS_DIR}/{name}: imports keryx now")
     store = ConfigStore(plan.config_dir)
     for env_file in plan.env_files:
         try:
@@ -497,13 +599,20 @@ def run(
         except ConfigError as error:
             raise MigrationError(f"DATA_DIR could not be unset: {error}") from None
         report.notes.append(f"DATA_DIR no longer names {_tilde(plan.legacy)}")
+    if plan.pin_tunnel and TUNNEL_KEY not in _stored_quietly(store):
+        try:
+            store.set({TUNNEL_KEY: LEGACY_APP_NAME})
+        except ConfigError as error:
+            raise MigrationError(f"{TUNNEL_KEY} could not be set: {error}") from None
+        report.notes.append(f"{TUNNEL_KEY} = {LEGACY_APP_NAME}, the tunnel it has been running")
     report.tightened = _tighten(plan) + fix_permissions()
     if plan.retire:
         report.retired_to, report.leftovers = _retire(plan.legacy, today)
     report.leftovers += _working_leftovers(plan.working_dirs)
-    report.rerendered = rerender()
-    if service is not None and (was_active or service.active()):
-        report.started = service.start()
+    report.rerendered = retire() + rerender()
+    starting = successor or service
+    if starting is not None and (was_active or starting.active()):
+        report.started = starting.start()
     return report
 
 
@@ -534,8 +643,8 @@ def move(source: Path, destination: Path) -> None:
     """`source` to `destination`: a rename, else a copy that is fsynced before the original
     goes, for a destination on another file system."""
     secure_dir(destination.parent)
-    if destination.is_dir() and not destination.is_symlink() and not any(destination.iterdir()):
-        destination.rmdir()  # made empty by `ensure_dirs`, before this ran
+    if destination.is_dir() and not destination.is_symlink() and not holds_files(destination):
+        shutil.rmtree(destination)  # empty directories `ensure_dirs` made, before this ran
     try:
         os.rename(source, destination)
         return
@@ -616,6 +725,60 @@ def rewrite_task_paths(
     unfinished = {"queued", "running"}
     lost.sort(key=lambda row: (row[1] not in unfinished, row[0]))
     return changed, lost
+
+
+def rewrite_imports(path: Path) -> bool:
+    """`path`'s imports of the old package, made imports of `keryx`. True when it changed.
+
+    Only the import lines: the rest of the file is the owner's, and a comment that still
+    says Jarvis is history rather than a fault.
+    """
+    text = _text_quietly(path)
+    fixed = OLD_IMPORT.sub(r"\1keryx", text)
+    if fixed == text:
+        return False
+    write_private(path, fixed)
+    return True
+
+
+def old_target(target: Any) -> Any:
+    """Jarvis's unit on `target`'s manager, when it is installed and `target` is the default.
+
+    A unit named in `SERVICE_UNIT` is the owner's own, whatever it is called, and is left.
+    """
+    from keryx.restart.service import LAUNCHD_LABEL, SYSTEMD_UNIT, ServiceTarget, is_installed
+
+    if target is None or target.unit not in (SYSTEMD_UNIT, LAUNCHD_LABEL):
+        return None
+    old = ServiceTarget(target.manager, OLD_UNITS[target.manager][0])
+    return old if is_installed(old) else None
+
+
+def retire_old_units(manager: str, *, run: Callable[..., Any] = subprocess.run) -> list[str]:
+    """Jarvis's units disabled and their files removed, now that Keryx's replace them.
+
+    Before Keryx's are installed, so two tunnels never run at once.
+    """
+    done = []
+    if manager == "systemd":
+        directory = xdg_home("config") / "systemd" / "user"
+        commands = [
+            ["systemctl", "--user", "disable", "--now", unit] for unit in OLD_UNITS[manager]
+        ]
+        files = [directory / unit for unit in OLD_UNITS[manager]]
+    else:
+        directory = Path.home() / "Library" / "LaunchAgents"
+        commands = [
+            ["launchctl", "bootout", f"gui/{os.getuid()}/{label}"] for label in OLD_UNITS[manager]
+        ]
+        files = [directory / f"{label}.plist" for label in OLD_UNITS[manager]]
+    for command, path in zip(commands, files, strict=True):
+        run(command, capture_output=True, text=True, check=False)
+        path.unlink(missing_ok=True)
+        done.append(f"{path.name}: retired")
+    if manager == "systemd":
+        run(["systemctl", "--user", "daemon-reload"], capture_output=True, text=True, check=False)
+    return done
 
 
 def _tighten(plan: Plan) -> list[str]:
