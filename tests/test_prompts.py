@@ -858,8 +858,20 @@ def test_a_bug_or_a_wish_about_keryx_is_work_it_can_file(settings, unwrapped):
     assert "A bug: something you got wrong" in text
     assert "And a feature request: something you cannot do yet and they wish you could" in text
     assert "saying whether it is a bug report or a feature request for you" in text
-    assert "If they want the thing built now rather than suggested" in text
     assert "Do not offer to file anything after every stumble or passing wish" in text
+
+
+def test_a_wish_is_usually_built_and_an_unclear_one_is_asked_about(settings, unwrapped):
+    """Most wishes are met by a tool of the owner's own, so filing is not the default.
+
+    Only the owner knows whether they meant "build it" or "pass it on", so when their
+    words do not say, the voice model asks once rather than guessing either way.
+    """
+    text = unwrapped(_rendered(_reporting(settings)))
+
+    assert "Most wishes are better built than filed" in text
+    assert "When you cannot tell which they want, ask once" in text
+    assert "build it for them now, or pass it on as a suggestion?" in text
 
 
 def test_with_issue_reports_off_the_prompt_says_nothing_about_them(settings, unwrapped):

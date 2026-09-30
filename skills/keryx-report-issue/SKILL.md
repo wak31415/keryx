@@ -67,10 +67,11 @@ Three reasons not to file, each cheap to check:
 For a feature request it is shorter still: skip the log and the version, and spend the
 look on whether Keryx already has something close (a tool, a plugin, a setting — the
 owner may simply not know it exists, in which case say so and do not file) and on where it
-might go. `docs/tools.md` in the checkout says what the voice tools are and how a new one
-is added. A thing only this owner would want — a check of their own server, their own
+might go. `docs/tools.md` in the checkout says what the voice tools are, the plugins
+included. A thing only this owner would want — a check of their own server, their own
 account — is a voice tool of their own, not a feature for everyone: say so in your report
-rather than filing it.
+rather than filing it. A voice tool everyone could use is usually a new plugin
+(`src/keryx/plugins/`); say so in the issue.
 
 - **The version:** `git -C <checkout> describe --always --dirty`, and the commit's date.
 - **The log:** `keryx.log` in the logs directory. Look at the end, around the time it
