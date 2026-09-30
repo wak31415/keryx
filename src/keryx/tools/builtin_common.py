@@ -142,12 +142,20 @@ CALLBACK_ALREADY_DONE_MESSAGE = (
     "That task has already finished, so there is nothing to call back about. Tell them what "
     "came of it now instead, and then call mark_reported."
 )
-#: What `mark_reported` hands back. It is also registered `silent=True`, so in the normal
-#: case nothing is generated over this at all; the wording is here for the model that goes
+#: What `mark_reported` hands back once everything has been said. It is submitted silently,
+#: so nothing is generated over it at all; the wording is here for the model that goes
 #: looking at the result anyway.
 REPORTED_MESSAGE = (
     "Recorded. This is bookkeeping and they have already heard the result, so say nothing "
     "about it and do not repeat what you just told them."
+)
+#: What `mark_reported` hands back when the model called it before it had finished — the
+#: habit on almost every call-back: a line of greeting, the call, then the result. This one
+#: gets a turn, and it has to carry the rest of what the model meant to say.
+CONTINUE_REPORTING_MESSAGE = (
+    "Recorded. Now finish what you were saying, in this turn: the result itself if you have "
+    "not given it yet, and any other news. Do not greet them again or repeat what you "
+    "already said."
 )
 STILL_RUNNING_MESSAGE = (
     "still running. Say the task number once and that you will tell them when it lands. "

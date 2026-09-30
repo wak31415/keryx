@@ -96,10 +96,13 @@ remember:
   `possession_gate`, `get_task`) in `builtin_common`. **The order `builtin.py` calls them in is the order
   the tools are offered to the model.** A new tool goes in a domain module and the
   `docs/tools.md` table, or `tests/test_docs_sync.py` fails. A tool may also be registered `silent=True`
-  (`mark_reported`, `end_session`): its result is submitted without asking for a response,
-  because both are called *after* the thing worth saying has been said and the turn would
-  only be spent saying it again. Only for those; anything the owner is waiting to hear keeps
-  its turn.
+  (`end_session`): its result is submitted without asking for a response, because it is
+  called *after* the thing worth saying has been said and the turn would only be spent
+  saying it again. `mark_reported` is silent *per call*: the model says in `still_to_say`
+  whether it has finished, because it calls it before the result as often as after — on
+  almost every call-back of 2026-09-29, a line of greeting, the stamp, and silence until the
+  owner asked what the update was. Only for those; anything the owner is waiting to hear
+  keeps its turn.
   The owner's *own* tools are not here: `tools/custom.py` loads `DATA_DIR/tools/*.py` into
   each call's copy of the registry (`ToolRegistry.for_call`), so they need no restart and
   never enter the repository. Each declares its gate (`needs_pin`, True by default), cannot

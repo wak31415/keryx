@@ -420,6 +420,34 @@ async def test_a_silent_tool_result_does_not_buy_another_spoken_turn(
     assert provider.tool_responses == [False]
 
 
+async def test_a_tool_silent_per_call_asks_for_a_turn_only_when_the_call_says_so(
+    make_session, phone, provider, tools
+):
+    """The call-back that greeted, stamped the task, and then went quiet until asked."""
+
+    async def handler(ctx: ToolContext, args: dict) -> dict:
+        return {"reported": [7]}
+
+    tools.register(
+        "mark_reported",
+        "Bookkeeping.",
+        {"type": "object", "properties": {}},
+        handler,
+        silent=lambda args: args.get("still_to_say") is False,
+    )
+    session = make_session(phone, provider)
+
+    async with running(session):
+        provider.feed(FunctionCall(call_id="early", name="mark_reported",
+                                   arguments={"task_ids": [7], "still_to_say": True}))
+        await eventually(lambda: len(provider.tool_results) == 1)
+        provider.feed(FunctionCall(call_id="late", name="mark_reported",
+                                   arguments={"task_ids": [7], "still_to_say": False}))
+        await eventually(lambda: len(provider.tool_results) == 2)
+
+    assert provider.tool_responses == [True, False]
+
+
 async def test_an_unknown_tool_reports_an_error_to_the_model(make_session, phone, provider):
     session = make_session(phone, provider)
 

@@ -41,6 +41,7 @@ from keryx.tools.builtin_common import (
     CALLBACK_ALREADY_DONE_MESSAGE,
     CALLBACK_OWNER_ONLY_MESSAGE,
     CALLBACK_SET_MESSAGE,
+    CONTINUE_REPORTING_MESSAGE,
     DEFAULT_TASK_LIMIT,
     MAX_TASK_LIMIT,
     MODEL_AGENT_CONFLICT_MESSAGE,
@@ -302,6 +303,11 @@ def register_task_tools(
 
     # --- mark_reported -----------------------------------------------------
 
+    def _still_to_say(arguments: dict) -> bool:
+        # Missing or not a boolean is "still to say": a turn too many is a sentence said
+        # twice, where a turn too few is the call going quiet on news they never heard.
+        return arguments.get("still_to_say") is not False
+
     async def mark_reported(ctx: ToolContext, arguments: dict) -> dict:
         ids = _task_ids(arguments.get("task_ids"))
         # Stamping a task takes it out of the next call's digest, so a call that has proved
@@ -319,32 +325,43 @@ def register_task_tools(
         # Ids that were already reported (or never existed) come back missing rather than
         # as an error: the model is working from a spoken conversation, and there is
         # nothing useful it could say to them about either case.
-        return {"reported": reported, "message": REPORTED_MESSAGE}
+        still_to_say = _still_to_say(arguments)
+        message = CONTINUE_REPORTING_MESSAGE if still_to_say else REPORTED_MESSAGE
+        return {"reported": reported, "message": message}
 
     registry.register(
         "mark_reported",
-        "Record that you have now told them about tasks that finished. Call it immediately "
-        "after you say a result out loud — whether it came from the list of things they had "
-        "not heard, from a '[system]' note during the call, or inline from dispatch_task. "
-        "Until you call it, those tasks are still waiting to be told and the owner will hear them "
-        "again at the start of the next call. Only pass ids you actually mentioned to them. "
-        "It is bookkeeping and says nothing back: once you have called it, stay quiet and "
-        "let them speak.",
+        "Record that you are telling them about tasks that finished — whether from the list of "
+        "things they had not heard, from a '[system]' note during the call, or inline from "
+        "dispatch_task. Until you call it, those tasks are still waiting to be told and the "
+        "owner will hear them again at the start of the next call. Only pass ids you have "
+        "told them about, or are telling them about in this turn. Set still_to_say to true "
+        "if you have not finished — the result itself, or other news, is still to come — and "
+        "the turn comes straight back to you to say it. Set it to false only once everything "
+        "has been said: then nothing more is generated, and it is their turn.",
         {
             "type": "object",
             "properties": {
                 "task_ids": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "The task numbers you just told them about.",
-                }
+                    "description": "The task numbers you are telling them about.",
+                },
+                "still_to_say": {
+                    "type": "boolean",
+                    "description": "True if you have not finished yet: the result itself, "
+                    "or other news, is still to come in this turn. False once you have said "
+                    "everything.",
+                },
             },
-            "required": ["task_ids"],
+            "required": ["task_ids", "still_to_say"],
         },
         mark_reported,
-        # Silent: it is called *after* the result has been spoken, and a turn generated
-        # over its answer is a turn spent saying that result a second time.
-        silent=True,
+        # Silent only once everything has been said: a turn generated over its answer then
+        # is the result said a second time. Called before the result — the habit on almost
+        # every call-back, 2026-09-29 — silence left the call quiet with the news half told
+        # until the owner asked for it, so that call gets its turn back.
+        silent=lambda arguments: not _still_to_say(arguments),
     )
 
     # --- recall ------------------------------------------------------------

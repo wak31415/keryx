@@ -76,7 +76,9 @@ def test_docs_tools_documents_exactly_the_tools_that_are_registered():
 #: Snake-case words in the prompt's "Your tools" section that are not tool names: three
 #: tool *arguments* the model has to pass by name, a Gmail search operator it is shown as
 #: an example, and the status a gated tool returns.
-NOT_TOOLS = frozenset({"wait_seconds", "task_id", "gmail_query", "newer_than", "pin_required"})
+NOT_TOOLS = frozenset(
+    {"wait_seconds", "task_id", "gmail_query", "newer_than", "pin_required", "still_to_say"}
+)
 
 
 def prompt_tool_names() -> set[str]:

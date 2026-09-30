@@ -290,6 +290,15 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Fixed
 
+- **A call-back gives its news without waiting to be asked, this time for real.** The model
+  almost always calls `mark_reported` straight after its first line ("Quick update…"), and
+  `mark_reported` was silent: no turn was asked for after it, so the call went quiet with
+  the news half told until the owner spoke, for 9–22 seconds on every call-back checked.
+  The fix of #64 changed wording, and wording was never what ended the turn. Now
+  `mark_reported` takes `still_to_say`, and the turn comes straight back while the result
+  is still to come; it stays silent once everything has been said. The voice prompt and the
+  tool description stopped telling the model to "stop talking" after calling it.
+
 - **The approval bridge rang about questions already answered at the keyboard** (#56). An
   `AskUserQuestion` or `ExitPlanMode` answered on screen was never matched to its pending
   request, because Claude Code hands both back to `PostToolUse` in a different shape

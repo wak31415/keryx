@@ -27,6 +27,7 @@ from keryx.tools.builtin import register_builtin_tools
 from keryx.tools.builtin_common import (
     CALLBACK_SET_MESSAGE,
     CONFIG_SET_MESSAGE,
+    CONTINUE_REPORTING_MESSAGE,
     KEYPRESS_REQUIRED_MESSAGE,
     PIN_ENROL_MESSAGE,
     PIN_INCOMPLETE_MESSAGE,
@@ -1529,17 +1530,38 @@ async def test_mark_reported_records_the_ids_the_model_said_out_loud(tools):
     assert (await tools.manager.get(task.id)).reported_at is not None
 
 
-async def test_mark_reported_is_silent_because_they_have_already_heard_the_result(tools):
+async def test_mark_reported_is_silent_once_everything_has_been_said(tools):
     """A turn generated over its answer is the result said a second time.
 
     A real call-back was the case: the model greeted them, gave the result, called
     `mark_reported`, and the forced response made it say the whole greeting again.
     """
-    assert tools.registry.is_silent("mark_reported")
+    done = {"task_ids": [(await _finish(tools)).id], "still_to_say": False}
+    assert tools.registry.is_silent("mark_reported", done)
 
-    result = await tools.call("mark_reported", {"task_ids": [(await _finish(tools)).id]})
+    result = await tools.call("mark_reported", done)
 
     assert result["message"] == REPORTED_MESSAGE
+
+
+async def test_mark_reported_before_the_result_hands_the_turn_back(tools):
+    """The habit on almost every call-back (2026-09-29): a line of greeting, `mark_reported`,
+    and the result meant to follow. Silence there left the call quiet, the news half told,
+    until the owner asked for it."""
+    early = {"task_ids": [(await _finish(tools)).id], "still_to_say": True}
+    assert not tools.registry.is_silent("mark_reported", early)
+
+    result = await tools.call("mark_reported", early)
+
+    assert result["message"] == CONTINUE_REPORTING_MESSAGE
+    assert "greet them again" in result["message"]
+
+
+async def test_mark_reported_without_the_flag_keeps_its_turn(tools):
+    """A turn too many is a sentence said twice; a turn too few is news never heard."""
+    assert not tools.registry.is_silent("mark_reported", {"task_ids": [1]})
+    schema = tools.registry._tools["mark_reported"].parameters
+    assert schema["required"] == ["task_ids", "still_to_say"]
 
 
 async def test_end_session_is_silent_because_the_goodbye_came_first(tools):
