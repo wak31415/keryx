@@ -1,30 +1,35 @@
 # Roadmap
 
-## Moving to GPT-Live
+## v0.2.0: local models
 
-[GPT-Live](https://developers.openai.com/api/docs/guides/live), released in September 2026,
-is a promising fit for Keryx. It listens while it speaks, and it keeps the conversation
-going while a backend works. It also splits the job the way Keryx already does: a voice in
-front, and an agent behind it that does the reasoning and calls the tools.
+Run the work and the voice on your own hardware, so a call and what it starts can stay on
+your machine.
 
-I'm looking into moving Keryx onto it, and working out whether that can be done without
-losing any features. Until then, Keryx runs on the Realtime API. It isn't as simple as
-changing the model name, for three reasons.
+- [ ] A local model as a third agent, next to Claude and Codex, chosen per task
+- [ ] A local voice in place of the Realtime API: one speech-to-speech model, or speech
+      recognition, a language model, and speech synthesis joined together
+- [ ] The PIN, the keypad, the call-backs, and interruptions working on the local voice
+- [ ] `keryx setup` and `keryx doctor` set up and check the local models
 
-### Tools
+## v0.3.0: talking to it at a Mac
 
-On GPT-Live, the voice doesn't call tools itself. Every tool goes through the delegated
-backend. The PIN, the keypad, and the call-backs have to keep working there, and quick
-answers such as "what's running?" have to stay quick.
+Say a wake word and talk to the assistant through the Mac's microphone and speaker, with no
+phone and no Twilio. The work is on the
+[`feat/local-wakeword`](https://github.com/wak31415/keryx/tree/feat/local-wakeword) branch.
 
-### Timing and wording
+- [ ] Test the wake word and the local channel on real hardware
+- [ ] `keryx setup` and `keryx doctor` cover the local channel
+- [ ] Merge `feat/local-wakeword` into `main` (macOS only at first)
 
-Keryx needs to know when a spoken reply ends, so that it can hang up after a goodbye and
-stop talking when you interrupt. GPT-Live has no event for the end of a reply. Keryx also
-relies on exact wording, and GPT-Live paraphrases the text it's given.
+## Not scheduled: GPT-Live
 
-### Instructions during a call
+[GPT-Live](https://developers.openai.com/api/docs/guides/live) listens while it speaks and
+keeps talking while a backend works, which suits Keryx. I'm looking into moving onto it
+without losing features. It isn't a model-name change:
 
-Giving the PIN changes what a call may do, and Keryx rewrites the voice's instructions to
-match. GPT-Live fixes its instructions when the call starts, and after that it only accepts
-additions.
+- [ ] Tools go through GPT-Live's delegated backend, with the PIN, the keypad, and the
+      call-backs intact, and quick answers still quick
+- [ ] Keryx can tell when a reply ends, so it can hang up after a goodbye and stop when
+      you interrupt, and the voice keeps the exact wording it's given
+- [ ] Giving the PIN still changes the voice's instructions mid-call, though GPT-Live
+      only accepts additions after the call starts
