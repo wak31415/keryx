@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 
 from agents.fakes import BLOCK, ScriptedAdapter
-from jarvis.agents.auth import AuthMode, AuthSource, AuthStatus
-from jarvis.agents.base import AgentOpenError, RunResult, SteerUnavailable, TokenUsage
-from jarvis.agents.session import (
+from keryx.agents.auth import AuthMode, AuthSource, AuthStatus
+from keryx.agents.base import AgentOpenError, RunResult, SteerUnavailable, TokenUsage
+from keryx.agents.session import (
     NO_DONE_ERROR,
     AdapterRunner,
     AdapterSession,
@@ -21,7 +21,7 @@ from jarvis.agents.session import (
     Text,
     ToolCall,
 )
-from jarvis.tasks.models import Task, TaskKind
+from keryx.tasks.models import Task, TaskKind
 
 KEY = "sk-live-0123456789abcdef"
 SLACK = "xoxb-000000000-slack-token"
@@ -107,7 +107,7 @@ async def test_a_failed_turn_speaks_the_failure_and_asks_for_no_restart():
     adapter = ScriptedAdapter(
         [
             Text("I will now run the migration."),
-            Text("RESTART_REQUIRED: changed jarvis"),
+            Text("RESTART_REQUIRED: changed keryx"),
             Done(ok=False, error="usage limit reached", usage=TokenUsage(5, 1)),
         ]
     )
@@ -118,7 +118,7 @@ async def test_a_failed_turn_speaks_the_failure_and_asks_for_no_restart():
     assert result.error == "usage limit reached"
     assert result.spoken_summary == "The task failed: usage limit reached"
     assert result.restart_reason is None
-    assert result.final_text == "RESTART_REQUIRED: changed jarvis"
+    assert result.final_text == "RESTART_REQUIRED: changed keryx"
     assert result.usage == TokenUsage(5, 1)
 
 
@@ -198,7 +198,7 @@ async def test_cancelling_a_blocked_turn_closes_the_adapters_stream():
     [KEY, "agent-access-token-0001", "GOCSPX-google-client-secret", SLACK],
 )
 async def test_no_credential_reaches_an_error_a_notice_or_the_log(secret, caplog):
-    caplog.set_level(logging.DEBUG, logger="jarvis.agents.session")
+    caplog.set_level(logging.DEBUG, logger="keryx.agents.session")
     adapter = ScriptedAdapter(
         [Notice(f"server said {secret}"), Done(ok=False, error=f"401 for {secret}")],
         [RuntimeError(f"stream died quoting {secret}")],
@@ -226,7 +226,7 @@ async def test_a_masked_key_is_redacted_too():
 
 
 async def test_a_notice_is_logged_at_its_own_level(caplog):
-    caplog.set_level(logging.INFO, logger="jarvis.agents.session")
+    caplog.set_level(logging.INFO, logger="keryx.agents.session")
     await run(
         ScriptedAdapter(
             [Notice("retrying", level=logging.INFO), Notice("gave up"), Done(ok=True)]
@@ -308,7 +308,7 @@ def test_the_context_is_resolved_once_from_the_task_and_settings(settings, tmp_p
     )
 
     assert context.cwd == tmp_path
-    assert "Jarvis-Task: 12" in context.instructions
+    assert "Keryx-Task: 12" in context.instructions
     assert "Ada" in context.instructions
     assert context.model is None
     assert context.auth.mode is AuthMode.API_KEY

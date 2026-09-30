@@ -1,13 +1,13 @@
-"""The smaller `jarvis setup` sections, each against a scripted terminal and a fake world."""
+"""The smaller `keryx setup` sections, each against a scripted terminal and a fake world."""
 
 import stat
 
 import pytest
 
-from jarvis.config import Settings, pin_file, read_enrolled_pin, write_enrolled_pin
-from jarvis.config.store import ConfigStore
-from jarvis.setup import sections
-from jarvis.setup.sections import pin_problem
+from keryx.config import Settings, pin_file, read_enrolled_pin, write_enrolled_pin
+from keryx.config.store import ConfigStore
+from keryx.setup import sections
+from keryx.setup.sections import pin_problem
 
 from .fakes import DEFAULT
 
@@ -63,7 +63,9 @@ def test_a_key_in_the_environment_wins_and_is_said_to(make_ctx, monkeypatch):
 def test_owner_name_numbers_and_a_pin_chosen_now(make_ctx):
     ctx = make_ctx(
         [
-            ("What should Jarvis call you", "Ada"),
+            ("assistant be called", "other"),
+            ("Its name", "Ada Bot"),
+            ("What should Ada Bot call you", "Ada"),
             ("mobile numbers", "+15551234567, +15557654321"),
             ("Set the PIN", "now"),
             ("New PIN", "482915"),
@@ -74,25 +76,54 @@ def test_owner_name_numbers_and_a_pin_chosen_now(make_ctx):
     sections.run_owner(ctx)
 
     stored = ConfigStore().stored()
+    assert stored["ASSISTANT_NAME"] == "Ada Bot"
     assert stored["OWNER_NAME"] == "Ada"
     assert stored["ALLOWED_CALLERS"] == ["+15551234567", "+15557654321"]
     assert stored["OWNER_NUMBER"] == "+15551234567"
     path = pin_file(ctx.settings.config_dir)
     assert read_enrolled_pin(ctx.settings.config_dir) == "482915"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert "JARVIS_PIN" not in stored
+    assert "KERYX_PIN" not in stored
     assert "482915" not in " ".join(ctx.ui.lines())
 
 
 def test_the_first_call_may_be_left_to_set_the_pin(make_ctx):
     ctx = make_ctx(
-        [("call you", ""), ("mobile numbers", ""), ("Set the PIN", "call")]
+        [("assistant be called", "Lyra"), ("call you", ""), ("mobile numbers", ""),
+         ("Set the PIN", "call")]
     )
 
     sections.run_owner(ctx)
 
     assert not pin_file(ctx.settings.config_dir).exists()
     assert ctx.settings.pin_enrolment_open
+
+
+def test_keeping_the_assistants_name_saves_nothing_for_it(make_ctx):
+    ctx = make_ctx(
+        [("assistant be called", "Lyra"), ("What should Lyra call you", "Ada"),
+         ("mobile numbers", ""), ("Set the PIN", "call")]
+    )
+
+    sections.run_owner(ctx)
+
+    assert "ASSISTANT_NAME" not in ConfigStore().stored()
+
+
+def test_a_name_of_their_own_is_checked_before_it_is_kept(make_ctx):
+    ctx = make_ctx(
+        [("assistant be called", "other"), ("Its name", "  friday  "), ("call you", ""),
+         ("mobile numbers", ""), ("Set the PIN", "call")]
+    )
+
+    sections.run_owner(ctx)
+
+    assert ConfigStore().stored()["ASSISTANT_NAME"] == "friday"
+    assert sections.assistant_problem("R2D2") == (
+        "Must be 1 to 32 letters, spaces, apostrophes or hyphens, starting with a letter."
+    )
+    assert "coding agent" in sections.assistant_problem("Claude")
+    assert sections.assistant_problem("Friday") is None
 
 
 @pytest.mark.parametrize("digits", ["12345", "123456789", "12a456", "111111", "123456", "876543"])
@@ -102,7 +133,8 @@ def test_a_pin_that_is_not_worth_having_is_refused(digits):
 
 def test_a_mistyped_second_pin_asks_again(make_ctx):
     ctx = make_ctx(
-        [("call you", ""), ("mobile", ""), ("Set the PIN", "now"), ("New PIN", "482915"),
+        [("assistant be called", "Lyra"), ("call you", ""), ("mobile", ""), ("Set the PIN", "now"),
+         ("New PIN", "482915"),
          ("same PIN", "482916"), ("New PIN", "482915"), ("same PIN", "482915")]
     )
 
@@ -154,7 +186,7 @@ def test_stopping_before_the_last_yes_leaves_the_old_pin(make_ctx):
 
 
 def test_a_pin_in_the_environment_is_never_touched(make_ctx, monkeypatch):
-    monkeypatch.setenv("JARVIS_PIN", "482915")
+    monkeypatch.setenv("KERYX_PIN", "482915")
     ctx = make_ctx([], review=True)
 
     sections.run_pin(ctx)
@@ -207,6 +239,8 @@ def test_manual_asks_each_setting_by_type_and_saves_only_changes(make_ctx):
         if extra.get("group") != "voice" or not info.repr:
             continue
         key = name.upper()
+        if key in sections.NOT_MANUAL:
+            continue
         answer = {"OPENAI_VOICE": "marin", "VAD_MODE": "server", "VAD_SILENCE_MS": "900"}
         answers.append((key, answer.get(key, DEFAULT)))
     answers.append(("may the running service change", DEFAULT))
@@ -251,14 +285,14 @@ def test_files_from_before_the_xdg_layout_point_at_migrate(make_ctx, tmp_path):
     assert ConfigStore().stored() == {}
     assert (tmp_path / ".env").exists()
     assert any(".env" in line for line in ctx.ui.lines("warn"))
-    assert any("jarvis migrate" in line for line in ctx.ui.lines("note"))
+    assert any("keryx migrate" in line for line in ctx.ui.lines("note"))
 
 
 def test_nothing_from_before_asks_nothing(make_ctx):
     ctx = make_ctx([])
     sections.run_import(ctx)
     assert ctx.ui.asked == []
-    assert ctx.ui.lines("success") == ["everything is where Jarvis looks for it"]
+    assert ctx.ui.lines("success") == ["everything is where Keryx looks for it"]
 
 
 # --- the service -----------------------------------------------------------------------------
@@ -278,7 +312,7 @@ def test_the_service_installer_runs_on_a_yes(make_ctx, world, tmp_path, monkeypa
     for name in ("install-systemd.sh", "install-launchd.sh"):
         (script_dir / name).write_text("#!/bin/sh\n")
     monkeypatch.setattr(sections, "repo_root", lambda: tmp_path / "repo")
-    ConfigStore().set({"PUBLIC_HOST": "jarvis.example.com"})
+    ConfigStore().set({"PUBLIC_HOST": "keryx.example.com"})
     ctx = make_ctx([("Install it now", True)])
 
     sections.run_service(ctx)
@@ -328,7 +362,9 @@ def test_a_manual_value_that_does_not_validate_is_refused_where_it_is_typed(make
 def test_reviewing_the_owner_asks_again_and_can_clear_the_numbers(make_ctx):
     ConfigStore().set({"OWNER_NAME": "Ada", "ALLOWED_CALLERS": "+15551234567"})
     ctx = make_ctx(
-        [("call you", "Ada"), ("mobile numbers", ""), ("Set the PIN", "call")], review=True
+        [("assistant be called", "Lyra"), ("call you", "Ada"), ("mobile numbers", ""),
+         ("Set the PIN", "call")],
+        review=True,
     )
 
     sections.run_owner(ctx)
@@ -356,7 +392,7 @@ def test_a_replacement_declined_at_the_first_question_changes_nothing(make_ctx):
 
 
 def test_an_installed_service_is_said_and_nothing_asked(make_ctx, monkeypatch):
-    from jarvis.doctor import Check
+    from keryx.doctor import Check
 
     monkeypatch.setattr(sections, "service_manager_check", lambda s: Check("s", True, "unit"))
     ctx = make_ctx([])
@@ -415,7 +451,7 @@ def test_a_replacement_that_fails_to_write_leaves_the_old_pin(make_ctx, monkeypa
     def disk_full(*args):
         raise OSError("disk full")
 
-    monkeypatch.setattr("jarvis.config.files.os.replace", disk_full)
+    monkeypatch.setattr("keryx.config.files.os.replace", disk_full)
 
     with pytest.raises(OSError):
         sections.run_pin(ctx)
@@ -423,9 +459,9 @@ def test_a_replacement_that_fails_to_write_leaves_the_old_pin(make_ctx, monkeypa
     assert read_enrolled_pin(ctx.settings.config_dir) == "482915"
 
 
-def test_a_new_pin_says_a_running_jarvis_needs_a_restart(make_ctx):
+def test_a_new_pin_says_a_running_keryx_needs_a_restart(make_ctx):
     ctx = make_ctx([("Set the PIN", "now"), ("New PIN", "739104"), ("same PIN", "739104")])
 
     sections.run_pin(ctx)
 
-    assert any("jarvis restart" in line for line in ctx.ui.lines("note"))
+    assert any("keryx restart" in line for line in ctx.ui.lines("note"))

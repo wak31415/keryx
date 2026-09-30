@@ -2,7 +2,7 @@
 
 import pytest
 
-from jarvis.continuity.transcripts import (
+from keryx.continuity.transcripts import (
     MAX_TRANSCRIPT_CHARS,
     PIN_REDACTED,
     read_tail,
@@ -27,13 +27,13 @@ def test_only_what_was_said_comes_back(tmp_path):
         tmp_path,
         "abc123",
         "[17:59:34] --- session abc123 channel=phone caller=+15550000000\n"
-        "[17:59:36] assistant: Hi, this is Jarvis.\n"
+        "[17:59:36] assistant: Hi, this is Keryx.\n"
         "[17:59:42] user: Start the build.\n"
         "[17:59:49] --- session ended (hangup)\n",
     )
 
     assert read_tail(tmp_path, "abc123") == (
-        "assistant: Hi, this is Jarvis.\nuser: Start the build."
+        "assistant: Hi, this is Keryx.\nuser: Start the build."
     )
 
 

@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.config import Settings, jarvis_home, pin_file, read_enrolled_pin, write_enrolled_pin
-from jarvis.config.files import dump_toml, read_toml, write_private
-from jarvis.config.settings import ConfigFileError
-from jarvis.config.store import (
+from keryx.config import Settings, keryx_home, pin_file, read_enrolled_pin, write_enrolled_pin
+from keryx.config.files import dump_toml, read_toml, write_private
+from keryx.config.settings import ConfigFileError, env_var_name, field_for
+from keryx.config.store import (
     FROM_DEFAULT,
     FROM_ENV,
     FROM_PIN_FILE,
@@ -39,11 +39,11 @@ def load() -> Settings:
 # --- where things go ------------------------------------------------------------------
 
 
-def test_the_home_is_jarvis_home(monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "elsewhere"))
-    assert jarvis_home() == tmp_path / "elsewhere"
-    monkeypatch.delenv("JARVIS_HOME")
-    assert jarvis_home() == Path.home() / ".config" / "jarvis"
+def test_the_home_is_keryx_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("KERYX_HOME", str(tmp_path / "elsewhere"))
+    assert keryx_home() == tmp_path / "elsewhere"
+    monkeypatch.delenv("KERYX_HOME")
+    assert keryx_home() == Path.home() / ".config" / "keryx"
 
 
 def test_a_plain_setting_goes_in_config_and_a_secret_in_secrets(store):
@@ -75,7 +75,7 @@ def test_a_failed_write_leaves_the_old_file_whole(store, monkeypatch):
     def broken(*_args):
         raise OSError("disk full")
 
-    monkeypatch.setattr("jarvis.config.files.os.replace", broken)
+    monkeypatch.setattr("keryx.config.files.os.replace", broken)
     with pytest.raises(OSError):
         store.set({"OPENAI_VOICE": "cedar"})
 
@@ -142,12 +142,12 @@ def test_an_unknown_key_is_refused(store):
 
 
 def test_the_pin_is_never_a_stored_setting(store):
-    with pytest.raises(ConfigError, match="jarvis setup"):
-        store.set({"JARVIS_PIN": "482915"})
+    with pytest.raises(ConfigError, match="keryx setup"):
+        store.set({"KERYX_PIN": "482915"})
 
 
 def test_a_pin_hand_written_into_a_file_is_not_read(store, tmp_path):
-    write_private(store.secrets_path, dump_toml({"JARVIS_PIN": "482915"}))
+    write_private(store.secrets_path, dump_toml({"KERYX_PIN": "482915"}))
 
     assert Settings(_env_file=None, openai_api_key="x", data_dir=tmp_path / "d").pin is None
 
@@ -182,12 +182,12 @@ def test_the_environment_beats_both_files_and_secrets_beat_config(store, monkeyp
 
 
 def test_a_env_in_the_working_directory_is_never_read(store):
-    """A checkout is the one place a secret must never live; `jarvis migrate` moves it."""
+    """A checkout is the one place a secret must never live; `keryx migrate` moves it."""
     Path(".env").write_text("OPENAI_VOICE=from-dotenv\nPORT=7000\n")
 
     settings = Settings(openai_api_key="x")
 
-    assert (settings.openai_voice, settings.port) == ("cedar", 8080)
+    assert (settings.openai_voice, settings.port) == ("", 8080)
     assert store.source_of("PORT") == FROM_DEFAULT
 
 
@@ -198,10 +198,10 @@ def test_the_code_beats_everything(store):
 
 
 def test_the_pin_file_is_a_source_of_its_own(store, settings):
-    assert store.source_of("JARVIS_PIN", settings) == FROM_DEFAULT
+    assert store.source_of("KERYX_PIN", settings) == FROM_DEFAULT
     write_enrolled_pin(settings.config_dir, "482915")
 
-    assert store.source_of("JARVIS_PIN", settings) == FROM_PIN_FILE
+    assert store.source_of("KERYX_PIN", settings) == FROM_PIN_FILE
 
 
 def test_a_config_file_that_does_not_parse_says_so(store):
@@ -315,18 +315,39 @@ def test_import_env_resolves_relative_paths_against_the_env_file(store, tmp_path
 
 
 def test_import_env_moves_the_pin_to_its_own_file(store, tmp_path):
-    env = write_env(tmp_path, f"JARVIS_PIN=482915\nDATA_DIR={tmp_path / 'data'}\n")
+    env = write_env(tmp_path, f"KERYX_PIN=482915\nDATA_DIR={tmp_path / 'data'}\n")
 
     report = store.import_env(env)
 
-    assert report.pin == "moved to JARVIS_HOME/pin"
+    assert report.pin == "moved to KERYX_HOME/pin"
     assert pin_file(store.home).read_text().strip() == "482915"
-    assert "JARVIS_PIN" not in store.stored()
+    assert "KERYX_PIN" not in store.stored()
+
+
+def test_a_env_from_before_the_rename_imports_under_the_new_names(store, tmp_path):
+    env = write_env(tmp_path, "JARVIS_PIN=482915\nJARVIS_CHECKOUT=/srv/keryx\n")
+
+    report = store.import_env(env)
+
+    assert report.pin == "moved to KERYX_HOME/pin"
+    assert pin_file(store.home).read_text().strip() == "482915"
+    assert store.stored() == {"KERYX_CHECKOUT": "/srv/keryx"}
+
+
+def test_an_old_name_in_the_environment_is_read_and_the_new_one_wins(store, monkeypatch):
+    monkeypatch.setenv("JARVIS_PIN", "482915")
+
+    assert Settings(openai_api_key="x").pin == "482915"
+    assert store.source_of("KERYX_PIN") == FROM_ENV
+    assert field_for("JARVIS_PIN") == "pin" and env_var_name("pin") == "KERYX_PIN"
+
+    monkeypatch.setenv("KERYX_PIN", "13572468")
+    assert Settings(openai_api_key="x").pin == "13572468"
 
 
 def test_import_env_refuses_everything_over_a_different_enrolled_pin(store, tmp_path):
     write_enrolled_pin(store.home, "111357")
-    env = write_env(tmp_path, "JARVIS_PIN=482915\nOPENAI_VOICE=marin\n")
+    env = write_env(tmp_path, "KERYX_PIN=482915\nOPENAI_VOICE=marin\n")
 
     with pytest.raises(ConfigError, match="Nothing was imported"):
         store.import_env(env)
@@ -398,7 +419,7 @@ def test_the_service_names_an_agent_in_any_case(store, settings):
 
 
 def test_import_env_is_the_owners_alone(store, tmp_path):
-    env = write_env(tmp_path, "ALLOWED_CALLERS=+15550000000\nJARVIS_PIN=482915\n")
+    env = write_env(tmp_path, "ALLOWED_CALLERS=+15550000000\nKERYX_PIN=482915\n")
 
     with pytest.raises(ConfigError, match="only the owner"):
         store.import_env(env, actor="service")
@@ -411,7 +432,7 @@ def test_import_env_puts_the_pin_beside_the_store_wherever_data_lives(
 ):
     """Where the PIN is must not depend on a setting: `DATA_DIR` moves nothing of it."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "from-env"))
-    env = write_env(tmp_path, f"JARVIS_PIN=482915\nDATA_DIR={tmp_path / 'from-dotenv'}\n")
+    env = write_env(tmp_path, f"KERYX_PIN=482915\nDATA_DIR={tmp_path / 'from-dotenv'}\n")
 
     store.import_env(env)
 

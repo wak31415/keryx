@@ -5,7 +5,7 @@ The helpers every plugin test uses are in `helpers.py` beside this.
 
 import pytest
 
-from jarvis.config import Settings
+from keryx.config import Settings
 
 
 @pytest.fixture

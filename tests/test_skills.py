@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from jarvis.skills import MAX_DESCRIPTION_CHARS, Skill, discover_skills, discover_skills_in
+from keryx.skills import MAX_DESCRIPTION_CHARS, Skill, discover_skills, discover_skills_in
 
 
 def write_skill(root: Path, directory: str, body: str) -> Path:

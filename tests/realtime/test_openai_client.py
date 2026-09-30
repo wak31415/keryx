@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.realtime import openai as realtime_openai
-from jarvis.realtime.base import (
+from keryx.realtime import openai as realtime_openai
+from keryx.realtime.base import (
     AudioDelta,
     Disconnected,
     FunctionCall,
@@ -29,7 +29,7 @@ from jarvis.realtime.base import (
     SpeechStopped,
     Transcript,
 )
-from jarvis.realtime.openai import OpenAIRealtimeClient, build_session_update
+from keryx.realtime.openai import OpenAIRealtimeClient, build_session_update
 
 from .fake_ws import FakeConnector, FakeWS
 
@@ -83,7 +83,7 @@ def last_response_create_id(ws: FakeWS) -> str:
 def phone_config(**overrides) -> SessionConfig:
     """The phone-path config: µ-law, barge-in enabled, transcription on."""
     params: dict = {
-        "instructions": "You are Jarvis.",
+        "instructions": "You are Keryx.",
         "tools": TOOLS,
         "voice": "marin",
         "audio_format": "audio/pcmu",
@@ -140,7 +140,7 @@ def test_build_session_update_matches_ga_schema_for_the_phone_path():
         "type": "session.update",
         "session": {
             "type": "realtime",
-            "instructions": "You are Jarvis.",
+            "instructions": "You are Keryx.",
             "tools": TOOLS,
             "tool_choice": "auto",
             "audio": {
@@ -174,7 +174,7 @@ def test_a_transcription_language_is_passed_as_a_hint():
 
 def test_build_session_update_for_the_local_path_omits_transcription_and_barge_in():
     config = SessionConfig(
-        instructions="Local Jarvis.",
+        instructions="Local Keryx.",
         tools=[],
         voice="cedar",
         audio_format="audio/pcm",
@@ -189,7 +189,7 @@ def test_build_session_update_for_the_local_path_omits_transcription_and_barge_i
         "type": "session.update",
         "session": {
             "type": "realtime",
-            "instructions": "Local Jarvis.",
+            "instructions": "Local Keryx.",
             "tools": [],
             "tool_choice": "auto",
             "audio": {
@@ -385,7 +385,7 @@ async def test_transcripts_carry_the_right_role(connect):
         role="assistant", text="Sure, I'll take care of that.", item_id="item_assistant_1"
     )
     assert await harness.next_event() == Transcript(
-        role="user", text="Hey Jarvis, what's on my calendar?", item_id="item_user_1"
+        role="user", text="Hey Keryx, what's on my calendar?", item_id="item_user_1"
     )
 
 
@@ -623,11 +623,11 @@ async def test_update_instructions_sends_only_the_instructions(connect):
     `session.update` that carries one is refused whole, instructions and all."""
     harness = await connect()
 
-    await harness.client.update_instructions("You are Jarvis, now with their briefing.")
+    await harness.client.update_instructions("You are Keryx, now with their briefing.")
 
     assert harness.ws.sent[-1] == {
         "type": "session.update",
-        "session": {"type": "realtime", "instructions": "You are Jarvis, now with their briefing."},
+        "session": {"type": "realtime", "instructions": "You are Keryx, now with their briefing."},
     }
     assert harness.ws.sent_types == ["session.update", "session.update"]
 
@@ -871,7 +871,7 @@ def test_the_silence_timer_is_used_in_server_mode():
 
 def test_noise_reduction_reaches_the_input_block_when_it_is_set():
     config = SessionConfig(
-        instructions="Jarvis.",
+        instructions="Keryx.",
         tools=[],
         voice="cedar",
         audio_format="audio/pcmu",
@@ -886,7 +886,7 @@ def test_noise_reduction_reaches_the_input_block_when_it_is_set():
 def test_noise_reduction_left_off_is_absent_rather_than_null():
     """The API validates the value, so "off" has to be the missing field, not a null one."""
     config = SessionConfig(
-        instructions="Jarvis.", tools=[], voice="cedar", audio_format="audio/pcmu"
+        instructions="Keryx.", tools=[], voice="cedar", audio_format="audio/pcmu"
     )
 
     assert "noise_reduction" not in build_session_update(config)["session"]["audio"]["input"]

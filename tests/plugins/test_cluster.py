@@ -5,8 +5,8 @@ The hosts here are made up: nothing in a test knows any real cluster.
 
 import pytest
 
-from jarvis import plugins
-from jarvis.integrations.cluster import (
+from keryx import plugins
+from keryx.integrations.cluster import (
     MESSAGES,
     ClusterError,
     ClusterReport,
@@ -15,9 +15,9 @@ from jarvis.integrations.cluster import (
     GuardedSsh,
     MyJobs,
 )
-from jarvis.plugins.cluster import build_querier, cluster_stats_tool
-from jarvis.tools.custom import ToolUnavailable
-from jarvis.trust import TrustLevel
+from keryx.plugins.cluster import build_querier, cluster_stats_tool
+from keryx.tools.custom import ToolUnavailable
+from keryx.trust import TrustLevel
 from plugins.helpers import call, loaded, names, offered, refusal, turn_on
 
 NAME = "cluster_stats"

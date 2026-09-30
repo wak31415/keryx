@@ -23,10 +23,10 @@ from openai_codex import InternalRpcError, InvalidRequestError
 from openai_codex.generated.notification_registry import NOTIFICATION_MODELS
 from openai_codex.models import Notification
 
-from jarvis import plugins
-from jarvis.agents import codex as codex_module
-from jarvis.agents.base import AgentOpenError, SteerUnavailable, TokenUsage
-from jarvis.agents.codex import (
+from keryx import plugins
+from keryx.agents import codex as codex_module
+from keryx.agents.base import AgentOpenError, SteerUnavailable, TokenUsage
+from keryx.agents.codex import (
     CODEX_MODELS,
     CodexAgentRunner,
     _error_text,
@@ -37,8 +37,8 @@ from jarvis.agents.codex import (
     ensure_login_home,
     mcp_config,
 )
-from jarvis.agents.session import AdapterSession
-from jarvis.tasks.models import Task, TaskKind
+from keryx.agents.session import AdapterSession
+from keryx.tasks.models import Task, TaskKind
 
 
 def turn_on_slack(settings, server: str) -> None:
@@ -207,7 +207,7 @@ async def test_a_turn_maps_the_notifications_into_a_result(settings):
 
 
 async def test_a_failed_turn_says_what_went_wrong_without_the_url(settings, caplog):
-    caplog.set_level(logging.INFO, logger="jarvis.agents.session")
+    caplog.set_level(logging.INFO, logger="keryx.agents.session")
     session = await open_session(settings, FakeCodex(FakeTurn(notifications("failed"))))
 
     result = await session.run("go", on_progress=quiet)
@@ -374,7 +374,7 @@ async def test_a_new_task_starts_a_thread_with_the_instructions_and_the_model(se
     assert codex.cwd == tmp_path
     assert options["model"] == "gpt-6-sol"
     assert "dispatched on Ada's behalf" in options["developer_instructions"]
-    assert "Jarvis-Task: 31" in options["developer_instructions"]
+    assert "Keryx-Task: 31" in options["developer_instructions"]
     assert options["config"] is None
     assert codex.resumed == []
 
@@ -449,7 +449,7 @@ async def test_warnings_that_reach_no_turn_are_logged_redacted(settings, caplog)
         await asyncio.sleep(0)
     await session.close()
 
-    said = [r.getMessage() for r in caplog.records if r.name == "jarvis.agents.codex"]
+    said = [r.getMessage() for r in caplog.records if r.name == "keryx.agents.codex"]
     assert said == [
         "codex: unknown key ([redacted])",
         "codex: old flag",
@@ -622,7 +622,7 @@ def bundled(monkeypatch):
     monkeypatch.setattr(codex_module, "codex_cli", lambda: "/venv/codex_cli_bin/bin/codex")
 
 
-async def test_an_api_key_logs_in_once_into_a_home_of_jarvis_own(
+async def test_an_api_key_logs_in_once_into_a_home_of_keryx_own(
     settings, tmp_path, monkeypatch, bundled
 ):
     settings.codex_api_key = KEY
@@ -648,7 +648,7 @@ async def test_an_api_key_logs_in_once_into_a_home_of_jarvis_own(
     assert call["env"]["CODEX_HOME"] == str(home)
     assert stat.S_IMODE(home.stat().st_mode) == 0o700
     assert stat.S_IMODE((home / "auth.json").stat().st_mode) == 0o600
-    assert stat.S_IMODE((home / ".jarvis-login-sha256").stat().st_mode) == 0o600
+    assert stat.S_IMODE((home / ".keryx-login-sha256").stat().st_mode) == 0o600
     assert (home / "config.toml").resolve() == (owner / "config.toml").resolve()
     assert (home / "skills").is_symlink()
     assert not (home / "AGENTS.md").exists()  # the owner has none, so nothing to link
@@ -693,7 +693,7 @@ async def test_a_refused_key_fails_the_open_without_quoting_it(settings, bundled
 
     assert KEY not in str(raised.value)
     assert "codex refused CODEX_API_KEY" in str(raised.value)
-    assert not (settings.data_dir / "codex" / ".jarvis-login-sha256").exists()
+    assert not (settings.data_dir / "codex" / ".keryx-login-sha256").exists()
 
 
 def test_no_bundled_cli_is_a_clear_refusal(settings, tmp_path, monkeypatch):
@@ -724,7 +724,7 @@ class PopenRecorder:
         ("token", {"OPENAI_API_KEY": "", "CODEX_API_KEY": "", "CODEX_ACCESS_TOKEN": "agent-tok-1"}),
     ],
 )
-async def test_the_app_server_never_inherits_a_credential_jarvis_did_not_choose(
+async def test_the_app_server_never_inherits_a_credential_keryx_did_not_choose(
     settings, monkeypatch, tier, expected
 ):
     from openai_codex import client as sdk_client

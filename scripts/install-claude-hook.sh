@@ -2,7 +2,7 @@
 # Install the approval-bridge hook into the Claude CLI's settings.
 #
 # Two things, both additive and both reversible with --uninstall: copy
-# `scripts/claude_hooks/jarvis_approval.py` to ~/.claude/hooks/, and merge the hook
+# `scripts/claude_hooks/keryx_approval.py` to ~/.claude/hooks/, and merge the hook
 # entries it needs into ~/.claude/settings.json. Existing hooks are left alone; the
 # settings file is backed up into ~/.claude/backups/ before it is touched.
 set -euo pipefail
@@ -14,11 +14,14 @@ source "${here}/lib.sh"
 claude_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 settings="${claude_dir}/settings.json"
 hooks_dir="${claude_dir}/hooks"
-target="${hooks_dir}/jarvis_approval.py"
+target="${hooks_dir}/keryx_approval.py"
+# What the hook was called before the service was Keryx: replaced, never left beside it,
+# or every prompt would reach the broker twice (and the old one never at all).
+old_target="${hooks_dir}/jarvis_approval.py"
 uninstall=0
 [[ "${1:-}" == "--uninstall" ]] && uninstall=1
 # Where the broker listens: STATE_DIR, as the service resolves it (lib.sh). The hook reads
-# JARVIS_STATE_DIR and never the configuration, so it is always written into the command.
+# KERYX_STATE_DIR and never the configuration, so it is always written into the command.
 (( uninstall )) || require_paths
 state_dir="${RESOLVED_STATE_DIR:-}"
 
@@ -29,10 +32,11 @@ else
   echo '{}' > "${settings}"
 fi
 
+rm -f "${old_target}"
 if (( uninstall )); then
   rm -f "${target}"
 else
-  install -m 0755 "${here}/claude_hooks/jarvis_approval.py" "${target}"
+  install -m 0755 "${here}/claude_hooks/keryx_approval.py" "${target}"
 fi
 
 python3 - "${settings}" "${target}" "${uninstall}" "${state_dir%/}" <<'PY'
@@ -55,7 +59,7 @@ WANTED = {
 }
 # Always, even at the default: the hook's own fallback is only for one wired up by hand,
 # and a hook that guessed differently from the broker would leave every prompt unescalated.
-raise_command = f"env JARVIS_STATE_DIR={shlex.quote(state_dir)} python3 {shlex.quote(target)}"
+raise_command = f"env KERYX_STATE_DIR={shlex.quote(state_dir)} python3 {shlex.quote(target)}"
 # The resolving events fire on *every* tool call, so the common case — nothing pending —
 # must not pay for a Python interpreter. `sh` costs a millisecond, and it drains stdin
 # rather than leaving the CLI writing into a closed pipe. Quoted as a whole, so a path that
@@ -68,7 +72,11 @@ for event, timeout in WANTED.items():
     groups = hooks.setdefault(event, [])
     groups[:] = [
         group for group in groups
-        if not any("jarvis_approval.py" in str(h.get("command", "")) for h in group.get("hooks", []))
+        if not any(
+            name in str(h.get("command", ""))
+            for h in group.get("hooks", [])
+            for name in ("keryx_approval.py", "jarvis_approval.py")
+        )
     ]
     if not uninstall:
         command = raise_command if event == "PermissionRequest" else resolve_command
@@ -84,5 +92,5 @@ PY
 
 if (( ! uninstall )); then
   echo "hook script: ${target}"
-  echo "turn it off at any time with: uv run jarvis approvals --disable"
+  echo "turn it off at any time with: uv run keryx approvals --disable"
 fi

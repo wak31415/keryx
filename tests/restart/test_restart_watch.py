@@ -12,11 +12,11 @@ from xml.etree import ElementTree
 
 import pytest
 
-from jarvis.config import Settings
-from jarvis.restart.logscan import log_dir
-from jarvis.restart.logscan import marks as log_marks
-from jarvis.restart.store import RECORD_NAME, RestartRecord, RestartStore
-from jarvis.restart.watchdog import (
+from keryx.config import Settings
+from keryx.restart.logscan import log_dir
+from keryx.restart.logscan import marks as log_marks
+from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
+from keryx.restart.watchdog import (
     ALERTED,
     CONFIRMED,
     MAX_SMS_CHARS,
@@ -29,8 +29,8 @@ from jarvis.restart.watchdog import (
 OWNER = "+15550000001"
 TRACEBACK = (
     "Traceback (most recent call last):\n"
-    '  File "/repo/src/jarvis/cli.py", line 12, in <module>\n'
-    "ModuleNotFoundError: No module named 'jarvis.nope'\n"
+    '  File "/repo/src/keryx/cli.py", line 12, in <module>\n'
+    "ModuleNotFoundError: No module named 'keryx.nope'\n"
 )
 
 
@@ -49,7 +49,7 @@ class FakeTwilioOut:
     @property
     def can_text(self) -> bool:
         """Mirrors the real one: credentials *and* `SMS_ENABLED`, derived not snapshotted,
-        so a test that drops `configured` afterwards stops texting the way Jarvis would."""
+        so a test that drops `configured` afterwards stops texting the way Keryx would."""
         return self.configured and self.sms_enabled
 
     async def send_sms(self, to: str, body: str) -> str:
@@ -90,7 +90,7 @@ class FakeClock:
 def make_settings(tmp_path: Path, **overrides) -> Settings:
     values = {
         "openai_api_key": "test",
-        "data_dir": tmp_path / "jarvis",
+        "data_dir": tmp_path / "keryx",
         "state_dir": tmp_path / "state",
         "owner_number_explicit": OWNER,
     }
@@ -112,7 +112,7 @@ def pending(**fields) -> RestartRecord:
         "requested_at": (datetime.now(UTC) - timedelta(seconds=90)).isoformat(),
         "reason": "picked up new code",
         "number": OWNER,
-        "target": "systemd jarvis.service",
+        "target": "systemd keryx.service",
         "version": "v1-abc1234",
     }
     values.update(fields)
@@ -171,7 +171,7 @@ async def test_no_pending_restart_is_nothing_to_watch(harness):
     assert not harness.twilio.sms and not harness.twilio.calls
 
 
-async def test_a_record_that_disappears_means_jarvis_confirmed_it_itself(harness):
+async def test_a_record_that_disappears_means_keryx_confirmed_it_itself(harness):
     harness.store.save(pending())
     harness.clock.on_sleep = lambda count: harness.store.clear() if count == 2 else None
 
@@ -179,7 +179,7 @@ async def test_a_record_that_disappears_means_jarvis_confirmed_it_itself(harness
     assert not harness.twilio.sms and not harness.twilio.calls
 
 
-async def test_a_restart_jarvis_already_reported_is_left_alone(harness):
+async def test_a_restart_keryx_already_reported_is_left_alone(harness):
     """`failed` means it came back far enough to know — and therefore to have said so."""
     harness.store.save(pending(state="failed", error="systemctl exited 1"))
 
@@ -219,16 +219,16 @@ async def test_the_alert_call_is_spoken_and_needs_nothing_of_ours_to_answer(harn
     await harness.run()
 
     words = spoken(harness.twilio.calls[0]["twiml"])
-    assert "Jarvis alert" in words
+    assert "Keryx alert" in words
     assert "did not come back" in words
     assert "by text" in words  # the detail is in the message, not read out
 
 
 async def test_the_alert_carries_the_error_the_logs_have(harness):
     """This is the answer to "did the update work", and it is the only one there is."""
-    write_log(harness.settings, "jarvis.log", "old news\n")
+    write_log(harness.settings, "keryx.log", "old news\n")
     harness.store.save(pending(log_marks=log_marks(harness.settings.state_dir)))
-    write_log(harness.settings, "jarvis.err.log", TRACEBACK)
+    write_log(harness.settings, "keryx.err.log", TRACEBACK)
 
     await harness.run()
 
@@ -257,7 +257,7 @@ async def test_a_service_that_answers_but_never_confirmed_is_worded_differently(
 
 
 async def test_the_alert_marks_the_record_so_a_late_start_does_not_ring_about_it(harness):
-    """A record left pending is a Jarvis that starts an hour later and calls about this."""
+    """A record left pending is a Keryx that starts an hour later and calls about this."""
     harness.store.save(pending())
 
     await harness.run()
@@ -328,7 +328,7 @@ async def test_the_deadline_is_reached_by_polling_not_by_waiting(harness):
 
 
 async def test_with_texting_off_the_alert_is_the_call(tmp_path):
-    """Jarvis is down, so the `<Say>` call is the only channel left that works at all."""
+    """Keryx is down, so the `<Say>` call is the only channel left that works at all."""
     harness = Harness(make_settings(tmp_path), twilio=FakeTwilioOut(sms_enabled=False))
     harness.store.save(pending())
 

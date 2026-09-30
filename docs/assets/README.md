@@ -7,7 +7,7 @@ answer when the mark is copied into a slide, a favicon or a social preview.
 
 | File | What it is |
 |---|---|
-| `jarvis-mark.svg` | The mark: three rounded bars of a voice, the tallest in the middle. Geometry only — no text, so it needs no font and renders identically everywhere. |
+| `keryx-mark.svg` | The mark: three rounded bars of a voice, the tallest in the middle. Geometry only — no text, so it needs no font and renders identically everywhere. |
 
 The colours are the "sunset" set — orange `#f97316`, pink `#db2777`, violet `#7c3aed` — and
 the file carries its own dark-mode tones (`#fb923c`, `#f472b6`, `#a78bfa`) behind a

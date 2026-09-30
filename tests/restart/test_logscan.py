@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.restart.logscan import (
+from keryx.restart.logscan import (
     LOG_NAMES,
     MAX_ERRORS,
     MAX_LINE_CHARS,
@@ -19,9 +19,9 @@ from jarvis.restart.logscan import (
 )
 
 TRACEBACK = """Traceback (most recent call last):
-  File "/repo/src/jarvis/cli.py", line 12, in <module>
-    from jarvis.tools import builtin
-ModuleNotFoundError: No module named 'jarvis.tools.nope'
+  File "/repo/src/keryx/cli.py", line 12, in <module>
+    from keryx.tools import builtin
+ModuleNotFoundError: No module named 'keryx.tools.nope'
 """
 
 
@@ -42,9 +42,9 @@ def write(state_dir: Path, name: str, text: str) -> None:
 
 
 def test_marks_records_the_length_of_every_log(state_dir: Path) -> None:
-    write(state_dir, "jarvis.log", "hello\n")
+    write(state_dir, "keryx.log", "hello\n")
     taken = marks(state_dir)
-    assert taken["jarvis.log"] == 6
+    assert taken["keryx.log"] == 6
 
 
 def test_a_log_that_is_not_there_yet_is_marked_at_zero(state_dir: Path) -> None:
@@ -59,16 +59,16 @@ def test_marks_of_a_missing_log_directory_are_all_zero(tmp_path: Path) -> None:
 
 
 def test_nothing_is_reported_from_before_the_mark(state_dir: Path) -> None:
-    write(state_dir, "jarvis.log", "2026-08-26 ERROR   jarvis: last month's problem\n")
+    write(state_dir, "keryx.log", "2026-08-26 ERROR   keryx: last month's problem\n")
     taken = marks(state_dir)
-    write(state_dir, "jarvis.log", "2026-08-26 INFO    jarvis: all is well\n")
+    write(state_dir, "keryx.log", "2026-08-26 INFO    keryx: all is well\n")
     assert not errors_since(state_dir, taken)
 
 
 def test_an_error_after_the_mark_is_reported(state_dir: Path) -> None:
-    write(state_dir, "jarvis.log", "2026-08-26 INFO    jarvis: starting\n")
+    write(state_dir, "keryx.log", "2026-08-26 INFO    keryx: starting\n")
     taken = marks(state_dir)
-    write(state_dir, "jarvis.log", "2026-08-26 ERROR   jarvis.tools: no such tool\n")
+    write(state_dir, "keryx.log", "2026-08-26 ERROR   keryx.tools: no such tool\n")
     found = errors_since(state_dir, taken)
     assert found.count == 1
     assert found.lines[0].endswith("no such tool")
@@ -76,21 +76,21 @@ def test_an_error_after_the_mark_is_reported(state_dir: Path) -> None:
 
 def test_critical_counts_as_an_error(state_dir: Path) -> None:
     taken = marks(state_dir)
-    write(state_dir, "jarvis.log", "2026-08-26 CRITICAL jarvis: the wheels came off\n")
+    write(state_dir, "keryx.log", "2026-08-26 CRITICAL keryx: the wheels came off\n")
     assert errors_since(state_dir, taken).count == 1
 
 
 def test_a_traceback_is_reported_as_the_line_that_ends_it(state_dir: Path) -> None:
     taken = marks(state_dir)
-    write(state_dir, "jarvis.err.log", TRACEBACK)
+    write(state_dir, "keryx.err.log", TRACEBACK)
     found = errors_since(state_dir, taken)
     assert found.count == 1
-    assert found.lines == ("ModuleNotFoundError: No module named 'jarvis.tools.nope'",)
+    assert found.lines == ("ModuleNotFoundError: No module named 'keryx.tools.nope'",)
 
 
 def test_a_traceback_with_no_ending_still_reports_its_header(state_dir: Path) -> None:
     taken = marks(state_dir)
-    write(state_dir, "jarvis.err.log", "Traceback (most recent call last):\n  File 'x', line 1\n")
+    write(state_dir, "keryx.err.log", "Traceback (most recent call last):\n  File 'x', line 1\n")
     found = errors_since(state_dir, taken)
     assert found.count == 1
     assert found.lines[0].startswith("Traceback")
@@ -98,7 +98,7 @@ def test_a_traceback_with_no_ending_still_reports_its_header(state_dir: Path) ->
 
 def test_back_to_back_tracebacks_are_counted_separately(state_dir: Path) -> None:
     taken = marks(state_dir)
-    write(state_dir, "jarvis.err.log", TRACEBACK * 2)
+    write(state_dir, "keryx.err.log", TRACEBACK * 2)
     assert errors_since(state_dir, taken).count == 2
 
 
@@ -111,7 +111,7 @@ def test_every_log_file_is_scanned(state_dir: Path) -> None:
 
 def test_only_the_last_few_lines_are_kept(state_dir: Path) -> None:
     taken = marks(state_dir)
-    write(state_dir, "jarvis.log", "".join(f"ERROR problem {n}\n" for n in range(10)))
+    write(state_dir, "keryx.log", "".join(f"ERROR problem {n}\n" for n in range(10)))
     found = errors_since(state_dir, taken)
     assert found.count == 10
     assert len(found.lines) == MAX_ERRORS
@@ -120,33 +120,33 @@ def test_only_the_last_few_lines_are_kept(state_dir: Path) -> None:
 
 def test_a_long_line_is_trimmed_for_speech(state_dir: Path) -> None:
     taken = marks(state_dir)
-    write(state_dir, "jarvis.log", "ERROR " + "x" * 500 + "\n")
+    write(state_dir, "keryx.log", "ERROR " + "x" * 500 + "\n")
     (line,) = errors_since(state_dir, taken).lines
     assert len(line) == MAX_LINE_CHARS
     assert line.endswith("…")
 
 
 def test_a_log_that_rotated_under_us_is_read_from_the_start(state_dir: Path) -> None:
-    write(state_dir, "jarvis.log", "x" * 5000)
+    write(state_dir, "keryx.log", "x" * 5000)
     taken = marks(state_dir)
     # Rotation replaces the file with a short new one, so the mark is now past its end.
-    (log_dir(state_dir) / "jarvis.log").write_text("ERROR after the rotation\n", encoding="utf-8")
+    (log_dir(state_dir) / "keryx.log").write_text("ERROR after the rotation\n", encoding="utf-8")
     assert errors_since(state_dir, taken).count == 1
 
 
 def test_no_marks_means_nothing_found_rather_than_the_whole_file(state_dir: Path) -> None:
-    write(state_dir, "jarvis.log", "ERROR months of history\n" * 50)
+    write(state_dir, "keryx.log", "ERROR months of history\n" * 50)
     assert not errors_since(state_dir, {})
     assert not errors_since(state_dir, None)
 
 
 def test_a_missing_log_directory_is_not_an_error(tmp_path: Path) -> None:
-    assert not errors_since(tmp_path / "nowhere", {"jarvis.log": 0})
+    assert not errors_since(tmp_path / "nowhere", {"keryx.log": 0})
 
 
 def test_undecodable_bytes_do_not_stop_the_scan(state_dir: Path) -> None:
     taken = marks(state_dir)
-    (log_dir(state_dir) / "jarvis.log").write_bytes(b"\xff\xfe ERROR still readable\n")
+    (log_dir(state_dir) / "keryx.log").write_bytes(b"\xff\xfe ERROR still readable\n")
     assert errors_since(state_dir, taken).count == 1
 
 

@@ -1,0 +1,22 @@
+# cluster_stats: "what's free on the cluster?" and "am I still running?" read from Slurm.
+# It only reads (squeue and sinfo), and it never opens a connection of its own: each host
+# must have an ssh ControlMaster in ~/.ssh/config, and it asks only while you are logged
+# in there already. Changes here count from the next call; no restart.
+#
+# `keryx plugins hosts` lists the hosts it could ask. `keryx plugins remove
+# cluster_stats` turns this off.
+
+# A script of your own to run every Slurm read through, as `GUARD --host HOST SCRIPT`,
+# exiting 42 when the login has expired. Blank: the built-in one, which checks the
+# ControlMaster's local socket (`ssh -O check`) before anything else.
+guard = {guard}
+
+# How long a cluster may take to answer, in seconds. Every cluster is asked at once,
+# inside a call, so this is the whole wait.
+timeout_s = {timeout_s}
+{extra}
+
+# One line per host: its ssh alias from ~/.ssh/config, which is also the word you say,
+# and the Slurm partition its GPUs are in. For example:  mycluster = "gpu"
+[clusters]
+{clusters}

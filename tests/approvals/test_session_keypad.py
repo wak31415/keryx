@@ -12,16 +12,16 @@ import pytest
 from fakes import FakeProvider, FakeTransport, eventually
 from test_session import make_settings, running
 
-from jarvis.events import EventBus
-from jarvis.session import (
+from keryx.events import EventBus
+from keryx.session import (
     PIN_ENTRY_CANCELLED_MESSAGE,
     PIN_ENTRY_MESSAGE,
     PIN_SHORT_MESSAGE,
     VoiceSession,
 )
-from jarvis.tools import ToolRegistry
-from jarvis.transports.base import Dtmf
-from jarvis.trust import TrustLevel
+from keryx.tools import ToolRegistry
+from keryx.transports.base import Dtmf
+from keryx.trust import TrustLevel
 
 PIN = "424242"
 
@@ -149,10 +149,10 @@ async def test_a_session_with_no_keypad_behaves_as_before(phone, provider, tmp_p
         assert [text for text, _, _ in provider.injected[1:]] == []
 
 
-# --- a call Jarvis placed ---------------------------------------------------
+# --- a call Keryx placed ---------------------------------------------------
 
 
-async def test_a_call_jarvis_placed_can_still_key_the_pin_in(phone, provider, keypad, tmp_path):
+async def test_a_call_keryx_placed_can_still_key_the_pin_in(phone, provider, keypad, tmp_path):
     """Possession may answer an approval, and the owner may still want the rest of it.
 
     So with nothing armed, a digit on such a call is a PIN attempt exactly as before — a
@@ -231,7 +231,7 @@ async def test_any_key_at_all_counts(phone, provider, keypad, tmp_path):
 # --- the way back to the PIN while a menu is armed --------------------------
 #
 # The dead end this closes: on an escalation call the owner may want FULL — to dispatch
-# work, or to ask for something else while they have Jarvis on the line — and every digit
+# work, or to ask for something else while they have Keryx on the line — and every digit
 # they type goes to the armed menu, which reads each one back as an unrecognised key. `*`
 # is never part of a PIN and never an answer to a menu, so it is free to mean "the keypad
 # is for the PIN now", and free to mean it again in reverse.

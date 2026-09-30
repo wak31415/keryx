@@ -6,13 +6,13 @@ import stat
 
 import pytest
 
-from jarvis.agents.base import RunResult
-from jarvis.config.store import ConfigStore
-from jarvis.continuity.memory import read_memory, seed_memory
-from jarvis.projects import MAX_BRIEF_CHARS, MAX_BRIEFS_CHARS, discover_briefs, discover_projects
-from jarvis.projects import summaries_dir as summaries
-from jarvis.setup import project_context
-from jarvis.setup.project_context import build_prompt, parse_draft
+from keryx.agents.base import RunResult
+from keryx.config.store import ConfigStore
+from keryx.continuity.memory import read_memory, seed_memory
+from keryx.projects import MAX_BRIEF_CHARS, MAX_BRIEFS_CHARS, discover_briefs, discover_projects
+from keryx.projects import summaries_dir as summaries
+from keryx.setup import project_context
+from keryx.setup.project_context import build_prompt, parse_draft
 
 from .fakes import DEFAULT
 
@@ -111,7 +111,7 @@ def test_the_owner_accepts_edits_and_drops_and_only_that_is_kept(make_ctx, world
             ("remember about you", ["1"]),
         ]
     )
-    seed_memory(ctx.settings.data_dir, owner="Ada", facts=["Old fact."])
+    seed_memory(ctx.settings.data_dir, owner="Ada", assistant="Lyra", facts=["Old fact."])
 
     project_context.run_section(ctx)
 
@@ -266,7 +266,7 @@ def test_no_facts_kept_and_a_memory_too_full_are_both_quiet_failures(make_ctx, w
     project_context.run_section(none_kept)
     assert not (none_kept.settings.data_dir / "memory.md").exists()
 
-    from jarvis.continuity.memory import MAX_MEMORY_CHARS
+    from keryx.continuity.memory import MAX_MEMORY_CHARS
 
     world.task_result = RunResult(ok=True, final_text=answer([], ["x" * MAX_MEMORY_CHARS]))
     too_full = make_ctx([("explore", "folders"), ("Folders", str(root)), ("remember", ["0"])])

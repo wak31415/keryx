@@ -3,8 +3,8 @@ nothing unlocks."""
 
 import pytest
 
-from jarvis.config import GROUPS, Settings, env_var_name, field_group, is_secret
-from jarvis.config.permissions import (
+from keryx.config import GROUPS, Settings, env_var_name, field_group, is_secret
+from keryx.config.permissions import (
     PROTECTED_KEYS,
     current_actor,
     is_protected,
@@ -39,7 +39,7 @@ def test_nothing_protected_defaults_to_writable():
 @pytest.mark.parametrize(
     "key",
     [
-        "JARVIS_PIN",
+        "KERYX_PIN",
         "ALLOWED_CALLERS",
         "OWNER_NUMBER",
         "BRIEFING_BEFORE_PIN",
@@ -77,6 +77,7 @@ def test_the_writable_defaults_are_the_ones_you_would_say_on_a_call():
     """A plugin's settings are in its own file, which `set_config` does not reach: the
     budget and the email model went with them (2026-09-29), an accepted cost."""
     assert set(writable_keys({})) == {
+        "ASSISTANT_NAME",
         "OPENAI_VOICE",
         "VAD_MODE",
         "VAD_EAGERNESS",
@@ -104,7 +105,15 @@ def test_an_override_moves_an_unprotected_key_either_way():
     assert not service_writable("NOT_A_SETTING", {"NOT_A_SETTING": True})
 
 
-def test_the_actor_is_the_service_only_inside_jarvis_serve(monkeypatch):
+def test_the_actor_is_the_service_only_inside_keryx_serve(monkeypatch):
     assert current_actor() == "owner"
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+    assert current_actor() == "service"
+
+
+def test_a_subagent_of_the_old_service_is_still_the_service(monkeypatch):
+    """Security, not courtesy: `jarvis serve` marks its subagents with the old name, and
+    one of them running the new command must not be taken for the owner at a terminal."""
     monkeypatch.setenv("JARVIS_ACTOR", "service")
+
     assert current_actor() == "service"

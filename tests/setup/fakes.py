@@ -1,4 +1,4 @@
-"""A scripted terminal and a fake outside world for `jarvis setup`.
+"""A scripted terminal and a fake outside world for `keryx setup`.
 
 `ScriptedPrompter` answers each question from a list of `(fragment, answer)` pairs, taken
 in order: the question's text must contain the fragment, so a test that drifts out of step
@@ -12,11 +12,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from jarvis.agents.base import RunResult
-from jarvis.issues import GhStatus
-from jarvis.notify.twilio_out import TwilioError, TwilioNumber
-from jarvis.setup.context import Probes
-from jarvis.setup.ui import Choice
+from keryx.agents.base import RunResult
+from keryx.issues import GhStatus
+from keryx.notify.twilio_out import TwilioError, TwilioNumber
+from keryx.setup.context import Probes
+from keryx.setup.ui import Choice
 
 
 class ScriptedPrompter:

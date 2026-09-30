@@ -7,9 +7,9 @@ asserts on what the session did with them. Neither touches a socket, a mic or a 
 import asyncio
 from collections.abc import AsyncIterator, Callable
 
-from jarvis.realtime.base import ProviderEvent, SessionConfig
-from jarvis.transports.base import AudioFormat, Hangup, TransportEvent
-from jarvis.trust import TrustLevel
+from keryx.realtime.base import ProviderEvent, SessionConfig
+from keryx.transports.base import AudioFormat, Hangup, TransportEvent
+from keryx.trust import TrustLevel
 
 _END = object()
 

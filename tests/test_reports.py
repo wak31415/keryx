@@ -10,11 +10,11 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
-from jarvis.app import build_app_state
-from jarvis.config import Settings
-from jarvis.notify.reports import report_token, verify_report_token
-from jarvis.server import create_app
-from jarvis.tasks.models import Task, TaskKind
+from keryx.app import build_app_state
+from keryx.config import Settings
+from keryx.notify.reports import report_token, verify_report_token
+from keryx.server import create_app
+from keryx.tasks.models import Task, TaskKind
 
 SECRET = "a-report-secret"
 REPORT = "# Task 1 — research\n\nfind the thing\n\n---\n\nI found the thing.\n"
@@ -23,8 +23,8 @@ REPORT = "# Task 1 — research\n\nfind the thing\n\n---\n\nI found the thing.\n
 def make_settings(tmp_path, **overrides) -> Settings:
     values = {
         "openai_api_key": "test",
-        "data_dir": tmp_path / "jarvis",
-        "public_host": "jarvis.example",
+        "data_dir": tmp_path / "keryx",
+        "public_host": "keryx.example",
         "report_secret": SECRET,
     }
     values.update(overrides)

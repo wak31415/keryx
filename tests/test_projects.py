@@ -2,7 +2,7 @@
 
 import logging
 
-from jarvis.projects import (
+from keryx.projects import (
     MAX_BRIEF_CHARS,
     MAX_BRIEFS_CHARS,
     discover_briefs,
@@ -24,8 +24,8 @@ def test_configured_projects_come_first_then_the_root(settings, tmp_path):
 
 def test_a_configured_project_inside_the_root_is_listed_once(settings, tmp_path):
     root = tmp_path / "projects"
-    (root / "jarvis").mkdir(parents=True)
-    settings.projects = {"the voice thing": str(root / "jarvis")}
+    (root / "keryx").mkdir(parents=True)
+    settings.projects = {"the voice thing": str(root / "keryx")}
     settings.projects_root = root
 
     assert list(discover_projects(settings)) == ["the voice thing"]
@@ -62,7 +62,7 @@ def test_a_missing_root_is_not_an_error(settings, tmp_path):
 def test_a_project_with_a_brief_describes_itself(settings, tmp_path):
     root = tmp_path / "projects"
     (root / "orchard-sensor-net").mkdir(parents=True)
-    (root / "orchard-sensor-net" / ".jarvis-brief.md").write_text(
+    (root / "orchard-sensor-net" / ".keryx-brief.md").write_text(
         "Soil sensors in an orchard.\n", encoding="utf-8"
     )
     (root / "quiet").mkdir()
@@ -75,10 +75,26 @@ def test_a_project_with_a_brief_describes_itself(settings, tmp_path):
     ]
 
 
+def test_a_brief_written_before_the_rename_is_still_read_and_the_new_name_wins(
+    settings, tmp_path
+):
+    root = tmp_path / "projects"
+    (root / "old").mkdir(parents=True)
+    (root / "old" / ".jarvis-brief.md").write_text("Written long ago.\n", encoding="utf-8")
+    (root / "both").mkdir()
+    (root / "both" / ".jarvis-brief.md").write_text("Stale.\n", encoding="utf-8")
+    (root / "both" / ".keryx-brief.md").write_text("Current.\n", encoding="utf-8")
+    settings.projects_root = root
+
+    briefs = dict((b.name, b.text) for b in discover_briefs(discover_projects(settings)))
+
+    assert briefs == {"old": "Written long ago.", "both": "Current."}
+
+
 def test_a_very_long_brief_is_capped(settings, tmp_path):
     root = tmp_path / "projects"
     (root / "verbose").mkdir(parents=True)
-    (root / "verbose" / ".jarvis-brief.md").write_text("word " * 2000, encoding="utf-8")
+    (root / "verbose" / ".keryx-brief.md").write_text("word " * 2000, encoding="utf-8")
     settings.projects_root = root
 
     (brief,) = discover_briefs(discover_projects(settings))
@@ -90,7 +106,7 @@ def test_a_very_long_brief_is_capped(settings, tmp_path):
 def test_an_empty_brief_is_no_brief(settings, tmp_path):
     root = tmp_path / "projects"
     (root / "blank").mkdir(parents=True)
-    (root / "blank" / ".jarvis-brief.md").write_text("   \n", encoding="utf-8")
+    (root / "blank" / ".keryx-brief.md").write_text("   \n", encoding="utf-8")
     settings.projects_root = root
 
     assert discover_briefs(discover_projects(settings)) == []
@@ -103,13 +119,13 @@ def test_the_briefs_together_are_capped_and_what_is_left_out_is_logged(tmp_path,
     for index in range(10):
         path = tmp_path / f"project-{index}"
         path.mkdir()
-        (path / ".jarvis-brief.md").write_text(f"{index} " + "x" * (MAX_BRIEF_CHARS - 10))
+        (path / ".keryx-brief.md").write_text(f"{index} " + "x" * (MAX_BRIEF_CHARS - 10))
         projects[f"project-{index}"] = path
     (tmp_path / "short").mkdir()
-    (tmp_path / "short" / ".jarvis-brief.md").write_text("A short one.")
+    (tmp_path / "short" / ".keryx-brief.md").write_text("A short one.")
     projects["short"] = tmp_path / "short"
 
-    with caplog.at_level(logging.WARNING, logger="jarvis.projects"):
+    with caplog.at_level(logging.WARNING, logger="keryx.projects"):
         briefs = discover_briefs(projects)
 
     assert sum(len(brief.text) for brief in briefs) <= MAX_BRIEFS_CHARS
@@ -124,11 +140,11 @@ def test_the_briefs_together_are_capped_and_what_is_left_out_is_logged(tmp_path,
 
 
 def test_a_summary_stands_in_for_a_missing_brief_and_a_repo_brief_wins(settings, tmp_path):
-    from jarvis.projects import summaries_dir
+    from keryx.projects import summaries_dir
 
     for name in ("orchard", "weather", "quiet"):
         (settings.projects_root / name).mkdir(parents=True)
-    (settings.projects_root / "orchard" / ".jarvis-brief.md").write_text("The repo's own.")
+    (settings.projects_root / "orchard" / ".keryx-brief.md").write_text("The repo's own.")
     written = summaries_dir(settings)
     written.mkdir(parents=True)
     (written / "orchard.md").write_text("Setup's draft.")

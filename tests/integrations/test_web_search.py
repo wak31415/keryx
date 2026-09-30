@@ -1,6 +1,6 @@
 """Tests for the voice model's own web search. No network: the transport is injected."""
 
-from jarvis.integrations.web_search import (
+from keryx.integrations.web_search import (
     MAX_ANSWER_CHARS,
     OpenAIWebSearch,
     answer_text,

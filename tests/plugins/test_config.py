@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import plugins
-from jarvis.config.store import ConfigStore
-from jarvis.integrations.gmail import token_path
-from jarvis.tools.custom import ToolUnavailable
+from keryx import plugins
+from keryx.config.store import ConfigStore
+from keryx.integrations.gmail import token_path
+from keryx.tools.custom import ToolUnavailable
 from plugins.helpers import loaded, loading, names, turn_on
 
 
@@ -26,7 +26,7 @@ def test_a_fresh_file_is_the_template_with_the_defaults(settings):
     path = plugins.write_config(settings, "check_billing", {})
 
     text = path.read_text()
-    assert "jarvis config set OPENAI_ADMIN_KEY --stdin" in text
+    assert "keryx config set OPENAI_ADMIN_KEY --stdin" in text
     assert tomllib.loads(text) == plugins.defaults("check_billing")
     assert mode(path) == 0o600
 
@@ -150,7 +150,7 @@ def test_status_goes_through_the_loader_a_call_uses(settings):
     found = {status.name: status for status in plugins.status(settings)}
 
     assert found["check_billing"].on and found["check_billing"].refused is None
-    assert not found["check_email"].on and "jarvis auth login gmail" in found["check_email"].refused
+    assert not found["check_email"].on and "keryx auth login gmail" in found["check_email"].refused
     assert not found["send_to_slack"].installed and found["send_to_slack"].refused is None
     assert found["send_to_slack"].values["channel_id"] == "D1"
     assert found["cluster_stats"].as_dict()["on"] is False
@@ -172,7 +172,7 @@ def test_every_template_runs_from_where_it_ships(settings, name):
     Beside it is no settings file, so each either builds its tool on the defaults or refuses
     with a reason, never a traceback.
     """
-    source = Path(str(resources.files("jarvis.plugins").joinpath("templates", f"{name}.py")))
+    source = Path(str(resources.files("keryx.plugins").joinpath("templates", f"{name}.py")))
     spec = importlib.util.spec_from_file_location(f"template_{name}", source)
     module = importlib.util.module_from_spec(spec)
 
@@ -265,10 +265,10 @@ def test_command_line_values_are_its_own_keys_cleaned():
 @pytest.mark.parametrize(
     ("name", "assignment", "says"),
     [
-        ("send_to_slack", "SLACK_BOT_TOKEN=xoxb-1", "jarvis config set SLACK_BOT_TOKEN --stdin"),
-        ("check_billing", "openai_admin_key=sk", "jarvis config set OPENAI_ADMIN_KEY --stdin"),
+        ("send_to_slack", "SLACK_BOT_TOKEN=xoxb-1", "keryx config set SLACK_BOT_TOKEN --stdin"),
+        ("check_billing", "openai_admin_key=sk", "keryx config set OPENAI_ADMIN_KEY --stdin"),
         ("send_to_slack", "bot_token=xoxb-1", "its secrets: SLACK_BOT_TOKEN"),
-        ("check_email", "token=x", "jarvis auth login gmail"),
+        ("check_email", "token=x", "keryx auth login gmail"),
         ("cluster_stats", "clusters=alpha", "has no setting"),
         ("check_billing", "budget", "is not KEY=VALUE"),
     ],

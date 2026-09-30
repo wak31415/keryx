@@ -1,10 +1,10 @@
-"""Tests for jarvis.audio.util."""
+"""Tests for keryx.audio.util."""
 
 import threading
 
 import numpy as np
 
-from jarvis.audio.util import (
+from keryx.audio.util import (
     AudioGate,
     PlaybackBuffer,
     chunk_bytes,

@@ -10,12 +10,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jarvis.continuity.recall import MAX_LIMIT, Recaller, search_calls, terms
-from jarvis.events import EventBus
-from jarvis.tasks.agent_runner import FakeAgentRunner
-from jarvis.tasks.manager import TaskManager
-from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import TaskStore
+from keryx.continuity.recall import MAX_LIMIT, Recaller, search_calls, terms
+from keryx.events import EventBus
+from keryx.tasks.agent_runner import FakeAgentRunner
+from keryx.tasks.manager import TaskManager
+from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.store import TaskStore
 
 
 @pytest.fixture
@@ -119,7 +119,7 @@ def test_an_unreadable_mtime_leaves_the_date_blank_rather_than_guessing(settings
     path = settings.data_dir / "calls" / "old.log"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("[14:02:11] user: the orchard thing\n")
-    monkeypatch.setattr("jarvis.continuity.recall._file_date", lambda _path: None)
+    monkeypatch.setattr("keryx.continuity.recall._file_date", lambda _path: None)
 
     assert search_calls(settings.data_dir, ["orchard"], limit=4)[0].when == ""
 

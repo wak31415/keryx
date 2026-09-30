@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Something Jarvis should be able to do
+about: Something Keryx should be able to do
 labels: enhancement
 ---
 
@@ -10,7 +10,7 @@ labels: enhancement
 
 **What happens today**
 
-**Why it belongs in Jarvis rather than in a subagent**
+**Why it belongs in Keryx rather than in a subagent**
 
 <!-- The default answer to "can it do X" is "ask Claude to do X" — a task already has the
 machine, the repos, the mailbox and every installed skill. A new *tool* on the voice model

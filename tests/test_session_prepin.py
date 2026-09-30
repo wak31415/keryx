@@ -14,19 +14,19 @@ import pytest
 from fakes import FakeProvider, FakeTransport, eventually
 from test_session import make_settings, running
 
-from jarvis.continuity.briefing import Briefing
-from jarvis.continuity.transcripts import was_authorized
-from jarvis.events import EventBus, SessionEnded
-from jarvis.realtime.base import FunctionCall, Transcript
-from jarvis.session import (
+from keryx.continuity.briefing import Briefing
+from keryx.continuity.transcripts import was_authorized
+from keryx.events import EventBus, SessionEnded
+from keryx.realtime.base import FunctionCall, Transcript
+from keryx.session import (
     ENROL_CONFIRM_MESSAGE,
     OPENING_MESSAGE,
     PIN_ACCEPTED_MESSAGE,
     VoiceSession,
 )
-from jarvis.tools import ToolRegistry
-from jarvis.transports.base import Dtmf
-from jarvis.trust import TrustLevel
+from keryx.tools import ToolRegistry
+from keryx.transports.base import Dtmf
+from keryx.trust import TrustLevel
 
 PIN = "123456"
 NONE, POSSESSION = TrustLevel.NONE, TrustLevel.POSSESSION
@@ -104,7 +104,7 @@ def local():
 
 @pytest.fixture
 def tools():
-    """`submit_pin` exactly as `jarvis.tools.builtin` delegates it."""
+    """`submit_pin` exactly as `keryx.tools.builtin` delegates it."""
     registry = ToolRegistry()
 
     async def submit_pin(ctx, arguments: dict) -> dict:
@@ -228,7 +228,7 @@ async def test_briefing_before_pin_off_restores_the_old_silence(make_session, ph
         assert briefer.builds == 0  # not even read
 
 
-async def test_with_it_off_a_call_jarvis_placed_still_hears_only_the_digest(
+async def test_with_it_off_a_call_keryx_placed_still_hears_only_the_digest(
     make_session, phone, provider
 ):
     """Possession is proof the owner is holding the phone; the setting is about strangers.
@@ -327,7 +327,7 @@ async def test_a_wrong_pin_delivers_nothing(make_session, phone, provider):
         assert MEMORY not in provider.config.instructions
 
 
-async def test_a_spoken_pin_takes_a_call_jarvis_placed_to_full(make_session, phone, provider):
+async def test_a_spoken_pin_takes_a_call_keryx_placed_to_full(make_session, phone, provider):
     """The escape hatch that was always there, and does not depend on the keypad at all.
 
     `submit_pin` is one of the five tools ungated at every level, so a call-back whose
@@ -438,7 +438,7 @@ async def test_news_is_announced_into_a_call_before_the_pin(make_session, phone,
     """A result that lands mid-call reaches it, for the same reason the digest does.
 
     Hearing it is still not the owner having been told: `Announced.delivered` takes
-    `POSSESSION` (`jarvis.notify.deliver`), so the call-back and the text still go out.
+    `POSSESSION` (`keryx.notify.deliver`), so the call-back and the text still go out.
     """
     session = make_session(phone, provider)
 
@@ -478,7 +478,7 @@ async def test_an_approval_is_never_announced_into_a_call_that_could_not_answer_
         assert [text for text, *_ in provider.injected] == [OPENING_MESSAGE]
 
 
-async def test_a_call_jarvis_placed_hears_an_approval(make_session, phone, provider):
+async def test_a_call_keryx_placed_hears_an_approval(make_session, phone, provider):
     session = make_session(phone, provider, possession=True)
 
     async with running(session):
@@ -494,7 +494,7 @@ async def test_a_local_session_is_announced_to_as_before(make_session, local, pr
         assert await session.announce("Task 41 finished.") is True
 
 
-# --- a call Jarvis placed itself --------------------------------------------
+# --- a call Keryx placed itself --------------------------------------------
 
 
 def test_a_session_knows_which_task_its_opening_context_is_about(make_session, phone, provider):
@@ -522,7 +522,7 @@ async def test_hearing_the_memory_never_earns_the_right_to_rewrite_it(
 ):
     """The one invariant the 2026-09-19 widening must not touch.
 
-    Reading is cheap to get wrong and recoverable; *writing* what Jarvis believes is not.
+    Reading is cheap to get wrong and recoverable; *writing* what Keryx believes is not.
     A spoofer who hears the memory read out must still not be able to edit it, so
     `SessionEnded.authorized` stays `FULL`-only and the memory writer never runs for such
     a call — however much that call was handed at the greeting.

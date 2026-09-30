@@ -1,6 +1,6 @@
 # Security policy
 
-Jarvis answers a phone number and hands what it hears to a subagent running with your full
+Keryx answers a phone number and hands what it hears to a subagent running with your full
 user access. Please treat a bug in the PIN gate, the Twilio signature check, the stream
 token, the approval bridge's policy allowlist, or the report links as a security issue
 rather than an ordinary one.
@@ -14,24 +14,24 @@ makes that cheap. So the allowlist is not authentication; the PIN is, and a phon
 spoofer is the whole of what it stands between you and.
 
 It is **not** a defence against a compromised machine, and it was never going to be.
-Anyone who can read your files has `~/.config/jarvis/secrets.toml` and `~/.config/jarvis/pin`
+Anyone who can read your files has `~/.config/keryx/secrets.toml` and `~/.config/keryx/pin`
 — the API keys, the Twilio token, the PIN and everything else. Against that attacker the PIN
-is worth nothing, and Jarvis's directories are already theirs to read directly.
+is worth nothing, and Keryx's directories are already theirs to read directly.
 
 That is why **reads happen before the PIN**. Gating them bought nothing against the
 attacker who matters, and charged a keypad entry to every ordinary call you make. The
 trade is deliberate, and the line it draws is **reading versus acting**: before the PIN,
-on an inbound call, you can hear what Jarvis knows, and nothing the caller says or does
+on an inbound call, you can hear what Keryx knows, and nothing the caller says or does
 changes anything or outlives the call.
 
 - **Until a PIN exists, none of this happens.** The trade above is a read against a keypad
   entry, and it presumes there is an entry to make: on a machine that has never had a PIN
   a phone call cannot authenticate at all, so an allowed caller would otherwise hear the
-  memory read out on every call for ever. Until one is set — by `jarvis setup`, or on the
+  memory read out on every call for ever. Until one is set — by `keryx setup`, or on the
   first call — the briefing is withheld whatever `BRIEFING_BEFORE_PIN` says, and the read-only
   tools over the same material are refused with it.
-- **A call opens knowing what Jarvis knows.** The results you have not been told about,
-  what Jarvis remembers about you (`memory.md`), your project names, your project briefs
+- **A call opens knowing what Keryx knows.** The results you have not been told about,
+  what Keryx remembers about you (`memory.md`), your project names, your project briefs
   and your installed skills all reach the session at the greeting
   (`BRIEFING_BEFORE_PIN`, on by default), and the four voice tools that read the same
   material back — `list_tasks`, `get_task_status`, `get_task_result` and `list_projects` —
@@ -39,9 +39,9 @@ changes anything or outlives the call.
   allowed number hears it. Set `BRIEFING_BEFORE_PIN=false` to hold all of it back until
   the PIN, which also puts those four tools back behind it.
 - **`recall` is the read that still needs the PIN**, and the distinction is deliberate.
-  The briefing is bounded and curated: you can read it with `jarvis memory`, prune it, and
+  The briefing is bounded and curated: you can read it with `keryx memory`, prune it, and
   it is the same page whatever the caller says. `recall` is an unbounded query the *caller*
-  steers, over every raw transcript Jarvis has ever written — a different quantity of
+  steers, over every raw transcript Keryx has ever written — a different quantity of
   exposure, and the one thing on the phone a spoofer could actually mine.
 - **Nothing that acts happens without it.** Every voice tool that hands work to Claude,
   writes something down or changes anything answers `pin_required` first; of the built-in
@@ -57,7 +57,7 @@ changes anything or outlives the call.
   placed and the approval still rings.
 - **Nothing outlives the call.** **No memory update is dispatched for it** — a call that
   read the memory out still cannot rewrite it, which is the invariant that matters most
-  here: hearing what Jarvis believes about you is recoverable, editing it is not. No result
+  here: hearing what Keryx believes about you is recoverable, editing it is not. No result
   can be marked as heard except the ones this call itself read out, no call-back or
   call-back note can be arranged, and nothing is sent anywhere in writing. Its transcript is kept on
   disk, as the record of what was tried, but it is marked as never authorized and `recall`
@@ -68,27 +68,27 @@ changes anything or outlives the call.
 
 ## Setting the first PIN, on the first call
 
-`JARVIS_PIN` is set at the keyboard, and until it is, the phone is no use to you: every
+`KERYX_PIN` is set at the keyboard, and until it is, the phone is no use to you: every
 dispatch is refused, and nothing of yours is read out at all (above). That is the one
 setup step the thing being set up cannot do for itself — so **the first call may key a PIN
 in**, and that is the only way a PIN is ever set from the phone.
 
 **It is a one-way door.** While no PIN exists anywhere — none in the environment, no
-`JARVIS_HOME/pin` — a caller keys six to eight digits, is asked to key the same digits again,
+`KERYX_HOME/pin` — a caller keys six to eight digits, is asked to key the same digits again,
 and once the two match that is the PIN from then on. The moment a PIN exists the door is
-shut, and it is shut by the write itself rather than by a check: `JARVIS_HOME/pin` is created
+shut, and it is shut by the write itself rather than by a check: `KERYX_HOME/pin` is created
 with `O_CREAT | O_EXCL`, so a second write fails in the kernel. There is deliberately no
-setter anywhere — no voice tool, no `jarvis config set` — that can change an enrolled PIN.
-`jarvis setup`, at a terminal, is the owner at the keyboard: it writes a first PIN the same
+setter anywhere — no voice tool, no `keryx config set` — that can change an enrolled PIN.
+`keryx setup`, at a terminal, is the owner at the keyboard: it writes a first PIN the same
 way, and replaces one only after two explicit yeses, with the new digits already typed
-twice, by an atomic rename, so a failure part way leaves the old PIN in place. A Jarvis
-already running keeps the PIN it started with until `jarvis restart`.
+twice, by an atomic rename, so a failure part way leaves the old PIN in place. A Keryx
+already running keeps the PIN it started with until `keryx restart`.
 
 **The accepted risk: whoever calls first sets it.** The window is the few minutes between
-starting Jarvis and making the first call, it closes on first use, and nobody is going to
+starting Keryx and making the first call, it closes on first use, and nobody is going to
 spoof your number inside it; the caller still has to be on `ALLOWED_CALLERS` to reach the
-voice model at all. If you would rather not take that bet, choose the PIN in `jarvis setup`
-before the first call, and there is then no window to close. `jarvis doctor` says where the
+voice model at all. If you would rather not take that bet, choose the PIN in `keryx setup`
+before the first call, and there is then no window to close. `keryx doctor` says where the
 PIN in use came from, never what it is.
 
 **The digits are keyed, never spoken.** Saying a PIN out loud cannot enrol one, because
@@ -97,97 +97,97 @@ outcome here; the keyed digits take the same path as any other keyed PIN and nev
 the model, the transcript or a log line. Three unusable entries leave the PIN for the rest
 of that call — a cap, not a lockout: nothing has been set, so there is nothing to guess
 at, and the next call may still enrol. An enrolled PIN is stored as digits rather than a
-hash, in a 0600 file inside a 0700 `~/.config/jarvis`: six digits fall to any hash in
+hash, in a 0600 file inside a 0700 `~/.config/keryx`: six digits fall to any hash in
 microseconds, so hashing would imply a protection that is not there, and the file sits
 beside `secrets.toml`, which is no less private.
 
 **Where the PIN is does not depend on a setting.** It lives in the configuration directory,
-which only the `JARVIS_HOME` environment variable moves, and not in `DATA_DIR`, which a
+which only the `KERYX_HOME` environment variable moves, and not in `DATA_DIR`, which a
 setting does. When it was `DATA_DIR/pin`, pointing `DATA_DIR` at an empty directory found no
 PIN — and no PIN is an open door. A PIN still in an old `~/.jarvis` keeps the door shut
-too, until `jarvis migrate` has moved it.
+too, until `keryx migrate` has moved it.
 
 **What a subagent can do to it, and what it cannot.** A subagent runs as you with
-`bypassPermissions`, so it can delete `JARVIS_HOME/pin` exactly as it can edit any of your files. What
+`bypassPermissions`, so it can delete `KERYX_HOME/pin` exactly as it can edit any of your files. What
 it cannot do is *rewrite* an enrolled PIN — that is what `O_EXCL` buys — so there is no
 silent swap. Deleting the file is a lockout plus a fresh enrolment window for whoever
-calls next: loud, and visible in `jarvis doctor`, rather than a PIN quietly becoming
-somebody else's. If that worries you, set `JARVIS_PIN` in the service's own environment
+calls next: loud, and visible in `keryx doctor`, rather than a PIN quietly becoming
+somebody else's. If that worries you, set `KERYX_PIN` in the service's own environment
 (the unit's `Environment=`), which always wins over the file.
 
-**Why there is no "config setter script Jarvis can call"**, so that nobody proposes one
-later: any sudoers rule that lets Jarvis run a setter without a password lets a subagent
+**Why there is no "config setter script Keryx can call"**, so that nobody proposes one
+later: any sudoers rule that lets Keryx run a setter without a password lets a subagent
 run it too, which hands straight back the ability the `O_EXCL` write exists to remove. A
 root-owned setter that *you* run with your own sudo password is fine — the point is only
-that Jarvis must have no privileged way to invoke it.
+that Keryx must have no privileged way to invoke it.
 
 ## Where secrets live
 
-Every key, token and password is in `~/.config/jarvis/secrets.toml` (`JARVIS_HOME` moves
+Every key, token and password is in `~/.config/keryx/secrets.toml` (`KERYX_HOME` moves
 it), created 0600 inside an 0700 directory and replaced atomically, so there is no moment at
 which it exists with looser permissions. The plain settings are in `config.toml` beside it,
 and so are the PIN (`pin`) and the Google client file. **Keep that directory out of a
 dotfiles repository**: it is configuration in name only. Not a keyring, on purpose: a
 service started by systemd at boot, with nobody logged in, cannot unlock one — the same
-reason Claude Code and Codex keep their credentials in a file of their own. What Jarvis
-keeps is owner-only as well: the data (`~/.local/share/jarvis`: transcripts, tasks, the
-memory, sign-in tokens), the state (`~/.local/state/jarvis`: logs, and the approval socket)
-and the cache. `jarvis doctor` warns when any of these is readable by anyone else (`--fix`
+reason Claude Code and Codex keep their credentials in a file of their own. What Keryx
+keeps is owner-only as well: the data (`~/.local/share/keryx`: transcripts, tasks, the
+memory, sign-in tokens), the state (`~/.local/state/keryx`: logs, and the approval socket)
+and the cache. `keryx doctor` warns when any of these is readable by anyone else (`--fix`
 tightens it and changes nothing else), when one sits inside a git work tree, when a secret
 has been written into `config.toml` by hand, and while an imported copy of an old `.env` is
 still on disk.
 
 Nothing is read from the working directory. A `.env` in the checkout used to be read, and a
-checkout is the one place a secret is one `git add` from leaving the machine; `jarvis serve`
+checkout is the one place a secret is one `git add` from leaving the machine; `keryx serve`
 now refuses to start while one is there, or while files are still in an old `~/.jarvis`,
-until `jarvis migrate` has moved them.
+until `keryx migrate` has moved them.
 
 A secret is never put on a command line, where `ps` and your shell history keep it:
-`jarvis config set KEY --stdin` reads it from standard input and `--from-env VAR` from a
+`keryx config set KEY --stdin` reads it from standard input and `--from-env VAR` from a
 variable, and the command refuses one given as a plain argument. Nothing prints one back —
-not `jarvis config get`, not `config list`, not an error message.
+not `keryx config get`, not `config list`, not an error message.
 
-## What Jarvis may change about itself
+## What Keryx may change about itself
 
-Jarvis can change some of its own settings: the voice model's `set_config` tool, when you
-ask on a call (it needs the PIN), and any subagent that runs `jarvis config set` inside a
-task, since everything `jarvis serve` starts is marked as the running service. It may
+Keryx can change some of its own settings: the voice model's `set_config` tool, when you
+ask on a call (it needs the PIN), and any subagent that runs `keryx config set` inside a
+task, since everything `keryx serve` starts is marked as the running service. It may
 change only a *service-writable* setting — by default the ones you would plausibly ask for
 out loud: the voice, turn-taking, which model, a few timeouts and limits, quiet hours, the
 log level. A plugin's settings are in its own file (`DATA_DIR/tools/<name>.toml`), which
 `set_config` does not reach. A limit it may tune it may never switch off — the
 subagent timeout, the call length and the local silence timeout all mean "no limit" at 0,
-and that is a spending decision — and no value it saves can stop Jarvis starting again. `jarvis config lock KEY` and `unlock KEY` move the
-rest, and `jarvis config list` shows where each one stands.
+and that is a spending decision — and no value it saves can stop Keryx starting again. `keryx config lock KEY` and `unlock KEY` move the
+rest, and `keryx config list` shows where each one stands.
 
 Some can never be unlocked: every credential, the PIN, who may call and which number is
 yours, `BRIEFING_BEFORE_PIN`, the approval bridge's switch and allowlist, whether and where
-Jarvis files issues about itself (an issue is public), the spending cap,
+Keryx files issues about itself (an issue is public), the spending cap,
 the daily task cap, retention, texting, the network settings, where data lives, and every
-debug switch. Each is either a secret or a line of defence, and Jarvis's
+debug switch. Each is either a secret or a line of defence, and Keryx's
 own tools must not be able to lower their own guard because somebody asked nicely on the
 phone.
 
-Be clear about what this is: **a rule Jarvis's own tools obey, not a sandbox.** A subagent
+Be clear about what this is: **a rule Keryx's own tools obey, not a sandbox.** A subagent
 runs as you with a shell, and can edit `config.toml` directly, exactly as it can edit any
 other file of yours. What the rule buys is that the ordinary paths — the tool the voice
-model is handed, the command a subagent reaches for — refuse, and say so: `jarvis config
+model is handed, the command a subagent reaches for — refuse, and say so: `keryx config
 set` holds it to the service-writable keys, and `config import-env`, `auth login`,
 `memory seed`, `setup` and `config lock|unlock` refuse it outright.
 
-Your own voice tools are code Jarvis runs. Every `.py` file in `DATA_DIR/tools` is imported
-inside the service at the start of each call (`jarvis.tools.custom`), and a subagent writes
+Your own voice tools are code Keryx runs. Every `.py` file in `DATA_DIR/tools` is imported
+inside the service at the start of each call (`keryx.tools.custom`), and a subagent writes
 one there when you ask for a new ability on the phone. Each says whether it needs the PIN,
 and does by default; none can take a built-in tool's name, so none can stand in for `submit_pin` or
 `dispatch_task`; and a file or directory that anyone but you could write is refused
 unread. That is the whole of it. A tool file can do anything you can, a subagent that can
-write one could equally edit Jarvis's source, and a tool that declares `needs_pin=False`
+write one could equally edit Keryx's source, and a tool that declares `needs_pin=False`
 answers every caller — so what a tool reads, and who may hear it, is decided by the file,
-and `jarvis tools` is where you see what each one says.
+and `keryx tools` is where you see what each one says.
 
-The plugins (`jarvis plugins`) are files of exactly this kind, with the same gates: a
-one-line `.py` that `jarvis plugins install` copies in, 0600, and a TOML of settings beside
-it. Only the owner at a terminal installs or removes one (`jarvis plugins install` and
+The plugins (`keryx plugins`) are files of exactly this kind, with the same gates: a
+one-line `.py` that `keryx plugins install` copies in, 0600, and a TOML of settings beside
+it. Only the owner at a terminal installs or removes one (`keryx plugins install` and
 `remove` refuse the running service), but a subagent can write into `DATA_DIR/tools` as
 it can write anything of yours, so they are held to nothing more than your own tools are.
 Every value written into a plugin's TOML is validated first and quoted, so no value can add
@@ -199,22 +199,22 @@ the ControlMaster's local socket (`ssh -O check HOST`, no network, no authentica
 before anything, and runs the read only over that live master, in `BatchMode`, so nothing
 can wait on a prompt; a master that is not there is "the login has expired", said once and
 never retried, because where login is two-factor an unanswerable connection hangs, and a
-storm of them gets an address banned. The wizard and `jarvis plugins hosts` offer only
+storm of them gets an address banned. The wizard and `keryx plugins hosts` offer only
 hosts with a ControlMaster in `~/.ssh/config`. The remote command is assembled from
 constants and refuses anything but `squeue` and `sinfo`.
 
-`jarvis setup`'s project summaries are drafted by a coding agent reading the folders you
+`keryx setup`'s project summaries are drafted by a coding agent reading the folders you
 chose, which means it reads whatever a README in them says. So nothing it writes is kept
 until you accept it, the path of each project is shown beside its summary, and a project is
 only added to `PROJECTS` when its path is inside a folder you chose: projects widen where a
 keypad approval may write files.
 
-## Calls Jarvis places itself
+## Calls Keryx places itself
 
 A call-back, a restart's confirmation and an approval escalation are outbound, and that
-makes them different in kind: Jarvis dialled a number *you* configured, so reaching it
-means holding that phone. The proof is the single-use token Jarvis mints for the call's
-own media stream, which records that Jarvis placed it and what it dialled; a call whose
+makes them different in kind: Keryx dialled a number *you* configured, so reaching it
+means holding that phone. The proof is the single-use token Keryx mints for the call's
+own media stream, which records that Keryx placed it and what it dialled; a call whose
 token says so, and whose dialled number is one of yours, opens with that much proved.
 "One of yours" is `ALLOWED_CALLERS` (plus `OWNER_NUMBER` if you set it to something else),
 because this is a single-owner agent and a second allowed number is your second handset.
@@ -225,15 +225,15 @@ What it buys, over and above what any call may hear: answering the question Clau
 back with (`send_followup`), arranging a call back **on that same number**, marking any
 result as told, and answering a waiting approval on the keypad — the last because the
 approval allowlist is already the filter on what a key may ever run, its denylist still
-wins, and `jarvis approvals --disable` still wins over everything. What it does not buy:
-starting new work, searching your past calls, sending to Slack, restarting Jarvis, or
+wins, and `keryx approvals --disable` still wins over everything. What it does not buy:
+starting new work, searching your past calls, sending to Slack, restarting Keryx, or
 calling a number chosen during the call. Those are the PIN. (It also still matters with
 `BRIEFING_BEFORE_PIN` off, where it is what lets a call-back read you the result it rang
 about.)
 
 Voicemail is the residual risk here, and it is handled rather than ignored: an answering
 machine can take an outbound call and be read a result. So before acting on anything
-*said* on such a call, Jarvis asks for one keypress — a machine cannot press a key — and
+*said* on such a call, the assistant asks for one keypress — a machine cannot press a key — and
 the keypad is still the only thing that can answer an approval. Detecting the answering
 machine itself (Twilio's `machine_detection`) is filed as issue #50, not built.
 
@@ -252,7 +252,7 @@ run only for calls that were authorized: reading the memory out is the design, r
 it is not. Also in scope: an announcement beyond what the call could hear at the greeting;
 `recall`, or any comparable unbounded search, answering without the PIN; anything private
 that the briefing does *not* already carry being read out without it; anything that
-confers possession on a call Jarvis did not place, or on one it placed to a number other
+confers possession on a call Keryx did not place, or on one it placed to a number other
 than `OWNER_NUMBER`; **anything that sets or replaces a PIN while one already exists**, from
 the phone or from a subagent, or that reads an enrolled PIN back out anywhere; and, with
 `BRIEFING_BEFORE_PIN=false`, anything of yours reaching such a call at all.
@@ -297,7 +297,7 @@ history, not separately supported lines.
 ## PIN and brute force
 
 Caller ID is spoofable, so anyone who knows an allowed number can reach a phone session, and
-from there `JARVIS_PIN` is the only thing between them and a subagent with your access. This
+from there `KERYX_PIN` is the only thing between them and a subagent with your access. This
 section is what stands behind that PIN and what it costs you.
 
 **Per call.** Three wrong PINs, spoken or keyed, end the call, and a call that has locked
@@ -320,7 +320,7 @@ guesser a fresh budget):
 | `PIN_LOCKOUT_MINUTES` | 60 | how long PIN entry stays locked |
 
 - While it is locked, **every PIN is refused, the right one included**, before it is
-  compared. Jarvis says so in one sentence and ends the call.
+  compared. The assistant says so in one sentence and ends the call.
 - **Nothing resets the count early** — not the lock lifting, not a right PIN. Past the limit,
   each further wrong PIN inside the window locks it again, so a campaign that keeps going
   gets one guess an hour: about 24 a day, which puts a 6-digit PIN decades away and an 8-digit
@@ -344,15 +344,15 @@ locked: one wrong guess an hour holds PIN entry shut for as long as they care to
 deliberate. A lock can be waited out or cleared; a guessed PIN hands over the machine. While
 it is locked a call still connects and anything that needs no PIN still answers, the wake
 word and the terminal are unaffected, and what you lose is whatever the PIN gates on the
-phone. What you can do about it: change `JARVIS_PIN` (the alert says to — a campaign that
+phone. What you can do about it: change `KERYX_PIN` (the alert says to — a campaign that
 has spent its guesses has learned nothing about the new one); clear the lock by stopping
-Jarvis, deleting `DATA_DIR/pin-failures.json` and starting it again; and take the spoofed
+Keryx, deleting `DATA_DIR/pin-failures.json` and starting it again; and take the spoofed
 number out of `ALLOWED_CALLERS` until it stops. Raising `PIN_FAILURE_LIMIT` makes you harder
 to lock out and the PIN proportionally easier to guess.
 
 **Signature validation cannot be switched off behind a tunnel.**
-`DEBUG_SKIP_TWILIO_VALIDATION=true` with `PUBLIC_HOST` set makes `jarvis serve` refuse to
-start the phone channel, and `jarvis doctor` reports it as a hard failure; with it off
+`DEBUG_SKIP_TWILIO_VALIDATION=true` with `PUBLIC_HOST` set makes `keryx serve` refuse to
+start the phone channel, and `keryx doctor` reports it as a hard failure; with it off
 anyone who can reach the tunnel could pose as Twilio and key PINs in at machine speed.
 
 **Known and not yet fixed.** Keyed digits are checked the moment as many have been typed as
@@ -377,8 +377,8 @@ branch, and it does not apply to a release built from `main`.)
   So is a subagent's credential reaching its command line, a log or a spoken error: it is
   handed over in the environment only, and what a refused key is quoted back as is redacted.
 - **Anything that requires the host account already.** Someone who can read
-  `~/.config/jarvis` or write `~/.claude/settings.json` is already you — deleting
-  `JARVIS_HOME/pin` is that, and it re-opens enrolment for the next caller rather than
+  `~/.config/keryx` or write `~/.claude/settings.json` is already you — deleting
+  `KERYX_HOME/pin` is that, and it re-opens enrolment for the next caller rather than
   changing the PIN in place (above). Text that reaches a
   Claude Code session on the host — an issue, a pull request, a web page it reads — is
   not that: a way for it to get the approval bridge to ring you about one command and

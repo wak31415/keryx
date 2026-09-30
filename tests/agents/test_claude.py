@@ -18,9 +18,9 @@ from claude_agent_sdk.types import (
     UserMessage,
 )
 
-from jarvis import plugins
-from jarvis.agents.base import AgentOpenError, RunResult, SteerUnavailable, TokenUsage
-from jarvis.agents.claude import (
+from keryx import plugins
+from keryx.agents.base import AgentOpenError, RunResult, SteerUnavailable, TokenUsage
+from keryx.agents.claude import (
     SUBAGENT_MAX_BUFFER_BYTES,
     ClaudeAgentRunner,
     ClaudeAgentSession,
@@ -28,9 +28,9 @@ from jarvis.agents.claude import (
     claude_usage,
     resolve_model,
 )
-from jarvis.agents.session import AdapterSession
-from jarvis.plugins.slack import slack_route
-from jarvis.tasks.models import Task, TaskKind
+from keryx.agents.session import AdapterSession
+from keryx.plugins.slack import slack_route
+from keryx.tasks.models import Task, TaskKind
 
 
 def turn_on_slack(settings, server: str) -> None:
@@ -137,7 +137,7 @@ def test_resolve_model_defaults_to_the_configured_model(settings, name):
 def test_build_options_sets_the_shared_agent_configuration(settings):
     settings.subagent_max_turns = 42
     settings.subagent_max_budget_usd = 2.5
-    task = make_task(kind=TaskKind.AGENT, project="jarvis", description="read the spec")
+    task = make_task(kind=TaskKind.AGENT, project="keryx", description="read the spec")
 
     options = build_options(task, settings)
 
@@ -160,7 +160,7 @@ def test_build_options_lifts_the_sdk_message_size_limit(settings):
 
 
 def test_build_options_appends_the_rendered_subagent_suffix(settings):
-    task = make_task(project="jarvis", description="add a README")
+    task = make_task(project="keryx", description="add a README")
 
     options = build_options(task, settings)
 
@@ -169,7 +169,7 @@ def test_build_options_appends_the_rendered_subagent_suffix(settings):
     append = options.system_prompt["append"]
     assert "SPOKEN_SUMMARY:" in append
     assert "add a README" in append
-    assert "jarvis" in append
+    assert "keryx" in append
     assert "{" not in append and "}" not in append
 
 
@@ -183,7 +183,7 @@ def test_build_options_defaults_cwd_to_a_created_workspace(settings):
 
 
 def test_a_task_directory_that_is_gone_is_never_created(settings, tmp_path):
-    """A projects root that was never there, or a checkout since deleted: Jarvis does not
+    """A projects root that was never there, or a checkout since deleted: Keryx does not
     invent a folder in somebody's home directory, it starts in its own workspace."""
     gone = tmp_path / "projects"
 
@@ -322,7 +322,7 @@ async def test_runner_open_connects_a_client_built_from_the_task(settings):
 def test_the_default_client_is_the_sdks_own(settings):
     from claude_agent_sdk import ClaudeSDKClient
 
-    from jarvis.agents.claude import _default_client_factory
+    from keryx.agents.claude import _default_client_factory
 
     client = _default_client_factory(build_options(make_task(), settings))
 
@@ -594,7 +594,7 @@ def test_build_options_hands_the_subagent_the_owners_name(settings):
 
 
 def test_the_claude_cli_is_the_one_the_sdk_bundles(monkeypatch, tmp_path):
-    from jarvis.agents import claude as claude_module
+    from keryx.agents import claude as claude_module
 
     bundled = tmp_path / "_bundled" / "claude"
     bundled.parent.mkdir()
@@ -610,7 +610,7 @@ def test_the_claude_cli_is_the_one_the_sdk_bundles(monkeypatch, tmp_path):
 
 
 def test_a_stored_login_is_the_credentials_file_or_the_keychain(monkeypatch, tmp_path):
-    from jarvis.agents import claude as claude_module
+    from keryx.agents import claude as claude_module
 
     monkeypatch.setenv("HOME", str(tmp_path))
     calls: list[list[str]] = []
@@ -639,7 +639,7 @@ def test_a_stored_login_is_the_credentials_file_or_the_keychain(monkeypatch, tmp
 
 
 def test_a_stored_login_follows_claude_config_dir(monkeypatch, tmp_path):
-    from jarvis.agents import claude as claude_module
+    from keryx.agents import claude as claude_module
 
     moved = tmp_path / "elsewhere"
     moved.mkdir()

@@ -1,4 +1,4 @@
-"""Tests for `jarvis.pin_guard`: wrong PINs counted across every call, and the lock they set.
+"""Tests for `keryx.pin_guard`: wrong PINs counted across every call, and the lock they set.
 
 The clock is always injected, so a day of failures and an hour of lockout take no time.
 """
@@ -9,8 +9,8 @@ import stat
 
 import pytest
 
-from jarvis.config import Settings
-from jarvis.pin_guard import STATE_NAME, Lockout, PinGuard
+from keryx.config import Settings
+from keryx.pin_guard import STATE_NAME, Lockout, PinGuard
 
 LIMIT = 4
 WINDOW = 24 * 3600.0
@@ -36,7 +36,7 @@ def clock() -> Clock:
 
 @pytest.fixture
 def path(tmp_path):
-    return tmp_path / "jarvis" / STATE_NAME
+    return tmp_path / "keryx" / STATE_NAME
 
 
 def make_guard(path, clock) -> PinGuard:
@@ -169,7 +169,7 @@ def test_starting_up_does_not_rewrite_a_count_that_has_not_changed(path, clock, 
     def no_writes(*args):
         raise AssertionError("the unchanged count was written back")
 
-    monkeypatch.setattr("jarvis.pin_guard.os.replace", no_writes)
+    monkeypatch.setattr("keryx.pin_guard.os.replace", no_writes)
 
     assert make_guard(path, clock).locked_until() is None
 
@@ -189,7 +189,7 @@ def test_an_unreadable_file_locks_for_one_cooldown_and_no_longer(path, clock, co
     path.parent.mkdir(parents=True)
     path.write_text(content)
 
-    with caplog.at_level(logging.ERROR, logger="jarvis.pin_guard"):
+    with caplog.at_level(logging.ERROR, logger="keryx.pin_guard"):
         guard = make_guard(path, clock)
 
     assert guard.locked_until() == START + COOLDOWN
@@ -221,10 +221,10 @@ def test_a_file_that_cannot_be_written_still_counts_in_memory(path, clock, caplo
     def refuse(*args):
         raise OSError("no space left on device")
 
-    monkeypatch.setattr("jarvis.pin_guard.os.replace", refuse)
+    monkeypatch.setattr("keryx.pin_guard.os.replace", refuse)
     guard = make_guard(path, clock)
 
-    with caplog.at_level(logging.ERROR, logger="jarvis.pin_guard"):
+    with caplog.at_level(logging.ERROR, logger="keryx.pin_guard"):
         lockouts = fail(guard, LIMIT)
 
     assert lockouts[-1] is not None
@@ -240,7 +240,7 @@ def test_the_guard_takes_its_numbers_and_its_file_from_settings(tmp_path, clock)
     settings = Settings(
         _env_file=None,
         openai_api_key="test",
-        data_dir=tmp_path / "jarvis",
+        data_dir=tmp_path / "keryx",
         pin_failure_limit=2,
         pin_failure_window_hours=1,
         pin_lockout_minutes=5,

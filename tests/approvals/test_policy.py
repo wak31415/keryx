@@ -8,9 +8,9 @@ digit can run. Every "not eligible" assertion here is load-bearing.
 
 import pytest
 
-from jarvis.approvals.models import Kind, input_digest, resolution_digest
-from jarvis.approvals.policy import classify
-from jarvis.config import Settings
+from keryx.approvals.models import Kind, input_digest, resolution_digest
+from keryx.approvals.policy import classify
+from keryx.config import Settings
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def settings(tmp_path):
     return Settings(
         _env_file=None,
         openai_api_key="test",
-        data_dir=tmp_path / "jarvis",
+        data_dir=tmp_path / "keryx",
         google_client_secrets_file=tmp_path / "none.json",
         approval_roots=[str(tmp_path / "roots")],
     )
@@ -49,7 +49,7 @@ def test_only_permission_requests_are_classified(settings):
 
 
 def test_bypass_permissions_never_escalates(settings):
-    """Jarvis's own subagents run this way; nobody is being asked, so nobody is rung."""
+    """Keryx's own subagents run this way; nobody is being asked, so nobody is rung."""
     event = request("Bash", {"command": "git push"}, permission_mode="bypassPermissions")
     assert classify(event, settings) is None
 
@@ -79,7 +79,7 @@ def test_a_hook_that_does_not_say_whether_it_trimmed_is_never_eligible(
     ringing reads exactly like one with nothing to ring about."""
     event = request("Bash", {"command": "git push"}, cwd=str(tmp_path / "roots" / "myproject"))
     del event["truncated"]
-    with caplog.at_level("WARNING", logger="jarvis.approvals.policy"):
+    with caplog.at_level("WARNING", logger="keryx.approvals.policy"):
         assert classify(event, settings) is None
     assert "install-claude-hook.sh" in caplog.text
 
@@ -210,7 +210,7 @@ def run(tmp_path, command):
         "git commit --message=wip",
         "git commit --message wip",
         "git commit -a -q -m wip",
-        "git commit -m wip -- src/jarvis/session.py",
+        "git commit -m wip -- src/keryx/session.py",
     ],
 )
 def test_the_everyday_git_commands_are_eligible(settings, tmp_path, command):

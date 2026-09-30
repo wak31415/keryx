@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jarvis.integrations.billing import (
+from keryx.integrations.billing import (
     ANTHROPIC_COST_URL,
     ANTHROPIC_USAGE_URL,
     OPENAI_COSTS_URL,
@@ -454,7 +454,7 @@ def test_a_failure_detail_never_carries_the_response_body():
 async def test_nothing_is_logged_that_contains_the_key(caplog):
     api = FakeApi(costs=openai_costs(1.0), completions=openai_usage())
 
-    with caplog.at_level(logging.DEBUG, logger="jarvis.billing"):
+    with caplog.at_level(logging.DEBUG, logger="keryx.billing"):
         await OpenAIBilling(ADMIN_KEY, get=api).month_to_date(now=NOW)
 
     assert caplog.text

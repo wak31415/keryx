@@ -4,11 +4,11 @@ import dataclasses
 
 import pytest
 
-from jarvis import plugins
-from jarvis.integrations.gmail import MESSAGES, EmailError, EmailReader, token_path
-from jarvis.plugins.email import check_email_tool
-from jarvis.tools.builtin_common import PIN_REQUIRED_MESSAGE
-from jarvis.trust import TrustLevel
+from keryx import plugins
+from keryx.integrations.gmail import MESSAGES, EmailError, EmailReader, token_path
+from keryx.plugins.email import check_email_tool
+from keryx.tools.builtin_common import PIN_REQUIRED_MESSAGE
+from keryx.trust import TrustLevel
 from plugins.helpers import call, loading, names, offered, refusal, turn_on
 
 NAME = "check_email"
@@ -95,12 +95,12 @@ def test_the_schema_asks_for_the_question_and_offers_two_days(settings):
 def test_not_signed_in_the_file_is_refused_with_the_command(settings):
     turn_on(settings, NAME)
 
-    assert refusal(settings, NAME) == "not signed in to Gmail: `jarvis auth login gmail`"
+    assert refusal(settings, NAME) == "not signed in to Gmail: `keryx auth login gmail`"
 
 
 def test_signed_in_without_the_claude_cli_it_says_how_to_get_it(settings, monkeypatch):
     token_path(settings).write_text("{}")
-    monkeypatch.setattr("jarvis.agents.registry.installed", lambda agent: False)
+    monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: False)
     turn_on(settings, NAME)
 
     assert "the claude CLI is not installed" in refusal(settings, NAME)
@@ -108,8 +108,8 @@ def test_signed_in_without_the_claude_cli_it_says_how_to_get_it(settings, monkey
 
 def test_signed_in_with_the_cli_it_loads_with_its_model_and_effort(settings, monkeypatch):
     token_path(settings).write_text("{}")
-    monkeypatch.setattr("jarvis.agents.registry.installed", lambda agent: True)
-    from jarvis.agents.registry import BACKENDS
+    monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: True)
+    from keryx.agents.registry import BACKENDS
 
     spec = dataclasses.replace(BACKENDS["claude"], find_cli=lambda: "/bin/claude")
     monkeypatch.setitem(BACKENDS, "claude", spec)

@@ -1,4 +1,4 @@
-"""Tests for jarvis.tasks.manager.
+"""Tests for keryx.tasks.manager.
 
 Every task runs against `FakeAgentRunner`, so no Agent SDK process is ever started.
 Ordering is made deterministic with the fake's `delay_s` plus bounded polling helpers —
@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.agents.router import RoutingAgentRunner
-from jarvis.config import Settings
-from jarvis.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
-from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult, TokenUsage
-from jarvis.tasks.manager import (
+from keryx.agents.router import RoutingAgentRunner
+from keryx.config import Settings
+from keryx.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
+from keryx.tasks.agent_runner import FakeAgentRunner, RunResult, TokenUsage
+from keryx.tasks.manager import (
     CLOSE_TIMEOUT_S,
     AgentUnavailableError,
     TaskLimitError,
@@ -30,8 +30,8 @@ from jarvis.tasks.manager import (
     executor_workers,
     install_default_executor,
 )
-from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import TaskStore
+from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.store import TaskStore
 
 WAIT = 2.0  # upper bound (seconds) for every wait in this module
 SLOW = 0.2  # fake agent turn long enough to observe a task while it is running
@@ -148,13 +148,13 @@ def test_build_prompt_names_the_repository_when_there_is_one():
         id=1,
         kind=TaskKind.AGENT,
         description="add a README",
-        project="jarvis",
-        cwd="/repos/jarvis",
+        project="keryx",
+        cwd="/repos/keryx",
     )
 
     prompt = build_prompt(task)
 
-    assert "Working directory: /repos/jarvis (project 'jarvis')" in prompt
+    assert "Working directory: /repos/keryx (project 'keryx')" in prompt
     assert "add a README" in prompt
 
 
@@ -426,7 +426,7 @@ async def test_followup_on_a_running_task_is_queued_and_resumed_after_the_turn(m
 
 async def test_a_followup_steers_a_running_turn_that_can_take_it(make_harness, caplog):
     """Codex takes a follow-up into the turn it is running: no re-run, one announcement."""
-    caplog.set_level(logging.INFO, logger="jarvis.tasks.manager")
+    caplog.set_level(logging.INFO, logger="keryx.tasks.manager")
     harness = make_harness(FakeAgentRunner(delay_s=SLOW, steer=True))
 
     task = await dispatch(harness.manager)
@@ -608,7 +608,7 @@ async def test_a_run_past_the_time_limit_is_stopped_and_says_so(make_harness):
 
 
 async def test_a_timed_out_agent_is_stopped_before_its_failure_is_reported(make_harness):
-    """Timing out the reader does not stop the agent: Jarvis must not say it stopped work
+    """Timing out the reader does not stop the agent: Keryx must not say it stopped work
     that is still changing files. Interrupt and close come before the row and the event."""
     harness = make_harness(FakeAgentRunner(delay_s=5), subagent_timeout_s=0.05)
     seen: list[tuple[int, bool]] = []
@@ -632,7 +632,7 @@ class AdapterRunner:
         self.opened: list[tuple[Task, str | None]] = []
 
     async def open(self, task, *, resume=None):
-        from jarvis.agents.session import AdapterSession
+        from keryx.agents.session import AdapterSession
 
         self.opened.append((task, resume))
         return AdapterSession(self.adapters.pop(0), session_id=resume)
@@ -641,7 +641,7 @@ class AdapterRunner:
 async def test_a_turn_blocked_in_its_reader_is_interrupted_closed_and_unwound(make_harness):
     from agents.fakes import BLOCK, ScriptedAdapter
 
-    from jarvis.agents.session import Text
+    from keryx.agents.session import Text
 
     adapter = ScriptedAdapter([Text("working"), BLOCK])
     harness = make_harness(AdapterRunner(adapter), subagent_timeout_s=0.05)
@@ -893,11 +893,11 @@ async def test_daily_cap_blocks_further_dispatches(make_harness):
 
 async def test_resolve_project_prefers_the_configured_name(make_harness, tmp_path):
     root = make_projects(tmp_path, "orchard-sensor-net")
-    checkout = tmp_path / "elsewhere" / "jarvis"
+    checkout = tmp_path / "elsewhere" / "keryx"
     checkout.mkdir(parents=True)
-    harness = make_harness(projects={"jarvis": str(checkout)}, projects_root=root)
+    harness = make_harness(projects={"keryx": str(checkout)}, projects_root=root)
 
-    assert harness.manager.resolve_project("jarvis") == ("jarvis", checkout)
+    assert harness.manager.resolve_project("keryx") == ("keryx", checkout)
 
 
 async def test_resolve_project_is_fuzzy_about_spaces_and_dashes(make_harness, tmp_path):
@@ -1002,7 +1002,7 @@ def test_closing_a_session_outlasts_the_sdks_terminate_and_kill_escalation():
     assert CLOSE_TIMEOUT_S > 5.0 * 4
 
 
-# --- a task that changed Jarvis's own code ---------------------------------
+# --- a task that changed Keryx's own code ---------------------------------
 
 
 async def test_a_subagents_restart_request_lands_on_the_task(make_harness):
@@ -1029,7 +1029,7 @@ async def test_a_task_that_asked_for_nothing_needs_no_restart(make_harness):
     assert finished.needs_restart is False
 
 
-async def test_an_internal_task_may_not_take_jarvis_off_the_air(make_harness):
+async def test_an_internal_task_may_not_take_keryx_off_the_air(make_harness):
     """The memory update runs after every call; a restart is not its to ask for."""
     result = RunResult(ok=True, spoken_summary="folded it in", restart_reason="why not")
     harness = make_harness(FakeAgentRunner([result]))

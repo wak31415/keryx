@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from jarvis.config import Settings
-from jarvis.setup.google import (
+from keryx.config import Settings
+from keryx.setup.google import (
     MCP_PROTOCOL_VERSION,
     PROBE_TOOL,
     SIGN_IN_INSTRUCTIONS,
@@ -21,7 +21,7 @@ def settings(tmp_path):
     return Settings(
         _env_file=None,
         openai_api_key="test",
-        data_dir=tmp_path / "jarvis",
+        data_dir=tmp_path / "keryx",
         google_client_secrets_file=tmp_path / "no-client.json",
         google_oauth_client_id="client-id",
         google_oauth_client_secret="client-secret",
@@ -132,7 +132,7 @@ def test_missing_oauth_client_settings_refuse_to_start_the_server(settings):
 
 def test_a_client_file_is_as_good_as_the_pair(settings, tmp_path):
     """The old `setup-google` refused unless the id/secret pair was set, though everything
-    else in Jarvis took the downloaded JSON: one loader now, for both sign-ins."""
+    else in Keryx took the downloaded JSON: one loader now, for both sign-ins."""
     client = tmp_path / "client.json"
     client.write_text('{"installed": {"client_id": "file-id", "client_secret": "file-secret"}}')
     from_file = settings.model_copy(
@@ -337,7 +337,7 @@ def test_the_default_popen_is_resolved_when_it_is_called(settings, monkeypatch):
         spawned.append(argv)
         return scripted_process()
 
-    monkeypatch.setattr("jarvis.setup.google.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("keryx.setup.google.subprocess.Popen", fake_popen)
 
     run_google_setup(settings, echo=lambda _text: None)
 

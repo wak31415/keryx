@@ -1,10 +1,10 @@
-"""Tests for jarvis.tasks.models."""
+"""Tests for keryx.tasks.models."""
 
 import logging
 from datetime import UTC, datetime
 
-from jarvis.tasks import models
-from jarvis.tasks.models import ProjectUsage, Task, TaskKind, TaskStatus
+from keryx.tasks import models
+from keryx.tasks.models import ProjectUsage, Task, TaskKind, TaskStatus
 
 # --- enums -------------------------------------------------------------
 
@@ -191,7 +191,7 @@ def test_from_row_ignores_a_column_this_build_has_no_field_for():
     """Regression: the DB moves ahead of a running process, and reads must survive it.
 
     `TaskStore._migrate` upgrades `tasks.db` from whichever process opens it first, while
-    `jarvis serve` holds the `Task` it imported at startup. On 2026-08-25 the v3 upgrade
+    `keryx serve` holds the `Task` it imported at startup. On 2026-08-25 the v3 upgrade
     added `reported_at` under a live service and every read raised `TypeError: Task.
     __init__() got an unexpected keyword argument 'reported_at'`, which took `dispatch_task`
     down with it.
@@ -211,7 +211,7 @@ def test_from_row_names_the_unknown_column_once_and_not_once_per_row(caplog):
     row = _sample_task().to_row()
     row["some_later_column"] = 1
 
-    with caplog.at_level(logging.WARNING, logger="jarvis.tasks.models"):
+    with caplog.at_level(logging.WARNING, logger="keryx.tasks.models"):
         Task.from_row(row)
         Task.from_row(row)
 

@@ -1,4 +1,4 @@
-"""The `jarvis-report-issue` skill is prose a subagent follows, so a test keeps it true.
+"""The `keryx-report-issue` skill is prose a subagent follows, so a test keeps it true.
 
 Nothing that runs would notice if the commands it names went away, the templates it points
 at moved, or the rules that keep a public issue free of the owner's life were edited out.
@@ -9,25 +9,25 @@ import re
 import pytest
 from typer.testing import CliRunner
 
-from jarvis.cli import app
-from jarvis.config.settings import SOURCE_ROOT
-from jarvis.issues import SKILL
-from jarvis.skills import BUNDLED_SKILLS, discover_skills
+from keryx.cli import app
+from keryx.config.settings import SOURCE_ROOT
+from keryx.issues import SKILL
+from keryx.skills import BUNDLED_SKILLS, discover_skills
 
 TEXT = (SOURCE_ROOT / SKILL).read_text(encoding="utf-8")
 FLAT = " ".join(TEXT.split())
 
 
-def test_the_skill_parses_the_way_jarvis_parses_every_other_skill():
+def test_the_skill_parses_the_way_keryx_parses_every_other_skill():
     found = {skill.name: skill.description for skill in discover_skills(BUNDLED_SKILLS)}
 
-    assert "bug report or a feature request" in found["jarvis-report-issue"].lower()
+    assert "bug report or a feature request" in found["keryx-report-issue"].lower()
 
 
 def test_every_command_it_names_exists():
-    for command in sorted(set(re.findall(r"-m jarvis ([a-z-]+)", TEXT))):
+    for command in sorted(set(re.findall(r"-m keryx ([a-z-]+)", TEXT))):
         result = CliRunner().invoke(app, [command, "--help"])
-        assert result.exit_code == 0, f"`jarvis {command}` is named in the skill but is gone"
+        assert result.exit_code == 0, f"`keryx {command}` is named in the skill but is gone"
 
 
 def test_the_templates_it_follows_are_in_the_repository():

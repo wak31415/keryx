@@ -2,9 +2,9 @@
 
 import pytest
 
-from jarvis.agents.base import FakeAgentRunner
-from jarvis.agents.router import AgentNotEnabledError, RoutingAgentRunner
-from jarvis.tasks.models import Task, TaskKind
+from keryx.agents.base import FakeAgentRunner
+from keryx.agents.router import AgentNotEnabledError, RoutingAgentRunner
+from keryx.tasks.models import Task, TaskKind
 
 
 def make_task(**overrides) -> Task:
