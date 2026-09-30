@@ -24,8 +24,8 @@ the digest at the top of your next call depends on it.
 | `list_projects` | the project names that can be dispatched into |
 | `request_callback` | call back when a task lands |
 | `web_search` | answer a small factual question on the spot, through the Responses API |
-| `restart_service` | restart Jarvis (after the call ends) |
-| `set_config` | change one of Jarvis's own settings — only those the running service may (`keryx config list`); saved, applied at the next restart |
+| `restart_service` | restart Keryx (after the call ends) |
+| `set_config` | change one of Keryx's own settings — only those the running service may (`keryx config list`); saved, applied at the next restart |
 | `submit_pin` | check a spoken PIN |
 | `end_session` | hang up |
 
@@ -39,7 +39,7 @@ the digest at the top of your next call depends on it.
 
 `web_search`, `submit_pin` and `end_session` are the only built-in tools an inbound caller
 reaches before the PIN (with the four that read back the briefing — see the security model);
-everything else waits for it. On a call *Jarvis placed to your own number*, five more open
+everything else waits for it. On a call *Keryx placed to your own number*, five more open
 up without it — `send_followup`, `request_callback`, `mark_reported` and the two approval
 tools — because reaching that phone proves something an inbound number cannot. See the
 [security model](https://github.com/wak31415/keryx/wiki/Security-Model).
@@ -60,8 +60,8 @@ first time through.
 
 A plugin is two files in `~/.local/share/keryx/tools/`:
 
-- **`<name>.py`**, one line that calls into Jarvis (`keryx.plugins.<module>`), so an update
-  to Jarvis reaches your copy; and
+- **`<name>.py`**, one line that calls into Keryx (`keryx.plugins.<module>`), so an update
+  to Keryx reaches your copy; and
 - **`<name>.toml`**, its settings, with a comment on every one — edit it by hand, or walk
   `keryx setup` → Plugins again. A secret is never in it: it stays in `secrets.toml`
   (`keryx config set KEY --stdin`), or in the Gmail sign-in's own file.
@@ -89,7 +89,7 @@ run your own guard script, name it as `guard` in `cluster_stats.toml`; it is opt
 Slack is opt-in in both directions: nothing goes to it unless you asked. When you do ask,
 the voice sends text with `send_to_slack` and subagents send files, plots and reports
 through the same Slack app, as the MCP server named by `mcp_server` in
-`send_to_slack.toml`. Unasked, a file stays in the written report — Jarvis tells you it is
+`send_to_slack.toml`. Unasked, a file stays in the written report — the assistant tells you it is
 there and offers to send it, rather than reading a path down the phone.
 
 Upgrading from before plugins, when these were settings (`CLUSTERS`, `SLACK_CHANNEL_ID`,
@@ -106,7 +106,7 @@ Claude Code or Codex ([`agents.md`](agents.md)): one kind, every tool, the repos
 Gmail and Calendar, the installed skills, and subagents of its own. Nothing classifies the
 work in advance.
 
-That is why the plugins are short. **The default answer to "can Jarvis do X" is "ask
+That is why the plugins are short. **The default answer to "can Keryx do X" is "ask
 Claude to do X"** — a task already has your machine, your repositories, your mailbox and
 every skill you have installed. A tool only earns its place when the answer is needed
 *inside the call*, in the second or two before a silence gets awkward. Half a minute of
@@ -115,12 +115,12 @@ only thing it buys you.
 
 ## Your own tools
 
-The quickest way to give Jarvis a new ability is to ask for one out loud:
+The quickest way to give Keryx a new ability is to ask for one out loud:
 
 > *"Give yourself a way to tell me the next two trains from my station."*
 
 That is an ordinary task (it needs the PIN, like every dispatch from the phone), and the
-tool it produces is **yours, not Jarvis's**: a Python file in `~/.local/share/keryx/tools/`
+tool it produces is **yours, not Keryx's**: a Python file in `~/.local/share/keryx/tools/`
 (`DATA_DIR/tools`), never in this repository and never committed. Every call reads that
 directory afresh when it starts, so the tool is there from your next call — no restart.
 
@@ -155,7 +155,7 @@ the whole contract: the file, the wording, credentials, and how to check it. In 
 
 ## Adding a built-in tool
 
-A tool that belongs in Jarvis for everyone — one you would send upstream — goes in the
+A tool that belongs in Keryx for everyone — one you would send upstream — goes in the
 repository instead. Ask for it the same way, naming the project:
 
 > *"In the keryx project, add a built-in tool called `next_train` … Same shape as
@@ -164,7 +164,7 @@ repository instead. Ask for it the same way, naming the project:
 The subagent has the repository, the tests and this file, and
 `prompts/subagent_suffix.md` already tells it how work here is expected to end. A `.py`
 change needs a restart before the tool exists — say *"restart yourself"* when it is done
-and Jarvis will ring you back once it is up.
+and Keryx will ring you back once it is up.
 
 What it will do, and what to check if you are writing it by hand:
 

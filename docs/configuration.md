@@ -113,7 +113,7 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 |---|---|---|---|
 | `PROJECTS` |  | no | Spoken project names for repositories outside `PROJECTS_ROOT`, as `{"name": "/path"}`. |
 | `PROJECTS_ROOT` | `~/projects` | no | Where a task with no project starts; each subdirectory is a project you can name. Never created: without it, such a task starts in `DATA_DIR/workspace`. |
-| `SKILLS_DIR` | `$CLAUDE_CONFIG_DIR/skills` (`~/.claude/skills`) | never | Where the Claude CLI keeps its skills; listed in the voice prompt so Keryx knows what the subagents are good at. |
+| `SKILLS_DIR` | `$CLAUDE_CONFIG_DIR/skills` (`~/.claude/skills`) | never | Where the Claude CLI keeps its skills; listed in the voice prompt so the assistant knows what the subagents are good at. |
 | `KERYX_CHECKOUT` |  | no | The Keryx repository on this machine, which a subagent reads when it reports a problem with Keryx. Unset: the checkout Keryx runs from, when it runs from one. |
 | `ISSUE_REPORTING` | `false` | never | Whether a bug or a feature request for Keryx, said on a call, may be filed as a GitHub issue by a subagent, with `gh`. `keryx setup` asks; only you can turn it on. |
 | `ISSUE_REPO` | `wak31415/keryx` | never | The GitHub repository (`owner/name`) those issues are filed on. |

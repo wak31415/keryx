@@ -8,6 +8,15 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Added
 
+- **The assistant has a name of its own: Lyra, unless you choose another.** `ASSISTANT_NAME`
+  is what the voice on the phone is called and introduces itself as. Lyra (voice `marin`)
+  and Jarvis (voice `cedar`) are built in, each with its own voice, and any other name —
+  letters, spaces, apostrophes and hyphens — speaks in `OPENAI_VOICE`, or `marin`.
+  `OPENAI_VOICE` now defaults to empty, which means the assistant's own voice; a voice you
+  set still wins. `keryx setup` asks for the name in the owner section, and the service may
+  change it (`set_config`). **An upgraded install answers as Lyra**: `keryx config set
+  ASSISTANT_NAME Jarvis` keeps the old name and voice.
+
 - **Bug reports and feature requests for Jarvis, by saying so.** "That's a bug, report it"
   or "suggest that Jarvis should be able to…" is dispatched like any other work, and the
   subagent files it as an issue on Jarvis's repository with `gh`, following the new
@@ -154,6 +163,23 @@ surface — a removed or renamed setting or command is a major bump.
   four states, and tells you to copy an enrolled PIN into `.env` to make it permanent.
 
 ### Changed
+
+- **Breaking: the service is Keryx now, and `keryx migrate` moves an install over.** The
+  package, the command (`keryx`), the directories (`~/.config/keryx`,
+  `~/.local/share/keryx`, `~/.local/state/keryx`, `~/.cache/keryx`), the units
+  (`keryx.service`, `dev.keryx.agent`), the approval hook (`keryx_approval.py`), the log
+  names, the skills (`skills/keryx-*`), the environment variables (`KERYX_HOME`,
+  `KERYX_PIN`, `KERYX_ACTOR`, `KERYX_CHECKOUT`), the commit trailer (`Keryx-Task:`) and the
+  repository (`wak31415/keryx`) all carry the new name, and the distribution is `keryx-voice`.
+  `keryx serve` refuses to start until `keryx migrate` has run. The migration stops
+  `jarvis.service`, moves each old directory whole, rewrites the `jarvis` imports of the
+  tools in `~/.local/share/keryx/tools`, keeps the Cloudflare tunnel you have been running
+  (`CLOUDFLARE_TUNNEL=jarvis`), retires the old unit, installs `keryx.service` and the hook,
+  and starts it. For one release the old names are still read: `JARVIS_PIN`,
+  `JARVIS_CHECKOUT` and `JARVIS_ACTOR` (a subagent of either build stays the service), a
+  `.jarvis-brief.md`, and a `jarvis` command that says to run `keryx migrate`. A
+  `JARVIS_HOME` is not followed: rename it to `KERYX_HOME`. To find every commit made on
+  request: `git log -E --grep '^(Jarvis|Keryx)-Task:'`.
 
 - **Breaking: the four optional tools are plugins, and their settings moved into the
   plugins' own files.** `CLUSTERS`, `CLUSTER_SSH_GUARD`, `CLUSTER_QUERY_TIMEOUT_S`,

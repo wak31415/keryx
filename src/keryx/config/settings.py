@@ -594,7 +594,7 @@ class Settings(BaseSettings):
     )
     skills_dir: Path = setting(
         description="Where the Claude CLI keeps its skills; listed in the voice prompt so "
-        "Keryx knows what the subagents are good at.",
+        "the assistant knows what the subagents are good at.",
         group="projects",
         default_factory=lambda: claude_config_dir() / "skills",
     )

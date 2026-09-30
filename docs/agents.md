@@ -1,6 +1,6 @@
 # Coding agents: Claude Code and Codex
 
-Jarvis does the talking; a coding agent on your machine does the work. Two are supported,
+Keryx does the talking; a coding agent on your machine does the work. Two are supported,
 and a task runs on whichever one it was handed to for its whole life:
 
 - **Claude Code** (`claude`), driven through the Claude Agent SDK. The default.
@@ -11,7 +11,7 @@ Each agent is an optional extra of the same name — `claude`, `codex`, or `all`
 SDK carries its own CLI, so there is nothing else to install. They are large: a complete
 environment measured about 760 MB, 510 MB with Codex alone, 410 MB with Claude alone and
 160 MB with neither (dev tools included in all four). The Codex SDK is pinned to one exact
-version, because Jarvis reads its messages field by field.
+version, because Keryx reads its messages field by field.
 
 | Command | Installs |
 |---|---|
@@ -59,17 +59,17 @@ line, never in a log. `OPENAI_API_KEY`, the voice model's key, is never handed t
 that would quietly move a ChatGPT-plan user onto per-token billing. Set `CODEX_API_KEY` if
 that is what you want.
 
-Codex's own process is handed a copy of Jarvis's environment, so Jarvis overrides every
+Codex's own process is handed a copy of Keryx's environment, so Keryx overrides every
 credential variable the chosen tier does not use with an empty value, which Codex treats as
 unset. Beyond that, each Codex tier goes in its own way, because of what the app-server the
 SDK runs actually reads (checked against 0.157.1):
 
-- **`CODEX_API_KEY`** is *ignored* in the app-server's environment. So Jarvis logs in with
+- **`CODEX_API_KEY`** is *ignored* in the app-server's environment. So Keryx logs in with
   the key once — on stdin, never on a command line — into a Codex home of its own
   (`~/.local/share/keryx/codex`, owner-only, with your `config.toml`, `AGENTS.md` and
   `skills` linked in, but not `hooks.json`: your hooks are your own automation), and logs in
   again only when the key changes. Your own `~/.codex` login is never touched.
-- **`CODEX_ACCESS_TOKEN`** *is* read from the environment, so that is all Jarvis does with
+- **`CODEX_ACCESS_TOKEN`** *is* read from the environment, so that is all Keryx does with
   it: nothing is stored. It is not a ChatGPT token but an OpenAI *agent identity* token; a
   bogus one fails cleanly, but no real one has been run yet.
 - **The stored login** is your own `~/.codex`, exactly as the `codex` CLI uses it.
@@ -117,7 +117,7 @@ Two of those are worth knowing before you switch:
   `uv run keryx setup` (or `keryx auth login google-workspace`); `doctor` warns until you
   have.
 - **The approval bridge** (`keryx approvals`) is for Claude Code sessions on your own
-  screen that stop and ask you something. It has nothing to do with which agent Jarvis
+  screen that stop and ask you something. It has nothing to do with which agent Keryx
   dispatches to, and it stays Claude Code only.
 
 Both agents run with approvals and the sandbox off (`bypassPermissions` for Claude, the
@@ -132,7 +132,7 @@ Two more that are true of both, and worth knowing:
 - **Cancel and the wall-clock cap stop the agent, then its process.** For Codex that kills
   the commands it was running — checked with one that ignores SIGTERM, SIGHUP and SIGINT.
   A command that *detached itself* (`setsid`, a daemon) survives, as it would have under
-  `codex exec`: Jarvis stops the app-server, not a process group it never had.
+  `codex exec`: Keryx stops the app-server, not a process group it never had.
 
 ## Possible later
 

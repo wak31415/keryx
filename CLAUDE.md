@@ -1,8 +1,10 @@
 # CLAUDE.md
 
-Jarvis: a Twilio phone voice agent, backed by the OpenAI Realtime API and Claude Agent SDK
-subagents. The local wake-word channel is developed on `feat/local-wakeword` and is not part
-of `main`.
+Keryx: a Twilio phone voice-assistant service, backed by the OpenAI Realtime API and Claude
+Agent SDK subagents. The assistant it puts on the line has a name of its own
+(`ASSISTANT_NAME`, Lyra by default; see "Two names"). Until 2026-09-29 the service was called
+Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is not part of
+`main`.
 
 ## Commands
 
@@ -21,9 +23,10 @@ of `main`.
   (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
   `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
   `config import-env [PATH]`, `config lock|unlock KEY` (what the running service may change)
-- Move an install from `~/.jarvis` and a checkout `.env` to the XDG directories:
-  `uv run keryx migrate [--dry-run] [--yes]` (stops the service, moves, re-renders the unit
-  and the approval hook, starts it again; `serve` refuses to start until it has run)
+- Move a Jarvis install to Keryx — its XDG directories (`~/.config/jarvis`, …), or an older
+  `~/.jarvis` and a checkout `.env`: `uv run keryx migrate [--dry-run] [--yes]` (stops the
+  service, moves, retires `jarvis.service` for `keryx.service`, re-renders the unit and the
+  approval hook, starts it again; `serve` refuses to start until it has run)
 - Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
   the browser landed on), `uv run keryx auth status [--json] [--smoke]`
@@ -32,11 +35,11 @@ of `main`.
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
   the kill switch); install the Claude hook with `scripts/install-claude-hook.sh`
 - Inspect tasks: `uv run keryx tasks list [--status …] [--limit N] [--internal]`,
-  `uv run keryx tasks show <id>` (the `TOLD` column is `NO` until Jarvis has said it)
+  `uv run keryx tasks show <id>` (the `TOLD` column is `NO` until the assistant has said it)
 - What the tasks spent, per project: `uv run keryx tasks usage [--days N] [--json]` (by the
   project each was dispatched with; the dollars are the agents' own estimates, and the
   voice calls are not tasks)
-- Read what Jarvis remembers between calls: `uv run keryx memory` (`--path` for the file)
+- Read what the assistant remembers between calls: `uv run keryx memory` (`--path` for the file)
 - The plugins (Slack, email, billing, cluster stats): `uv run keryx plugins [list] [--json]`,
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
@@ -168,7 +171,7 @@ what the voice may name. Five rulings:
   exception, forced by Codex's app-server ignoring `CODEX_API_KEY`: that key is logged in
   once, on stdin, into `data_dir/codex`, never the owner's `~/.codex`. `OPENAI_API_KEY` is
   never lent to Codex: that would move a ChatGPT-plan user onto per-token billing unasked,
-  and because the SDK copies Jarvis's environment into the app-server, every credential
+  and because the SDK copies Keryx's environment into the app-server, every credential
   variable the chosen tier does not use is overridden with an empty value.
 - **Both agents run on their vendor's SDK, whose client is injectable.** Claude on the Agent
   SDK (driving it as `claude -p` would lose `max_budget_usd`, `max_turns`, the lifted
@@ -185,15 +188,43 @@ what the voice may name. Five rulings:
   is running, which blanks a placeholder it does not know, so the voice prompt's own wording
   is rewritten to the default agent's name in `prompts._name_the_agent` rather than templated.
   The one new placeholder, `{agents}`, is a paragraph of its own that blanks cleanly.
+  `{assistant}` is the exception that proves it: it arrived with the rename, when the
+  templates moved to `src/keryx`, where no older build reads them at all.
+
+## Two names
+
+The service is **Keryx**: the package, the command, the directories, the units, the hook,
+the repository, and everything the service says in its own voice — the watchdog's alert,
+a text, a refusal, the approval broker's note to Claude Code. The **assistant** on the phone
+is whatever `ASSISTANT_NAME` says (`keryx/persona.py`): Lyra by default, Jarvis as the
+other built-in persona, or any name of the owner's. Three rulings:
+
+- **Messages from the service say Keryx; the assistant's own speech uses its name.** A
+  prompt says `{assistant}` wherever the assistant means itself (the voice prompt, the first
+  call, the memory update, the subagent suffix). Python wording the voice model hears — a
+  tool description, a call-back context — says "you" or "yourself" instead, so no name is
+  threaded through it.
+- **A persona is a name and a voice.** `PERSONAS` gives each built-in its Realtime voice
+  (Lyra `marin`, Jarvis `cedar`), and any other name speaks in `OPENAI_VOICE`, or `marin`.
+  `Settings.voice` is what a call uses: `OPENAI_VOICE` when set, else the persona's. A voice
+  the organization may not use is refused with the whole `session.update`, instructions and
+  tools included, so a persona's voice is a constant that has been heard, never a guess. A
+  coding agent's name is refused as an assistant's.
+- **The old name is read, never written, for one release.** `JARVIS_ACTOR=service` is the
+  service as much as `KERYX_ACTOR` (a security point: a subagent of either build running the
+  other's command must stay the service), and `serve` sets both. `JARVIS_PIN` and
+  `JARVIS_CHECKOUT` are read under the new names, a `.jarvis-brief.md` still describes a
+  project without a `.keryx-brief.md`, and a `jarvis` command says to run `keryx migrate`. A
+  `JARVIS_HOME` is never followed: `serve` refuses until it is renamed.
 
 ## Trust has three levels
 
-Caller ID is spoofable, so an inbound number proves nothing — but a call *Jarvis placed* is
+Caller ID is spoofable, so an inbound number proves nothing — but a call *Keryx placed* is
 different in kind, and one bit of trust could not say so. `keryx/trust.py` has the three,
 ordered so everything asks for "at least this much":
 
 - **`NONE`** — an inbound call before the PIN.
-- **`POSSESSION`** — a call Jarvis placed to `Settings.owner_number`. Reaching that phone
+- **`POSSESSION`** — a call Keryx placed to `Settings.owner_number`. Reaching that phone
   means holding it.
 - **`FULL`** — the PIN was given on this call, or the channel is the local microphone.
   `VoiceSession.trusted` is the old spelling of exactly this, and still means it.
@@ -201,11 +232,11 @@ ordered so everything asks for "at least this much":
 Four rulings, and `SECURITY.md` is the threat model:
 
 - **A token is the only thing that may confer possession.** `stream_tokens.outbound_extra`
-  records that Jarvis placed the call and the number it dialled; `confers_possession` applies
+  records that Keryx placed the call and the number it dialled; `confers_possession` applies
   the rule in `_open_session`, against `Settings.owner_numbers` — never Twilio's `From`/`To`,
-  which are the caller's carrier talking. That set is the whole allowlist, because Jarvis has
+  which are the caller's carrier talking. That set is the whole allowlist, because Keryx has
   one owner: `ALLOWED_CALLERS` is the handsets one person picks up, not a guest list, and
-  `OWNER_NUMBER` only chooses which one Jarvis rings first. Do not narrow it back to the one
+  `OWNER_NUMBER` only chooses which one Keryx rings first. Do not narrow it back to the one
   number — that only makes the tier fail silently on the owner's other phone.
 - **The PIN is the line between reading and acting, not between private and not.** The
   owner's ruling, and the reasoning is why it is written down: the threat case is somebody
@@ -231,7 +262,7 @@ Four rulings, and `SECURITY.md` is the threat model:
   **`recall` is not one of them and stays at `FULL`** — the briefing is a bounded, curated
   context the owner can read with `keryx memory` and prune, and it is the same whatever the
   caller says, where `recall` is an unbounded, caller-steered query over every raw transcript
-  Jarvis has ever written. That is a different quantity of exposure, and the one thing on the
+  Keryx has ever written. That is a different quantity of exposure, and the one thing on the
   phone a spoofer could actually mine.
 - **Possession is who is holding the phone, not that they meant to spend the machine.** It
   buys `send_followup` and `request_callback` (the answer to the question Claude came back
@@ -253,7 +284,7 @@ may stamp only `reportable_task_ids` — the tasks this call's own digest named,
 `opening_task_id` — because stamping decides what the owner never hears.
 **`SessionEnded.authorized` is still `FULL` only**, so a call that never gave the PIN reads
 the memory and never rewrites it, and no `recall` runs over its transcript. That is the
-single most important invariant here: hearing what Jarvis believes is recoverable, editing it
+single most important invariant here: hearing what Keryx believes is recoverable, editing it
 is not. A spoken PIN is `[PIN]` in every transcript line
 (`continuity.transcripts.redact_pin`), and everything that hands a transcript to a model
 redacts again, for logs written before. Do not narrow the subagent's tools instead.
@@ -261,10 +292,10 @@ redacts again, for logs written before. Do not narrow the subagent's tools inste
 ## Continuity is three pieces
 
 A realtime session starts blank — the provider keeps nothing across sockets — so what
-Jarvis knows at the top of a call is assembled every time by
+Keryx knows at the top of a call is assembled every time by
 `keryx/continuity/briefing.py`:
 
-- **The digest.** `Task.reported_at` is the only record that Jarvis *told the owner*; `announced`
+- **The digest.** `Task.reported_at` is the only record that Keryx *told the owner*; `announced`
   and `sms_sent` only say a delivery was attempted, and neither survives a call they missed.
   Until `reported_at` is stamped, the task rides at the top of the next call — from the
   greeting, PIN or no PIN, along with the rest of the standing briefing
@@ -292,7 +323,7 @@ Jarvis knows at the top of a call is assembled every time by
   It needs the PIN, redacts it, and skips calls that never gave it — the one read that did
   not move when the briefing did, because it is unbounded and the caller steers it.
 
-`Task.internal` marks work Jarvis asked for itself (today: the memory update). It hides the
+`Task.internal` marks work Keryx asked for itself (today: the memory update). It hides the
 task from the spoken lists, the digest, `recall`, the daily cap and the notifier — and
 restricts *nothing* about the subagent. It is not a task kind; do not grow it into one.
 
@@ -301,7 +332,7 @@ restricts *nothing* about the subagent. It is not a task kind; do not grow it in
 it edited `src/keryx/**` (`git describe --dirty` flips on any open edit). Honoured only on a
 task that succeeded, never on an internal one. The Notifier then hands that task's call-back
 to the restart's confirmation, which carries both halves — what the work came to, and whether
-it is running. Do not make a subagent restart Jarvis itself; it is inside the cgroup.
+it is running. Do not make a subagent restart Keryx itself; it is inside the cgroup.
 
 ## Settings live in a store, and the service may change only some
 
@@ -336,7 +367,7 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   commands that write what the service may not — `config import-env`, `auth login`,
   `memory seed`, `setup`, `config lock|unlock`, `migrate`, `plugins install|remove` — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
-  context) run as the service. This binds Jarvis's own tools; it is not a
+  context) run as the service. This binds Keryx's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
   `tests/config/test_permissions.py` names the writable set.
 - **The PIN is not a setting.** It stays in `KERYX_HOME/pin`, a write-once file of its own
@@ -353,7 +384,7 @@ addresses and a yes.
 
 ## Storage follows XDG
 
-Jarvis keeps its files where uv, gh, git and neovim keep theirs, on Linux and macOS alike —
+Keryx keeps its files where uv, gh, git and neovim keep theirs, on Linux and macOS alike —
 never `~/Library`, so no `platformdirs` — and each `XDG_*_HOME` is honoured, an empty or
 relative one ignored as the specification says (`config/files.py::xdg_home`):
 
@@ -375,13 +406,19 @@ Four rulings:
   not the state, because people treat state as disposable and losing it hands a guesser a
   fresh budget.
 - **Nothing is read from the working directory.** No `.env`, no `.secrets/`. `serve` (and
-  every command that reads the data) refuses while one is there or while `~/.jarvis` still
-  holds Jarvis's files (`Settings.storage_refusal`). The signal is the old files being
+  every command that reads the data) refuses while one is there, while `~/.jarvis` still
+  holds its files, or while one of Jarvis's XDG directories still holds a file
+  (`Settings.storage_refusal`). The signal is the old files being
   there, never the new directory missing — `ensure_dirs` makes that on any command.
 - **`keryx migrate` plans before it touches anything, and can run twice.** A conflict
   stops it before the service is stopped; an entry already moved is not in the next plan.
-  Nothing is deleted but a stale socket: `~/.jarvis` is renamed aside with its leftovers.
-  Claude sessions that ran in the old workspace are let go, so a follow-up starts afresh.
+  Nothing is deleted but a stale socket: `~/.jarvis` is renamed aside with its leftovers,
+  and each of Jarvis's XDG directories moves whole — whole, because what is in them has
+  outgrown any list of names. Claude sessions that ran in the old workspace are let go, so a
+  follow-up starts afresh, and the imports of the tools in `DATA_DIR/tools` are rewritten
+  (their import lines only). `CLOUDFLARE_TUNNEL` is pinned to `jarvis` when it was the
+  default, and Jarvis's unit is retired before Keryx's is installed, so two tunnels never
+  run at once.
 - **The service resolves what its installer's terminal resolved.** The units render
   `KERYX_HOME` and the four `XDG_*_HOME`, and the restart watchdog's transient unit is
   handed them with `--setenv`: a user manager's environment is not the service's. A
@@ -410,7 +447,7 @@ itself and reports that nothing loaded. Process start is the only moment the che
 running code are the same thing.
 
 The third half is `keryx/restart/watchdog.py`, and it exists because the first two both live
-*inside* Jarvis. A restart is usually loading a change Jarvis just made to its own code; a
+*inside* Keryx. A restart is usually loading a change Keryx just made to its own code; a
 change that will not import means there is no new process, so nothing runs `resume()` and
 nobody is told anything — silence that reads exactly like success. So `_execute()` arms
 `keryx restart-watch` in a transient `systemd-run --user` unit *just before* handing over
@@ -428,12 +465,12 @@ is killed handing over and returns `-15`. And "back up" is not "working" —
 
 ## The approval bridge runs the other way
 
-Everything else in Jarvis carries a result *outwards* from work the owner asked for.
+Everything else in Keryx carries a result *outwards* from work the owner asked for.
 `keryx/approvals/` is the opposite: a Claude Code session on their own screen has stopped
 and asked *them* something, and they are not at the keyboard. A hook in `~/.claude/hooks/`
 (canonical copy: `scripts/claude_hooks/keryx_approval.py`, installed by
 `scripts/install-claude-hook.sh`) hands the pending prompt to the broker over a Unix socket
-and blocks; five minutes later, if they still have not answered, Jarvis rings them.
+and blocks; five minutes later, if they still have not answered, Keryx rings them.
 
 Four rulings hold it up, and none of them is a preference:
 
@@ -447,8 +484,8 @@ Four rulings hold it up, and none of them is a preference:
   a request the hook had to trim), read back whole or not at all.
 - **The keypad decides, never the transcription.** `answer_approval` cannot answer
   anything; the most it does is put a menu in the model's mouth. `ApprovalBroker.digit` is
-  the only thing in Jarvis that can approve a tool call, it is reachable only from a call
-  that has proved something — `FULL`, or the `POSSESSION` of a call Jarvis placed to the
+  the only thing in Keryx that can approve a tool call, it is reachable only from a call
+  that has proved something — `FULL`, or the `POSSESSION` of a call Keryx placed to the
   owner's own number, which is what the escalation call itself is (`VoiceSession._on_dtmf`
   routes there once `authorized`, or while `Keypad.armed`) — and an unrecognised key re-asks
   rather than agreeing. `policy.py`'s allowlist is already the "routine and reversible"
@@ -491,7 +528,7 @@ ones that bite:
   a clear "that needs an admin key" beats a tool that is silently not registered.
 - **`GET` and nothing else.** `_get` takes no body and no method, so no caller can turn it
   into a write. Keep it that way, and keep the plugin `needs_pin=False`: it is the one capability
-  in Jarvis that cannot change anything, and asking what a number is should not need a PIN.
+  in Keryx that cannot change anything, and asking what a number is should not need a PIN.
 - **The spend figure is not per-key, and says so.** OpenAI's costs endpoint filters by
   `project_ids` and nothing finer; `BillingReport.scope` carries what the number actually
   covers. Token *usage* can be narrowed to a key id. Do not let the two blur.
@@ -539,7 +576,7 @@ the one with a scar behind it:
 
 ## Issue reports go out, and only the pattern goes with them
 
-"That's a bug, report it" and "suggest that Jarvis could…" are dispatches like any other;
+"That's a bug, report it" and "suggest that Keryx could…" are dispatches like any other;
 there is no voice tool and no task kind for them. `keryx/issues.py::IssueReporting`
 resolves where they go (`ISSUE_REPO`, the upstream repository by default) and what the
 subagent may read (`Settings.checkout` — `KERYX_CHECKOUT`, else the checkout the code runs
@@ -554,8 +591,8 @@ bug and hears the wish as chat. Four rulings:
   `keryx setup` rather than answering it. The wizard's
   Issue reports section counts as left until it has been walked, whatever `doctor` says —
   off passes `doctor` — and it checks `gh` (`issues.gh_status`, a `Probes` field) and offers
-  `gh auth login` on the terminal. Nothing else in Jarvis signs `gh` in.
-- **The owner does not pay for Jarvis's bugs.** The look is about ten tool calls: no tests,
+  `gh auth login` on the terminal. Nothing else in Keryx signs `gh` in.
+- **The owner does not pay for Keryx's bugs.** The look is about ten tool calls: no tests,
   no reproduction, no fix, no feature built, no edit to the checkout. The issue says the
   look was brief.
 - **The repository is public.** No number, PIN, secret, name or project of the owner's, and
@@ -599,10 +636,10 @@ inside functions, not imported at module scope, so the suite runs without them.
   reaches the file while the service is still a build behind. `Task.from_row` drops columns it
   has no field for; keep it that way, and keep writes naming their columns so the older build
   cannot blank the newer one's data.
-- Jarvis does not text. `SMS_ENABLED` is off by default (many accounts lack SMS permission
+- Keryx does not text. `SMS_ENABLED` is off by default (many accounts lack SMS permission
   for their region, and Slack is the written channel), so gate any send on
   `TwilioOut.can_text` and never on `configured` — outbound *calls* are unaffected, and the
-  restart watchdog's `<Say>` alert is the last thing working when Jarvis is down.
+  restart watchdog's `<Say>` alert is the last thing working when Keryx is down.
 - **One action is one sentence.** The wording the model is handed — the tool descriptions,
   the `*_MESSAGE` constants in `builtin_common`, the call-back contexts, the voice prompt —
   says what *not* to say as firmly as what to say, because the failure mode is never
@@ -615,13 +652,14 @@ inside functions, not imported at module scope, so the suite runs without them.
   arguments are fine). The rulings in this file bind: follow them, and amend this file in
   the same commit when one changes.
 - Conventional commits (`feat:`/`fix:`/`chore:`/`docs:`) with the Co-Authored-By
-  Claude trailer. A subagent Jarvis dispatched adds `Jarvis-Task: <id>` as well, so
-  `git log --grep '^Jarvis-Task:'` is everything the owner asked for out loud rather than
-  typed — the one thing `git log` cannot otherwise recover.
+  Claude trailer. A subagent Keryx dispatched adds `Keryx-Task: <id>` as well (it was
+  `Jarvis-Task:` before the rename), so `git log -E --grep '^(Jarvis|Keryx)-Task:'` is
+  everything the owner asked for out loud rather than typed — the one thing `git log`
+  cannot otherwise recover.
 - Clean and minimal over clever; TDD, with `uv run pytest -q` and
   `uv run ruff check src tests` pristine before a commit. Coverage has a floor (96%) and it
   is a ratchet: raise it when the measured number moves up, never lower it to pass.
-- All four of Jarvis's directories are 0700 and the files under them 0600
+- All four of Keryx's directories are 0700 and the files under them 0600
   (`config.secure_dir` / `secure_file` / `write_private`). Anything new that writes there
   goes through them.
 - A configured `KERYX_PIN` is 6-8 digits and `keryx serve` refuses to start otherwise.

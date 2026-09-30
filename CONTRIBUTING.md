@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking. Jarvis is a single-tenant personal service rather than a library, so
+Thanks for looking. Keryx is a single-tenant personal service rather than a library, so
 "contributing" here mostly means running it yourself and sending back what broke. Issues
 about the setup being wrong, or the README lying, are as welcome as code.
 
@@ -55,12 +55,13 @@ Closes #12
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ```
 
-A subagent Jarvis dispatched adds `Jarvis-Task: <id>` as well, which makes
-`git log --grep '^Jarvis-Task:'` the record of what was asked for out loud.
+A subagent Keryx dispatched adds `Keryx-Task: <id>` as well (`Jarvis-Task:` before the
+service was renamed), which makes `git log -E --grep '^(Jarvis|Keryx)-Task:'` the record of
+what was asked for out loud.
 
 ## Releases
 
-There is no package index in this story. Jarvis is installed from a clone, so a release is
+There is no package index in this story. Keryx is installed from a clone, so a release is
 a tag and a set of notes, not an upload.
 
 1. Bump `version` in `pyproject.toml` by hand. Semantic versioning, and the only public
@@ -112,7 +113,7 @@ Every direct dependency carries a lower bound at the version `uv.lock` pins — 
 it is actually tested against — and an upper bound at the next release that may break it.
 For the 0.x projects that is the next *minor*, because that is where a 0.x puts its
 breaking changes. `claude-agent-sdk` is held to a single minor deliberately: it is young,
-it moves fast, and every task in Jarvis runs through it.
+it moves fast, and every task in Keryx runs through it.
 
 Dependabot opens weekly PRs for `uv` (manifest and lock together, which is what CI installs
 from) and for the GitHub Actions themselves. CI is the gate: a bump that fails `uv sync
@@ -125,7 +126,7 @@ worth knowing about:
 
 | Package | Licence | Why it is fine |
 |---|---|---|
-| `soxr` | **LGPL-2.1-or-later** | The only copyleft dependency, and a direct one: it is the resampler, and it is native code. Jarvis imports it as an ordinary installed library — nothing is vendored, nothing is statically linked, and no combined binary is distributed — so the LGPL's relink condition is satisfied by pip being able to replace it. Do not vendor it into a bundle without revisiting this. |
+| `soxr` | **LGPL-2.1-or-later** | The only copyleft dependency, and a direct one: it is the resampler, and it is native code. Keryx imports it as an ordinary installed library — nothing is vendored, nothing is statically linked, and no combined binary is distributed — so the LGPL's relink condition is satisfied by pip being able to replace it. Do not vendor it into a bundle without revisiting this. |
 | `certifi` | MPL-2.0 | Weak, file-level copyleft on an unmodified dependency. Nothing here modifies it. |
 
 Redo this review when
