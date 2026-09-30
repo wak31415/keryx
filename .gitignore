@@ -28,6 +28,7 @@ credentials/
 # Local scratch and launcher
 tmp/
 .claude-launch.sh
+.claude/
 
 # OS / editors
 .DS_Store
