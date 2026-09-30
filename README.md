@@ -24,9 +24,9 @@ conversation runs on the OpenAI Realtime API. Call from a phone, or from a watch
 place calls.
 
 <p align="center">
-  <img src="docs/assets/keryx-incoming-call.jpg" width="480" alt="A Garmin watch showing an incoming call from an assistant named Jarvis.">
+  <img src="docs/assets/keryx-incoming-call.jpg" width="480" alt="A Garmin watch showing an incoming call from Lyra.">
   <br>
-  <em>Keryx ringing my watch with a result. I named my assistant Jarvis; out of the box it is Lyra.</em>
+  <em>Keryx ringing my watch with a result, and Lyra on the line.</em>
 </p>
 
 ## What Keryx adds
