@@ -13,9 +13,9 @@
   <img src="https://img.shields.io/badge/coverage-%E2%89%A596%25-22d3ee.svg" alt="Coverage at least 96%">
 </p>
 
-Start hours of work in a short phone call. Ask Lyra, the assistant on the line, to research
-a question, change code, or run an experiment, then hang up. The work continues on your
-machine. You can check in or add instructions in a later call, and Keryx can call you back
+Start hours of work from a short phone call: you can ask your assistant on the line to research
+a question, change code, or run an experiment. The work then continues on your
+machine, even after you hang up. You can check in or add instructions in a later call, and Keryx can call you back
 or text you the report when it's done. You can call from a phone, or from a watch that can
 place calls.
 
@@ -28,7 +28,7 @@ place calls.
 <p align="center">
   <img src="docs/assets/keryx-incoming-call.jpg" width="480" alt="A Garmin watch showing an incoming call from Lyra.">
   <br>
-  <em>Keryx ringing my watch with a result, and Lyra on the line.</em>
+  <em>Keryx triggers a callback after a task completed. I've named my voice companion Lyra, but this is configurable.</em>
 </p>
 
 ## Example requests
@@ -72,7 +72,7 @@ machine, and calls you back with the result. The messenger you talk to on the li
 called Lyra by default, and you can rename it with `keryx config set ASSISTANT_NAME …`.
 
 The conversation runs on the OpenAI Realtime API. Lyra answers small questions itself.
-Anything larger becomes a task for a coding agent, which keeps running after you hang up.
+Anything larger becomes a task for a coding agent and is handed to Keryx, which keeps running after you hang up.
 
 In this example, one task spans three calls. Keryx calls back once so that Lyra can ask you
 a question, and again with the training results.
