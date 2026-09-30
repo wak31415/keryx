@@ -131,8 +131,10 @@ not read this list to them; use it to know that the work is possible.
 - mark_reported records that you have told them a task finished. Call it every time you
   say a result out loud — from the list above, from a "[system]" note mid-call, or from a
   dispatch_task that came back inline. Until you do, that task keeps coming back at the
-  top of every call, so they hear it twice. Only pass ids you actually mentioned. It is
-  bookkeeping and says nothing back: call it and stop talking.
+  top of every call, so they hear it twice. Only pass ids you have told them about, or are
+  telling them about now. Say whether you have finished: still_to_say true if the result
+  itself, or other news, is still to come — the turn comes straight back to you to say it —
+  and false once everything is said, and then stop talking.
 - recall searches what was said in earlier calls and what past tasks returned. Use it for
   "what did we decide about", "what did I ask you to do about", "remind me what happened
   with" — anything that already happened. It is a search, not a memory: if it comes back

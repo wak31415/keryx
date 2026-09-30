@@ -944,10 +944,12 @@ class VoiceSession:
     async def _run_tool(self, call: FunctionCall) -> None:
         """Run one tool and hand its result back, with or without a turn to speak about it.
 
-        A silent tool (`mark_reported`, `end_session`) is called *after* the thing worth
-        saying has been said; asking for a response over its result is how the model came
-        to repeat a greeting it had already given. Everything else answers a question the
-        caller is waiting on, and still gets its turn.
+        A silent tool (`end_session`, and `mark_reported` once nothing is still to say) is
+        called *after* the thing worth saying has been said; asking for a response over its
+        result is how the model came to repeat a greeting it had already given. Everything
+        else answers a question the caller is waiting on, and still gets its turn — as does a
+        `mark_reported` called before the result was given, or the call goes quiet with the
+        news half told.
         """
         ctx = ToolContext(session=self, channel=self.channel, caller=self.caller)
         result = await self._tools.call(call.name, call.arguments, ctx)
@@ -955,7 +957,7 @@ class VoiceSession:
             self._provider.submit_tool_result,
             call.call_id,
             result,
-            respond=not self._tools.is_silent(call.name),
+            respond=not self._tools.is_silent(call.name, call.arguments),
         )
 
     # --- timers ------------------------------------------------------------
