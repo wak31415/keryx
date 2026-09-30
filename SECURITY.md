@@ -76,7 +76,7 @@ anything behind, or reach a coding agent. In particular:
   when it is quoted back.
 - Text that reaches a Claude Code session on your machine (an issue, a pull request, a web
   page) and gets the approval bridge to ring you about one command while running another,
-  or to offer a command its policy should never offer.
+  or to run a command its policy should never have offered.
 
 ### Out of scope
 
@@ -108,7 +108,7 @@ These are the design, not flaws in it:
 Caller ID can be spoofed. `ALLOWED_CALLERS` keeps strangers from reaching the voice model at
 all, but anyone who spoofs an allowed number does reach it, and the public source code makes
 that cheap. So the allowlist is not authentication. The PIN is, and its one job is to stop a
-caller who has spoofed your number.
+caller who has spoofed an allowed number.
 
 The PIN is **not** a defense against a compromised machine. Anyone who can read your files
 can read `~/.config/keryx/secrets.toml` and `~/.config/keryx/pin`, which hold the API keys,
@@ -175,8 +175,8 @@ a PIN is ever set from the phone.
 `KERYX_HOME/pin` file), a caller enters six to eight digits and then enters them again. When
 the two entries match, that is the PIN. Once a PIN exists, enrollment is closed, and the
 file write itself closes it rather than a separate check: Keryx creates `KERYX_HOME/pin` with
-`O_CREAT | O_EXCL`, so the kernel refuses a second write. On purpose, nothing can change an
-enrolled PIN: no voice tool, and no `keryx config set`.
+`O_CREAT | O_EXCL`, so the kernel refuses a second write. On purpose, no voice tool and no
+`keryx config set` can change an enrolled PIN. Only `keryx setup` at a terminal can.
 
 `keryx setup`, run at a terminal, is you at the keyboard. It writes a first PIN the same
 way. It replaces an existing PIN only after you confirm twice and type the new digits twice,
@@ -316,8 +316,10 @@ command line on the machine is unaffected. You lose whatever the PIN gates on th
 
 What you can do about it:
 
-- Change the PIN with `keryx setup`, as the alert suggests. An attacker who has used up
-  their guesses has learned nothing about the new one.
+- Change `KERYX_PIN`, as the alert says: with `keryx setup` if the PIN is in
+  `KERYX_HOME/pin`, or wherever you set it if it is in the service's environment. Then
+  restart Keryx, because a running service keeps the PIN it started with. An attacker who
+  has used up their guesses has learned nothing about the new PIN.
 - Clear the lock: stop Keryx, delete `DATA_DIR/pin-failures.json`, and start Keryx again.
 - Remove the spoofed number from `ALLOWED_CALLERS` until the attempts stop.
 
