@@ -20,8 +20,8 @@ or text you the report when it's done. You can call from a phone, or from a watc
 place calls.
 
 > [!NOTE]
-> Keryx is pre-1.0. It's a single-owner service that runs on your own machine with your own
-> API keys. While it only answers calls from your own numbers, and asks for your PIN before
+> Keryx is pre-1.0. It's self-hosted: it runs on your own machine with your own API keys.
+> While it only answers calls from your own numbers, and asks for your PIN before
 > it does anything on your behalf in case someone spoofs one of them, please review
 > [SECURITY.md](SECURITY.md) for details on how safe it is to run.
 
