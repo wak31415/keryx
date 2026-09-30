@@ -27,7 +27,7 @@ import secrets
 import tomllib
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import Field, PrivateAttr, field_validator, model_validator
 from pydantic.fields import FieldInfo
@@ -62,6 +62,7 @@ from jarvis.config.pin import (
     read_enrolled_pin,
     write_enrolled_pin,
 )
+from jarvis.persona import DEFAULT_NAME, DEFAULT_VOICE, PERSONAS, voice_for
 
 log = logging.getLogger("jarvis.config")
 
@@ -142,6 +143,11 @@ LEGACY_CLIENT_FILE = Path(".secrets") / "client_secret.json"
 LEGACY_WORKING_FILES = (LEGACY_ENV_FILE, LEGACY_CLIENT_FILE)
 #: Where a problem with Jarvis is filed unless `ISSUE_REPO` says otherwise: its own tracker.
 UPSTREAM_REPO = "wak31415/jarvis-voice-agent"
+#: An assistant's name: a letter, then up to 31 letters, spaces, apostrophes or hyphens.
+ASSISTANT_NAME_PATTERN = re.compile(r"[^\W\d_](?:[^\W\d_]|[ '’-]){0,31}")
+ASSISTANT_NAME_RULE = (
+    "must be 1 to 32 letters, spaces, apostrophes or hyphens, starting with a letter"
+)
 #: `owner/name`, as GitHub spells a repository.
 REPO_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 #: The repository root of the running code: `src/jarvis/config/settings.py`, three up.
@@ -256,8 +262,22 @@ class Settings(BaseSettings):
     openai_realtime_model: str = setting(
         "gpt-realtime-2.1", "The realtime speech-to-speech model a call runs on.", group="voice"
     )
+    assistant_name: str = setting(
+        DEFAULT_NAME,
+        "What the assistant on the phone is called: the name it answers to and introduces "
+        "itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, "
+        f"spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or "
+        f"`{DEFAULT_VOICE}`.",
+        group="voice",
+        service_writable=True,
+    )
     openai_voice: str = setting(
-        "cedar", "The voice Jarvis speaks in.", group="voice", service_writable=True
+        "",
+        "The Realtime voice the assistant speaks in. Empty is the assistant's own "
+        "(`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail "
+        "to open.",
+        group="voice",
+        service_writable=True,
     )
     openai_transcription_model: str = setting(
         "gpt-4o-mini-transcribe",
@@ -753,6 +773,23 @@ class Settings(BaseSettings):
             return [str(item).strip().lower() for item in value if str(item).strip()]
         return value
 
+    @field_validator("assistant_name", mode="after")
+    @classmethod
+    def _assistant_name_is_a_name(cls, value: str) -> str:
+        """A name the prompt can say: no digits, no braces, and not a coding agent's.
+
+        An assistant called Claude would hand its work to Claude and hear itself named in
+        every result, so the agents' names are refused. A built-in persona's name is spelled
+        its way (`jarvis` is Jarvis), and runs of spaces are collapsed.
+        """
+        name = " ".join(value.split())
+        if not ASSISTANT_NAME_PATTERN.fullmatch(name):
+            raise ValueError(ASSISTANT_NAME_RULE)
+        if name.lower() in get_args(AgentName):
+            raise ValueError(f"{name} is a coding agent's name; the assistant needs its own")
+        persona = PERSONAS.get(name.lower())
+        return persona.name if persona is not None else name
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _log_level_is_uppercase(cls, value: object) -> object:
@@ -946,6 +983,11 @@ class Settings(BaseSettings):
         except (OSError, ValueError) as exc:
             log.warning("could not use the Google client secrets at %s: %s", path, exc)
             return None
+
+    @property
+    def voice(self) -> str:
+        """The voice a call speaks in: `OPENAI_VOICE`, else the assistant's own."""
+        return self.openai_voice or voice_for(self.assistant_name)
 
     @property
     def owner_label(self) -> str:

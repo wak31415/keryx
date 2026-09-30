@@ -17,7 +17,7 @@ PIN = "123456"
 def test_voice_prompt_is_packaged_and_loadable():
     text = load_prompt("voice_system.md")
 
-    assert "Jarvis" in text
+    assert "You are {assistant}" in text
     assert "{channel}" in text
 
 
@@ -518,18 +518,34 @@ def _author_first_name() -> str:
     return project["authors"][0]["name"].split()[0]
 
 
-def test_the_voice_prompt_says_whom_jarvis_works_for(settings):
+def test_the_voice_prompt_says_whom_the_assistant_works_for(settings):
     settings.owner_name = "Ada"
 
     rendered = _rendered(settings)
 
-    assert "You are Jarvis, Ada's personal assistant." in rendered
+    assert "You are Lyra, Ada's personal assistant." in rendered
+
+
+def test_the_voice_prompt_uses_the_assistants_configured_name(settings, unwrapped):
+    settings.assistant_name = "Jarvis"
+
+    rendered = unwrapped(_rendered(settings))
+
+    assert rendered.startswith("# Jarvis You are Jarvis, the owner's personal assistant.")
+    assert "Lyra" not in rendered
+
+
+def test_the_first_call_introduction_renders_every_placeholder(settings):
+    rendered = _rendered(settings, memory=None)
+
+    assert "This is the first call" in rendered
+    assert "{" not in rendered and "}" not in rendered
 
 
 def test_without_a_name_the_voice_prompt_works_for_the_owner(settings):
     rendered = _rendered(settings)
 
-    assert "You are Jarvis, the owner's personal assistant." in rendered
+    assert "You are Lyra, the owner's personal assistant." in rendered
     assert "{" not in rendered and "}" not in rendered
 
 
@@ -841,7 +857,7 @@ def test_a_bug_or_a_wish_about_jarvis_is_work_it_can_file(settings, unwrapped):
 
     assert "A bug: something you got wrong" in text
     assert "And a feature request: something you cannot do yet and they wish you could" in text
-    assert "saying whether it is a bug report or a feature request for Jarvis" in text
+    assert "saying whether it is a bug report or a feature request for you" in text
     assert "If they want the thing built now rather than suggested" in text
     assert "Do not offer to file anything after every stumble or passing wish" in text
 
@@ -856,6 +872,6 @@ def test_with_issue_reports_off_the_prompt_says_nothing_about_them(settings, unw
 def test_the_issues_paragraph_names_the_default_agent(settings, unwrapped):
     codex = _reporting(settings).model_copy(update={"agent_backend": "codex"})
 
-    assert "and Codex files it as an issue on Jarvis's own repository" in unwrapped(
+    assert "and Codex files it as an issue on your own repository" in unwrapped(
         _rendered(codex)
     )

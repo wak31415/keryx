@@ -176,7 +176,19 @@ async def test_the_update_is_titled_with_the_owners_name(settings, writer):
 
     await bus.publish(ended())
 
-    assert "# What Jarvis knows about Ada" in (await internal_tasks(store))[0].description
+    assert "# What Lyra knows about Ada" in (await internal_tasks(store))[0].description
+
+
+async def test_the_update_is_written_by_the_assistant_they_named(settings, writer):
+    settings.assistant_name = "Jarvis"
+    _, bus, _, store = writer
+    write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
+
+    await bus.publish(ended())
+
+    description = (await internal_tasks(store))[0].description
+    assert description.startswith("# Update Jarvis's memory")
+    assert "# What Jarvis knows about the owner" in description
 
 
 async def test_the_update_is_shown_the_structure_the_skeleton_defines(settings, writer):
@@ -187,7 +199,7 @@ async def test_the_update_is_shown_the_structure_the_skeleton_defines(settings, 
     await bus.publish(ended())
 
     description = (await internal_tasks(store))[0].description
-    assert memory_skeleton("the owner") in description
+    assert memory_skeleton("the owner", "Lyra") in description
 
 
 async def test_the_update_runs_in_the_data_directory_not_a_repo(settings, writer):
@@ -255,8 +267,8 @@ async def test_start_and_stop_are_idempotent(settings, writer):
 
 
 def test_the_skeleton_is_a_title_and_three_sections():
-    assert memory_skeleton("Ada").splitlines() == [
-        "# What Jarvis knows about Ada",
+    assert memory_skeleton("Ada", "Lyra").splitlines() == [
+        "# What Lyra knows about Ada",
         "",
         "## Standing facts",
         "## Ongoing threads",
@@ -265,10 +277,12 @@ def test_the_skeleton_is_a_title_and_three_sections():
 
 
 def test_a_first_memory_puts_the_facts_under_standing_facts():
-    text = compose_memory("Ada", ["Prefers short answers.", "  - Works nights.  ", "", "  "])
+    text = compose_memory(
+        "Ada", ["Prefers short answers.", "  - Works nights.  ", "", "  "], assistant="Lyra"
+    )
 
     assert text == (
-        "# What Jarvis knows about Ada\n\n"
+        "# What Lyra knows about Ada\n\n"
         "## Standing facts\n\n"
         "- Prefers short answers.\n"
         "- Works nights.\n\n"
@@ -280,12 +294,14 @@ def test_a_first_memory_puts_the_facts_under_standing_facts():
 def test_a_fact_spread_over_lines_stays_one_bullet():
     """A newline inside a fact would start a line the structure does not expect."""
     assert "- Lives by the sea, and walks a dog.\n" in compose_memory(
-        "Ada", ["Lives by the sea,\n  and walks a dog."]
+        "Ada", ["Lives by the sea,\n  and walks a dog."], assistant="Lyra"
     )
 
 
 def test_seeding_writes_a_private_memory_the_next_call_reads(settings):
-    assert seed_memory(settings.data_dir, owner="Ada", facts=["Prefers short answers."])
+    assert seed_memory(
+        settings.data_dir, owner="Ada", assistant="Lyra", facts=["Prefers short answers."]
+    )
 
     path = memory_path(settings.data_dir)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
@@ -295,9 +311,12 @@ def test_seeding_writes_a_private_memory_the_next_call_reads(settings):
 
 def test_seeding_never_overwrites_a_memory_that_is_already_there(settings):
     """What calls have written down is worth more than a first draft typed at a terminal."""
-    seed_memory(settings.data_dir, owner="Ada", facts=["the first draft"])
+    seed_memory(settings.data_dir, owner="Ada", assistant="Lyra", facts=["the first draft"])
 
-    assert seed_memory(settings.data_dir, owner="Ada", facts=["a second one"]) is False
+    written = seed_memory(
+        settings.data_dir, owner="Ada", assistant="Lyra", facts=["a second one"]
+    )
+    assert written is False
     assert "the first draft" in read_memory(settings.data_dir)
 
 
@@ -305,13 +324,15 @@ def test_seeding_over_an_empty_file_is_not_overwriting_anything(settings):
     settings.ensure_dirs()
     memory_path(settings.data_dir).write_text("\n  \n")
 
-    assert seed_memory(settings.data_dir, owner="Ada", facts=["a fact"]) is True
+    assert seed_memory(settings.data_dir, owner="Ada", assistant="Lyra", facts=["a fact"]) is True
 
 
 def test_force_replaces_the_memory(settings):
-    seed_memory(settings.data_dir, owner="Ada", facts=["the first draft"])
+    seed_memory(settings.data_dir, owner="Ada", assistant="Lyra", facts=["the first draft"])
 
-    assert seed_memory(settings.data_dir, owner="Ada", facts=["a second one"], force=True)
+    assert seed_memory(
+        settings.data_dir, owner="Ada", assistant="Lyra", facts=["a second one"], force=True
+    )
     assert "a second one" in read_memory(settings.data_dir)
     assert "the first draft" not in read_memory(settings.data_dir)
 
@@ -319,7 +340,9 @@ def test_force_replaces_the_memory(settings):
 def test_seeding_refuses_more_than_a_call_reads(settings):
     """Every character of it is sent on every call; a trim would quietly lose the end."""
     with pytest.raises(ValueError, match=str(MAX_MEMORY_CHARS)):
-        seed_memory(settings.data_dir, owner="Ada", facts=["x" * MAX_MEMORY_CHARS])
+        seed_memory(
+            settings.data_dir, owner="Ada", assistant="Lyra", facts=["x" * MAX_MEMORY_CHARS]
+        )
 
     assert not memory_path(settings.data_dir).exists()
 
@@ -330,11 +353,11 @@ def test_seeding_refuses_more_than_a_call_reads(settings):
 def test_standing_facts_are_added_under_their_heading_whatever_came_after(tmp_path):
     from jarvis.continuity.memory import add_standing_facts
 
-    seed_memory(tmp_path, owner="Ada", facts=["Works nights."])
+    seed_memory(tmp_path, owner="Ada", assistant="Lyra", facts=["Works nights."])
     path = memory_path(tmp_path)
     path.write_text(path.read_text() + "\n- Talked about the orchard.\n")
 
-    add_standing_facts(tmp_path, owner="Ada", facts=["• Writes Rust.", " "])
+    add_standing_facts(tmp_path, owner="Ada", assistant="Lyra", facts=["• Writes Rust.", " "])
 
     lines = path.read_text().splitlines()
     standing = lines.index("## Standing facts")
@@ -347,7 +370,7 @@ def test_standing_facts_are_added_under_their_heading_whatever_came_after(tmp_pa
 def test_standing_facts_start_a_memory_when_there_is_none(tmp_path):
     from jarvis.continuity.memory import add_standing_facts
 
-    add_standing_facts(tmp_path, owner="Ada", facts=["Writes Rust."])
+    add_standing_facts(tmp_path, owner="Ada", assistant="Lyra", facts=["Writes Rust."])
 
     assert "- Writes Rust." in memory_path(tmp_path).read_text()
 
@@ -357,7 +380,7 @@ def test_a_heading_edited_out_by_hand_comes_back(tmp_path):
 
     memory_path(tmp_path).write_text("# Notes\n\nfree text\n")
 
-    add_standing_facts(tmp_path, owner="Ada", facts=["Writes Rust."])
+    add_standing_facts(tmp_path, owner="Ada", assistant="Lyra", facts=["Writes Rust."])
 
     assert memory_path(tmp_path).read_text().endswith("## Standing facts\n\n- Writes Rust.\n")
 
@@ -365,10 +388,10 @@ def test_a_heading_edited_out_by_hand_comes_back(tmp_path):
 def test_standing_facts_past_what_a_call_reads_are_refused(tmp_path):
     from jarvis.continuity.memory import add_standing_facts
 
-    seed_memory(tmp_path, owner="Ada", facts=["Works nights."])
+    seed_memory(tmp_path, owner="Ada", assistant="Lyra", facts=["Works nights."])
     before = memory_path(tmp_path).read_text()
 
     with pytest.raises(ValueError, match="a call reads"):
-        add_standing_facts(tmp_path, owner="Ada", facts=["x" * MAX_MEMORY_CHARS])
+        add_standing_facts(tmp_path, owner="Ada", assistant="Lyra", facts=["x" * MAX_MEMORY_CHARS])
 
     assert memory_path(tmp_path).read_text() == before

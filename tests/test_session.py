@@ -128,10 +128,10 @@ async def test_session_config_follows_the_phone_transport(make_session, phone, p
     config = provider.config
     assert config.audio_format == "audio/pcmu"
     assert config.interrupt_response is True
-    assert config.voice == settings.openai_voice
+    assert config.voice == settings.voice == "marin"
     assert config.transcription_model == settings.openai_transcription_model
     assert config.transcription_language is None  # unset: the transcriber guesses
-    assert "Jarvis" in config.instructions
+    assert "You are Lyra" in config.instructions
     assert "phone" in config.instructions
 
 
@@ -978,7 +978,7 @@ async def test_a_briefer_that_raises_does_not_cost_the_call(make_session, phone,
     async with running(session):
         await eventually(lambda: provider.config is not None)
 
-    assert "Jarvis" in provider.config.instructions
+    assert "You are Lyra" in provider.config.instructions
     assert provider.injected[0][0] == OPENING_MESSAGE
 
 

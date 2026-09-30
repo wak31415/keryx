@@ -136,17 +136,21 @@ def seed(settings: Settings, facts: list[str], *, force: bool, echo: Echo) -> st
     so nothing was refused — which is how an agent asks what a call will carry.
     """
     path = memory_path(settings.data_dir)
-    owner = settings.owner_label
-    if compose_memory(owner, facts) == compose_memory(owner, []):
+    owner, assistant = settings.owner_label, settings.assistant_name
+    if compose_memory(owner, facts, assistant=assistant) == compose_memory(
+        owner, [], assistant=assistant
+    ):
         echo(f"nothing to write down, so {path} is left as it is.")
         return "unchanged"
     existing = read_memory(settings.data_dir)
     if existing and not force:
-        echo(f"Jarvis already remembers something ({len(existing)} characters in {path}).")
+        echo(f"{assistant} already remembers something ({len(existing)} characters in {path}).")
         echo("`jarvis memory` shows it; `jarvis memory seed --force` replaces it.")
         return "exists"
     try:
-        written = seed_memory(settings.data_dir, owner=owner, facts=facts, force=force)
+        written = seed_memory(
+            settings.data_dir, owner=owner, assistant=assistant, facts=facts, force=force
+        )
     except ValueError as exc:
         echo(f"{exc}: shorten it and try again.")
         return "too_long"
@@ -161,11 +165,12 @@ def seed(settings: Settings, facts: list[str], *, force: bool, echo: Echo) -> st
 
 
 def run_section(ctx: SetupContext) -> None:
-    """What Jarvis should know about its owner from the first call, as a first memory."""
+    """What the assistant should know about its owner from the first call, as a first memory."""
     ui, settings = ctx.ui, ctx.settings
+    assistant = settings.assistant_name
     existing = read_memory(settings.data_dir)
     if existing:
-        ui.success(f"Jarvis already remembers {len(existing)} characters about you")
+        ui.success(f"{assistant} already remembers {len(existing)} characters about you")
         if not ui.confirm("Replace that memory with a new one?", default=False):
             return
     ui.note(
@@ -173,16 +178,16 @@ def run_section(ctx: SetupContext) -> None:
         "Nothing you would not send there."
     )
     uses = ui.checkbox(
-        "What will you mostly use Jarvis for?",
+        f"What will you mostly use {assistant} for?",
         [Choice(key, label.replace("their ", "your ")) for key, label in USES.items()],
     )
     other = ui.text("Anything else you will use it for? (optional)")
     facts = []
     if uses or other:
         named = [USES[key] for key in uses] + ([other] if other else [])
-        facts.append(f"Mostly uses Jarvis for {', '.join(named)}.")
+        facts.append(f"Mostly uses {assistant} for {', '.join(named)}.")
     ui.note(
-        "A few things Jarvis should know about you, one per line — what you do, what keeps "
+        f"A few things {assistant} should know about you, one per line — what you do, what keeps "
         "coming up, how you like to be answered. A blank line finishes."
     )
     while line := ui.text("fact"):
@@ -190,14 +195,20 @@ def run_section(ctx: SetupContext) -> None:
     if not facts:
         ui.note("Nothing to write down; the first call will introduce itself instead.")
         return
-    text = compose_memory(settings.owner_label, facts)
+    text = compose_memory(settings.owner_label, facts, assistant=assistant)
     if len(text) > MAX_MEMORY_CHARS:
         ui.error(f"That comes to {len(text)} characters, and a call reads {MAX_MEMORY_CHARS}.")
         return
     ui.panel(str(memory_path(settings.data_dir)), text)
     if not ui.confirm("Write it?", default=True):
         return
-    if seed_memory(settings.data_dir, owner=settings.owner_label, facts=facts, force=True):
+    if seed_memory(
+        settings.data_dir,
+        owner=settings.owner_label,
+        assistant=assistant,
+        facts=facts,
+        force=True,
+    ):
         ui.success("memory written (readable by you alone)")
 
 

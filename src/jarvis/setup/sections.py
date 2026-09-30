@@ -37,12 +37,15 @@ from jarvis.config import (
 from jarvis.config.permissions import is_protected, service_writable, writable_keys
 from jarvis.config.store import ConfigError, validate
 from jarvis.doctor import service_manager_check
+from jarvis.persona import DEFAULT_VOICE, PERSONAS
 from jarvis.setup.context import SetupContext
 from jarvis.setup.phone import numbers_problem
-from jarvis.setup.ui import Choice
+from jarvis.setup.ui import Choice, Prompter
 
 #: Settings the manual walk does not offer: each has a section, or a door, of its own.
-NOT_MANUAL = frozenset({"JARVIS_PIN", "ALLOWED_CALLERS", "OWNER_NUMBER", "OWNER_NAME"})
+NOT_MANUAL = frozenset(
+    {"JARVIS_PIN", "ALLOWED_CALLERS", "OWNER_NUMBER", "OWNER_NAME", "ASSISTANT_NAME"}
+)
 
 
 # --- import ----------------------------------------------------------------------------
@@ -215,11 +218,50 @@ def _service_permissions(ctx: SetupContext) -> None:
 # --- owner and PIN ---------------------------------------------------------------------
 
 
+def assistant_problem(value: str) -> str | None:
+    try:
+        validate({"ASSISTANT_NAME": value})
+    except ConfigError as error:
+        message = str(error).removeprefix("ASSISTANT_NAME ")
+        return f"{message[0].upper()}{message[1:]}."
+    return None
+
+
+#: What "Something else" is, beside the built-in personas.
+OTHER_NAME = "other"
+
+
+def ask_assistant_name(ui: Prompter, current: str) -> str:
+    """The assistant's name: a built-in persona, with its voice, or one of their own."""
+    choices = [
+        Choice(persona.name, persona.name, hint=f"speaks in {persona.voice}")
+        for persona in PERSONAS.values()
+    ]
+    choices.append(
+        Choice(OTHER_NAME, "Something else", hint=f"speaks in OPENAI_VOICE, or {DEFAULT_VOICE}")
+    )
+    built_in = current.lower() in PERSONAS
+    picked = ui.select(
+        "What should your assistant be called?",
+        choices,
+        default=current if built_in else OTHER_NAME,
+    )
+    if picked != OTHER_NAME:
+        return picked
+    typed = ui.text(
+        "Its name", default="" if built_in else current, validate=assistant_problem
+    )
+    return str(validate({"ASSISTANT_NAME": typed})["ASSISTANT_NAME"])
+
+
 def run_owner(ctx: SetupContext) -> None:
     ui, settings = ctx.ui, ctx.settings
     values: dict[str, Any] = {}
     if not settings.owner_name or ctx.review:
-        name = ui.text('What should Jarvis call you? (blank for "the owner")',
+        assistant = ask_assistant_name(ui, settings.assistant_name)
+        if assistant != settings.assistant_name:
+            values["ASSISTANT_NAME"] = assistant
+        name = ui.text(f'What should {assistant} call you? (blank for "the owner")',
                        default=settings.owner_name or "")
         if name != (settings.owner_name or ""):
             values["OWNER_NAME"] = name or None

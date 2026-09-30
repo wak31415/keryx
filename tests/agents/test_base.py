@@ -266,6 +266,17 @@ def test_the_subagent_suffix_says_whom_the_work_is_for():
     assert "dispatched on the owner's behalf" in render_subagent_suffix(task)
 
 
+def test_the_subagent_suffix_names_the_assistant_that_dispatched_it(unwrapped, tmp_path):
+    task = Task(id=1, kind=TaskKind.AGENT, description="x")
+
+    suffix = unwrapped(render_subagent_suffix(task, assistant="Jarvis", tools_dir=tmp_path))
+
+    assert suffix.startswith("# Dispatched by Jarvis You are a subagent Jarvis dispatched")
+    assert "something Jarvis should be able to do on a call" in suffix
+    assert "Lyra" not in suffix
+    assert "You are a subagent Lyra dispatched" in unwrapped(render_subagent_suffix(task))
+
+
 def test_the_subagent_suffix_says_where_the_owners_tools_go_and_how_to_check_them(
     tmp_path, unwrapped
 ):

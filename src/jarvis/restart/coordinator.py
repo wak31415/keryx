@@ -82,19 +82,20 @@ EXEC_CONFIRM_S = 20.0
 #: How many rows the task counts in the summary look at.
 TASK_SCAN_LIMIT = 50
 #: What a live session hears instead of a call — nobody is rung mid-conversation.
-RESTART_ANNOUNCEMENT = "The restart is done and Jarvis is back up: {status}."
+RESTART_ANNOUNCEMENT = "The restart is done and you are back up: {status}."
 #: The opening context of the call-back itself: a confirmation, not a report.
 RESTART_CONTEXT = (
-    "You are calling the user back because the Jarvis service — you — has just restarted "
-    "and is running again. They asked for the restart {when}{reason}{change}, and this call "
-    "is the confirmation. Status: {status}. In your first turn, greet them and tell them in "
-    "one or two sentences whether it worked — do not stop after the greeting to wait for "
-    "them. If the status mentions errors in the log, or says the checkout did not change, "
-    "that is the headline: say plainly that the update may not have taken, say what the "
-    "error was, and offer to put Claude on it. Otherwise say it went through, mention "
-    "anything else in the status they would want to know, and ask if they need anything "
-    "else. Keep it short: they asked for a restart, not a report. This is a new call: they "
-    "may have to give the PIN again before you can start more work."
+    "You are calling the user back because you — the service behind this call — have just "
+    "restarted and are running again. They asked for the restart "
+    "{when}{reason}{change}, and this call is the confirmation. Status: {status}. In your "
+    "first turn, greet them and tell them in one or two sentences whether it worked — do "
+    "not stop after the greeting to wait for them. If the status mentions errors in the "
+    "log, or says the checkout did not change, that is the headline: say plainly that the "
+    "update may not have taken, say what the error was, and offer to put Claude on it. "
+    "Otherwise say it went through, mention anything else in the status they would want to "
+    "know, and ask if they need anything else. Keep it short: they asked for a restart, not "
+    "a report. This is a new call: they may have to give the PIN again before you can start "
+    "more work."
 )
 #: The clause that names the work a restart was loading, for the context above.
 LOADING_TASK = ", to load the work from task {task_id}"
@@ -104,7 +105,7 @@ LOADING_TASK = ", to load the work from task {task_id}"
 RESTART_WITH_TASK_CONTEXT = (
     "You are calling the user back about task {task_id}, which they asked you for earlier and "
     "which has now finished — and about the restart it needed, because the work changed "
-    "Jarvis's own code and Jarvis has just restarted to load it. What they asked for: "
+    "your own code and you have just restarted to load it. What they asked for: "
     "{request}. Result: {detail}. Restart: {status}.{history} In your first turn — do not stop "
     "after the greeting to wait for them — greet them, remind them in a few words what this "
     "is about, tell them what came of the work, and then say whether the change is actually "
@@ -140,7 +141,7 @@ NO_CALLBACK_MESSAGE = (
 )
 UNSUPPORTED_MESSAGE = (
     "Tell them, in one sentence, that you cannot restart yourself because this copy of "
-    "Jarvis was not started by a service manager, so nothing would start it again."
+    "you was not started by a service manager, so nothing would start it again."
 )
 ALREADY_PENDING_MESSAGE = "Tell them a restart is already scheduled for when this call ends."
 

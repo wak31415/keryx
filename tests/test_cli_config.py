@@ -124,7 +124,7 @@ def test_unset_returns_a_key_to_its_default(home):
 
     assert result.exit_code == 0
     assert "OPENAI_VOICE unset" in result.output
-    assert run("config", "get", "OPENAI_VOICE").output == "cedar\n"
+    assert run("config", "get", "OPENAI_VOICE").output == "\n"
 
 
 def test_the_environment_winning_is_said(home, monkeypatch):

@@ -61,7 +61,7 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
     # owner-only, which the privacy check then looks at.
     settings.ensure_dirs()
     settings.projects_root.mkdir()
-    seed_memory(settings.data_dir, owner="Sam", facts=["Works nights."])
+    seed_memory(settings.data_dir, owner="Sam", assistant="Lyra", facts=["Works nights."])
     # Every plugin on: loading them contacts nothing (Slack posts, Gmail reads, ssh runs
     # only when a tool is called).
     with_agent(monkeypatch, "claude", cli="/bin/claude")

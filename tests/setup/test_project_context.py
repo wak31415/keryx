@@ -111,7 +111,7 @@ def test_the_owner_accepts_edits_and_drops_and_only_that_is_kept(make_ctx, world
             ("remember about you", ["1"]),
         ]
     )
-    seed_memory(ctx.settings.data_dir, owner="Ada", facts=["Old fact."])
+    seed_memory(ctx.settings.data_dir, owner="Ada", assistant="Lyra", facts=["Old fact."])
 
     project_context.run_section(ctx)
 

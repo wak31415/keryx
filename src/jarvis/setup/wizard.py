@@ -285,7 +285,8 @@ def summary(ctx: SetupContext) -> int:
     agent = BACKENDS[settings.agent_backend].label
     if not phone:
         ui.outro(f"Everything but the phone is set up, and the phone is how you talk to "
-                 f"Jarvis: run `jarvis setup` again to set up calls; {agent} will do the work.")
+                 f"{settings.assistant_name}: run `jarvis setup` again to set up calls; "
+                 f"{agent} will do the work.")
         return 0
     ui.outro(f"Ready. Start Jarvis with `scripts/dev.sh`; {agent} will do the work.")
     return 0

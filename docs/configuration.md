@@ -34,7 +34,8 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 |---|---|---|---|
 | `OPENAI_API_KEY` | *required* (secret) | never | OpenAI API key with Realtime access. The only setting Jarvis cannot start without. |
 | `OPENAI_REALTIME_MODEL` | `gpt-realtime-2.1` | no | The realtime speech-to-speech model a call runs on. |
-| `OPENAI_VOICE` | `cedar` | yes | The voice Jarvis speaks in. |
+| `ASSISTANT_NAME` | `Lyra` | yes | What the assistant on the phone is called: the name it answers to and introduces itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or `marin`. |
+| `OPENAI_VOICE` | `` | yes | The Realtime voice the assistant speaks in. Empty is the assistant's own (`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail to open. |
 | `OPENAI_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | no | Transcribes what the caller says, for the call log. |
 | `TRANSCRIPTION_LANGUAGE` | `` | yes | The language you speak on a call, as an ISO-639-1 code (`en`, `de`, `fr`), for the call log's transcription — which `recall` and the memory read. Empty lets the transcriber guess each turn. The voice model itself hears the audio either way. |
 | `CLOCK_FORMAT` | `24h` | yes | How the voice prompt writes the time of day (`14:05` or `2:05 PM`), and so how Jarvis tends to say it. |

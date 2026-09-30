@@ -93,7 +93,7 @@ ErrorCode = Literal["not_configured", "signed_out", "gmail_failed", "model_faile
 MESSAGES: dict[ErrorCode, str] = {
     "not_configured": "Email isn't set up on this machine yet. Say that in one sentence.",
     "signed_out": (
-        "Jarvis has been signed out of Gmail, so it can't read the email. Say that in one "
+        "You have been signed out of Gmail, so you can't read the email. Say that in one "
         "sentence; it needs `jarvis auth login gmail` at the keyboard."
     ),
     "gmail_failed": "Gmail didn't answer just now. Say so in one sentence; trying again may work.",

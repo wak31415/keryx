@@ -302,7 +302,9 @@ def test_load_settings_returns_settings_instance(tmp_path):
 def test_defaults_match_spec_table():
     settings = Settings(_env_file=None, openai_api_key="test")
     assert settings.openai_realtime_model == "gpt-realtime-2.1"
-    assert settings.openai_voice == "cedar"
+    assert settings.assistant_name == "Lyra"
+    assert settings.openai_voice == ""
+    assert settings.voice == "marin"
     assert settings.openai_transcription_model == "gpt-4o-mini-transcribe"
     assert settings.transcription_language == ""
     assert settings.clock_format == "24h"

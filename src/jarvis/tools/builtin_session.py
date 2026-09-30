@@ -116,7 +116,7 @@ def register_session_tools(
             "anything: it hands you back the keypad menu for that request, which you read "
             "out, and they decide by pressing a key. Never tell them it is done until the "
             "machine says so — a spoken yes is not an answer, and you must never choose "
-            "for them. Needs a phone call, and the PIN unless Jarvis rang them.",
+            "for them. Needs a phone call, and the PIN unless you rang them.",
             {
                 "type": "object",
                 "properties": {
@@ -154,7 +154,7 @@ def register_session_tools(
 
     registry.register(
         "set_config",
-        "Change one of Jarvis's own settings when they ask — the voice, how long it waits "
+        "Change one of your own settings when they ask — the voice, how long you wait "
         "before answering, which model does the work. Only these can be changed: "
         f"{', '.join(writable) or 'none'}. A blank value puts one back to its default. "
         "It is saved, not applied: it takes effect after a restart, which you say in one "

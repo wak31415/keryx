@@ -39,9 +39,9 @@ def register_restart_tools(
 
         registry.register(
             "restart_service",
-            "Restart Jarvis itself — the service behind this call — when they ask for one, "
-            "or when work they asked for has changed Jarvis's own code and only a restart "
-            "loads it. The restart drops this call, so it waits until the call has ended "
+            "Restart yourself — the service behind this call — when they ask for one, or "
+            "when work they asked for has changed your own code and only a restart loads "
+            "it. The restart drops this call, so it waits until the call has ended "
             "and then rings them back by itself to say whether it worked; the answer tells "
             "you what to say. Never reach for it to fix something you were not asked to fix.",
             {
@@ -56,7 +56,7 @@ def register_restart_tools(
                         "type": "integer",
                         "description": "The task whose change this restart is loading, if "
                         "it is loading one. Pass it: the confirmation then checks that the "
-                        "change is actually running rather than only that Jarvis came back.",
+                        "change is actually running rather than only that you came back.",
                     },
                 },
                 "required": [],

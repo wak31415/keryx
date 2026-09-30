@@ -26,6 +26,7 @@ from typing import Any, Protocol
 
 from jarvis.config import OWNER_FALLBACK, Settings, secure_dir
 from jarvis.issues import IssueReporting
+from jarvis.persona import DEFAULT_NAME
 from jarvis.prompts import render_prompt
 from jarvis.skills import CUSTOM_TOOLS_SKILL
 from jarvis.tasks.models import Task
@@ -236,6 +237,7 @@ def render_subagent_suffix(
     *,
     slack_mcp_server: str | None = None,
     owner: str | None = None,
+    assistant: str = DEFAULT_NAME,
     tools_dir: Path | None = None,
     issues: IssueReporting | None = None,
 ) -> str:
@@ -245,6 +247,7 @@ def render_subagent_suffix(
     to the sentence they said out loud, which is the one thing `git log` cannot recover. The
     Slack paragraph is there only when `slack_mcp_server` names a route to use. `owner` is
     whom the work is for (`Settings.owner_label`); `OWNER_FALLBACK` when it is not given.
+    `assistant` is who dispatched it (`Settings.assistant_name`).
     `tools_dir` is where the owner's own voice tools live (`jarvis.tools.custom`), and the
     section on writing one is there only when it is given. `issues` is where a report of a
     problem with Jarvis goes (`jarvis.issues`), and that section is there only when given.
@@ -257,6 +260,7 @@ def render_subagent_suffix(
     custom_tools = (
         render_prompt(
             SUBAGENT_CUSTOM_TOOLS_PROMPT,
+            assistant=assistant,
             tools_dir=str(tools_dir),
             skill=str(CUSTOM_TOOLS_SKILL),
             check=f"{sys.executable} -m jarvis tools",
@@ -266,6 +270,7 @@ def render_subagent_suffix(
     )
     return render_prompt(
         SUBAGENT_SUFFIX_PROMPT,
+        assistant=assistant,
         owner=owner or OWNER_FALLBACK,
         project=task.project or "none",
         description=task.description,

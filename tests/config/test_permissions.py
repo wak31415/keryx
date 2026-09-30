@@ -77,6 +77,7 @@ def test_the_writable_defaults_are_the_ones_you_would_say_on_a_call():
     """A plugin's settings are in its own file, which `set_config` does not reach: the
     budget and the email model went with them (2026-09-29), an accepted cost."""
     assert set(writable_keys({})) == {
+        "ASSISTANT_NAME",
         "OPENAI_VOICE",
         "VAD_MODE",
         "VAD_EAGERNESS",

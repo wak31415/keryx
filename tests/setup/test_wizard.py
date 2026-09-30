@@ -34,6 +34,7 @@ FIRST_RUN = [
     # Settings
     ("sensible default", "recommended"),
     # Owner and PIN
+    ("assistant be called", "Jarvis"),
     ("call you", "Ada"),
     ("mobile numbers", "+15551234567"),
     ("Set the PIN", "now"),
@@ -66,6 +67,7 @@ def test_a_first_run_walks_everything_and_a_second_asks_nothing(make_ctx, claude
     assert settings.openai_api_key == "sk-live"
     assert settings.issue_reporting is True
     assert settings.owner_name == "Ada"
+    assert settings.assistant_name == "Jarvis"
     assert settings.pin_source == "enrolled"
     [outro] = ctx.ui.lines("outro")
     assert "the phone is how you talk to Jarvis" in outro
@@ -87,6 +89,7 @@ def test_esc_goes_back_a_question_and_the_key_is_not_asked_for_twice(
             ("sensible default", Back()),  # back into Voice: the key is typed again
             ("OpenAI API key", "sk-other"),
             ("sensible default", "recommended"),
+            ("assistant be called", "Lyra"),
             ("call you", "Ada"),
             ("mobile numbers", Back()),  # the name again, offered as it was answered
             ("call you", DEFAULT),
@@ -127,7 +130,7 @@ def test_a_section_picked_from_the_overview_is_walked_alone_and_comes_back(
         ("What next?", "voice"),
         ("OpenAI API key", DEFAULT),        # configured: offered, and kept with Enter
         ("What next?", "owner"),
-        ("call you", Back()),               # Esc at the first question: the overview
+        ("assistant be called", Back()),    # Esc at the first question: the overview
         ("What next?", "exit"),
     ])
 

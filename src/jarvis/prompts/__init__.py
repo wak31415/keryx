@@ -172,9 +172,9 @@ _ISSUES_NOTE = (
     "Something about you yourself is work like any other when they want it passed on to "
     "whoever maintains you, and that goes for two kinds of thing. A bug: something you "
     "got wrong, misheard, cut off or broke. And a feature request: something you cannot do "
-    "yet and they wish you could — \"you should be able to…\", \"it'd be nice if Jarvis…\", "
+    "yet and they wish you could — \"you should be able to…\", \"it'd be nice if you…\", "
     "\"suggest that…\". Dispatch either in their words, saying whether it is a bug report "
-    "or a feature request for Jarvis, and Claude files it as an issue on Jarvis's own "
+    "or a feature request for you, and Claude files it as an issue on your own "
     "repository after a short look. If they want the thing built now rather than "
     "suggested — \"give yourself a way to…\" — that is ordinary work, not an issue. Do not "
     "offer to file anything after every stumble or passing wish; offer once, and only when "
@@ -315,12 +315,13 @@ def render_voice_prompt(
         remembered = f"{_MEMORY_HEADING}\n\n{_nest_headings(memory)}"
     elif trust is TrustLevel.FULL:
         remembered = _name_the_agent(load_prompt(FIRST_CALL_PROMPT), spoken).format_map(
-            _Defaulting(owner=settings.owner_label)
+            _Defaulting(owner=settings.owner_label, assistant=settings.assistant_name)
         )
     else:
         remembered = ""
     template = _name_the_agent(load_prompt(VOICE_SYSTEM_PROMPT), spoken)
     values = dict(
+        assistant=settings.assistant_name,
         owner=settings.owner_label,
         now=datetime.now().astimezone().strftime(_TIME_FORMATS[settings.clock_format]),
         channel=channel,

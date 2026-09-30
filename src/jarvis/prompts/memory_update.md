@@ -1,6 +1,6 @@
-# Update Jarvis's memory
+# Update {assistant}'s memory
 
-A call just ended. Fold what happened in it into the memory document Jarvis reads at the
+A call just ended. Fold what happened in it into the memory document {assistant} reads at the
 start of every future call, so the next conversation opens knowing them rather than
 starting from nothing.
 

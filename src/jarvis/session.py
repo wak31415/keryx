@@ -624,7 +624,7 @@ class VoiceSession:
                 agents=_dispatch_agents(schemas),
             ),
             tools=schemas,
-            voice=self._settings.openai_voice,
+            voice=self._settings.voice,
             audio_format=self._transport.audio_format,
             vad_mode=self._settings.vad_mode,
             vad_eagerness=self._settings.vad_eagerness,

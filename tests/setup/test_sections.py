@@ -63,7 +63,9 @@ def test_a_key_in_the_environment_wins_and_is_said_to(make_ctx, monkeypatch):
 def test_owner_name_numbers_and_a_pin_chosen_now(make_ctx):
     ctx = make_ctx(
         [
-            ("What should Jarvis call you", "Ada"),
+            ("assistant be called", "other"),
+            ("Its name", "Ada Bot"),
+            ("What should Ada Bot call you", "Ada"),
             ("mobile numbers", "+15551234567, +15557654321"),
             ("Set the PIN", "now"),
             ("New PIN", "482915"),
@@ -74,6 +76,7 @@ def test_owner_name_numbers_and_a_pin_chosen_now(make_ctx):
     sections.run_owner(ctx)
 
     stored = ConfigStore().stored()
+    assert stored["ASSISTANT_NAME"] == "Ada Bot"
     assert stored["OWNER_NAME"] == "Ada"
     assert stored["ALLOWED_CALLERS"] == ["+15551234567", "+15557654321"]
     assert stored["OWNER_NUMBER"] == "+15551234567"
@@ -86,13 +89,41 @@ def test_owner_name_numbers_and_a_pin_chosen_now(make_ctx):
 
 def test_the_first_call_may_be_left_to_set_the_pin(make_ctx):
     ctx = make_ctx(
-        [("call you", ""), ("mobile numbers", ""), ("Set the PIN", "call")]
+        [("assistant be called", "Lyra"), ("call you", ""), ("mobile numbers", ""),
+         ("Set the PIN", "call")]
     )
 
     sections.run_owner(ctx)
 
     assert not pin_file(ctx.settings.config_dir).exists()
     assert ctx.settings.pin_enrolment_open
+
+
+def test_keeping_the_assistants_name_saves_nothing_for_it(make_ctx):
+    ctx = make_ctx(
+        [("assistant be called", "Lyra"), ("What should Lyra call you", "Ada"),
+         ("mobile numbers", ""), ("Set the PIN", "call")]
+    )
+
+    sections.run_owner(ctx)
+
+    assert "ASSISTANT_NAME" not in ConfigStore().stored()
+
+
+def test_a_name_of_their_own_is_checked_before_it_is_kept(make_ctx):
+    ctx = make_ctx(
+        [("assistant be called", "other"), ("Its name", "  friday  "), ("call you", ""),
+         ("mobile numbers", ""), ("Set the PIN", "call")]
+    )
+
+    sections.run_owner(ctx)
+
+    assert ConfigStore().stored()["ASSISTANT_NAME"] == "friday"
+    assert sections.assistant_problem("R2D2") == (
+        "Must be 1 to 32 letters, spaces, apostrophes or hyphens, starting with a letter."
+    )
+    assert "coding agent" in sections.assistant_problem("Claude")
+    assert sections.assistant_problem("Friday") is None
 
 
 @pytest.mark.parametrize("digits", ["12345", "123456789", "12a456", "111111", "123456", "876543"])
@@ -102,7 +133,8 @@ def test_a_pin_that_is_not_worth_having_is_refused(digits):
 
 def test_a_mistyped_second_pin_asks_again(make_ctx):
     ctx = make_ctx(
-        [("call you", ""), ("mobile", ""), ("Set the PIN", "now"), ("New PIN", "482915"),
+        [("assistant be called", "Lyra"), ("call you", ""), ("mobile", ""), ("Set the PIN", "now"),
+         ("New PIN", "482915"),
          ("same PIN", "482916"), ("New PIN", "482915"), ("same PIN", "482915")]
     )
 
@@ -207,6 +239,8 @@ def test_manual_asks_each_setting_by_type_and_saves_only_changes(make_ctx):
         if extra.get("group") != "voice" or not info.repr:
             continue
         key = name.upper()
+        if key in sections.NOT_MANUAL:
+            continue
         answer = {"OPENAI_VOICE": "marin", "VAD_MODE": "server", "VAD_SILENCE_MS": "900"}
         answers.append((key, answer.get(key, DEFAULT)))
     answers.append(("may the running service change", DEFAULT))
@@ -328,7 +362,9 @@ def test_a_manual_value_that_does_not_validate_is_refused_where_it_is_typed(make
 def test_reviewing_the_owner_asks_again_and_can_clear_the_numbers(make_ctx):
     ConfigStore().set({"OWNER_NAME": "Ada", "ALLOWED_CALLERS": "+15551234567"})
     ctx = make_ctx(
-        [("call you", "Ada"), ("mobile numbers", ""), ("Set the PIN", "call")], review=True
+        [("assistant be called", "Lyra"), ("call you", "Ada"), ("mobile numbers", ""),
+         ("Set the PIN", "call")],
+        review=True,
     )
 
     sections.run_owner(ctx)

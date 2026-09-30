@@ -512,7 +512,7 @@ def register_task_tools(
 
     registry.register(
         "request_callback",
-        "Arrange for Jarvis to phone the user back when a task finishes, instead of them "
+        "Arrange to phone the user back yourself when a task finishes, instead of them "
         "waiting on the line. Offer this yourself whenever a task is still running and the "
         "conversation is winding down — do not wait to be asked. It returns at once, so do "
         "not say you are setting it up first: once they say yes, call it and then tell them "

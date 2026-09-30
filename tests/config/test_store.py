@@ -187,7 +187,7 @@ def test_a_env_in_the_working_directory_is_never_read(store):
 
     settings = Settings(openai_api_key="x")
 
-    assert (settings.openai_voice, settings.port) == ("cedar", 8080)
+    assert (settings.openai_voice, settings.port) == ("", 8080)
     assert store.source_of("PORT") == FROM_DEFAULT
 
 

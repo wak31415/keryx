@@ -49,7 +49,7 @@ def test_seed_takes_the_facts_on_stdin_and_writes_them_owner_only(home):
 
     assert result.exit_code == 0, result.output
     text = memory_text(home)
-    assert "# What Jarvis knows about Ada" in text
+    assert "# What Lyra knows about Ada" in text
     assert "- Works nights." in text and "- Likes brevity" in text
     assert stat.S_IMODE(memory_path(home.data_dir).stat().st_mode) == 0o600
     assert "sent to the realtime provider on every call" in result.output
@@ -73,7 +73,7 @@ def test_an_unreadable_file_is_a_wrong_command_line(home, tmp_path):
 
 
 def test_seed_never_replaces_a_memory_without_force(home):
-    seed_memory(home.data_dir, owner="Ada", facts=["Old fact."])
+    seed_memory(home.data_dir, owner="Ada", assistant="Lyra", facts=["Old fact."])
 
     refused = runner.invoke(app, ["memory", "seed", "--file", "-"], input="New fact.\n")
     forced = runner.invoke(app, ["memory", "seed", "--file", "-", "--force"], input="New fact.\n")
@@ -163,7 +163,7 @@ def test_the_report_counts_projects_briefs_skills_and_what_every_call_carries(ho
     (home.skills_dir / "mermaid" / "SKILL.md").write_text(
         "---\nname: mermaid\ndescription: Diagrams.\n---\n"
     )
-    seed_memory(home.data_dir, owner="Ada", facts=["Works nights."])
+    seed_memory(home.data_dir, owner="Ada", assistant="Lyra", facts=["Works nights."])
     memory_chars = len(memory_text(home).strip())
 
     report = "\n".join(setup_report(home))
@@ -196,7 +196,7 @@ def test_facts_skip_blank_lines_and_headings():
 def test_the_section_writes_what_they_use_it_for_and_their_facts(make_ctx):
     ctx = make_ctx(
         [
-            ("mostly use Jarvis for", ["email", "coding"]),
+            ("mostly use Lyra for", ["email", "coding"]),
             ("Anything else", "reading papers"),
             ("fact", "Works nights."),
             ("fact", ""),
@@ -208,7 +208,7 @@ def test_the_section_writes_what_they_use_it_for_and_their_facts(make_ctx):
 
     text = read_memory(ctx.settings.data_dir)
     assert (
-        "Mostly uses Jarvis for email triage, coding tasks in their repositories, reading papers."
+        "Mostly uses Lyra for email triage, coding tasks in their repositories, reading papers."
         in text
     )
     assert "- Works nights." in text
@@ -228,7 +228,7 @@ def test_saying_no_writes_nothing(make_ctx):
 
 def test_a_memory_there_is_kept_unless_they_want_it_replaced(make_ctx):
     ctx = make_ctx([("Replace that memory", DEFAULT)])
-    seed_memory(ctx.settings.data_dir, owner="Ada", facts=["Old."])
+    seed_memory(ctx.settings.data_dir, owner="Ada", assistant="Lyra", facts=["Old."])
 
     profile.run_section(ctx)
 

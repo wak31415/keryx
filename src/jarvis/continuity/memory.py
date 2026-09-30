@@ -101,7 +101,7 @@ def memory_path(data_dir: Path) -> Path:
     return data_dir / MEMORY_FILE
 
 
-def memory_skeleton(owner: str) -> str:
+def memory_skeleton(owner: str, assistant: str) -> str:
     """The memory document's structure, and the one place it is written down.
 
     The update prompt shows it to the subagent that keeps the file, and `compose_memory`
@@ -109,10 +109,10 @@ def memory_skeleton(owner: str) -> str:
     for both.
     """
     headings = "\n".join(f"## {section}" for section in _SECTIONS)
-    return f"# What Jarvis knows about {owner}\n\n{headings}"
+    return f"# What {assistant} knows about {owner}\n\n{headings}"
 
 
-def compose_memory(owner: str, facts: Iterable[str]) -> str:
+def compose_memory(owner: str, facts: Iterable[str], *, assistant: str) -> str:
     """A first memory document: the skeleton, with `facts` as its standing facts.
 
     Each fact becomes one bullet on one line, whatever bullet or line breaks it arrived
@@ -122,7 +122,7 @@ def compose_memory(owner: str, facts: Iterable[str]) -> str:
     bullets = "\n".join(f"- {fact}" for fact in cleaned if fact)
     standing = f"## {_SECTIONS[0]}"
     blocks: list[str] = []
-    for line in memory_skeleton(owner).splitlines():
+    for line in memory_skeleton(owner, assistant).splitlines():
         if line.strip():
             blocks.append(line)
         if line == standing and bullets:
@@ -131,7 +131,12 @@ def compose_memory(owner: str, facts: Iterable[str]) -> str:
 
 
 def seed_memory(
-    data_dir: Path, *, owner: str, facts: Iterable[str], force: bool = False
+    data_dir: Path,
+    *,
+    owner: str,
+    assistant: str,
+    facts: Iterable[str],
+    force: bool = False,
 ) -> bool:
     """Write a first `memory.md` from `facts`. True when written.
 
@@ -143,7 +148,7 @@ def seed_memory(
     """
     if not force and read_memory(data_dir):
         return False
-    text = compose_memory(owner, facts)
+    text = compose_memory(owner, facts, assistant=assistant)
     if len(text) > MAX_MEMORY_CHARS:
         raise ValueError(
             f"that memory is {len(text)} characters, and a call reads {MAX_MEMORY_CHARS}"
@@ -156,7 +161,9 @@ def seed_memory(
     return True
 
 
-def add_standing_facts(data_dir: Path, *, owner: str, facts: Iterable[str]) -> None:
+def add_standing_facts(
+    data_dir: Path, *, owner: str, assistant: str, facts: Iterable[str]
+) -> None:
     """Add `facts` to the memory's standing facts; a first memory when there is none.
 
     The bullets go at the end of the "Standing facts" section, whatever calls have written
@@ -169,7 +176,7 @@ def add_standing_facts(data_dir: Path, *, owner: str, facts: Iterable[str]) -> N
     except OSError:
         existing = ""
     if not existing.strip():
-        seed_memory(data_dir, owner=owner, facts=facts, force=True)
+        seed_memory(data_dir, owner=owner, assistant=assistant, facts=facts, force=True)
         return
     cleaned = (_BULLET.sub("", " ".join(fact.split())) for fact in facts)
     bullets = [f"- {fact}" for fact in cleaned if fact]
@@ -294,7 +301,10 @@ class MemoryWriter:
         dispatched = await self._manager.tasks_for_session(event.session_id)
         prompt = render_prompt(
             MEMORY_PROMPT,
-            structure=memory_skeleton(self._settings.owner_label),
+            assistant=self._settings.assistant_name,
+            structure=memory_skeleton(
+                self._settings.owner_label, self._settings.assistant_name
+            ),
             transcript_path=str(path),
             memory_path=str(memory_path(self._settings.data_dir)),
             max_chars=str(MAX_MEMORY_CHARS),

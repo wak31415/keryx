@@ -157,6 +157,7 @@ class AgentContext:
                 task,
                 slack_mcp_server=slack.mcp_server if slack is not None else None,
                 owner=settings.owner_label,
+                assistant=settings.assistant_name,
                 tools_dir=settings.custom_tools_dir,
                 issues=IssueReporting.from_settings(settings),
             ),

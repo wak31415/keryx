@@ -238,7 +238,12 @@ def _review_facts(ctx: SetupContext, draft: Draft) -> None:
     if not facts:
         return
     try:
-        add_standing_facts(settings.data_dir, owner=settings.owner_label, facts=facts)
+        add_standing_facts(
+            settings.data_dir,
+            owner=settings.owner_label,
+            assistant=settings.assistant_name,
+            facts=facts,
+        )
     except ValueError as exc:
         ui.error(str(exc))
         return
