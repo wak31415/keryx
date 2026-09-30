@@ -11,9 +11,9 @@ import logging
 import pytest
 from fakes import FakeVoiceSession, eventually
 
-from jarvis.events import EventBus, PinLockedOut
-from jarvis.logging_util import mask_number
-from jarvis.notify.pin_alert import PinLockoutAlerter, lockout_text
+from keryx.events import EventBus, PinLockedOut
+from keryx.logging_util import mask_number
+from keryx.notify.pin_alert import PinLockoutAlerter, lockout_text
 
 CALLER = "+15551234567"
 OWNER = "+15550000001"
@@ -89,7 +89,7 @@ def test_the_alert_says_what_happened_until_when_and_what_to_do(settings):
     assert "24 hours" in text
     assert mask_number(CALLER) in text
     assert CALLER not in text
-    assert "JARVIS_PIN" in text
+    assert "KERYX_PIN" in text
 
 
 # --- where it goes ----------------------------------------------------------------
@@ -148,7 +148,7 @@ async def test_a_broken_slack_does_not_cost_the_announcement(bus, settings, capl
     owner = session(authorized=True)
     start(bus, settings, sessions=FakeSessions(owner), slack=FakeSlack(error=OSError("down")))
 
-    with caplog.at_level(logging.ERROR, logger="jarvis.notify.pin_alert"):
+    with caplog.at_level(logging.ERROR, logger="keryx.notify.pin_alert"):
         await bus.publish(event())
         await eventually(lambda: owner.announced)
         await eventually(lambda: "Slack" in caplog.text)
@@ -157,7 +157,7 @@ async def test_a_broken_slack_does_not_cost_the_announcement(bus, settings, capl
 async def test_an_alert_that_reached_nobody_says_so_in_the_log(bus, settings, caplog):
     alerter = start(bus, settings)
 
-    with caplog.at_level(logging.WARNING, logger="jarvis.notify.pin_alert"):
+    with caplog.at_level(logging.WARNING, logger="keryx.notify.pin_alert"):
         await alerter.deliver(event())
 
     assert "reached nobody" in caplog.text

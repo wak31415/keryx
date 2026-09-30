@@ -9,11 +9,11 @@ loads it, with the real builders — none of which reach the network before they
 import contextlib
 from dataclasses import dataclass
 
-from jarvis import plugins
-from jarvis.config import Settings
-from jarvis.tools import ToolContext, ToolRegistry
-from jarvis.tools.custom import LOADING_SETTINGS, CustomTool, _gated, load_custom_tools
-from jarvis.trust import TrustLevel
+from keryx import plugins
+from keryx.config import Settings
+from keryx.tools import ToolContext, ToolRegistry
+from keryx.tools.custom import LOADING_SETTINGS, CustomTool, _gated, load_custom_tools
+from keryx.trust import TrustLevel
 
 
 @dataclass
@@ -67,6 +67,6 @@ def loading(settings: Settings):
 
 
 def turn_on(settings: Settings, name: str, **values) -> None:
-    """Write the plugin's settings and install it, the way `jarvis plugins install` does."""
+    """Write the plugin's settings and install it, the way `keryx plugins install` does."""
     plugins.write_config(settings, name, values)
     plugins.install(settings, name)

@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from jarvis.agents.base import (
+from keryx.agents.base import (
     DEFAULT_FAKE_RESULT,
     INTERRUPTED_RESULT,
     NO_SUMMARY,
@@ -16,9 +16,9 @@ from jarvis.agents.base import (
     extract_spoken_summary,
     render_subagent_suffix,
 )
-from jarvis.issues import IssueReporting
-from jarvis.skills import CUSTOM_TOOLS_SKILL
-from jarvis.tasks.models import Task, TaskKind
+from keryx.issues import IssueReporting
+from keryx.skills import CUSTOM_TOOLS_SKILL
+from keryx.tasks.models import Task, TaskKind
 
 
 def make_task(**overrides) -> Task:
@@ -222,7 +222,7 @@ def test_a_marker_with_no_reason_is_still_asking():
 
 
 def test_merely_talking_about_a_restart_is_not_asking_for_one():
-    """It takes Jarvis off the air, so only the explicit line counts."""
+    """It takes Keryx off the air, so only the explicit line counts."""
     text = "You will need to restart the service. A restart is required to load this."
 
     assert extract_restart_request(text) is None
@@ -238,7 +238,7 @@ def test_the_subagent_suffix_carries_the_task_number_for_the_commit_trailer(sett
 
     suffix = render_subagent_suffix(task)
 
-    assert "Jarvis-Task: 31" in suffix
+    assert "Keryx-Task: 31" in suffix
     assert "Task number: 31" in suffix
 
 
@@ -246,13 +246,13 @@ def test_a_task_with_no_number_yet_still_renders():
     """The suffix is built at open(), after the row exists — but never crash if it is not."""
     suffix = render_subagent_suffix(Task(id=None, kind=TaskKind.AGENT, description="x"))
 
-    assert "Jarvis-Task: unknown" in suffix
+    assert "Keryx-Task: unknown" in suffix
 
 
-def test_the_subagent_suffix_tells_it_not_to_restart_jarvis_itself(settings):
+def test_the_subagent_suffix_tells_it_not_to_restart_keryx_itself(settings):
     """It runs inside the service: restarting from there kills it mid-report."""
     suffix = render_subagent_suffix(
-        Task(id=1, kind=TaskKind.AGENT, description="change jarvis")
+        Task(id=1, kind=TaskKind.AGENT, description="change keryx")
     )
 
     assert "RESTART_REQUIRED:" in suffix
@@ -286,10 +286,10 @@ def test_the_subagent_suffix_says_where_the_owners_tools_go_and_how_to_check_the
     suffix = unwrapped(render_subagent_suffix(task, tools_dir=tmp_path / "tools"))
 
     assert f"it goes in `{tmp_path / 'tools'}`" in suffix
-    assert "never in the Jarvis repository, and it is never committed" in suffix
+    assert "never in the Keryx repository, and it is never committed" in suffix
     assert f"Read `{CUSTOM_TOOLS_SKILL}`" in suffix
     assert CUSTOM_TOOLS_SKILL.is_file()
-    assert f"`{sys.executable} -m jarvis tools`" in suffix
+    assert f"`{sys.executable} -m keryx tools`" in suffix
     assert "needs no restart and no RESTART_REQUIRED: line" in suffix
     assert "{custom_tools}" not in render_subagent_suffix(task)
     assert "voice tool" not in render_subagent_suffix(task)
@@ -297,8 +297,8 @@ def test_the_subagent_suffix_says_where_the_owners_tools_go_and_how_to_check_the
 
 def test_the_original_names_are_still_importable_from_tasks_agent_runner():
     """The runner started in `tasks/agent_runner.py`; the move keeps those names."""
-    from jarvis.agents import base, claude
-    from jarvis.tasks import agent_runner
+    from keryx.agents import base, claude
+    from keryx.tasks import agent_runner
 
     assert agent_runner.RunResult is base.RunResult
     assert agent_runner.AgentRunner is base.AgentRunner
@@ -308,7 +308,7 @@ def test_the_original_names_are_still_importable_from_tasks_agent_runner():
     assert agent_runner.ClaudeAgentRunner is claude.ClaudeAgentRunner
 
 
-def test_the_subagent_suffix_says_how_to_report_a_problem_with_jarvis(settings, unwrapped):
+def test_the_subagent_suffix_says_how_to_report_a_problem_with_keryx(settings, unwrapped):
     """Where the code, the logs and the skill are, and that the job is an issue, not a fix."""
     issues = IssueReporting.from_settings(_reporting(settings))
     assert issues is not None
@@ -319,7 +319,7 @@ def test_the_subagent_suffix_says_how_to_report_a_problem_with_jarvis(settings, 
     assert f"Read `{issues.skill}` before anything else" in suffix
     assert f"the checkout at `{issues.checkout}`" in suffix
     assert f"its logs are in `{issues.logs}`" in suffix
-    assert f"its command is `{sys.executable} -m jarvis`" in suffix
+    assert f"its command is `{sys.executable} -m keryx`" in suffix
     assert "Unless they asked for the fix or the feature as well, change nothing" in suffix
     assert "The call they asked from" not in suffix
 
@@ -341,7 +341,7 @@ def test_the_issue_section_names_the_call_it_came_from(settings, unwrapped):
 def test_without_issue_reporting_the_suffix_has_no_issue_section():
     suffix = render_subagent_suffix(make_task())
 
-    assert "bug in Jarvis" not in suffix
+    assert "bug in Keryx" not in suffix
     assert "{issues}" not in suffix
 
 

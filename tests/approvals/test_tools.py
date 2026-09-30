@@ -1,7 +1,7 @@
 """The two voice tools, and the one thing they are not allowed to do.
 
 `answer_approval` never answers anything. The most it can do is hand the model a menu to
-read out; the digit that follows is the only thing in Jarvis that can approve a tool call,
+read out; the digit that follows is the only thing in Keryx that can approve a tool call,
 and it does not come through here. Both gates in front of the menu — the trust level and
 the phone — are asserted below, because a spoken "yes" reaching an `allow` is the failure
 this whole design exists to make impossible.
@@ -11,15 +11,15 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from jarvis.config import Settings
-from jarvis.events import EventBus
-from jarvis.inline_waits import InlineWaits
-from jarvis.tasks.agent_runner import FakeAgentRunner
-from jarvis.tasks.manager import TaskManager
-from jarvis.tasks.store import TaskStore
-from jarvis.tools import ToolContext, ToolRegistry
-from jarvis.tools.builtin import register_builtin_tools
-from jarvis.trust import TrustLevel
+from keryx.config import Settings
+from keryx.events import EventBus
+from keryx.inline_waits import InlineWaits
+from keryx.tasks.agent_runner import FakeAgentRunner
+from keryx.tasks.manager import TaskManager
+from keryx.tasks.store import TaskStore
+from keryx.tools import ToolContext, ToolRegistry
+from keryx.tools.builtin import register_builtin_tools
+from keryx.trust import TrustLevel
 
 PIN = "424242"
 
@@ -58,7 +58,7 @@ class StubBroker:
         return {
             "status": "awaiting_keypad",
             "request_id": request_id,
-            "summary": "Claude wants to run: git push, in jarvis",
+            "summary": "Claude wants to run: git push, in keryx",
             "options": "press 1 for approve, press 2 for reject, or 0 to leave it on screen",
         }
 
@@ -68,7 +68,7 @@ def settings(tmp_path):
     return Settings(
         _env_file=None,
         openai_api_key="test",
-        data_dir=tmp_path / "jarvis",
+        data_dir=tmp_path / "keryx",
         google_client_secrets_file=tmp_path / "none.json",
         pin=PIN,
     )
@@ -127,7 +127,7 @@ async def test_a_caller_who_has_proved_nothing_gets_the_pin_gate(registry, broke
     assert broker.armed == []
 
 
-async def test_a_call_jarvis_placed_may_answer_one_without_the_pin(registry, broker):
+async def test_a_call_keryx_placed_may_answer_one_without_the_pin(registry, broker):
     """The tier's point: the escalation call rings the owner's own phone, and
     `approvals/policy.py`'s allowlist is already the filter on what a key may run."""
     answer = await registry.call(
@@ -193,7 +193,7 @@ async def test_listing_needs_the_pin_because_a_waiting_command_is_private(regist
     assert "git push" not in str(answer)
 
 
-async def test_a_call_jarvis_placed_may_hear_what_is_waiting(registry, broker):
+async def test_a_call_keryx_placed_may_hear_what_is_waiting(registry, broker):
     """It is usually the call the broker placed about one of them."""
     broker.waiting = [{"request_id": 1, "summary": "git push", "options": "press 1"}]
     answer = await registry.call(

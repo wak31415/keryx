@@ -11,9 +11,9 @@ from xml.etree import ElementTree
 
 import pytest
 
-from jarvis.config import Settings
-from jarvis.logging_util import mask_number
-from jarvis.notify.twilio_out import TwilioError, TwilioOut, stream_twiml
+from keryx.config import Settings
+from keryx.logging_util import mask_number
+from keryx.notify.twilio_out import TwilioError, TwilioOut, stream_twiml
 
 SID = "AC00000000000000000000000000000001"
 AUTH_TOKEN = "an-auth-token"
@@ -47,7 +47,7 @@ class FakeClient:
 def make_settings(tmp_path, **overrides) -> Settings:
     values = {
         "openai_api_key": "test",
-        "data_dir": tmp_path / "jarvis",
+        "data_dir": tmp_path / "keryx",
         "twilio_account_sid": SID,
         "twilio_auth_token": AUTH_TOKEN,
         "twilio_number": NUMBER,
@@ -89,7 +89,7 @@ async def test_the_rest_client_is_built_lazily_from_the_credentials_and_reused(
         built.append((sid, auth_token))
         return FakeClient()
 
-    monkeypatch.setattr("jarvis.notify.twilio_out.Client", fake_client)
+    monkeypatch.setattr("keryx.notify.twilio_out.Client", fake_client)
     out = TwilioOut(make_settings(tmp_path))
 
     assert built == []  # nothing is constructed until something is actually sent
@@ -137,11 +137,11 @@ async def test_place_call_only_sends_a_status_callback_when_one_is_given(out, cl
 
 
 def test_stream_twiml_connects_the_media_socket_over_wss_with_every_parameter():
-    xml = stream_twiml("jarvis.example", {"token": "t0k", "caller": TO, "task_id": "3"})
+    xml = stream_twiml("keryx.example", {"token": "t0k", "caller": TO, "task_id": "3"})
 
     stream = ElementTree.fromstring(xml).find("./Connect/Stream")
     assert stream is not None, xml
-    assert stream.get("url") == "wss://jarvis.example/twilio/media"
+    assert stream.get("url") == "wss://keryx.example/twilio/media"
     parameters = {p.get("name"): p.get("value") for p in stream.findall("Parameter")}
     assert parameters == {"token": "t0k", "caller": TO, "task_id": "3"}
 
@@ -179,7 +179,7 @@ def test_texting_can_be_turned_back_on(tmp_path):
 
 def test_calling_is_unaffected_by_texting_being_off(tmp_path):
     """The restart watchdog's alert is a call, and it is the last thing still working
-    when Jarvis itself is down."""
+    when Keryx itself is down."""
     out = TwilioOut(make_settings(tmp_path))
 
     assert out.can_text is False
@@ -191,7 +191,7 @@ def test_calling_is_unaffected_by_texting_being_off(tmp_path):
 
 async def test_a_text_is_logged_with_the_number_masked(out, caplog):
     """`logging_util.mask_number` is the only shape a phone number may take in a log."""
-    with caplog.at_level(logging.INFO, logger="jarvis.notify.twilio_out"):
+    with caplog.at_level(logging.INFO, logger="keryx.notify.twilio_out"):
         await out.send_sms(TO, "task 3 finished")
 
     assert "texted" in caplog.text
@@ -200,7 +200,7 @@ async def test_a_text_is_logged_with_the_number_masked(out, caplog):
 
 
 async def test_a_call_is_logged_with_the_number_masked(out, caplog):
-    with caplog.at_level(logging.INFO, logger="jarvis.notify.twilio_out"):
+    with caplog.at_level(logging.INFO, logger="keryx.notify.twilio_out"):
         await out.place_call(TO, twiml="<Response/>")
 
     assert "calling" in caplog.text
@@ -261,7 +261,7 @@ class FakeAccountClient:
 
 
 def test_the_admin_reads_the_account_and_its_numbers():
-    from jarvis.notify.twilio_out import RestTwilioAdmin, TwilioNumber
+    from keryx.notify.twilio_out import RestTwilioAdmin, TwilioNumber
 
     admin = RestTwilioAdmin("AC1", "tok", client=FakeAccountClient())
 
@@ -270,7 +270,7 @@ def test_the_admin_reads_the_account_and_its_numbers():
 
 
 def test_the_admin_sets_both_webhooks_as_post():
-    from jarvis.notify.twilio_out import RestTwilioAdmin
+    from keryx.notify.twilio_out import RestTwilioAdmin
 
     client = FakeAccountClient()
     RestTwilioAdmin("AC1", "tok", client=client).set_webhooks(
@@ -291,7 +291,7 @@ def test_the_admin_sets_both_webhooks_as_post():
 
 
 def test_an_admin_failure_is_a_twilio_error_with_the_number_masked():
-    from jarvis.notify.twilio_out import RestTwilioAdmin
+    from keryx.notify.twilio_out import RestTwilioAdmin
 
     admin = RestTwilioAdmin("AC1", "tok", client=FakeAccountClient(fail=True))
 

@@ -5,16 +5,16 @@ was missing ten settings `Settings` reads, and the README listed thirteen of the
 model's tools out of eighteen — including neither `recall` nor `mark_reported`, both of which
 are load-bearing for how continuity works. Both were the sort of drift nobody notices,
 because nothing that runs looks at either file. The settings reference is generated from
-`Settings` now (`jarvis.config.reference`), so the test is that it was regenerated.
+`Settings` now (`keryx.config.reference`), so the test is that it was regenerated.
 """
 
 import re
 from pathlib import Path
 
-from jarvis.agents.registry import BACKENDS
-from jarvis.config import Settings, env_var_name
-from jarvis.config.reference import render as render_configuration
-from jarvis.tools.builtin import BUILTIN_TOOL_NAMES
+from keryx.agents.registry import BACKENDS
+from keryx.config import Settings, env_var_name
+from keryx.config.reference import render as render_configuration
+from keryx.tools.builtin import BUILTIN_TOOL_NAMES
 
 #: The repository root, so the test does not depend on the working directory pytest ran in.
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +23,7 @@ CONFIGURATION_DOC = ROOT / "docs" / "configuration.md"
 #: Every module registrations can live in. `builtin.py` is the aggregator and the five
 #: `builtin_*.py` are the domains it calls, so a new domain module is picked up by the glob
 #: rather than by somebody remembering to add it here.
-BUILTIN_DIR = ROOT / "src" / "jarvis" / "tools"
+BUILTIN_DIR = ROOT / "src" / "keryx" / "tools"
 
 #: The tool table in `docs/tools.md`, fenced so the test has an unambiguous region to read.
 TOOL_TABLE = re.compile(r"<!-- tools:start -->(.*?)<!-- tools:end -->", re.S)
@@ -48,7 +48,7 @@ def documented_tool_names() -> set[str]:
 
 
 def test_the_configuration_reference_is_generated_from_settings():
-    """Regenerate it with `uv run python -m jarvis.config.reference > docs/configuration.md`."""
+    """Regenerate it with `uv run python -m keryx.config.reference > docs/configuration.md`."""
     assert CONFIGURATION_DOC.read_text() == render_configuration()
 
 
@@ -87,7 +87,7 @@ def prompt_tool_names() -> set[str]:
     paragraphs count too: they describe the tools only some machines offer, and are spliced
     into that section, in place of a `{placeholder}`, when the tool is registered.
     """
-    prompts = ROOT / "src" / "jarvis" / "prompts"
+    prompts = ROOT / "src" / "keryx" / "prompts"
     text = (prompts / "voice_system.md").read_text()
     body = re.sub(r"\{[a-z_]+\}", "", text[text.index("## Your tools") :])
     body += "".join(path.read_text() for path in sorted(prompts.glob("voice_tool_*.md")))
@@ -99,7 +99,7 @@ AGENTS_DOC = ROOT / "docs" / "agents.md"
 AGENT_TABLE = re.compile(r"<!-- agents:start -->(.*?)<!-- agents:end -->", re.S)
 
 
-def test_docs_agents_has_a_column_for_every_agent_jarvis_knows():
+def test_docs_agents_has_a_column_for_every_agent_keryx_knows():
     """A third agent added to the registry without a column is a parity nobody wrote down."""
     match = AGENT_TABLE.search(AGENTS_DOC.read_text())
     assert match is not None, "the <!-- agents:start --> table in docs/agents.md is gone"
@@ -134,7 +134,7 @@ def test_the_voice_prompt_still_describes_the_tools_the_model_is_given():
 
 def test_the_prompt_tells_the_model_not_to_announce_the_instant_tools():
     """The list of tools too fast to be worth announcing has to stay a list of real ones."""
-    text = (ROOT / "src" / "jarvis" / "prompts" / "voice_system.md").read_text()
+    text = (ROOT / "src" / "keryx" / "prompts" / "voice_system.md").read_text()
     sentence = text[text.index("all answer in\n  milliseconds") - 400 :][:500]
     sentence = re.sub(r"\{[a-z_]+\}", "", sentence)
 

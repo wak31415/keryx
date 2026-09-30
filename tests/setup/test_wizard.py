@@ -1,14 +1,14 @@
-"""`jarvis setup` as a whole: what it says is left, what it walks, and what it asks a second
+"""`keryx setup` as a whole: what it says is left, what it walks, and what it asks a second
 time (nothing, unless reviewing)."""
 
 import pytest
 
-from jarvis.agents import registry
-from jarvis.agents.registry import BACKENDS
-from jarvis.config.store import ConfigStore
-from jarvis.setup import wizard
-from jarvis.setup.ui import Aborted, Back
-from jarvis.setup.wizard import DONE, FAILED, MISSING, pending, run_wizard, statuses
+from keryx.agents import registry
+from keryx.agents.registry import BACKENDS
+from keryx.config.store import ConfigStore
+from keryx.setup import wizard
+from keryx.setup.ui import Aborted, Back
+from keryx.setup.wizard import DONE, FAILED, MISSING, pending, run_wizard, statuses
 
 from .fakes import DEFAULT
 
@@ -188,7 +188,7 @@ def test_the_import_section_appears_only_with_something_to_migrate(make_ctx, tmp
 
 
 def test_nothing_is_set_up_until_the_old_files_are_migrated(make_ctx, tmp_path):
-    """What setup saves would land where `jarvis migrate` is about to move things."""
+    """What setup saves would land where `keryx migrate` is about to move things."""
     (tmp_path / ".env").write_text("OWNER_NAME=Ada\n")
     ctx = make_ctx([])
 
@@ -196,7 +196,7 @@ def test_nothing_is_set_up_until_the_old_files_are_migrated(make_ctx, tmp_path):
 
     assert ctx.ui.asked == [] and ConfigStore().stored() == {}
     assert ".env" in ctx.ui.lines("error")[0]
-    assert "jarvis migrate" in ctx.ui.lines("outro")[0]
+    assert "keryx migrate" in ctx.ui.lines("outro")[0]
 
 
 def test_review_walks_every_section_and_asks_again(make_ctx, claude_signed_in, monkeypatch):
@@ -246,7 +246,7 @@ def test_ctrl_c_propagates_and_what_was_saved_stays(make_ctx, claude_signed_in):
 
 
 def test_half_a_phone_counts_against_the_summary(make_ctx, claude_signed_in):
-    ConfigStore().set({"OPENAI_API_KEY": "sk", "PUBLIC_HOST": "jarvis.example.com"})
+    ConfigStore().set({"OPENAI_API_KEY": "sk", "PUBLIC_HOST": "keryx.example.com"})
 
     assert wizard.summary(make_ctx([])) == 1
 
@@ -267,7 +267,7 @@ def test_the_agent_instructions_name_this_machines_paths(make_ctx):
     assert str(ctx.store.home) in text
     assert str(ctx.settings.data_dir / "projects") in text
     assert "--from-env" in text and "never set it yourself" in text
-    assert "jarvis auth login gmail --callback-url" in text
+    assert "keryx auth login gmail --callback-url" in text
     assert "{" not in text
 
 

@@ -13,10 +13,10 @@ import stat
 import pytest
 from fakes import TIMEOUT, DrainingFakeTransport, FakeProvider, FakeTransport, eventually
 
-from jarvis.config import Settings
-from jarvis.continuity.briefing import OTHERS_NUDGE, Briefing
-from jarvis.events import EventBus, SessionEnded, SessionStarted
-from jarvis.realtime.base import (
+from keryx.config import Settings
+from keryx.continuity.briefing import OTHERS_NUDGE, Briefing
+from keryx.events import EventBus, SessionEnded, SessionStarted
+from keryx.realtime.base import (
     AudioDelta,
     Disconnected,
     FunctionCall,
@@ -26,7 +26,7 @@ from jarvis.realtime.base import (
     SpeechStarted,
     Transcript,
 )
-from jarvis.session import (
+from keryx.session import (
     OPENING_MESSAGE,
     RECONNECT_MESSAGE,
     SILENCE_MESSAGE,
@@ -34,8 +34,8 @@ from jarvis.session import (
     SessionRegistry,
     VoiceSession,
 )
-from jarvis.tools import ToolContext, ToolRegistry
-from jarvis.transports.base import AudioIn, Dtmf, Hangup
+from keryx.tools import ToolContext, ToolRegistry
+from keryx.transports.base import AudioIn, Dtmf, Hangup
 
 # audio/pcmu is 8 kHz 8-bit -> 8 bytes per millisecond.
 PCMU_BYTES_PER_MS = 8
@@ -45,7 +45,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
     return Settings(
         _env_file=None,
         openai_api_key="test",
-        data_dir=tmp_path / "jarvis",
+        data_dir=tmp_path / "keryx",
         **overrides,
     )
 
@@ -138,8 +138,8 @@ async def test_session_config_follows_the_phone_transport(make_session, phone, p
 async def test_starting_a_session_never_logs_the_callers_number(
     make_session, phone, provider, caplog
 ):
-    """The start line names the caller; `~/.jarvis/logs/jarvis.log` is not the place for one."""
-    with caplog.at_level(logging.INFO, logger="jarvis.session"):
+    """The start line names the caller; `~/.jarvis/logs/keryx.log` is not the place for one."""
+    with caplog.at_level(logging.INFO, logger="keryx.session"):
         session = make_session(phone, provider)
         async with running(session):
             await eventually(lambda: provider.config is not None)
@@ -541,7 +541,7 @@ async def test_request_end_waits_for_the_active_response(make_session, phone, pr
 async def test_request_end_gives_up_after_the_grace_period(
     make_session, phone, provider, monkeypatch
 ):
-    monkeypatch.setattr("jarvis.session.END_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr("keryx.session.END_GRACE_SECONDS", 0.05)
     session = make_session(phone, provider)
 
     task = asyncio.create_task(session.run())
@@ -589,7 +589,7 @@ async def test_a_local_session_ends_even_if_no_response_ever_arrives(
     make_session, local, provider, published, monkeypatch, tmp_path
 ):
     """The greeting may never be spoken (a rejected response.create): still hang up."""
-    monkeypatch.setattr("jarvis.session.END_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr("keryx.session.END_GRACE_SECONDS", 0.05)
     settings = make_settings(tmp_path, local_silence_timeout=0.05)
     session = make_session(local, provider, settings=settings)
 
@@ -672,7 +672,7 @@ async def test_a_zero_silence_timeout_disables_the_timer(make_session, local, pr
 async def test_max_call_seconds_warns_then_ends_the_call(
     make_session, phone, provider, published, monkeypatch, tmp_path
 ):
-    monkeypatch.setattr("jarvis.session.MAX_CALL_WARNING_SECONDS", 0.05)
+    monkeypatch.setattr("keryx.session.MAX_CALL_WARNING_SECONDS", 0.05)
     settings = make_settings(tmp_path, max_call_seconds=0.1)
     session = make_session(phone, provider, settings=settings)
 
@@ -775,7 +775,7 @@ async def test_a_non_fatal_provider_error_is_logged_and_survived(
     session = make_session(phone, provider)
 
     async with running(session):
-        with caplog.at_level(logging.WARNING, logger="jarvis.session"):
+        with caplog.at_level(logging.WARNING, logger="keryx.session"):
             provider.feed(ProviderError(code="whatever", message="odd", fatal=False))
             provider.feed(AudioDelta(item_id="item_1", audio=b"\x00" * 8))
             await eventually(lambda: phone.sent != [])
@@ -842,7 +842,7 @@ def test_session_registry_lists_only_live_sessions(make_session, phone, provider
 async def test_the_session_takes_its_turn_detection_from_settings(
     make_session, phone, provider, settings
 ):
-    """How long Jarvis waits before answering is a setting, not a constant."""
+    """How long Keryx waits before answering is a setting, not a constant."""
     tuned = settings.model_copy(
         update={
             "vad_mode": "server",
@@ -1034,7 +1034,7 @@ async def test_a_call_back_hears_of_the_other_news_after_its_own(make_session, p
 
 def test_the_prompt_is_told_the_agents_the_dispatch_tool_offers():
     """Read off the tool's own schema, so the prompt can never offer a different set."""
-    from jarvis.session import _dispatch_agents
+    from keryx.session import _dispatch_agents
 
     agent = {"enum": ["claude", "codex"]}
     schemas = [

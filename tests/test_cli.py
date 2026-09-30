@@ -1,4 +1,4 @@
-"""Tests for the `jarvis` command line: wiring only, no hardware and no network."""
+"""Tests for the `keryx` command line: wiring only, no hardware and no network."""
 
 import asyncio
 import importlib.metadata
@@ -18,25 +18,25 @@ from fakes import FakeProvider
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from jarvis import plugins
-from jarvis.app import TASK_DB_NAME
-from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
-from jarvis.cli import (
+from keryx import plugins
+from keryx.app import TASK_DB_NAME
+from keryx.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
+from keryx.cli import (
     APPROVALS_EMPTY,
     LOG_BACKUP_COUNT,
     LOG_MAX_BYTES,
     MAX_REPORT_CHARS,
     app,
 )
-from jarvis.config import PLACEHOLDER_KEY, Settings
-from jarvis.config.store import ConfigStore
-from jarvis.continuity.memory import memory_path
-from jarvis.realtime.base import AudioDelta, Transcript
-from jarvis.restart.service import ServiceTarget
-from jarvis.restart.store import RECORD_NAME, RestartRecord, RestartStore
-from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
-from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import TaskStore
+from keryx.config import PLACEHOLDER_KEY, Settings
+from keryx.config.store import ConfigStore
+from keryx.continuity.memory import memory_path
+from keryx.realtime.base import AudioDelta, Transcript
+from keryx.restart.service import ServiceTarget
+from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
+from keryx.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
+from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.store import TaskStore
 
 runner = CliRunner()
 
@@ -44,8 +44,8 @@ runner = CliRunner()
 @pytest.fixture
 def settings_stub(monkeypatch, tmp_path, every_agent_installed):
     """Make every command see a hermetic Settings instead of the ambient environment."""
-    settings = Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis")
-    monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
+    settings = Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path / "keryx")
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
     return settings
 
 
@@ -85,7 +85,18 @@ def test_version_prints_the_installed_package_version():
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0, result.output
-    assert result.output.strip() == f"jarvis {importlib.metadata.version('jarvis')}"
+    assert result.output.strip() == f"keryx {importlib.metadata.version('keryx-voice')}"
+
+
+def test_the_old_command_says_what_happened_and_fails(capsys):
+    """A unit from before the rename must not start a service from the old directories."""
+    from keryx.cli import renamed
+
+    with pytest.raises(SystemExit) as exit_info:
+        renamed()
+
+    assert exit_info.value.code == 1
+    assert "Jarvis is now Keryx: run `keryx migrate`" in capsys.readouterr().err
 
 
 def test_help_documents_version():
@@ -129,7 +140,7 @@ def test_serve_refuses_to_answer_the_phone_without_signature_checks_behind_a_tun
     built: dict = {}
     stub_uvicorn(monkeypatch, built)
     monkeypatch.setattr(settings_stub, "debug_skip_twilio_validation", True)
-    monkeypatch.setattr(settings_stub, "public_host", "jarvis.example")
+    monkeypatch.setattr(settings_stub, "public_host", "keryx.example")
 
     result = runner.invoke(app, ["serve"])
 
@@ -155,7 +166,7 @@ def test_serve_refuses_a_default_agent_that_is_not_enabled(settings_stub, monkey
 def test_serve_refuses_a_default_agent_whose_extra_is_not_installed(settings_stub, monkeypatch):
     built: dict = {}
     stub_uvicorn(monkeypatch, built)
-    from jarvis.agents import registry
+    from keryx.agents import registry
 
     monkeypatch.setattr(registry, "installed", lambda agent: agent != "claude")
 
@@ -177,9 +188,9 @@ def test_serve_refuses_until_the_old_files_are_migrated(settings_stub, monkeypat
     result = runner.invoke(app, ["serve"])
 
     assert result.exit_code == 2, result.output
-    assert "jarvis migrate" in result.output
+    assert "keryx migrate" in result.output
     assert "config" not in built
-    assert not (settings_stub.state_dir / "logs" / "jarvis.log").exists()
+    assert not (settings_stub.state_dir / "logs" / "keryx.log").exists()
 
 
 @pytest.mark.parametrize(
@@ -197,7 +208,7 @@ def test_what_reads_the_data_waits_for_the_migration_too(settings_stub, command)
     result = runner.invoke(app, command)
 
     assert result.exit_code == 2, result.output
-    assert "jarvis migrate" in result.output
+    assert "keryx migrate" in result.output
     assert not (settings_stub.data_dir / "tasks.db").exists()
 
 
@@ -215,7 +226,7 @@ def stub_uvicorn(monkeypatch, built: dict) -> None:
             executor = asyncio.get_running_loop()._default_executor
             built["executor_workers"] = executor._max_workers if executor else 0
 
-    monkeypatch.setattr("jarvis.cli.uvicorn.Server", StubServer)
+    monkeypatch.setattr("keryx.cli.uvicorn.Server", StubServer)
 
 
 def test_serve_names_settings_a_plugin_replaced_and_starts_anyway(
@@ -227,7 +238,7 @@ def test_serve_names_settings_a_plugin_replaced_and_starts_anyway(
     built: dict = {}
     stub_uvicorn(monkeypatch, built)
 
-    with caplog.at_level("WARNING", logger="jarvis.cli"):
+    with caplog.at_level("WARNING", logger="keryx.cli"):
         result = runner.invoke(app, ["serve"])
 
     assert result.exit_code == 0, result.output
@@ -278,7 +289,7 @@ def test_serve_wires_the_task_stack_into_the_shared_state(settings_stub, monkeyp
     result = runner.invoke(app, ["serve"])
 
     assert result.exit_code == 0, result.output
-    state = built["config"].app.state.jarvis
+    state = built["config"].app.state.keryx
     assert state.manager is not None
     assert isinstance(state.manager._runner.runners["claude"], ClaudeAgentRunner)
     assert "dispatch_task" in {schema["name"] for schema in state.registry.schemas()}
@@ -292,7 +303,7 @@ def test_fake_agents_swaps_the_subagent_runner(settings_stub, monkeypatch):
     result = runner.invoke(app, ["serve", "--fake-agents"])
 
     assert result.exit_code == 0, result.output
-    state = built["config"].app.state.jarvis
+    state = built["config"].app.state.keryx
     assert isinstance(state.manager._runner, FakeAgentRunner)
     assert settings_stub.fake_agents is False  # the loaded settings are left alone
 
@@ -304,7 +315,7 @@ def test_loopback_runs_a_session_and_writes_the_reply(settings_stub, monkeypatch
     provider = FakeProvider()
     provider.feed(AudioDelta(item_id="item_1", audio=b"\x01\x02" * 240))
     provider.feed(Transcript(role="assistant", text="hello there", item_id="item_1"))
-    monkeypatch.setattr("jarvis.cli.OpenAIRealtimeClient", lambda *args, **kwargs: provider)
+    monkeypatch.setattr("keryx.cli.OpenAIRealtimeClient", lambda *args, **kwargs: provider)
     wav_in = write_wav(tmp_path / "in.wav")
     out = tmp_path / "reply.wav"
 
@@ -343,7 +354,7 @@ def test_serve_writes_a_rotating_log_file(settings_stub, monkeypatch):
         if isinstance(handler, RotatingFileHandler)
     ]
     assert len(handlers) == 1  # re-running serve replaces the handler, it does not stack
-    assert Path(handlers[0].baseFilename) == settings_stub.state_dir / "logs" / "jarvis.log"
+    assert Path(handlers[0].baseFilename) == settings_stub.state_dir / "logs" / "keryx.log"
     assert handlers[0].maxBytes == LOG_MAX_BYTES
     assert handlers[0].backupCount == LOG_BACKUP_COUNT
 
@@ -441,7 +452,7 @@ def test_tasks_show_prints_every_field_and_the_report(settings_stub, tmp_path):
         make_task(
             "check the logs",
             status=TaskStatus.DONE,
-            project="jarvis",
+            project="keryx",
             summary="Nothing on fire.",
             report_path=str(report),
             claude_session_id="sess-42",
@@ -457,7 +468,7 @@ def test_tasks_show_prints_every_field_and_the_report(settings_stub, tmp_path):
     for expected in (
         "check the logs",
         "done",
-        "jarvis",
+        "keryx",
         "Nothing on fire.",
         "sess-42",
         "55831",
@@ -591,9 +602,9 @@ def optional_key_loader(monkeypatch, tmp_path, calls: list[dict]) -> Settings:
 
     def load(**overrides):
         calls.append(overrides)
-        return Settings(_env_file=None, data_dir=tmp_path / "jarvis", **overrides)
+        return Settings(_env_file=None, data_dir=tmp_path / "keryx", **overrides)
 
-    monkeypatch.setattr("jarvis.cli.load_settings", load)
+    monkeypatch.setattr("keryx.cli.load_settings", load)
 
 
 def test_read_only_commands_run_without_an_openai_key(monkeypatch, tmp_path):
@@ -618,7 +629,7 @@ def log_levels(monkeypatch):
     """
     asked: list[object] = []
     monkeypatch.setattr(
-        "jarvis.cli.logging.basicConfig", lambda **kwargs: asked.append(kwargs["level"])
+        "keryx.cli.logging.basicConfig", lambda **kwargs: asked.append(kwargs["level"])
     )
     return asked
 
@@ -633,9 +644,9 @@ def test_read_only_commands_print_their_answer_without_info_lines(settings_stub,
 
 def test_log_level_debug_still_reaches_a_read_only_command(monkeypatch, tmp_path, log_levels):
     settings = Settings(
-        _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", log_level="debug"
+        _env_file=None, openai_api_key="test", data_dir=tmp_path / "keryx", log_level="debug"
     )
-    monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
 
     assert runner.invoke(app, ["tasks", "list"]).exit_code == 0
 
@@ -648,7 +659,7 @@ def test_the_restart_watchdog_keeps_its_info_lines(settings_stub, log_levels, mo
     async def watch(_settings):
         return "nothing"
 
-    monkeypatch.setattr("jarvis.cli.watch", watch)
+    monkeypatch.setattr("keryx.cli.watch", watch)
 
     result = runner.invoke(app, ["restart-watch"])
 
@@ -665,16 +676,16 @@ def restart_settings(monkeypatch, tmp_path):
     settings = Settings(
         _env_file=None,
         openai_api_key="test",
-        data_dir=tmp_path / "jarvis",
+        data_dir=tmp_path / "keryx",
         owner_number_explicit="+15550000001",
     )
-    monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
-    monkeypatch.setattr("jarvis.cli.loaded_version", lambda data_dir, repo=None: "v-test")
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+    monkeypatch.setattr("keryx.cli.loaded_version", lambda data_dir, repo=None: "v-test")
     monkeypatch.setattr(
-        "jarvis.cli.resolve_target",
-        lambda _settings, **_kwargs: ServiceTarget("systemd", "jarvis.service"),
+        "keryx.cli.resolve_target",
+        lambda _settings, **_kwargs: ServiceTarget("systemd", "keryx.service"),
     )
-    monkeypatch.setattr("jarvis.cli.health_probe", lambda _settings: 0)
+    monkeypatch.setattr("keryx.cli.health_probe", lambda _settings: 0)
     # `resolve_target` is stubbed above, but `watch_command` still looks for `systemd-run`
     # on PATH — and on a macOS runner it is not there, so the watchdog silently did not arm
     # and this fixture failed on the host rather than on anything it was testing.
@@ -701,10 +712,10 @@ def ran(monkeypatch):
         calls.append(list(command))
         return Done
 
-    monkeypatch.setattr("jarvis.cli.subprocess.run", fake_run)
+    monkeypatch.setattr("keryx.cli.subprocess.run", fake_run)
     # The watchdog deliberately starts a process that outlives its parent, which is the
     # one thing a test suite must never do (see the testing rule in CLAUDE.md).
-    monkeypatch.setattr("jarvis.cli.spawn_watchdog", lambda plan, settings: 4321)
+    monkeypatch.setattr("keryx.cli.spawn_watchdog", lambda plan, settings: 4321)
     return calls, Done
 
 
@@ -714,7 +725,7 @@ def test_restart_asks_the_service_manager_and_records_the_call_back(restart_sett
     result = runner.invoke(app, ["restart", "--reason", "new code"])
 
     assert result.exit_code == 0
-    assert calls == [["systemctl", "--user", "restart", "jarvis.service"]]
+    assert calls == [["systemctl", "--user", "restart", "keryx.service"]]
     record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
     assert record.reason == "new code"
     assert record.number == "+15550000001"
@@ -734,12 +745,12 @@ def test_a_quiet_restart_arms_no_watchdog(restart_settings, ran):
 
     record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
     assert record.watchdog == ""
-    assert calls == [["systemctl", "--user", "restart", "jarvis.service"]]
+    assert calls == [["systemctl", "--user", "restart", "keryx.service"]]
 
 
 def test_restart_refuses_to_cut_off_a_live_call(restart_settings, ran, monkeypatch):
     calls, _ = ran
-    monkeypatch.setattr("jarvis.cli.health_probe", lambda _settings: 1)
+    monkeypatch.setattr("keryx.cli.health_probe", lambda _settings: 1)
 
     result = runner.invoke(app, ["restart"])
 
@@ -751,7 +762,7 @@ def test_restart_refuses_to_cut_off_a_live_call(restart_settings, ran, monkeypat
 
 def test_restart_force_goes_ahead_anyway(restart_settings, ran, monkeypatch):
     calls, _ = ran
-    monkeypatch.setattr("jarvis.cli.health_probe", lambda _settings: 1)
+    monkeypatch.setattr("keryx.cli.health_probe", lambda _settings: 1)
 
     result = runner.invoke(app, ["restart", "--force"])
 
@@ -763,7 +774,7 @@ def test_restart_without_a_service_manager_says_how_to_install_one(
     restart_settings, ran, monkeypatch
 ):
     calls, _ = ran
-    monkeypatch.setattr("jarvis.cli.resolve_target", lambda _settings, **_kwargs: None)
+    monkeypatch.setattr("keryx.cli.resolve_target", lambda _settings, **_kwargs: None)
 
     result = runner.invoke(app, ["restart"])
 
@@ -780,9 +791,9 @@ def test_restart_from_a_terminal_restarts_the_installed_service(
 
     def resolve(_settings, **kwargs):
         asked.append(kwargs)
-        return ServiceTarget("systemd", "jarvis.service")
+        return ServiceTarget("systemd", "keryx.service")
 
-    monkeypatch.setattr("jarvis.cli.resolve_target", resolve)
+    monkeypatch.setattr("keryx.cli.resolve_target", resolve)
 
     assert runner.invoke(app, ["restart"]).exit_code == 0
     assert asked == [{"from_outside": True}]
@@ -872,10 +883,10 @@ def test_doctor_passes_on_a_complete_install(
         twilio_number="+15550000000",
         allowed_callers=["+15551234567"],
         pin="123456",
-        public_host="jarvis.example.com",
-        data_dir=tmp_path / "jarvis",
+        public_host="keryx.example.com",
+        data_dir=tmp_path / "keryx",
     )
-    monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
 
     result = runner.invoke(app, ["doctor"])
 
@@ -886,14 +897,14 @@ def test_doctor_passes_on_a_complete_install(
 def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path):
     """`doctor` is the command that has to work when nothing else does.
 
-    A `JARVIS_PIN` that breaks the 6-8 digit rule stops `jarvis serve` from loading at all,
+    A `KERYX_PIN` that breaks the 6-8 digit rule stops `keryx serve` from loading at all,
     so if it stopped `doctor` too there would be nothing left to diagnose it with.
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
 
     def load(**overrides):
-        # What the real loader does with JARVIS_PIN=1234 in the environment: refuse, until
+        # What the real loader does with KERYX_PIN=1234 in the environment: refuse, until
         # the caller says what to put there instead.
         values = {
             "openai_api_key": "sk-test",
@@ -902,19 +913,19 @@ def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path):
             "twilio_auth_token": "token",
             "twilio_number": "+15550000000",
             "allowed_callers": ["+15551234567"],
-            "public_host": "jarvis.example.com",
-            "data_dir": tmp_path / "jarvis",
+            "public_host": "keryx.example.com",
+            "data_dir": tmp_path / "keryx",
             "pin": "9876",
         }
         values.update(overrides)
         return Settings(_env_file=None, **values)
 
-    monkeypatch.setattr("jarvis.cli.load_settings", load)
+    monkeypatch.setattr("keryx.cli.load_settings", load)
 
     result = runner.invoke(app, ["doctor"])
 
     assert result.exit_code == 1, result.output
-    assert "JARVIS_PIN" in result.output
+    assert "KERYX_PIN" in result.output
     assert "6 to 8 digits" in result.output
     pin_line = next(line for line in result.output.splitlines() if "PIN:" in line)
     assert "9876" not in pin_line
@@ -928,7 +939,7 @@ def test_doctor_explains_a_malformed_pin_set_the_way_a_person_sets_one(
     """The same, through the real loader rather than a stub that stands in for it.
 
     `pydantic` reports a field's *alias* when it has one, so a value refused under
-    `JARVIS_PIN` arrives as `JARVIS_PIN` and not as `pin`. A fallback that matched only the
+    `KERYX_PIN` arrives as `KERYX_PIN` and not as `pin`. A fallback that matched only the
     field name never fired, and `doctor` died with a traceback in the one state it exists
     to explain.
     """
@@ -936,8 +947,8 @@ def test_doctor_explains_a_malformed_pin_set_the_way_a_person_sets_one(
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     for name, value in {
         "OPENAI_API_KEY": "sk-test",
-        "JARVIS_PIN": "1234",
-        "DATA_DIR": str(tmp_path / "jarvis"),
+        "KERYX_PIN": "1234",
+        "DATA_DIR": str(tmp_path / "keryx"),
         "PROJECTS_ROOT": str(tmp_path / "projects"),
         "SKILLS_DIR": str(tmp_path / "skills"),
     }.items():
@@ -947,7 +958,7 @@ def test_doctor_explains_a_malformed_pin_set_the_way_a_person_sets_one(
 
     assert not isinstance(result.exception, ValidationError), result.exception
     assert result.exit_code == 1, result.output
-    assert "JARVIS_PIN is set but unusable" in result.output
+    assert "KERYX_PIN is set but unusable" in result.output
     assert "6 to 8 digits" in result.output
     assert "allowed callers" in result.output  # the rest was still checked
 
@@ -959,12 +970,12 @@ def test_serve_refuses_to_start_on_a_malformed_pin(monkeypatch, tmp_path):
     def load(**overrides):
         return Settings(_env_file=None, openai_api_key="sk-test", data_dir=tmp_path, pin="9876")
 
-    monkeypatch.setattr("jarvis.cli.load_settings", load)
+    monkeypatch.setattr("keryx.cli.load_settings", load)
 
     result = runner.invoke(app, ["serve"])
 
     assert result.exit_code == 2, result.output
-    assert "JARVIS_PIN" in result.output
+    assert "KERYX_PIN" in result.output
     assert "6 to 8 digits" in result.output
     assert "9876" not in result.output
     assert "doctor" in result.output
@@ -1125,7 +1136,7 @@ def test_forget_keeps_a_window_when_one_is_given(settings_stub):
 # --- housekeeping and the memory -------------------------------------------
 
 
-def test_tasks_list_hides_jarvis_own_housekeeping(settings_stub):
+def test_tasks_list_hides_keryx_own_housekeeping(settings_stub):
     seed_tasks(
         settings_stub,
         make_task("their work", status=TaskStatus.DONE),
@@ -1202,7 +1213,7 @@ def test_memory_says_so_when_there_is_nothing_remembered_yet(settings_stub):
 
 def test_memory_prints_what_is_remembered(settings_stub):
     settings_stub.ensure_dirs()
-    memory_path(settings_stub.data_dir).write_text("# What Jarvis knows\n\nThey hate jargon.\n")
+    memory_path(settings_stub.data_dir).write_text("# What Keryx knows\n\nThey hate jargon.\n")
 
     result = runner.invoke(app, ["memory"])
 
@@ -1228,7 +1239,7 @@ def write_tool(settings: Settings, name: str, source: str) -> None:
 
 
 MOON_TOOL = (
-    "from jarvis.tools.custom import custom_tool\n\n"
+    "from keryx.tools.custom import custom_tool\n\n"
     "@custom_tool(description='The moon tonight.', needs_pin=False)\n"
     "def moon_phase(ctx, args):\n    return {}\n"
 )
@@ -1292,7 +1303,7 @@ def test_plugins_install_never_takes_a_secret(settings_stub):
                                  "--set", "SLACK_BOT_TOKEN=xoxb-secret"])
 
     assert result.exit_code == 1
-    assert "jarvis config set SLACK_BOT_TOKEN --stdin" in result.output
+    assert "keryx config set SLACK_BOT_TOKEN --stdin" in result.output
     assert "xoxb-secret" not in result.output
     assert not plugins.config_path(settings_stub, "send_to_slack").exists()
 
@@ -1331,7 +1342,7 @@ def test_a_template_is_written_off_and_activated_once_edited(settings_stub):
     path = plugins.config_path(settings_stub, "cluster_stats")
 
     assert written.exit_code == 0 and str(path) in written.output
-    assert "then `jarvis plugins install cluster_stats`" in written.output
+    assert "then `keryx plugins install cluster_stats`" in written.output
     early = runner.invoke(app, ["plugins", "install", "cluster_stats"])
     assert early.exit_code == 1 and "names no host" in early.output
 
@@ -1387,7 +1398,7 @@ def test_plugins_remove_turns_one_off_and_keeps_its_settings(settings_stub):
 
 @pytest.mark.parametrize("argv", [["install", "check_billing"], ["remove", "check_billing"]])
 def test_the_service_may_not_turn_plugins_on_or_off(settings_stub, monkeypatch, argv):
-    monkeypatch.setenv("JARVIS_ACTOR", "service")
+    monkeypatch.setenv("KERYX_ACTOR", "service")
 
     result = runner.invoke(app, ["plugins", *argv, "--yes"] if argv[0] == "remove" else
                            ["plugins", *argv])
@@ -1398,13 +1409,13 @@ def test_the_service_may_not_turn_plugins_on_or_off(settings_stub, monkeypatch, 
 
 
 def test_plugins_hosts_lists_what_ssh_says_and_whose_master_is_up(settings_stub, monkeypatch):
-    from jarvis.plugins.ssh_hosts import SshHost
+    from keryx.plugins.ssh_hosts import SshHost
 
-    monkeypatch.setattr("jarvis.cli.ssh_hosts.discover", lambda: [
+    monkeypatch.setattr("keryx.cli.ssh_hosts.discover", lambda: [
         SshHost("alpha", "login.alpha.example", "me", True, "/tmp/cm"),
         SshHost("beta", "beta.example", "", False, ""),
     ])
-    monkeypatch.setattr("jarvis.cli.ssh_hosts.master_alive", lambda alias: alias == "alpha")
+    monkeypatch.setattr("keryx.cli.ssh_hosts.master_alive", lambda alias: alias == "alpha")
 
     as_json = runner.invoke(app, ["plugins", "hosts", "--json"])
     text = runner.invoke(app, ["plugins", "hosts"])
@@ -1418,7 +1429,7 @@ def test_plugins_hosts_lists_what_ssh_says_and_whose_master_is_up(settings_stub,
 
 
 def test_plugins_hosts_with_no_ssh_config_says_so(settings_stub, monkeypatch):
-    monkeypatch.setattr("jarvis.cli.ssh_hosts.discover", lambda: [])
+    monkeypatch.setattr("keryx.cli.ssh_hosts.discover", lambda: [])
 
     assert "no hosts in" in runner.invoke(app, ["plugins", "hosts"]).output
 

@@ -1,15 +1,15 @@
-"""Where a spoken bug report or feature request for Jarvis goes, and whether `gh` can file it."""
+"""Where a spoken bug report or feature request for Keryx goes, and whether `gh` can file it."""
 
 import subprocess
 
 import pytest
 from pydantic import ValidationError
 
-from jarvis import issues as issues_module
-from jarvis.config import Settings
-from jarvis.config import settings as settings_module
-from jarvis.config.settings import SOURCE_ROOT, UPSTREAM_REPO
-from jarvis.issues import SKILL, GhStatus, IssueReporting, gh_status
+from keryx import issues as issues_module
+from keryx.config import Settings
+from keryx.config import settings as settings_module
+from keryx.config.settings import SOURCE_ROOT, UPSTREAM_REPO
+from keryx.issues import SKILL, GhStatus, IssueReporting, gh_status
 
 
 def _with(settings: Settings, **changes) -> Settings:
@@ -18,9 +18,9 @@ def _with(settings: Settings, **changes) -> Settings:
 
 def _checkout(tmp_path):
     """A stand-in checkout: all `from_settings` asks of one is the skill."""
-    root = tmp_path / "jarvis-clone"
+    root = tmp_path / "keryx-clone"
     (root / SKILL).parent.mkdir(parents=True)
-    (root / SKILL).write_text("---\nname: jarvis-report-issue\n---\n", encoding="utf-8")
+    (root / SKILL).write_text("---\nname: keryx-report-issue\n---\n", encoding="utf-8")
     return root
 
 
@@ -30,7 +30,7 @@ def test_it_is_off_until_the_owner_turns_it_on(settings):
     assert IssueReporting.from_settings(settings) is None
 
 
-def test_on_it_files_upstream_from_the_checkout_jarvis_runs_from(settings):
+def test_on_it_files_upstream_from_the_checkout_keryx_runs_from(settings):
     issues = IssueReporting.from_settings(_with(settings))
 
     assert issues is not None
@@ -44,7 +44,7 @@ def test_on_it_files_upstream_from_the_checkout_jarvis_runs_from(settings):
 def test_a_configured_checkout_wins_and_its_skill_is_the_one_read(settings, tmp_path):
     clone = _checkout(tmp_path)
 
-    issues = IssueReporting.from_settings(_with(settings, jarvis_checkout=clone))
+    issues = IssueReporting.from_settings(_with(settings, keryx_checkout=clone))
 
     assert issues is not None
     assert issues.checkout == clone
@@ -52,7 +52,7 @@ def test_a_configured_checkout_wins_and_its_skill_is_the_one_read(settings, tmp_
 
 
 def test_a_checkout_without_the_skill_is_nothing_to_report_from(settings, tmp_path):
-    assert IssueReporting.from_settings(_with(settings, jarvis_checkout=tmp_path)) is None
+    assert IssueReporting.from_settings(_with(settings, keryx_checkout=tmp_path)) is None
 
 
 def test_with_no_checkout_at_all_there_is_nothing_to_report_from(
@@ -76,7 +76,7 @@ def test_the_call_it_came_from_is_named_only_when_its_transcript_exists(settings
     assert issues.transcript(None) is None
 
 
-@pytest.mark.parametrize("value", ["", "jarvis", "a/b/c", "https://github.com/a/b", "a b/c"])
+@pytest.mark.parametrize("value", ["", "keryx", "a/b/c", "https://github.com/a/b", "a b/c"])
 def test_the_repository_is_owner_slash_name(value):
     with pytest.raises(ValidationError, match="owner/name"):
         Settings(_env_file=None, openai_api_key="test", issue_repo=value)
@@ -91,13 +91,13 @@ def test_a_padded_repository_is_trimmed():
 def test_the_checkout_setting_is_absolute_or_home_relative(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    home = Settings(_env_file=None, openai_api_key="test", jarvis_checkout="~/jarvis")
-    blank = Settings(_env_file=None, openai_api_key="test", jarvis_checkout=" ")
+    home = Settings(_env_file=None, openai_api_key="test", keryx_checkout="~/keryx")
+    blank = Settings(_env_file=None, openai_api_key="test", keryx_checkout=" ")
 
-    assert home.checkout == tmp_path / "jarvis"
-    assert blank.jarvis_checkout is None
+    assert home.checkout == tmp_path / "keryx"
+    assert blank.keryx_checkout is None
     with pytest.raises(ValidationError, match="absolute"):
-        Settings(_env_file=None, openai_api_key="test", jarvis_checkout="jarvis")
+        Settings(_env_file=None, openai_api_key="test", keryx_checkout="keryx")
 
 
 # --- gh ---------------------------------------------------------------------------------

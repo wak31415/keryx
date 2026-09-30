@@ -15,7 +15,7 @@ version, because Jarvis reads its messages field by field.
 
 | Command | Installs |
 |---|---|
-| `uv sync` (in a clone) | both agents — the default `agents` group is `jarvis[all]` |
+| `uv sync` (in a clone) | both agents — the default `agents` group is `keryx[all]` |
 | `uv sync --no-group agents --extra codex` | Codex only (`--extra claude`: Claude only) |
 | `uv sync --no-group agents` | neither: `--fake-agents` only |
 | `uv sync --extra codex` | both still: the default group comes along |
@@ -24,11 +24,11 @@ version, because Jarvis reads its messages field by field.
 Python packaging has no default extras (PEP 771 is a draft, and uv 0.11 has no
 `default-extras`), which is why the default is a dependency group. One consequence: `uv run`
 syncs the environment back to the defaults before it runs, so on a narrowed checkout give it
-the same flags (`uv run --no-group agents --extra codex jarvis …`) or set `UV_NO_SYNC=1` —
+the same flags (`uv run --no-group agents --extra codex keryx …`) or set `UV_NO_SYNC=1` —
 the service units run `uv run`, and would otherwise put every agent back.
 
-An agent that is not installed says so in `doctor` and `jarvis setup`, with the command that
-installs it; it is never offered to the voice model; and `jarvis serve` refuses to start with
+An agent that is not installed says so in `doctor` and `keryx setup`, with the command that
+installs it; it is never offered to the voice model; and `keryx serve` refuses to start with
 it as `AGENT_BACKEND`. `--fake-agents` needs neither.
 
 `AGENT_BACKEND` picks the one that does the work when you do not say, and `AGENTS_ENABLED`
@@ -37,11 +37,11 @@ name it out loud — "have Codex look at the build" — and a model name picks i
 ("use opus" is Claude, "use terra" is Codex). A follow-up always goes back to the agent that
 started the task: a session belongs to the agent that issued it.
 
-`uv run jarvis setup` is the way in: its "Coding agents" section shows what is installed and
+`uv run keryx setup` is the way in: its "Coding agents" section shows what is installed and
 signed in, asks which agents and which is the default, runs the sign-in each one is missing
 (and leaves one that can already run alone), and runs one real task through each as a smoke
-test. From the command line: `jarvis auth login claude|codex`, `jarvis config set
-AGENT_BACKEND …`, and `jarvis auth status --smoke`. `uv run jarvis doctor` checks the same
+test. From the command line: `keryx auth login claude|codex`, `keryx config set
+AGENT_BACKEND …`, and `keryx auth status --smoke`. `uv run keryx doctor` checks the same
 things on every run.
 
 ## Signing in
@@ -66,14 +66,14 @@ SDK runs actually reads (checked against 0.157.1):
 
 - **`CODEX_API_KEY`** is *ignored* in the app-server's environment. So Jarvis logs in with
   the key once — on stdin, never on a command line — into a Codex home of its own
-  (`~/.local/share/jarvis/codex`, owner-only, with your `config.toml`, `AGENTS.md` and
+  (`~/.local/share/keryx/codex`, owner-only, with your `config.toml`, `AGENTS.md` and
   `skills` linked in, but not `hooks.json`: your hooks are your own automation), and logs in
   again only when the key changes. Your own `~/.codex` login is never touched.
 - **`CODEX_ACCESS_TOKEN`** *is* read from the environment, so that is all Jarvis does with
   it: nothing is stored. It is not a ChatGPT token but an OpenAI *agent identity* token; a
   bogus one fails cleanly, but no real one has been run yet.
 - **The stored login** is your own `~/.codex`, exactly as the `codex` CLI uses it.
-  `jarvis auth login codex` runs the SDK's bundled `codex login`, which shares that home with any
+  `keryx auth login codex` runs the SDK's bundled `codex login`, which shares that home with any
   `codex` you have on PATH.
 
 ## What each agent can do here
@@ -99,14 +99,14 @@ checked is marked, and listed under "possible".
 | Choosing the model by name | ✅ opus, sonnet, fable, haiku | ✅ astra, sol, luna, terra |
 | Wall-clock cap (`SUBAGENT_TIMEOUT_S`) | ✅ | ✅ |
 | Turn cap and dollar cap | ✅ `SUBAGENT_MAX_TURNS`, `SUBAGENT_MAX_BUDGET_USD` | — |
-| Tokens recorded on the task (`jarvis tasks show`, per project in `jarvis tasks usage`) | ✅ | ✅ |
+| Tokens recorded on the task (`keryx tasks show`, per project in `keryx tasks usage`) | ✅ | ✅ |
 | Dollar cost recorded on the task | ✅ | — a plan call has no price |
 | Slack, through the server the `send_to_slack` plugin names (`mcp_server`) | ✅ | ✅ handed over from `~/.claude.json` |
 | Gmail and Calendar | ✅ claude.ai connectors | ✅ with `GOOGLE_WORKSPACE_MCP=true` |
 | Its own instructions file | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` |
 | Its own skills, listed to the voice model | `SKILLS_DIR` | `~/.codex/skills` |
 | Nothing to install beyond `uv sync` (extra `claude` / `codex`) | ✅ | ✅ bundled CLI (~350 MB) |
-| `doctor`, `jarvis setup`, `jarvis auth`, `--fake-agents` | ✅ | ✅ |
+| `doctor`, `keryx setup`, `keryx auth`, `--fake-agents` | ✅ | ✅ |
 | Approval bridge for your on-screen sessions | ✅ | — |
 <!-- agents:end -->
 
@@ -114,9 +114,9 @@ Two of those are worth knowing before you switch:
 
 - **Gmail and Calendar.** Claude gets them from its claude.ai connectors, which live on the
   Anthropic account. Codex has none, so with Codex enabled, connect Google for agents in
-  `uv run jarvis setup` (or `jarvis auth login google-workspace`); `doctor` warns until you
+  `uv run keryx setup` (or `keryx auth login google-workspace`); `doctor` warns until you
   have.
-- **The approval bridge** (`jarvis approvals`) is for Claude Code sessions on your own
+- **The approval bridge** (`keryx approvals`) is for Claude Code sessions on your own
   screen that stop and ask you something. It has nothing to do with which agent Jarvis
   dispatches to, and it stays Claude Code only.
 
@@ -164,19 +164,19 @@ Two more that are true of both, and worth knowing:
 
 ## Adding a third agent
 
-Every agent runs through one session (`jarvis/agents/session.py`), which already does the
+Every agent runs through one session (`keryx/agents/session.py`), which already does the
 progress lines, the `SPOKEN_SUMMARY:` and `RESTART_REQUIRED:` reading, the usage, the
 redaction and the error handling. A new agent is:
 
-- **one module** under `src/jarvis/agents/` holding an *adapter* — a class whose
+- **one module** under `src/keryx/agents/` holding an *adapter* — a class whose
   `turn(prompt)` yields `Text`, `ToolCall`, `FileEdit`, `SessionId`, `Notice` and a final
   `Done`, plus `steer`, `interrupt` and `close` — and an `AdapterRunner` subclass whose
   `context(task)` builds its `AgentContext` and whose `connect(context, resume)` starts its
   client and returns the adapter;
-- **one `BackendSpec` entry** in `jarvis/agents/registry.py::BACKENDS`: its runner, its
+- **one `BackendSpec` entry** in `keryx/agents/registry.py::BACKENDS`: its runner, its
   spoken model names, where its credentials come from (`AuthSource`), its install hint,
   instructions file, skills directory and login commands. The router, the task manager, the
-  voice tools, `doctor` and `jarvis setup` read that table and nothing else;
+  voice tools, `doctor` and `keryx setup` read that table and nothing else;
 - **its name** in `AgentName` in `config/settings.py`, **its settings** in `Settings`
   (`docs/configuration.md` is regenerated from it), **a column** in the table above (a test checks), and **tests** — the
   shared `ScriptedAdapter` in `tests/agents/fakes.py` covers the session, so its own tests

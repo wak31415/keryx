@@ -3,22 +3,22 @@
 import pytest
 from fakes import FakeVoiceSession, eventually
 
-from jarvis.agents.router import RoutingAgentRunner
-from jarvis.app import AppState, build_app_state, shutdown_app_state
-from jarvis.continuity.briefing import Briefer
-from jarvis.continuity.memory import MemoryWriter, memory_path
-from jarvis.continuity.transcripts import transcript_path
-from jarvis.events import PinLockedOut, SessionEnded, TaskCompleted
-from jarvis.notify.notifier import Notifier
-from jarvis.notify.pin_alert import PinLockoutAlerter
-from jarvis.notify.twilio_out import TwilioOut
-from jarvis.pin_guard import STATE_NAME, PinGuard
-from jarvis.realtime.openai import OpenAIRealtimeClient
-from jarvis.restart.coordinator import RestartCoordinator
-from jarvis.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
-from jarvis.tasks.manager import TaskManager
-from jarvis.tasks.models import Task, TaskKind
-from jarvis.tasks.store import TaskStore
+from keryx.agents.router import RoutingAgentRunner
+from keryx.app import AppState, build_app_state, shutdown_app_state
+from keryx.continuity.briefing import Briefer
+from keryx.continuity.memory import MemoryWriter, memory_path
+from keryx.continuity.transcripts import transcript_path
+from keryx.events import PinLockedOut, SessionEnded, TaskCompleted
+from keryx.notify.notifier import Notifier
+from keryx.notify.pin_alert import PinLockoutAlerter
+from keryx.notify.twilio_out import TwilioOut
+from keryx.pin_guard import STATE_NAME, PinGuard
+from keryx.realtime.openai import OpenAIRealtimeClient
+from keryx.restart.coordinator import RestartCoordinator
+from keryx.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
+from keryx.tasks.manager import TaskManager
+from keryx.tasks.models import Task, TaskKind
+from keryx.tasks.store import TaskStore
 
 
 @pytest.fixture
@@ -140,7 +140,7 @@ async def test_the_provider_factory_builds_a_realtime_client_per_call(state):
 
 async def test_the_provider_factory_passes_the_configured_key_and_model(settings, monkeypatch):
     made: list[tuple] = []
-    monkeypatch.setattr("jarvis.app.OpenAIRealtimeClient", lambda *args: made.append(args))
+    monkeypatch.setattr("keryx.app.OpenAIRealtimeClient", lambda *args: made.append(args))
     built = build_app_state(settings)
 
     assert made == []  # nothing is connected until a call actually arrives

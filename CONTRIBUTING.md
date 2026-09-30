@@ -13,20 +13,20 @@ Security problems do **not** go in an issue — see [SECURITY.md](SECURITY.md).
 uv sync                            # Python 3.12
 uv run pytest -q                   # must be green, with no warnings
 uv run ruff check src tests
-uv run jarvis doctor               # what this machine is still missing
+uv run keryx doctor               # what this machine is still missing
 ```
 
 You do **not** need an API key or Twilio to run the tests. The suite never
 reads your own configuration or data — each test has its own `HOME`, XDG directories,
-`JARVIS_HOME` and working directory, so neither `~/.config/jarvis` nor a `.env` in your
+`KERYX_HOME` and working directory, so neither `~/.config/keryx` nor a `.env` in your
 checkout takes part — and never reaches the network: see the fixtures in
 `tests/conftest.py`, and do not weaken them.
 
 To run the thing itself without spending Claude tokens:
 
 ```bash
-uv run jarvis serve --fake-agents
-uv run jarvis loopback --wav sample.wav --out reply.wav
+uv run keryx serve --fake-agents
+uv run keryx loopback --wav sample.wav --out reply.wav
 ```
 
 ## The rules that are not negotiable

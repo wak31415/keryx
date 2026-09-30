@@ -1,4 +1,4 @@
-"""A first memory: `jarvis memory seed` for an agent, the "About you" section for a person,
+"""A first memory: `keryx memory seed` for an agent, the "About you" section for a person,
 and the report both end with — what every call will carry."""
 
 import json
@@ -7,12 +7,12 @@ import stat
 import pytest
 from typer.testing import CliRunner
 
-from jarvis.cli import app
-from jarvis.config import Settings, write_enrolled_pin
-from jarvis.continuity.memory import MAX_MEMORY_CHARS, memory_path, read_memory, seed_memory
-from jarvis.projects import MAX_BRIEFS_CHARS
-from jarvis.setup import profile
-from jarvis.setup.profile import PIN_NOTES, facts_from_text, pin_note, setup_report, setup_summary
+from keryx.cli import app
+from keryx.config import Settings, write_enrolled_pin
+from keryx.continuity.memory import MAX_MEMORY_CHARS, memory_path, read_memory, seed_memory
+from keryx.projects import MAX_BRIEFS_CHARS
+from keryx.setup import profile
+from keryx.setup.profile import PIN_NOTES, facts_from_text, pin_note, setup_report, setup_summary
 
 from .fakes import DEFAULT
 
@@ -27,11 +27,11 @@ def home(monkeypatch, tmp_path):
         _env_file=None,
         openai_api_key="test",
         owner_name="Ada",
-        data_dir=tmp_path / "jarvis",
+        data_dir=tmp_path / "keryx",
         projects_root=tmp_path / "projects",
         skills_dir=tmp_path / "skills",
     )
-    monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
     return settings
 
 
@@ -39,7 +39,7 @@ def memory_text(settings) -> str:
     return memory_path(settings.data_dir).read_text()
 
 
-# --- jarvis memory seed ---------------------------------------------------------------
+# --- keryx memory seed ---------------------------------------------------------------
 
 
 def test_seed_takes_the_facts_on_stdin_and_writes_them_owner_only(home):
@@ -78,7 +78,7 @@ def test_seed_never_replaces_a_memory_without_force(home):
     refused = runner.invoke(app, ["memory", "seed", "--file", "-"], input="New fact.\n")
     forced = runner.invoke(app, ["memory", "seed", "--file", "-", "--force"], input="New fact.\n")
 
-    assert refused.exit_code == 1 and "`jarvis memory seed --force` replaces it" in refused.output
+    assert refused.exit_code == 1 and "`keryx memory seed --force` replaces it" in refused.output
     assert forced.exit_code == 0 and "- New fact." in memory_text(home)
 
 
@@ -103,7 +103,7 @@ def test_a_memory_too_long_for_a_call_is_refused(home):
 def test_json_reports_everything_a_call_will_carry_and_nothing_else(home):
     for name in ("orchard", "weather"):
         (home.projects_root / name).mkdir(parents=True)
-    (home.projects_root / "orchard" / ".jarvis-brief.md").write_text("Soil sensors.")
+    (home.projects_root / "orchard" / ".keryx-brief.md").write_text("Soil sensors.")
     (home.data_dir / "projects").mkdir(parents=True)
     (home.data_dir / "projects" / "weather.md").write_text("Forecasts.")
 
@@ -137,7 +137,7 @@ def test_json_says_whether_a_pin_exists_and_where_from_never_the_digits(home):
 
 def test_the_pin_note_names_each_of_the_four_states(home):
     assert pin_note(home) == PIN_NOTES[None]
-    assert "jarvis setup" in pin_note(home)
+    assert "keryx setup" in pin_note(home)
     assert pin_note(home.model_copy(update={"pin": "482915"})) == PIN_NOTES["environment"]
 
     home.config_dir.mkdir(parents=True, exist_ok=True)
@@ -158,7 +158,7 @@ def test_the_report_says_the_projects_root_is_missing(home):
 def test_the_report_counts_projects_briefs_skills_and_what_every_call_carries(home):
     for name in ("orchard", "weather"):
         (home.projects_root / name).mkdir(parents=True)
-    (home.projects_root / "orchard" / ".jarvis-brief.md").write_text("Soil sensors.")
+    (home.projects_root / "orchard" / ".keryx-brief.md").write_text("Soil sensors.")
     (home.skills_dir / "mermaid").mkdir(parents=True)
     (home.skills_dir / "mermaid" / "SKILL.md").write_text(
         "---\nname: mermaid\ndescription: Diagrams.\n---\n"

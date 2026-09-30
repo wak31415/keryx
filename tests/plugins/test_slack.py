@@ -4,22 +4,22 @@ import json
 
 import pytest
 
-from jarvis import plugins
-from jarvis.agents.base import render_subagent_suffix
-from jarvis.agents.claude import CLAUDE_AUTH
-from jarvis.agents.session import AgentContext
-from jarvis.integrations.slack import SlackWebApi
-from jarvis.issues import IssueReporting
-from jarvis.plugins.slack import (
+from keryx import plugins
+from keryx.agents.base import render_subagent_suffix
+from keryx.agents.claude import CLAUDE_AUTH
+from keryx.agents.session import AgentContext
+from keryx.integrations.slack import SlackWebApi
+from keryx.issues import IssueReporting
+from keryx.plugins.slack import (
     FAILED_MESSAGE,
     send_to_slack_tool,
     slack_route,
     slack_sender,
 )
-from jarvis.tasks.models import Task, TaskKind
-from jarvis.tools.builtin_common import PIN_REQUIRED_MESSAGE
-from jarvis.tools.custom import ToolUnavailable
-from jarvis.trust import TrustLevel
+from keryx.tasks.models import Task, TaskKind
+from keryx.tools.builtin_common import PIN_REQUIRED_MESSAGE
+from keryx.tools.custom import ToolUnavailable
+from keryx.trust import TrustLevel
 from plugins.helpers import call, loaded, loading, names, offered, refusal
 
 NAME = "send_to_slack"
@@ -125,7 +125,7 @@ def test_without_a_token_the_file_is_refused_with_the_command_that_fixes_it(sett
     plugins.write_config(settings, NAME, {"channel_id": "D123"})
     plugins.install(settings, NAME)
 
-    assert "jarvis config set SLACK_BOT_TOKEN --stdin" in refusal(settings, NAME)
+    assert "keryx config set SLACK_BOT_TOKEN --stdin" in refusal(settings, NAME)
 
 
 def test_a_token_saved_after_startup_is_found_in_the_store(settings, monkeypatch):

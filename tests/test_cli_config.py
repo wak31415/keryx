@@ -1,5 +1,5 @@
-"""`jarvis config`, `jarvis auth`, `jarvis setup` and `jarvis doctor --json`: the command line
-a coding agent sets Jarvis up with. The store is the test's own `JARVIS_HOME`."""
+"""`keryx config`, `keryx auth`, `keryx setup` and `keryx doctor --json`: the command line
+a coding agent sets Keryx up with. The store is the test's own `KERYX_HOME`."""
 
 import json
 import os
@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from jarvis.cli import app
-from jarvis.config.files import read_toml
-from jarvis.config.store import ConfigStore
+from keryx.cli import app
+from keryx.config.files import read_toml
+from keryx.config.store import ConfigStore
 
 runner = CliRunner()
 
@@ -21,7 +21,7 @@ runner = CliRunner()
 def home(tmp_path, monkeypatch, every_agent_installed):
     """Settings from the store alone, with the data directory kept in the scratch space."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "keryx"))
     monkeypatch.setenv("PROJECTS_ROOT", str(tmp_path / "projects"))
     return ConfigStore()
 
@@ -111,10 +111,10 @@ def test_get_refuses_a_secret(home):
 
 
 def test_the_pin_is_never_a_config_setting(home):
-    result = run("config", "set", "JARVIS_PIN", "--stdin", input="482915")
+    result = run("config", "set", "KERYX_PIN", "--stdin", input="482915")
 
     assert result.exit_code == 1
-    assert "jarvis setup" in result.output
+    assert "keryx setup" in result.output
 
 
 def test_unset_returns_a_key_to_its_default(home):
@@ -188,7 +188,7 @@ def test_unlock_is_refused_on_a_protected_key(home):
 
 
 def test_inside_a_task_set_is_the_service_and_lock_is_refused(home, monkeypatch):
-    monkeypatch.setenv("JARVIS_ACTOR", "service")
+    monkeypatch.setenv("KERYX_ACTOR", "service")
 
     allowed = run("config", "set", "OPENAI_VOICE", "marin")
     refused = run("config", "set", "PUBLIC_HOST", "evil.example.com")
@@ -202,11 +202,11 @@ def test_inside_a_task_set_is_the_service_and_lock_is_refused(home, monkeypatch)
 
 @pytest.mark.parametrize(("key", "value"), [("ISSUE_REPORTING", "true"),
                                             ("ISSUE_REPO", "someone/else")])
-def test_jarvis_cannot_turn_issue_reports_on_or_point_them_elsewhere(home, monkeypatch, key,
+def test_keryx_cannot_turn_issue_reports_on_or_point_them_elsewhere(home, monkeypatch, key,
                                                                     value):
-    """An issue is public: the owner turns it on by hand, and nothing unlocks it for Jarvis."""
+    """An issue is public: the owner turns it on by hand, and nothing unlocks it for Keryx."""
     unlocking = run("config", "unlock", key)
-    monkeypatch.setenv("JARVIS_ACTOR", "service")
+    monkeypatch.setenv("KERYX_ACTOR", "service")
     refused = run("config", "set", key, value)
 
     assert unlocking.exit_code == 1 and "protected" in unlocking.output
@@ -225,20 +225,20 @@ def test_path_names_every_directory(home):
     assert str(home.home) in output and "config.toml" in output and "secrets.toml" in output
     rows = dict(line.split(None, 1) for line in output.splitlines())
     assert rows["data"] == os.environ["DATA_DIR"]  # the fixture's
-    assert rows["state"] == str(Path.home() / ".local/state/jarvis")
-    assert rows["cache"] == str(Path.home() / ".cache/jarvis")
+    assert rows["state"] == str(Path.home() / ".local/state/keryx")
+    assert rows["cache"] == str(Path.home() / ".cache/keryx")
 
 
 def test_path_for_a_shell_is_every_directory_quoted_for_eval(home, monkeypatch):
-    monkeypatch.setenv("STATE_DIR", "/srv/jarvis state")
+    monkeypatch.setenv("STATE_DIR", "/srv/keryx state")
 
     lines = run("config", "path", "--shell").output.splitlines()
 
     assert dict(shlex.split(line)[0].split("=", 1) for line in lines) == {
-        "JARVIS_HOME": str(home.home),
+        "KERYX_HOME": str(home.home),
         "DATA_DIR": os.environ["DATA_DIR"],
-        "STATE_DIR": "/srv/jarvis state",
-        "CACHE_DIR": str(Path.home() / ".cache/jarvis"),
+        "STATE_DIR": "/srv/keryx state",
+        "CACHE_DIR": str(Path.home() / ".cache/keryx"),
         "XDG_CONFIG_HOME": str(Path.home() / ".config"),
         "XDG_DATA_HOME": str(Path.home() / ".local/share"),
         "XDG_STATE_HOME": str(Path.home() / ".local/state"),
@@ -321,7 +321,7 @@ def test_auth_login_gmail_prints_a_link_then_finishes_with_the_callback(
     def post(url, data, timeout):
         return type("R", (), {"status_code": 200, "json": lambda self: {"refresh_token": "r"}})()
 
-    monkeypatch.setattr("jarvis.setup.google.httpx.post", post)
+    monkeypatch.setattr("keryx.setup.google.httpx.post", post)
     second = run(
         "auth", "login", "gmail", "--callback-url",
         f"http://localhost:1/?state={state}&code=c&scope=https://www.googleapis.com/auth/gmail.readonly",
@@ -329,7 +329,7 @@ def test_auth_login_gmail_prints_a_link_then_finishes_with_the_callback(
 
     assert second.exit_code == 0, second.output
     assert "signed in" in second.output
-    assert (tmp_path / "jarvis" / "gmail_token.json").is_file()
+    assert (tmp_path / "keryx" / "gmail_token.json").is_file()
 
 
 def test_auth_login_gmail_without_a_client_says_how_to_get_one(home):
@@ -340,7 +340,7 @@ def test_auth_login_gmail_without_a_client_says_how_to_get_one(home):
 
 
 def test_auth_login_of_an_agent_that_is_not_installed_says_how(home, monkeypatch):
-    monkeypatch.setattr("jarvis.agents.registry.installed", lambda agent: False)
+    monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: False)
 
     result = run("auth", "login", "codex")
 
@@ -349,7 +349,7 @@ def test_auth_login_of_an_agent_that_is_not_installed_says_how(home, monkeypatch
 
 def test_auth_login_runs_the_agents_own_login(home, monkeypatch):
     ran = []
-    monkeypatch.setattr("jarvis.cli.run_command", lambda argv: ran.append(argv) or 0)
+    monkeypatch.setattr("keryx.cli.run_command", lambda argv: ran.append(argv) or 0)
 
     result = run("auth", "login", "codex", "--browser")
 
@@ -371,7 +371,7 @@ def test_setup_agent_instructions_print_without_asking(home):
     result = run("setup", "--agent-instructions")
 
     assert result.exit_code == 0
-    assert "jarvis config list --json" in result.output
+    assert "keryx config list --json" in result.output
     assert str(home.home) in result.output
 
 
@@ -381,7 +381,7 @@ def test_setup_agent_instructions_print_without_asking(home):
 def test_doctor_asks_twilio_only_with_credentials_and_a_host(
     home, monkeypatch, _no_twilio_from_doctor
 ):
-    from jarvis import cli
+    from keryx import cli
 
     monkeypatch.setattr(cli, "_twilio_admin", _no_twilio_from_doctor)
     settings = cli._load_settings_optional()
@@ -400,10 +400,10 @@ def test_doctor_fix_with_nothing_loose_says_so(home):
 
 
 def test_setup_runs_the_wizard_on_a_terminal(home, monkeypatch):
-    from jarvis import cli
+    from keryx import cli
 
     monkeypatch.setattr(cli, "_interactive", lambda: True)
-    monkeypatch.setattr("jarvis.setup.ui.RichPrompter", lambda: object())
+    monkeypatch.setattr("keryx.setup.ui.RichPrompter", lambda: object())
     reviews = []
     monkeypatch.setattr(cli, "run_wizard", lambda ctx, review_all: reviews.append(review_all) or 1)
 
@@ -414,11 +414,11 @@ def test_setup_runs_the_wizard_on_a_terminal(home, monkeypatch):
 
 
 def test_ctrl_c_in_setup_says_what_was_kept(home, monkeypatch):
-    from jarvis import cli
-    from jarvis.setup.ui import Aborted
+    from keryx import cli
+    from keryx.setup.ui import Aborted
 
     monkeypatch.setattr(cli, "_interactive", lambda: True)
-    monkeypatch.setattr("jarvis.setup.ui.RichPrompter", lambda: object())
+    monkeypatch.setattr("keryx.setup.ui.RichPrompter", lambda: object())
 
     def stop(ctx, review_all):
         raise Aborted
@@ -432,7 +432,7 @@ def test_ctrl_c_in_setup_says_what_was_kept(home, monkeypatch):
 
 
 def test_a_secret_typed_at_a_terminal_is_asked_for_hidden(home, monkeypatch):
-    from jarvis import cli
+    from keryx import cli
 
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
     asked = []
@@ -445,8 +445,8 @@ def test_a_secret_typed_at_a_terminal_is_asked_for_hidden(home, monkeypatch):
 
 
 def test_import_env_says_where_the_pin_and_client_went(home, tmp_path):
-    data_dir = tmp_path / "jarvis"
-    (tmp_path / ".env").write_text(f"JARVIS_PIN=482915\nDATA_DIR={data_dir}\nPORT=8080\n")
+    data_dir = tmp_path / "keryx"
+    (tmp_path / ".env").write_text(f"KERYX_PIN=482915\nDATA_DIR={data_dir}\nPORT=8080\n")
     (tmp_path / ".secrets").mkdir()
     (tmp_path / ".secrets" / "client_secret.json").write_text(
         '{"installed": {"client_id": "i", "client_secret": "s"}}'
@@ -454,18 +454,18 @@ def test_import_env_says_where_the_pin_and_client_went(home, tmp_path):
 
     result = run("config", "import-env")
 
-    assert "PIN: moved to JARVIS_HOME/pin" in result.output
+    assert "PIN: moved to KERYX_HOME/pin" in result.output
     assert "Google client file:" in result.output
     assert "left at their defaults: PORT" in result.output
 
 
 def test_lock_of_a_key_that_is_not_there_is_refused(home):
-    assert run("config", "lock", "JARVIS_PIN").exit_code == 1
+    assert run("config", "lock", "KERYX_PIN").exit_code == 1
 
 
 def test_auth_status_prints_a_table_and_exits_1_on_a_failure(home, monkeypatch):
     monkeypatch.setattr(
-        "jarvis.setup.auth.status",
+        "keryx.setup.auth.status",
         lambda settings, store, smoke: {"claude": {"state": "failed", "detail": "no key"}},
     )
 
@@ -477,7 +477,7 @@ def test_auth_status_prints_a_table_and_exits_1_on_a_failure(home, monkeypatch):
 
 def test_auth_status_says_off_for_an_agent_that_is_not_enabled(home, monkeypatch):
     monkeypatch.setattr(
-        "jarvis.setup.auth.status",
+        "keryx.setup.auth.status",
         lambda settings, store, smoke: {
             "codex": {"state": "missing", "detail": "not enabled", "enabled": False}
         },
@@ -500,7 +500,7 @@ def test_auth_status_says_off_for_an_agent_that_is_not_enabled(home, monkeypatch
 )
 def test_inside_a_task_the_owners_commands_are_refused(home, tmp_path, monkeypatch, args):
     (tmp_path / ".env").write_text("ALLOWED_CALLERS=+15550000000\n")
-    monkeypatch.setenv("JARVIS_ACTOR", "service")
+    monkeypatch.setenv("KERYX_ACTOR", "service")
 
     result = run(*args, input="A fact.\n")
 
@@ -526,7 +526,7 @@ def test_serve_refuses_a_config_that_does_not_parse_in_one_line(home):
     result = run("serve")
 
     assert result.exit_code == 2
-    assert "jarvis cannot start" in result.output and "Traceback" not in result.output
+    assert "keryx cannot start" in result.output and "Traceback" not in result.output
 
 
 def test_doctor_reports_a_config_that_does_not_parse_rather_than_crashing(home):

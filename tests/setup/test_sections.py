@@ -1,13 +1,13 @@
-"""The smaller `jarvis setup` sections, each against a scripted terminal and a fake world."""
+"""The smaller `keryx setup` sections, each against a scripted terminal and a fake world."""
 
 import stat
 
 import pytest
 
-from jarvis.config import Settings, pin_file, read_enrolled_pin, write_enrolled_pin
-from jarvis.config.store import ConfigStore
-from jarvis.setup import sections
-from jarvis.setup.sections import pin_problem
+from keryx.config import Settings, pin_file, read_enrolled_pin, write_enrolled_pin
+from keryx.config.store import ConfigStore
+from keryx.setup import sections
+from keryx.setup.sections import pin_problem
 
 from .fakes import DEFAULT
 
@@ -83,7 +83,7 @@ def test_owner_name_numbers_and_a_pin_chosen_now(make_ctx):
     path = pin_file(ctx.settings.config_dir)
     assert read_enrolled_pin(ctx.settings.config_dir) == "482915"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert "JARVIS_PIN" not in stored
+    assert "KERYX_PIN" not in stored
     assert "482915" not in " ".join(ctx.ui.lines())
 
 
@@ -186,7 +186,7 @@ def test_stopping_before_the_last_yes_leaves_the_old_pin(make_ctx):
 
 
 def test_a_pin_in_the_environment_is_never_touched(make_ctx, monkeypatch):
-    monkeypatch.setenv("JARVIS_PIN", "482915")
+    monkeypatch.setenv("KERYX_PIN", "482915")
     ctx = make_ctx([], review=True)
 
     sections.run_pin(ctx)
@@ -285,14 +285,14 @@ def test_files_from_before_the_xdg_layout_point_at_migrate(make_ctx, tmp_path):
     assert ConfigStore().stored() == {}
     assert (tmp_path / ".env").exists()
     assert any(".env" in line for line in ctx.ui.lines("warn"))
-    assert any("jarvis migrate" in line for line in ctx.ui.lines("note"))
+    assert any("keryx migrate" in line for line in ctx.ui.lines("note"))
 
 
 def test_nothing_from_before_asks_nothing(make_ctx):
     ctx = make_ctx([])
     sections.run_import(ctx)
     assert ctx.ui.asked == []
-    assert ctx.ui.lines("success") == ["everything is where Jarvis looks for it"]
+    assert ctx.ui.lines("success") == ["everything is where Keryx looks for it"]
 
 
 # --- the service -----------------------------------------------------------------------------
@@ -312,7 +312,7 @@ def test_the_service_installer_runs_on_a_yes(make_ctx, world, tmp_path, monkeypa
     for name in ("install-systemd.sh", "install-launchd.sh"):
         (script_dir / name).write_text("#!/bin/sh\n")
     monkeypatch.setattr(sections, "repo_root", lambda: tmp_path / "repo")
-    ConfigStore().set({"PUBLIC_HOST": "jarvis.example.com"})
+    ConfigStore().set({"PUBLIC_HOST": "keryx.example.com"})
     ctx = make_ctx([("Install it now", True)])
 
     sections.run_service(ctx)
@@ -392,7 +392,7 @@ def test_a_replacement_declined_at_the_first_question_changes_nothing(make_ctx):
 
 
 def test_an_installed_service_is_said_and_nothing_asked(make_ctx, monkeypatch):
-    from jarvis.doctor import Check
+    from keryx.doctor import Check
 
     monkeypatch.setattr(sections, "service_manager_check", lambda s: Check("s", True, "unit"))
     ctx = make_ctx([])
@@ -451,7 +451,7 @@ def test_a_replacement_that_fails_to_write_leaves_the_old_pin(make_ctx, monkeypa
     def disk_full(*args):
         raise OSError("disk full")
 
-    monkeypatch.setattr("jarvis.config.files.os.replace", disk_full)
+    monkeypatch.setattr("keryx.config.files.os.replace", disk_full)
 
     with pytest.raises(OSError):
         sections.run_pin(ctx)
@@ -459,9 +459,9 @@ def test_a_replacement_that_fails_to_write_leaves_the_old_pin(make_ctx, monkeypa
     assert read_enrolled_pin(ctx.settings.config_dir) == "482915"
 
 
-def test_a_new_pin_says_a_running_jarvis_needs_a_restart(make_ctx):
+def test_a_new_pin_says_a_running_keryx_needs_a_restart(make_ctx):
     ctx = make_ctx([("Set the PIN", "now"), ("New PIN", "739104"), ("same PIN", "739104")])
 
     sections.run_pin(ctx)
 
-    assert any("jarvis restart" in line for line in ctx.ui.lines("note"))
+    assert any("keryx restart" in line for line in ctx.ui.lines("note"))

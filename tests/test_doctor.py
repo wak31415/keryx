@@ -1,4 +1,4 @@
-"""Tests for `jarvis doctor`'s checks: pure functions, no hardware and no network."""
+"""Tests for `keryx doctor`'s checks: pure functions, no hardware and no network."""
 
 import dataclasses
 import importlib.util
@@ -6,21 +6,21 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import plugins
-from jarvis.agents.registry import BACKENDS
-from jarvis.config import Settings, pin_file
-from jarvis.config.store import ConfigStore
-from jarvis.continuity.memory import memory_path, seed_memory
-from jarvis.doctor import (
+from keryx import plugins
+from keryx.agents.registry import BACKENDS
+from keryx.config import Settings, pin_file
+from keryx.config.store import ConfigStore
+from keryx.continuity.memory import memory_path, seed_memory
+from keryx.doctor import (
     Check,
     _data_dir_privacy_check,
     format_check,
     has_hard_failure,
     run_doctor_checks,
 )
-from jarvis.integrations.gmail import token_path
-from jarvis.issues import GhStatus
-from jarvis.logging_util import mask_number
+from keryx.integrations.gmail import token_path
+from keryx.issues import GhStatus
+from keryx.logging_util import mask_number
 
 
 @pytest.fixture
@@ -30,14 +30,14 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
 
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     # The service is installed. Asked of a fake: the real question goes to `systemctl`.
-    monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target: True)
+    monkeypatch.setattr("keryx.restart.service.is_installed", lambda target: True)
 
-    credentials = tmp_path / "jarvis" / "google"
+    credentials = tmp_path / "keryx" / "google"
     credentials.mkdir(parents=True, mode=0o700)
     (credentials / "credentials.json").write_text("{}")
     (credentials / "credentials.json").chmod(0o600)
-    (tmp_path / "jarvis" / "gmail_token.json").write_text("{}")
-    (tmp_path / "jarvis" / "gmail_token.json").chmod(0o600)
+    (tmp_path / "keryx" / "gmail_token.json").write_text("{}")
+    (tmp_path / "keryx" / "gmail_token.json").chmod(0o600)
 
     settings = Settings(
         _env_file=None,
@@ -48,8 +48,8 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
         twilio_number="+15550000000",
         allowed_callers=["+15551234567"],
         pin="123456",
-        public_host="jarvis.example.com",
-        data_dir=tmp_path / "jarvis",
+        public_host="keryx.example.com",
+        data_dir=tmp_path / "keryx",
         google_oauth_client_id="client-id",
         google_oauth_client_secret="client-secret",
         owner_name="Sam",
@@ -99,7 +99,7 @@ def test_files_left_in_the_old_home_are_a_migration_still_to_run(healthy):
     check = by_name(run_doctor_checks(healthy))["storage"]
 
     assert (check.ok, check.severity, check.state) == (False, "hard", "missing")
-    assert "jarvis migrate" in check.detail and str(legacy) in check.detail
+    assert "keryx migrate" in check.detail and str(legacy) in check.detail
     assert check.section == "import"
 
 
@@ -108,7 +108,7 @@ def test_a_env_in_the_working_directory_is_a_migration_still_to_run(healthy):
 
     check = by_name(run_doctor_checks(healthy))["storage"]
 
-    assert check.ok is False and "jarvis migrate" in check.detail
+    assert check.ok is False and "keryx migrate" in check.detail
 
 
 def test_nothing_legacy_is_fine(healthy):
@@ -119,7 +119,7 @@ def test_nothing_legacy_is_fine(healthy):
 
 
 def test_a_missing_openai_key_is_reported_not_raised(healthy, monkeypatch):
-    from jarvis import doctor
+    from keryx import doctor
 
     settings = healthy.model_copy(update={"openai_api_key": doctor.PLACEHOLDER_KEY})
 
@@ -192,7 +192,7 @@ def test_the_agents_cli_is_named_when_it_is_there(healthy, monkeypatch):
 
 
 def test_an_agent_that_is_not_installed_says_which_extra_installs_it(healthy, monkeypatch):
-    monkeypatch.setattr("jarvis.doctor.installed", lambda agent: agent != "codex")
+    monkeypatch.setattr("keryx.doctor.installed", lambda agent: agent != "codex")
     settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
 
     check = by_name(run_doctor_checks(settings))["Codex agent"]
@@ -239,7 +239,7 @@ def test_codex_without_workspace_mcp_has_no_mailbox_and_says_so(healthy, monkeyp
 
     check = by_name(run_doctor_checks(settings))["Google for agents"]
     assert (check.ok, check.severity, check.state) == (False, "soft", "missing")
-    assert "not set up (optional)" in check.detail and "jarvis setup" in check.detail
+    assert "not set up (optional)" in check.detail and "keryx setup" in check.detail
 
 
 def test_cloudflared_satisfies_the_tunnel_check(healthy, monkeypatch):
@@ -331,7 +331,7 @@ def test_a_missing_pin_only_warns_and_says_the_first_call_can_set_one(healthy):
     check = by_name(checks)["PIN"]
     assert (check.ok, check.severity) == (False, "soft")
     assert "no PIN yet" in check.detail
-    assert "`jarvis setup` or the first call can set one" in check.detail
+    assert "`keryx setup` or the first call can set one" in check.detail
     assert "nothing of yours is read out until then" in check.detail
     assert check.state == "missing"
     assert has_hard_failure(checks) is False
@@ -346,7 +346,7 @@ def test_a_pin_from_the_environment_says_so(healthy):
 
 
 def test_a_pin_in_its_own_file_says_when_and_where(healthy):
-    """`JARVIS_HOME/pin` is the PIN's store now, whoever wrote it — setup or a first call."""
+    """`KERYX_HOME/pin` is the PIN's store now, whoever wrote it — setup or a first call."""
     settings = healthy.model_copy(update={"pin": None})
     assert settings.enrol_pin("987654") is True
 
@@ -392,7 +392,7 @@ def test_an_installed_service_is_reported(healthy):
 
 def test_a_service_manager_with_nothing_installed_is_not_a_tick(healthy, monkeypatch):
     """`systemctl` on PATH used to be enough for a ✅ naming a unit that did not exist."""
-    monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target: False)
+    monkeypatch.setattr("keryx.restart.service.is_installed", lambda target: False)
 
     check = by_name(run_doctor_checks(healthy))["service manager"]
 
@@ -446,7 +446,7 @@ def test_a_world_readable_data_dir_only_warns(healthy):
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "0755" in check.detail
-    assert "jarvis doctor --fix" in check.detail
+    assert "keryx doctor --fix" in check.detail
 
 
 def test_a_group_readable_data_dir_is_reported_too(healthy):
@@ -487,13 +487,13 @@ def test_google_is_reported_as_unused_while_workspace_mcp_is_off(healthy):
 
 def test_google_credentials_only_warn_when_the_oauth_client_is_configured(healthy, tmp_path):
     healthy.google_workspace_mcp = True
-    for path in (tmp_path / "jarvis" / "google").iterdir():
+    for path in (tmp_path / "keryx" / "google").iterdir():
         path.unlink()
 
     checks = run_doctor_checks(healthy)
     check = by_name(checks)["Google for agents"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "jarvis auth login google-workspace" in check.detail
+    assert "keryx auth login google-workspace" in check.detail
     assert has_hard_failure(checks) is False
 
 
@@ -513,7 +513,7 @@ def test_google_is_reported_as_not_configured_without_an_oauth_client(healthy):
 
 # --- what a stranger needs to know about their own install -----------------
 #
-# Every one of these is a warning at most. A Jarvis with no name for its owner, no memory,
+# Every one of these is a warning at most. A Keryx with no name for its owner, no memory,
 # no projects root, no cluster and no Slack still works — it just knows less and offers less,
 # and this is where somebody who did not write it finds out why.
 
@@ -537,7 +537,7 @@ def test_an_empty_memory_points_at_setup(healthy):
     checks = run_doctor_checks(healthy)
     check = by_name(checks)["memory"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "jarvis setup" in check.detail
+    assert "keryx setup" in check.detail
     assert has_hard_failure(checks) is False
 
 
@@ -574,7 +574,7 @@ def test_a_plugin_that_is_off_is_optional_and_says_how(healthy):
     check = by_name(checks)["cluster_stats"]
 
     assert (check.ok, check.state, check.severity) == (False, "missing", "soft")
-    assert "jarvis plugins install cluster_stats" in check.detail
+    assert "keryx plugins install cluster_stats" in check.detail
     assert format_check(check).startswith("○")
     assert has_hard_failure(checks) is False
 
@@ -604,7 +604,7 @@ def test_a_secret_set_for_a_plugin_that_is_off_is_a_warning(healthy, name, says)
 
     assert (check.ok, check.state, check.severity) == (False, "failed", "soft")
     assert says in check.detail
-    assert f"jarvis plugins install {name}" in check.detail
+    assert f"keryx plugins install {name}" in check.detail
 
 
 def test_email_signed_in_without_the_claude_cli_is_refused_with_how(healthy, monkeypatch):
@@ -624,7 +624,7 @@ def test_settings_a_plugin_replaced_point_at_the_one_command(healthy):
 
     assert (check.ok, check.severity, check.section) == (False, "soft", "plugins")
     assert "CLUSTERS, SLACK_MCP_SERVER" in check.detail
-    assert "jarvis plugins install --from-settings" in check.detail
+    assert "keryx plugins install --from-settings" in check.detail
 
 
 # --- formatting ------------------------------------------------------------
@@ -647,8 +647,8 @@ def test_a_formatted_check_carries_its_name_and_detail():
 
 
 def test_a_loose_secret_file_is_named_and_fix_tightens_only_modes(healthy):
-    from jarvis.config.store import ConfigStore
-    from jarvis.doctor import fix_permissions
+    from keryx.config.store import ConfigStore
+    from keryx.doctor import fix_permissions
 
     store = ConfigStore()
     store.set({"OPENAI_API_KEY": "sk-1"})
@@ -675,10 +675,10 @@ def test_a_loose_secret_file_is_named_and_fix_tightens_only_modes(healthy):
 
 
 def test_a_config_inside_a_git_work_tree_warns(healthy, tmp_path, monkeypatch):
-    from jarvis.config.store import ConfigStore
+    from keryx.config.store import ConfigStore
 
     (tmp_path / "repo" / ".git").mkdir(parents=True)
-    store = ConfigStore(tmp_path / "repo" / "jarvis-home")
+    store = ConfigStore(tmp_path / "repo" / "keryx-home")
 
     check = by_name(run_doctor_checks(healthy, store=store))["outside git"]
 
@@ -688,7 +688,7 @@ def test_a_config_inside_a_git_work_tree_warns(healthy, tmp_path, monkeypatch):
 
 def test_a_relative_config_path_that_steps_out_of_a_work_tree_does_not_warn(healthy):
     """`fresh/../jh` is not inside `fresh`, even before it exists."""
-    from jarvis.config.store import ConfigStore
+    from keryx.config.store import ConfigStore
 
     (Path("fresh") / ".git").mkdir(parents=True)
     store = ConfigStore(Path("fresh/../jh"))
@@ -697,8 +697,8 @@ def test_a_relative_config_path_that_steps_out_of_a_work_tree_does_not_warn(heal
 
 
 def test_a_secret_written_into_config_toml_by_hand_warns(healthy):
-    from jarvis.config.files import dump_toml, write_private
-    from jarvis.config.store import ConfigStore
+    from keryx.config.files import dump_toml, write_private
+    from keryx.config.store import ConfigStore
 
     store = ConfigStore()
     write_private(store.config_path, dump_toml({"TWILIO_AUTH_TOKEN": "tok"}))
@@ -710,8 +710,8 @@ def test_a_secret_written_into_config_toml_by_hand_warns(healthy):
 
 
 def test_a_protected_key_unlocked_by_hand_is_reported(healthy):
-    from jarvis.config.files import dump_toml, write_private
-    from jarvis.config.store import ConfigStore
+    from keryx.config.files import dump_toml, write_private
+    from keryx.config.store import ConfigStore
 
     store = ConfigStore()
     write_private(store.config_path, dump_toml({"service_writable": {"PORT": True}}))
@@ -739,7 +739,7 @@ def test_an_imported_env_left_behind_is_reported(healthy, tmp_path, monkeypatch)
 
 class FakeTwilio:
     def __init__(self, voice_url=None, *, fail=False):
-        from jarvis.notify.twilio_out import TwilioNumber
+        from keryx.notify.twilio_out import TwilioNumber
 
         self.fail = fail
         self.number = TwilioNumber("PN1", "+15550000000", voice_url, None)
@@ -755,7 +755,7 @@ def test_the_webhook_is_checked_only_when_a_client_is_given(healthy):
 
 
 def test_a_webhook_pointed_here_passes(healthy):
-    twilio = FakeTwilio("https://jarvis.example.com/twilio/voice")
+    twilio = FakeTwilio("https://keryx.example.com/twilio/voice")
 
     check = by_name(run_doctor_checks(healthy, twilio=twilio))["Twilio webhook"]
 
@@ -768,7 +768,7 @@ def test_a_webhook_pointed_elsewhere_is_a_warning_that_says_setup_fixes_it(healt
     check = by_name(run_doctor_checks(healthy, twilio=twilio))["Twilio webhook"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert "old.example.com" in check.detail and "jarvis setup" in check.detail
+    assert "old.example.com" in check.detail and "keryx setup" in check.detail
 
 
 def test_twilio_down_is_a_warning_not_a_crash(healthy):
@@ -800,14 +800,14 @@ def test_every_check_has_a_section_and_a_state(healthy):
 
 
 def _reporting(settings, monkeypatch, status):
-    monkeypatch.setattr("jarvis.doctor.gh_status", lambda: status)
+    monkeypatch.setattr("keryx.doctor.gh_status", lambda: status)
     return by_name(run_doctor_checks(settings.model_copy(update={"issue_reporting": True})))[
         "issue reports"
     ]
 
 
 def test_issue_reports_off_pass_and_never_ask_gh(healthy, monkeypatch):
-    monkeypatch.setattr("jarvis.doctor.gh_status", lambda: pytest.fail("gh was asked"))
+    monkeypatch.setattr("keryx.doctor.gh_status", lambda: pytest.fail("gh was asked"))
 
     check = by_name(run_doctor_checks(healthy))["issue reports"]
 
@@ -839,9 +839,9 @@ def test_issue_reports_on_without_gh_are_missing_and_soft(healthy, monkeypatch, 
 
 
 def test_issue_reports_on_with_no_checkout_to_read(healthy, monkeypatch, tmp_path):
-    monkeypatch.setattr("jarvis.doctor.gh_status", lambda: pytest.fail("gh was asked"))
-    settings = healthy.model_copy(update={"issue_reporting": True, "jarvis_checkout": tmp_path})
+    monkeypatch.setattr("keryx.doctor.gh_status", lambda: pytest.fail("gh was asked"))
+    settings = healthy.model_copy(update={"issue_reporting": True, "keryx_checkout": tmp_path})
 
     check = by_name(run_doctor_checks(settings))["issue reports"]
 
-    assert check.state == "missing" and "JARVIS_CHECKOUT" in check.detail
+    assert check.state == "missing" and "KERYX_CHECKOUT" in check.detail

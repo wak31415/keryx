@@ -2,7 +2,7 @@
 
 import json
 
-from jarvis.integrations.slack import SlackWebApi, slack_credentials
+from keryx.integrations.slack import SlackWebApi, slack_credentials
 
 #: A made-up server name: which MCP server carries Slack is the owner's setting, never ours.
 SERVER = "team-slack"

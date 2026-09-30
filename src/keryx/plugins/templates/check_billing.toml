@@ -1,0 +1,25 @@
+# check_billing: "what am I spending?" read from the provider's own billing API. It only
+# reads. Changes here count from the next call; no restart.
+#
+# It needs an admin key, not the key calls run on, and those are secrets kept in
+# secrets.toml: `keryx config set OPENAI_ADMIN_KEY --stdin` and
+# `keryx config set ANTHROPIC_ADMIN_KEY --stdin`. `keryx plugins remove check_billing`
+# turns this off.
+
+# Whose bill it reports when the caller names none: auto (OpenAI, the account calls run
+# on), openai or anthropic.
+provider = {provider}
+
+# What you call a month's budget, in dollars; 0 for none. Neither provider serves one over
+# the API, so "percent of the budget" is only as real as this number.
+monthly_budget = {monthly_budget}
+
+# Narrows the OpenAI spend figure to one project (there is no finer filter). Blank: all.
+openai_project_id = {openai_project_id}
+
+# Narrows OpenAI *token usage*, not spend, to one key_... id. Blank: all.
+openai_api_key_id = {openai_api_key_id}
+
+# Narrows Anthropic spend to one workspace. Blank: all.
+anthropic_workspace_id = {anthropic_workspace_id}
+{extra}

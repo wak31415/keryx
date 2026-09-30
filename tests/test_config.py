@@ -1,4 +1,4 @@
-"""Tests for jarvis.config.Settings."""
+"""Tests for keryx.config.Settings."""
 
 import json
 import os
@@ -9,27 +9,27 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from jarvis.config import (
+from keryx.config import (
     OPTIONAL_STR_FIELDS,
     OWNER_FALLBACK,
     PIN_FROM_ENV,
     PIN_FROM_FILE,
     Settings,
     env_var_name,
-    jarvis_home,
+    keryx_home,
     load_settings,
     pin_file,
     read_enrolled_pin,
     secure_dir,
     secure_file,
 )
-from jarvis.config.files import config_file, dump_toml, write_private
+from keryx.config.files import config_file, dump_toml, write_private
 
 
 def test_allowed_callers_parses_comma_separated_env(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("ALLOWED_CALLERS", "+15555555555,+15556666666")
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "keryx"))
 
     settings = Settings(_env_file=None)
 
@@ -108,7 +108,7 @@ def test_the_codex_credentials_are_never_in_the_repr(tmp_path):
     assert "hidden" not in repr(settings)
 
 
-def test_an_agent_jarvis_does_not_know_fails_the_load(tmp_path):
+def test_an_agent_keryx_does_not_know_fails_the_load(tmp_path):
     with pytest.raises(ValidationError):
         Settings(_env_file=None, openai_api_key="t", data_dir=tmp_path, agents_enabled="gemini")
     with pytest.raises(ValidationError):
@@ -120,7 +120,7 @@ def test_a_setting_a_plugin_replaced_no_longer_stops_anything(monkeypatch, tmp_p
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("CLUSTERS", '{"alpha; rm -rf ~": "gpu"}')
     monkeypatch.setenv("SLACK_CHANNEL_ID", "D1")
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "keryx"))
 
     settings = Settings(_env_file=None)
 
@@ -129,22 +129,22 @@ def test_a_setting_a_plugin_replaced_no_longer_stops_anything(monkeypatch, tmp_p
 
 def test_projects_parses_json_env(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("PROJECTS", '{"jarvis": "/home/me/jarvis", "other": "/home/me/other"}')
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
+    monkeypatch.setenv("PROJECTS", '{"keryx": "/home/me/keryx", "other": "/home/me/other"}')
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "keryx"))
 
     settings = Settings(_env_file=None)
 
-    assert settings.projects == {"jarvis": "/home/me/jarvis", "other": "/home/me/other"}
+    assert settings.projects == {"keryx": "/home/me/keryx", "other": "/home/me/other"}
 
 
 def test_projects_defaults_to_empty_dict(settings):
     assert settings.projects == {}
 
 
-def test_jarvis_pin_env_alias(monkeypatch, tmp_path):
+def test_keryx_pin_env_alias(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("JARVIS_PIN", "123456")
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
+    monkeypatch.setenv("KERYX_PIN", "123456")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "keryx"))
 
     settings = Settings(_env_file=None)
 
@@ -159,7 +159,7 @@ def test_owner_number_explicit_env_wins(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("OWNER_NUMBER", "+15551000000")
     monkeypatch.setenv("ALLOWED_CALLERS", "+15555555555,+15556666666")
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "keryx"))
 
     settings = Settings(_env_file=None)
 
@@ -169,7 +169,7 @@ def test_owner_number_explicit_env_wins(monkeypatch, tmp_path):
 def test_owner_number_falls_back_to_first_allowed_caller(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("ALLOWED_CALLERS", "+15555555555,+15556666666")
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "keryx"))
 
     settings = Settings(_env_file=None)
 
@@ -201,7 +201,7 @@ def test_report_secret_value_returns_explicit_value_when_set(tmp_path):
     settings = Settings(
         _env_file=None,
         openai_api_key="test",
-        data_dir=tmp_path / "jarvis",
+        data_dir=tmp_path / "keryx",
         report_secret="explicit-secret",
     )
 
@@ -237,7 +237,7 @@ def test_ensure_dirs_makes_the_whole_tree_owner_only(settings):
 def test_a_relative_directory_is_refused(key, monkeypatch):
     """It would be resolved against whatever directory a process started in, and the
     service, the CLI and the installers would each find a different one."""
-    monkeypatch.setenv(key, "jarvis-data")
+    monkeypatch.setenv(key, "keryx-data")
 
     with pytest.raises(ValidationError, match="absolute"):
         Settings(_env_file=None, openai_api_key="test")
@@ -259,9 +259,9 @@ def test_the_directories_default_to_the_xdg_ones(monkeypatch, tmp_path):
 
     settings = Settings(_env_file=None, openai_api_key="test")
 
-    assert settings.data_dir == tmp_path / "d" / "jarvis"
-    assert settings.state_dir == tmp_path / "s" / "jarvis"
-    assert settings.cache_dir == tmp_path / "c" / "jarvis"
+    assert settings.data_dir == tmp_path / "d" / "keryx"
+    assert settings.state_dir == tmp_path / "s" / "keryx"
+    assert settings.cache_dir == tmp_path / "c" / "keryx"
 
 
 def test_ensure_dirs_tightens_a_directory_that_already_exists(settings):
@@ -284,17 +284,17 @@ def test_secure_file_leaves_a_missing_file_alone(tmp_path):
 
 def test_data_dir_expands_tilde(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("DATA_DIR", "~/.jarvis-test-does-not-exist")
+    monkeypatch.setenv("DATA_DIR", "~/.keryx-test-does-not-exist")
 
     settings = Settings(_env_file=None)
 
     assert "~" not in str(settings.data_dir)
-    assert settings.data_dir == Path.home() / ".jarvis-test-does-not-exist"
+    assert settings.data_dir == Path.home() / ".keryx-test-does-not-exist"
 
 
 def test_load_settings_returns_settings_instance(tmp_path):
     settings = load_settings(
-        _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis"
+        _env_file=None, openai_api_key="test", data_dir=tmp_path / "keryx"
     )
     assert isinstance(settings, Settings)
 
@@ -334,7 +334,7 @@ def test_defaults_match_spec_table():
 def test_debug_skip_twilio_validation_env(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("DEBUG_SKIP_TWILIO_VALIDATION", "true")
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "keryx"))
 
     settings = Settings(_env_file=None)
 
@@ -342,7 +342,7 @@ def test_debug_skip_twilio_validation_env(monkeypatch, tmp_path):
 
 
 def test_the_phone_server_may_start_with_signatures_checked(tmp_path):
-    settings = Settings(_env_file=None, openai_api_key="test", public_host="jarvis.example")
+    settings = Settings(_env_file=None, openai_api_key="test", public_host="keryx.example")
 
     assert settings.phone_refusal() is None
 
@@ -360,7 +360,7 @@ def test_skipping_signatures_behind_a_public_host_is_refused(tmp_path):
         _env_file=None,
         openai_api_key="test",
         debug_skip_twilio_validation=True,
-        public_host="jarvis.example",
+        public_host="keryx.example",
     )
 
     refusal = settings.phone_refusal()
@@ -373,7 +373,7 @@ def test_skipping_signatures_behind_a_public_host_is_refused(tmp_path):
 def test_fake_agents_env(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("FAKE_AGENTS", "true")
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "keryx"))
 
     settings = Settings(_env_file=None)
 
@@ -389,7 +389,7 @@ def test_a_config_file_of_blanks_leaves_every_optional_setting_unset(tmp_path):
     blanks = {env_var_name(name): "" for name in Settings.model_fields}
     write_private(config_file(), dump_toml(blanks))
 
-    settings = Settings(openai_api_key="test", data_dir=tmp_path / "jarvis")
+    settings = Settings(openai_api_key="test", data_dir=tmp_path / "keryx")
 
     for name in OPTIONAL_STR_FIELDS:
         assert getattr(settings, name) is None, name
@@ -467,7 +467,7 @@ def test_the_rejection_names_the_rule_and_never_quotes_the_pin(tmp_path):
 def test_a_blank_pin_is_not_a_pin(tmp_path):
     for blank in ("", "   "):
         settings = Settings(
-            _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", pin=blank
+            _env_file=None, openai_api_key="test", data_dir=tmp_path / "keryx", pin=blank
         )
         assert settings.pin is None
 
@@ -482,7 +482,7 @@ def test_repr_never_leaks_a_secret(tmp_path):
         "report_secret": "report-secret-value",
         "google_oauth_client_secret": "google-secret-value",
     }
-    settings = Settings(_env_file=None, data_dir=tmp_path / "jarvis", **values)
+    settings = Settings(_env_file=None, data_dir=tmp_path / "keryx", **values)
 
     text = repr(settings)
 
@@ -573,7 +573,7 @@ def test_an_explicit_noise_reduction_profile_wins_on_every_channel():
     assert settings.noise_reduction_for("local") == "far_field"
 
 
-# --- whom Jarvis works for -------------------------------------------------
+# --- whom Keryx works for -------------------------------------------------
 
 
 def test_the_owner_is_called_by_name_when_one_is_set():
@@ -596,7 +596,7 @@ def test_a_blank_owner_name_is_the_owner():
 
 def make(tmp_path, **overrides) -> Settings:
     return Settings(
-        _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", **overrides
+        _env_file=None, openai_api_key="test", data_dir=tmp_path / "keryx", **overrides
     )
 
 
@@ -611,7 +611,7 @@ def test_an_enrolled_pin_is_read_when_the_environment_has_none(tmp_path):
 
 
 def test_the_environment_wins_over_an_enrolled_pin(tmp_path):
-    """`JARVIS_PIN` is the owner at the keyboard, which outranks anything the phone set."""
+    """`KERYX_PIN` is the owner at the keyboard, which outranks anything the phone set."""
     make(tmp_path).enrol_pin("123456")
 
     settings = make(tmp_path, pin="654321")
@@ -654,7 +654,7 @@ def test_an_enrolled_pin_can_never_be_overwritten(tmp_path):
 
     assert make(tmp_path).enrol_pin("654321") is False
 
-    assert pin_file(jarvis_home()).read_text(encoding="utf-8").strip() == "123456"
+    assert pin_file(keryx_home()).read_text(encoding="utf-8").strip() == "123456"
     assert make(tmp_path).pin == "123456"
 
 
@@ -662,7 +662,7 @@ def test_the_enrolled_pin_file_is_readable_by_nobody_else(tmp_path):
     """It sits beside `secrets.toml`; the mode is the protection."""
     make(tmp_path).enrol_pin("123456")
 
-    mode = stat.S_IMODE(pin_file(jarvis_home()).stat().st_mode)
+    mode = stat.S_IMODE(pin_file(keryx_home()).stat().st_mode)
 
     assert mode == 0o600
 
@@ -671,7 +671,7 @@ def test_the_enrolled_pin_is_stored_as_digits_and_not_as_a_hash(tmp_path):
     """Deliberate: six digits fall to any hash in microseconds, so one buys nothing."""
     make(tmp_path).enrol_pin("123456")
 
-    assert pin_file(jarvis_home()).read_text(encoding="utf-8").strip() == "123456"
+    assert pin_file(keryx_home()).read_text(encoding="utf-8").strip() == "123456"
 
 
 def test_enrolment_refuses_anything_that_is_not_a_pin(tmp_path):
@@ -681,11 +681,11 @@ def test_enrolment_refuses_anything_that_is_not_a_pin(tmp_path):
         with pytest.raises(ValueError, match="6 to 8 digits"):
             settings.enrol_pin(candidate)
 
-    assert not pin_file(jarvis_home()).exists()
+    assert not pin_file(keryx_home()).exists()
 
 
 def test_enrolling_adopts_the_pin_in_this_process_too(tmp_path):
-    """`jarvis serve` holds one `Settings`; the PIN has to be live without a restart."""
+    """`keryx serve` holds one `Settings`; the PIN has to be live without a restart."""
     settings = make(tmp_path)
 
     assert settings.enrol_pin("123456") is True
@@ -708,10 +708,10 @@ def test_an_unusable_enrolled_pin_file_still_seals_the_door(tmp_path):
     """A file that is there but holds nothing usable is not an invitation to enrol again.
 
     It is no PIN (so nothing authorizes), and `O_EXCL` still refuses to replace it: the
-    owner deletes it or sets `JARVIS_PIN`, which is exactly the one-way door working.
+    owner deletes it or sets `KERYX_PIN`, which is exactly the one-way door working.
     """
-    secure_dir(jarvis_home())
-    pin_file(jarvis_home()).write_text("not-a-pin\n", encoding="utf-8")
+    secure_dir(keryx_home())
+    pin_file(keryx_home()).write_text("not-a-pin\n", encoding="utf-8")
 
     settings = make(tmp_path)
 
@@ -723,8 +723,8 @@ def test_an_unusable_enrolled_pin_file_still_seals_the_door(tmp_path):
 
 def test_a_pin_file_that_cannot_be_read_is_no_pin(tmp_path):
     """A directory where the file should be: unreadable, and never an exception at import."""
-    secure_dir(jarvis_home())
-    pin_file(jarvis_home()).mkdir()
+    secure_dir(keryx_home())
+    pin_file(keryx_home()).mkdir()
 
     assert make(tmp_path).pin is None
 
@@ -737,11 +737,11 @@ def test_an_install_from_before_the_xdg_layout_may_not_start(tmp_path):
 
     refusal = make(tmp_path).storage_refusal()
 
-    assert refusal is not None and "jarvis migrate" in refusal
+    assert refusal is not None and "keryx migrate" in refusal
     assert "calls, memory.md, pin, …" in refusal
 
 
-def test_what_is_not_jarviss_in_the_old_home_stops_nothing(tmp_path):
+def test_what_is_not_keryxs_in_the_old_home_stops_nothing(tmp_path):
     legacy = Path.home() / ".jarvis"
     legacy.mkdir(parents=True)
     (legacy / "restart-after-task7.sh").touch()
@@ -759,6 +759,22 @@ def test_an_old_home_still_named_on_purpose_is_in_use_not_legacy(tmp_path):
     assert in_use.storage_refusal() is None
 
 
+def test_the_old_home_variable_is_named_and_never_followed(tmp_path, monkeypatch):
+    """Following it would find the old directory; ignoring it would start with none of
+    their settings. Neither is what they meant, so `serve` stops and says which."""
+    monkeypatch.delenv("KERYX_HOME")
+    monkeypatch.setenv("JARVIS_HOME", "/srv/assistant-config")
+
+    refusal = make(tmp_path).storage_refusal()
+
+    assert refusal is not None
+    assert "JARVIS_HOME=/srv/assistant-config" in refusal and "KERYX_HOME" in refusal
+    assert make(tmp_path).config_dir != Path("/srv/assistant-config")
+
+    monkeypatch.setenv("KERYX_HOME", str(tmp_path / "home"))
+    assert make(tmp_path).storage_refusal() is None
+
+
 @pytest.mark.parametrize("name", [".env", ".secrets/client_secret.json"])
 def test_configuration_in_the_working_directory_may_not_be_started_beside(name, tmp_path):
     working = tmp_path / "checkout"
@@ -767,7 +783,7 @@ def test_configuration_in_the_working_directory_may_not_be_started_beside(name, 
 
     refusal = make(tmp_path).storage_refusal(working)
 
-    assert refusal is not None and name in refusal and "jarvis migrate" in refusal
+    assert refusal is not None and name in refusal and "keryx migrate" in refusal
     assert make(tmp_path).storage_refusal(tmp_path / "elsewhere") is None
 
 
@@ -784,7 +800,7 @@ def test_moving_data_dir_neither_loses_the_pin_nor_opens_the_door(tmp_path):
 
 
 def test_a_pin_left_in_the_legacy_home_keeps_the_door_shut(tmp_path):
-    """That machine has a PIN; it has not been moved yet (`jarvis migrate`), and a caller
+    """That machine has a PIN; it has not been moved yet (`keryx migrate`), and a caller
     must not be the one to choose a new one in the meantime."""
     legacy = Path.home() / ".jarvis"
     legacy.mkdir(parents=True)
@@ -792,7 +808,7 @@ def test_a_pin_left_in_the_legacy_home_keeps_the_door_shut(tmp_path):
 
     settings = make(tmp_path)
 
-    assert settings.pin is None  # never read from there: `jarvis migrate` moves it
+    assert settings.pin is None  # never read from there: `keryx migrate` moves it
     assert settings.pin_enrolment_open is False
 
 
@@ -862,7 +878,7 @@ def test_a_write_that_cannot_finish_leaves_no_usable_pin_and_says_so(tmp_path, m
 
     "Delete the enrolled PIN" is the one operation this module must not know how to do, so
     what is left is a machine in the sealed state — no PIN, no enrolment — which
-    `jarvis doctor` reports and only the owner clears.
+    `keryx doctor` reports and only the owner clears.
     """
 
     def fails_midway(handle, *_args, **_kwargs):
@@ -875,8 +891,8 @@ def test_a_write_that_cannot_finish_leaves_no_usable_pin_and_says_so(tmp_path, m
     assert settings.enrol_pin("123456") is False
 
     assert settings.pin is None
-    assert read_enrolled_pin(jarvis_home()) is None
-    assert pin_file(jarvis_home()).exists()  # left exactly where it fell
+    assert read_enrolled_pin(keryx_home()) is None
+    assert pin_file(keryx_home()).exists()  # left exactly where it fell
     assert make(tmp_path).pin_enrolment_open is False
 
 

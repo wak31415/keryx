@@ -1,6 +1,6 @@
 """Tests for the one-time media-stream tokens that guard `WS /twilio/media`."""
 
-from jarvis.stream_tokens import (
+from keryx.stream_tokens import (
     StreamTokenStore,
     TokenInfo,
     confers_possession,
@@ -100,24 +100,24 @@ OWNER = "+15555555555"
 OTHER = "+15550009999"
 
 
-def test_an_outbound_token_records_that_jarvis_placed_it_and_what_it_dialled():
+def test_an_outbound_token_records_that_keryx_placed_it_and_what_it_dialled():
     extra = outbound_extra(OWNER, opening_context="task 3 is done", task_id=3)
 
     assert extra == {
-        "jarvis_placed": True,
+        "keryx_placed": True,
         "dialled": OWNER,
         "opening_context": "task 3 is done",
         "task_id": 3,
     }
 
 
-def test_a_call_jarvis_placed_to_the_owner_confers_possession():
+def test_a_call_keryx_placed_to_the_owner_confers_possession():
     info = TokenInfo(caller=OWNER, extra=outbound_extra(OWNER))
 
     assert confers_possession(info, (OWNER,)) is True
 
 
-def test_any_phone_of_the_owners_confers_it_not_just_the_one_jarvis_rings_first():
+def test_any_phone_of_the_owners_confers_it_not_just_the_one_keryx_rings_first():
     """This is a single-owner agent: the allowlist is their handsets, not a guest list.
 
     Ringing them back on the second one reaches the same person, so requiring the first

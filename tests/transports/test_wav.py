@@ -1,4 +1,4 @@
-"""Tests for the WAV file transport used by `jarvis loopback`."""
+"""Tests for the WAV file transport used by `keryx loopback`."""
 
 import asyncio
 import wave
@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from jarvis.transports.base import AudioIn, Hangup
-from jarvis.transports.wav import WavTransport
+from keryx.transports.base import AudioIn, Hangup
+from keryx.transports.wav import WavTransport
 
 SAMPLE_RATE = 24000
 FRAME_MS = 20

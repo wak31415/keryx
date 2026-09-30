@@ -10,13 +10,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jarvis.continuity.briefing import OTHERS_NUDGE, Briefer, Briefing, format_digest
-from jarvis.continuity.memory import MAX_MEMORY_CHARS, memory_path, read_memory
-from jarvis.events import EventBus
-from jarvis.tasks.agent_runner import FakeAgentRunner
-from jarvis.tasks.manager import TaskManager
-from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import TaskStore
+from keryx.continuity.briefing import OTHERS_NUDGE, Briefer, Briefing, format_digest
+from keryx.continuity.memory import MAX_MEMORY_CHARS, memory_path, read_memory
+from keryx.events import EventBus
+from keryx.tasks.agent_runner import FakeAgentRunner
+from keryx.tasks.manager import TaskManager
+from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.store import TaskStore
 
 
 @dataclass
@@ -58,7 +58,7 @@ def test_no_memory_file_is_an_empty_memory_not_an_error(settings):
 
 def test_the_memory_is_read_back_whole_when_it_fits(settings):
     settings.ensure_dirs()
-    memory_path(settings.data_dir).write_text("# What Jarvis knows\n\nThey hate jargon.\n")
+    memory_path(settings.data_dir).write_text("# What Keryx knows\n\nThey hate jargon.\n")
 
     assert "They hate jargon." in read_memory(settings.data_dir)
 

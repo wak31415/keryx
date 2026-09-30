@@ -1,4 +1,4 @@
-"""`jarvis migrate`: an install as it is today — `~/.jarvis`, a `tasks.db` full of absolute
+"""`keryx migrate`: an install as it is today — `~/.jarvis`, a `tasks.db` full of absolute
 paths, and a `.env` in the checkout holding the PIN — moved to the XDG directories.
 
 HOME and every XDG variable are the test's own (the conftest), so the `~/.jarvis` here is
@@ -17,14 +17,14 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from jarvis import cli
-from jarvis.config import Settings
-from jarvis.config import migrate as migration
-from jarvis.config.files import dump_toml, read_toml, secure_dir
-from jarvis.config.migrate import MigrationError, Service, make_plan, rewrite_task_paths, run
-from jarvis.restart.service import ServiceTarget
-from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import TaskStore
+from keryx import cli
+from keryx.config import Settings
+from keryx.config import migrate as migration
+from keryx.config.files import dump_toml, read_toml, secure_dir
+from keryx.config.migrate import MigrationError, Service, make_plan, rewrite_task_paths, run
+from keryx.restart.service import ServiceTarget
+from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.store import TaskStore
 
 TODAY = date(2026, 9, 28)
 PIN = "482915"
@@ -40,15 +40,15 @@ class Machine:
 
     @property
     def config(self) -> Path:
-        return self.home / ".config" / "jarvis"
+        return self.home / ".config" / "keryx"
 
     @property
     def data(self) -> Path:
-        return self.home / ".local" / "share" / "jarvis"
+        return self.home / ".local" / "share" / "keryx"
 
     @property
     def state(self) -> Path:
-        return self.home / ".local" / "state" / "jarvis"
+        return self.home / ".local" / "state" / "keryx"
 
     def plan(self):
         return make_plan([self.repo])
@@ -61,7 +61,7 @@ def add_task(store: TaskStore, **fields) -> None:
 @pytest.fixture
 def machine(tmp_path, monkeypatch) -> Machine:
     """`~/.jarvis` as a real install left it, and a checkout with a `.env` in it."""
-    monkeypatch.delenv("JARVIS_HOME")  # the default, ~/.config/jarvis, is what is under test
+    monkeypatch.delenv("KERYX_HOME")  # the default, ~/.config/keryx, is what is under test
     home = Path.home()
     legacy = secure_dir(home / ".jarvis")
     store = TaskStore(legacy / "tasks.db")
@@ -80,19 +80,19 @@ def machine(tmp_path, monkeypatch) -> Machine:
         secure_dir(legacy / directory)
     (legacy / "tasks" / "1.md").write_text("the report")
     (legacy / "calls" / "abc.log").write_text("user: hello")
-    (legacy / "memory.md").write_text("# What Jarvis knows\n")
+    (legacy / "memory.md").write_text("# What Keryx knows\n")
     (legacy / "google" / "creds.json").write_text("{}")
     (legacy / "approvals" / "audit.jsonl").write_text("{}\n")
     (legacy / "approvals.sock").touch()
     (legacy / "logs").mkdir(mode=0o775)
     (legacy / "logs").chmod(0o775)
-    (legacy / "logs" / "jarvis.log").write_text("INFO started\n")
-    (legacy / "logs" / "jarvis.log").chmod(0o664)
+    (legacy / "logs" / "keryx.log").write_text("INFO started\n")
+    (legacy / "logs" / "keryx.log").chmod(0o664)
     for name in ("pin-failures.json", "report_secret", "gmail_token.json", "running-version",
                  "startup-log-marks.json"):
         (legacy / name).write_text(name)
     for leftover in ("restart-after-task7.sh", "memory.md.real"):
-        (legacy / leftover).write_text("not Jarvis's to move")
+        (legacy / leftover).write_text("not Keryx's to move")
 
     repo = tmp_path / "repo"
     (repo / ".secrets").mkdir(parents=True)
@@ -142,9 +142,9 @@ def test_the_plan_reads_and_never_writes(machine):
     assert moves["approvals"] == machine.state / "approvals"
     assert moves["client_secret.json"] == machine.config / "google_client_secret.json"
     assert moves["approvals.sock"] is None  # removed, not moved
-    assert "restart-after-task7.sh" not in moves  # not Jarvis's: stays where it is
+    assert "restart-after-task7.sh" not in moves  # not Keryx's: stays where it is
     text = "\n".join(plan.describe())
-    assert "~/.jarvis/tasks.db  →  ~/.local/share/jarvis/tasks.db" in text
+    assert "~/.jarvis/tasks.db  →  ~/.local/share/keryx/tasks.db" in text
     assert ".env: imported" in text
 
 
@@ -167,7 +167,7 @@ def test_everything_lands_where_it_belongs(machine):
     for name in ("memory.md", "workspace", "google", "pin-failures.json", "report_secret",
                  "gmail_token.json", "tasks.db"):
         assert (machine.data / name).exists(), name
-    for name in ("logs/jarvis.log", "approvals/audit.jsonl", "running-version",
+    for name in ("logs/keryx.log", "approvals/audit.jsonl", "running-version",
                  "startup-log-marks.json"):
         assert (machine.state / name).exists(), name
     assert not (machine.state / "approvals.sock").exists()
@@ -178,7 +178,7 @@ def test_everything_lands_where_it_belongs(machine):
     assert report.imported and report.moved
 
 
-def test_what_is_not_jarviss_is_kept_aside_and_listed(machine):
+def test_what_is_not_keryxs_is_kept_aside_and_listed(machine):
     report = migrate(machine)
 
     retired = machine.home / ".jarvis.migrated-2026-09-28"
@@ -201,7 +201,7 @@ def test_the_database_follows_the_data(machine):
     found = rows(machine.data / "tasks.db")
     assert found[1]["report_path"] == str(machine.data / "tasks" / "1.md")
     assert found[2]["cwd"] == str(machine.data / "workspace")
-    assert found[4]["cwd"] == "/projects/orchard"  # a project: nothing of Jarvis's
+    assert found[4]["cwd"] == "/projects/orchard"  # a project: nothing of Keryx's
     assert found[4]["report_path"] == str(machine.data / "tasks" / "4.md")
     assert found[5]["cwd"] == str(machine.data)
     assert report.rewritten == 5
@@ -234,7 +234,7 @@ def test_everything_moved_is_owner_only(machine):
     report = migrate(machine)
 
     assert mode(machine.state / "logs") == 0o700
-    assert mode(machine.state / "logs" / "jarvis.log") == 0o600
+    assert mode(machine.state / "logs" / "keryx.log") == 0o600
     for directory in (machine.config, machine.data, machine.state):
         assert mode(directory) == 0o700
     assert any("logs" in line for line in report.tightened)
@@ -267,7 +267,7 @@ def test_an_interrupted_run_finishes_on_the_next(machine, monkeypatch):
         real(source, destination)
 
     monkeypatch.setattr(migration, "move", breaks_half_way)
-    with pytest.raises(MigrationError, match="run `jarvis migrate` again"):
+    with pytest.raises(MigrationError, match="run `keryx migrate` again"):
         migrate(machine)
     assert machine.legacy.is_dir() and (machine.repo / ".env").is_file()
 
@@ -283,7 +283,7 @@ def test_an_interrupted_run_finishes_on_the_next(machine, monkeypatch):
 
 
 def test_empty_directories_made_by_an_earlier_command_are_not_in_the_way(machine):
-    """`ensure_dirs` runs on any command, so `jarvis doctor` before the migration leaves
+    """`ensure_dirs` runs on any command, so `keryx doctor` before the migration leaves
     empty `tasks/`, `calls/`, `logs/` and `approvals/` where things are about to go."""
     Settings(_env_file=None, openai_api_key="x").ensure_dirs()
 
@@ -325,7 +325,7 @@ def test_a_conflicting_pin_is_refused_before_anything_moves(machine):
 
     plan = machine.plan()
 
-    assert any("JARVIS_PIN" in conflict for conflict in plan.conflicts)
+    assert any("the PIN in" in conflict for conflict in plan.conflicts)
     assert all(PIN not in conflict and "111357" not in conflict for conflict in plan.conflicts)
 
 
@@ -355,7 +355,7 @@ def test_a_data_dir_naming_the_old_directory_is_unset(machine):
 
 
 def test_a_data_dir_kept_elsewhere_keeps_its_data_and_gives_up_the_rest(machine, tmp_path):
-    elsewhere = secure_dir(tmp_path / "srv" / "jarvis")
+    elsewhere = secure_dir(tmp_path / "srv" / "keryx")
     (elsewhere / "calls").mkdir()
     (elsewhere / "pin").write_text(f"{PIN}\n")
     (elsewhere / "restart.json").write_text("{}")
@@ -551,7 +551,7 @@ class FakeManager:
 
 def test_the_service_is_stopped_before_anything_moves_and_started_after(machine):
     manager = FakeManager(machine)
-    service = Service(ServiceTarget("systemd", "jarvis.service"), run=manager,
+    service = Service(ServiceTarget("systemd", "keryx.service"), run=manager,
                       sleep=lambda _: None)
     rerendered = []
 
@@ -568,7 +568,7 @@ def test_the_service_is_stopped_before_anything_moves_and_started_after(machine)
 
 def test_a_service_that_will_not_stop_moves_nothing(machine):
     manager = FakeManager(machine, stops=False)
-    service = Service(ServiceTarget("systemd", "jarvis.service"), run=manager,
+    service = Service(ServiceTarget("systemd", "keryx.service"), run=manager,
                       sleep=lambda _: None)
     before = listing(machine.legacy)
 
@@ -581,7 +581,7 @@ def test_a_service_that_will_not_stop_moves_nothing(machine):
 def test_a_stopped_service_is_not_started_by_the_migration(machine):
     manager = FakeManager(machine)
     manager.running = False
-    service = Service(ServiceTarget("systemd", "jarvis.service"), run=manager)
+    service = Service(ServiceTarget("systemd", "keryx.service"), run=manager)
 
     report = migrate(machine, service=service)
 
@@ -592,7 +592,7 @@ def test_a_stopped_service_is_not_started_by_the_migration(machine):
 
 def test_a_service_the_installer_already_started_is_not_started_twice(machine):
     manager = FakeManager(machine)
-    service = Service(ServiceTarget("systemd", "jarvis.service"), run=manager,
+    service = Service(ServiceTarget("systemd", "keryx.service"), run=manager,
                       sleep=lambda _: None)
 
     def installer_starts_it():
@@ -618,7 +618,7 @@ def test_a_service_the_installer_already_started_is_not_started_twice(machine):
     ],
 )
 def test_whether_the_service_is_running(manager, stdout, code, running):
-    from jarvis.restart.service import is_active
+    from keryx.restart.service import is_active
 
     target = ServiceTarget(manager, "unit")
 
@@ -629,20 +629,20 @@ def test_whether_the_service_is_running(manager, stdout, code, running):
 
 
 def test_a_manager_that_cannot_be_asked_counts_as_running():
-    from jarvis.restart.service import is_active
+    from keryx.restart.service import is_active
 
     def hangs(argv, **kwargs):
         raise subprocess.TimeoutExpired(argv, 5)
 
-    assert is_active(ServiceTarget("systemd", "jarvis.service"), run=hangs) is True
+    assert is_active(ServiceTarget("systemd", "keryx.service"), run=hangs) is True
 
 
 def test_launchd_is_booted_out_and_bootstrapped_from_its_plist():
-    target = ServiceTarget("launchd", "dev.jarvis.agent")
+    target = ServiceTarget("launchd", "dev.keryx.agent")
 
     assert target.stop_command()[:2] == ["launchctl", "bootout"]
     assert target.start_command()[:2] == ["launchctl", "bootstrap"]
-    assert target.start_command()[-1].endswith("Library/LaunchAgents/dev.jarvis.agent.plist")
+    assert target.start_command()[-1].endswith("Library/LaunchAgents/dev.keryx.agent.plist")
 
 
 # --- the command -----------------------------------------------------------------------
@@ -650,7 +650,7 @@ def test_launchd_is_booted_out_and_bootstrapped_from_its_plist():
 
 @pytest.fixture
 def command(machine, monkeypatch):
-    """`jarvis migrate` run from the machine's checkout, with nothing real to re-render."""
+    """`keryx migrate` run from the machine's checkout, with nothing real to re-render."""
     monkeypatch.chdir(machine.repo)
     monkeypatch.setattr(cli, "repo_root", lambda: machine.repo)
     ran: list[list[str]] = []
@@ -665,14 +665,14 @@ def test_dry_run_prints_the_plan_and_touches_nothing(machine, command):
     result = runner.invoke(cli.app, ["migrate", "--dry-run"])
 
     assert result.exit_code == 0, result.output
-    assert "~/.jarvis/tasks.db  →  ~/.local/share/jarvis/tasks.db" in result.output
+    assert "~/.jarvis/tasks.db  →  ~/.local/share/keryx/tasks.db" in result.output
     assert (listing(machine.home), listing(machine.repo)) == before
 
 
 def test_the_command_migrates_and_says_what_is_left(machine, command):
     claude = machine.home / ".claude"
     claude.mkdir()
-    (claude / "settings.json").write_text('{"hooks": {"x": "python3 jarvis_approval.py"}}')
+    (claude / "settings.json").write_text('{"hooks": {"x": "python3 keryx_approval.py"}}')
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 
@@ -688,7 +688,7 @@ def test_the_command_migrates_and_says_what_is_left(machine, command):
 def test_the_command_rerenders_an_installed_service(machine, command, monkeypatch):
     manager = FakeManager(machine)
     monkeypatch.setattr(cli, "resolve_target",
-                        lambda settings, **_: ServiceTarget("systemd", "jarvis.service"))
+                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
     monkeypatch.setattr(cli, "MigratingService",
                         lambda target: Service(target, run=manager, sleep=lambda _: None))
 
@@ -722,9 +722,9 @@ def test_an_installer_that_fails_says_to_run_it_again(machine, command, monkeypa
     monkeypatch.setattr(cli, "run_command", lambda argv: 1)
     claude = machine.home / ".claude"
     claude.mkdir()
-    (claude / "settings.json").write_text("jarvis_approval.py")
+    (claude / "settings.json").write_text("keryx_approval.py")
 
-    assert cli._rerender(ServiceTarget("systemd", "jarvis.service")) == [
+    assert cli._rerender(ServiceTarget("systemd", "keryx.service")) == [
         "install-systemd.sh: exited 1, run it again",
         "approval hook: exited 1, run it again",
     ]
@@ -732,7 +732,7 @@ def test_an_installer_that_fails_says_to_run_it_again(machine, command, monkeypa
 
 def test_the_command_will_not_cut_a_live_call_off(machine, command, monkeypatch):
     monkeypatch.setattr(cli, "resolve_target",
-                        lambda settings, **_: ServiceTarget("systemd", "jarvis.service"))
+                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
     monkeypatch.setattr(cli, "health_probe", lambda settings: 1)
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
@@ -769,7 +769,7 @@ def test_a_failure_part_way_is_reported(machine, command, monkeypatch):
 
 
 def test_the_service_may_not_migrate(machine, command, monkeypatch):
-    monkeypatch.setenv("JARVIS_ACTOR", "service")
+    monkeypatch.setenv("KERYX_ACTOR", "service")
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 

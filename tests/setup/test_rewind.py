@@ -5,10 +5,10 @@ import asyncio
 
 import pytest
 
-from jarvis.setup.context import Probes
-from jarvis.setup.rewind import ASK, PROBE, Entry, Recorder, rewind
-from jarvis.setup.ui import Back, Choice, Forward
-from jarvis.setup.wizard import Section, run_walk
+from keryx.setup.context import Probes
+from keryx.setup.rewind import ASK, PROBE, Entry, Recorder, rewind
+from keryx.setup.ui import Back, Choice, Forward
+from keryx.setup.wizard import Section, run_walk
 
 from .fakes import DEFAULT, ScriptedPrompter
 

@@ -12,8 +12,8 @@ from datetime import datetime
 
 import pytest
 
-from jarvis.approvals.broker import ApprovalBroker
-from jarvis.config import Settings
+from keryx.approvals.broker import ApprovalBroker
+from keryx.config import Settings
 
 
 def broker_at(monkeypatch, tmp_path, *, window: str | None, hour: int, minute: int = 0):
@@ -21,7 +21,7 @@ def broker_at(monkeypatch, tmp_path, *, window: str | None, hour: int, minute: i
     settings = Settings(
         _env_file=None,
         openai_api_key="test",
-        data_dir=tmp_path / "jarvis",
+        data_dir=tmp_path / "keryx",
         approval_quiet_hours=window,
     )
     broker = ApprovalBroker(settings, sessions=None, twilio_out=None, stream_tokens=None)
@@ -32,7 +32,7 @@ def broker_at(monkeypatch, tmp_path, *, window: str | None, hour: int, minute: i
             assert tz is None, "quiet hours are deliberately naive local time"
             return datetime(2026, 9, 2, hour, minute)
 
-    monkeypatch.setattr("jarvis.approvals.broker.datetime", FixedClock)
+    monkeypatch.setattr("keryx.approvals.broker.datetime", FixedClock)
     return broker
 
 

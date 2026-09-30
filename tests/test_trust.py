@@ -9,10 +9,10 @@ import pytest
 from fakes import FakeProvider, FakeTransport
 from test_session import make_settings
 
-from jarvis.events import EventBus
-from jarvis.session import VoiceSession
-from jarvis.tools import ToolContext, ToolRegistry
-from jarvis.trust import TrustLevel
+from keryx.events import EventBus
+from keryx.session import VoiceSession
+from keryx.tools import ToolContext, ToolRegistry
+from keryx.trust import TrustLevel
 
 
 def test_the_levels_are_ordered_from_nothing_to_everything():
@@ -40,7 +40,7 @@ def test_an_inbound_call_before_the_pin_has_proved_nothing(make_session):
     assert make_session().trust is TrustLevel.NONE
 
 
-def test_a_call_jarvis_placed_to_the_owner_holds_the_phone(make_session):
+def test_a_call_keryx_placed_to_the_owner_holds_the_phone(make_session):
     assert make_session(possession=True).trust is TrustLevel.POSSESSION
 
 

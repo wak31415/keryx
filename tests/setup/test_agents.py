@@ -1,4 +1,4 @@
-"""The "Coding agents" section and the pieces `jarvis auth` shares with it: no terminal, no
+"""The "Coding agents" section and the pieces `keryx auth` shares with it: no terminal, no
 login, no subagent. Every agent's CLI and stored login are faked through the registry."""
 
 import asyncio
@@ -7,13 +7,13 @@ import subprocess
 
 import pytest
 
-from jarvis.agents import registry
-from jarvis.agents.base import AgentOpenError, FakeAgentRunner, RunResult
-from jarvis.agents.registry import BACKENDS
-from jarvis.config.store import ConfigStore
-from jarvis.setup import agents
-from jarvis.setup.agents import SMOKE_PROMPT, detect, login_argv, passed_smoke
-from jarvis.setup.context import run_command
+from keryx.agents import registry
+from keryx.agents.base import AgentOpenError, FakeAgentRunner, RunResult
+from keryx.agents.registry import BACKENDS
+from keryx.config.store import ConfigStore
+from keryx.setup import agents
+from keryx.setup.agents import SMOKE_PROMPT, detect, login_argv, passed_smoke
+from keryx.setup.context import run_command
 
 from .fakes import DEFAULT
 
@@ -150,7 +150,7 @@ def test_an_agent_that_is_not_installed_cannot_be_picked_and_says_how(make_ctx, 
 
     agents.run_section(ctx)
 
-    [codex] = [c for c in ctx.ui.choices["Which agents should Jarvis use?"] if c.value == "codex"]
+    [codex] = [c for c in ctx.ui.choices["Which agents should Keryx use?"] if c.value == "codex"]
     assert codex.disabled == "not installed: uv sync --extra codex"
     assert any("uv sync --extra codex" in line for line in ctx.ui.lines("table"))
 
@@ -280,14 +280,14 @@ def test_a_command_runs_on_this_terminal(monkeypatch):
         ran.append(argv)
         return subprocess.CompletedProcess(argv, 0)
 
-    monkeypatch.setattr("jarvis.setup.context.subprocess.run", run)
+    monkeypatch.setattr("keryx.setup.context.subprocess.run", run)
     assert run_command(("codex", "login")) == 0
     assert ran == [["codex", "login"]]
 
     def missing(argv, check):
         raise FileNotFoundError(argv[0])
 
-    monkeypatch.setattr("jarvis.setup.context.subprocess.run", missing)
+    monkeypatch.setattr("keryx.setup.context.subprocess.run", missing)
     assert run_command(("codex", "login")) == 127
 
 
@@ -298,7 +298,7 @@ def test_a_setup_task_runs_as_the_service_and_puts_the_actor_back(settings, monk
 
     class Recording(FakeAgentRunner):
         async def open(self, task, *, resume=None):
-            seen.append(os.environ.get("JARVIS_ACTOR"))
+            seen.append(os.environ.get("KERYX_ACTOR"))
             return await super().open(task, resume=resume)
 
     spec = BACKENDS["claude"]
@@ -309,4 +309,4 @@ def test_a_setup_task_runs_as_the_service_and_puts_the_actor_back(settings, monk
     asyncio.run(agents.run_task(settings, "claude", "hi"))
 
     assert seen == ["service"]
-    assert "JARVIS_ACTOR" not in os.environ
+    assert "KERYX_ACTOR" not in os.environ

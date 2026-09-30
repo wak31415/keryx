@@ -11,8 +11,8 @@ from types import SimpleNamespace
 import pytest
 from fakes import FakeVoiceSession
 
-from jarvis.notify.deliver import Announced, announce_to_live_sessions, safe_send_sms
-from jarvis.trust import TrustLevel
+from keryx.notify.deliver import Announced, announce_to_live_sessions, safe_send_sms
+from keryx.trust import TrustLevel
 
 
 class FakeSessions:
@@ -72,7 +72,7 @@ async def test_a_call_that_has_proved_nothing_hears_the_news_but_is_not_a_delive
     assert stranger.announced == ["hello"]
 
 
-async def test_a_call_jarvis_placed_is_a_delivery():
+async def test_a_call_keryx_placed_is_a_delivery():
     owner = FakeVoiceSession(channel="phone", trust=TrustLevel.POSSESSION)
 
     result = await announce_to_live_sessions(FakeSessions(owner), "hello", needs=TrustLevel.NONE)

@@ -3,8 +3,8 @@
 import pytest
 from pydantic import ValidationError
 
-from jarvis.config import Settings
-from jarvis.persona import DEFAULT_VOICE, PERSONAS, voice_for
+from keryx.config import Settings
+from keryx.persona import DEFAULT_VOICE, PERSONAS, voice_for
 
 
 def _settings(**values) -> Settings:

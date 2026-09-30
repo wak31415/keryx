@@ -9,7 +9,7 @@ import stat
 
 import pytest
 
-from jarvis.continuity.memory import (
+from keryx.continuity.memory import (
     MAX_MEMORY_CHARS,
     MAX_MEMORY_FILE_CHARS,
     MIN_SPOKEN_LINES,
@@ -22,11 +22,11 @@ from jarvis.continuity.memory import (
     read_memory,
     seed_memory,
 )
-from jarvis.continuity.transcripts import transcript_path
-from jarvis.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
-from jarvis.tasks.agent_runner import FakeAgentRunner
-from jarvis.tasks.manager import TaskManager
-from jarvis.tasks.store import TaskStore
+from keryx.continuity.transcripts import transcript_path
+from keryx.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
+from keryx.tasks.agent_runner import FakeAgentRunner
+from keryx.tasks.manager import TaskManager
+from keryx.tasks.store import TaskStore
 
 
 @pytest.fixture
@@ -351,7 +351,7 @@ def test_seeding_refuses_more_than_a_call_reads(settings):
 
 
 def test_standing_facts_are_added_under_their_heading_whatever_came_after(tmp_path):
-    from jarvis.continuity.memory import add_standing_facts
+    from keryx.continuity.memory import add_standing_facts
 
     seed_memory(tmp_path, owner="Ada", assistant="Lyra", facts=["Works nights."])
     path = memory_path(tmp_path)
@@ -368,7 +368,7 @@ def test_standing_facts_are_added_under_their_heading_whatever_came_after(tmp_pa
 
 
 def test_standing_facts_start_a_memory_when_there_is_none(tmp_path):
-    from jarvis.continuity.memory import add_standing_facts
+    from keryx.continuity.memory import add_standing_facts
 
     add_standing_facts(tmp_path, owner="Ada", assistant="Lyra", facts=["Writes Rust."])
 
@@ -376,7 +376,7 @@ def test_standing_facts_start_a_memory_when_there_is_none(tmp_path):
 
 
 def test_a_heading_edited_out_by_hand_comes_back(tmp_path):
-    from jarvis.continuity.memory import add_standing_facts
+    from keryx.continuity.memory import add_standing_facts
 
     memory_path(tmp_path).write_text("# Notes\n\nfree text\n")
 
@@ -386,7 +386,7 @@ def test_a_heading_edited_out_by_hand_comes_back(tmp_path):
 
 
 def test_standing_facts_past_what_a_call_reads_are_refused(tmp_path):
-    from jarvis.continuity.memory import add_standing_facts
+    from keryx.continuity.memory import add_standing_facts
 
     seed_memory(tmp_path, owner="Ada", assistant="Lyra", facts=["Works nights."])
     before = memory_path(tmp_path).read_text()

@@ -2,7 +2,7 @@
 
 import pytest
 
-from jarvis.config import spoken_digits
+from keryx.config import spoken_digits
 
 
 @pytest.mark.parametrize(

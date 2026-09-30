@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 from rich.console import Console
 
-from jarvis.setup import ui
-from jarvis.setup.ui import KEYS_HINT, Aborted, Back, Choice, Forward, RichPrompter, heading
+from keryx.setup import ui
+from keryx.setup.ui import KEYS_HINT, Aborted, Back, Choice, Forward, RichPrompter, heading
 
 
 @pytest.fixture
@@ -22,7 +22,7 @@ def drawn(prompter) -> str:
 
 
 def test_every_kind_of_line_is_drawn_in_the_gutter(prompter):
-    prompter.intro("Jarvis setup", "saved as you go")
+    prompter.intro("Keryx setup", "saved as you go")
     prompter.section("Voice")
     prompter.note("a note\nover two lines")
     prompter.success("saved")
@@ -34,7 +34,7 @@ def test_every_kind_of_line_is_drawn_in_the_gutter(prompter):
     prompter.outro("done")
 
     text = drawn(prompter)
-    for fragment in ("Jarvis setup", "◆  Voice", "│  a note", "│  over two lines", "✓  saved",
+    for fragment in ("Keryx setup", "◆  Voice", "│  a note", "│  over two lines", "✓  saved",
                      "▲  careful", "✗  broken [not markup]", "one", "body [x]", "└  done"):
         assert fragment in text, fragment
 
@@ -119,7 +119,7 @@ def test_each_question_gets_a_screen_of_its_own(prompter, questionary, screens):
     answers.update(text="Ada", confirm=True)
     prompter.section("Owner and PIN", step=(4, 9))
     prompter.note("Who you are.")
-    prompter.text("What should Jarvis call you?")
+    prompter.text("What should Keryx call you?")
     prompter.success("saved OWNER_NAME")
     prompter.note("Your numbers.")
     prompter.confirm("Numbers?")

@@ -1,7 +1,7 @@
-"""Tests for `jarvis.continuity.retention`: what gets deleted, and the one thing that never does.
+"""Tests for `keryx.continuity.retention`: what gets deleted, and the one thing that never does.
 
 The rule with a consequence behind it is that a finished task the caller has not been told
-about survives any prune, however old. `Task.reported_at` is the only record that Jarvis
+about survives any prune, however old. `Task.reported_at` is the only record that Keryx
 said a result out loud, so deleting an unreported row is deleting a result they will never
 hear — and unlike hearing something twice, that is not recoverable.
 """
@@ -12,23 +12,23 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
-from jarvis.config import Settings
-from jarvis.continuity.memory import MAX_MEMORY_FILE_CHARS, memory_path, trim_memory
-from jarvis.continuity.retention import (
+from keryx.config import Settings
+from keryx.continuity.memory import MAX_MEMORY_FILE_CHARS, memory_path, trim_memory
+from keryx.continuity.retention import (
     PruneReport,
     cutoff_for,
     prune,
     prune_transcripts,
     prune_with,
 )
-from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import TaskStore
+from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.store import TaskStore
 
 NOW = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
 
 
 def make_settings(tmp_path, **overrides) -> Settings:
-    values = {"openai_api_key": "test", "data_dir": tmp_path / "jarvis"}
+    values = {"openai_api_key": "test", "data_dir": tmp_path / "keryx"}
     values.update(overrides)
     settings = Settings(_env_file=None, **values)
     settings.ensure_dirs()
@@ -164,7 +164,7 @@ async def test_an_unreported_task_survives_however_old_it_is(tmp_path):
 
 
 async def test_an_unreported_internal_task_is_pruned(tmp_path):
-    """Housekeeping Jarvis asked for itself is owed to nobody, so it never rode the digest."""
+    """Housekeeping Keryx asked for itself is owed to nobody, so it never rode the digest."""
     settings = make_settings(tmp_path, task_retention_days=1)
     store = await store_for(settings)
     task = await add_task(store, age_days=40, internal=True, reported_at=None)
@@ -240,7 +240,7 @@ async def test_the_two_windows_do_not_touch_each_other(tmp_path):
 
 
 async def test_prune_with_takes_the_cutoffs_outright(tmp_path):
-    """What `jarvis forget` uses: delete now, whatever the configured windows say."""
+    """What `keryx forget` uses: delete now, whatever the configured windows say."""
     settings = make_settings(tmp_path)  # both windows off
     write_call(settings, "yesterday", age_days=1)
     store = await store_for(settings)

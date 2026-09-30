@@ -15,7 +15,7 @@ import subprocess
 
 import pytest
 
-from jarvis.integrations.cluster import (
+from keryx.integrations.cluster import (
     MARK,
     READ_ONLY,
     ClusterError,
@@ -358,7 +358,7 @@ def fake_run(monkeypatch, *, returncode=0, stdout="", stderr="", raises=None):
             raise raises
         return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
 
-    monkeypatch.setattr("jarvis.integrations.cluster.subprocess.run", run)
+    monkeypatch.setattr("keryx.integrations.cluster.subprocess.run", run)
     return calls
 
 
@@ -456,7 +456,7 @@ def scripted_ssh(monkeypatch, *answers):
         code, out = answer
         return subprocess.CompletedProcess(argv, code, out, "")
 
-    monkeypatch.setattr("jarvis.integrations.cluster.subprocess.run", run)
+    monkeypatch.setattr("keryx.integrations.cluster.subprocess.run", run)
     return calls
 
 

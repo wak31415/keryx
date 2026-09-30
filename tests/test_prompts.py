@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.prompts import load_prompt, render_voice_prompt
-from jarvis.skills import Skill
-from jarvis.trust import TrustLevel
+from keryx.prompts import load_prompt, render_voice_prompt
+from keryx.skills import Skill
+from keryx.trust import TrustLevel
 
 PIN = "123456"
 
@@ -32,7 +32,7 @@ def test_render_fills_every_placeholder(settings):
         channel="phone",
         caller="+15555555555",
         trust=TrustLevel.FULL,
-        projects=["jarvis", "orchard"],
+        projects=["keryx", "orchard"],
         skills=[Skill(name="mermaid", description="Author Mermaid diagrams.")],
         opening_context=None,
     )
@@ -41,7 +41,7 @@ def test_render_fills_every_placeholder(settings):
     assert "mermaid: Author Mermaid diagrams." in rendered
     assert "phone" in rendered
     assert "+15555555555" in rendered
-    assert "jarvis, orchard" in rendered
+    assert "keryx, orchard" in rendered
 
 
 @pytest.mark.parametrize(
@@ -88,7 +88,7 @@ def test_render_includes_the_opening_context(settings):
 
 def test_render_defaults_projects_to_everything_the_manager_can_resolve(settings, tmp_path):
     """Anything under projects_root dispatches, so the model has to know its name."""
-    settings.projects = {"jarvis": "/tmp/jarvis"}
+    settings.projects = {"keryx": "/tmp/keryx"}
     root = tmp_path / "projects"
     (root / "weather-station").mkdir(parents=True)
     settings.projects_root = root
@@ -97,7 +97,7 @@ def test_render_defaults_projects_to_everything_the_manager_can_resolve(settings
         settings, channel="local", caller=None, trust=TrustLevel.FULL, opening_context=None
     )
 
-    assert "jarvis" in rendered
+    assert "keryx" in rendered
     assert "weather-station" in rendered
 
 
@@ -129,7 +129,7 @@ def test_render_says_so_when_no_skills_are_installed(settings, tmp_path):
 def test_render_includes_a_project_brief(settings, tmp_path):
     root = tmp_path / "projects"
     (root / "orchard-sensor-net").mkdir(parents=True)
-    (root / "orchard-sensor-net" / ".jarvis-brief.md").write_text(
+    (root / "orchard-sensor-net" / ".keryx-brief.md").write_text(
         "Soil sensors in an orchard.", encoding="utf-8"
     )
     settings.projects_root = root
@@ -157,7 +157,7 @@ def owners_world(settings, tmp_path):
     """A machine with projects, briefs and skills on it — the map of the owner's world."""
     root = tmp_path / "projects"
     (root / "weather-station").mkdir(parents=True)
-    (root / "weather-station" / ".jarvis-brief.md").write_text("A rain gauge on the roof.")
+    (root / "weather-station" / ".keryx-brief.md").write_text("A rain gauge on the roof.")
     skills = tmp_path / "skills"
     (skills / "wandb-query").mkdir(parents=True)
     (skills / "wandb-query" / "SKILL.md").write_text(
@@ -308,7 +308,7 @@ def test_the_digest_is_not_part_of_what_is_held_back(owners_world, trust):
 #
 # Whether a Slack message goes out is the voice model's decision, taken turn by turn, so
 # the rule can only live in the prompt. That makes it easy to drop by accident while
-# editing the prose around it, and the failure is silent — no test breaks, Jarvis just
+# editing the prose around it, and the failure is silent — no test breaks, Keryx just
 # quietly starts messaging them again. These pin the rule to the prompt text instead.
 
 
@@ -323,7 +323,7 @@ def test_voice_prompt_does_not_send_search_results_unasked(unwrapped):
 def test_the_prompt_names_no_plugin_because_each_describes_itself(settings, unwrapped):
     """A plugin is on some machines and not others; the prompt describing one that is not
     there invites a call to a tool that does not exist. Their descriptions carry it all."""
-    from jarvis.plugins import PLUGINS
+    from keryx.plugins import PLUGINS
 
     text = unwrapped(_rendered(settings))
 
@@ -422,7 +422,7 @@ def test_the_prompt_sends_questions_about_the_past_to_recall(unwrapped):
 
 
 def test_the_memorys_own_headings_are_nested_under_the_section(settings):
-    """Otherwise "Standing facts" reads as an instruction to Jarvis, not as what it knows."""
+    """Otherwise "Standing facts" reads as an instruction to Keryx, not as what it knows."""
     rendered = _rendered(settings, memory="## Standing facts\n\nThey hate jargon.")
 
     assert "### Standing facts" in rendered
@@ -503,13 +503,13 @@ def test_the_prompt_does_not_let_it_promise_what_a_result_will_contain(unwrapped
 
 # --- nobody's name is built in ---------------------------------------------
 #
-# Jarvis was written for one person, and their name was in the first line of the voice prompt,
+# Keryx was written for one person, and their name was in the first line of the voice prompt,
 # the subagent suffix, the memory's title and a tool description. Anyone else who installed
 # it got an assistant that believed it worked for them. The name is `OWNER_NAME` now, and
 # these keep it from coming back by the easy route of an edit to the prose.
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "src" / "jarvis"
+PACKAGE = ROOT / "src" / "keryx"
 
 
 def _author_first_name() -> str:
@@ -550,7 +550,7 @@ def test_without_a_name_the_voice_prompt_works_for_the_owner(settings):
 
 
 def test_no_packaged_prompt_or_source_names_the_author():
-    """Not in a prompt, a string constant, a docstring or a comment under `src/jarvis`."""
+    """Not in a prompt, a string constant, a docstring or a comment under `src/keryx`."""
     name = re.compile(rf"\b{re.escape(_author_first_name())}\b", re.IGNORECASE)
     files = sorted([*PACKAGE.rglob("*.py"), *PACKAGE.rglob("*.md")])
 
@@ -629,7 +629,7 @@ def test_the_prompt_makes_a_follow_up_rare_rather_than_forbidden(unwrapped):
 # --- the first call --------------------------------------------------------
 #
 # A machine with nothing in `memory.md` has never had a call worth remembering, so the
-# first authorized one opens as an introduction instead: what Jarvis is, and a handful of
+# first authorized one opens as an introduction instead: what Keryx is, and a handful of
 # questions about them. The absence of the memory is the whole marker — there is no second
 # record of "has been onboarded" — so these check both edges of it.
 
@@ -691,9 +691,9 @@ def test_anything_remembered_at_all_ends_the_interview(settings):
 def test_the_first_call_never_reaches_a_session_that_has_not_given_the_pin(settings):
     """Before the PIN there is no telling whose first call it is.
 
-    Not even on a call Jarvis placed: possession says whose phone answered, not that the
+    Not even on a call Keryx placed: possession says whose phone answered, not that the
     interview is wanted, and the questions are about them. Unmoved by the 2026-09-19
-    widening, which this runs under: being handed the briefing is being told what Jarvis
+    widening, which this runs under: being handed the briefing is being told what Keryx
     knows, and an interview is asking the owner for more.
     """
     assert settings.briefing_before_pin is True
@@ -729,7 +729,7 @@ def test_the_first_call_starts_where_the_conversation_already_is(unwrapped):
     assert "do not greet them again" in flat
 # --- what the prompt says about this call's level ---------------------------
 #
-# The model cannot read `jarvis/trust.py`, so the only thing that tells it what it may do
+# The model cannot read `keryx/trust.py`, so the only thing that tells it what it may do
 # is these three paragraphs. A level whose note goes missing is a model guessing, and it
 # guesses generously.
 
@@ -749,7 +749,7 @@ def test_an_inbound_call_is_told_it_has_proved_nothing(settings, unwrapped):
     assert "asking for the PIN" in rendered
 
 
-def test_a_call_jarvis_placed_is_told_what_the_key_is_for(settings, unwrapped):
+def test_a_call_keryx_placed_is_told_what_the_key_is_for(settings, unwrapped):
     """The voicemail rule only works if the model knows to ask for the key."""
     rendered = unwrapped(_rendered(settings, trust=TrustLevel.POSSESSION))
 
@@ -832,7 +832,7 @@ def test_the_skills_of_every_enabled_agent_are_listed(settings, tmp_path, monkey
             f"---\nname: {name}\ndescription: Does {name}.\n---\n", encoding="utf-8"
         )
     settings.skills_dir = claude_skills
-    monkeypatch.setattr("jarvis.agents.registry.codex_home", lambda: codex_home)
+    monkeypatch.setattr("keryx.agents.registry.codex_home", lambda: codex_home)
 
     alone = render_voice_prompt(settings, channel="phone", caller=None)
     settings.agents_enabled = ["claude", "codex"]
@@ -848,7 +848,7 @@ def _reporting(settings):
     return settings.model_copy(update={"issue_reporting": True})
 
 
-def test_a_bug_or_a_wish_about_jarvis_is_work_it_can_file(settings, unwrapped):
+def test_a_bug_or_a_wish_about_keryx_is_work_it_can_file(settings, unwrapped):
     """The voice model only has to know it is a dispatch; the subagent has the skill.
 
     Feature requests by name: left to itself, a model files a bug and hears a wish as chat.

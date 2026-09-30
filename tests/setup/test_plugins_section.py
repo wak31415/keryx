@@ -1,4 +1,4 @@
-"""The Plugins section: which optional tools Jarvis has, and each one's important settings.
+"""The Plugins section: which optional tools Keryx has, and each one's important settings.
 
 The ssh hosts are made up and answered by `FakeWorld`; nothing here reads a real
 `~/.ssh/config` or runs ssh.
@@ -8,14 +8,14 @@ import tomllib
 
 import pytest
 
-from jarvis import plugins
-from jarvis.agents import registry
-from jarvis.config.store import ConfigStore
-from jarvis.integrations.gmail import token_path
-from jarvis.plugins.ssh_hosts import SshHost
-from jarvis.setup import plugins as section
-from jarvis.setup import wizard
-from jarvis.setup.ui import Back
+from keryx import plugins
+from keryx.agents import registry
+from keryx.config.store import ConfigStore
+from keryx.integrations.gmail import token_path
+from keryx.plugins.ssh_hosts import SshHost
+from keryx.setup import plugins as section
+from keryx.setup import wizard
+from keryx.setup.ui import Back
 
 from .fakes import DEFAULT
 
@@ -42,7 +42,7 @@ def test_a_first_walk_ticks_slack_and_email(make_ctx):
 
     section.run_section(ctx)
 
-    choices = {c.value: c for c in ctx.ui.choices["Which plugins should Jarvis have?"]}
+    choices = {c.value: c for c in ctx.ui.choices["Which plugins should Keryx have?"]}
     assert [name for name, c in choices.items() if c.checked] == ["send_to_slack", "check_email"]
     assert "recommended" in choices["send_to_slack"].hint
     assert "recommended" not in choices["cluster_stats"].hint
@@ -54,7 +54,7 @@ def test_a_later_walk_ticks_only_what_is_on(make_ctx):
 
     section.run_section(ctx)
 
-    assert not any(c.checked for c in ctx.ui.choices["Which plugins should Jarvis have?"])
+    assert not any(c.checked for c in ctx.ui.choices["Which plugins should Keryx have?"])
 
 
 def test_email_needs_the_claude_extra(make_ctx, monkeypatch):
@@ -63,7 +63,7 @@ def test_email_needs_the_claude_extra(make_ctx, monkeypatch):
 
     section.run_section(ctx)
 
-    email = next(c for c in ctx.ui.choices["Which plugins should Jarvis have?"]
+    email = next(c for c in ctx.ui.choices["Which plugins should Keryx have?"]
                  if c.value == "check_email")
     assert "uv sync --extra claude" in email.disabled and not email.checked
 
@@ -120,7 +120,7 @@ def test_email_not_signed_in_is_left_off(make_ctx):
     section.run_section(ctx)
 
     assert not on(ctx, "check_email")
-    assert any("jarvis auth login gmail" in line for line in ctx.ui.lines("note"))
+    assert any("keryx auth login gmail" in line for line in ctx.ui.lines("note"))
 
 
 # --- billing -----------------------------------------------------------------------------
@@ -259,7 +259,7 @@ def test_template_writes_the_file_and_a_draft_and_says_where(make_ctx, world):
     assert plugins.draft_path(ctx.settings, "cluster_stats").exists()
     assert not on(ctx, "cluster_stats")
     assert f"written to {path}" in ctx.ui.lines("success")
-    assert any("jarvis plugins install cluster_stats" in line for line in ctx.ui.lines("note"))
+    assert any("keryx plugins install cluster_stats" in line for line in ctx.ui.lines("note"))
 
 
 def test_cancel_writes_nothing(make_ctx, world):

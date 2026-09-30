@@ -4,9 +4,9 @@ import dataclasses
 
 import pytest
 
-from jarvis.agents.auth import AuthMode, child_env, redact, resolve_auth
-from jarvis.agents.claude import CLAUDE_AUTH
-from jarvis.agents.codex import CODEX_AUTH
+from keryx.agents.auth import AuthMode, child_env, redact, resolve_auth
+from keryx.agents.claude import CLAUDE_AUTH
+from keryx.agents.codex import CODEX_AUTH
 
 
 def with_login(source, present: bool):

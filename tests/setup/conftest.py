@@ -1,12 +1,12 @@
-"""A `SetupContext` on a scratch machine: a store in `JARVIS_HOME`, a data directory, and
+"""A `SetupContext` on a scratch machine: a store in `KERYX_HOME`, a data directory, and
 settings read back from the store after every save — the way the real wizard reads them."""
 
 import pytest
 from pydantic import ValidationError
 
-from jarvis.config import PLACEHOLDER_KEY, Settings
-from jarvis.config.store import ConfigStore
-from jarvis.setup.context import SetupContext
+from keryx.config import PLACEHOLDER_KEY, Settings
+from keryx.config.store import ConfigStore
+from keryx.setup.context import SetupContext
 
 from .fakes import FakeWorld, ScriptedPrompter
 
@@ -16,7 +16,7 @@ def machine(tmp_path, monkeypatch, every_agent_installed):
     """Where things live on the scratch machine, and a loader that reads the store."""
     monkeypatch.chdir(tmp_path)  # a legacy `.secrets/` or `.env` is looked for here
     paths = {
-        "data_dir": tmp_path / "jarvis",
+        "data_dir": tmp_path / "keryx",
         "projects_root": tmp_path / "projects",
         "skills_dir": tmp_path / "skills",
     }
