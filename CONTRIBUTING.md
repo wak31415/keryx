@@ -60,6 +60,29 @@ A subagent Keryx dispatched adds `Keryx-Task: <id>` as well (`Jarvis-Task:` befo
 service was renamed), which makes `git log -E --grep '^(Jarvis|Keryx)-Task:'` the record of
 what was asked for out loud.
 
+## Writing docs
+
+The README, the wiki, `docs/`, and `SECURITY.md` follow one house style, taken from the
+[Google developer documentation style guide](https://developers.google.com/style/highlights):
+
+- **American spelling**: behavior, defense, license.
+- **Address the reader as "you"**, and use contractions (it's, don't, can't). `SECURITY.md`
+  is the exception: it spells them out. The author's "I" belongs only in the README's
+  caption and in `docs/roadmap.md`.
+- **Short sentences, one idea each.** Keep the spaced em dash ( — ) as the dash, but use at
+  most one pair in a sentence, and prefer a full stop.
+- **Numbered lists for steps**, and the condition before the instruction: "If your account
+  can send SMS, run …", not "Run … if your account can send SMS".
+- **Name the effect, not the identifier.** Keep a function or setting name only when the
+  reader types it or sees it.
+- **Sentence-case headings**, the serial comma, and link text that says where it goes (never
+  "here" or "below").
+- **Document the present.** Upgrade steps go in the CHANGELOG and the wiki's Upgrading page,
+  not in how-to pages.
+
+The voice model's own wording (prompts, tool descriptions, the `*_MESSAGE` constants) has
+rules of its own in `CLAUDE.md`; this section is about docs people read.
+
 ## Releases
 
 There is no package index in this story. Keryx is installed from a clone, so a release is
@@ -82,9 +105,9 @@ carries the `Private :: Do Not Upload` classifier so that an accidental `uv publ
 uv run pytest -q --cov --cov-report=term:skip-covered
 ```
 
-**The floor is 95%, and it is a ratchet rather than a target.** It was last raised to the number
-actually measured on 2026-09-16 (95.32%), floored to a whole point so a rounding wobble
-does not fail CI while real erosion does. Raise it when the measured number has moved up;
+**The floor is 96%, and it is a ratchet rather than a target.** It was last raised on
+2026-09-27 (`fail_under` in `pyproject.toml`), to the number actually measured floored to a
+whole point, so a rounding wobble does not fail CI while real erosion does. Raise it when the measured number has moved up;
 do not lower it to make a branch pass. `pytest --cov` fails below it, and CI prints the
 per-module table into the run summary.
 
@@ -108,7 +131,7 @@ named after them. They are error
 paths that need a broken filesystem or a half-open socket to reach honestly. If you are
 touching one of these modules, adding the test is welcome.
 
-## Dependencies and their licences
+## Dependencies and their licenses
 
 Every direct dependency carries a lower bound at the version `uv.lock` pins — the version
 it is actually tested against — and an upper bound at the next release that may break it.
@@ -120,12 +143,12 @@ Dependabot opens weekly PRs for `uv` (manifest and lock together, which is what 
 from) and for the GitHub Actions themselves. CI is the gate: a bump that fails `uv sync
 --locked`, ruff or the suite does not land.
 
-**Licence review** (2026-09-02, 68 distributions on Linux; the macOS-only audio packages
+**License review** (2026-09-02, 68 distributions on Linux; the macOS-only audio packages
 left with the wake word on 2026-09-28). Everything is permissive — MIT, BSD, Apache-2.0,
 PSF, ISC — with two exceptions
 worth knowing about:
 
-| Package | Licence | Why it is fine |
+| Package | License | Why it is fine |
 |---|---|---|
 | `soxr` | **LGPL-2.1-or-later** | The only copyleft dependency, and a direct one: it is the resampler, and it is native code. Keryx imports it as an ordinary installed library — nothing is vendored, nothing is statically linked, and no combined binary is distributed — so the LGPL's relink condition is satisfied by pip being able to replace it. Do not vendor it into a bundle without revisiting this. |
 | `certifi` | MPL-2.0 | Weak, file-level copyleft on an unmodified dependency. Nothing here modifies it. |
