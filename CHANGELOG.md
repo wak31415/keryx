@@ -1,8 +1,8 @@
 # Changelog
 
 Notable changes, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and versions follow [semantic versioning](https://semver.org/) over the CLI and `.env`
-surface — a removed or renamed setting or command is a major bump.
+and versions follow [semantic versioning](https://semver.org/) over the command line and the
+settings: a removed or renamed setting or command is a major bump.
 
 ## [Unreleased]
 
