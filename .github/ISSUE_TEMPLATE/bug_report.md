@@ -12,7 +12,7 @@ labels: bug
 
 **Reproducing it**
 
-<!-- The smallest sequence that shows it. `uv run keryx serve --fake-agents` costs no
+<!-- The smallest sequence that shows it. `uv run keryx serve --demo` spends no agent
 tokens and reproduces most things that are not provider-specific. -->
 
 **`keryx doctor`**

@@ -22,10 +22,11 @@ reads your own configuration or data — each test has its own `HOME`, XDG direc
 checkout takes part — and never reaches the network: see the fixtures in
 `tests/conftest.py`, and do not weaken them.
 
-To run the thing itself without spending Claude tokens:
+To run the thing itself without spending agent tokens (every task comes back with a
+sample answer):
 
 ```bash
-uv run keryx serve --fake-agents
+uv run keryx serve --demo
 uv run keryx loopback --wav sample.wav --out reply.wav
 ```
 

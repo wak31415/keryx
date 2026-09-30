@@ -30,7 +30,7 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
   the browser landed on), `uv run keryx auth status [--json] [--smoke]`
-- Run the agent: `uv run keryx serve` (`--fake-agents` / `--host` / `--port`; a hidden
+- Run the agent: `uv run keryx serve` (`--demo` / `--host` / `--port`; a hidden
   `--no-wakeword` is accepted and ignored, for units installed before it left `main`); `scripts/dev.sh` adds the Cloudflare tunnel
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
   the kill switch); install the Claude hook with `scripts/install-claude-hook.sh`
@@ -215,7 +215,9 @@ other built-in persona, or any name of the owner's. Three rulings:
   other's command must stay the service), and `serve` sets both. `JARVIS_PIN` and
   `JARVIS_CHECKOUT` are read under the new names, a `.jarvis-brief.md` still describes a
   project without a `.keryx-brief.md`, and a `jarvis` command says to run `keryx migrate`. A
-  `JARVIS_HOME` is never followed: `serve` refuses until it is renamed.
+  `JARVIS_HOME` is never followed: `serve` refuses until it is renamed. The same holds for a setting renamed later:
+  its old name is an alias (`FAKE_AGENTS` → `DEMO_MODE`), `canonical_key` turns it into the
+  current one wherever a rule is asked, and nothing is ever stored under it.
 
 ## Trust has three levels
 

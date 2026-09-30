@@ -11,6 +11,8 @@ from keryx.config.permissions import (
     service_writable,
     writable_keys,
 )
+from keryx.config.settings import canonical_key
+from keryx.config.store import ConfigError, ConfigStore
 
 KEYS = [env_var_name(name) for name in Settings.model_fields]
 
@@ -64,7 +66,7 @@ def test_nothing_protected_defaults_to_writable():
         "SLACK_BOT_TOKEN",
         "OPENAI_ADMIN_KEY",
         "DEBUG_SKIP_TWILIO_VALIDATION",
-        "FAKE_AGENTS",
+        "DEMO_MODE",
         "TWILIO_AUTH_TOKEN",
     ],
 )
@@ -117,3 +119,25 @@ def test_a_subagent_of_the_old_service_is_still_the_service(monkeypatch):
     monkeypatch.setenv("JARVIS_ACTOR", "service")
 
     assert current_actor() == "service"
+
+
+@pytest.mark.parametrize("old", ["FAKE_AGENTS", "JARVIS_CHECKOUT", "JARVIS_PIN"])
+def test_an_old_name_is_protected_exactly_as_the_current_one(old):
+    """A setting's rules are the same whatever name it is asked for by."""
+    new = canonical_key(old)
+    overrides = {old: True, new: True}
+    assert is_protected(old) == is_protected(new)
+    assert service_writable(old, overrides) == service_writable(new, overrides)
+    assert is_protected("FAKE_AGENTS") and is_protected("JARVIS_PIN")
+
+
+def test_an_old_name_cannot_be_unlocked_or_written_by_the_service():
+    store = ConfigStore()
+
+    with pytest.raises(ConfigError, match="DEMO_MODE is protected"):
+        store.unlock("fake_agents")
+    with pytest.raises(ConfigError):
+        store.set({"FAKE_AGENTS": "true"}, actor="service")
+
+    store.set({"FAKE_AGENTS": "true"})  # the owner may, and it is stored under the new name
+    assert store.stored() == {"DEMO_MODE": True}

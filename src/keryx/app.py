@@ -95,7 +95,7 @@ def build_app_state(settings: Settings) -> AppState:
     bus = EventBus()
     store = TaskStore(settings.data_dir / TASK_DB_NAME)
     # One runner per enabled coding agent behind a router, or the scripted one behind
-    # `--fake-agents`.
+    # `--demo`.
     manager = TaskManager(store, build_agent_runner(settings), bus, settings)
 
     registry = ToolRegistry()

@@ -17,7 +17,7 @@ version, because Keryx reads its messages field by field.
 |---|---|
 | `uv sync` (in a clone) | both agents — the default `agents` group is `keryx[all]` |
 | `uv sync --no-group agents --extra codex` | Codex only (`--extra claude`: Claude only) |
-| `uv sync --no-group agents` | neither: `--fake-agents` only |
+| `uv sync --no-group agents` | neither: `keryx serve --demo` only |
 | `uv sync --extra codex` | both still: the default group comes along |
 | `pip install '.[all]'`, `'.[codex]'`, `'.[claude]'` | what it names; plain `pip install .` installs neither |
 
@@ -29,7 +29,8 @@ the service units run `uv run`, and would otherwise put every agent back.
 
 An agent that is not installed says so in `doctor` and `keryx setup`, with the command that
 installs it; it is never offered to the voice model; and `keryx serve` refuses to start with
-it as `AGENT_BACKEND`. `--fake-agents` needs neither.
+it as `AGENT_BACKEND`. `keryx serve --demo`, which answers every task with a sample reply,
+needs neither.
 
 `AGENT_BACKEND` picks the one that does the work when you do not say, and `AGENTS_ENABLED`
 lists every one a task may be sent to. With more than one enabled and signed in, you can
@@ -106,7 +107,7 @@ checked is marked, and listed under "possible".
 | Its own instructions file | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` |
 | Its own skills, listed to the voice model | `SKILLS_DIR` | `~/.codex/skills` |
 | Nothing to install beyond `uv sync` (extra `claude` / `codex`) | ✅ | ✅ bundled CLI (~350 MB) |
-| `doctor`, `keryx setup`, `keryx auth`, `--fake-agents` | ✅ | ✅ |
+| `doctor`, `keryx setup`, `keryx auth`, `--demo` | ✅ | ✅ |
 | Approval bridge for your on-screen sessions | ✅ | — |
 <!-- agents:end -->
 

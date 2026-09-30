@@ -112,7 +112,7 @@ async def test_shutting_down_takes_the_notifier_off_the_bus(state):
 
 async def test_the_real_agent_runner_is_used_unless_fakes_are_asked_for(settings):
     real = build_app_state(settings)
-    fake = build_app_state(settings.model_copy(update={"fake_agents": True}))
+    fake = build_app_state(settings.model_copy(update={"demo_mode": True}))
 
     assert isinstance(real.manager._runner, RoutingAgentRunner)
     assert isinstance(real.manager._runner.runners["claude"], ClaudeAgentRunner)

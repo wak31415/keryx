@@ -24,6 +24,7 @@ from keryx.config import (
     secure_file,
 )
 from keryx.config.files import config_file, dump_toml, write_private
+from keryx.config.store import ConfigStore
 
 
 def test_allowed_callers_parses_comma_separated_env(monkeypatch, tmp_path):
@@ -82,8 +83,8 @@ def test_a_default_agent_that_is_not_installed_is_refused_in_one_line(
     assert refusal == (
         f"AGENT_BACKEND is {agent}, which is not installed — uv sync --extra {agent}"
     )
-    settings.fake_agents = True
-    assert settings.agent_refusal() is None  # --fake-agents runs no real agent
+    settings.demo_mode = True
+    assert settings.agent_refusal() is None  # --demo runs no real agent
 
 
 def test_the_enabled_agents_put_the_default_first_and_say_each_once(
@@ -327,7 +328,7 @@ def test_defaults_match_spec_table():
     assert settings.max_phone_sessions == 2
     assert settings.log_level == "INFO"
     assert settings.debug_skip_twilio_validation is False
-    assert settings.fake_agents is False
+    assert settings.demo_mode is False
     assert settings.slack_bot_token is None
 
 
@@ -370,14 +371,39 @@ def test_skipping_signatures_behind_a_public_host_is_refused(tmp_path):
     assert "\n" not in refusal
 
 
-def test_fake_agents_env(monkeypatch, tmp_path):
+@pytest.mark.parametrize("name", ["DEMO_MODE", "FAKE_AGENTS"])  # the old name, for a release
+def test_demo_mode_env(monkeypatch, tmp_path, name):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("FAKE_AGENTS", "true")
+    monkeypatch.setenv(name, "true")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "keryx"))
 
     settings = Settings(_env_file=None)
 
-    assert settings.fake_agents is True
+    assert settings.demo_mode is True
+
+
+def test_an_old_name_in_the_config_file_is_read_and_the_new_one_wins(tmp_path):
+    store = ConfigStore()
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text('FAKE_AGENTS = true\nJARVIS_CHECKOUT = "/srv/old"\n')
+
+    settings = Settings(_env_file=None, openai_api_key="x")
+    assert (settings.demo_mode, settings.keryx_checkout) == (True, Path("/srv/old"))
+
+    store.config_path.write_text(
+        'JARVIS_CHECKOUT = "/srv/old"\nKERYX_CHECKOUT = "/srv/new"\nFAKE_AGENTS = true\n'
+        "DEMO_MODE = false\n"
+    )
+    settings = Settings(_env_file=None, openai_api_key="x")
+    assert (settings.demo_mode, settings.keryx_checkout) == (False, Path("/srv/new"))
+
+
+def test_a_pin_in_the_config_file_is_no_pin_under_its_old_name_either(tmp_path):
+    store = ConfigStore()
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text('JARVIS_PIN = "482915"\nKERYX_PIN = "482915"\n')
+
+    assert Settings(_env_file=None, openai_api_key="x").pin is None
 
 
 # --- blank optional settings count as unset ----------------------------------

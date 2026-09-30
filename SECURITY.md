@@ -9,7 +9,7 @@ rather than an ordinary one.
 
 **The PIN defends against somebody on the phone, not against somebody on your machine.**
 Caller ID is spoofable: `ALLOWED_CALLERS` keeps strangers from reaching the voice model at
-all, but anyone who fakes an allowed number does reach it, and the source being public
+all, but anyone who spoofs an allowed number does reach it, and the source being public
 makes that cheap. So the allowlist is not authentication; the PIN is, and a phone-side
 spoofer is the whole of what it stands between you and.
 

@@ -160,4 +160,4 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 | Setting | Default | Service may change | What it is |
 |---|---|---|---|
 | `DEBUG_SKIP_TWILIO_VALIDATION` | `false` | never | Skip Twilio's request signatures, for a machine nothing outside can reach. `keryx serve` refuses the phone with it on behind a `PUBLIC_HOST`. |
-| `FAKE_AGENTS` | `false` | never | Run scripted subagents instead of real ones. |
+| `DEMO_MODE` | `false` | never | Try the phone before a coding agent is set up: calls, the PIN and call-backs are real, and every task comes back after a moment with a sample answer that says it was a demo. No agent runs and no agent tokens are spent. `keryx serve --demo` turns it on for one run. |

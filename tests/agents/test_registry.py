@@ -11,6 +11,8 @@ from keryx.agents.claude import ClaudeAgentRunner
 from keryx.agents.codex import CodexAgentRunner
 from keryx.agents.registry import (
     BACKENDS,
+    DEMO_DELAY_S,
+    DEMO_SUMMARY,
     agent_for_model,
     auth_status,
     build_agent_runner,
@@ -21,6 +23,7 @@ from keryx.agents.registry import (
     skill_dirs,
 )
 from keryx.agents.router import RoutingAgentRunner
+from keryx.tasks.models import Task, TaskKind
 
 
 @pytest.mark.parametrize(
@@ -52,10 +55,26 @@ def test_serve_gets_one_runner_per_enabled_agent_behind_the_router(settings):
     assert isinstance(runner.runners["claude"], ClaudeAgentRunner)
 
 
-def test_fake_agents_is_the_whole_runner(settings):
-    settings.fake_agents = True
+def test_the_demo_is_the_whole_runner(settings):
+    settings.demo_mode = True
 
-    assert isinstance(build_agent_runner(settings), FakeAgentRunner)
+    runner = build_agent_runner(settings)
+
+    assert isinstance(runner, FakeAgentRunner)
+    assert runner.delay_s == DEMO_DELAY_S > 0  # time to hang up and be rung back
+
+
+async def test_a_demo_task_says_it_was_a_demo_and_costs_nothing(settings):
+    """A demo that said the work was done would be believed."""
+    settings.demo_mode = True
+    task = Task(id=1, kind=TaskKind.AGENT, description="build me a tool")
+    runner = build_agent_runner(settings)
+    runner.delay_s = 0
+
+    result = await (await runner.open(task)).run(task.description, on_progress=print)
+
+    assert result.spoken_summary == DEMO_SUMMARY and "nothing was actually done" in DEMO_SUMMARY
+    assert result.cost_usd == 0
 
 
 def test_a_codex_alias_resolves_and_blank_is_codexs_own_default(settings):
@@ -137,9 +156,9 @@ def test_the_default_is_always_offered_and_the_rest_only_when_ready(
     assert offered_agents(settings) == ["claude", "codex"]
 
 
-def test_fake_agents_offers_every_enabled_agent(settings):
+def test_the_demo_offers_every_enabled_agent(settings):
     settings.agents_enabled = ["claude", "codex"]
-    settings.fake_agents = True
+    settings.demo_mode = True
 
     assert offered_agents(settings) == ["claude", "codex"]
 
@@ -190,9 +209,9 @@ def test_an_agent_that_is_not_installed_is_never_offered_not_even_as_the_default
     assert agent not in ready_backends(settings)
 
 
-def test_fake_agents_needs_neither_extra(settings, monkeypatch):
+def test_the_demo_needs_neither_extra(settings, monkeypatch):
     settings.agents_enabled = ["claude", "codex"]
-    settings.fake_agents = True
+    settings.demo_mode = True
     uninstall(monkeypatch, "claude", "codex")
 
     assert offered_agents(settings) == ["claude", "codex"]
