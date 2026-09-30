@@ -213,6 +213,22 @@ def _response_done(event: dict) -> ResponseDone:
     return ResponseDone(response_id=response.get("id", ""), status=response.get("status", ""))
 
 
+def _log_unfinished(response: dict) -> None:
+    """A response that did not complete, with the server's reason.
+
+    Cancelled is ordinary (the caller spoke over it) and goes to INFO; failed or incomplete
+    is the server's doing and goes to WARNING. Either way it is the line that explains a call
+    that went quiet: without it, a response that never produced a word leaves no trace.
+    """
+    status = response.get("status", "")
+    if status in ("completed", "in_progress", ""):
+        return
+    details = response.get("status_details") or {}
+    reason = details.get("reason") or (details.get("error") or {}).get("message") or ""
+    level = logging.INFO if status == "cancelled" else logging.WARNING
+    logger.log(level, "response %s %s: %s", response.get("id", ""), status, reason or "no reason")
+
+
 def _function_call(event: dict) -> FunctionCall:
     raw = event.get("arguments") or "{}"
     try:
@@ -412,6 +428,7 @@ class OpenAIRealtimeClient:
             # says nothing about the fate of a `response.create` still awaiting an error.
             self._active_response = True
         elif event_type == "response.done":
+            _log_unfinished(event.get("response") or {})
             await self._on_response_finished()
         elif event_type == "error":
             await self._on_error(event)
