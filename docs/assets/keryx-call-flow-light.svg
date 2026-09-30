@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1360" height="1800" viewBox="0 0 1360 1800" role="img" aria-labelledby="title description">
 <title id="title">One task across three phone calls</title>
-<desc id="description">A five-lane sequence diagram. You call Lyra and start a coding-agent task, then hang up. The agent asks which validation split to use; Lyra calls back, relays your answer to the same task, and you hang up again. The agent runs training on a compute cluster. Lyra calls with a short result summary and texts the written report. A result is marked reported only after it is spoken.</desc>
+<desc id="description">A five-lane sequence diagram. You call your number, which Keryx answers, and ask Lyra, its assistant, to start a coding-agent task; then you hang up. The agent asks which validation split to use; Keryx calls you back, Lyra asks, and your answer goes to the same task. The agent runs training on a compute cluster. Keryx calls again, Lyra gives a short result summary, and the written report is texted. A result is marked reported only after it is spoken.</desc>
 <style>
   text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; }
   .title { font-size: 34px; font-weight: 730; fill: #1f2937; }
@@ -28,7 +28,8 @@
 <text class="header-text" x="395" y="146" text-anchor="middle">Twilio</text>
 <line class="lifeline" x1="395" y1="164" x2="395" y2="1726"/>
 <rect class="header-box" x="577" y="112" width="206" height="52" rx="6"/>
-<text class="header-text" x="680" y="146" text-anchor="middle">Lyra</text>
+<text class="header-text" x="680" y="136" text-anchor="middle">Keryx</text>
+<text class="msg-detail" x="680" y="156" text-anchor="middle">assistant: Lyra</text>
 <line class="lifeline" x1="680" y1="164" x2="680" y2="1726"/>
 <rect class="header-box" x="862" y="112" width="206" height="52" rx="6"/>
 <text class="header-text" x="965" y="146" text-anchor="middle">Coding agent</text>
@@ -40,7 +41,7 @@
 <text class="phase" x="680" y="207" text-anchor="middle">CALL 1 · START THE TASK</text>
 <line class="message" x1="120" y1="275" x2="384" y2="275"/>
 <polygon class="arrowhead" points="395,275 383,268 383,282"/>
-<text class="msg-label" x="257" y="235" text-anchor="middle">Dial Lyra</text>
+<text class="msg-label" x="257" y="235" text-anchor="middle">Call your number</text>
 <text class="msg-detail" x="257" y="256" text-anchor="middle">phone or calling watch</text>
 <line class="message" x1="395" y1="337" x2="669" y2="337"/>
 <polygon class="arrowhead" points="680,337 668,330 668,344"/>
@@ -125,5 +126,5 @@
 <text class="msg-label" x="790" y="1689">Mark reported</text>
 <text class="msg-detail" x="790" y="1712">only after spoken</text>
 <rect class="note" x="178" y="1738" width="1004" height="47" rx="7"/>
-<text class="note-text" x="680" y="1768" text-anchor="middle">Already on a call? Lyra speaks there. Otherwise, the result waits in your next-call digest.</text>
+<text class="note-text" x="680" y="1768" text-anchor="middle">Already on a call? Lyra tells you there. Otherwise, the result waits in your next-call digest.</text>
 </svg>

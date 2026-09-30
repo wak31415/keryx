@@ -17,13 +17,16 @@ Start hours of work in a short call. Ask Lyra to research a question, change cod
 an experiment, then hang up. It keeps working, lets you check in or add instructions later,
 and can call you back or text you the report when it's done.
 
-Keryx is the service; Lyra is the assistant it puts on the line. Call it Jarvis instead, or
-any name you like (`keryx config set ASSISTANT_NAME …`): Lyra and Jarvis each have a voice
-of their own. Keryx uses the OpenAI Realtime API for conversation and coding agents on your
-machine for the work. Call it from a phone or a watch that can place calls.
+Two names, two layers. **Keryx** is the service: it answers the phone, hands the work to
+coding agents on your machine, and calls you back. **Lyra** is the assistant you talk to on
+the line, and you can give it any name you like (`keryx config set ASSISTANT_NAME …`). The
+conversation runs on the OpenAI Realtime API. Call from a phone, or from a watch that can
+place calls.
 
 <p align="center">
-  <img src="docs/assets/keryx-incoming-call.jpg" width="480" alt="A Garmin watch showing an incoming call from the assistant.">
+  <img src="docs/assets/keryx-incoming-call.jpg" width="480" alt="A Garmin watch showing an incoming call from an assistant named Jarvis.">
+  <br>
+  <em>Keryx ringing my watch with a result. I named my assistant Jarvis; out of the box it is Lyra.</em>
 </p>
 
 ## What Keryx adds
@@ -60,8 +63,8 @@ For example:
 
 ## A short call, a long task
 
-This example shows a task continuing across calls: Lyra asks one question, then calls
-again with the training results.
+This example shows a task continuing across calls: Keryx calls back once so Lyra can ask
+one question, and again with the training results.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/keryx-call-flow-dark.svg">
