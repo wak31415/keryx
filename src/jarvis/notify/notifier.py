@@ -62,18 +62,20 @@ FAILED_TEXT = "Task {task_id} failed: {detail}"
 DONE_CONTEXT = (
     "You are calling the user back about task {task_id}, which they asked you for earlier "
     "on the phone and which has now finished. What they asked for: {request}. "
-    "Result: {detail}.{history} Greet them, say in a sentence or two what this is about and "
-    "what came of it, then ask if they need anything else. Say it once: no second greeting, "
-    "and do not put the same result again in other words. This is a new call: they may have "
-    "to give the PIN again before you can start more work."
+    "Result: {detail}.{history} In your first turn, greet them, say in a sentence or two what "
+    "this is about and what came of it, then ask if they need anything else — do not stop "
+    "after the greeting to wait for them: the result is why you rang. Say it once: no second "
+    "greeting, and do not put the same result again in other words. This is a new call: they "
+    "may have to give the PIN again before you can start more work."
 )
 FAILED_CONTEXT = (
     "You are calling the user back about task {task_id}, which they asked you for earlier "
     "on the phone and which has failed. What they asked for: {request}. "
-    "Error: {detail}.{history} Greet them, say in a sentence or two what this is about and "
-    "what went wrong, then ask if they need anything else. Say it once: no second greeting, "
-    "and do not put the same explanation again in other words. This is a new call: they may "
-    "have to give the PIN again before you can start more work."
+    "Error: {detail}.{history} In your first turn, greet them, say in a sentence or two what "
+    "this is about and what went wrong, then ask if they need anything else — do not stop "
+    "after the greeting to wait for them: the failure is why you rang. Say it once: no second "
+    "greeting, and do not put the same explanation again in other words. This is a new call: "
+    "they may have to give the PIN again before you can start more work."
 )
 #: The note the earlier session left for this call, if it left one.
 NOTE_PREAMBLE = " Where you left off: {note}."

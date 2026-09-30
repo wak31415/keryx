@@ -14,7 +14,7 @@ import pytest
 from fakes import TIMEOUT, DrainingFakeTransport, FakeProvider, FakeTransport, eventually
 
 from jarvis.config import Settings
-from jarvis.continuity.briefing import Briefing
+from jarvis.continuity.briefing import OTHERS_NUDGE, Briefing
 from jarvis.events import EventBus, SessionEnded, SessionStarted
 from jarvis.realtime.base import (
     AudioDelta,
@@ -996,6 +996,40 @@ async def test_a_call_back_keeps_its_own_opening_context_and_gains_the_nudge(
     opening = provider.injected[0][0]
     assert opening.startswith("You are calling them back about task 41.")
     assert "2 tasks finished" in opening
+
+
+async def test_a_call_back_about_the_only_news_opens_with_its_context_alone(
+    make_session, phone, provider
+):
+    """The task it rang about is still unreported, so it is in the digest too — and a nudge
+    about it, "after your greeting", made the model greet, tease and wait (#63)."""
+    context = "You are calling them back about task 41."
+    briefer = FakeBriefer(Briefing(pending="- task 41", pending_count=1, task_ids=(41,)))
+    session = make_session(
+        phone, provider, briefer=briefer, opening_context=context, opening_task_id=41
+    )
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+    assert provider.injected[0][0] == context
+
+
+async def test_a_call_back_hears_of_the_other_news_after_its_own(make_session, phone, provider):
+    context = "You are calling them back about task 41."
+    briefing = Briefing(pending="- task 40\n- task 41", pending_count=2, task_ids=(40, 41))
+    session = make_session(
+        phone,
+        provider,
+        briefer=FakeBriefer(briefing),
+        opening_context=context,
+        opening_task_id=41,
+    )
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+    assert provider.injected[0][0] == context + OTHERS_NUDGE
 
 
 def test_the_prompt_is_told_the_agents_the_dispatch_tool_offers():

@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jarvis.continuity.briefing import Briefer, Briefing, format_digest
+from jarvis.continuity.briefing import OTHERS_NUDGE, Briefer, Briefing, format_digest
 from jarvis.continuity.memory import MAX_MEMORY_CHARS, memory_path, read_memory
 from jarvis.events import EventBus
 from jarvis.tasks.agent_runner import FakeAgentRunner
@@ -135,6 +135,43 @@ def test_the_nudge_after_the_pin_does_not_greet_them_a_second_time():
 
 def test_several_pending_tasks_are_plural():
     assert "3 tasks finished" in Briefing(pending="…", pending_count=3).opening_nudge()
+
+
+def test_the_opening_nudge_wants_the_news_in_the_greeting_turn():
+    """"After your greeting" was read as a turn boundary: greet, tease, wait (#63)."""
+    nudge = Briefing(pending="…", pending_count=1).opening_nudge()
+
+    assert "in the same turn as your greeting" in nudge
+    assert "after your greeting" not in nudge
+
+
+def test_a_call_back_whose_task_is_the_only_news_gets_no_nudge():
+    """The call's own context carries that task; a nudge would tell it a second time."""
+    briefing = Briefing(pending="- task 41", pending_count=1, task_ids=(41,))
+
+    assert briefing.opening_nudge(41) == ""
+
+
+def test_a_call_back_is_nudged_only_about_the_other_news():
+    briefing = Briefing(pending="- task 40\n- task 41", pending_count=2, task_ids=(40, 41))
+
+    nudge = briefing.opening_nudge(41)
+
+    assert nudge == OTHERS_NUDGE
+    assert "result above first" in nudge and "all in this first turn" in nudge
+
+
+def test_a_call_back_task_the_digest_left_out_still_leaves_others_to_tell():
+    """A full digest names the oldest; the call's own task, the newest, is past its end."""
+    briefing = Briefing(pending="- task 1\n- task 2", pending_count=3, task_ids=(1, 2))
+
+    assert briefing.opening_nudge(41) == OTHERS_NUDGE
+
+
+def test_a_call_back_about_a_task_already_told_still_hears_of_the_rest():
+    briefing = Briefing(pending="- task 40", pending_count=1, task_ids=(40,))
+
+    assert briefing.opening_nudge(41) == OTHERS_NUDGE
 
 
 # --- Briefer ---------------------------------------------------------------
