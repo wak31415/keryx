@@ -23,7 +23,7 @@ place calls.
 > Keryx is pre-1.0. It's self-hosted: it runs on your own machine with your own API keys.
 > While it only answers calls from your own numbers, and asks for your PIN before
 > it does anything on your behalf in case someone spoofs one of them, please review
-> [SECURITY.md](SECURITY.md) for details on how safe it is to run.
+> [SECURITY.md](SECURITY.md) before deploying it.
 
 <p align="center">
   <img src="docs/assets/keryx-incoming-call.jpg" width="480" alt="A Garmin watch showing an incoming call from Lyra.">
