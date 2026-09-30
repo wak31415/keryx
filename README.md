@@ -66,12 +66,10 @@ API alone and with ChatGPT Voice, as of September 2026:
 
 ## System overview
 
-Keryx has two layers, with a name for each:
-
-- **Keryx** is the service. It answers the phone, hands work to a coding agent on your
-  machine, and calls you back.
-- **Lyra** is the assistant you talk to on the line. You can give it any name you like with
-  `keryx config set ASSISTANT_NAME …`.
+*Keryx* (κῆρυξ) is Ancient Greek for a herald: a messenger who carries word back and forth.
+That's the job here. Keryx answers the phone, hands your request to a coding agent on your
+machine, and calls you back with the result. The messenger you talk to on the line is
+called Lyra by default, and you can rename it with `keryx config set ASSISTANT_NAME …`.
 
 The conversation runs on the OpenAI Realtime API. Lyra answers small questions itself.
 Anything larger becomes a task for a coding agent, which keeps running after you hang up.
