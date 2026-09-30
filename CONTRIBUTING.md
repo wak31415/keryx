@@ -77,8 +77,7 @@ The README, the wiki, `docs/`, and `SECURITY.md` follow one house style, taken f
   reader types it or sees it.
 - **Sentence-case headings**, the serial comma, and link text that says where it goes (never
   "here" or "below").
-- **Document the present.** Upgrade steps go in the CHANGELOG and the wiki's Upgrading page,
-  not in how-to pages.
+- **Document the present.** Upgrade steps go in the CHANGELOG, not in how-to pages.
 
 The voice model's own wording (prompts, tool descriptions, the `*_MESSAGE` constants) has
 rules of its own in `CLAUDE.md`; this section is about docs people read.

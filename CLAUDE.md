@@ -588,7 +588,9 @@ subagent may read (`Settings.checkout` — `KERYX_CHECKOUT`, else the checkout t
 from — its logs, and the call it came from), and `prompts/subagent_issues.md` points every
 subagent at `skills/keryx-report-issue`, read from that checkout. The voice prompt's
 paragraph names feature requests as well as bugs, because a model left to itself files the
-bug and hears the wish as chat. Four rulings:
+bug and hears the wish as chat. It also says most wishes are better built now, as a tool of
+the owner's own, and has the voice ask once when the owner's words don't say which they
+want: only they know whether they meant "build it" or "pass it on". Four rulings:
 
 - **Off until the owner turns it on by hand**, because it publishes. `ISSUE_*` is in
   `PROTECTED_KEYS`: neither the service nor a subagent may set `ISSUE_REPORTING` or
