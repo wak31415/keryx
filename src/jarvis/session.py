@@ -602,9 +602,12 @@ class VoiceSession:
 
         The nudge rides on the opening message rather than on the system prompt alone
         because a realtime model leads with what it was just handed far more reliably
-        than with a section it has to go looking for.
+        than with a section it has to go looking for. On a call Jarvis placed about a task,
+        that task is the opening context itself, and the nudge is about the others only.
         """
-        return (self._opening_context or OPENING_MESSAGE) + self._briefing.opening_nudge()
+        if self._opening_context is None:
+            return OPENING_MESSAGE + self._briefing.opening_nudge()
+        return self._opening_context + self._briefing.opening_nudge(self.opening_task_id)
 
     def _build_config(self) -> SessionConfig:
         """The provider session: transport's audio format, our prompt, our tools."""

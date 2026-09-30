@@ -474,6 +474,22 @@ async def test_a_failed_task_is_called_back_too(harness):
     assert "Error: the build never went green." in context
 
 
+@pytest.mark.parametrize("failed", [False, True])
+async def test_a_call_back_gives_its_news_in_the_first_turn(harness, failed):
+    """Told only to greet and then say it, a model greets, promises news and waits (#63)."""
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    if failed:
+        await harness.failed(task, "it broke")
+    else:
+        await harness.finished(task, "it worked")
+
+    info = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
+    context = info.extra["opening_context"]
+    assert "In your first turn" in context
+    assert "do not stop after the greeting to wait for them" in context
+
+
 async def test_nobody_is_called_back_while_they_are_already_on_the_phone(harness):
     harness.session(channel="phone")
     task = await harness.task(callback_requested=True, callback_number=CALLER)
