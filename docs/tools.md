@@ -1,14 +1,8 @@
 # The tools the voice model can call
 
-Seventeen are built in, and they fall into two groups that you should treat very
-differently. Four more are **plugins** you turn on if you want them (below), and anything
-else is a tool of your own.
-
-**The core is the machinery of a call** — dispatching work, following it, and getting off
-the phone. It is the same for everybody and it is not where you should be making changes:
-several of these carry rulings that are easy to break by accident. `mark_reported` in
-particular is the only thing that records that a result was actually *said out loud*, and
-the digest at the top of your next call depends on it.
+Seventeen tools are built in. They're Keryx's own machinery for a call: dispatching work,
+following it, and getting off the phone. Four more are [plugins](#plugins) that you turn on
+if you want them, and anything else is [a tool of your own](#your-own-tools).
 
 <!-- tools:start -->
 | Core tool | What it does |
@@ -153,53 +147,13 @@ the whole contract: the file, the wording, credentials, and how to check it. In 
 - **`keryx tools`** lists what the directory holds and what the next call would refuse,
   and exits 1 while anything is refused.
 
-## Adding a built-in tool
+The wiki walks through two of the plugins end to end, and either makes a good model for a
+tool of your own:
+[`check_billing`](https://github.com/wak31415/keryx/wiki/Worked-Example-check_billing), which
+reads an API and changes nothing, and
+[`cluster_stats`](https://github.com/wak31415/keryx/wiki/Worked-Example-cluster_stats), which
+reaches outside the machine safely.
 
-A tool that belongs in Keryx for everyone — one you would send upstream — goes in the
-repository instead. Ask for it the same way, naming the project:
-
-> *"In the keryx project, add a built-in tool called `next_train` … Same shape as
-> `web_search`."*
-
-The subagent has the repository, the tests and this file, and
-`prompts/subagent_suffix.md` already tells it how work here is expected to end. A `.py`
-change needs a restart before the tool exists — say *"restart yourself"* when it is done
-and Keryx will ring you back once it is up.
-
-What it will do, and what to check if you are writing it by hand:
-
-1. **A new `src/keryx/tools/builtin_<domain>.py`**, exporting one `register_*` function.
-   The existing four are `builtin_comms`, `builtin_tasks`, `builtin_restart` and
-   `builtin_session`; `builtin_common` holds the wording, the argument parsing and the
-   gates. If the tool talks to something outside this machine, the *client* is a separate
-   module under `src/keryx/integrations/` and the `builtin_*` module only registers it.
-   A tool only some people want is a plugin instead (`src/keryx/plugins/`: a module, a
-   pair of templates and a row in `PLUGINS`).
-2. **One line in `src/keryx/tools/builtin.py`**, which is only a composition root. Where
-   you put that line matters: *the order it calls the register functions in is the order
-   the tools are offered to the model.*
-3. **A row in the table above.** `tests/test_docs_sync.py` compares the registrations
-   against this file and fails if they disagree, in either direction.
-4. **`pin_gate(ctx, settings)` first, unless the tool can neither change anything nor read
-   anything of yours.** Caller ID is spoofable, so before the PIN a phone caller gets
-   nothing private and leaves nothing behind. A tool that only reads a public number may
-   skip it — asking what a number is should not need a PIN — but it has to be added to
-   `UNGATED` in `tests/tools/test_builtin.py` on purpose, or the test that walks every tool
-   fails, and a tool that can run a command needs a better reason than convenience.
-5. **A fake behind a `Protocol`**, never the real service. Nothing in the test suite
-   touches the network or hardware; see `keryx/integrations/billing.py` for a small
-   example of the protocol-plus-fake shape and `tests/plugins/test_billing.py` for how it
-   is driven.
-6. **A description written to be *heard*.** The model reads it to decide when to reach for
-   the tool, so say when to use it and when not to. Look at how `check_billing`'s
-   description names the actual phrasings — "what am I spending", "what has Claude cost" —
-   rather than describing the API it calls.
-
-Two of the plugins are written up end to end as templates to work from:
-[`check_billing`](https://github.com/wak31415/keryx/wiki/Worked-Example-check_billing) for the read-only-API shape, and
-[`cluster_stats`](https://github.com/wak31415/keryx/wiki/Worked-Example-cluster_stats) for reaching outside the machine
-safely.
-
-Skills are the other half of this and often the better answer. Anything under `SKILLS_DIR`
-is listed in the voice prompt, so a subagent already knows what it is good at without you
-naming it — a new skill needs no code here at all, and no restart.
+Skills are often a better answer than a tool. Anything under `SKILLS_DIR` is listed in the
+voice prompt, so a subagent already knows what it's good at without you naming it. A new
+skill needs no code here at all, and no restart.
