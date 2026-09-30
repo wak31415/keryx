@@ -6,339 +6,55 @@ settings: a removed or renamed setting or command is a major bump.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-30
+
+The first public release. You call a phone number and talk to your voice assistant, Lyra
+by default. Keryx is the service behind it: it hands the work you ask for to a coding agent
+on your machine, keeps that work running after you hang up, remembers what happened between
+calls, and calls you when there's news.
+
 ### Added
 
-- **The assistant has a name of its own: Lyra, unless you choose another.** `ASSISTANT_NAME`
-  is what the voice on the phone is called and introduces itself as. Lyra (voice `marin`)
-  and Jarvis (voice `cedar`) are built in, each with its own voice, and any other name —
-  letters, spaces, apostrophes and hyphens — speaks in `OPENAI_VOICE`, or `marin`.
-  `OPENAI_VOICE` now defaults to empty, which means the assistant's own voice; a voice you
-  set still wins. `keryx setup` asks for the name in the owner section, and the service may
-  change it (`set_config`). **An upgraded install answers as Lyra**: `keryx config set
-  ASSISTANT_NAME Jarvis` keeps the old name and voice.
+- **A voice assistant you can call.** A Twilio number puts you through to an assistant that
+  runs on the OpenAI Realtime API. It's called Lyra unless you choose another name, and
+  Jarvis is a second built-in persona with its own voice. It answers small questions itself,
+  with a web search when it needs one.
+- **Tasks that keep running after you hang up.** Anything larger becomes a task for Claude
+  Code or Codex, in the project you name. In a later call, you can ask how a task is going,
+  add instructions, or cancel it. If both agents are set up, you can say which one to use.
+- **Call-backs.** When a task finishes, or needs a decision from you, Keryx calls you and the
+  assistant tells you the result. If your Twilio account can send SMS, you can turn on texts
+  with a link to the written report. Texting is off by default.
+- **Continuity between calls.** Each call starts with the results you haven't heard yet and
+  what the assistant remembers about you. Keryx updates that memory after every call in
+  which you gave the PIN. With the PIN, you can also ask about anything said in an earlier
+  call. Your first call is a short introduction, so the assistant can learn what you work on
+  and how you like to be answered.
+- **Security for a phone line.** Keryx answers only your own numbers. A PIN of six to eight
+  digits guards everything that acts on your behalf, and wrong guesses count across calls
+  toward a lockout. You can set the PIN on the keypad during your first call. A call that
+  Keryx places to your own phone can answer the question it's calling about without the
+  PIN. [SECURITY.md](SECURITY.md) has the threat model.
+- **The approval bridge.** If a Claude Code session on your screen stops to ask for
+  permission and you don't answer within five minutes, Keryx calls you, and you answer on
+  the keypad. Only routine, reversible commands can be approved by phone.
+- **Keryx can grow during a call.** Ask for a new voice command, and a coding agent writes it
+  as a tool of your own, ready on the next call without a restart. A change to Keryx itself
+  ends with a restart and a call to confirm that the new code is running. If it doesn't
+  start, a watchdog calls you with a plain alert.
+- **Plugins.** Slack, email, billing, and Slurm cluster status are optional voice tools
+  that you turn on in `keryx setup` or with `keryx plugins install`.
+- **Bug reports and feature requests by voice.** If you turn it on, "that's a bug, report
+  it" files a GitHub issue on Keryx's repository with nothing personal in it. It's off by
+  default, and only you can turn it on.
+- **Setup and upkeep from the command line.** `keryx setup` is a wizard that asks only for
+  what's still missing, and `keryx doctor` checks the whole setup. `keryx config`,
+  `keryx auth`, and `keryx tasks` cover settings, sign-ins, and what each task did and cost.
+  `keryx forget` and two retention settings delete old transcripts and tasks.
+- **A demo mode.** `keryx serve --demo` lets you try the phone before a coding agent is set
+  up. Every task comes back with a sample answer, and no agent tokens are spent.
+- **Linux and macOS.** Keryx runs as a systemd or launchd service, keeps its files in the
+  standard XDG directories, and stores secrets in files only you can read.
 
-- **Bug reports and feature requests for Jarvis, by saying so.** "That's a bug, report it"
-  or "suggest that Jarvis should be able to…" is dispatched like any other work, and the
-  subagent files it as an issue on Jarvis's repository with `gh`, following the new
-  `skills/jarvis-report-issue` skill: about ten tool calls of looking (the logs, the call it
-  came from, a grep of the code), no tests run and nothing fixed or built, the repository's
-  own issue templates, and nothing of yours in it — no numbers, names, quotes or project
-  details. A security problem is never filed in public, and one already filed is not filed
-  twice. Off until you turn it on, and only you can — Jarvis and its subagents can never
-  set `ISSUE_REPORTING` or `ISSUE_REPO`: `jarvis setup` has an Issue reports section that asks,
-  checks that `gh` is signed in and offers `gh auth login`, and `jarvis doctor` checks it
-  too. `ISSUE_REPORTING` turns it on, `ISSUE_REPO` says where (the upstream repository by
-  default), and `JARVIS_CHECKOUT` says where the code is when Jarvis does not run from a
-  checkout of its own.
-- **Plugins: the optional voice tools, on only when you want them.** `send_to_slack`,
-  `check_email`, `check_billing` and `cluster_stats` are no longer registered from Jarvis's
-  own source. Each is two files in `~/.local/share/jarvis/tools/` — a one-line `.py` that
-  calls into Jarvis, and a commented `.toml` of its settings — turned on with `jarvis setup`
-  → Plugins (Slack and email ticked the first time) or `jarvis plugins install NAME`, off
-  with `jarvis plugins remove NAME`, and changed without a restart. `jarvis plugins` lists
-  them and why one is refused; `jarvis doctor` has one check each.
-- **`cluster_stats` for anyone with an ssh ControlMaster.** A built-in guard (`ssh -O
-  check`, then a `BatchMode` read over the live master) replaces the guard script you had to
-  write; `jarvis plugins hosts` and the wizard read `~/.ssh/config`, offer only hosts with a
-  ControlMaster, and list each one's Slurm partitions. A guard of your own is still
-  accepted (`guard` in `cluster_stats.toml`).
-- **Your own voice tools.** A Python file in `~/.local/share/jarvis/tools/` defines a tool
-  the voice model can call, with `@custom_tool` from `jarvis.tools.custom`; each call reads
-  the directory afresh, so a new one needs no restart, and none of it lives in the
-  repository. Ask for one out loud and the subagent writes it, following the new
-  `skills/jarvis-custom-tools` skill. Each tool is behind the PIN unless it says `needs_pin=False`,
-  cannot take a built-in's name, and is refused if anyone but you could write it.
-  `jarvis tools` lists them and what the next call would refuse.
-- **`jarvis migrate`** moves an install from `~/.jarvis`, and a `.env` or `.secrets/` in the
-  checkout, to the XDG directories. `--dry-run` prints the plan, and a conflict stops it
-  before anything is touched. It stops the service while it moves things, rewrites the
-  paths `tasks.db` holds, imports the `.env`, re-renders the service and the approval hook,
-  and starts the service again. Nothing is deleted: the old directory is renamed
-  `~/.jarvis.migrated-<date>`. It can be run twice. Claude tasks that ran in the old
-  workspace lose their session, and a follow-up starts afresh; the migration lists them.
-- **`STATE_DIR`** (`~/.local/state/jarvis`): the logs, the restart record and stamps, and the
-  approval bridge's socket and markers. **`CACHE_DIR`** (`~/.cache/jarvis`): the wake-word
-  models, which `jarvis download-models` now fetches there instead of into the installed
-  package. Neither may be changed by the running service.
-- `jarvis config path` names the data, state and cache directories, and `--shell` prints
-  them for a script to eval.
-- **`jarvis setup`**, a wizard that asks only for what is still missing and saves as it
-  goes: the voice key (checked with OpenAI), the coding agents and their sign-ins (never
-  asked of an agent that can already run), your name, numbers and PIN, then — each optional —
-  Twilio (numbers listed from your account; the webhooks set only after you say yes),
-  Google, the plugins (Slack, email, billing, cluster stats), a first memory, project summaries a coding agent drafts for you to
-  accept, and the background service. `--all` reviews everything.
-- **A configuration store.** Settings live in `~/.jarvis/config.toml` and every secret in a
-  0600 `secrets.toml`; `jarvis config list|get|set|unset|path|import-env|lock|unlock` reads
-  and changes them, and a secret is only ever taken from `--stdin` or `--from-env`.
-  `docs/configuration.md` describes every setting, generated from the code.
-- **`jarvis auth login claude|codex|gmail|google-workspace`** and `jarvis auth status`: every
-  sign-in in one place. `--client-file` takes the Google client JSON the console downloads.
-- **`jarvis setup --agent-instructions`**: how a coding agent sets Jarvis up from the command
-  line; `skills/jarvis-setup` is the same as a Claude Code skill.
-- **`set_config`**: ask Jarvis on a call to change its own voice, turn-taking or model. It
-  may change only what the running service is allowed to; credentials, the PIN, who may call
-  and every other line of defence are protected and cannot be unlocked.
-- `jarvis doctor --json` and `--fix` (tightens loose secret files), and checks that secrets
-  are private, outside git, not in `config.toml`, and that the Twilio webhook points here.
-- `jarvis memory seed --file -` writes a first memory from standing facts.
-
-- **`jarvis init`** starts the memory before the first call: it asks what Jarvis should call
-  you and a few things it should know, shows the `memory.md` it will write (owner-only), and
-  reports what every call will carry to the realtime provider — memory, project briefs,
-  skills. It never edits `.env`; it prints the `OWNER_NAME=` line to add. The README has a
-  new "Teaching Jarvis about you" section.
-- **`OWNER_NAME`**: whom Jarvis works for, in the voice prompt, the subagent prompt, the
-  memory's title and the Slack tool. Blank means "the owner".
-- **Wrong PINs count across calls.** `PIN_FAILURE_LIMIT` (10) inside
-  `PIN_FAILURE_WINDOW_HOURS` (24) locks PIN entry on every call for `PIN_LOCKOUT_MINUTES`
-  (60), survives a restart, and tells you once; `MAX_PHONE_SESSIONS` (2) caps phone calls
-  open at once. SECURITY.md explains the price: a caller who can spoof your number can keep
-  your PIN locked.
-- `jarvis --version`, and five soft `jarvis doctor` checks: owner name, memory seeded,
-  projects root, and whether `cluster_stats` and `send_to_slack` are offered and why not.
-- A licence (Apache-2.0), CI on Linux and macOS, `SECURITY.md`, `CONTRIBUTING.md`, a code
-  of conduct, issue and pull-request templates, and Dependabot.
-- `jarvis doctor` reports whether `~/.jarvis` is readable by anyone else, which service
-  manager supervises the process (and what is unavailable when nothing does), and what is
-  wrong with a malformed `JARVIS_PIN`.
-- The README documents the approval bridge, what is stored on disk and what is sent to
-  which third party, and the single-owner assumptions the deployment rests on.
-- Test coverage is measured (94%) and CI fails below that floor.
-- Retention: `TRANSCRIPT_RETENTION_DAYS` and `TASK_RETENTION_DAYS` (both off by default)
-  prune at the top of `jarvis serve`, and `jarvis forget` does it on demand. A finished
-  task you have not been told about is never deleted.
-- **A get-to-know-you first call.** With nothing in `memory.md` yet, the first authorized
-  call opens as an introduction rather than an ordinary call: what Jarvis is, then what to
-  call you, what you work on, which projects matter, how you like to be answered and what
-  is worth ringing you about — a handful of questions, one a turn, and the shape of it said
-  back once at the end. Work always comes first, "not now" ends it for the rest of the
-  call, and it is never a condition of anything. The absence of the memory is the only
-  marker, so the call after it is ordinary again. It lives in `prompts/first_call.md` and
-  reloads without a restart.
-- **`jarvis init --json`** prints the same report as one document, for the agent you told
-  to set this up: the memory's size and the briefs' total against their caps, the projects
-  and which of them wrote a brief, the skills, whether `OWNER_NAME` is set, and the `.env`
-  line to add. It needs `--yes`, and the exit code is a contract — 0 written or nothing to
-  write, 1 a memory was wanted and not written, 2 a wrong command line.
-- **A `jarvis-onboard` Claude Code skill** (`skills/jarvis-onboard/`, copied or symlinked
-  into `~/.claude/skills/`): run once at the keyboard, it interviews you, drafts a
-  `.jarvis-brief.md` for the projects **you pick after seeing the list**, proposes additions
-  to `~/.claude/CLAUDE.md`, and pipes the agreed facts into `jarvis init --from - --yes`.
-  Nothing is scanned, written or sent without you seeing it first.
-- **A call Jarvis placed to your own number now counts for something.** Reaching
-  `OWNER_NUMBER` means holding that phone, and the outbound call's media stream already
-  carries a single-use token Jarvis minted, so such a call opens able to answer the
-  question Claude came back with (`send_followup`), arrange a call back on that same
-  number, mark a result as told, and answer a waiting approval on the keypad — without the
-  PIN. Starting work, `recall`, restarting and the memory still need it. Nothing else
-  confers this: not an allowed caller, not the `From` on an inbound call. Because voicemail
-  can answer a call, acting on anything you *say* takes one keypress first. If an approval
-  menu is open on such a call and you want the PIN, press `*` to give the keypad to the PIN
-  (`*` again gives it back to the menu); saying the digits works at any time.
-- **`BRIEFING_BEFORE_PIN`** (default `true`): an inbound call is handed its whole standing
-  briefing before the PIN — the results you have not been told about, what Jarvis remembers
-  about you, your project names, their briefs and your skills — and the four voice tools
-  that read the same material back (`list_tasks`, `get_task_status`, `get_task_result`,
-  `list_projects`) answer without it too. The trade-off is that a caller who spoofs one of
-  your `ALLOWED_CALLERS` hears it; `false` restores the old silence and puts those four
-  tools back behind the PIN with it.
-
-- **The first call can set the PIN.** `JARVIS_PIN` is set at the keyboard, and until it is
-  the phone is no use to you — the one setup step Jarvis cannot do for itself. So while
-  there is no PIN at all, the first call may key one in: six to eight digits and hash,
-  keyed a second time to confirm, written to `~/.jarvis/pin` (owner-only) and used from
-  then on, briefing and all. It is a one-way door, held shut by the kernel: the file is
-  created with `O_EXCL`, no tool or command anywhere can change an enrolled PIN, and only
-  you can — in `.env`, which always wins, or by deleting the file. A spoken PIN cannot
-  enrol one; the digits are keyed, checked twice and never reach the model, the transcript
-  or a log line. The risk you accept is that whoever calls first sets it: the window is a
-  few minutes long and closes on first use, and
-  [SECURITY.md](SECURITY.md#setting-the-first-pin-on-the-first-call) has it in full,
-  including what a subagent can still do to the file and what it cannot.
-- **`jarvis init` suggests a PIN**: a `JARVIS_PIN=` line with six cryptographically random
-  digits beside the `OWNER_NAME=` one, to paste or ignore — it still never edits `.env` and
-  never sets a PIN itself. `--json` gains a `pin` block saying whether one is set, where it
-  came from and where the file lives, and never the digits. `jarvis doctor` reports the same
-  four states, and tells you to copy an enrolled PIN into `.env` to make it permanent.
-
-### Changed
-
-- **`keryx serve --demo` replaces `--fake-agents`**, and `DEMO_MODE` replaces `FAKE_AGENTS`.
-  It is for trying the phone before a coding agent is set up: calls, the PIN and call-backs
-  are real, and every task comes back after twenty seconds with a sample answer that says it
-  was a demo — no agent runs, no agent tokens are spent. The old flag and setting still work
-  for one release. An old setting name is now also read from `config.toml`, and every rule
-  (protection, `config lock|unlock`, what the service may write) is asked of the current
-  name, so none can be passed by typing the old one.
-
-- **Breaking: the service is Keryx now, and `keryx migrate` moves an install over.** The
-  package, the command (`keryx`), the directories (`~/.config/keryx`,
-  `~/.local/share/keryx`, `~/.local/state/keryx`, `~/.cache/keryx`), the units
-  (`keryx.service`, `dev.keryx.agent`), the approval hook (`keryx_approval.py`), the log
-  names, the skills (`skills/keryx-*`), the environment variables (`KERYX_HOME`,
-  `KERYX_PIN`, `KERYX_ACTOR`, `KERYX_CHECKOUT`), the commit trailer (`Keryx-Task:`) and the
-  repository (`wak31415/keryx`) all carry the new name, and the distribution is `keryx-voice`.
-  `keryx serve` refuses to start until `keryx migrate` has run. The migration stops
-  `jarvis.service`, moves each old directory whole, rewrites the `jarvis` imports of the
-  tools in `~/.local/share/keryx/tools`, keeps the Cloudflare tunnel you have been running
-  (`CLOUDFLARE_TUNNEL=jarvis`), retires the old unit, installs `keryx.service` and the hook,
-  and starts it. For one release the old names are still read: `JARVIS_PIN`,
-  `JARVIS_CHECKOUT` and `JARVIS_ACTOR` (a subagent of either build stays the service), a
-  `.jarvis-brief.md`, and a `jarvis` command that says to run `keryx migrate`. A
-  `JARVIS_HOME` is not followed: rename it to `KERYX_HOME`. To find every commit made on
-  request: `git log -E --grep '^(Jarvis|Keryx)-Task:'`.
-
-- **Breaking: the four optional tools are plugins, and their settings moved into the
-  plugins' own files.** `CLUSTERS`, `CLUSTER_SSH_GUARD`, `CLUSTER_QUERY_TIMEOUT_S`,
-  `BILLING_PROVIDER`, `BILLING_MONTHLY_BUDGET`, `OPENAI_BILLING_PROJECT_ID`,
-  `OPENAI_BILLING_API_KEY_ID`, `ANTHROPIC_BILLING_WORKSPACE_ID`, `SLACK_CHANNEL_ID`,
-  `SLACK_MCP_SERVER`, `EMAIL_MODEL` and `EMAIL_EFFORT` are no longer settings: left in
-  `config.toml` they are ignored (`serve` logs one line, `doctor` names them), and until you
-  move them none of the four is offered — Slack stops receiving PIN-lockout alerts, and
-  subagents stop being told about the Slack server. Run `jarvis plugins install
-  --from-settings` (or `jarvis setup` → Plugins) once after upgrading, then restart.
-  `SLACK_BOT_TOKEN`, `OPENAI_ADMIN_KEY` and `ANTHROPIC_ADMIN_KEY` stay in `secrets.toml`.
-  The voice's `set_config` can no longer change the budget or the email model.
-- **Storage follows XDG, on Linux and macOS alike.** The configuration, the PIN and the
-  Google client file are in `~/.config/jarvis` (`JARVIS_HOME`), the data in
-  `~/.local/share/jarvis` (`DATA_DIR`), the state in `~/.local/state/jarvis` and the cache in
-  `~/.cache/jarvis`; each `XDG_*_HOME` is honoured. The PIN moved out of `DATA_DIR`, so
-  that where it is no longer depends on a setting. A relative `DATA_DIR` is refused. The
-  service units and the restart watchdog carry the resolved directories, the approval hook
-  is always told where the socket is (`JARVIS_STATE_DIR`), and `scripts/dev.sh` logs the
-  tunnel to `STATE_DIR/logs` rather than the checkout. `jarvis serve`, and every command
-  that reads the data, refuses to start until `jarvis migrate` has run on an older install.
-- **Before the PIN, the phone keeps nothing and changes nothing.** Caller ID is spoofable,
-  so an allowed number no longer earns the right to *do* anything. On the phone, dispatch,
-  `recall`, Slack, cancelling, restarting, arranging a call back and answering a pending
-  approval all ask for the PIN first; no memory update runs after such a call, so a call
-  that heard the memory read out still cannot rewrite it; and `recall` never searches its
-  transcript. A call that has proved nothing still never counts as having told you.
-- **The PIN is the line between reading and acting, not between private and not.** It
-  defends against somebody spoofing one of your `ALLOWED_CALLERS`; it is not a defence
-  against a compromised machine, which has `.env` and so has the PIN itself. Gating reads
-  bought nothing against that attacker and charged a keypad entry to every ordinary call,
-  so reads now happen before the PIN (`BRIEFING_BEFORE_PIN`, above). `recall` is the one
-  read that stays behind it: the briefing is a bounded page you can read with
-  `jarvis memory` and prune, where `recall` is an unbounded search of every call ever
-  recorded, steered by whoever is on the line.
-- **The approval bridge decides on exactly what will run.** The policy checks the raw
-  command before normalising it, refuses anything the hook had to trim or cannot read back
-  whole, matches `APPROVAL_BASH_ALLOW` word for word on the parsed argv (prefix entries
-  such as `make` now match only exactly), allows only plain forms of `git push` and
-  `git commit`, drops `pytest` from the defaults, and never lets a keypad approve a write
-  into `.git`, `.claude` or `.mcp.json`. **Re-run `scripts/install-claude-hook.sh`**: an
-  older installed hook makes every request ineligible.
-- **`cluster_stats` is a worked example you configure** (`CLUSTERS`, `CLUSTER_SSH_GUARD`,
-  both empty by default); the tool and its prompt paragraph appear only once both are set.
-  **Breaking** for an install that relied on the built-in clusters.
-- **The subagents' Slack MCP server is a setting** (`SLACK_MCP_SERVER`, empty by default).
-  **Breaking** for an install that relied on the built-in server name.
-- **`PROJECTS_ROOT` defaults to `~/projects`** and is never created; an unscoped task
-  without one runs in `data_dir/workspace`. Set it if yours lives elsewhere.
-- `SERVICE_MANAGER=auto` restarts through systemd or launchd only when this process runs
-  under that unit, so a hand-started `jarvis serve` refuses instead of restarting the
-  installed service. The installers render the installing shell's `PATH` and log under
-  `DATA_DIR`: re-run them.
-- The prompts, tool wording and docs say "the owner" and "they"; the prompt clock carries
-  the time zone; with texting off, the voice model promises a call rather than a text;
-  project briefs are capped at 6000 characters in total.
-- The coverage floor is 95%.
-- **Calls say a thing once.** Reviewing a week of transcripts turned up the same shape
-  everywhere: "let me set that up for you" followed by "all set", four spoken turns for
-  one PIN, a call-back that delivered its greeting twice. The voice prompt now forbids
-  announcing an action and then confirming it, names the tools too fast to be worth
-  announcing at all, and stops the model predicting the PIN or claiming to know what a
-  running task will come back with. `mark_reported` and `end_session` are registered
-  `silent=True`: their results no longer buy a spoken turn, which is what made a call-back
-  repeat its own greeting.
-- **The repository is now `jarvis-voice-agent`** (was `garmin-voice-agent`; GitHub
-  redirects the old URL). The package, the CLI and `~/.jarvis` are unchanged.
-- **`JARVIS_PIN` must be 6 to 8 digits.** `jarvis serve` refuses to start on anything else.
-  An existing install with a shorter PIN must change it before deploying this.
-- `~/.jarvis` and its subdirectories are created mode 0700, and transcripts, `tasks.db`,
-  task logs and reports mode 0600. An existing tree is tightened in place on the next start.
-- Every dependency now carries a version range instead of being unbounded.
-- **A follow-up question is rare now, not forbidden.** The voice prompt used to ban one
-  outright — "do not confirm first", "dispatch anyway", "the questions worth asking are the
-  ones Claude works out". Dispatch-first is still the default, but the rule is a threshold:
-  ask when the answer changes what actually happens and Claude could not work it out from
-  the machine itself, roughly one dispatch in ten.
-- **Trust on a call is three levels, not one bit.** `jarvis/trust.py` names them — nothing
-  proved, a phone Jarvis dialled, and the PIN — and the voice prompt says which one this
-  call is at and how to reach the next. Hearing a result announced mid-call no longer
-  counts as having told *you* unless the call proved at least that much, so the text and
-  the call-back still go out to a call that has not.
-
-- **Before a PIN exists at all, nothing of yours is read out.** `BRIEFING_BEFORE_PIN`
-  trades a read against a keypad entry, and that presumed there was an entry to make: on a
-  machine that had never had a PIN there is no authentication on the phone, so an allowed
-  caller heard the memory, the unheard results and your project names on every call, for
-  ever, with no way to gate it. The briefing is withheld and the four read-only voice tools
-  are refused until a PIN exists, whatever the setting says — which also makes `JARVIS_PIN`
-  optional in `.env.example` rather than required.
-
-### Removed
-
-- **A `.env` in the working directory is no longer read**, nor
-  `.secrets/client_secret.json`: a checkout is the one place a secret must never live.
-  `jarvis migrate` moves both into the store.
-- `jarvis init`, `setup-agent`, `setup-google` and `setup-gmail`: `jarvis setup`, `jarvis auth`
-  and `jarvis memory seed` do what they did. `.env.example` is gone; an existing `.env` is
-  still read below the store until `jarvis config import-env` moves it in.
-
-### Fixed
-
-- **A call-back gives its news without waiting to be asked, this time for real.** The model
-  almost always calls `mark_reported` straight after its first line ("Quick update…"), and
-  `mark_reported` was silent: no turn was asked for after it, so the call went quiet with
-  the news half told until the owner spoke, for 9–22 seconds on every call-back checked.
-  The fix of #64 changed wording, and wording was never what ended the turn. Now
-  `mark_reported` takes `still_to_say`, and the turn comes straight back while the result
-  is still to come; it stays silent once everything has been said. The voice prompt and the
-  tool description stopped telling the model to "stop talking" after calling it.
-
-- **The approval bridge rang about questions already answered at the keyboard** (#56). An
-  `AskUserQuestion` or `ExitPlanMode` answered on screen was never matched to its pending
-  request, because Claude Code hands both back to `PostToolUse` in a different shape
-  (answers added, or the plan emptied). The request stayed pending until Claude's turn
-  ended, so Jarvis rang five minutes in whenever Claude was still working. The
-  production log had 81 prompts and not one cleared this way. They now match on the part
-  of the input both events carry, settling a request cancels its escalation timer, and
-  pending is checked once more just before dialling. `jarvis approvals` prints how many
-  calls an earlier answer stopped, and the audit log gains `waited_s` and `escalation` on
-  `settled`, plus `resolve_unmatched` and `resolve_fallback` lines. It needs a restart and
-  no change to the installed hook.
-- A spoken PIN said the way people say one was refused. `submit_pin` compared the
-  model's argument to the PIN character for character, so the right PIN written down
-  grouped ("424-242", "424 242") or in words was refused, and each refusal counted against
-  the PIN lockout; the keypad, which only ever sends bare digits, was unaffected. Spaces,
-  dashes, commas, stops and digit words are now read back to the digits first
-  (`config.spoken_digits`), and an entry that is not six to eight digits even then — half a
-  PIN the line clipped, hash pressed too early on the keypad — is `incomplete`: not compared, and not
-  counted on the call or across calls, since it cannot be the PIN.
-- `jarvis doctor` died with a pydantic traceback when `JARVIS_PIN` was set to something
-  that is not 6–8 digits — the one state it exists to explain, since `jarvis serve` will
-  not load at all. The fallback it has for that matched the field name and never the
-  `JARVIS_PIN` the error actually carries.
-- `uv run jarvis serve` crashed on Linux unless given `--no-wakeword`; it now says the wake
-  word needs macOS and serves the phone channel.
-- A spoken PIN was written into call transcripts, where `recall` could read it back. It is
-  now `[PIN]` as each line is written, and redacted again whenever an older transcript is
-  read.
-- The memory writer ran after every call, including one that never gave the PIN.
-- Phone numbers reached the log in two more places (outbound call errors and the
-  transcript header).
-- `DEBUG_SKIP_TWILIO_VALIDATION` could run behind a public host; `serve` now refuses.
-- A subagent that read a large image lost its turn to the Agent SDK's 1 MiB line limit.
-- Read-only CLI commands printed the service's INFO log lines.
-- The sdist shipped whatever happened to be in the checkout; it now ships an explicit list.
-- Test fixtures and docs carried details of one person's install; they are synthetic now.
-- Tests could read a developer's real `.env`, which once printed a live admin key into
-  pytest output, and assumed the host they grew up on (systemd on `PATH`, no forced
-  colour, a short temp directory). The suite now passes on Linux and macOS alike.
-- `/openapi.json` was served through the public tunnel.
-- Caller phone numbers were written to the log in full.
-- The README listed 13 of the voice model's 19 tools, and the docs still described task
-  kinds (`coding`, `cowork`) that were removed in August 2026.
+[Unreleased]: https://github.com/wak31415/keryx/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/wak31415/keryx/releases/tag/v0.1.0
