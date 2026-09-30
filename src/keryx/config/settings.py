@@ -199,7 +199,12 @@ class _TomlLayer(PydanticBaseSettingsSource):
         return None, field_name, False  # pragma: no cover - `__call__` does the reading
 
     def __call__(self) -> dict[str, Any]:
-        fields = {env_var_name(name): name for name in self.settings_cls.model_fields}
+        # An older name (`FAKE_AGENTS`) is read too, and the current one wins over it.
+        fields = {
+            key: name
+            for name in self.settings_cls.model_fields
+            for key in reversed(env_var_names(name))
+        }
         values: dict[str, Any] = {}
         try:
             data = read_toml(self.path)
@@ -207,9 +212,14 @@ class _TomlLayer(PydanticBaseSettingsSource):
             if tolerate_broken_files.get():
                 return {}
             raise ConfigFileError(f"{self.path} does not parse ({error})") from None
-        for key, value in data.items():
+        current = sorted(data.items(), key=lambda item: item[0] in fields and (
+            item[0] == env_var_name(fields[item[0]])
+        ))
+        for key, value in current:
             name = fields.get(key)
-            if name is None or key in NOT_STORED or value == "":
+            # Checked by the current name: `JARVIS_PIN` in a file is no more a PIN than
+            # `KERYX_PIN` would be.
+            if name is None or env_var_name(name) in NOT_STORED or value == "":
                 continue
             values[name] = value
         return values
@@ -758,8 +768,15 @@ class Settings(BaseSettings):
         "`keryx serve` refuses the phone with it on behind a `PUBLIC_HOST`.",
         group="debug",
     )
-    fake_agents: bool = setting(
-        False, "Run scripted subagents instead of real ones.", group="debug"
+    demo_mode: bool = setting(
+        False,
+        "Try the phone before a coding agent is set up: calls, the PIN and call-backs are "
+        "real, and every task comes back after a moment with a sample answer that says it "
+        "was a demo. No agent runs and no agent tokens are spent. `keryx serve --demo` turns "
+        "it on for one run.",
+        group="debug",
+        # `FAKE_AGENTS` until 2026-09-29, still read for one release.
+        validation_alias=AliasChoices("DEMO_MODE", "FAKE_AGENTS"),
     )
 
     # --- validation ----------------------------------------------------------------------
@@ -1094,7 +1111,7 @@ class Settings(BaseSettings):
 
         A default that is not enabled is a contradiction: every task nobody named an agent
         for would be sent to one this process was told not to run. A default whose SDK (its
-        extra) is not installed could run nothing at all. `--fake-agents` runs no real agent,
+        extra) is not installed could run nothing at all. `--demo` runs no real agent,
         so it needs neither.
         """
         if self.agents_enabled and self.agent_backend not in self.agents_enabled:
@@ -1105,7 +1122,7 @@ class Settings(BaseSettings):
         # Imported here: the registry imports the agents, which import this module.
         from keryx.agents.registry import install_command, installed
 
-        if not self.fake_agents and not installed(self.agent_backend):
+        if not self.demo_mode and not installed(self.agent_backend):
             return (
                 f"AGENT_BACKEND is {self.agent_backend}, which is not installed — "
                 f"{install_command(self.agent_backend)}"
@@ -1221,6 +1238,14 @@ def field_for(key: str) -> str | None:
         if wanted in env_var_names(name):
             return name
     return None
+
+
+def canonical_key(key: str) -> str:
+    """`key` as the store and every rule name it: an older name (`FAKE_AGENTS`) becomes the
+    current one (`DEMO_MODE`), so no rule can be passed by typing the old one."""
+    wanted = key.strip().upper()
+    name = field_for(wanted)
+    return env_var_name(name) if name is not None else wanted
 
 
 def _extra(name: str) -> dict[str, Any]:

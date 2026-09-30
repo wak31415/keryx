@@ -7,7 +7,7 @@ above that seam — the task manager, the notifier, the voice tools — sees onl
 subagent is handed whichever agent runs it: the rendered system-prompt suffix, the
 directory it starts in, and the `workspace-mcp` server that gives it Gmail and Calendar.
 
-`FakeAgentRunner` is the scripted stand-in used by tests and by `--fake-agents`.
+`FakeAgentRunner` is the scripted stand-in used by tests and by `keryx serve --demo`.
 
 Every subagent is told (via `prompts/subagent_suffix.md`) to end its final message with a
 `SPOKEN_SUMMARY:` line; `extract_spoken_summary` turns that into the sentence the voice
@@ -436,7 +436,7 @@ class FakeAgentSession(AgentSession):
 
 
 class FakeAgentRunner(AgentRunner):
-    """Scripted `AgentRunner` for tests and the CLI's `--fake-agents` dev flag.
+    """Scripted `AgentRunner` for tests and for `keryx serve --demo`.
 
     `results` is a list popped from the front (the last one repeats), a callable taking
     `(task, resume)`, or `None` for `DEFAULT_FAKE_RESULT` every time. `interrupt_ends_run`

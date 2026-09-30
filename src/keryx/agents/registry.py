@@ -17,7 +17,7 @@ from importlib.util import find_spec
 from pathlib import Path
 
 from keryx.agents.auth import AuthSource, AuthStatus, resolve_auth
-from keryx.agents.base import AgentRunner, FakeAgentRunner
+from keryx.agents.base import AgentRunner, FakeAgentRunner, RunResult
 from keryx.agents.claude import CLAUDE_AUTH, CLAUDE_MODELS, ClaudeAgentRunner, claude_cli
 from keryx.agents.codex import (
     CODEX_AUTH,
@@ -32,6 +32,23 @@ from keryx.config import Settings
 from keryx.config.files import claude_config_dir
 
 log = logging.getLogger("keryx.agents.registry")
+
+#: What every task comes back with under `keryx serve --demo`. It says it was a demo, because
+#: a demo that claimed the work was done would be believed.
+DEMO_SUMMARY = (
+    "That was a demo, so nothing was actually done. With a coding agent set up, the real "
+    "result would be here."
+)
+DEMO_RESULT = RunResult(
+    ok=True,
+    final_text=f"A demo run: no coding agent ran.\n\nSPOKEN_SUMMARY: {DEMO_SUMMARY}",
+    spoken_summary=DEMO_SUMMARY,
+    session_id="demo",
+    cost_usd=0.0,
+    error=None,
+)
+#: How long a demo task takes: time to hang up, and be rung back with the result.
+DEMO_DELAY_S = 20.0
 
 
 @dataclass(frozen=True)
@@ -163,9 +180,9 @@ def offered_agents(settings: Settings) -> list[str]:
     The default is always there, ready or not — a task nobody named an agent for goes to it
     either way, and its failure says why, which beats a tool that silently lost its agent —
     unless it is not installed at all, which `serve` refuses before anything is offered.
-    Under `--fake-agents` every enabled agent is offered, since none of them is real.
+    Under `--demo` every enabled agent is offered, since none of them is real.
     """
-    if settings.fake_agents:
+    if settings.demo_mode:
         return list(settings.enabled_agents)
     return [
         name
@@ -183,11 +200,12 @@ def skill_dirs(settings: Settings) -> list[Path]:
 def build_agent_runner(settings: Settings) -> AgentRunner:
     """The runner `keryx serve` hands the task manager.
 
-    `--fake-agents` is the whole runner, whatever agents are enabled: it is for exercising
-    everything else without a single real subagent. Otherwise one runner per enabled
+    `--demo` is the whole runner, whatever agents are enabled: everything else is real, and
+    every task comes back after `DEMO_DELAY_S` with `DEMO_RESULT` — long enough to hang up
+    and be rung back, which is the thing a demo is for. Otherwise one runner per enabled
     agent, behind the router.
     """
-    if settings.fake_agents:
-        return FakeAgentRunner()
+    if settings.demo_mode:
+        return FakeAgentRunner([DEMO_RESULT], delay_s=DEMO_DELAY_S)
     runners = {name: BACKENDS[name].make_runner(settings) for name in settings.enabled_agents}
     return RoutingAgentRunner(runners, default=settings.agent_backend)

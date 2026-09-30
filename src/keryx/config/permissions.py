@@ -25,6 +25,7 @@ from collections.abc import Mapping
 from keryx.config.settings import (
     NOT_STORED,
     Settings,
+    canonical_key,
     env_var_name,
     field_for,
     field_service_writable,
@@ -74,7 +75,7 @@ PROTECTED_PATTERNS = (
     "SKILLS_DIR",
     # Development switches, every one of which turns a check off.
     "DEBUG_*",
-    "FAKE_AGENTS",
+    "DEMO_MODE",
 )
 
 
@@ -90,10 +91,14 @@ def current_actor() -> str:
 
 
 def is_protected(key: str) -> bool:
-    """Never service-writable, whatever the owner says: a secret, or a line of defence."""
+    """Never service-writable, whatever the owner says: a secret, or a line of defence.
+
+    Asked of the current name, whichever name it was given under (`canonical_key`).
+    """
     field = field_for(key)
     if field is not None and is_secret(field):
         return True
+    key = canonical_key(key)
     return any(fnmatch.fnmatchcase(key, pattern) for pattern in PROTECTED_PATTERNS)
 
 
@@ -110,6 +115,7 @@ def service_writable(key: str, overrides: Mapping[str, bool]) -> bool:
     protected key, even if an override somehow says so (a hand edit of `config.toml`).
     """
     field = field_for(key)
+    key = canonical_key(key)
     if field is None or key in NOT_STORED or is_protected(key):
         return False
     return bool(overrides.get(key, field_service_writable(field)))

@@ -164,6 +164,14 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Changed
 
+- **`keryx serve --demo` replaces `--fake-agents`**, and `DEMO_MODE` replaces `FAKE_AGENTS`.
+  It is for trying the phone before a coding agent is set up: calls, the PIN and call-backs
+  are real, and every task comes back after twenty seconds with a sample answer that says it
+  was a demo — no agent runs, no agent tokens are spent. The old flag and setting still work
+  for one release. An old setting name is now also read from `config.toml`, and every rule
+  (protection, `config lock|unlock`, what the service may write) is asked of the current
+  name, so none can be passed by typing the old one.
+
 - **Breaking: the service is Keryx now, and `keryx migrate` moves an install over.** The
   package, the command (`keryx`), the directories (`~/.config/keryx`,
   `~/.local/share/keryx`, `~/.local/state/keryx`, `~/.cache/keryx`), the units

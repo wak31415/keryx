@@ -43,6 +43,7 @@ from keryx.config.settings import (
     NOT_STORED,
     PLACEHOLDER_KEY,
     Settings,
+    canonical_key,
     env_var_name,
     env_var_names,
     field_for,
@@ -264,7 +265,7 @@ class ConfigStore:
 
         All or nothing: one refused or invalid value and neither file is touched.
         """
-        keys = {key.strip().upper(): value for key, value in values.items()}
+        keys = {canonical_key(key): value for key, value in values.items()}
         for key in keys:
             if field_for(key) is None:
                 raise ConfigError(f"there is no setting called {key} (`keryx config list`)")
@@ -289,7 +290,7 @@ class ConfigStore:
 
         Returns the ones that were actually there.
         """
-        wanted = [key.strip().upper() for key in keys]
+        wanted = [canonical_key(key) for key in keys]
         present = set(self.stored())
         self.set({key: None for key in wanted}, actor=actor)
         return [key for key in wanted if key in present]
@@ -300,14 +301,13 @@ class ConfigStore:
 
     def unlock(self, key: str) -> None:
         """Let the running service write `key`; refused for `permissions.PROTECTED_KEYS`."""
-        if permissions.is_protected(key.strip().upper()):
-            raise ConfigError(
-                f"{key.strip().upper()} is protected: the running service may never change it"
-            )
+        key = canonical_key(key)
+        if permissions.is_protected(key):
+            raise ConfigError(f"{key} is protected: the running service may never change it")
         self._override(key, True)
 
     def _override(self, key: str, writable: bool) -> None:
-        key = key.strip().upper()
+        key = canonical_key(key)
         if field_for(key) is None or key in NOT_STORED:
             raise ConfigError(f"there is no setting called {key}")
         config = self._config()

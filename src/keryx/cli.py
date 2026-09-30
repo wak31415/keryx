@@ -295,9 +295,17 @@ def serve(
         # still pass it, and a restart must not fail on an unknown option.
         bool, typer.Option("--no-wakeword", hidden=True)
     ] = False,
-    fake_agents: Annotated[
+    demo: Annotated[
         bool,
-        typer.Option("--fake-agents", help="Run scripted subagents instead of real agents."),
+        typer.Option(
+            "--demo",
+            help="Try the phone before a coding agent is set up: every task comes back with "
+            "a sample answer, and no agent tokens are spent.",
+        ),
+    ] = False,
+    fake_agents: Annotated[
+        # Its name until 2026-09-29, kept for one release.
+        bool, typer.Option("--fake-agents", hidden=True)
     ] = False,
     host: Annotated[
         str | None, typer.Option("--host", help="Override HOST for the phone server.")
@@ -309,8 +317,8 @@ def serve(
     """Run Keryx: the Twilio phone server."""
     # Only pass overrides that were actually asked for; everything else is the store's.
     overrides: dict[str, object] = {}
-    if fake_agents:
-        overrides["fake_agents"] = True
+    if demo or fake_agents:
+        overrides["demo_mode"] = True
     if host is not None:
         overrides["host"] = host
     if port is not None:

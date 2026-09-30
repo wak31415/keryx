@@ -2,7 +2,7 @@
 # Dev loop for the phone channel: the Cloudflare tunnel plus `keryx serve`.
 #
 # Point the Twilio number's voice webhook at https://$PUBLIC_HOST/twilio/voice and call in.
-# Extra flags go straight through to `keryx serve`, e.g. `scripts/dev.sh --fake-agents`.
+# Extra flags go straight through to `keryx serve`, e.g. `scripts/dev.sh --demo`.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

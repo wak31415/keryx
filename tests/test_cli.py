@@ -107,9 +107,10 @@ def test_serve_help_documents_its_switches():
     result = runner.invoke(app, ["serve", "--help"])
 
     assert result.exit_code == 0
-    for option in ("--fake-agents", "--host", "--port"):
+    for option in ("--demo", "--host", "--port"):
         assert option in result.output
     assert "--no-phone" not in result.output and "--no-wakeword" not in result.output
+    assert "fake" not in result.output.lower()
 
 
 def test_loopback_help_documents_its_switches():
@@ -296,16 +297,17 @@ def test_serve_wires_the_task_stack_into_the_shared_state(settings_stub, monkeyp
     assert state.store._conn is None  # the store is closed again when serve returns
 
 
-def test_fake_agents_swaps_the_subagent_runner(settings_stub, monkeypatch):
+@pytest.mark.parametrize("flag", ["--demo", "--fake-agents"])  # the old name, for a release
+def test_the_demo_swaps_the_subagent_runner(settings_stub, monkeypatch, flag):
     built: dict = {}
     stub_uvicorn(monkeypatch, built)
 
-    result = runner.invoke(app, ["serve", "--fake-agents"])
+    result = runner.invoke(app, ["serve", flag])
 
     assert result.exit_code == 0, result.output
     state = built["config"].app.state.keryx
     assert isinstance(state.manager._runner, FakeAgentRunner)
-    assert settings_stub.fake_agents is False  # the loaded settings are left alone
+    assert settings_stub.demo_mode is False  # the loaded settings are left alone
 
 
 # --- loopback --------------------------------------------------------------
