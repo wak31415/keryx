@@ -70,26 +70,46 @@ too.
 read nothing of yours. `send_to_slack` writes as you and `check_email` reads your mail, so
 both wait for it.
 
-**`cluster_stats` needs nothing written.** It asks Slurm over an ssh ControlMaster you
-already have open (`ControlMaster auto` in `~/.ssh/config`), and never opens a connection
-of its own: it checks the master's local socket (`ssh -O check`) first, and says "the
-login has expired" rather than dialling out, because where login is two-factor a
-connection attempt nobody can answer hangs, and a storm of them gets an address banned.
-`keryx plugins hosts` lists the hosts it could ask; the wizard shows them, reads each
-chosen host's partitions from Slurm, and then installs it, writes it as a template for you
-to finish, or does nothing. A host without a ControlMaster is never offered. If you already
-run your own guard script, name it as `guard` in `cluster_stats.toml`; it is optional.
+**`check_billing` needs an admin key.** The key Keryx talks to the model with can't read
+billing: OpenAI wants an Admin key from the organization's admin-keys page, and Anthropic
+wants an `sk-ant-admin…` key. To turn it on by hand:
+
+```bash
+uv run keryx config set OPENAI_ADMIN_KEY --stdin     # or ANTHROPIC_ADMIN_KEY
+uv run keryx plugins install check_billing --set monthly_budget=40
+```
+
+The spend it reports is the whole organization's, or one project's or workspace's if you
+set that in `check_billing.toml`. It can't be narrowed to one API key. The month-end figure
+is the tool's own straight-line estimate, and the assistant says so.
+
+**`cluster_stats` uses the ssh login you already have open.** It needs an ssh ControlMaster
+to each cluster in `~/.ssh/config`, for example:
+
+```
+Host mycluster
+    HostName login.example.edu
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%r@%h:%p
+    ControlPersist 8h
+```
+
+Log in once at your desk, then turn it on in `keryx setup` → Plugins, or by hand with
+`keryx plugins install cluster_stats --cluster mycluster=gpu`: the ssh alias, which is also
+the name you say on the phone, and the partition its GPUs are in. `keryx plugins hosts`
+lists the hosts it could ask. A host without a ControlMaster is never offered.
+
+It never opens a connection of its own. It checks the master's local socket first, and if
+the login has expired, it says so instead of dialing out: where login is two-factor, a
+connection nobody can answer hangs, and a storm of them can get an address banned. To fix
+an expired login, open the master again at your desk, for example with `ssh -fN mycluster`.
+If you already run a guard script of your own, name it as `guard` in `cluster_stats.toml`.
 
 Slack is opt-in in both directions: nothing goes to it unless you asked. When you do ask,
 the voice sends text with `send_to_slack` and subagents send files, plots and reports
 through the same Slack app, as the MCP server named by `mcp_server` in
 `send_to_slack.toml`. Unasked, a file stays in the written report — the assistant tells you it is
 there and offers to send it, rather than reading a path down the phone.
-
-Upgrading from before plugins, when these were settings (`CLUSTERS`, `SLACK_CHANNEL_ID`,
-`BILLING_MONTHLY_BUDGET`, …): `keryx doctor` names any still in `config.toml`, and
-`keryx plugins install --from-settings` moves them into the plugins' files and turns on
-every one that was offered before.
 
 ## One routing decision
 
@@ -146,13 +166,6 @@ the whole contract: the file, the wording, credentials, and how to check it. In 
   hands the model an error it can say.
 - **`keryx tools`** lists what the directory holds and what the next call would refuse,
   and exits 1 while anything is refused.
-
-The wiki walks through two of the plugins end to end, and either makes a good model for a
-tool of your own:
-[`check_billing`](https://github.com/wak31415/keryx/wiki/Worked-Example-check_billing), which
-reads an API and changes nothing, and
-[`cluster_stats`](https://github.com/wak31415/keryx/wiki/Worked-Example-cluster_stats), which
-reaches outside the machine safely.
 
 Skills are often a better answer than a tool. Anything under `SKILLS_DIR` is listed in the
 voice prompt, so a subagent already knows what it's good at without you naming it. A new

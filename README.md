@@ -136,8 +136,8 @@ each step in detail.
   Claude Code prompts on your screen by phone
 - [Security policy and threat model](SECURITY.md): read it before you put the phone line
   online
-- [Wiki](https://github.com/wak31415/keryx/wiki): troubleshooting, worked examples, and the
-  command-line reference
+- [Wiki](https://github.com/wak31415/keryx/wiki): troubleshooting, the command-line reference,
+  and writing your own tools
 - [Changelog](CHANGELOG.md)
 
 ## Getting help
