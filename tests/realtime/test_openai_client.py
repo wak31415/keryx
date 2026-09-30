@@ -367,6 +367,40 @@ async def test_speech_started_and_stopped_are_translated(connect):
     assert await harness.next_event() == SpeechStopped()
 
 
+@pytest.mark.parametrize(
+    ("status", "details", "level", "reason"),
+    [
+        ("cancelled", {"type": "cancelled", "reason": "turn_detected"}, "INFO", "turn_detected"),
+        ("failed", {"type": "failed", "error": {"message": "server busy"}}, "WARNING",
+         "server busy"),
+        ("incomplete", {"type": "incomplete", "reason": "max_output_tokens"}, "WARNING",
+         "max_output_tokens"),
+    ],
+)
+async def test_a_response_that_did_not_complete_is_logged_with_its_reason(
+    connect, caplog, status, details, level, reason
+):
+    """A call that opened in silence left no trace: a response that never produced a word."""
+    harness = await connect()
+    event = {"type": "response.done",
+             "response": {"id": "resp_9", "status": status, "status_details": details}}
+
+    with caplog.at_level("INFO", logger="keryx.realtime"):
+        harness.ws.feed(event)
+        assert await harness.next_event() == ResponseDone(response_id="resp_9", status=status)
+
+    [record] = [r for r in caplog.records if "resp_9" in r.getMessage()]
+    assert record.levelname == level and reason in record.getMessage()
+
+
+async def test_a_completed_response_is_not_logged(connect, caplog):
+    harness = await connect()
+    with caplog.at_level("INFO", logger="keryx.realtime"):
+        harness.ws.feed(server_event("response_done"))
+        await harness.next_event()
+    assert not [r for r in caplog.records if "resp_001" in r.getMessage()]
+
+
 async def test_response_lifecycle_events_are_translated(connect):
     harness = await connect()
     harness.ws.feed(server_event("response_created"))

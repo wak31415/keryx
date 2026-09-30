@@ -268,6 +268,8 @@ class VoiceSession:
         self._current_item_id: str | None = None
         self._item_first_ts_ms: float | None = None
         self._item_bytes_sent = 0
+        #: When the session opened, until its first audio: see `_on_audio_delta`.
+        self._opened_at: float | None = None
         self._last_audio_ts_ms: int | None = None
 
         self._pin_attempts = 0
@@ -380,6 +382,7 @@ class VoiceSession:
             session_header(self.session_id, self.channel, self.caller, authorized=self.authorized)
         )
         await self._bus.publish(SessionStarted(self.session_id, self.channel, self.caller))
+        self._opened_at = time.monotonic()
         log.info(
             "session %s started (%s, caller %s)",
             self.session_id,
@@ -877,6 +880,15 @@ class VoiceSession:
             self._current_item_id = event.item_id
             self._item_first_ts_ms = self._now_ms()
             self._item_bytes_sent = 0
+        if self._opened_at is not None:
+            # Once per call: a call that opens in silence is one the owner hangs up on,
+            # and how long it took to say anything is the first thing to know about it.
+            log.info(
+                "session %s first audio %.1fs after it opened",
+                self.session_id,
+                time.monotonic() - self._opened_at,
+            )
+            self._opened_at = None
         self._item_bytes_sent += len(event.audio)
         await self._safe_call(self._transport.send_audio, event.audio)
 
@@ -894,7 +906,7 @@ class VoiceSession:
             return
 
         played_ms = self._played_ms()
-        log.debug("session %s barge-in after %.0f ms", self.session_id, played_ms)
+        log.info("session %s barge-in after %.0f ms", self.session_id, played_ms)
         await self._safe_call(self._transport.clear)
         await self._safe_call(self._provider.truncate, self._current_item_id, int(played_ms))
         self._reset_item_tracking()

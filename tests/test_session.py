@@ -277,6 +277,23 @@ async def test_assistant_audio_is_forwarded_to_the_transport(make_session, phone
         await eventually(lambda: phone.sent == [b"\xff" * 16])
 
 
+async def test_the_first_audio_of_a_call_is_logged_once_with_its_delay(
+    make_session, phone, provider, caplog
+):
+    """A call that opens in silence is one the owner hangs up on: how long it took is the
+    first thing to know about it."""
+    session = make_session(phone, provider)
+
+    with caplog.at_level("INFO", logger="keryx.session"):
+        async with running(session):
+            provider.feed(AudioDelta(item_id="item_1", audio=b"\xff" * 16))
+            provider.feed(AudioDelta(item_id="item_2", audio=b"\xff" * 16))
+            await eventually(lambda: len(phone.sent) == 2)
+
+    firsts = [r for r in caplog.records if "first audio" in r.getMessage()]
+    assert len(firsts) == 1 and "after it opened" in firsts[0].getMessage()
+
+
 # --- barge-in --------------------------------------------------------------
 
 
