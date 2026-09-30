@@ -12,9 +12,9 @@ import numpy as np
 import pytest
 from fakes_audio import FakeStreamFactory
 
-from jarvis.audio.util import AudioGate, resample_pcm16
-from jarvis.transports.base import AudioIn, Hangup, Transport
-from jarvis.transports.local_audio import LocalAudioDevice, LocalTransport, build_chime
+from keryx.audio.util import AudioGate, resample_pcm16
+from keryx.transports.base import AudioIn, Hangup, Transport
+from keryx.transports.local_audio import LocalAudioDevice, LocalTransport, build_chime
 
 SAMPLE_RATE = 24000
 FRAME_SAMPLES = 1920

@@ -17,13 +17,13 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from twilio.request_validator import RequestValidator
 
-from jarvis.app import build_app_state
-from jarvis.config import Settings
-from jarvis.realtime.base import AudioDelta
-from jarvis.server import LINE_BUSY_MESSAGE, create_app
-from jarvis.session import PIN_PAUSED_MESSAGE
-from jarvis.stream_tokens import outbound_extra
-from jarvis.trust import TrustLevel
+from keryx.app import build_app_state
+from keryx.config import Settings
+from keryx.realtime.base import AudioDelta
+from keryx.server import LINE_BUSY_MESSAGE, create_app
+from keryx.session import PIN_PAUSED_MESSAGE
+from keryx.stream_tokens import outbound_extra
+from keryx.trust import TrustLevel
 
 AUTH_TOKEN = "an-auth-token"
 CALLER = "+15551234567"
@@ -36,10 +36,10 @@ TIMEOUT = 5.0
 def make_settings(tmp_path, **overrides) -> Settings:
     values = {
         "openai_api_key": "test",
-        "data_dir": tmp_path / "jarvis",
+        "data_dir": tmp_path / "keryx",
         "twilio_auth_token": AUTH_TOKEN,
         "allowed_callers": [CALLER],
-        "public_host": "jarvis.example",
+        "public_host": "keryx.example",
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)
@@ -115,7 +115,7 @@ def test_an_allowed_caller_gets_twiml_that_opens_the_media_stream(client, state)
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/xml")
-    assert stream_element(response).get("url") == "wss://jarvis.example/twilio/media"
+    assert stream_element(response).get("url") == "wss://keryx.example/twilio/media"
     parameters = stream_parameters(response)
     assert parameters["caller"] == CALLER
     info = state.stream_tokens.redeem(parameters["token"])
@@ -148,12 +148,12 @@ def test_the_forwarded_scheme_and_host_are_used_for_the_signature_and_the_stream
             client,
             "/twilio/voice",
             {"From": CALLER, "CallSid": CALL_SID},
-            url="https://jarvis.example/twilio/voice",
-            headers={"x-forwarded-proto": "https", "x-forwarded-host": "jarvis.example"},
+            url="https://keryx.example/twilio/voice",
+            headers={"x-forwarded-proto": "https", "x-forwarded-host": "keryx.example"},
         )
 
     assert response.status_code == 200
-    assert stream_element(response).get("url") == "wss://jarvis.example/twilio/media"
+    assert stream_element(response).get("url") == "wss://keryx.example/twilio/media"
 
 
 def test_a_caller_who_is_not_allowed_is_told_the_number_is_private(client, state):
@@ -193,8 +193,8 @@ def test_the_default_line_limit_takes_two_calls(client, state):
 
 
 def test_an_inbound_call_never_writes_the_caller_number_to_the_log(client, caplog):
-    """`~/.jarvis/logs/jarvis.log` and the journal are not a place for a phone number."""
-    with caplog.at_level(logging.INFO, logger="jarvis.server"):
+    """`~/.jarvis/logs/keryx.log` and the journal are not a place for a phone number."""
+    with caplog.at_level(logging.INFO, logger="keryx.server"):
         post_signed(client, "/twilio/voice", {"From": CALLER, "CallSid": CALL_SID})
 
     assert "answering a call" in caplog.text
@@ -203,7 +203,7 @@ def test_an_inbound_call_never_writes_the_caller_number_to_the_log(client, caplo
 
 
 def test_a_refused_caller_is_not_written_down_in_full_either(client, caplog):
-    with caplog.at_level(logging.WARNING, logger="jarvis.server"):
+    with caplog.at_level(logging.WARNING, logger="keryx.server"):
         post_signed(client, "/twilio/voice", {"From": STRANGER, "CallSid": CALL_SID})
 
     assert "ALLOWED_CALLERS" in caplog.text
@@ -227,13 +227,13 @@ def test_validation_can_be_skipped_for_local_development(tmp_path):
         response = client.post("/twilio/voice", data={"From": CALLER, "CallSid": CALL_SID})
 
     assert response.status_code == 200
-    assert stream_element(response).get("url") == "wss://jarvis.example/twilio/media"
+    assert stream_element(response).get("url") == "wss://keryx.example/twilio/media"
 
 
 def test_every_skipped_signature_check_is_a_warning(tmp_path, caplog):
     settings = make_settings(tmp_path, twilio_auth_token=None, debug_skip_twilio_validation=True)
     state = build_app_state(settings)
-    with caplog.at_level(logging.WARNING, logger="jarvis.server"):
+    with caplog.at_level(logging.WARNING, logger="keryx.server"):
         with TestClient(create_app(state)) as client:
             client.post("/twilio/voice", data={"From": CALLER, "CallSid": CALL_SID})
 
@@ -425,7 +425,7 @@ def test_a_call_while_pin_entry_is_locked_is_refused_even_the_right_pin(tmp_path
 
 
 def test_a_call_back_session_knows_the_task_it_was_placed_about(client, state):
-    """From the token Jarvis minted, never from the socket's own parameters."""
+    """From the token Keryx minted, never from the socket's own parameters."""
     provider = FakeProvider()
     provider.feed(AudioDelta(item_id="item_1", audio=b"\x00"))
     state.provider_factory = lambda: provider
@@ -459,7 +459,7 @@ def test_the_session_opens_with_the_context_carried_by_the_token(client, state):
             ws.receive_text()
 
 
-# --- what a call Jarvis placed opens at ------------------------------------
+# --- what a call Keryx placed opens at ------------------------------------
 
 
 def live_session(state):
@@ -484,14 +484,14 @@ def run_media_session(client, state, token: str):
     return trust
 
 
-def test_a_call_jarvis_placed_to_the_owner_opens_at_possession(client, state):
-    """The token Jarvis minted is the proof, and it is the only thing that may be."""
+def test_a_call_keryx_placed_to_the_owner_opens_at_possession(client, state):
+    """The token Keryx minted is the proof, and it is the only thing that may be."""
     token = state.stream_tokens.issue(CALLER, outbound_extra(CALLER, opening_context="hello"))
 
     assert run_media_session(client, state, token) is TrustLevel.POSSESSION
 
 
-def test_a_call_jarvis_placed_to_the_owners_second_phone_opens_at_possession(tmp_path):
+def test_a_call_keryx_placed_to_the_owners_second_phone_opens_at_possession(tmp_path):
     """One owner, two handsets: the allowlist is their phones, not a guest list."""
     state = build_app_state(make_settings(tmp_path, allowed_callers=[CALLER, STRANGER]))
     token = state.stream_tokens.issue(STRANGER, outbound_extra(STRANGER))
@@ -500,7 +500,7 @@ def test_a_call_jarvis_placed_to_the_owners_second_phone_opens_at_possession(tmp
         assert run_media_session(client, state, token) is TrustLevel.POSSESSION
 
 
-def test_a_call_jarvis_placed_to_a_number_that_is_not_theirs_opens_at_nothing(tmp_path):
+def test_a_call_keryx_placed_to_a_number_that_is_not_theirs_opens_at_nothing(tmp_path):
     """A call-back may go to a number the owner gave out loud; that is not their phone."""
     state = build_app_state(make_settings(tmp_path, allowed_callers=[CALLER]))
     token = state.stream_tokens.issue(STRANGER, outbound_extra(STRANGER))

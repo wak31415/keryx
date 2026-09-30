@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from jarvis.tools import ToolContext, ToolRegistry
+from keryx.tools import ToolContext, ToolRegistry
 
 
 class StubSession:
@@ -97,7 +97,7 @@ async def test_call_converts_a_handler_exception_into_an_error_result(registry, 
 
     registry.register("boom", "Explode.", PARAMS, boom)
 
-    with caplog.at_level(logging.ERROR, logger="jarvis.tools.registry"):
+    with caplog.at_level(logging.ERROR, logger="keryx.tools.registry"):
         result = await registry.call("boom", {}, ctx)
 
     assert result == {"error": "ValueError: no good"}

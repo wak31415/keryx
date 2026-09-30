@@ -8,8 +8,8 @@ import pytest
 from fakes import eventually
 from starlette.websockets import WebSocketDisconnect
 
-from jarvis.transports.base import AudioIn, Dtmf, Hangup
-from jarvis.transports.twilio_ws import START_TIMEOUT_SECONDS, TransportError, TwilioTransport
+from keryx.transports.base import AudioIn, Dtmf, Hangup
+from keryx.transports.twilio_ws import START_TIMEOUT_SECONDS, TransportError, TwilioTransport
 
 STREAM_SID = "MZ0123456789abcdef"
 CALL_SID = "CA0123456789abcdef"

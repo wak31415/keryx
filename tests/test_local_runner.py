@@ -11,11 +11,11 @@ import contextlib
 import pytest
 from fakes import FakeAudioDevice, FakeProvider, FakeWakeListener, eventually
 
-from jarvis.events import EventBus
-from jarvis.local_runner import LocalRunner
-from jarvis.session import SessionRegistry
-from jarvis.tools import ToolRegistry
-from jarvis.transports.local_audio import LocalTransport
+from keryx.events import EventBus
+from keryx.local_runner import LocalRunner
+from keryx.session import SessionRegistry
+from keryx.tools import ToolRegistry
+from keryx.transports.local_audio import LocalTransport
 
 TIMEOUT = 2.0
 

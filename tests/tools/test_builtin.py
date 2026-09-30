@@ -11,20 +11,20 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from jarvis.config import Settings, pin_file, secure_dir
-from jarvis.config.store import ConfigStore
-from jarvis.continuity.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
-from jarvis.continuity.recall import MAX_LIMIT as MAX_RECALL_LIMIT
-from jarvis.continuity.recall import Hit
-from jarvis.events import EventBus
-from jarvis.inline_waits import InlineWaits
-from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult
-from jarvis.tasks.manager import TaskManager
-from jarvis.tasks.models import TaskStatus
-from jarvis.tasks.store import TaskStore
-from jarvis.tools import ToolContext, ToolRegistry
-from jarvis.tools.builtin import register_builtin_tools
-from jarvis.tools.builtin_common import (
+from keryx.config import Settings, pin_file, secure_dir
+from keryx.config.store import ConfigStore
+from keryx.continuity.recall import DEFAULT_LIMIT as DEFAULT_RECALL_LIMIT
+from keryx.continuity.recall import MAX_LIMIT as MAX_RECALL_LIMIT
+from keryx.continuity.recall import Hit
+from keryx.events import EventBus
+from keryx.inline_waits import InlineWaits
+from keryx.tasks.agent_runner import FakeAgentRunner, RunResult
+from keryx.tasks.manager import TaskManager
+from keryx.tasks.models import TaskStatus
+from keryx.tasks.store import TaskStore
+from keryx.tools import ToolContext, ToolRegistry
+from keryx.tools.builtin import register_builtin_tools
+from keryx.tools.builtin_common import (
     CALLBACK_SET_MESSAGE,
     CONFIG_SET_MESSAGE,
     KEYPRESS_REQUIRED_MESSAGE,
@@ -38,7 +38,7 @@ from jarvis.tools.builtin_common import (
     REPORTED_MESSAGE,
     STILL_RUNNING_MESSAGE,
 )
-from jarvis.trust import TrustLevel
+from keryx.trust import TrustLevel
 
 WAIT = 2.0  # upper bound (seconds) for every wait in this module
 SLOW = 0.3  # a fake agent turn long enough to observe a task while it is still running
@@ -67,7 +67,7 @@ class StubSession:
     """The duck-typed slice of `VoiceSession` the tools actually touch."""
 
     authorized: bool = True
-    #: A call Jarvis placed to the owner's own number (`jarvis.trust`).
+    #: A call Keryx placed to the owner's own number (`keryx.trust`).
     possession: bool = False
     #: Whether a key has been pressed on this call — the proof it is not voicemail.
     keypressed: bool = False
@@ -146,8 +146,8 @@ async def make_tools(tmp_path):
         settings = Settings(
             _env_file=None,
             openai_api_key="test",
-            data_dir=tmp_path / "jarvis",
-            projects={"jarvis": str(repo)},
+            data_dir=tmp_path / "keryx",
+            projects={"keryx": str(repo)},
             projects_root=tmp_path / "no-such-root",
             **overrides,
         )
@@ -330,7 +330,7 @@ async def test_local_sessions_dispatch_destructive_work_without_a_pin(make_tools
 
     result = await tools.call(
         "dispatch_task",
-        {"description": "add a README", "project": "jarvis"},
+        {"description": "add a README", "project": "keryx"},
         channel="local",
         authorized=False,
     )
@@ -344,7 +344,7 @@ async def test_an_unauthorized_phone_caller_is_asked_for_the_pin(make_tools):
 
     result = await tools.call(
         "dispatch_task",
-        {"description": "add a README", "project": "jarvis"},
+        {"description": "add a README", "project": "keryx"},
         channel="phone",
         caller="+15555555555",
         authorized=False,
@@ -390,7 +390,7 @@ async def test_destructive_work_is_refused_when_no_pin_is_configured(make_tools)
 
     result = await tools.call(
         "dispatch_task",
-        {"description": "add a README", "project": "jarvis"},
+        {"description": "add a README", "project": "keryx"},
         channel="phone",
         caller="+15555555555",
         authorized=False,
@@ -412,7 +412,7 @@ async def test_a_pin_file_that_is_not_a_pin_is_a_machine_only_its_owner_can_fix(
 
     result = await tools.call(
         "dispatch_task",
-        {"description": "add a README", "project": "jarvis"},
+        {"description": "add a README", "project": "keryx"},
         channel="phone",
         caller="+15555555555",
         authorized=False,
@@ -428,7 +428,7 @@ async def test_a_blank_pin_is_no_pin_at_all(make_tools):
 
     result = await tools.call(
         "dispatch_task",
-        {"description": "add a README", "project": "jarvis"},
+        {"description": "add a README", "project": "keryx"},
         channel="phone",
         caller="+15555555555",
         authorized=False,
@@ -451,7 +451,7 @@ UNGATED = {"web_search", "submit_pin", "end_session"}
 #: the same facts out loud is incoherent. Off, they go back behind the PIN with it.
 READ_TOOLS = {"list_tasks", "get_task_status", "get_task_result", "list_projects"}
 
-#: What an inbound call reaches before the PIN as Jarvis ships. Everything else acts, or
+#: What an inbound call reaches before the PIN as Keryx ships. Everything else acts, or
 #: reads far past the briefing (`recall`), and a new tool is gated unless it is added here
 #: on purpose.
 BEFORE_THE_PIN = UNGATED | READ_TOOLS
@@ -572,9 +572,9 @@ async def test_with_no_pin_on_the_machine_even_the_read_only_tools_are_refused(m
 async def test_recall_needs_the_pin_however_much_the_briefing_gives_away(make_tools):
     """The one read that is not a piece of the briefing, and the distinction it rests on.
 
-    The briefing is bounded and curated: the owner can read it with `jarvis memory`, prune
+    The briefing is bounded and curated: the owner can read it with `keryx memory`, prune
     it, and it is the same whatever the caller says. `recall` is an unbounded query the
-    *caller* steers, over every raw transcript Jarvis has ever written — a different
+    *caller* steers, over every raw transcript Keryx has ever written — a different
     quantity of exposure, and the one thing on the phone a spoofer could actually mine.
     """
     tools, _restarter, recaller, _approvals = _everything(make_tools)
@@ -588,7 +588,7 @@ async def test_recall_needs_the_pin_however_much_the_briefing_gives_away(make_to
     assert (await tools.call("recall", {"query": "bank"}, authorized=True))["hits"]
 
 
-#: What a call Jarvis placed to the owner's own number may reach without the PIN, on top
+#: What a call Keryx placed to the owner's own number may reach without the PIN, on top
 #: of what any call may. Two are how the owner answers the question Claude came back with,
 #: two are the approval it usually rang about, and `mark_reported` is the news it opened by
 #: saying. Everything else still waits for the PIN: possession says who is holding the
@@ -604,7 +604,7 @@ POSSESSION_TOOLS = BEFORE_THE_PIN | {
 OWNER = "+15555555555"
 
 
-async def test_a_call_jarvis_placed_reaches_five_more_and_no_others(make_tools):
+async def test_a_call_keryx_placed_reaches_five_more_and_no_others(make_tools):
     tools = make_tools(
         FakeAgentRunner(delay_s=SLOW),
         searcher=FakeSearcher(),
@@ -634,7 +634,7 @@ async def test_a_call_jarvis_placed_reaches_five_more_and_no_others(make_tools):
 
 
 @pytest.mark.parametrize("tool", ["send_followup", "request_callback"])
-async def test_a_call_jarvis_placed_asks_for_one_key_before_it_acts(make_tools, tool):
+async def test_a_call_keryx_placed_asks_for_one_key_before_it_acts(make_tools, tool):
     """An answering machine takes the call and can be talked at. It cannot press a key."""
     tools = make_tools(pin="123456", allowed_callers=[OWNER])
     task = await tools.dispatch("rewrite the ingest script")
@@ -659,7 +659,7 @@ async def test_a_call_jarvis_placed_asks_for_one_key_before_it_acts(make_tools, 
     assert answered.get("status") != "keypress_required"
 
 
-async def test_a_call_jarvis_placed_rings_back_only_the_number_it_rang(make_tools):
+async def test_a_call_keryx_placed_rings_back_only_the_number_it_rang(make_tools):
     """Possession is a fact about this number; another one is a decision, and needs the PIN."""
     tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="123456", allowed_callers=[OWNER])
     task = await tools.dispatch("rewrite the ingest script")
@@ -707,7 +707,7 @@ async def test_before_the_pin_a_caller_hears_the_tasks_the_briefing_already_name
 
     assert [entry["id"] for entry in listed["tasks"]] == [1]
     assert status["task_id"] == 1 and result["task_id"] == 1
-    assert projects["projects"] == ["jarvis"]
+    assert projects["projects"] == ["keryx"]
 
 
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
@@ -866,7 +866,7 @@ async def test_an_unknown_project_comes_back_with_the_candidates(tools):
     )
 
     assert "unknown project" in result["error"]
-    assert result["candidates"] == ["jarvis"]
+    assert result["candidates"] == ["keryx"]
 
 
 async def test_a_coding_task_without_a_project_is_dispatched_anyway(tools):
@@ -1067,7 +1067,7 @@ async def test_cancel_task_stops_a_running_task(make_tools):
 async def test_an_unauthorized_phone_caller_cannot_touch_a_destructive_task(make_tools, tool):
     """`list_tasks` shows every task; reaching into a coding one still needs the PIN."""
     tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="424242")
-    await tools.dispatch("add a README", project="jarvis")
+    await tools.dispatch("add a README", project="keryx")
 
     result = await tools.call(
         tool,
@@ -1084,7 +1084,7 @@ async def test_an_unauthorized_phone_caller_cannot_touch_a_destructive_task(make
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
 async def test_an_authorized_phone_caller_may_touch_a_destructive_task(make_tools, tool):
     tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="424242")
-    await tools.dispatch("add a README", project="jarvis")
+    await tools.dispatch("add a README", project="keryx")
     await wait_for_status(tools, 1, TaskStatus.RUNNING)
 
     result = await tools.call(
@@ -1120,7 +1120,7 @@ async def test_reaching_into_a_running_task_needs_the_pin_too(make_tools, tool):
 @pytest.mark.parametrize("tool", ["send_followup", "cancel_task"])
 async def test_a_local_session_needs_no_pin_to_follow_up_or_cancel(make_tools, tool):
     tools = make_tools(FakeAgentRunner(delay_s=SLOW), pin="424242")
-    await tools.dispatch("add a README", project="jarvis")
+    await tools.dispatch("add a README", project="keryx")
     await wait_for_status(tools, 1, TaskStatus.RUNNING)
 
     result = await tools.call(
@@ -1134,7 +1134,7 @@ async def test_a_local_session_needs_no_pin_to_follow_up_or_cancel(make_tools, t
 
 
 async def test_list_projects_returns_names_only(tools):
-    assert await tools.call("list_projects", {}) == {"projects": ["jarvis"]}
+    assert await tools.call("list_projects", {}) == {"projects": ["keryx"]}
 
 
 # --- request_callback ------------------------------------------------------
@@ -1602,7 +1602,7 @@ async def test_a_call_may_stamp_what_its_own_digest_named_before_the_pin(make_to
     """Otherwise the digest it just read out comes back at the top of every call for ever.
 
     The set is what this call actually said, and no wider: the ids come from the briefing
-    Jarvis built, never from anything a caller can put in an argument.
+    Keryx built, never from anything a caller can put in an argument.
     """
     tools = make_tools(pin="123456")
     named = await _finish(tools)
@@ -1620,7 +1620,7 @@ async def test_a_call_may_stamp_what_its_own_digest_named_before_the_pin(make_to
     assert (await tools.manager.get(unnamed.id)).reported_at is None
 
 
-async def test_a_call_jarvis_placed_may_stamp_anything(make_tools):
+async def test_a_call_keryx_placed_may_stamp_anything(make_tools):
     """Whoever answered is holding the owner's own phone, and heard whatever was said."""
     tools = make_tools(pin="123456")
     task = await _finish(tools)
@@ -1639,7 +1639,7 @@ async def test_a_call_jarvis_placed_may_stamp_anything(make_tools):
 async def test_a_call_back_may_stamp_the_task_it_was_placed_about_before_the_pin(make_tools):
     """The call opened with that result, so it has been said; the digest must not repeat it.
 
-    Only that one: the id comes from the stream token Jarvis minted for its own outbound
+    Only that one: the id comes from the stream token Keryx minted for its own outbound
     call, never from anything a caller can say.
     """
     tools = make_tools(pin="123456")
@@ -1743,7 +1743,7 @@ async def test_set_config_saves_a_writable_key_as_the_service_and_says_so_once(m
 
 
 async def test_set_config_refuses_a_protected_key_whatever_the_owner_unlocked(make_tools):
-    from jarvis.config.files import dump_toml, write_private
+    from keryx.config.files import dump_toml, write_private
 
     store = ConfigStore()
     write_private(store.config_path, dump_toml({"service_writable": {"ALLOWED_CALLERS": True}}))
@@ -1775,5 +1775,5 @@ async def test_set_config_offers_the_model_only_what_it_may_write(make_tools):
 
     assert "VAD_EAGERNESS" in offered
     assert "OPENAI_VOICE" not in offered
-    assert not {"OPENAI_API_KEY", "JARVIS_PIN", "ALLOWED_CALLERS", "PUBLIC_HOST"} & set(offered)
+    assert not {"OPENAI_API_KEY", "KERYX_PIN", "ALLOWED_CALLERS", "PUBLIC_HOST"} & set(offered)
     assert "Needs the PIN" in schema["description"]

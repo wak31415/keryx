@@ -1,0 +1,14 @@
+# check_email: questions about your email answered on a call in about five seconds, from
+# one Gmail read and one model call. Changes here count from the next call; no restart.
+#
+# It reads Gmail with a read-only sign-in kept in its own token file, made by
+# `keryx auth login gmail`, and answers through the bundled claude CLI (the claude
+# extra). `keryx plugins remove check_email` turns this off.
+
+# The model that answers.
+model = {model}
+
+# How hard it thinks: low, medium or high. Low keeps the answer near five seconds, which
+# is waited for inside a call.
+effort = {effort}
+{extra}

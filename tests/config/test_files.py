@@ -1,4 +1,4 @@
-"""Where Jarvis's directories are, and the TOML the store writes, read back by the reader
+"""Where Keryx's directories are, and the TOML the store writes, read back by the reader
 `Settings` uses."""
 
 import tomllib
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.config.files import (
+from keryx.config.files import (
     XDG_HOMES,
     claude_config_dir,
     claude_user_config,
@@ -14,7 +14,7 @@ from jarvis.config.files import (
     default_data_dir,
     default_state_dir,
     dump_toml,
-    jarvis_home,
+    keryx_home,
     legacy_entries,
     xdg_home,
 )
@@ -44,21 +44,21 @@ def test_without_the_variables_the_defaults_are_the_specifications(monkeypatch):
         monkeypatch.delenv(variable, raising=False)
     home = Path.home()
 
-    assert jarvis_home() != home / ".config" / "jarvis"  # JARVIS_HOME, set by the conftest
-    monkeypatch.delenv("JARVIS_HOME")
-    assert jarvis_home() == home / ".config" / "jarvis"
-    assert default_data_dir() == home / ".local" / "share" / "jarvis"
-    assert default_state_dir() == home / ".local" / "state" / "jarvis"
-    assert default_cache_dir() == home / ".cache" / "jarvis"
+    assert keryx_home() != home / ".config" / "keryx"  # KERYX_HOME, set by the conftest
+    monkeypatch.delenv("KERYX_HOME")
+    assert keryx_home() == home / ".config" / "keryx"
+    assert default_data_dir() == home / ".local" / "share" / "keryx"
+    assert default_state_dir() == home / ".local" / "state" / "keryx"
+    assert default_cache_dir() == home / ".cache" / "keryx"
 
 
-def test_jarvis_home_outranks_the_config_directory(monkeypatch, tmp_path):
+def test_keryx_home_outranks_the_config_directory(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "elsewhere"))
-    assert jarvis_home() == tmp_path / "elsewhere"
+    monkeypatch.setenv("KERYX_HOME", str(tmp_path / "elsewhere"))
+    assert keryx_home() == tmp_path / "elsewhere"
 
-    monkeypatch.setenv("JARVIS_HOME", "  ")
-    assert jarvis_home() == tmp_path / "xdg" / "jarvis"
+    monkeypatch.setenv("KERYX_HOME", "  ")
+    assert keryx_home() == tmp_path / "xdg" / "keryx"
 
 
 def test_the_claude_directories_are_in_home_by_default():
@@ -84,7 +84,7 @@ def test_claude_config_dir_moves_the_directory_and_the_user_config(monkeypatch, 
     assert claude_user_config() == tmp_path / "claude" / ".claude.json"
 
 
-def test_legacy_entries_are_only_the_names_jarvis_wrote(tmp_path):
+def test_legacy_entries_are_only_the_names_keryx_wrote(tmp_path):
     legacy = tmp_path / "legacy"
     legacy.mkdir()
     for name in ("tasks.db", "calls", "restart-after-task7.sh", "memory.md.real"):

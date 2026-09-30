@@ -6,11 +6,11 @@ import json
 import stat
 from urllib.parse import parse_qs, urlparse
 
-from jarvis import plugins
-from jarvis.config.store import ConfigStore
-from jarvis.integrations.gmail import token_path
-from jarvis.setup import google
-from jarvis.setup.google import GoogleSetupError, install_client_file
+from keryx import plugins
+from keryx.config.store import ConfigStore
+from keryx.integrations.gmail import token_path
+from keryx.setup import google
+from keryx.setup.google import GoogleSetupError, install_client_file
 
 from .fakes import DEFAULT
 
@@ -43,7 +43,7 @@ def test_skip_is_the_default_and_touches_nothing(make_ctx):
 
 def email_step(make_ctx, tmp_path, answers):
     """The email half, which is the `check_email` plugin's step now."""
-    from jarvis.setup import plugins as plugins_section
+    from keryx.setup import plugins as plugins_section
 
     ctx = make_ctx(answers)
     plugins_section.run_email(ctx)
@@ -51,7 +51,7 @@ def email_step(make_ctx, tmp_path, answers):
 
 
 def test_email_answers_end_to_end(make_ctx, world, tmp_path):
-    from jarvis.setup import plugins as plugins_section
+    from keryx.setup import plugins as plugins_section
 
     source = client_file(tmp_path)
     post = Post()

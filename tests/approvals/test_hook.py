@@ -1,9 +1,9 @@
 """The real hook script, run as a real subprocess, against a real broker.
 
-`scripts/claude_hooks/jarvis_approval.py` is the file the Claude CLI executes, so this is
+`scripts/claude_hooks/keryx_approval.py` is the file the Claude CLI executes, so this is
 the only test in the suite that would notice it being broken. It is driven exactly as the
 CLI drives it — the hook payload on stdin, the decision read back off stdout — with the
-socket in `tmp_path` so nothing here can reach the real Jarvis.
+socket in `tmp_path` so nothing here can reach the real Keryx.
 
 What it must never do is the point: on a missing socket, a broker that says nothing, a
 malformed reply or a bug of its own, it prints nothing and exits 0, which leaves the
@@ -19,11 +19,11 @@ from pathlib import Path
 import pytest
 
 from approvals.test_broker import FakeSessions, FakeTwilio, until
-from jarvis.approvals.broker import ApprovalBroker
-from jarvis.config import Settings
-from jarvis.stream_tokens import StreamTokenStore
+from keryx.approvals.broker import ApprovalBroker
+from keryx.config import Settings
+from keryx.stream_tokens import StreamTokenStore
 
-HOOK = Path(__file__).resolve().parents[2] / "scripts" / "claude_hooks" / "jarvis_approval.py"
+HOOK = Path(__file__).resolve().parents[2] / "scripts" / "claude_hooks" / "keryx_approval.py"
 TIMEOUT = 10.0
 
 
@@ -31,7 +31,7 @@ TIMEOUT = 10.0
 def state_dir(tmp_path, short_tmp_path):
     """Short, because the broker binds `state_dir/approvals.sock` — see the conftest."""
     (tmp_path / "roots" / "myproject").mkdir(parents=True)
-    return short_tmp_path / "jarvis"
+    return short_tmp_path / "keryx"
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ def settings(tmp_path, state_dir):
         state_dir=state_dir,
         google_client_secrets_file=tmp_path / "none.json",
         approval_roots=[str(tmp_path / "roots")],
-        public_host="jarvis.example",
+        public_host="keryx.example",
         owner_number_explicit="+15557000000",
         approval_escalate_seconds=0.05,
         approval_call_window_seconds=1.0,
@@ -68,7 +68,7 @@ async def broker(settings, twilio):
 
 async def run_hook(state_dir, event, *, timeout=TIMEOUT):
     """Run the hook the way the CLI does; returns (stdout, returncode)."""
-    environment = {**os.environ, "JARVIS_STATE_DIR": str(state_dir)}
+    environment = {**os.environ, "KERYX_STATE_DIR": str(state_dir)}
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         str(HOOK),
@@ -97,7 +97,7 @@ def permission_event(tmp_path, tool="Bash", tool_input=None, session_id="claude1
 
 
 async def test_no_socket_means_no_output(tmp_path, state_dir):
-    """Jarvis not running is the common case, and it must cost the prompt nothing."""
+    """Keryx not running is the common case, and it must cost the prompt nothing."""
     out, code = await run_hook(state_dir, permission_event(tmp_path))
     assert (out, code) == ("", 0)
 
@@ -109,7 +109,7 @@ async def test_rubbish_on_stdin_is_survived(tmp_path, state_dir):
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "JARVIS_STATE_DIR": str(state_dir)},
+        env={**os.environ, "KERYX_STATE_DIR": str(state_dir)},
     )
     out, _ = await asyncio.wait_for(process.communicate(b"{not json"), TIMEOUT)
     assert (out.decode().strip(), process.returncode) == ("", 0)

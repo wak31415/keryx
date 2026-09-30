@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Install (or remove) the systemd user units that keep Jarvis and its Cloudflare tunnel
+# Install (or remove) the systemd user units that keep Keryx and its Cloudflare tunnel
 # running on a Linux host. (macOS uses scripts/install-launchd.sh instead.)
 #
 #   scripts/install-systemd.sh              # render the templates and start both units
 #   scripts/install-systemd.sh --uninstall  # stop both units and delete them
 #
 # The templates in ops/systemd/ carry __PLACEHOLDER__ names; this script fills them in from
-# `command -v` and `jarvis config get`, writes the result to ~/.config/systemd/user/, and hands
+# `command -v` and `keryx config get`, writes the result to ~/.config/systemd/user/, and hands
 # them to systemctl. Lingering keeps both running when nobody is logged in, so the machine
-# answers the phone after a reboot. Logs land in STATE_DIR/logs/ (~/.local/state/jarvis/logs/
-# unless the configuration says otherwise), and the units get this shell's PATH, JARVIS_HOME
+# answers the phone after a reboot. Logs land in STATE_DIR/logs/ (~/.local/state/keryx/logs/
+# unless the configuration says otherwise), and the units get this shell's PATH, KERYX_HOME
 # and XDG directories — run it from the shell whose tools the subagents should have, and again
 # after that changes.
 #
@@ -22,7 +22,7 @@ source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 
 TEMPLATES="$REPO/ops/systemd"
 UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-SERVICES=(jarvis cloudflared)
+SERVICES=(keryx cloudflared)
 
 uninstall() {
   for name in "${SERVICES[@]}"; do
@@ -41,7 +41,7 @@ fi
 
 require_public_host "the hostname routed to the Cloudflare tunnel"
 TUNNEL="$(config_value CLOUDFLARE_TUNNEL)"
-TUNNEL="${TUNNEL:-jarvis}"
+TUNNEL="${TUNNEL:-keryx}"
 
 require_command UV uv "https://docs.astral.sh/uv/"
 require_command CLOUDFLARED cloudflared "https://developers.cloudflare.com/cloudflare-one/"
@@ -53,7 +53,7 @@ no Cloudflare tunnel named "$TUNNEL" on this machine. Create it once (opens a br
   cloudflared tunnel create $TUNNEL
   cloudflared tunnel route dns $TUNNEL $PUBLIC_HOST
 
-To use a different name: jarvis config set CLOUDFLARE_TUNNEL <name>
+To use a different name: keryx config set CLOUDFLARE_TUNNEL <name>
 HINT
   exit 1
 fi
@@ -64,7 +64,7 @@ for name in "${SERVICES[@]}"; do
   render "$TEMPLATES/$name.service" "$UNITS/$name.service" \
     "UV=$UV" "CLOUDFLARED=$CLOUDFLARED" "TUNNEL=$TUNNEL" "PORT=$PORT" \
     "PATH=$(systemd_quoted "$PATH")" "LOGS=$(systemd_path "$LOGS")" \
-    "JARVIS_HOME=$(systemd_quoted "$JARVIS_HOME_DIR")" \
+    "KERYX_HOME=$(systemd_quoted "$KERYX_HOME_DIR")" \
     "XDG_CONFIG_HOME=$(systemd_quoted "$RESOLVED_XDG_CONFIG_HOME")" \
     "XDG_DATA_HOME=$(systemd_quoted "$RESOLVED_XDG_DATA_HOME")" \
     "XDG_STATE_HOME=$(systemd_quoted "$RESOLVED_XDG_STATE_HOME")" \
@@ -83,11 +83,11 @@ fi
 
 cat <<INFO
 
-Jarvis is running under systemd.
+Keryx is running under systemd.
 
-  status:  systemctl --user status jarvis cloudflared
-  logs:    journalctl --user -u jarvis -f
-           tail -f $LOGS/jarvis.err.log $LOGS/jarvis.log
+  status:  systemctl --user status keryx cloudflared
+  logs:    journalctl --user -u keryx -f
+           tail -f $LOGS/keryx.err.log $LOGS/keryx.log
   stop:    $0 --uninstall
 INFO
 webhook_hint

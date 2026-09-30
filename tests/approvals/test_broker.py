@@ -17,10 +17,10 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from jarvis.approvals.broker import ApprovalBroker
-from jarvis.config import Settings
-from jarvis.stream_tokens import StreamTokenStore, confers_possession
-from jarvis.trust import TrustLevel
+from keryx.approvals.broker import ApprovalBroker
+from keryx.config import Settings
+from keryx.stream_tokens import StreamTokenStore, confers_possession
+from keryx.trust import TrustLevel
 
 TIMEOUT = 3.0
 
@@ -49,7 +49,7 @@ class FakeSession:
     accepts: bool = True
 
     #: What this call has proved. An approval may only be announced into one that can
-    #: answer it, which is POSSESSION or better (`jarvis.trust`).
+    #: answer it, which is POSSESSION or better (`keryx.trust`).
     trust: TrustLevel = TrustLevel.FULL
 
     async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
@@ -84,10 +84,10 @@ def settings(tmp_path, short_tmp_path):
         _env_file=None,
         openai_api_key="test",
         data_dir=tmp_path / "data",
-        state_dir=short_tmp_path / "jarvis",
+        state_dir=short_tmp_path / "keryx",
         google_client_secrets_file=tmp_path / "none.json",
         approval_roots=[str(tmp_path / "roots")],
-        public_host="jarvis.example",
+        public_host="keryx.example",
         owner_number_explicit="+15557000000",
         approval_escalate_seconds=0.05,
         approval_call_window_seconds=1.5,
@@ -280,7 +280,7 @@ async def test_it_rings_them_when_nobody_answers(broker, twilio, tmp_path, hooks
     await hooks.raise_request(permission_event(cwd=str(tmp_path / "roots" / "myproject")))
     await until(lambda: twilio.calls)
     assert twilio.calls[0]["to"] == "+15557000000"
-    assert "jarvis.example" in twilio.calls[0]["twiml"]
+    assert "keryx.example" in twilio.calls[0]["twiml"]
 
 
 async def test_the_call_carries_the_request_and_the_menu(broker, twilio, tmp_path, hooks):

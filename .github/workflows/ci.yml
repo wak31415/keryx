@@ -38,7 +38,7 @@ jobs:
 
       # Deliberately no configuration is written, here or anywhere in this workflow. The
       # suite must be hermetic: it points HOME and the XDG directories at a temporary
-      # directory, and a green run on a runner with no Jarvis settings at all is the
+      # directory, and a green run on a runner with no Keryx settings at all is the
       # standing regression test for the leak in #25.
       - name: Install the locked dependencies
         run: uv sync --locked
@@ -79,16 +79,16 @@ jobs:
 
       # `prompts/*.md` and `py.typed` are read at runtime, not just packaged for tidiness:
       # a wheel without them installs and then fails on the first call. hatchling's
-      # `packages = ["src/jarvis"]` should carry them; verify rather than assume.
+      # `packages = ["src/keryx"]` should carry them; verify rather than assume.
       - name: The wheel carries the runtime data files
         run: |
           set -euo pipefail
           contents="$(python -m zipfile -l dist/*.whl)"
           echo "$contents"
-          grep -q 'jarvis/py\.typed' <<<"$contents"
-          grep -q 'jarvis/prompts/voice_system\.md' <<<"$contents"
-          grep -q 'jarvis/prompts/subagent_suffix\.md' <<<"$contents"
-          grep -q 'jarvis/prompts/memory_update\.md' <<<"$contents"
+          grep -q 'keryx/py\.typed' <<<"$contents"
+          grep -q 'keryx/prompts/voice_system\.md' <<<"$contents"
+          grep -q 'keryx/prompts/subagent_suffix\.md' <<<"$contents"
+          grep -q 'keryx/prompts/memory_update\.md' <<<"$contents"
 
       # `uv venv --python 3.12`, not the runner's `python`: `requires-python` is
       # `>=3.12,<3.13`, so a runner image that has moved on to 3.13 would fail the install
@@ -100,4 +100,4 @@ jobs:
           uv venv --python 3.12 /tmp/wheel-venv
           uv pip install --python /tmp/wheel-venv/bin/python dist/*.whl
           # From `/tmp`, so nothing resolves against the checkout.
-          cd /tmp && /tmp/wheel-venv/bin/jarvis --help
+          cd /tmp && /tmp/wheel-venv/bin/keryx --help

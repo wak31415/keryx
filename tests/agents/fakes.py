@@ -3,8 +3,8 @@
 import asyncio
 from collections.abc import Iterable, Sequence
 
-from jarvis.agents.base import SteerUnavailable
-from jarvis.agents.session import AgentEvent
+from keryx.agents.base import SteerUnavailable
+from keryx.agents.session import AgentEvent
 
 #: A turn step that never finishes, as a stream blocked in its reader does.
 BLOCK = "block"

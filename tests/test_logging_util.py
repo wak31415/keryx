@@ -1,10 +1,10 @@
-"""Tests for `jarvis.logging_util`: what a phone number looks like once it is written down."""
+"""Tests for `keryx.logging_util`: what a phone number looks like once it is written down."""
 
 import logging
 
 import pytest
 
-from jarvis.logging_util import mask_number
+from keryx.logging_util import mask_number
 
 
 @pytest.mark.parametrize(
@@ -31,7 +31,7 @@ def test_the_full_number_is_not_in_the_masked_form(caplog):
     number = "+15551234567"
 
     with caplog.at_level(logging.INFO):
-        logging.getLogger("jarvis.test").info("a call from %s", mask_number(number))
+        logging.getLogger("keryx.test").info("a call from %s", mask_number(number))
 
     assert number not in caplog.text
     assert "…4567" in caplog.text

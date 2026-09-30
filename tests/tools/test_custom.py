@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.config import Settings
-from jarvis.tools import ToolContext, ToolRegistry
-from jarvis.tools.custom import custom_tool, load_custom_tools, register_custom_tools
-from jarvis.trust import TrustLevel
+from keryx.config import Settings
+from keryx.tools import ToolContext, ToolRegistry
+from keryx.tools.custom import custom_tool, load_custom_tools, register_custom_tools
+from keryx.trust import TrustLevel
 
 GOOD = '''
-from jarvis.tools.custom import custom_tool
+from keryx.tools.custom import custom_tool
 
 @custom_tool(description="The moon's phase tonight, in one sentence.", needs_pin=False)
 async def moon_phase(ctx, args):
@@ -49,7 +49,7 @@ def write(directory: Path, name: str, source: str) -> Path:
 def tool_source(function: str, *, body: str = 'return {"ok": True}', **options: str) -> str:
     extra = "".join(f", {key}={value}" for key, value in options.items())
     return (
-        "from jarvis.tools.custom import custom_tool\n\n"
+        "from keryx.tools.custom import custom_tool\n\n"
         f'@custom_tool(description="Does {function}."{extra})\n'
         f"async def {function}(ctx, args):\n    {body}\n"
     )
@@ -219,7 +219,7 @@ def test_registered_tools_come_after_the_built_in_ones(settings, tools, caplog):
     write(tools, "moon.py", GOOD)
     write(tools, "clash.py", tool_source("dispatch_task"))
 
-    with caplog.at_level(logging.INFO, logger="jarvis.tools.custom"):
+    with caplog.at_level(logging.INFO, logger="keryx.tools.custom"):
         registry = loaded(settings, taken=("dispatch_task",))
 
     assert registry.names() == ["dispatch_task", "moon_phase"]
@@ -237,7 +237,7 @@ async def test_a_tool_needs_the_pin_unless_it_says_otherwise(tmp_path):
 
 
 async def test_possession_is_not_the_pin(tmp_path):
-    """A call Jarvis placed to their phone still has to give the PIN for a custom tool."""
+    """A call Keryx placed to their phone still has to give the PIN for a custom tool."""
     settings = pinned(tmp_path)
     write(settings.custom_tools_dir, "act.py", tool_source("act"))
 
@@ -259,7 +259,7 @@ async def test_a_plain_function_runs_in_a_thread_and_gets_its_arguments(settings
         tools,
         "echo.py",
         "import threading\n"
-        "from jarvis.tools.custom import custom_tool\n\n"
+        "from keryx.tools.custom import custom_tool\n\n"
         "@custom_tool(description='Echo.', needs_pin=False)\n"
         "def echo(ctx, args):\n"
         "    return {'said': args['text'], 'main': threading.current_thread()"

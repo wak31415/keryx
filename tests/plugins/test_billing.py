@@ -4,10 +4,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jarvis import plugins
-from jarvis.integrations.billing import BillingError, BillingReport
-from jarvis.plugins.billing import check_billing_tool, reader_for
-from jarvis.trust import TrustLevel
+from keryx import plugins
+from keryx.integrations.billing import BillingError, BillingReport
+from keryx.plugins.billing import check_billing_tool, reader_for
+from keryx.trust import TrustLevel
 from plugins.helpers import call, loading, names, offered, refusal, turn_on
 
 NAME = "check_billing"
@@ -161,8 +161,8 @@ async def test_installed_with_no_key_at_all_it_says_so(settings, monkeypatch):
     monkeypatch.setattr(plugins, "current_settings", lambda: settings)
     settings = settings.model_copy(update={"openai_api_key": "unset"})
     turn_on(settings, NAME)
-    from jarvis.tools import ToolRegistry
-    from jarvis.tools.custom import register_custom_tools
+    from keryx.tools import ToolRegistry
+    from keryx.tools.custom import register_custom_tools
 
     registry = ToolRegistry()
     register_custom_tools(registry, settings)

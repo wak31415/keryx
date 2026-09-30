@@ -1,4 +1,4 @@
-"""Tests for jarvis.tasks.store."""
+"""Tests for keryx.tasks.store."""
 
 import asyncio
 import sqlite3
@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import (
+from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.store import (
     _V3_COLUMNS,
     _V4_COLUMNS,
     _V5_COLUMNS,
@@ -282,7 +282,7 @@ async def test_close_is_idempotent():
 
 
 def test_the_busy_timeout_is_set_explicitly(tmp_path):
-    """Cross-process contention is normal here: `jarvis serve` holds the database open for
+    """Cross-process contention is normal here: `keryx serve` holds the database open for
     the life of the service while the CLI opens it from a terminal. Waiting is the right
     answer; "database is locked" mid-call is not."""
     store = TaskStore(tmp_path / "tasks.db")
@@ -388,7 +388,7 @@ async def test_mark_reported_with_no_ids_is_a_no_op(store):
 
 async def test_internal_tasks_stay_out_of_the_digest_the_lists_and_the_cap(store):
     await _finished(store, "their work")
-    await _finished(store, "jarvis's own memory update", internal=True)
+    await _finished(store, "keryx's own memory update", internal=True)
 
     assert [task.description for task in await store.list_unreported()] == ["their work"]
     assert [task.description for task in await store.list()] == ["their work"]
@@ -605,7 +605,7 @@ def _add_a_later_column(path) -> None:
 async def test_a_column_added_under_a_running_store_does_not_break_reads(tmp_path):
     """Regression for the 2026-08-25 outage (`unexpected keyword argument 'reported_at'`).
 
-    The migration runs in whichever process opens `tasks.db` first, and `jarvis serve`
+    The migration runs in whichever process opens `tasks.db` first, and `keryx serve`
     holds the `Task` it imported at startup — so a self-edit that adds a column reaches
     the database while the running service is still a build behind. That gap used to make
     every read raise, which took out `dispatch_task`, the manager's own failure path and

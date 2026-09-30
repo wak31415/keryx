@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dev loop for the phone channel: the Cloudflare tunnel plus `jarvis serve`.
+# Dev loop for the phone channel: the Cloudflare tunnel plus `keryx serve`.
 #
 # Point the Twilio number's voice webhook at https://$PUBLIC_HOST/twilio/voice and call in.
 # The wake word is off here (the tunnel, not the mic, is what we are exercising); pass
@@ -12,7 +12,7 @@ source scripts/lib.sh
 
 require_public_host "the hostname routed to the Cloudflare tunnel"
 TUNNEL="$(config_value CLOUDFLARE_TUNNEL)"
-TUNNEL="${TUNNEL:-jarvis}"
+TUNNEL="${TUNNEL:-keryx}"
 require_command CLOUDFLARED cloudflared "https://developers.cloudflare.com/cloudflare-one/"
 make_dirs
 # Beside the service's own logs in STATE_DIR, never in the checkout.
@@ -21,10 +21,10 @@ TUNNEL_LOG="$LOGS/cloudflared.log"
 cloudflared tunnel --no-autoupdate --protocol http2 run \
   --url "http://localhost:$PORT" "$TUNNEL" > "$TUNNEL_LOG" 2>&1 &
 TUNNEL_PID=$!
-# No `exec` below: this trap is what stops the tunnel when jarvis exits.
+# No `exec` below: this trap is what stops the tunnel when keryx exits.
 trap 'kill "$TUNNEL_PID" 2>/dev/null || true' EXIT
 
 echo "tunnel:  https://$PUBLIC_HOST -> http://localhost:$PORT  (log: $TUNNEL_LOG)"
 echo "webhook: https://$PUBLIC_HOST/twilio/voice"
 
-uv run jarvis serve --no-wakeword "$@"
+uv run keryx serve --no-wakeword "$@"

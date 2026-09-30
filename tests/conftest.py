@@ -4,7 +4,10 @@ import dataclasses
 
 import pytest
 
-from jarvis.config import Settings
+from keryx.config import Settings
+from keryx.config.files import LEGACY_HOME_ENV
+from keryx.config.permissions import ACTOR_ENVS
+from keryx.config.settings import env_var_names
 
 
 def _settings_env_var_names() -> set[str]:
@@ -13,11 +16,9 @@ def _settings_env_var_names() -> set[str]:
     Derived from `Settings.model_fields` so it can't drift as fields are added/renamed.
     """
     names: set[str] = set()
-    for field_name, field in Settings.model_fields.items():
+    for field_name in Settings.model_fields:
         names.add(field_name.upper())
-        alias = field.validation_alias
-        if isinstance(alias, str):
-            names.add(alias)
+        names.update(env_var_names(field_name))
     return names
 
 
@@ -40,7 +41,7 @@ def _plain_cli_output(monkeypatch):
     monkeypatch.setenv("COLUMNS", "200")
 
 
-#: The XDG base directories Jarvis resolves its own from, each moved into the test's home.
+#: The XDG base directories Keryx resolves its own from, each moved into the test's home.
 XDG_HOMES = {
     "XDG_CONFIG_HOME": ".config",
     "XDG_DATA_HOME": ".local/share",
@@ -53,14 +54,14 @@ XDG_HOMES = {
 def _isolated_env(monkeypatch, tmp_path):
     """Strip ambient env vars `Settings` reads so tests are hermetic on any machine/CI.
 
-    `JARVIS_HOME` too, pointed at a directory of the test's own: `Settings` reads
+    `KERYX_HOME` too, pointed at a directory of the test's own: `Settings` reads
     `config.toml` and `secrets.toml` from it, and the developer's real ones must never take
-    part in a test — nor be written by one. `JARVIS_ACTOR` goes because a suite run by a
+    part in a test — nor be written by one. `KERYX_ACTOR` goes because a suite run by a
     subagent of the live service inherits `service`, and would be refused as one.
 
     `HOME`, every `XDG_*_HOME` and the working directory move into the test's own
     directory as well. Every default
-    Jarvis has for where it keeps things is derived from them, and one check looks for a
+    Keryx has for where it keeps things is derived from them, and one check looks for a
     legacy `~/.jarvis` — which on a developer's machine really is there, holding every call
     they ever made.
     """
@@ -70,12 +71,13 @@ def _isolated_env(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(home))
     for name, relative in XDG_HOMES.items():
         monkeypatch.setenv(name, str(home / relative))
-    monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "jarvis-home"))
-    monkeypatch.delenv("JARVIS_ACTOR", raising=False)
+    monkeypatch.setenv("KERYX_HOME", str(tmp_path / "keryx-home"))
+    for name in (*ACTOR_ENVS, LEGACY_HOME_ENV):
+        monkeypatch.delenv(name, raising=False)
     # The Claude CLI's own directory is derived from `HOME` unless this moves it.
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     # And the working directory: a `.env` in the checkout the suite runs from is what
-    # `jarvis serve` refuses to start beside, and what `jarvis migrate` would import.
+    # `keryx serve` refuses to start beside, and what `keryx migrate` would import.
     working = tmp_path / "cwd"
     working.mkdir()
     monkeypatch.chdir(working)
@@ -93,7 +95,7 @@ def settings(tmp_path):
     return Settings(
         _env_file=None,
         openai_api_key="test",
-        data_dir=tmp_path / "jarvis",
+        data_dir=tmp_path / "keryx",
         google_client_secrets_file=tmp_path / "no-client-secrets.json",
         projects_root=tmp_path / "no-projects",
         skills_dir=tmp_path / "no-skills",
@@ -121,11 +123,11 @@ def _outside_any_service(monkeypatch):
 
     `SERVICE_MANAGER=auto` reads this process's cgroup and asks `systemctl`/`launchctl`
     whether the unit is installed. A suite run by a subagent of the live service *is*
-    inside `jarvis.service`, and would resolve to it. The tests about those two probes
+    inside `keryx.service`, and would resolve to it. The tests about those two probes
     import the real functions, which this does not reach.
     """
-    monkeypatch.setattr("jarvis.restart.service.runs_under", lambda target, **_: False)
-    monkeypatch.setattr("jarvis.restart.service.is_installed", lambda target, **_: False)
+    monkeypatch.setattr("keryx.restart.service.runs_under", lambda target, **_: False)
+    monkeypatch.setattr("keryx.restart.service.is_installed", lambda target, **_: False)
 
 
 @pytest.fixture
@@ -135,8 +137,8 @@ def every_agent_installed(monkeypatch):
     CI installs them all, but a machine synced with one agent runs the suite too; a test
     that is not about which extras are there asks for this rather than depend on it.
     """
-    from jarvis import doctor
-    from jarvis.agents import registry
+    from keryx import doctor
+    from keryx.agents import registry
 
     for module in (registry, doctor):
         monkeypatch.setattr(module, "installed", lambda agent: True)
@@ -149,10 +151,10 @@ def every_agent_installed(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_checkout_env(monkeypatch, tmp_path):
-    """`jarvis migrate` reads a `.env` and `.secrets/` in the checkout the service runs in,
+    """`keryx migrate` reads a `.env` and `.secrets/` in the checkout the service runs in,
     and in a test that checkout would be this one — a developer's real one, with every key
     in it. Pointed at a directory of the test's own instead."""
-    monkeypatch.setattr("jarvis.cli.repo_root", lambda: tmp_path / "checkout")
+    monkeypatch.setattr("keryx.cli.repo_root", lambda: tmp_path / "checkout")
 
 
 @pytest.fixture(autouse=True)
@@ -164,7 +166,7 @@ def _wake_word_models_downloaded(monkeypatch):
     openwakeword imported (`test_openwakeword_is_never_imported_at_module_scope`). The
     models go in the test's own CACHE_DIR; the wake-word tests patch their own directory.
     """
-    from jarvis.wakeword import FEATURE_MODELS, models_dir
+    from keryx.wakeword import FEATURE_MODELS, models_dir
 
     def downloaded(settings):
         directory = models_dir(settings.cache_dir)
@@ -173,25 +175,25 @@ def _wake_word_models_downloaded(monkeypatch):
             (directory / name).touch()
         return directory
 
-    monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", downloaded)
+    monkeypatch.setattr("keryx.doctor._wakeword_models_dir", downloaded)
 
 
 @pytest.fixture(autouse=True)
 def _no_gh_from_doctor(monkeypatch):
-    """`jarvis doctor` runs `gh auth status` while issue reports are on, which asks GitHub.
+    """`keryx doctor` runs `gh auth status` while issue reports are on, which asks GitHub.
     Never from a test: `gh` is not installed, unless a test says what it answers."""
-    from jarvis.issues import GhStatus
+    from keryx.issues import GhStatus
 
-    monkeypatch.setattr("jarvis.doctor.gh_status", lambda: GhStatus(installed=False))
+    monkeypatch.setattr("keryx.doctor.gh_status", lambda: GhStatus(installed=False))
 
 
 @pytest.fixture(autouse=True)
 def _no_twilio_from_doctor(monkeypatch):
-    """`jarvis doctor` asks Twilio where the number points when it has credentials. Never
+    """`keryx doctor` asks Twilio where the number points when it has credentials. Never
     from a test: the doctor tests hand in a fake client of their own. Returns the real one,
     for the one test about it — never `monkeypatch.undo()`, which would also undo the
     suite's HOME and XDG isolation and read the developer's own settings."""
-    from jarvis import cli
+    from keryx import cli
 
     real = cli._twilio_admin
     monkeypatch.setattr(cli, "_twilio_admin", lambda settings: None)

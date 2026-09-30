@@ -1,9 +1,9 @@
-"""Tests for jarvis.events."""
+"""Tests for keryx.events."""
 
 import asyncio
 import logging
 
-from jarvis.events import (
+from keryx.events import (
     EventBus,
     SessionEnded,
     SessionStarted,
@@ -154,7 +154,7 @@ async def test_exception_in_sync_handler_is_isolated_and_logged(caplog):
     bus.subscribe(TaskStarted, bad_handler)
     bus.subscribe(TaskStarted, received.append)
 
-    with caplog.at_level(logging.ERROR, logger="jarvis.events"):
+    with caplog.at_level(logging.ERROR, logger="keryx.events"):
         await bus.publish(TaskStarted(task_id=1))  # must not raise
 
     assert received == [TaskStarted(task_id=1)]
@@ -171,7 +171,7 @@ async def test_exception_in_async_handler_is_isolated_and_logged(caplog):
     bus.subscribe(TaskStarted, bad_handler)
     bus.subscribe(TaskStarted, received.append)
 
-    with caplog.at_level(logging.ERROR, logger="jarvis.events"):
+    with caplog.at_level(logging.ERROR, logger="keryx.events"):
         await bus.publish(TaskStarted(task_id=1))
 
     assert received == [TaskStarted(task_id=1)]

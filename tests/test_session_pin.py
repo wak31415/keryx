@@ -14,16 +14,16 @@ import pytest
 from fakes import TIMEOUT, FakeProvider, FakeTransport, eventually
 from test_session import make_settings, running
 
-from jarvis.config import pin_file, secure_dir
-from jarvis.events import EventBus, PinLockedOut, SessionEnded
-from jarvis.pin_guard import PinGuard
-from jarvis.realtime.base import (
+from keryx.config import pin_file, secure_dir
+from keryx.events import EventBus, PinLockedOut, SessionEnded
+from keryx.pin_guard import PinGuard
+from keryx.realtime.base import (
     FunctionCall,
     ResponseDone,
     ResponseStarted,
     SpeechStarted,
 )
-from jarvis.session import (
+from keryx.session import (
     ENROL_CONFIRM_MESSAGE,
     ENROL_DONE_MESSAGE,
     ENROL_FAILED_MESSAGE,
@@ -40,9 +40,9 @@ from jarvis.session import (
     PIN_SHORT_MESSAGE,
     VoiceSession,
 )
-from jarvis.tools import ToolRegistry
-from jarvis.transports.base import Dtmf
-from jarvis.trust import TrustLevel
+from keryx.tools import ToolRegistry
+from keryx.transports.base import Dtmf
+from keryx.trust import TrustLevel
 
 PIN = "424242"
 WRONG = "111111"
@@ -74,7 +74,7 @@ def phone():
 def tools():
     """A registry with the one tool that matters here.
 
-    It delegates exactly as `jarvis.tools.builtin`'s `submit_pin` does (which
+    It delegates exactly as `keryx.tools.builtin`'s `submit_pin` does (which
     `tests/tools/test_builtin.py` pins down), so the spoken PIN path can be driven the way
     the model really drives it: a function call, answered with a tool result.
     """
@@ -270,7 +270,7 @@ async def test_the_third_spoken_failure_hangs_up_only_after_the_goodbye(
 async def test_the_lockout_ends_the_call_even_if_the_goodbye_never_comes(
     make_session, phone, provider, ended, monkeypatch
 ):
-    monkeypatch.setattr("jarvis.session.END_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr("keryx.session.END_GRACE_SECONDS", 0.05)
     session = make_session(phone, provider)
 
     task = asyncio.create_task(session.run())
@@ -351,7 +351,7 @@ async def test_an_authorized_session_stays_authorized(make_session, phone, provi
 
 
 async def test_a_blank_pin_is_never_accepted(make_session, phone, provider):
-    """A blank `JARVIS_PIN` is not a PIN, and a blank candidate is not an answer."""
+    """A blank `KERYX_PIN` is not a PIN, and a blank candidate is not an answer."""
     session = make_session(phone, provider, pin=None)
 
     async with running(session):
@@ -430,7 +430,7 @@ async def test_a_hash_after_a_complete_entry_is_ignored(make_session, phone, pro
 async def test_a_stale_digit_is_dropped_after_the_inter_digit_gap(
     make_session, phone, provider, monkeypatch
 ):
-    monkeypatch.setattr("jarvis.session.DTMF_RESET_SECONDS", 0.02)
+    monkeypatch.setattr("keryx.session.DTMF_RESET_SECONDS", 0.02)
     session = make_session(phone, provider)
 
     async with running(session):
@@ -465,7 +465,7 @@ async def test_three_wrong_keypad_entries_hang_up_only_after_the_goodbye(
 async def test_a_keypad_lockout_ends_the_call_without_a_goodbye_too(
     make_session, phone, provider, ended, monkeypatch
 ):
-    monkeypatch.setattr("jarvis.session.END_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr("keryx.session.END_GRACE_SECONDS", 0.05)
     session = make_session(phone, provider)
 
     task = asyncio.create_task(session.run())
@@ -483,7 +483,7 @@ async def test_keypad_digits_are_ignored_when_a_pin_exists_that_cannot_be_read(
 ):
     """No PIN to check and no enrolment either: the file is there, so the door is shut.
 
-    Only `jarvis doctor` gets the owner out of this — delete the file, or set `JARVIS_PIN`
+    Only `keryx doctor` gets the owner out of this — delete the file, or set `KERYX_PIN`
     — and in the meantime the keypad does nothing at all.
     """
     session = make_session(phone, provider, pin=None)
@@ -512,7 +512,7 @@ async def test_keypad_digits_are_ignored_once_authorized(make_session, phone, pr
 async def test_keypad_digits_never_reach_the_log(make_session, phone, provider, caplog):
     session = make_session(phone, provider)
 
-    with caplog.at_level(logging.DEBUG, logger="jarvis.session"):
+    with caplog.at_level(logging.DEBUG, logger="keryx.session"):
         async with running(session):
             await press(phone, PIN)
             await eventually(lambda: session.authorized)
@@ -673,7 +673,7 @@ async def test_the_lockout_the_owner_has_not_heard_about_is_published_once(
 
 # --- enrolling the first PIN (the one-way door) -----------------------------
 #
-# A new owner has to set `JARVIS_PIN` at the keyboard before the phone is any use, which
+# A new owner has to set `KERYX_PIN` at the keyboard before the phone is any use, which
 # is the one setup step the phone cannot do for them. So the first call may key one in —
 # open while no PIN exists, sealed for ever the moment one does. The digits are keyed,
 # never spoken, so they take the same path as an ordinary keyed PIN: never to the model,
@@ -798,7 +798,7 @@ async def test_an_enrolled_pin_is_never_re_enrolled(make_session, phone, provide
 
 
 async def test_a_pin_from_the_environment_leaves_no_door_to_open(make_session, phone, provider):
-    session = make_session(phone, provider)  # JARVIS_PIN is set
+    session = make_session(phone, provider)  # KERYX_PIN is set
 
     async with running(session):
         await press(phone, f"{NEW_PIN}#")
@@ -822,7 +822,7 @@ async def test_a_spoken_pin_cannot_enrol_one(make_session, phone, provider):
 async def test_the_enrolled_digits_never_reach_a_log_line(make_session, phone, provider, caplog):
     session = make_session(phone, provider, pin=None)
 
-    with caplog.at_level(logging.DEBUG, logger="jarvis.session"):
+    with caplog.at_level(logging.DEBUG, logger="keryx.session"):
         async with running(session):
             await press(phone, f"{NEW_PIN}#")
             await press(phone, f"{NEW_PIN}#")
@@ -835,7 +835,7 @@ async def test_a_write_that_fails_changes_nothing_and_says_so(
     make_session, phone, provider, monkeypatch
 ):
     monkeypatch.setattr(
-        "jarvis.config.settings.write_enrolled_pin", lambda *_args, **_kwargs: False
+        "keryx.config.settings.write_enrolled_pin", lambda *_args, **_kwargs: False
     )
     session = make_session(phone, provider, pin=None)
 

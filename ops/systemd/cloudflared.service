@@ -7,7 +7,7 @@
 # `cloudflared tunnel route dns __TUNNEL__ PUBLIC_HOST`), which is a one-time browser login.
 
 [Unit]
-Description=Cloudflare tunnel for Jarvis
+Description=Cloudflare tunnel for Keryx
 
 [Service]
 Type=simple

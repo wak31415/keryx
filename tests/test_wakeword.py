@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from jarvis.wakeword import (
+from keryx.wakeword import (
     WAKE_FRAME_SAMPLES,
     WAKE_SAMPLE_RATE,
     OpenWakeWordDetector,

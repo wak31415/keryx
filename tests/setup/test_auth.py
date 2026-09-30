@@ -1,16 +1,16 @@
-"""`jarvis auth`'s two halves, called directly: every sign-in's state, and one sign-in."""
+"""`keryx auth`'s two halves, called directly: every sign-in's state, and one sign-in."""
 
 import asyncio
 import dataclasses
 
 import pytest
 
-from jarvis.agents import registry
-from jarvis.agents.base import RunResult
-from jarvis.agents.registry import BACKENDS
-from jarvis.config.store import ConfigStore
-from jarvis.setup import auth, google
-from jarvis.setup.auth import AuthError, LoginOptions
+from keryx.agents import registry
+from keryx.agents.base import RunResult
+from keryx.agents.registry import BACKENDS
+from keryx.config.store import ConfigStore
+from keryx.setup import auth, google
+from keryx.setup.auth import AuthError, LoginOptions
 
 
 @pytest.fixture

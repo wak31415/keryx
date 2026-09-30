@@ -1,15 +1,15 @@
 # Shared helpers for the scripts in this directory. Source it; do not run it.
 #
-# Sourcing sets REPO, the RESOLVED_* paths (below), JARVIS_HOME_DIR, JARVIS_DIR and LOGS, and
+# Sourcing sets REPO, the RESOLVED_* paths (below), KERYX_HOME_DIR, KERYX_DIR and LOGS, and
 # provides the scaffolding that install-systemd.sh and install-launchd.sh each had their own
 # copy of: argument parsing, the configuration and PATH checks, template rendering, and the
 # closing banner. What is left in the installers is what is genuinely different — systemd
 # units versus launchd agents.
 #
-# Settings are read through `jarvis config get`, and where Jarvis keeps things through
-# `jarvis config path --shell` — the way the service reads them, from the store in
-# JARVIS_HOME and the defaults — and never by grepping a file or restating a default here.
-# JARVIS_CLI says how to run jarvis (default `uv run --project "$REPO" jarvis`); the tests
+# Settings are read through `keryx config get`, and where Keryx keeps things through
+# `keryx config path --shell` — the way the service reads them, from the store in
+# KERYX_HOME and the defaults — and never by grepping a file or restating a default here.
+# KERYX_CLI says how to run keryx (default `uv run --project "$REPO" keryx`); the tests
 # point it at the interpreter running them.
 #
 # Deliberately no `set -euo pipefail` here: this file is sourced, and a sourced file should
@@ -20,13 +20,13 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 #: Set by `parse_install_args` when `--uninstall` was passed.
 UNINSTALL=0
 
-jarvis_cli() {
-  # jarvis_cli ARGS... — run jarvis from the repository, the service's working directory.
+keryx_cli() {
+  # keryx_cli ARGS... — run keryx from the repository, the service's working directory.
   local -a cli
-  if [[ -n "${JARVIS_CLI:-}" ]]; then
-    read -r -a cli <<< "$JARVIS_CLI"  # a command line, split on purpose
+  if [[ -n "${KERYX_CLI:-}" ]]; then
+    read -r -a cli <<< "$KERYX_CLI"  # a command line, split on purpose
   elif command -v uv >/dev/null 2>&1; then
-    cli=(uv run --quiet --project "$REPO" jarvis)  # an array: $REPO may hold a space
+    cli=(uv run --quiet --project "$REPO" keryx)  # an array: $REPO may hold a space
   else
     echo "uv is not on PATH (https://docs.astral.sh/uv/)" >&2
     return 1
@@ -35,40 +35,40 @@ jarvis_cli() {
 }
 
 config_value() {
-  # config_value NAME — the value jarvis would use for NAME; empty when it has none.
-  # Never a secret: `jarvis config get` refuses those, and a config.toml that does not parse.
-  jarvis_cli config get "$1"
+  # config_value NAME — the value keryx would use for NAME; empty when it has none.
+  # Never a secret: `keryx config get` refuses those, and a config.toml that does not parse.
+  keryx_cli config get "$1"
 }
 
 resolve_paths() {
-  # resolve_paths — set RESOLVED_<NAME> for every line of `jarvis config path --shell`:
-  # JARVIS_HOME, DATA_DIR, STATE_DIR, CACHE_DIR and the four XDG_*_HOME they came from.
+  # resolve_paths — set RESOLVED_<NAME> for every line of `keryx config path --shell`:
+  # KERYX_HOME, DATA_DIR, STATE_DIR, CACHE_DIR and the four XDG_*_HOME they came from.
   # Prefixed, so that a DATA_DIR or XDG_STATE_HOME this shell exports is never reassigned
-  # and handed to every `jarvis` the script runs afterwards. Only NAME='value' lines are
-  # taken, each quoted by jarvis for exactly this eval.
+  # and handed to every `keryx` the script runs afterwards. Only NAME='value' lines are
+  # taken, each quoted by keryx for exactly this eval.
   local output line
-  output="$(jarvis_cli config path --shell)" || return 1
+  output="$(keryx_cli config path --shell)" || return 1
   while IFS= read -r line; do
     [[ "$line" =~ ^[A-Z_]+= ]] && eval "RESOLVED_$line"
   done <<< "$output"
   [[ -n "${RESOLVED_STATE_DIR:-}" ]] || {
-    echo "jarvis did not say where it keeps things (jarvis config path --shell)" >&2
+    echo "keryx did not say where it keeps things (keryx config path --shell)" >&2
     return 1
   }
 }
 
 resolve_paths || true
 #: Where the configuration lives; rendered into the units so the service reads the same one.
-JARVIS_HOME_DIR="${RESOLVED_JARVIS_HOME:-}"
+KERYX_HOME_DIR="${RESOLVED_KERYX_HOME:-}"
 #: The resolved DATA_DIR. Not called DATA_DIR, for the reason `resolve_paths` gives.
-JARVIS_DIR="${RESOLVED_DATA_DIR:-}"
-#: Where the service's logs go: STATE_DIR/logs, where `jarvis restart` reads them back.
+KERYX_DIR="${RESOLVED_DATA_DIR:-}"
+#: Where the service's logs go: STATE_DIR/logs, where `keryx restart` reads them back.
 LOGS="${RESOLVED_STATE_DIR:+$RESOLVED_STATE_DIR/logs}"
 
 require_paths() {
-  # require_paths — exit unless `resolve_paths` found where Jarvis keeps things.
+  # require_paths — exit unless `resolve_paths` found where Keryx keeps things.
   if [[ -z "$LOGS" ]]; then
-    echo "could not ask jarvis where it keeps things; run \`jarvis config path\` to see why" >&2
+    echo "could not ask keryx where it keeps things; run \`keryx config path\` to see why" >&2
     exit 1
   fi
 }
@@ -106,15 +106,15 @@ require_public_host() {
   PORT="$(config_value PORT)"
   PORT="${PORT:-8080}"
   if [[ -z "$PUBLIC_HOST" ]]; then
-    echo "PUBLIC_HOST is not set ($1): run \`jarvis setup\`, or" >&2
-    echo "  jarvis config set PUBLIC_HOST jarvis.example.com" >&2
+    echo "PUBLIC_HOST is not set ($1): run \`keryx setup\`, or" >&2
+    echo "  keryx config set PUBLIC_HOST keryx.example.com" >&2
     exit 1
   fi
 }
 
 make_dirs() {
   # make_dirs [DIR ...] — the log directory, plus wherever this platform's units live.
-  # Owner-only when it creates STATE_DIR itself, as `jarvis` would (config.secure_dir).
+  # Owner-only when it creates STATE_DIR itself, as `keryx` would (config.secure_dir).
   require_paths
   (umask 077 && mkdir -p "$LOGS")
   if (( $# )); then

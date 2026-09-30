@@ -15,20 +15,20 @@ from xml.etree import ElementTree
 import pytest
 from fakes import FakeVoiceSession
 
-from jarvis.config import Settings
-from jarvis.events import EventBus, TaskCompleted, TaskFailed
-from jarvis.inline_waits import InlineWaits
-from jarvis.notify.notifier import SMS_BODY_LIMIT, Notifier
-from jarvis.notify.reports import report_token
-from jarvis.session import SessionRegistry
-from jarvis.stream_tokens import StreamTokenStore, confers_possession
-from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import TaskStore
-from jarvis.trust import TrustLevel
+from keryx.config import Settings
+from keryx.events import EventBus, TaskCompleted, TaskFailed
+from keryx.inline_waits import InlineWaits
+from keryx.notify.notifier import SMS_BODY_LIMIT, Notifier
+from keryx.notify.reports import report_token
+from keryx.session import SessionRegistry
+from keryx.stream_tokens import StreamTokenStore, confers_possession
+from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.store import TaskStore
+from keryx.trust import TrustLevel
 
 OWNER = "+15550000001"
 CALLER = "+15551234567"
-HOST = "jarvis.example"
+HOST = "keryx.example"
 SECRET = "a-report-secret"
 
 
@@ -47,7 +47,7 @@ class FakeTwilioOut:
     @property
     def can_text(self) -> bool:
         """Mirrors the real one: credentials *and* `SMS_ENABLED`, derived not snapshotted,
-        so a test that drops `configured` afterwards stops texting the way Jarvis would."""
+        so a test that drops `configured` afterwards stops texting the way Keryx would."""
         return self.configured and self.sms_enabled
 
     async def send_sms(self, to: str, body: str) -> str:
@@ -66,7 +66,7 @@ class FakeTwilioOut:
 def make_settings(tmp_path, **overrides) -> Settings:
     values = {
         "openai_api_key": "test",
-        "data_dir": tmp_path / "jarvis",
+        "data_dir": tmp_path / "keryx",
         "owner_number_explicit": OWNER,
         "public_host": HOST,
         "report_secret": SECRET,
@@ -234,7 +234,7 @@ async def test_a_call_that_has_not_given_the_pin_hears_it_and_is_still_not_a_del
     assert [call["to"] for call in harness.twilio.calls] == [CALLER]
 
 
-async def test_a_call_jarvis_placed_hearing_it_is_a_delivery(harness):
+async def test_a_call_keryx_placed_hearing_it_is_a_delivery(harness):
     """Whoever answered is holding the owner's phone: ringing them again would be the
     duplicate every other rule here exists to avoid."""
     owner = harness.session(channel="phone", trust=TrustLevel.POSSESSION)
@@ -446,7 +446,7 @@ async def test_a_requested_call_back_dials_out_with_a_redeemable_stream_token(ha
     # A call-back is a new call, so it has to say what this was about, not just the answer.
     assert "look something up" in context
 
-    # And that Jarvis placed it, so the session it opens knows it is not a stranger.
+    # And that Keryx placed it, so the session it opens knows it is not a stranger.
     assert confers_possession(info, CALLER) is True
     assert "Result: I found the answer." in context
     assert "PIN" in context
@@ -612,7 +612,7 @@ async def test_a_call_back_without_a_previous_session_still_goes_out(harness):
 
 
 async def test_an_internal_task_is_never_announced_texted_or_called_about(harness):
-    """The per-call memory update is Jarvis talking to itself; they never asked for it."""
+    """The per-call memory update is Keryx talking to itself; they never asked for it."""
     session = harness.session(channel="phone")
     task = await harness.task(
         description="update the memory after call abc123",
@@ -639,7 +639,7 @@ async def test_an_internal_task_that_fails_is_just_as_quiet(harness):
     assert row.announced is False and row.sms_sent is False
 
 
-# --- (4) a task that changed Jarvis's own code ------------------------------
+# --- (4) a task that changed Keryx's own code ------------------------------
 
 
 async def test_a_task_that_needs_a_restart_asks_for_one(harness):
@@ -729,7 +729,7 @@ async def test_an_ordinary_task_asks_for_no_restart(harness):
 
 def test_a_summary_that_ends_in_a_stop_does_not_get_a_second_one():
     """The template supplies its own, and "the tests pass.." is what a voice reads out."""
-    from jarvis.notify.callback import no_trailing_stop
+    from keryx.notify.callback import no_trailing_stop
 
     assert no_trailing_stop("I added the recall tool and the tests pass.") == (
         "I added the recall tool and the tests pass"

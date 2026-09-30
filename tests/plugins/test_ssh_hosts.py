@@ -5,9 +5,9 @@ Every config here is synthetic; `ssh -G` and `ssh -O check` are answered by a fa
 
 import subprocess
 
-from jarvis.integrations.cluster import ClusterError
-from jarvis.plugins import ssh_hosts
-from jarvis.plugins.ssh_hosts import SshHost
+from keryx.integrations.cluster import ClusterError
+from keryx.plugins import ssh_hosts
+from keryx.plugins.ssh_hosts import SshHost
 
 
 def config(tmp_path, text: str, name: str = "config"):

@@ -6,10 +6,10 @@ import sys
 
 import pytest
 
-from jarvis.agents.base import FakeAgentRunner
-from jarvis.agents.claude import ClaudeAgentRunner
-from jarvis.agents.codex import CodexAgentRunner
-from jarvis.agents.registry import (
+from keryx.agents.base import FakeAgentRunner
+from keryx.agents.claude import ClaudeAgentRunner
+from keryx.agents.codex import CodexAgentRunner
+from keryx.agents.registry import (
     BACKENDS,
     agent_for_model,
     auth_status,
@@ -20,7 +20,7 @@ from jarvis.agents.registry import (
     resolve_model,
     skill_dirs,
 )
-from jarvis.agents.router import RoutingAgentRunner
+from keryx.agents.router import RoutingAgentRunner
 
 
 @pytest.mark.parametrize(
@@ -145,7 +145,7 @@ def test_fake_agents_offers_every_enabled_agent(settings):
 
 
 def test_skills_come_from_every_enabled_agent_the_default_first(settings, monkeypatch, tmp_path):
-    monkeypatch.setattr("jarvis.agents.registry.codex_home", lambda: tmp_path / "codex")
+    monkeypatch.setattr("keryx.agents.registry.codex_home", lambda: tmp_path / "codex")
     settings.agents_enabled = ["claude", "codex"]
     settings.agent_backend = "codex"
 
@@ -199,19 +199,19 @@ def test_fake_agents_needs_neither_extra(settings, monkeypatch):
     assert isinstance(build_agent_runner(settings), FakeAgentRunner)
 
 
-def test_all_of_jarvis_imports_with_neither_sdk_installed():
+def test_all_of_keryx_imports_with_neither_sdk_installed():
     """A machine with one extra, or none, must still import every module: the SDKs are
     only ever imported where an agent actually runs."""
     script = """
 import importlib, pkgutil, sys
 for name in ("claude_agent_sdk", "openai_codex", "codex_cli_bin"):
     sys.modules[name] = None
-import jarvis
-for module in pkgutil.walk_packages(jarvis.__path__, "jarvis."):
+import keryx
+for module in pkgutil.walk_packages(keryx.__path__, "keryx."):
     if module.name.endswith(("local_audio", "wakeword")):
         continue  # macOS-only, and imported only on macOS
     importlib.import_module(module.name)
-from jarvis.agents.registry import BACKENDS, installed
+from keryx.agents.registry import BACKENDS, installed
 assert not any(installed(name) for name in BACKENDS)
 assert all(spec.find_cli() is None for spec in BACKENDS.values())
 print("ok")

@@ -1,4 +1,4 @@
-"""A first memory: `jarvis memory seed` for an agent, the "About you" section for a person,
+"""A first memory: `keryx memory seed` for an agent, the "About you" section for a person,
 and the report both end with — what every call will carry."""
 
 import json
@@ -7,12 +7,12 @@ import stat
 import pytest
 from typer.testing import CliRunner
 
-from jarvis.cli import app
-from jarvis.config import Settings, write_enrolled_pin
-from jarvis.continuity.memory import MAX_MEMORY_CHARS, memory_path, read_memory, seed_memory
-from jarvis.projects import MAX_BRIEFS_CHARS
-from jarvis.setup import profile
-from jarvis.setup.profile import PIN_NOTES, facts_from_text, pin_note, setup_report, setup_summary
+from keryx.cli import app
+from keryx.config import Settings, write_enrolled_pin
+from keryx.continuity.memory import MAX_MEMORY_CHARS, memory_path, read_memory, seed_memory
+from keryx.projects import MAX_BRIEFS_CHARS
+from keryx.setup import profile
+from keryx.setup.profile import PIN_NOTES, facts_from_text, pin_note, setup_report, setup_summary
 
 from .fakes import DEFAULT
 
@@ -27,11 +27,11 @@ def home(monkeypatch, tmp_path):
         _env_file=None,
         openai_api_key="test",
         owner_name="Ada",
-        data_dir=tmp_path / "jarvis",
+        data_dir=tmp_path / "keryx",
         projects_root=tmp_path / "projects",
         skills_dir=tmp_path / "skills",
     )
-    monkeypatch.setattr("jarvis.cli.load_settings", lambda **overrides: settings)
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
     return settings
 
 
@@ -39,7 +39,7 @@ def memory_text(settings) -> str:
     return memory_path(settings.data_dir).read_text()
 
 
-# --- jarvis memory seed ---------------------------------------------------------------
+# --- keryx memory seed ---------------------------------------------------------------
 
 
 def test_seed_takes_the_facts_on_stdin_and_writes_them_owner_only(home):
@@ -49,7 +49,7 @@ def test_seed_takes_the_facts_on_stdin_and_writes_them_owner_only(home):
 
     assert result.exit_code == 0, result.output
     text = memory_text(home)
-    assert "# What Jarvis knows about Ada" in text
+    assert "# What Lyra knows about Ada" in text
     assert "- Works nights." in text and "- Likes brevity" in text
     assert stat.S_IMODE(memory_path(home.data_dir).stat().st_mode) == 0o600
     assert "sent to the realtime provider on every call" in result.output
@@ -73,12 +73,12 @@ def test_an_unreadable_file_is_a_wrong_command_line(home, tmp_path):
 
 
 def test_seed_never_replaces_a_memory_without_force(home):
-    seed_memory(home.data_dir, owner="Ada", facts=["Old fact."])
+    seed_memory(home.data_dir, owner="Ada", assistant="Lyra", facts=["Old fact."])
 
     refused = runner.invoke(app, ["memory", "seed", "--file", "-"], input="New fact.\n")
     forced = runner.invoke(app, ["memory", "seed", "--file", "-", "--force"], input="New fact.\n")
 
-    assert refused.exit_code == 1 and "`jarvis memory seed --force` replaces it" in refused.output
+    assert refused.exit_code == 1 and "`keryx memory seed --force` replaces it" in refused.output
     assert forced.exit_code == 0 and "- New fact." in memory_text(home)
 
 
@@ -103,7 +103,7 @@ def test_a_memory_too_long_for_a_call_is_refused(home):
 def test_json_reports_everything_a_call_will_carry_and_nothing_else(home):
     for name in ("orchard", "weather"):
         (home.projects_root / name).mkdir(parents=True)
-    (home.projects_root / "orchard" / ".jarvis-brief.md").write_text("Soil sensors.")
+    (home.projects_root / "orchard" / ".keryx-brief.md").write_text("Soil sensors.")
     (home.data_dir / "projects").mkdir(parents=True)
     (home.data_dir / "projects" / "weather.md").write_text("Forecasts.")
 
@@ -137,7 +137,7 @@ def test_json_says_whether_a_pin_exists_and_where_from_never_the_digits(home):
 
 def test_the_pin_note_names_each_of_the_four_states(home):
     assert pin_note(home) == PIN_NOTES[None]
-    assert "jarvis setup" in pin_note(home)
+    assert "keryx setup" in pin_note(home)
     assert pin_note(home.model_copy(update={"pin": "482915"})) == PIN_NOTES["environment"]
 
     home.config_dir.mkdir(parents=True, exist_ok=True)
@@ -158,12 +158,12 @@ def test_the_report_says_the_projects_root_is_missing(home):
 def test_the_report_counts_projects_briefs_skills_and_what_every_call_carries(home):
     for name in ("orchard", "weather"):
         (home.projects_root / name).mkdir(parents=True)
-    (home.projects_root / "orchard" / ".jarvis-brief.md").write_text("Soil sensors.")
+    (home.projects_root / "orchard" / ".keryx-brief.md").write_text("Soil sensors.")
     (home.skills_dir / "mermaid").mkdir(parents=True)
     (home.skills_dir / "mermaid" / "SKILL.md").write_text(
         "---\nname: mermaid\ndescription: Diagrams.\n---\n"
     )
-    seed_memory(home.data_dir, owner="Ada", facts=["Works nights."])
+    seed_memory(home.data_dir, owner="Ada", assistant="Lyra", facts=["Works nights."])
     memory_chars = len(memory_text(home).strip())
 
     report = "\n".join(setup_report(home))
@@ -196,7 +196,7 @@ def test_facts_skip_blank_lines_and_headings():
 def test_the_section_writes_what_they_use_it_for_and_their_facts(make_ctx):
     ctx = make_ctx(
         [
-            ("mostly use Jarvis for", ["email", "coding"]),
+            ("mostly use Lyra for", ["email", "coding"]),
             ("Anything else", "reading papers"),
             ("fact", "Works nights."),
             ("fact", ""),
@@ -208,7 +208,7 @@ def test_the_section_writes_what_they_use_it_for_and_their_facts(make_ctx):
 
     text = read_memory(ctx.settings.data_dir)
     assert (
-        "Mostly uses Jarvis for email triage, coding tasks in their repositories, reading papers."
+        "Mostly uses Lyra for email triage, coding tasks in their repositories, reading papers."
         in text
     )
     assert "- Works nights." in text
@@ -228,7 +228,7 @@ def test_saying_no_writes_nothing(make_ctx):
 
 def test_a_memory_there_is_kept_unless_they_want_it_replaced(make_ctx):
     ctx = make_ctx([("Replace that memory", DEFAULT)])
-    seed_memory(ctx.settings.data_dir, owner="Ada", facts=["Old."])
+    seed_memory(ctx.settings.data_dir, owner="Ada", assistant="Lyra", facts=["Old."])
 
     profile.run_section(ctx)
 

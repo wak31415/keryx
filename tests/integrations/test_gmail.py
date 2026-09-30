@@ -16,8 +16,8 @@ from datetime import datetime
 import httpx
 import pytest
 
-from jarvis.integrations import gmail
-from jarvis.integrations.gmail import (
+from keryx.integrations import gmail
+from keryx.integrations.gmail import (
     DAY_PROMPT,
     MAX_BODY_CHARS,
     SEARCH_PROMPT,
@@ -629,13 +629,13 @@ async def test_a_cancelled_runner_kills_its_process():
 
 
 def test_no_sign_in_means_no_tool(settings):
-    assert "jarvis auth login gmail" in email_problem(settings)
+    assert "keryx auth login gmail" in email_problem(settings)
 
 
 def test_no_claude_cli_means_no_tool(settings, monkeypatch):
     token_path(settings).parent.mkdir(parents=True, exist_ok=True)
     token_path(settings).write_text("{}")
-    monkeypatch.setattr("jarvis.agents.registry.installed", lambda agent: False)
+    monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: False)
 
     assert "claude CLI is not installed" in email_problem(settings)
 
@@ -645,7 +645,7 @@ def test_a_sign_in_and_a_cli_is_the_tool_with_its_token_kept_private(settings, m
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{}")
     path.chmod(0o644)
-    monkeypatch.setattr("jarvis.agents.registry.installed", lambda agent: True)
+    monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: True)
     spec = gmail_backend_with_cli(monkeypatch)
 
     assert email_problem(settings) is None
@@ -659,7 +659,7 @@ def test_a_sign_in_and_a_cli_is_the_tool_with_its_token_kept_private(settings, m
 def gmail_backend_with_cli(monkeypatch):
     import dataclasses
 
-    from jarvis.agents.registry import BACKENDS
+    from keryx.agents.registry import BACKENDS
 
     spec = dataclasses.replace(BACKENDS["claude"], find_cli=lambda: "/bin/claude")
     monkeypatch.setitem(BACKENDS, "claude", spec)

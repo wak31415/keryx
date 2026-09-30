@@ -1,4 +1,4 @@
-"""Tests for the Gmail sign-in behind `jarvis auth login gmail`: a consent link, then the
+"""Tests for the Gmail sign-in behind `keryx auth login gmail`: a consent link, then the
 redirect address exchanged once."""
 
 import json
@@ -7,8 +7,8 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from jarvis.integrations.gmail import SCOPE, TOKEN_URL, token_path
-from jarvis.setup.google import (
+from keryx.integrations.gmail import SCOPE, TOKEN_URL, token_path
+from keryx.setup.google import (
     PENDING_FILE,
     REDIRECT_URI,
     GoogleSetupError,
@@ -117,7 +117,7 @@ def test_google_refusing_the_code_is_said(client, post):
 
 
 def test_finishing_with_nothing_started_says_to_start(client):
-    with pytest.raises(GoogleSetupError, match="run `jarvis auth login gmail` first"):
+    with pytest.raises(GoogleSetupError, match="run `keryx auth login gmail` first"):
         finish_signin(client, REDIRECT_URI + "/?code=x&state=y", post=FakePost())
 
 

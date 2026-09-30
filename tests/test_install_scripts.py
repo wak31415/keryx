@@ -1,10 +1,10 @@
 """The installers, run for real against a scratch HOME with every service manager faked.
 
 `scripts/install-*.sh` render `ops/` into unit files and hand them to `systemctl` or
-`launchctl`. Here HOME, JARVIS_HOME and a copy of the repository's `scripts/` and `ops/` are
+`launchctl`. Here HOME, KERYX_HOME and a copy of the repository's `scripts/` and `ops/` are
 all under `tmp_path` — a copy, so that a real `.env` in a checkout can never be read — and
 `systemctl`, `loginctl`, `launchctl`, `cloudflared`, `ngrok` and `uv` are stubs first on PATH
-that only record how they were called. Settings come from `jarvis config get`, run with the
+that only record how they were called. Settings come from `keryx config get`, run with the
 interpreter running the tests, so what is checked is exactly what the installer writes, and
 nothing reaches the machine's own service manager.
 
@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.config.files import dump_toml
+from keryx.config.files import dump_toml
 
 SOURCE = Path(__file__).resolve().parents[1]
 BASH = shutil.which("bash")
@@ -39,7 +39,7 @@ pytestmark = pytest.mark.skipif(BASH is None, reason="the installers are bash sc
 
 @pytest.fixture
 def machine(tmp_path):
-    """A scratch HOME and JARVIS_HOME, a copy of the scripts, and stubs that record calls."""
+    """A scratch HOME and KERYX_HOME, a copy of the scripts, and stubs that record calls."""
     home = tmp_path / "home"
     home.mkdir()
     repo = tmp_path / "re po"  # a space, which the default `uv` command must survive
@@ -52,27 +52,27 @@ def machine(tmp_path):
         stub = stubs / name
         stub.write_text(f'#!/bin/sh\necho "{name} $*" >> "{calls}"\nexit 0\n')
         stub.chmod(0o755)
-    jarvis_home = tmp_path / "jarvis-home"
+    keryx_home = tmp_path / "keryx-home"
     path = os.pathsep.join([str(stubs), AWKWARD_DIR, "/usr/bin", "/bin"])
     environment = {
         "HOME": str(home),
         "USER": "tester",
         "PATH": path,
-        "JARVIS_HOME": str(jarvis_home),
-        "JARVIS_CLI": f"{sys.executable} -m jarvis",
+        "KERYX_HOME": str(keryx_home),
+        "KERYX_CLI": f"{sys.executable} -m keryx",
         "XDG_CONFIG_HOME": str(home / ".config"),
         "CLAUDE_CONFIG_DIR": str(home / ".claude"),
     }
-    machine = {"home": home, "repo": repo, "jarvis_home": jarvis_home, "env": environment,
+    machine = {"home": home, "repo": repo, "keryx_home": keryx_home, "env": environment,
                "calls": calls}
-    configure(machine, PUBLIC_HOST="jarvis.example.com", PORT=8080)
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
     return machine
 
 
 def configure(machine, **values) -> None:
-    """Write `config.toml` in the machine's JARVIS_HOME, replacing what was there."""
-    machine["jarvis_home"].mkdir(exist_ok=True)
-    (machine["jarvis_home"] / "config.toml").write_text(dump_toml(values))
+    """Write `config.toml` in the machine's KERYX_HOME, replacing what was there."""
+    machine["keryx_home"].mkdir(exist_ok=True)
+    (machine["keryx_home"] / "config.toml").write_text(dump_toml(values))
 
 
 def run(script: str, machine, *args: str) -> subprocess.CompletedProcess:
@@ -111,36 +111,36 @@ def systemd_unquote(value: str) -> str:
 # --- where things are --------------------------------------------------------
 
 
-def test_logs_default_to_the_state_dir_jarvis_uses(machine):
-    assert lib(machine, 'printf %s "$LOGS"') == f"{machine['home']}/.local/state/jarvis/logs"
+def test_logs_default_to_the_state_dir_keryx_uses(machine):
+    assert lib(machine, 'printf %s "$LOGS"') == f"{machine['home']}/.local/state/keryx/logs"
 
 
 def test_logs_follow_state_dir_from_the_configuration(machine):
-    configure(machine, STATE_DIR="/srv/jarvis state")
+    configure(machine, STATE_DIR="/srv/keryx state")
 
-    assert lib(machine, 'printf %s "$LOGS"') == "/srv/jarvis state/logs"
+    assert lib(machine, 'printf %s "$LOGS"') == "/srv/keryx state/logs"
 
 
 def test_logs_follow_the_xdg_state_directory(machine):
     machine["env"]["XDG_STATE_HOME"] = str(machine["home"] / "xdg state")
 
-    assert lib(machine, 'printf %s "$LOGS"') == f"{machine['home']}/xdg state/jarvis/logs"
+    assert lib(machine, 'printf %s "$LOGS"') == f"{machine['home']}/xdg state/keryx/logs"
 
 
-def test_every_path_comes_from_jarvis_and_none_is_reassigned(machine):
+def test_every_path_comes_from_keryx_and_none_is_reassigned(machine):
     """The resolved paths are prefixed, so an exported DATA_DIR is left exactly as it was."""
     machine["env"]["DATA_DIR"] = "/srv/data"
 
-    out = lib(machine, 'printf "%s|%s|%s" "$DATA_DIR" "$JARVIS_DIR" "$RESOLVED_CACHE_DIR"')
+    out = lib(machine, 'printf "%s|%s|%s" "$DATA_DIR" "$KERYX_DIR" "$RESOLVED_CACHE_DIR"')
 
-    assert out == f"/srv/data|/srv/data|{machine['home']}/.cache/jarvis"
+    assert out == f"/srv/data|/srv/data|{machine['home']}/.cache/keryx"
 
 
 def test_a_env_in_the_repository_is_never_read(machine):
     configure(machine)
     (machine["repo"] / ".env").write_text("STATE_DIR=/srv/from-dotenv\n")
 
-    assert lib(machine, 'printf %s "$LOGS"') == f"{machine['home']}/.local/state/jarvis/logs"
+    assert lib(machine, 'printf %s "$LOGS"') == f"{machine['home']}/.local/state/keryx/logs"
 
 
 def test_no_public_host_says_how_to_set_one(machine):
@@ -152,7 +152,7 @@ def test_no_public_host_says_how_to_set_one(machine):
     )
 
     assert result.returncode == 1
-    assert "jarvis config set PUBLIC_HOST" in result.stderr
+    assert "keryx config set PUBLIC_HOST" in result.stderr
 
 
 def test_render_inserts_values_literally(machine, tmp_path):
@@ -169,14 +169,14 @@ def test_render_inserts_values_literally(machine, tmp_path):
 
 def test_the_systemd_units_carry_this_shell_path_and_state_dir(machine):
     configure(
-        machine, PUBLIC_HOST="jarvis.example.com", STATE_DIR=str(machine["home"] / "jarvis-state")
+        machine, PUBLIC_HOST="keryx.example.com", STATE_DIR=str(machine["home"] / "keryx-state")
     )
 
     run("install-systemd.sh", machine)
 
     units = machine["home"] / ".config" / "systemd" / "user"
-    logs = machine["home"] / "jarvis-state" / "logs"
-    for name, log in (("jarvis", "jarvis"), ("cloudflared", "cloudflared")):
+    logs = machine["home"] / "keryx-state" / "logs"
+    for name, log in (("keryx", "keryx"), ("cloudflared", "cloudflared")):
         text = (units / f"{name}.service").read_text()
         assert not PLACEHOLDER.search(text), text
         settings = dict(
@@ -189,16 +189,16 @@ def test_the_systemd_units_carry_this_shell_path_and_state_dir(machine):
         assert path == machine["env"]["PATH"]
         assert settings["StandardOutput"] == f"append:{logs}/{log}.out.log"
         assert settings["StandardError"] == f"append:{logs}/{log}.err.log"
-    jarvis_unit = (units / "jarvis.service").read_text()
-    assert f'Environment="JARVIS_HOME={machine["jarvis_home"]}"' in jarvis_unit
+    keryx_unit = (units / "keryx.service").read_text()
+    assert f'Environment="KERYX_HOME={machine["keryx_home"]}"' in keryx_unit
     home = machine["home"]
     for name, path in (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"),
                        ("XDG_STATE_HOME", ".local/state"), ("XDG_CACHE_HOME", ".cache")):
-        assert f'Environment="{name}={home}/{path}"' in jarvis_unit, name
+        assert f'Environment="{name}={home}/{path}"' in keryx_unit, name
     assert logs.is_dir()
-    # Created by the installer, so owner-only, as `jarvis` itself would make it.
+    # Created by the installer, so owner-only, as `keryx` itself would make it.
     assert (logs.parent.stat().st_mode & 0o077) == 0
-    assert "systemctl --user enable --now jarvis.service" in machine["calls"].read_text()
+    assert "systemctl --user enable --now keryx.service" in machine["calls"].read_text()
 
 
 # --- launchd ------------------------------------------------------------------
@@ -206,7 +206,7 @@ def test_the_systemd_units_carry_this_shell_path_and_state_dir(machine):
 
 def test_the_launch_agents_carry_this_shell_path_and_state_dir(machine, tmp_path):
     state_dir = tmp_path / "state <&> more"
-    configure(machine, PUBLIC_HOST="jarvis.example.com", STATE_DIR=str(state_dir))
+    configure(machine, PUBLIC_HOST="keryx.example.com", STATE_DIR=str(state_dir))
     xdg_state = tmp_path / "xdg <state>"
     machine["env"]["XDG_STATE_HOME"] = str(xdg_state)
 
@@ -214,16 +214,16 @@ def test_the_launch_agents_carry_this_shell_path_and_state_dir(machine, tmp_path
 
     agents = machine["home"] / "Library" / "LaunchAgents"
     logs = f"{state_dir}/logs"
-    for label, log in (("dev.jarvis.agent", "jarvis"), ("dev.jarvis.tunnel", "ngrok")):
+    for label, log in (("dev.keryx.agent", "keryx"), ("dev.keryx.tunnel", "ngrok")):
         raw = (agents / f"{label}.plist").read_bytes()
         assert not PLACEHOLDER.search(raw.decode()), raw
         plist = plistlib.loads(raw)  # launchd refuses a plist that does not parse
         assert plist["EnvironmentVariables"]["PATH"] == machine["env"]["PATH"]
         assert plist["StandardOutPath"] == f"{logs}/{log}.out.log"
         assert plist["StandardErrorPath"] == f"{logs}/{log}.err.log"
-    agent = plistlib.loads((agents / "dev.jarvis.agent.plist").read_bytes())
+    agent = plistlib.loads((agents / "dev.keryx.agent.plist").read_bytes())
     environment = agent["EnvironmentVariables"]
-    assert environment["JARVIS_HOME"] == str(machine["jarvis_home"])
+    assert environment["KERYX_HOME"] == str(machine["keryx_home"])
     assert environment["XDG_DATA_HOME"] == f"{machine['home']}/.local/share"
     assert environment["XDG_STATE_HOME"] == str(xdg_state)
 
@@ -235,7 +235,7 @@ def test_the_units_carry_an_xdg_directory_the_shell_moved(machine):
 
     run("install-systemd.sh", machine)
 
-    unit = (machine["home"] / ".config" / "systemd" / "user" / "jarvis.service").read_text()
+    unit = (machine["home"] / ".config" / "systemd" / "user" / "keryx.service").read_text()
     [line] = [line for line in unit.splitlines() if line.startswith('Environment="XDG_DATA')]
     assert systemd_unquote(line.removeprefix("Environment=")) == (
         f"XDG_DATA_HOME={machine['home']}/data & more"
@@ -248,10 +248,10 @@ def test_the_units_carry_an_xdg_directory_the_shell_moved(machine):
 def test_the_dev_loop_logs_the_tunnel_beside_the_services_logs(machine):
     run("dev.sh", machine)
 
-    logs = machine["home"] / ".local" / "state" / "jarvis" / "logs"
+    logs = machine["home"] / ".local" / "state" / "keryx" / "logs"
     assert (logs / "cloudflared.log").exists()
     assert not (machine["repo"] / ".cloudflared.log").exists()
-    assert "uv run jarvis serve --no-wakeword" in machine["calls"].read_text()
+    assert "uv run keryx serve --no-wakeword" in machine["calls"].read_text()
 
 
 # --- the approval hook -----------------------------------------------------------
@@ -270,27 +270,51 @@ def test_the_hook_is_always_told_where_the_state_dir_is(machine):
     run("install-claude-hook.sh", machine)
 
     commands = hook_commands(machine)
-    target = machine["home"] / ".claude" / "hooks" / "jarvis_approval.py"
-    state_dir = f"{machine['home']}/.local/state/jarvis"
+    target = machine["home"] / ".claude" / "hooks" / "keryx_approval.py"
+    state_dir = f"{machine['home']}/.local/state/keryx"
     assert shlex.split(commands["PermissionRequest"]) == [
         "env",
-        f"JARVIS_STATE_DIR={state_dir}",
+        f"KERYX_STATE_DIR={state_dir}",
         "python3",
         str(target),
     ]
     assert f"[ -e {state_dir}/approvals/PENDING ]" in shlex.split(commands["PostToolUse"])[2]
 
 
-def test_the_hook_is_pointed_at_a_state_dir_set_in_the_configuration(machine):
-    configure(machine, STATE_DIR=str(machine["home"] / "jarvis state"))
+def test_the_hook_from_before_the_rename_is_replaced_not_joined(machine):
+    """Two hooks would hand every prompt to the broker twice, and the old one's socket is
+    gone; somebody else's hook on the same event is left alone."""
+    claude = machine["home"] / ".claude"
+    (claude / "hooks").mkdir(parents=True)
+    old = claude / "hooks" / "jarvis_approval.py"
+    old.write_text("# the old hook\n")
+    theirs = {"hooks": [{"type": "command", "command": "their-own-hook"}]}
+    old_command = f"env JARVIS_STATE_DIR=/x python3 {old}"
+    old_group = {"hooks": [{"type": "command", "command": old_command}]}
+    (claude / "settings.json").write_text(
+        json.dumps({"hooks": {"PermissionRequest": [theirs, old_group], "Stop": [old_group]}})
+    )
 
     run("install-claude-hook.sh", machine)
 
-    state_dir = f"{machine['home']}/jarvis state"
+    settings = json.loads((claude / "settings.json").read_text())
+    text = json.dumps(settings)
+    assert "jarvis_approval.py" not in text and not old.exists()
+    assert settings["hooks"]["PermissionRequest"][0] == theirs
+    assert "keryx_approval.py" in settings["hooks"]["PermissionRequest"][1]["hooks"][0]["command"]
+    assert len(settings["hooks"]["Stop"]) == 1
+
+
+def test_the_hook_is_pointed_at_a_state_dir_set_in_the_configuration(machine):
+    configure(machine, STATE_DIR=str(machine["home"] / "keryx state"))
+
+    run("install-claude-hook.sh", machine)
+
+    state_dir = f"{machine['home']}/keryx state"
     commands = hook_commands(machine)
     assert shlex.split(commands["PermissionRequest"])[:2] == [
         "env",
-        f"JARVIS_STATE_DIR={state_dir}",
+        f"KERYX_STATE_DIR={state_dir}",
     ]
     shell = shlex.split(commands["PostToolUse"])
     assert shell[:2] == ["sh", "-c"]
@@ -299,7 +323,7 @@ def test_the_hook_is_pointed_at_a_state_dir_set_in_the_configuration(machine):
 
 
 def test_the_resolve_command_still_runs_when_nothing_is_pending(machine):
-    configure(machine, STATE_DIR=str(machine["home"] / "jarvis state"))
+    configure(machine, STATE_DIR=str(machine["home"] / "keryx state"))
     run("install-claude-hook.sh", machine)
 
     result = subprocess.run(
@@ -317,10 +341,10 @@ def test_the_resolve_command_still_runs_when_nothing_is_pending(machine):
 
 
 def test_the_default_command_keeps_a_repository_path_with_a_space_whole(machine, tmp_path):
-    """Without JARVIS_CLI, `uv run --project <repo> jarvis config get` — the path one argument."""
+    """Without KERYX_CLI, `uv run --project <repo> keryx config get` — the path one argument."""
     stub = tmp_path / "bin" / "uv"
     stub.write_text('#!/bin/sh\nfor arg in "$@"; do echo "[$arg]"; done\n')
-    env = {key: value for key, value in machine["env"].items() if key != "JARVIS_CLI"}
+    env = {key: value for key, value in machine["env"].items() if key != "KERYX_CLI"}
 
     result = subprocess.run(
         [BASH, "-c", f'source "{machine["repo"] / "scripts" / "lib.sh"}"\nconfig_value PORT'],

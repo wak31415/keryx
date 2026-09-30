@@ -19,16 +19,16 @@ from xml.etree import ElementTree
 import pytest
 from fakes import FakeVoiceSession
 
-from jarvis.config import Settings
-from jarvis.restart.coordinator import (
+from keryx.config import Settings
+from keryx.restart.coordinator import (
     EXEC_CONFIRM_S,
     MAX_CALLBACK_ATTEMPTS,
     RestartCoordinator,
 )
-from jarvis.restart.health import health_probe, wait_until_serving
-from jarvis.restart.logscan import log_dir
-from jarvis.restart.logscan import marks as log_marks
-from jarvis.restart.service import (
+from keryx.restart.health import health_probe, wait_until_serving
+from keryx.restart.logscan import log_dir
+from keryx.restart.logscan import marks as log_marks
+from keryx.restart.service import (
     LAUNCHD_LABEL,
     SYSTEMD_UNIT,
     WATCH_UNIT_PREFIX,
@@ -42,8 +42,8 @@ from jarvis.restart.service import (
     watch_command,
     watch_log_path,
 )
-from jarvis.restart.store import RestartRecord, RestartStore, format_duration
-from jarvis.restart.version import (
+from keryx.restart.store import RestartRecord, RestartStore, format_duration
+from keryx.restart.version import (
     RUNNING_NAME,
     STARTUP_MARKS_NAME,
     current_version,
@@ -53,20 +53,20 @@ from jarvis.restart.version import (
     running_version,
     startup_log_marks,
 )
-from jarvis.session import SessionRegistry
-from jarvis.stream_tokens import StreamTokenStore, confers_possession
-from jarvis.tasks.models import Task, TaskKind, TaskStatus
-from jarvis.tasks.store import TaskStore
-from jarvis.trust import TrustLevel
+from keryx.session import SessionRegistry
+from keryx.stream_tokens import StreamTokenStore, confers_possession
+from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.store import TaskStore
+from keryx.trust import TrustLevel
 
 OWNER = "+15550000001"
 CALLER = "+15551234567"
-HOST = "jarvis.example"
+HOST = "keryx.example"
 VERSION = "v1-abc1234"
 TRACEBACK = (
     "Traceback (most recent call last):\n"
-    '  File "/repo/src/jarvis/cli.py", line 12, in <module>\n'
-    "ModuleNotFoundError: No module named 'jarvis.nope'\n"
+    '  File "/repo/src/keryx/cli.py", line 12, in <module>\n'
+    "ModuleNotFoundError: No module named 'keryx.nope'\n"
 )
 
 
@@ -96,7 +96,7 @@ class FakeTwilioOut:
     @property
     def can_text(self) -> bool:
         """Mirrors the real one: credentials *and* `SMS_ENABLED`, derived not snapshotted,
-        so a test that drops `configured` afterwards stops texting the way Jarvis would."""
+        so a test that drops `configured` afterwards stops texting the way Keryx would."""
         return self.configured and self.sms_enabled
 
     async def send_sms(self, to: str, body: str) -> str:
@@ -192,7 +192,7 @@ def _systemd_on_path(monkeypatch):
 def make_settings(tmp_path, **overrides) -> Settings:
     values = {
         "openai_api_key": "test",
-        "data_dir": tmp_path / "jarvis",
+        "data_dir": tmp_path / "keryx",
         "state_dir": tmp_path / "state",
         "owner_number_explicit": OWNER,
         "public_host": HOST,
@@ -254,7 +254,7 @@ class contextlib_suppress:
 @pytest.fixture(autouse=True)
 def _fixed_version(monkeypatch):
     """`git describe` is real work on a real checkout; pin it so summaries are assertable."""
-    monkeypatch.setattr("jarvis.restart.version.current_version", lambda repo=None: VERSION)
+    monkeypatch.setattr("keryx.restart.version.current_version", lambda repo=None: VERSION)
 
 
 @pytest.fixture
@@ -276,7 +276,7 @@ def pending(**fields) -> RestartRecord:
         "reason": "picked up new code",
         "number": OWNER,
         "origin_channel": "phone",
-        "target": "systemd jarvis.service",
+        "target": "systemd keryx.service",
         "version": "v0-old0000",
     }
     values.update(fields)
@@ -324,16 +324,16 @@ def test_auto_picks_launchd_when_this_process_runs_as_the_agent(tmp_path):
 
 
 def test_nothing_supervising_us_is_no_target(tmp_path):
-    """A Jarvis started by hand has nothing that would start it again: it must not stop."""
+    """A Keryx started by hand has nothing that would start it again: it must not stop."""
     settings = make_settings(tmp_path, service_manager="auto")
 
     assert resolve_target(settings, platform="linux", which=lambda name: None) is None
 
 
 def test_systemctl_on_path_is_not_the_same_as_being_supervised(tmp_path):
-    """Every Linux desktop has systemctl. A `jarvis serve` in a terminal is still unsupervised.
+    """Every Linux desktop has systemctl. A `keryx serve` in a terminal is still unsupervised.
 
-    It used to resolve to `systemctl --user restart jarvis.service` regardless — which
+    It used to resolve to `systemctl --user restart keryx.service` regardless — which
     failed "unit not found" where the service was not installed, telling nobody, and where
     it was, restarted the *installed* copy instead of the one that was asked.
     """
@@ -351,7 +351,7 @@ def test_systemctl_on_path_is_not_the_same_as_being_supervised(tmp_path):
 
 
 def test_from_outside_an_installed_unit_is_the_target(tmp_path):
-    """`jarvis restart` in a terminal is never under the unit; restarting it is its job."""
+    """`keryx restart` in a terminal is never under the unit; restarting it is its job."""
     settings = make_settings(tmp_path, service_manager="auto")
 
     target = resolve_target(
@@ -382,7 +382,7 @@ def test_from_outside_nothing_installed_is_no_target(tmp_path):
 
 
 def test_auto_checks_supervision_against_the_configured_unit(tmp_path):
-    settings = make_settings(tmp_path, service_manager="auto", service_unit="jarvis-dev.service")
+    settings = make_settings(tmp_path, service_manager="auto", service_unit="keryx-dev.service")
     asked: list[ServiceTarget] = []
 
     def supervising(target):
@@ -393,7 +393,7 @@ def test_auto_checks_supervision_against_the_configured_unit(tmp_path):
         settings, platform="linux", which=lambda name: "/usr/bin/x", supervising=supervising
     )
 
-    assert asked == [ServiceTarget("systemd", "jarvis-dev.service")]
+    assert asked == [ServiceTarget("systemd", "keryx-dev.service")]
     assert target == asked[0]
 
 
@@ -439,11 +439,11 @@ def test_a_configured_manager_is_taken_at_its_word(tmp_path):
 
 
 def test_the_unit_can_be_overridden(tmp_path):
-    settings = make_settings(tmp_path, service_manager="systemd", service_unit="jarvis-dev.service")
+    settings = make_settings(tmp_path, service_manager="systemd", service_unit="keryx-dev.service")
 
     target = resolve_target(settings, platform="linux", which=lambda name: "/usr/bin/systemctl")
 
-    assert target.unit == "jarvis-dev.service"
+    assert target.unit == "keryx-dev.service"
 
 
 # --- is this process the unit? ----------------------------------------------
@@ -454,21 +454,21 @@ USER_MANAGER = "/user.slice/user-1000.slice/user@1000.service"
 @pytest.mark.parametrize(
     ("cgroup", "expected"),
     [
-        (f"0::{USER_MANAGER}/app.slice/jarvis.service\n", True),
+        (f"0::{USER_MANAGER}/app.slice/keryx.service\n", True),
         # cgroup v1 (or hybrid): the systemd hierarchy is the named one.
-        (f"12:cpu:/\n1:name=systemd:{USER_MANAGER}/app.slice/jarvis.service\n", True),
+        (f"12:cpu:/\n1:name=systemd:{USER_MANAGER}/app.slice/keryx.service\n", True),
         # A terminal, a tmux pane, an ssh login: a scope, not the unit.
         (f"0::{USER_MANAGER}/tmux-spawn-0f1e.scope\n", False),
         ("0::/user.slice/user-1000.slice/session-3.scope\n", False),
         # Some other user service that happens to have started us, like a tmux server.
         (f"0::{USER_MANAGER}/app.slice/tmux.service\n", False),
         # A system unit of that name: `systemctl --user` cannot restart it.
-        ("0::/system.slice/jarvis.service\n", False),
+        ("0::/system.slice/keryx.service\n", False),
         ("", False),
     ],
 )
 def test_systemd_supervision_is_read_from_this_process_cgroup(cgroup, expected):
-    target = ServiceTarget("systemd", "jarvis.service")
+    target = ServiceTarget("systemd", "keryx.service")
 
     assert runs_under(target, cgroup=cgroup) is expected
 
@@ -506,10 +506,10 @@ def recording_run(result=None, error=None):
 def test_a_loaded_systemd_unit_is_installed():
     run, calls = recording_run(SimpleNamespace(returncode=0, stdout="loaded\n"))
 
-    assert is_installed(ServiceTarget("systemd", "jarvis.service"), run=run) is True
+    assert is_installed(ServiceTarget("systemd", "keryx.service"), run=run) is True
     # A read-only query, and nothing else.
     assert calls == [
-        ["systemctl", "--user", "show", "--property=LoadState", "--value", "jarvis.service"]
+        ["systemctl", "--user", "show", "--property=LoadState", "--value", "keryx.service"]
     ]
 
 
@@ -523,7 +523,7 @@ def test_a_loaded_systemd_unit_is_installed():
 def test_an_unknown_systemd_unit_is_not_installed(result):
     run, _ = recording_run(result)
 
-    assert is_installed(ServiceTarget("systemd", "jarvis.service"), run=run) is False
+    assert is_installed(ServiceTarget("systemd", "keryx.service"), run=run) is False
 
 
 @pytest.mark.parametrize(
@@ -532,7 +532,7 @@ def test_an_unknown_systemd_unit_is_not_installed(result):
 def test_a_probe_that_fails_reads_as_not_installed(error):
     run, _ = recording_run(error=error)
 
-    assert is_installed(ServiceTarget("systemd", "jarvis.service"), run=run) is False
+    assert is_installed(ServiceTarget("systemd", "keryx.service"), run=run) is False
 
 
 def test_a_loaded_launch_agent_is_installed():
@@ -625,7 +625,7 @@ async def test_the_record_says_who_to_call_and_what_was_running(harness):
     assert record.number == CALLER
     assert record.reason == "new code"
     assert record.version == VERSION
-    assert record.target == "systemd jarvis.service"
+    assert record.target == "systemd keryx.service"
     assert record.state == "pending"
 
 
@@ -699,8 +699,8 @@ async def test_a_copy_started_by_hand_refuses_rather_than_restart_the_installed_
     tmp_path, monkeypatch
 ):
     """`auto` with systemctl on PATH, the unit installed, and this process not under it."""
-    monkeypatch.setattr("jarvis.restart.service.runs_under", no)
-    monkeypatch.setattr("jarvis.restart.service.is_installed", yes)
+    monkeypatch.setattr("keryx.restart.service.runs_under", no)
+    monkeypatch.setattr("keryx.restart.service.is_installed", yes)
     harness = Harness(make_settings(tmp_path, service_manager="auto"))
 
     result = await harness.coordinator.request()
@@ -903,7 +903,7 @@ async def test_the_call_carries_a_redeemable_token_and_the_status(harness):
     assert "picked up new code" in context  # the reason they gave, read back to them
     assert "back up after" in context
     assert "phone listening" in context
-    assert confers_possession(info, OWNER) is True  # Jarvis dialled it; it is not a stranger
+    assert confers_possession(info, OWNER) is True  # Keryx dialled it; it is not a stranger
 
 
 async def test_the_summary_says_what_changed(tmp_path):
@@ -920,10 +920,10 @@ async def test_the_summary_says_what_changed(tmp_path):
 async def test_the_summary_reports_what_went_wrong_since_the_restart(tmp_path):
     """"Back up" is not "working": the logs are the only place the difference is written."""
     settings = make_settings(tmp_path)
-    write_log(settings, "jarvis.log", "2026-08-26 INFO    jarvis: from an earlier life\n")
+    write_log(settings, "keryx.log", "2026-08-26 INFO    keryx: from an earlier life\n")
     harness = Harness(settings)
     record = pending(log_marks=log_marks(settings.state_dir))
-    write_log(settings, "jarvis.err.log", TRACEBACK)
+    write_log(settings, "keryx.err.log", TRACEBACK)
 
     summary = await harness.coordinator.status_summary(record, phone_up=True)
 
@@ -935,7 +935,7 @@ async def test_a_clean_log_says_nothing_about_errors(tmp_path):
     settings = make_settings(tmp_path)
     harness = Harness(settings)
     record = pending(log_marks=log_marks(settings.state_dir))
-    write_log(settings, "jarvis.log", "2026-08-26 INFO    jarvis: serving\n")
+    write_log(settings, "keryx.log", "2026-08-26 INFO    keryx: serving\n")
 
     summary = await harness.coordinator.status_summary(record, phone_up=True)
 
@@ -947,7 +947,7 @@ async def test_errors_are_said_before_the_housekeeping(tmp_path):
     settings = make_settings(tmp_path)
     harness = Harness(settings)
     record = pending(log_marks=log_marks(settings.state_dir))
-    write_log(settings, "jarvis.err.log", TRACEBACK)
+    write_log(settings, "keryx.err.log", TRACEBACK)
 
     summary = await harness.coordinator.status_summary(record, phone_up=True)
 
@@ -1008,7 +1008,7 @@ def test_without_a_stamp_the_checkout_is_the_best_guess(tmp_path):
 def test_the_stamp_beats_a_checkout_that_has_moved_on(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     mark_running(settings.state_dir)
-    monkeypatch.setattr("jarvis.restart.version.current_version", lambda repo=None: "v2-newer00")
+    monkeypatch.setattr("keryx.restart.version.current_version", lambda repo=None: "v2-newer00")
 
     assert loaded_version(settings.state_dir) == VERSION
 
@@ -1023,7 +1023,7 @@ async def test_a_commit_made_before_the_restart_still_counts_as_loaded(tmp_path,
     settings = make_settings(tmp_path)
     harness = Harness(settings)
     mark_running(settings.state_dir)  # the process that is about to be restarted
-    monkeypatch.setattr("jarvis.restart.version.current_version", lambda repo=None: "v2-newer00")
+    monkeypatch.setattr("keryx.restart.version.current_version", lambda repo=None: "v2-newer00")
 
     await harness.coordinator.request(reason="new code", task_id=7)
     await harness.settle()
@@ -1053,7 +1053,7 @@ async def test_the_call_back_names_the_task_the_restart_loaded(harness):
 async def test_a_restart_records_where_the_logs_had_got_to(tmp_path):
     """Without the mark, the process that comes back cannot tell new errors from old."""
     settings = make_settings(tmp_path)
-    write_log(settings, "jarvis.log", "2026-08-26 ERROR   jarvis: yesterday's problem\n")
+    write_log(settings, "keryx.log", "2026-08-26 ERROR   keryx: yesterday's problem\n")
     harness = Harness(settings)
 
     await harness.coordinator.request(reason="new code", task_id=5)
@@ -1062,7 +1062,7 @@ async def test_a_restart_records_where_the_logs_had_got_to(tmp_path):
     record = harness.record()
     assert record is not None
     assert record.task_id == 5
-    assert record.log_marks["jarvis.log"] > 0
+    assert record.log_marks["keryx.log"] > 0
     # And the error that was already there is not attributed to this restart.
     assert "error" not in await harness.coordinator.status_summary(record, phone_up=True)
 
@@ -1139,7 +1139,7 @@ async def test_a_call_that_will_not_place_falls_back_to_a_text(harness):
 
 
 async def test_a_confirmation_that_cannot_be_delivered_at_all_is_kept(harness):
-    """Nothing got through: the record stays, marked, for `jarvis restart --status`."""
+    """Nothing got through: the record stays, marked, for `keryx restart --status`."""
     harness.twilio.call_error = RuntimeError("twilio is down")
     harness.twilio.sms_error = RuntimeError("twilio is still down")
     harness.store.save(pending())
@@ -1155,7 +1155,7 @@ async def test_a_quiet_restart_is_confirmed_in_the_log_and_cleared(harness, capl
     """`--no-callback`: nobody asked to be told, so a restart that worked is not `failed`."""
     harness.store.save(pending(number=None, quiet=True))
 
-    with caplog.at_level("INFO", logger="jarvis.restart"):
+    with caplog.at_level("INFO", logger="keryx.restart"):
         await harness.coordinator.resume(wait_ready=lambda: ready())
 
     assert harness.record() is None
@@ -1297,7 +1297,7 @@ async def test_wait_until_serving_returns_once_it_is_up():
 def test_the_watchdog_is_handed_to_systemd_so_the_cgroup_kill_cannot_take_it(tmp_path):
     """A process we merely fork is inside the unit being restarted, and dies with it."""
     settings = make_settings(tmp_path)
-    target = ServiceTarget("systemd", "jarvis.service")
+    target = ServiceTarget("systemd", "keryx.service")
 
     plan = watch_command(settings, target, which=lambda name: f"/usr/bin/{name}", pid=99)
 
@@ -1313,30 +1313,30 @@ def test_the_watchdog_runs_this_interpreter_not_whatever_is_on_path(tmp_path):
     """`systemd-run` starts with the user manager's environment, which has no venv in it."""
     plan = watch_command(
         make_settings(tmp_path),
-        ServiceTarget("systemd", "jarvis.service"),
+        ServiceTarget("systemd", "keryx.service"),
         which=lambda name: f"/usr/bin/{name}",
     )
 
     assert plan is not None
-    assert plan.argv[-4:] == [sys.executable, "-m", "jarvis", "restart-watch"]
+    assert plan.argv[-4:] == [sys.executable, "-m", "keryx", "restart-watch"]
 
 
 def test_the_watchdogs_own_output_goes_somewhere_a_person_can_find(tmp_path):
     settings = make_settings(tmp_path)
     plan = watch_command(
-        settings, ServiceTarget("systemd", "jarvis.service"), which=lambda name: name
+        settings, ServiceTarget("systemd", "keryx.service"), which=lambda name: name
     )
 
     assert plan is not None
     assert any("StandardError=append:" in argument for argument in plan.argv)
-    assert all("jarvis.log" not in argument for argument in plan.argv)  # not our own log
+    assert all("keryx.log" not in argument for argument in plan.argv)  # not our own log
 
 
 def test_the_watchdog_is_told_where_the_service_keeps_things(tmp_path):
     """A transient unit gets the user manager's environment, not the service's: without
-    these it could resolve another `JARVIS_HOME`, read no restart record, and ring nobody."""
+    these it could resolve another `KERYX_HOME`, read no restart record, and ring nobody."""
     environ = {
-        "JARVIS_HOME": "/srv/jarvis config",
+        "KERYX_HOME": "/srv/keryx config",
         "XDG_STATE_HOME": "/srv/state",
         "XDG_DATA_HOME": "",  # unset in all but name: not passed on
         "STATE_DIR": "/srv/elsewhere",
@@ -1344,7 +1344,7 @@ def test_the_watchdog_is_told_where_the_service_keeps_things(tmp_path):
     }
     plan = watch_command(
         make_settings(tmp_path),
-        ServiceTarget("systemd", "jarvis.service"),
+        ServiceTarget("systemd", "keryx.service"),
         which=lambda name: f"/usr/bin/{name}",
         environ=environ,
     )
@@ -1352,7 +1352,7 @@ def test_the_watchdog_is_told_where_the_service_keeps_things(tmp_path):
     assert plan is not None
     setenv = [argument for argument in plan.argv if argument.startswith("--setenv=")]
     assert setenv == [
-        "--setenv=JARVIS_HOME=/srv/jarvis config",
+        "--setenv=KERYX_HOME=/srv/keryx config",
         "--setenv=XDG_STATE_HOME=/srv/state",
         "--setenv=STATE_DIR=/srv/elsewhere",
     ]
@@ -1363,12 +1363,12 @@ def test_the_watchdog_takes_this_processs_own_environment_by_default(tmp_path, m
     monkeypatch.setenv("XDG_CACHE_HOME", "/srv/cache")
 
     plan = watch_command(
-        make_settings(tmp_path), ServiceTarget("systemd", "jarvis.service"), which=lambda n: n
+        make_settings(tmp_path), ServiceTarget("systemd", "keryx.service"), which=lambda n: n
     )
 
     assert plan is not None
     assert "--setenv=XDG_CACHE_HOME=/srv/cache" in plan.argv
-    assert f"--setenv=JARVIS_HOME={os.environ['JARVIS_HOME']}" in plan.argv
+    assert f"--setenv=KERYX_HOME={os.environ['KERYX_HOME']}" in plan.argv
 
 
 def test_launchd_needs_no_help_escaping(tmp_path):
@@ -1376,14 +1376,14 @@ def test_launchd_needs_no_help_escaping(tmp_path):
     plan = watch_command(make_settings(tmp_path), ServiceTarget("launchd", LAUNCHD_LABEL))
 
     assert plan is not None
-    assert plan.argv == [sys.executable, "-m", "jarvis", "restart-watch"]
+    assert plan.argv == [sys.executable, "-m", "keryx", "restart-watch"]
     assert plan.redirect  # nobody else will point its output anywhere
 
 
 def test_without_systemd_run_no_watchdog_is_claimed(tmp_path):
     """Starting one that will be killed with us is worse than saying it cannot be done."""
     plan = watch_command(
-        make_settings(tmp_path), ServiceTarget("systemd", "jarvis.service"), which=lambda _: None
+        make_settings(tmp_path), ServiceTarget("systemd", "keryx.service"), which=lambda _: None
     )
 
     assert plan is None
@@ -1434,7 +1434,7 @@ async def test_a_watchdog_that_will_not_start_is_recorded_and_the_restart_goes_o
     assert record is not None
     assert "not started" in record.watchdog
     assert "OSError" in record.watchdog
-    assert harness.spawn.commands == [["systemctl", "--user", "restart", "jarvis.service"]]
+    assert harness.spawn.commands == [["systemctl", "--user", "restart", "keryx.service"]]
 
 
 async def test_a_deferred_restart_arms_its_watch_when_it_actually_restarts(tmp_path):
@@ -1458,7 +1458,7 @@ async def test_a_deferred_restart_arms_its_watch_when_it_actually_restarts(tmp_p
 
 
 async def running_task(store: TaskStore, status=TaskStatus.RUNNING) -> Task:
-    task = Task(id=None, kind=TaskKind.AGENT, description="edit jarvis", status=status)
+    task = Task(id=None, kind=TaskKind.AGENT, description="edit keryx", status=status)
     return await store.create(task)
 
 
@@ -1492,7 +1492,7 @@ async def test_the_restart_goes_ahead_once_the_task_finishes(tmp_path):
     await store.update(task.id, status=TaskStatus.DONE)
     await harness.settle()
 
-    assert harness.spawn.commands == [["systemctl", "--user", "restart", "jarvis.service"]]
+    assert harness.spawn.commands == [["systemctl", "--user", "restart", "keryx.service"]]
     await store.close()
 
 
@@ -1603,8 +1603,8 @@ async def test_the_dying_process_last_gasps_are_not_this_restarts_errors(tmp_pat
     record = pending(log_marks=log_marks(settings.state_dir))
 
     # The old process dies noisily...
-    write_log(settings, "jarvis.err.log", "Traceback (most recent call last):\n")
-    write_log(settings, "jarvis.err.log", "RuntimeError: Event loop is closed\n")
+    write_log(settings, "keryx.err.log", "Traceback (most recent call last):\n")
+    write_log(settings, "keryx.err.log", "RuntimeError: Event loop is closed\n")
     # ...and only then do we start, which is where our own story begins.
     mark_startup_logs(settings.state_dir)
 
@@ -1618,7 +1618,7 @@ async def test_what_the_new_process_logs_is_very_much_its_own(tmp_path):
     harness = Harness(settings)
     record = pending(log_marks=log_marks(settings.state_dir))
     mark_startup_logs(settings.state_dir)
-    write_log(settings, "jarvis.err.log", TRACEBACK)
+    write_log(settings, "keryx.err.log", TRACEBACK)
 
     summary = await harness.coordinator.status_summary(record, phone_up=True)
 
@@ -1630,7 +1630,7 @@ async def test_without_a_startup_mark_the_record_is_still_used(tmp_path):
     settings = make_settings(tmp_path)
     harness = Harness(settings)
     record = pending(log_marks=log_marks(settings.state_dir))
-    write_log(settings, "jarvis.err.log", TRACEBACK)
+    write_log(settings, "keryx.err.log", TRACEBACK)
 
     summary = await harness.coordinator.status_summary(record, phone_up=True)
 
@@ -1663,8 +1663,8 @@ class RecordingPopen:
 def test_spawn_watchdog_starts_a_detached_process_and_returns_its_pid(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     popen = RecordingPopen()
-    monkeypatch.setattr("jarvis.restart.service.subprocess.Popen", popen)
-    plan = WatchPlan(["/usr/bin/true", "--watch"], "jarvis-restart-watch-1", redirect=False)
+    monkeypatch.setattr("keryx.restart.service.subprocess.Popen", popen)
+    plan = WatchPlan(["/usr/bin/true", "--watch"], "keryx-restart-watch-1", redirect=False)
 
     assert spawn_watchdog(plan, settings) == 4321
 
@@ -1681,7 +1681,7 @@ def test_a_redirected_watchdog_is_pointed_at_its_own_log(tmp_path, monkeypatch):
     """On launchd nothing redirects for us, and a watchdog that fails has no other voice."""
     settings = make_settings(tmp_path)
     popen = RecordingPopen()
-    monkeypatch.setattr("jarvis.restart.service.subprocess.Popen", popen)
+    monkeypatch.setattr("keryx.restart.service.subprocess.Popen", popen)
     plan = WatchPlan(["/usr/bin/true"], "detached", redirect=True)
 
     spawn_watchdog(plan, settings)
@@ -1751,7 +1751,7 @@ def test_an_unparseable_timestamp_gives_an_unknown_age():
 
 def test_a_version_that_cannot_be_stamped_is_still_returned(tmp_path, monkeypatch):
     """Decoration: an unwritable data dir costs one line of the spoken summary, not more."""
-    monkeypatch.setattr("jarvis.restart.version.current_version", lambda repo=None: "v1-abc")
+    monkeypatch.setattr("keryx.restart.version.current_version", lambda repo=None: "v1-abc")
     unwritable = tmp_path / "a-file"
     unwritable.write_text("not a directory")
 
@@ -1782,6 +1782,6 @@ def test_git_that_is_not_there_is_no_version_rather_than_an_error(tmp_path, monk
     def no_git(*args, **kwargs):
         raise FileNotFoundError("git")
 
-    monkeypatch.setattr("jarvis.restart.version.subprocess.run", no_git)
+    monkeypatch.setattr("keryx.restart.version.subprocess.run", no_git)
 
     assert current_version(tmp_path) is None

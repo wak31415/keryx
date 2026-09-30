@@ -5,9 +5,9 @@ import asyncio
 import httpx
 import pytest
 
-from jarvis.agents.base import RunResult
-from jarvis.setup import context
-from jarvis.setup.context import Probes, openai_key_problem
+from keryx.agents.base import RunResult
+from keryx.setup import context
+from keryx.setup.context import Probes, openai_key_problem
 
 
 class Answer:
@@ -48,11 +48,11 @@ def test_the_default_probes_reach_the_real_implementations(monkeypatch, settings
     async def address(settings):
         return "a@b.c"
 
-    monkeypatch.setattr("jarvis.setup.agents.run_smoke", fake)
-    monkeypatch.setattr("jarvis.setup.agents.run_task", fake)
-    monkeypatch.setattr("jarvis.setup.agents.is_headless", lambda: True)
-    monkeypatch.setattr("jarvis.setup.google.gmail_address", address)
-    monkeypatch.setattr("jarvis.setup.google.run_google_setup", lambda settings, echo: True)
+    monkeypatch.setattr("keryx.setup.agents.run_smoke", fake)
+    monkeypatch.setattr("keryx.setup.agents.run_task", fake)
+    monkeypatch.setattr("keryx.setup.agents.is_headless", lambda: True)
+    monkeypatch.setattr("keryx.setup.google.gmail_address", address)
+    monkeypatch.setattr("keryx.setup.google.run_google_setup", lambda settings, echo: True)
     probes = Probes()
 
     assert asyncio.run(probes.smoke(settings, "claude")).ok

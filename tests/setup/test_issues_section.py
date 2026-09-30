@@ -3,10 +3,10 @@
 `gh` is `FakeWorld.gh`; nothing here runs it.
 """
 
-from jarvis.config.store import ConfigStore
-from jarvis.issues import GH_LOGIN, GhStatus
-from jarvis.setup import issues as section
-from jarvis.setup import wizard
+from keryx.config.store import ConfigStore
+from keryx.issues import GH_LOGIN, GhStatus
+from keryx.setup import issues as section
+from keryx.setup import wizard
 
 from .fakes import DEFAULT
 
