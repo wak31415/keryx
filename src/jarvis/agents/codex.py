@@ -68,6 +68,7 @@ from jarvis.agents.session import (
     ToolCall,
 )
 from jarvis.config import Settings, secure_dir, secure_file
+from jarvis.config.files import claude_user_config
 from jarvis.integrations.slack import mcp_server_config
 from jarvis.tasks.models import Task
 
@@ -235,16 +236,22 @@ def mcp_servers(settings: Settings) -> dict[str, Mapping[str, Any]]:
 
     Claude reaches both through its own configuration (claude.ai connectors, the user-scope
     servers in `~/.claude.json`); Codex has neither, so they are handed over explicitly.
+    Slack's server is the one the `send_to_slack` plugin names, and none while it is off.
     """
+    from jarvis.plugins.slack import slack_route
+
     servers: dict[str, Mapping[str, Any]] = {}
     if settings.google_workspace_mcp:
         servers["google"] = google_mcp_server_config(settings)
-    if settings.slack_mcp_server:
-        slack = mcp_server_config(settings.slack_mcp_server)
+    route = slack_route(settings)
+    if route is not None and route.mcp_server:
+        slack = mcp_server_config(route.mcp_server)
         if slack is not None:
-            servers[settings.slack_mcp_server] = slack
+            servers[route.mcp_server] = slack
         else:
-            log.warning("SLACK_MCP_SERVER %s is not in ~/.claude.json", settings.slack_mcp_server)
+            log.warning(
+                "the Slack MCP server %s is not in %s", route.mcp_server, claude_user_config()
+            )
     return servers
 
 

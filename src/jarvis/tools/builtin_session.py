@@ -10,10 +10,10 @@ the background cannot press a key.
 
 `submit_pin` hands whatever the caller said straight to the session, which is the only
 thing that ever compares a PIN; the digits are neither logged nor kept here. What it adds
-on the way back is only wording: the session answers `authorized` / `invalid` / `locked` /
-`not_configured`, and each of those gets the one sentence the model should spend on it. A
-PIN used to cost four spoken turns on a real call and carry one fact; the messages say
-what not to say as firmly as what to say.
+on the way back is only wording: the session answers `authorized` / `invalid` /
+`incomplete` / `locked` / `not_configured`, and each of those gets the one sentence the
+model should spend on it. A PIN used to cost four spoken turns on a real call and carry one
+fact; the messages say what not to say as firmly as what to say.
 """
 
 import asyncio
@@ -30,6 +30,7 @@ from jarvis.tools.builtin_common import (
     CONFIG_SET_MESSAGE,
     ENDING_MESSAGE,
     PIN_ENROL_MESSAGE,
+    PIN_INCOMPLETE_MESSAGE,
     PIN_INVALID_MESSAGE,
     PIN_LOCKED_MESSAGE,
     PIN_NOT_CONFIGURED_MESSAGE,
@@ -45,6 +46,7 @@ from jarvis.tools.registry import ToolContext, ToolRegistry
 PIN_MESSAGES = {
     "authorized": PIN_OK_MESSAGE,
     "invalid": PIN_INVALID_MESSAGE,
+    "incomplete": PIN_INCOMPLETE_MESSAGE,
     "locked": PIN_LOCKED_MESSAGE,
     "not_configured": PIN_NOT_CONFIGURED_MESSAGE,
 }
@@ -190,14 +192,15 @@ def register_session_tools(
     registry.register(
         "submit_pin",
         "Check the PIN the caller just said, to unlock dispatching work on the phone. "
-        "Pass the digits exactly as you heard them, with nothing else. Never say them back "
-        "out loud, and do not announce that you are checking — it answers at once. The "
-        "answer is authorized, invalid (with the attempts left) or locked; when it is "
+        "Pass the digits you heard, in order, and nothing else; spaces, dashes or digit words "
+        "between them are fine. Never say them back out loud, and do not announce that you "
+        "are checking — it answers at once. The answer is authorized, invalid (with the "
+        "attempts left), incomplete (not a whole PIN, no attempt used) or locked; when it is "
         "authorized, say nothing about the PIN and carry straight on with their request.",
         {
             "type": "object",
             "properties": {
-                "pin": {"type": "string", "description": "The digits the caller said."},
+                "pin": {"type": "string", "description": "The digits the caller said, in order."},
             },
             "required": ["pin"],
         },

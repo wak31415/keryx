@@ -8,6 +8,38 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Added
 
+- **Bug reports and feature requests for Jarvis, by saying so.** "That's a bug, report it"
+  or "suggest that Jarvis should be able to…" is dispatched like any other work, and the
+  subagent files it as an issue on Jarvis's repository with `gh`, following the new
+  `skills/jarvis-report-issue` skill: about ten tool calls of looking (the logs, the call it
+  came from, a grep of the code), no tests run and nothing fixed or built, the repository's
+  own issue templates, and nothing of yours in it — no numbers, names, quotes or project
+  details. A security problem is never filed in public, and one already filed is not filed
+  twice. Off until you turn it on, and only you can — Jarvis and its subagents can never
+  set `ISSUE_REPORTING` or `ISSUE_REPO`: `jarvis setup` has an Issue reports section that asks,
+  checks that `gh` is signed in and offers `gh auth login`, and `jarvis doctor` checks it
+  too. `ISSUE_REPORTING` turns it on, `ISSUE_REPO` says where (the upstream repository by
+  default), and `JARVIS_CHECKOUT` says where the code is when Jarvis does not run from a
+  checkout of its own.
+- **Plugins: the optional voice tools, on only when you want them.** `send_to_slack`,
+  `check_email`, `check_billing` and `cluster_stats` are no longer registered from Jarvis's
+  own source. Each is two files in `~/.local/share/jarvis/tools/` — a one-line `.py` that
+  calls into Jarvis, and a commented `.toml` of its settings — turned on with `jarvis setup`
+  → Plugins (Slack and email ticked the first time) or `jarvis plugins install NAME`, off
+  with `jarvis plugins remove NAME`, and changed without a restart. `jarvis plugins` lists
+  them and why one is refused; `jarvis doctor` has one check each.
+- **`cluster_stats` for anyone with an ssh ControlMaster.** A built-in guard (`ssh -O
+  check`, then a `BatchMode` read over the live master) replaces the guard script you had to
+  write; `jarvis plugins hosts` and the wizard read `~/.ssh/config`, offer only hosts with a
+  ControlMaster, and list each one's Slurm partitions. A guard of your own is still
+  accepted (`guard` in `cluster_stats.toml`).
+- **Your own voice tools.** A Python file in `~/.local/share/jarvis/tools/` defines a tool
+  the voice model can call, with `@custom_tool` from `jarvis.tools.custom`; each call reads
+  the directory afresh, so a new one needs no restart, and none of it lives in the
+  repository. Ask for one out loud and the subagent writes it, following the new
+  `skills/jarvis-custom-tools` skill. Each tool is behind the PIN unless it says `needs_pin=False`,
+  cannot take a built-in's name, and is refused if anyone but you could write it.
+  `jarvis tools` lists them and what the next call would refuse.
 - **`jarvis migrate`** moves an install from `~/.jarvis`, and a `.env` or `.secrets/` in the
   checkout, to the XDG directories. `--dry-run` prints the plan, and a conflict stops it
   before anything is touched. It stops the service while it moves things, rewrites the
@@ -25,7 +57,7 @@ surface — a removed or renamed setting or command is a major bump.
   goes: the voice key (checked with OpenAI), the coding agents and their sign-ins (never
   asked of an agent that can already run), your name, numbers and PIN, then — each optional —
   Twilio (numbers listed from your account; the webhooks set only after you say yes),
-  Google, Slack, billing, a first memory, project summaries a coding agent drafts for you to
+  Google, the plugins (Slack, email, billing, cluster stats), a first memory, project summaries a coding agent drafts for you to
   accept, and the background service. `--all` reviews everything.
 - **A configuration store.** Settings live in `~/.jarvis/config.toml` and every secret in a
   0600 `secrets.toml`; `jarvis config list|get|set|unset|path|import-env|lock|unlock` reads
@@ -123,6 +155,17 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Changed
 
+- **Breaking: the four optional tools are plugins, and their settings moved into the
+  plugins' own files.** `CLUSTERS`, `CLUSTER_SSH_GUARD`, `CLUSTER_QUERY_TIMEOUT_S`,
+  `BILLING_PROVIDER`, `BILLING_MONTHLY_BUDGET`, `OPENAI_BILLING_PROJECT_ID`,
+  `OPENAI_BILLING_API_KEY_ID`, `ANTHROPIC_BILLING_WORKSPACE_ID`, `SLACK_CHANNEL_ID`,
+  `SLACK_MCP_SERVER`, `EMAIL_MODEL` and `EMAIL_EFFORT` are no longer settings: left in
+  `config.toml` they are ignored (`serve` logs one line, `doctor` names them), and until you
+  move them none of the four is offered — Slack stops receiving PIN-lockout alerts, and
+  subagents stop being told about the Slack server. Run `jarvis plugins install
+  --from-settings` (or `jarvis setup` → Plugins) once after upgrading, then restart.
+  `SLACK_BOT_TOKEN`, `OPENAI_ADMIN_KEY` and `ANTHROPIC_ADMIN_KEY` stay in `secrets.toml`.
+  The voice's `set_config` can no longer change the budget or the email model.
 - **Storage follows XDG, on Linux and macOS alike.** The configuration, the PIN and the
   Google client file are in `~/.config/jarvis` (`JARVIS_HOME`), the data in
   `~/.local/share/jarvis` (`DATA_DIR`), the state in `~/.local/state/jarvis` and the cache in
@@ -213,6 +256,25 @@ surface — a removed or renamed setting or command is a major bump.
 
 ### Fixed
 
+- **The approval bridge rang about questions already answered at the keyboard** (#56). An
+  `AskUserQuestion` or `ExitPlanMode` answered on screen was never matched to its pending
+  request, because Claude Code hands both back to `PostToolUse` in a different shape
+  (answers added, or the plan emptied). The request stayed pending until Claude's turn
+  ended, so Jarvis rang five minutes in whenever Claude was still working. The
+  production log had 81 prompts and not one cleared this way. They now match on the part
+  of the input both events carry, settling a request cancels its escalation timer, and
+  pending is checked once more just before dialling. `jarvis approvals` prints how many
+  calls an earlier answer stopped, and the audit log gains `waited_s` and `escalation` on
+  `settled`, plus `resolve_unmatched` and `resolve_fallback` lines. It needs a restart and
+  no change to the installed hook.
+- A spoken PIN said the way people say one was refused. `submit_pin` compared the
+  model's argument to the PIN character for character, so the right PIN written down
+  grouped ("424-242", "424 242") or in words was refused, and each refusal counted against
+  the PIN lockout; the keypad, which only ever sends bare digits, was unaffected. Spaces,
+  dashes, commas, stops and digit words are now read back to the digits first
+  (`config.spoken_digits`), and an entry that is not six to eight digits even then — half a
+  PIN the line clipped, hash pressed too early on the keypad — is `incomplete`: not compared, and not
+  counted on the call or across calls, since it cannot be the PIN.
 - `jarvis doctor` died with a pydantic traceback when `JARVIS_PIN` was set to something
   that is not 6–8 digits — the one state it exists to explain, since `jarvis serve` will
   not load at all. The fallback it has for that matched the field name and never the

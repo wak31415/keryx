@@ -47,6 +47,8 @@ def test_nothing_protected_defaults_to_writable():
         "APPROVALS_ENABLED",
         "APPROVAL_BASH_ALLOW",
         "APPROVAL_ROOTS",
+        "ISSUE_REPORTING",
+        "ISSUE_REPO",
         "SUBAGENT_MAX_BUDGET_USD",
         "DAILY_TASK_CAP",
         "TRANSCRIPT_RETENTION_DAYS",
@@ -58,8 +60,9 @@ def test_nothing_protected_defaults_to_writable():
         "STATE_DIR",
         "CACHE_DIR",
         "SERVICE_MANAGER",
-        "CLUSTERS",
         "SKILLS_DIR",
+        "SLACK_BOT_TOKEN",
+        "OPENAI_ADMIN_KEY",
         "DEBUG_SKIP_TWILIO_VALIDATION",
         "FAKE_AGENTS",
         "TWILIO_AUTH_TOKEN",
@@ -71,6 +74,8 @@ def test_the_lines_of_defence_are_protected(key):
 
 
 def test_the_writable_defaults_are_the_ones_you_would_say_on_a_call():
+    """A plugin's settings are in its own file, which `set_config` does not reach: the
+    budget and the email model went with them (2026-09-29), an accepted cost."""
     assert set(writable_keys({})) == {
         "OPENAI_VOICE",
         "VAD_MODE",
@@ -79,17 +84,16 @@ def test_the_writable_defaults_are_the_ones_you_would_say_on_a_call():
         "VAD_THRESHOLD",
         "VAD_PREFIX_MS",
         "NOISE_REDUCTION",
+        "TRANSCRIPTION_LANGUAGE",
+        "CLOCK_FORMAT",
         "SUBAGENT_MODEL",
         "CODEX_MODEL",
-        "EMAIL_MODEL",
-        "EMAIL_EFFORT",
         "AGENT_BACKEND",
         "LOCAL_SILENCE_TIMEOUT",
         "MAX_CALL_SECONDS",
         "SUBAGENT_TIMEOUT_S",
         "MAX_CONCURRENT_TASKS",
         "APPROVAL_QUIET_HOURS",
-        "BILLING_MONTHLY_BUDGET",
         "LOG_LEVEL",
     }
 

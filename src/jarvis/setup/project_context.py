@@ -3,13 +3,17 @@
 A call carries a short brief per project — what it is, what state it is in, what its words
 mean out loud — so that "how is the orchard thing going" means something to the voice
 model. Writing twenty of those by hand is the step nobody does, so this section asks first
-("May Claude look through these folders…?"), then sends one read-only task through the
-same runner a call would (`prompts/setup_project_context.md`), and shows each draft to be
-accepted, edited or dropped. Nothing is kept that the owner did not accept.
+— explore, explore only the folders the owner names, or not at all, with no answer assumed —
+then sends one read-only task through the same runner a call would
+(`prompts/setup_project_context.md`), and shows each draft to be accepted, edited or
+dropped. Nothing is kept that the owner did not accept. Exploring starts from the home
+directory and leaves the agent to find where the projects are; nothing about this
+machine's layout is assumed.
 
 Accepted summaries go to `DATA_DIR/projects/<name>.md` (0600), which
 `projects.discover_briefs` reads for any project without a `.jarvis-brief.md` of its own;
-a project found outside `PROJECTS_ROOT` is added to `PROJECTS` so it can be named on a call.
+a project Jarvis does not already know is added to `PROJECTS` so it can be named on a call —
+but only one inside the folders it was allowed to read, and none under a hidden directory.
 Accepted facts go into the memory's standing facts. The limits are the ones a call reads —
 `MAX_BRIEF_CHARS` each, `MAX_BRIEFS_CHARS` in all — enforced here as well as asked for.
 """
@@ -43,11 +47,25 @@ class Draft:
     dropped: list[str] = field(default_factory=list)
 
 
-def build_prompt(owner: str, folders: list[Path]) -> str:
+#: Where a project is, said to the agent: in folders the owner named, or anywhere it finds.
+NAMED_FOLDERS = (
+    "A project is a directory directly inside one of those folders (or the folder itself, "
+    "when it is a repository)."
+)
+EXPLORING = (
+    "Those are where to start, not a list of projects: find where {owner} keeps their work "
+    "— usually a folder like `projects`, `code`, `src` or `repos`, or repositories directly "
+    "inside — and treat each directory there as a project. Look a few levels down at most, "
+    "and stay out of system directories and other people's files."
+)
+
+
+def build_prompt(owner: str, folders: list[Path], *, exploring: bool = False) -> str:
     return render_prompt(
         PROMPT,
         owner=owner,
         folders="\n".join(f"- {folder}" for folder in folders),
+        where=(EXPLORING.format(owner=owner) if exploring else NAMED_FOLDERS),
         max_brief=str(MAX_BRIEF_CHARS),
         max_total=str(MAX_BRIEFS_CHARS),
     )
@@ -108,27 +126,25 @@ def run_section(ctx: SetupContext) -> None:
     label = BACKENDS[agent].spoken_name
     ui.note(
         "A call carries a short brief of each project, so Jarvis knows what you mean by "
-        "name. An agent can draft them for you to check."
+        f"name. {label} can explore your projects and draft them for you to check: it is "
+        "asked to read only and to skip anything secret, and nothing is kept until you "
+        "accept it."
     )
-    default = str(settings.projects_root) if settings.projects_root.is_dir() else ""
-    raw = ui.text("Folders to look through, comma-separated (blank to skip)", default=default)
-    folders = [Path(part.strip()).expanduser() for part in raw.split(",") if part.strip()]
-    missing = [str(folder) for folder in folders if not folder.is_dir()]
-    if missing:
-        ui.error(f"Not a folder: {', '.join(missing)}")
+    home = Path.home()
+    how = ui.select(
+        f"Let {label} explore your projects?",
+        [
+            Choice("explore", "Yes", hint=f"it finds them, starting from {home}"),
+            Choice("folders", "Yes, only in folders I name"),
+            Choice("no", "No"),
+        ],
+    )
+    if how == "no":
         return
-    if not folders:
-        return
-    if not ui.confirm(
-        f"May {label} look through these folders to summarise your projects? It is asked "
-        "to read only and to skip anything secret, and nothing is kept until you accept it.",
-        default=True,
-    ):
-        return
+    folders = [home] if how == "explore" else _ask_folders(ctx)
+    prompt = build_prompt(settings.owner_label, folders, exploring=how == "explore")
     with ui.spinner(f"{label} is reading your projects — this can take a few minutes…"):
-        result = asyncio.run(
-            ctx.probes.run_task(settings, agent, build_prompt(settings.owner_label, folders))
-        )
+        result = asyncio.run(ctx.probes.run_task(settings, agent, prompt))
     if not result.ok:
         ui.error(f"{label} could not finish: {result.error or 'no answer'}")
         return
@@ -143,8 +159,27 @@ def run_section(ctx: SetupContext) -> None:
     _review_facts(ctx, draft)
 
 
+def _ask_folders(ctx: SetupContext) -> list[Path]:
+    raw = ctx.ui.text("Folders to look through, comma-separated", validate=_folders_problem)
+    return _folders(raw)
+
+
+def _folders(raw: str) -> list[Path]:
+    return [Path(part.strip()).expanduser() for part in raw.split(",") if part.strip()]
+
+
+def _folders_problem(raw: str) -> str | None:
+    folders = _folders(raw)
+    if not folders:
+        return "Name at least one folder (Esc goes back)."
+    if missing := [str(folder) for folder in folders if not folder.is_dir()]:
+        return f"Not a folder: {', '.join(missing)}"
+    return None
+
+
 def _inside(path: str, folders: list[Path]) -> Path | None:
-    """`path` resolved, when it is a directory inside one of `folders`; else None."""
+    """`path` resolved, when it is a directory inside one of `folders` and not under a
+    hidden one (`~/.ssh` is nobody's project); else None."""
     if not path:
         return None
     try:
@@ -152,8 +187,10 @@ def _inside(path: str, folders: list[Path]) -> Path | None:
     except OSError:
         return None
     for folder in folders:
-        if resolved.is_dir() and resolved.is_relative_to(folder.expanduser().resolve()):
-            return resolved
+        base = folder.expanduser().resolve()
+        if resolved.is_dir() and resolved.is_relative_to(base):
+            hidden = any(part.startswith(".") for part in resolved.relative_to(base).parts)
+            return None if hidden else resolved
     return None
 
 

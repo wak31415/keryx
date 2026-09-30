@@ -40,6 +40,7 @@ from pydantic_settings import (
 )
 
 from jarvis.config.files import (
+    claude_config_dir,
     config_file,
     default_cache_dir,
     default_data_dir,
@@ -94,23 +95,14 @@ OPTIONAL_STR_FIELDS = (
     "google_oauth_client_secret",
     "user_google_email",
     "slack_bot_token",
-    "slack_channel_id",
-    "slack_mcp_server",
     "service_unit",
     "approval_quiet_hours",
     "openai_admin_key",
-    "openai_billing_project_id",
-    "openai_billing_api_key_id",
     "anthropic_admin_key",
-    "anthropic_billing_workspace_id",
 )
 
 #: The coding agents a task can run on (jarvis/agents/registry.py has one entry per name).
 AgentName = Literal["claude", "codex"]
-
-#: What a cluster name or partition has to be. Both are handed to a remote shell, so
-#: anything but a bare word is refused when the settings load rather than on a call.
-CLUSTER_WORD = re.compile(r"[A-Za-z0-9_.-]+")
 
 #: The sections settings are listed and set up under, in the order `jarvis setup` and
 #: `docs/configuration.md` walk them.
@@ -119,10 +111,8 @@ GROUPS: dict[str, str] = {
     "agents": "Coding agents",
     "owner": "Owner, callers and PIN",
     "phone": "Phone",
-    "google": "Google and email",
-    "slack": "Slack",
-    "billing": "Billing",
-    "cluster": "Cluster stats",
+    "google": "Google",
+    "plugins": "Plugin credentials",
     "projects": "Projects and skills",
     "approvals": "The approval bridge",
     "limits": "Limits and retention",
@@ -150,6 +140,12 @@ DIRECTORY_FIELDS = ("data_dir", "state_dir", "cache_dir")
 LEGACY_ENV_FILE = Path(".env")
 LEGACY_CLIENT_FILE = Path(".secrets") / "client_secret.json"
 LEGACY_WORKING_FILES = (LEGACY_ENV_FILE, LEGACY_CLIENT_FILE)
+#: Where a problem with Jarvis is filed unless `ISSUE_REPO` says otherwise: its own tracker.
+UPSTREAM_REPO = "wak31415/jarvis-voice-agent"
+#: `owner/name`, as GitHub spells a repository.
+REPO_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+#: The repository root of the running code: `src/jarvis/config/settings.py`, three up.
+SOURCE_ROOT = Path(__file__).resolve().parents[3]
 
 
 def setting(
@@ -268,8 +264,24 @@ class Settings(BaseSettings):
         "Transcribes what the caller says, for the call log.",
         group="voice",
     )
+    transcription_language: str = setting(
+        "",
+        "The language you speak on a call, as an ISO-639-1 code (`en`, `de`, `fr`), for the "
+        "call log's transcription — which `recall` and the memory read. Empty lets the "
+        "transcriber guess each turn. The voice model itself hears the audio either way.",
+        group="voice",
+        service_writable=True,
+        pattern=r"^([a-z]{2,3})?$",
+    )
+    clock_format: Literal["24h", "12h"] = setting(
+        "24h",
+        "How the voice prompt writes the time of day (`14:05` or `2:05 PM`), and so how "
+        "Jarvis tends to say it.",
+        group="voice",
+        service_writable=True,
+    )
     openai_web_search_model: str = setting(
-        "gpt-5.4-mini",
+        "gpt-6-luna",
         "Answers the voice model's own `web_search` tool, through the Responses API (the "
         "Realtime API has no hosted search tool).",
         group="voice",
@@ -369,7 +381,7 @@ class Settings(BaseSettings):
         repr=False,
     )
     subagent_model: str = setting(
-        "claude-opus-5", "The model a Claude task runs on when none is named.",
+        "claude-opus-5-5", "The model a Claude task runs on when none is named.",
         group="agents", service_writable=True,
     )
     subagent_max_turns: int = setting(
@@ -377,7 +389,8 @@ class Settings(BaseSettings):
         ge=1,
     )
     subagent_max_budget_usd: float = setting(
-        10.0, "Dollars one Claude task may spend.", group="agents",
+        10.0, "Dollars one Claude task may spend: a runaway cap. On a subscription it is "
+        "the SDK's estimate of what the task would have cost, not a charge.", group="agents",
         gt=0,
     )
     # Codex. The same order: CODEX_API_KEY > CODEX_ACCESS_TOKEN (logged in once into
@@ -493,7 +506,7 @@ class Settings(BaseSettings):
     host: str = setting("127.0.0.1", "The address the phone server binds.", group="phone")
     port: int = setting(8080, "The port the phone server binds.", group="phone", ge=1, le=65535)
 
-    # --- google and email --------------------------------------------------------------
+    # --- google -------------------------------------------------------------------------
 
     google_oauth_client_id: str | None = setting(
         None,
@@ -522,97 +535,29 @@ class Settings(BaseSettings):
         "Needed for Codex, which has no claude.ai connectors; Claude already has them.",
         group="google",
     )
-    email_model: str = setting(
-        "claude-opus-5-5",
-        "The model `check_email` answers with, through the bundled `claude` CLI.",
-        group="google",
-        service_writable=True,
-    )
-    email_effort: Literal["low", "medium", "high"] = setting(
-        "low",
-        "How hard it thinks: `low` keeps the answer near five seconds, which is waited "
-        "for inside a call.",
-        group="google",
-        service_writable=True,
-    )
 
-    # --- slack ---------------------------------------------------------------------------
+    # --- plugin credentials --------------------------------------------------------------
 
+    # Only the secrets: every other plugin setting is in the plugin's own TOML beside it in
+    # `DATA_DIR/tools` (`jarvis.plugins`). These stay here so they live in `secrets.toml`.
     slack_bot_token: str | None = setting(
-        None, "The bot token `send_to_slack` posts with.", group="slack", repr=False
-    )
-    slack_channel_id: str | None = setting(
-        None, "The DM channel `send_to_slack` posts to.", group="slack"
-    )
-    slack_mcp_server: str | None = setting(
         None,
-        "The user-scope MCP server in `~/.claude.json` that gives subagents Slack. Named, "
-        "subagents are told to use it, and the token and channel above fall back to its "
-        "config.",
-        group="slack",
-    )
-
-    # --- billing -------------------------------------------------------------------------
-
-    # Read-only, and on an *admin*-scoped credential: the key the voice agent talks to the
-    # model with cannot read `/v1/organization/costs`.
-    billing_provider: Literal["auto", "openai", "anthropic"] = setting(
-        "auto",
-        "Whose bill `check_billing` reports: `auto` is OpenAI, the key the call runs on.",
-        group="billing",
-    )
-    openai_admin_key: str | None = setting(
-        None,
-        "An OpenAI *admin* key; the ordinary key gets a 401 on the costs endpoint.",
-        group="billing",
+        "The bot token the `send_to_slack` plugin posts with (and the PIN-lockout alert).",
+        group="plugins",
         repr=False,
     )
-    openai_billing_project_id: str | None = setting(
+    # Read-only, and on an *admin*-scoped credential: the key the voice agent talks to the
+    # model with cannot read `/v1/organization/costs`.
+    openai_admin_key: str | None = setting(
         None,
-        "Narrows the spend figure to one project (there is no finer filter).",
-        group="billing",
-    )
-    openai_billing_api_key_id: str | None = setting(
-        None, "Narrows *token usage* (not spend) to one `key_…` id.", group="billing"
+        "An OpenAI *admin* key for the `check_billing` plugin; the ordinary key gets a 401 "
+        "on the costs endpoint.",
+        group="plugins",
+        repr=False,
     )
     anthropic_admin_key: str | None = setting(
-        None, "An `sk-ant-admin…` key, for what the subagents have cost.",
-        group="billing", repr=False,
-    )
-    anthropic_billing_workspace_id: str | None = setting(
-        None, "Narrows Anthropic spend to one workspace.", group="billing"
-    )
-    billing_monthly_budget: float | None = setting(
-        None,
-        "What you call a month's budget. Neither provider serves one over the API, so "
-        "\"…percent of the budget\" is only as real as this number.",
-        group="billing",
-        service_writable=True,
-    )
-
-    # --- cluster -------------------------------------------------------------------------
-
-    # A worked example, off until both are set and the guard is on disk. The guard is the
-    # whole point: where cluster auth is 2FA behind an ssh ControlMaster, a direct
-    # connection against a dead master hangs, and a retry storm of those gets an address
-    # banned by the login nodes.
-    cluster_ssh_guard: Path | None = setting(
-        None,
-        "The ssh guard script every Slurm read goes through (its contract is in "
-        "`jarvis/integrations/cluster.py`). Blank: no `cluster_stats`.",
-        group="cluster",
-    )
-    clusters: dict[str, str] = setting(
-        description='The clusters `cluster_stats` may ask about, as `{"name": '
-        '"partition"}`: the name is the ssh alias and the word you say.',
-        group="cluster",
-        default_factory=dict,
-    )
-    cluster_query_timeout_s: float = setting(
-        20.0,
-        "The whole wait, since every cluster is asked at once — inside a call.",
-        group="cluster",
-        gt=0,
+        None, "An `sk-ant-admin…` key, for what the subagents have cost (`check_billing`).",
+        group="plugins", repr=False,
     )
 
     # --- projects ------------------------------------------------------------------------
@@ -630,9 +575,26 @@ class Settings(BaseSettings):
         group="projects",
     )
     skills_dir: Path = setting(
-        Path("~/.claude/skills"),
-        "Where the Claude CLI keeps its skills; listed in the voice prompt so Jarvis knows "
-        "what the subagents are good at.",
+        description="Where the Claude CLI keeps its skills; listed in the voice prompt so "
+        "Jarvis knows what the subagents are good at.",
+        group="projects",
+        default_factory=lambda: claude_config_dir() / "skills",
+    )
+    jarvis_checkout: Path | None = setting(
+        None,
+        "The Jarvis repository on this machine, which a subagent reads when it reports a "
+        "problem with Jarvis. Unset: the checkout Jarvis runs from, when it runs from one.",
+        group="projects",
+    )
+    issue_reporting: bool = setting(
+        False,
+        "Whether a bug or a feature request for Jarvis, said on a call, may be filed as a "
+        "GitHub issue by a subagent, with `gh`. `jarvis setup` asks; only you can turn it on.",
+        group="projects",
+    )
+    issue_repo: str = setting(
+        UPSTREAM_REPO,
+        "The GitHub repository (`owner/name`) those issues are filed on.",
         group="projects",
     )
 
@@ -810,7 +772,7 @@ class Settings(BaseSettings):
     def _agent_name_is_lowercase(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
 
-    @field_validator("projects", "clusters", mode="before")
+    @field_validator("projects", mode="before")
     @classmethod
     def _parse_json_map(cls, value: object) -> object:
         """A JSON object given as text — `jarvis config set PROJECTS '{"a": "/b"}'`."""
@@ -850,7 +812,7 @@ class Settings(BaseSettings):
             return value
         raise ValueError(PIN_RULE)
 
-    @field_validator("cluster_ssh_guard", "google_client_secrets_file", mode="before")
+    @field_validator("google_client_secrets_file", "jarvis_checkout", mode="before")
     @classmethod
     def _blank_path_is_unset(cls, value: object) -> object:
         """A blank path is no path, not the current directory."""
@@ -858,36 +820,33 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("clusters", mode="after")
-    @classmethod
-    def _clusters_are_bare_words(cls, value: dict[str, str]) -> dict[str, str]:
-        """Names lower-cased (they are matched against speech), and both halves bare words."""
-        clusters: dict[str, str] = {}
-        for name, partition in value.items():
-            name, partition = name.strip().lower(), partition.strip()
-            if not (CLUSTER_WORD.fullmatch(name) and CLUSTER_WORD.fullmatch(partition)):
-                raise ValueError("each cluster name and partition must be a bare word")
-            clusters[name] = partition
-        return clusters
-
     @field_validator(
         *DIRECTORY_FIELDS,
         "projects_root",
         "skills_dir",
         "google_client_secrets_file",
-        "cluster_ssh_guard",
+        "jarvis_checkout",
         mode="after",
     )
     @classmethod
     def _expand_path(cls, value: Path | None) -> Path | None:
         return value.expanduser() if value is not None else None
 
-    @field_validator(*DIRECTORY_FIELDS, mode="after")
+    @field_validator(*DIRECTORY_FIELDS, "jarvis_checkout", mode="after")
     @classmethod
-    def _directory_is_absolute(cls, value: Path) -> Path:
+    def _directory_is_absolute(cls, value: Path | None) -> Path | None:
         """One place resolves a directory setting, and it resolves no relative one."""
-        if not value.is_absolute():
+        if value is not None and not value.is_absolute():
             raise ValueError("must be an absolute path (or start with ~)")
+        return value
+
+    @field_validator("issue_repo", mode="after")
+    @classmethod
+    def _repo_is_owner_slash_name(cls, value: str) -> str:
+        """`owner/name`: it is handed to `gh --repo` as it is."""
+        value = value.strip()
+        if not REPO_PATTERN.fullmatch(value):
+            raise ValueError("must be a GitHub repository as owner/name")
         return value
 
     @model_validator(mode="after")
@@ -1106,14 +1065,30 @@ class Settings(BaseSettings):
             return self.noise_reduction
         return "near_field" if channel == "phone" else "far_field"
 
-    def ensure_dirs(self) -> None:
-        """Create `data_dir` (`tasks`, `calls`) and `state_dir` (`logs`, `approvals`), owner-only.
+    @property
+    def custom_tools_dir(self) -> Path:
+        """`DATA_DIR/tools`: the owner's own voice tools (`jarvis.tools.custom`)."""
+        return self.data_dir / "tools"
 
-        Existing directories are tightened in place, so an install made before this simply
-        becomes private the next time anything starts. The cache directory is made by what
-        downloads into it, when it does.
+    @property
+    def checkout(self) -> Path | None:
+        """The Jarvis repository: `JARVIS_CHECKOUT`, else the one this code runs from.
+
+        None when neither is one — an install from a wheel, with no setting pointing at a
+        clone — because then there is no source tree to read and no skills beside it.
         """
-        for root, names in ((self.data_dir, ("tasks", "calls")),
+        if self.jarvis_checkout is not None:
+            return self.jarvis_checkout
+        return SOURCE_ROOT if (SOURCE_ROOT / "pyproject.toml").is_file() else None
+
+    def ensure_dirs(self) -> None:
+        """Create `data_dir` (`tasks`, `calls`, `tools`) and `state_dir` (`logs`, `approvals`).
+
+        All owner-only. Existing directories are tightened in place, so an install made
+        before this simply becomes private the next time anything starts. The cache
+        directory is made by what downloads into it, when it does.
+        """
+        for root, names in ((self.data_dir, ("tasks", "calls", "tools")),
                             (self.state_dir, ("logs", "approvals"))):
             secure_dir(root)
             for name in names:

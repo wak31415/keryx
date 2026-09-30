@@ -32,6 +32,10 @@ MAX_BRIEF_CHARS = 1500
 #: what the memory may add (`continuity.memory.MAX_MEMORY_CHARS`), which is the other thing
 #: every call carries — the prompt stays a receptionist's notes, not a filing cabinet.
 MAX_BRIEFS_CHARS = 4 * MAX_BRIEF_CHARS
+#: Directories a projects root can hold that are never a project: a package manager's or an
+#: interpreter's, left there by something run in the root itself. Dot-directories (`.venv`,
+#: `.git`) are skipped by their dot.
+NOT_PROJECTS = frozenset({"node_modules", "__pycache__"})
 
 
 @dataclass(frozen=True)
@@ -75,7 +79,7 @@ def discover_projects(settings: "Settings") -> dict[str, Path]:
         log.exception("could not list the projects root %s", root)
         entries = []
     for entry in entries:
-        if not entry.name.startswith(".") and entry.is_dir():
+        if not entry.name.startswith(".") and entry.name not in NOT_PROJECTS and entry.is_dir():
             add(entry.name, entry)
     return candidates
 

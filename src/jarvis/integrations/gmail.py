@@ -1,8 +1,8 @@
 """Questions about the owner's email, answered out loud in well under ten seconds.
 
-Behind the voice model's `check_email`. Dispatching an email question to a subagent took a
-median of five minutes (a Claude Code session reading the inbox one tool call at a time);
-this is one Gmail pass and one model call. Two shapes:
+Behind the `check_email` plugin (`jarvis.plugins.email`). Dispatching an email question to
+a subagent took a median of five minutes (a Claude Code session reading the inbox one tool
+call at a time); this is one Gmail pass and one model call. Two shapes:
 
 **A day** (`day` is today or yesterday) — "what do I need to do from today's email":
 
@@ -529,10 +529,14 @@ class ClaudeCliSummariser(Summariser):
         cli: str,
         settings: Settings,
         *,
+        model: str,
+        effort: str,
         run: Callable[..., Any] = _run_cli,
     ) -> None:
         self._cli = cli
         self._settings = settings
+        self._model = model
+        self._effort = effort
         self._run = run
 
     async def summarise(self, system: str, prompt: str) -> str:
@@ -541,8 +545,8 @@ class ClaudeCliSummariser(Summariser):
         auth = resolve_auth(CLAUDE_AUTH, self._settings, probe=False)
         argv = [
             self._cli, "-p",
-            "--model", self._settings.email_model,
-            "--effort", self._settings.email_effort,
+            "--model", self._model,
+            "--effort", self._effort,
             "--output-format", "json",
             "--setting-sources", "",
             "--strict-mcp-config",
@@ -628,20 +632,27 @@ class EmailReader:
         return {"status": "ok", "scope": label, "answer": answer, **counts}
 
 
-def build_email_reader(settings: Settings) -> EmailReader | None:
-    """The production reader, or None — and so no tool — until it could answer.
+def email_problem(settings: Settings) -> str | None:
+    """Why no reader can be built on this machine, in a sentence; None when one can."""
+    if not token_path(settings).is_file():
+        return "not signed in to Gmail: `jarvis auth login gmail`"
+    from jarvis.agents.registry import BACKENDS, install_command, installed
 
-    It needs a Gmail sign-in (`jarvis auth login gmail`) and the `claude` CLI (the `claude`
-    extra). The model and effort are settings: `EMAIL_MODEL`, `EMAIL_EFFORT`.
+    if not installed("claude") or BACKENDS["claude"].find_cli() is None:
+        return f"the claude CLI is not installed: `{install_command('claude')}`"
+    return None
+
+
+def build_email_reader(settings: Settings, *, model: str, effort: str) -> EmailReader:
+    """The production reader, answering with `model` at `effort` (the plugin's settings).
+
+    It needs a Gmail sign-in and the `claude` CLI; ask `email_problem` first.
     """
-    path = token_path(settings)
-    if not path.is_file():
-        return None
-    from jarvis.agents.registry import BACKENDS, installed
+    from jarvis.agents.registry import BACKENDS
 
-    cli = BACKENDS["claude"].find_cli() if installed("claude") else None
-    if cli is None:
-        log.warning("check_email is not offered: the claude CLI is not installed")
-        return None
+    path = token_path(settings)
+    cli = BACKENDS["claude"].find_cli()
+    assert cli is not None, "email_problem says so first"
     secure_file(path)
-    return EmailReader(HttpGmail(path), ClaudeCliSummariser(cli, settings))
+    summariser = ClaudeCliSummariser(cli, settings, model=model, effort=effort)
+    return EmailReader(HttpGmail(path), summariser)

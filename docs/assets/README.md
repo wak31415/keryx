@@ -7,7 +7,9 @@ answer when the mark is copied into a slide, a favicon or a social preview.
 
 | File | What it is |
 |---|---|
-| `jarvis-mark.svg` | The mark: a ring, open where the answer comes back, around a waveform. Geometry only — no text, so it needs no font and renders identically everywhere. |
+| `jarvis-mark.svg` | The mark: three rounded bars of a voice, the tallest in the middle. Geometry only — no text, so it needs no font and renders identically everywhere. |
 
-The colours (`#6366f1` indigo, `#22d3ee` cyan) were chosen to read on GitHub's light *and*
-dark backgrounds without needing two files or a `<picture>` swap.
+The colours are the "sunset" set — orange `#f97316`, pink `#db2777`, violet `#7c3aed` — and
+the file carries its own dark-mode tones (`#fb923c`, `#f472b6`, `#a78bfa`) behind a
+`prefers-color-scheme` query, so one file reads on light and dark backgrounds without a
+`<picture>` swap.

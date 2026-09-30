@@ -7,7 +7,7 @@ from jarvis.agents import registry
 from jarvis.agents.registry import BACKENDS
 from jarvis.config.store import ConfigStore
 from jarvis.setup import wizard
-from jarvis.setup.ui import Aborted
+from jarvis.setup.ui import Aborted, Back
 from jarvis.setup.wizard import DONE, FAILED, MISSING, pending, run_wizard, statuses
 
 from .fakes import DEFAULT
@@ -39,19 +39,19 @@ FIRST_RUN = [
     ("Set the PIN", "now"),
     ("New PIN", "482915"),
     ("same PIN again", "482915"),
-    # Phone, Google, Slack, Billing: all left for later
+    # Phone and plugins left for later (Google is done: Claude's connectors carry it)
     ("Set up phone calls", "skip"),
-    ("Connect Google", DEFAULT),
-    ("Set up Slack", DEFAULT),
-    ("spending questions", DEFAULT),
+    ("Which plugins", []),
+    # Issue reports: on, and gh (the fake) is already signed in
+    ("bug reports and feature requests", True),
     # About you
     ("mostly use Jarvis for", ["coding"]),
     ("Anything else", ""),
     ("fact", "Works nights."),
     ("fact", ""),
     ("Write it?", True),
-    # Project context: no folders
-    ("Folders to look through", ""),
+    # Project context: not now
+    ("explore your projects", "no"),
 ]
 
 
@@ -64,6 +64,7 @@ def test_a_first_run_walks_everything_and_a_second_asks_nothing(make_ctx, claude
     assert code == 0, ctx.ui.lines("panel")[-1]
     settings = ctx.refresh()
     assert settings.openai_api_key == "sk-live"
+    assert settings.issue_reporting is True
     assert settings.owner_name == "Ada"
     assert settings.pin_source == "enrolled"
     [outro] = ctx.ui.lines("outro")
@@ -72,18 +73,72 @@ def test_a_first_run_walks_everything_and_a_second_asks_nothing(make_ctx, claude
     again = make_ctx([("Everything is set up", "exit")])
     assert run_wizard(again) == 0
     assert again.ui.done()
-    assert again.ui.lines("section") == []
+    assert again.ui.lines("section") == ["Overview"]  # and no section walked
 
 
-def test_the_opening_table_marks_each_section(make_ctx, claude_signed_in):
+def test_esc_goes_back_a_question_and_the_key_is_not_asked_for_twice(
+    make_ctx, claude_signed_in, world
+):
+    ctx = make_ctx(
+        [
+            ("What next?", Back()),  # nothing before it: asked again
+            ("What next?", "left"),
+            ("OpenAI API key", "sk-live"),
+            ("sensible default", Back()),  # back into Voice: the key is typed again
+            ("OpenAI API key", "sk-other"),
+            ("sensible default", "recommended"),
+            ("call you", "Ada"),
+            ("mobile numbers", Back()),  # the name again, offered as it was answered
+            ("call you", DEFAULT),
+            ("mobile numbers", "+15551234567"),
+            ("Set the PIN", Aborted()),
+        ]
+    )
+
+    with pytest.raises(Aborted):
+        run_wizard(ctx)
+
+    assert ctx.ui.done()
+    settings = ctx.refresh()
+    assert settings.owner_name == "Ada" and settings.openai_api_key == "sk-other"
+    assert [call for call in world.calls if call[0] == "openai"] == [
+        ("openai", "sk-live"), ("openai", "sk-other")
+    ]
+
+
+def test_the_overview_puts_what_is_not_configured_first(make_ctx, claude_signed_in):
     ctx = make_ctx([("What next?", "exit")])
 
     run_wizard(ctx)
 
-    table = ctx.ui.lines("table")
-    assert "○ | Voice | missing" in table
-    assert "✓ | Coding agents | done" in table
-    assert not any("Import" in row for row in table)
+    labels = [choice.label for choice in ctx.ui.choices["What next?"]]
+    assert labels[0].startswith("Set up what is left")
+    todo, done = labels.index("Not yet configured"), labels.index("Configured")
+    assert todo < labels.index("○  Voice") < done < labels.index("✓  Coding agents")
+    assert labels[-2:] == ["Review everything", "Exit"]
+    assert not any("XDG" in label for label in labels)
+
+
+def test_a_section_picked_from_the_overview_is_walked_alone_and_comes_back(
+    make_ctx, claude_signed_in, world
+):
+    ConfigStore().set({"OPENAI_API_KEY": "sk-saved-key-0123456789"})
+    ctx = make_ctx([
+        ("What next?", "voice"),
+        ("OpenAI API key", DEFAULT),        # configured: offered, and kept with Enter
+        ("What next?", "owner"),
+        ("call you", Back()),               # Esc at the first question: the overview
+        ("What next?", "exit"),
+    ])
+
+    run_wizard(ctx)
+
+    assert ctx.ui.done()
+    assert ctx.ui.currents["OpenAI API key"] == "sk-saved-key-0123456789"
+    assert not [call for call in world.calls if call[0] == "openai"]  # nothing to check
+    assert ctx.ui.lines("section") == ["Overview", "Voice", "Overview", "Owner and PIN",
+                                       "Overview"]
+    assert ctx.ui.lines("panel")  # something was walked, so the summary closes it
 
 
 def test_a_section_that_failed_is_walked_even_after_it_was_walked(make_ctx, claude_signed_in):
@@ -102,12 +157,12 @@ def test_a_section_that_failed_is_walked_even_after_it_was_walked(make_ctx, clau
 
 def test_a_missing_optional_section_is_walked_once(make_ctx, claude_signed_in):
     ctx = make_ctx([])
-    found = statuses(ctx, [])
-    assert found["slack"] == MISSING and "slack" in [s.key for s in pending(ctx, found)]
+    found = statuses(ctx, wizard.run_doctor_checks(ctx.settings, probe_mic=False))
+    assert found["plugins"] == MISSING and "plugins" in [s.key for s in pending(ctx, found)]
 
-    ConfigStore().mark_walked("slack")
+    ConfigStore().mark_walked("plugins")
 
-    assert "slack" not in [s.key for s in pending(ctx, found)]
+    assert "plugins" not in [s.key for s in pending(ctx, found)]
 
 
 def test_the_voice_key_is_asked_until_it_is_there(make_ctx, claude_signed_in):
@@ -157,7 +212,7 @@ def test_review_walks_every_section_and_asks_again(make_ctx, claude_signed_in, m
     run_wizard(ctx, review_all=True)
 
     assert [key for key, _ in walked] == [
-        "voice", "agents", "settings", "owner", "phone", "google", "slack", "billing",
+        "voice", "agents", "settings", "owner", "phone", "google", "plugins", "issues",
         "profile", "projects", "service",
     ]
     assert all(review for _, review in walked)
@@ -170,7 +225,9 @@ def test_nothing_left_offers_a_review(make_ctx, claude_signed_in, monkeypatch):
     ctx = make_ctx([("Everything is set up", "exit")])
 
     assert run_wizard(ctx) == 0
-    assert [c.value for c in ctx.ui.choices["Everything is set up."]] == ["review", "exit"]
+    [options] = ctx.ui.choices.values()
+    values = [choice.value for choice in options if not choice.separator]
+    assert "left" not in values and values[-2:] == ["review", "exit"]
 
 
 def test_ctrl_c_propagates_and_what_was_saved_stays(make_ctx, claude_signed_in):

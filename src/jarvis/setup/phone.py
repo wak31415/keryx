@@ -72,7 +72,8 @@ def _twilio(ctx: SetupContext) -> tuple[TwilioAdmin, TwilioNumber] | None:
             default=settings.twilio_account_sid or "",
             validate=lambda v: None if v.strip().startswith("AC") else "It starts with AC.",
         )
-        token = ui.secret("Auth token", validate=lambda v: None if v.strip() else "Required.")
+        token = ui.secret("Auth token", validate=lambda v: None if v.strip() else "Required.",
+                          current=ctx.current("TWILIO_AUTH_TOKEN"))
     admin = ctx.probes.twilio(sid, token)
     try:
         with ui.spinner("Checking with Twilio…"):

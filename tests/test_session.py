@@ -14,7 +14,7 @@ import pytest
 from fakes import TIMEOUT, DrainingFakeTransport, FakeProvider, FakeTransport, eventually
 
 from jarvis.config import Settings
-from jarvis.continuity.briefing import Briefing
+from jarvis.continuity.briefing import OTHERS_NUDGE, Briefing
 from jarvis.events import EventBus, SessionEnded, SessionStarted
 from jarvis.realtime.base import (
     AudioDelta,
@@ -130,6 +130,7 @@ async def test_session_config_follows_the_phone_transport(make_session, phone, p
     assert config.interrupt_response is True
     assert config.voice == settings.openai_voice
     assert config.transcription_model == settings.openai_transcription_model
+    assert config.transcription_language is None  # unset: the transcriber guesses
     assert "Jarvis" in config.instructions
     assert "phone" in config.instructions
 
@@ -179,6 +180,32 @@ async def test_session_config_carries_the_tool_schemas(make_session, phone, prov
         await eventually(lambda: provider.config is not None)
 
     assert provider.config.tools == tools.schemas()
+
+
+async def test_each_call_offers_the_tools_on_disk_when_it_starts(
+    make_session, phone, provider, tools
+):
+    async def handler(ctx: ToolContext, args: dict) -> dict:
+        return {"pong": True}
+
+    loads: list[str] = []
+
+    def loader(call_tools: ToolRegistry) -> None:
+        loads.append("load")
+        call_tools.register("owners", "Theirs.", {"type": "object", "properties": {}}, handler)
+
+    tools.set_loader(loader)
+    session = make_session(phone, provider)
+
+    async with running(session):
+        await eventually(lambda: provider.config is not None)
+        provider.feed(FunctionCall(call_id="c1", name="owners", arguments={}))
+        await eventually(lambda: provider.tool_results)
+
+    assert [schema["name"] for schema in provider.config.tools] == ["owners"]
+    assert provider.tool_results[0][1] == {"pong": True}
+    assert loads == ["load"]
+    assert "owners" not in tools
 
 
 async def test_session_opens_with_a_greeting_request(make_session, phone, provider):
@@ -898,22 +925,24 @@ async def test_the_briefing_reaches_the_system_prompt(make_session, phone, provi
     assert briefer.builds == 1  # once per session, before the provider is connected
 
 
-async def test_the_prompt_describes_the_optional_tools_this_session_actually_has(
+async def test_an_optional_tool_is_described_by_its_own_schema_not_the_prompt(
     make_session, phone, provider, tools
 ):
-    """The cluster paragraph follows the registry, so the model is never told about a tool
-    it was not given."""
+    """A plugin says everything about itself in its description; the prompt names none, so
+    it never tells the model about a tool it was not given."""
 
     async def handler(ctx, arguments):
         return {}
 
-    tools.register("cluster_stats", "d", {"type": "object", "properties": {}}, handler)
+    tools.register("cluster_stats", "What the cluster is doing.",
+                   {"type": "object", "properties": {}}, handler)
     session = make_session(phone, provider)
 
     async with running(session):
         await eventually(lambda: provider.config is not None)
 
-    assert "- cluster_stats is what" in provider.config.instructions
+    assert "cluster_stats" in {schema["name"] for schema in provider.config.tools}
+    assert "cluster_stats" not in provider.config.instructions
 
 
 async def test_unreported_work_is_pushed_at_the_opening_message_too(
@@ -967,6 +996,40 @@ async def test_a_call_back_keeps_its_own_opening_context_and_gains_the_nudge(
     opening = provider.injected[0][0]
     assert opening.startswith("You are calling them back about task 41.")
     assert "2 tasks finished" in opening
+
+
+async def test_a_call_back_about_the_only_news_opens_with_its_context_alone(
+    make_session, phone, provider
+):
+    """The task it rang about is still unreported, so it is in the digest too — and a nudge
+    about it, "after your greeting", made the model greet, tease and wait (#63)."""
+    context = "You are calling them back about task 41."
+    briefer = FakeBriefer(Briefing(pending="- task 41", pending_count=1, task_ids=(41,)))
+    session = make_session(
+        phone, provider, briefer=briefer, opening_context=context, opening_task_id=41
+    )
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+    assert provider.injected[0][0] == context
+
+
+async def test_a_call_back_hears_of_the_other_news_after_its_own(make_session, phone, provider):
+    context = "You are calling them back about task 41."
+    briefing = Briefing(pending="- task 40\n- task 41", pending_count=2, task_ids=(40, 41))
+    session = make_session(
+        phone,
+        provider,
+        briefer=FakeBriefer(briefing),
+        opening_context=context,
+        opening_task_id=41,
+    )
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+    assert provider.injected[0][0] == context + OTHERS_NUDGE
 
 
 def test_the_prompt_is_told_the_agents_the_dispatch_tool_offers():

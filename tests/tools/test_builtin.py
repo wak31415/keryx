@@ -8,7 +8,6 @@ real `VoiceSession` PIN machinery has its own module (`tests/test_session_pin.py
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 
 import pytest
 
@@ -19,10 +18,6 @@ from jarvis.continuity.recall import MAX_LIMIT as MAX_RECALL_LIMIT
 from jarvis.continuity.recall import Hit
 from jarvis.events import EventBus
 from jarvis.inline_waits import InlineWaits
-from jarvis.integrations.billing import BillingError, BillingReport
-from jarvis.integrations.cluster import MESSAGES, ClusterError, ClusterReport, GpuCounts, MyJobs
-from jarvis.integrations.gmail import MESSAGES as EMAIL_MESSAGES
-from jarvis.integrations.gmail import EmailError
 from jarvis.tasks.agent_runner import FakeAgentRunner, RunResult
 from jarvis.tasks.manager import TaskManager
 from jarvis.tasks.models import TaskStatus
@@ -34,6 +29,7 @@ from jarvis.tools.builtin_common import (
     CONFIG_SET_MESSAGE,
     KEYPRESS_REQUIRED_MESSAGE,
     PIN_ENROL_MESSAGE,
+    PIN_INCOMPLETE_MESSAGE,
     PIN_INVALID_MESSAGE,
     PIN_MISSING_MESSAGE,
     PIN_NOT_CONFIGURED_MESSAGE,
@@ -141,14 +137,10 @@ async def make_tools(tmp_path):
         runner: FakeAgentRunner | None = None,
         *,
         searcher=None,
-        slack=None,
         restarter=None,
         recaller=None,
-        billing=None,
-        cluster=None,
         approvals=None,
         agents=None,
-        email=None,
         **overrides,
     ) -> Harness:
         settings = Settings(
@@ -170,14 +162,10 @@ async def make_tools(tmp_path):
             settings=settings,
             inline_waits=inline_waits,
             searcher=searcher,
-            slack=slack,
             restarter=restarter,
             recaller=recaller,
-            billing=billing,
-            cluster=cluster,
             approvals=approvals,
             agents=agents,
-            email=email,
         )
         harness = Harness(
             registry, manager, settings, store, agent_runner, StubSession(), inline_waits
@@ -453,9 +441,10 @@ async def test_a_blank_pin_is_no_pin_at_all(make_tools):
 
 
 #: The tools a phone caller may use at any level at all, `BRIEFING_BEFORE_PIN` off
-#: included. Two read numbers nobody can misuse (CLAUDE.md rules on both), one reads the
-#: web, and two are how a call gets past the PIN or off the line.
-UNGATED = {"check_billing", "cluster_stats", "web_search", "submit_pin", "end_session"}
+#: included. One reads the web, and two are how a call gets past the PIN or off the line.
+#: (The plugins that only read a number — `check_billing`, `cluster_stats` — say so with
+#: `needs_pin=False`; `tests/plugins` holds them to it.)
+UNGATED = {"web_search", "submit_pin", "end_session"}
 
 #: The read-only tools over what the standing briefing already carries. They follow the
 #: briefing (`BRIEFING_BEFORE_PIN`, on by default): gating them while the prompt states
@@ -497,21 +486,17 @@ class StubApprovals:
 
 def _everything(make_tools, **overrides):
     """A registry with every optional tool wired up, and the doubles to check after."""
-    slack, restarter, approvals = FakeSlack(), FakeRestarter(), StubApprovals()
+    restarter, approvals = FakeRestarter(), StubApprovals()
     recaller = FakeRecaller([Hit("call", "", "user: 1 2 3 4 5 6")])
     tools = make_tools(
         FakeAgentRunner(delay_s=SLOW),
         searcher=FakeSearcher(),
-        slack=slack,
         restarter=restarter,
         recaller=recaller,
-        billing=billing_factory(a_report()),
-        cluster=both_clusters(),
         approvals=approvals,
-        email=FakeEmail(),
         **{"pin": "123456", **overrides},
     )
-    return tools, slack, restarter, recaller, approvals
+    return tools, restarter, recaller, approvals
 
 
 async def test_before_the_pin_a_caller_may_read_and_may_not_act(make_tools):
@@ -522,10 +507,10 @@ async def test_before_the_pin_a_caller_may_read_and_may_not_act(make_tools):
     to Claude, writes something down, or searches past what the briefing carries still
     comes back `pin_required`.
     """
-    tools, slack, restarter, recaller, approvals = _everything(make_tools)
+    tools, restarter, recaller, approvals = _everything(make_tools)
     await tools.dispatch("check their bank statement")
     names = {schema["name"] for schema in tools.registry.schemas()}
-    assert names >= BEFORE_THE_PIN | {"send_to_slack", "recall", "list_pending_approvals"}
+    assert names >= BEFORE_THE_PIN | {"recall", "list_pending_approvals"}
 
     for name in sorted(names):
         result = await tools.call(
@@ -540,7 +525,7 @@ async def test_before_the_pin_a_caller_may_read_and_may_not_act(make_tools):
     assert (task.callback_requested, task.callback_note, task.reported_at) == (False, None, None)
     assert task.status is not TaskStatus.CANCELLED
     assert [one.id for one in await tools.manager.list()] == [1]
-    assert (slack.sent, restarter.requests, recaller.queries, approvals.armed) == ([], [], [], [])
+    assert (restarter.requests, recaller.queries, approvals.armed) == ([], [], [])
 
 
 async def test_with_the_briefing_held_back_every_tool_but_five_asks_for_the_pin(make_tools):
@@ -592,7 +577,7 @@ async def test_recall_needs_the_pin_however_much_the_briefing_gives_away(make_to
     *caller* steers, over every raw transcript Jarvis has ever written — a different
     quantity of exposure, and the one thing on the phone a spoofer could actually mine.
     """
-    tools, *_, recaller, _approvals = _everything(make_tools)
+    tools, _restarter, recaller, _approvals = _everything(make_tools)
 
     refused = await tools.call(
         "recall", {"query": "bank"}, channel="phone", caller="+15550001111", authorized=False
@@ -623,11 +608,8 @@ async def test_a_call_jarvis_placed_reaches_five_more_and_no_others(make_tools):
     tools = make_tools(
         FakeAgentRunner(delay_s=SLOW),
         searcher=FakeSearcher(),
-        slack=FakeSlack(),
         restarter=FakeRestarter(),
         recaller=FakeRecaller([Hit("call", "", "user: hello")]),
-        billing=billing_factory(a_report()),
-        cluster=both_clusters(),
         approvals=StubApprovals(),
         pin="123456",
         allowed_callers=[OWNER],
@@ -752,20 +734,17 @@ async def test_after_the_pin_the_phone_reads_them_as_before(make_tools):
 
 async def test_the_local_channel_needs_no_pin_to_read_them(make_tools):
     """The wake word is authorized by construction: they are at the machine."""
-    slack = FakeSlack()
-    tools = make_tools(slack=slack, recaller=FakeRecaller([]), pin="123456")
+    tools = make_tools(recaller=FakeRecaller([]), pin="123456")
     await _finish(tools)
 
     for name, arguments in [
         ("list_tasks", {}),
         ("get_task_result", {"task_id": 1}),
         ("recall", {"query": "ingest"}),
-        ("send_to_slack", {"message": "the link"}),
         ("list_projects", {}),
     ]:
         result = await tools.call(name, arguments, channel="local", authorized=False)
         assert result.get("status") != "pin_required", name
-    assert slack.sent == ["the link"]
 
 
 async def test_with_no_pin_configured_the_phone_reads_nothing(make_tools):
@@ -1332,6 +1311,17 @@ async def test_an_accepted_pin_is_not_something_to_announce(tools):
     assert "Say nothing about the PIN" in result["message"]
 
 
+async def test_half_a_pin_is_not_called_wrong(tools):
+    """Clipped by the line, it cost no attempt; the sentence must not sound like one did."""
+    tools.session.pin_result = {"status": "incomplete"}
+
+    result = await tools.call("submit_pin", {"pin": "4242"})
+
+    assert result["message"] == PIN_INCOMPLETE_MESSAGE
+    assert "cost no attempt" in result["message"]
+    assert "Do not call it wrong" in result["message"]
+
+
 async def test_a_spoken_pin_on_a_machine_with_none_sends_them_to_the_keypad(make_tools):
     """Saying digits cannot enrol one — a mishearing would be unfixable — so say so."""
     tools = make_tools()
@@ -1430,369 +1420,6 @@ async def test_an_empty_search_result_is_an_error_the_model_can_speak_to(make_to
 async def test_there_is_no_web_search_tool_without_a_searcher(tools):
     """A process wired without one simply does not offer it."""
     assert "web_search" not in {schema["name"] for schema in tools.registry.schemas()}
-
-
-# --- check_billing ---------------------------------------------------------
-
-
-class FakeBilling:
-    """A `BillingReader` that answers from a script, or raises the given `BillingError`."""
-
-    provider = "openai"
-
-    def __init__(self, report: BillingReport | BillingError) -> None:
-        self.report = report
-        self.asked = 0
-
-    async def month_to_date(self, *, now=None) -> BillingReport:
-        self.asked += 1
-        if isinstance(self.report, BillingError):
-            raise self.report
-        return self.report
-
-
-def billing_factory(answer, *, for_provider: BillingError | None = None):
-    """A `BillingFactory` recording which provider the model asked for."""
-    asked: list[str | None] = []
-
-    def factory(provider: str | None):
-        asked.append(provider)
-        if provider is not None and for_provider is not None:
-            raise for_provider
-        return FakeBilling(answer)
-
-    factory.asked = asked  # type: ignore[attr-defined]
-    return factory
-
-
-def a_report(**overrides) -> BillingReport:
-    defaults = dict(
-        provider="openai",
-        currency="USD",
-        spend=31.0,
-        period_start=datetime(2026, 8, 1, tzinfo=UTC),
-        period_end=datetime(2026, 9, 1, tzinfo=UTC),
-        as_of=datetime(2026, 8, 11, tzinfo=UTC),
-        usage={"input_tokens": 5, "requests": 2},
-    )
-    return BillingReport(**{**defaults, **overrides})
-
-
-async def test_check_billing_hands_back_the_month_with_a_sentence_to_say(make_tools):
-    tools = make_tools(billing=billing_factory(a_report()))
-
-    result = await tools.call("check_billing", {})
-
-    assert result["status"] == "ok"
-    assert result["provider"] == "openai"
-    assert result["spend_to_date"] == 31.0
-    assert result["period_start"] == "2026-08-01T00:00:00+00:00"
-    assert result["as_of"] == "2026-08-11T00:00:00+00:00"
-    assert result["estimate"] is True
-    assert result["usage"] == {"input_tokens": 5, "requests": 2}
-    assert "OpenAI so far this month" in result["spoken"]
-
-
-async def test_the_model_may_name_the_provider_and_the_default_is_none(make_tools):
-    factory = billing_factory(a_report())
-    tools = make_tools(billing=factory)
-
-    await tools.call("check_billing", {})
-    await tools.call("check_billing", {"provider": "Anthropic"})
-
-    assert factory.asked == [None, "anthropic"]
-
-
-@pytest.mark.parametrize(
-    "code",
-    ["not_configured", "auth", "rate_limited", "unavailable"],
-)
-async def test_every_billing_failure_is_a_status_with_a_sentence(make_tools, code):
-    """Never a raised exception and never an `error` the model has to invent words for."""
-    tools = make_tools(billing=billing_factory(BillingError(code, "HTTP 401 sk-admin-SECRET")))
-
-    result = await tools.call("check_billing", {})
-
-    assert result["status"] == code
-    assert result["message"]
-    assert "sk-admin" not in str(result)
-
-
-async def test_a_provider_with_no_credential_is_refused_at_the_factory(make_tools):
-    tools = make_tools(
-        billing=billing_factory(
-            a_report(), for_provider=BillingError("not_configured", "ANTHROPIC_ADMIN_KEY is unset")
-        )
-    )
-
-    result = await tools.call("check_billing", {"provider": "anthropic"})
-
-    assert result["status"] == "not_configured"
-    assert "ANTHROPIC_ADMIN_KEY" not in result["message"]
-
-
-async def test_check_billing_is_not_pin_gated_because_it_only_reads(make_tools):
-    """An unauthorized phone caller asking what the bill is changes nothing by asking."""
-    tools = make_tools(billing=billing_factory(a_report()))
-
-    result = await tools.call("check_billing", {}, channel="phone", authorized=False)
-
-    assert result["status"] == "ok"
-
-
-async def test_there_is_no_check_billing_tool_without_a_billing_factory(tools):
-    assert "check_billing" not in {schema["name"] for schema in tools.registry.schemas()}
-
-
-async def test_the_billing_schema_offers_exactly_the_two_providers(make_tools):
-    tools = make_tools(billing=billing_factory(a_report()))
-
-    schema = next(s for s in tools.registry.schemas() if s["name"] == "check_billing")
-
-    assert schema["parameters"]["properties"]["provider"]["enum"] == ["openai", "anthropic"]
-    assert schema["parameters"]["required"] == []
-
-
-# --- cluster_stats ---------------------------------------------------------
-
-
-class FakeClusters:
-    """A `ClusterQuerier` answering from a script: a report, or a `ClusterError` to raise."""
-
-    def __init__(self, answers: dict) -> None:
-        self.answers = answers
-        self.asked: list[str] = []
-
-    def known(self) -> list[str]:
-        return list(self.answers)
-
-    async def stats(self, cluster: str):
-        self.asked.append(cluster)
-        answer = self.answers.get(cluster)
-        if answer is None:
-            raise ClusterError("unknown_cluster", f"no cluster {cluster!r}")
-        if isinstance(answer, ClusterError):
-            raise answer
-        return answer
-
-
-def a_cluster_report(name: str = "alpha", **overrides) -> ClusterReport:
-    defaults = dict(
-        cluster=name,
-        spoken_name=name.capitalize(),
-        partition="shared",
-        gpus=GpuCounts(total=30, busy=4, free=26, nodes=3),
-        jobs=MyJobs(running=1, gpus=2, soonest_end_s=3600, ids=[100042]),
-        queue_competing=0,
-        queue_pending=1,
-    )
-    return ClusterReport(**{**defaults, **overrides})
-
-
-def both_clusters(**overrides):
-    answers = {"alpha": a_cluster_report("alpha"), "beta": a_cluster_report("beta")}
-    answers.update(overrides)
-    return FakeClusters(answers)
-
-
-async def test_cluster_stats_asks_every_cluster_when_they_name_none(make_tools):
-    clusters = both_clusters()
-    tools = make_tools(cluster=clusters)
-
-    result = await tools.call("cluster_stats", {})
-
-    assert clusters.asked == ["alpha", "beta"]
-    assert result["status"] == "ok"
-    assert [entry["cluster"] for entry in result["clusters"]] == ["alpha", "beta"]
-    assert "Alpha" in result["spoken"] and "Beta" in result["spoken"]
-
-
-async def test_cluster_stats_answers_for_one_cluster_when_they_name_it(make_tools):
-    clusters = both_clusters()
-    tools = make_tools(cluster=clusters)
-
-    result = await tools.call("cluster_stats", {"cluster": "Beta"})
-
-    assert clusters.asked == ["beta"]
-    assert [entry["cluster"] for entry in result["clusters"]] == ["beta"]
-
-
-async def test_the_payload_carries_counts_and_job_ids_but_never_a_job_name(make_tools):
-    """Anyone past the caller allowlist learns how busy a machine is, and nothing else."""
-    tools = make_tools(cluster=both_clusters())
-
-    result = await tools.call("cluster_stats", {"cluster": "alpha"})
-
-    entry = result["clusters"][0]
-    assert entry["gpus_free"] == 26 and entry["gpus_total"] == 30
-    assert entry["my_job_ids"] == [100042]
-    assert "name" not in entry and "cwd" not in entry
-
-
-async def test_one_cluster_failing_never_costs_the_other(make_tools):
-    tools = make_tools(cluster=both_clusters(beta=ClusterError("auth_expired", "login expired")))
-
-    result = await tools.call("cluster_stats", {})
-
-    assert result["status"] == "ok"
-    assert [entry["cluster"] for entry in result["clusters"]] == ["alpha"]
-    assert result["unavailable"] == [
-        {"cluster": "beta", "status": "auth_expired", "message": MESSAGES["auth_expired"]}
-    ]
-
-
-@pytest.mark.parametrize(
-    "code", ["not_configured", "unknown_cluster", "auth_expired", "timeout", "unavailable"]
-)
-async def test_every_cluster_failure_is_a_status_with_a_sentence(make_tools, code):
-    """Never a raised exception, and never a path or a host for the model to read out."""
-    detail = "no guard at /home/someone/.claude/skills/x/cluster_ssh.sh"
-    answers = {name: ClusterError(code, detail) for name in ("alpha", "beta")}
-    tools = make_tools(cluster=FakeClusters(answers))
-
-    result = await tools.call("cluster_stats", {})
-
-    assert result["status"] == code
-    assert result["message"] == MESSAGES[code]
-    assert ".claude" not in str(result)
-
-
-async def test_a_cluster_it_does_not_know_is_refused_rather_than_looked_up(make_tools):
-    clusters = both_clusters()
-    tools = make_tools(cluster=clusters)
-
-    result = await tools.call("cluster_stats", {"cluster": "gamma"})
-
-    assert result["status"] == "unknown_cluster"
-    assert clusters.asked == ["gamma"]  # asked the querier, which refused it by name
-
-
-async def test_cluster_stats_is_not_pin_gated_because_it_only_reads(make_tools):
-    """An unauthorized phone caller asking how busy a machine is changes nothing by asking."""
-    tools = make_tools(cluster=both_clusters())
-
-    result = await tools.call("cluster_stats", {}, channel="phone", authorized=False)
-
-    assert result["status"] == "ok"
-
-
-async def test_there_is_no_cluster_stats_tool_without_a_querier(tools):
-    assert "cluster_stats" not in {schema["name"] for schema in tools.registry.schemas()}
-
-
-async def test_the_cluster_schema_offers_exactly_the_configured_clusters(make_tools):
-    """The names come from the querier, which got them from settings — none are built in."""
-    tools = make_tools(cluster=both_clusters())
-
-    schema = next(s for s in tools.registry.schemas() if s["name"] == "cluster_stats")
-
-    assert schema["parameters"]["properties"]["cluster"]["enum"] == ["alpha", "beta", "all"]
-    assert schema["parameters"]["required"] == []
-    assert "alpha and beta" in schema["description"]
-
-
-async def test_one_configured_cluster_is_described_as_one(make_tools):
-    tools = make_tools(cluster=FakeClusters({"alpha": a_cluster_report("alpha")}))
-
-    schema = next(s for s in tools.registry.schemas() if s["name"] == "cluster_stats")
-
-    assert "the Slurm cluster alpha is doing" in schema["description"]
-    assert schema["parameters"]["properties"]["cluster"]["enum"] == ["alpha", "all"]
-
-
-async def test_a_querier_that_knows_no_cluster_offers_no_tool(make_tools):
-    tools = make_tools(cluster=FakeClusters({}))
-
-    assert "cluster_stats" not in {schema["name"] for schema in tools.registry.schemas()}
-
-
-# --- send_to_slack ---------------------------------------------------------
-
-
-class FakeSlack:
-    """A `SlackSender` that records what it was asked to send."""
-
-    def __init__(self, ok: bool = True) -> None:
-        self.ok = ok
-        self.sent: list[str] = []
-
-    async def send(self, text: str) -> bool:
-        self.sent.append(text)
-        return self.ok
-
-
-async def test_send_to_slack_sends_the_message(make_tools):
-    slack = FakeSlack()
-    tools = make_tools(slack=slack)
-
-    result = await tools.call("send_to_slack", {"message": "task 3 is done"})
-
-    assert result == {"status": "sent"}
-    assert slack.sent == ["task 3 is done"]
-
-
-async def test_send_to_slack_needs_a_message(make_tools):
-    tools = make_tools(slack=FakeSlack())
-
-    assert "message is required" in (await tools.call("send_to_slack", {}))["error"]
-
-
-async def test_a_refused_slack_message_comes_back_as_an_error(make_tools):
-    tools = make_tools(slack=FakeSlack(ok=False))
-
-    result = await tools.call("send_to_slack", {"message": "anything"})
-
-    assert "did not go through" in result["error"]
-
-
-async def test_there_is_no_slack_tool_without_credentials(tools):
-    assert "send_to_slack" not in {schema["name"] for schema in tools.registry.schemas()}
-
-
-def _slack_description(tools) -> str:
-    """The `send_to_slack` description, as the model is shown it, on one line."""
-    schema = next(s for s in tools.registry.schemas() if s["name"] == "send_to_slack")
-    return " ".join(schema["description"].split())
-
-
-async def test_the_slack_tool_tells_the_model_to_wait_to_be_asked(make_tools):
-    """The description is half the guardrail: the model reads it on every turn."""
-    description = _slack_description(make_tools(slack=FakeSlack()))
-
-    assert "Only call it when they have explicitly asked" in description
-    assert "Never call it unasked" in description
-
-
-async def test_the_slack_tool_names_whom_it_sends_to(make_tools):
-    assert _slack_description(make_tools(slack=FakeSlack())).startswith(
-        "Send the owner a message on Slack"
-    )
-    assert _slack_description(make_tools(slack=FakeSlack(), owner_name="Ada")).startswith(
-        "Send Ada a message on Slack"
-    )
-
-
-async def test_the_slack_tool_does_not_invite_a_written_copy_of_the_answer(make_tools):
-    """Repeating in writing what was just said out loud is the commonest unasked send.
-
-    But only unasked: a flat ban on it once sent "Slack me that" to a subagent instead.
-    """
-    description = _slack_description(make_tools(slack=FakeSlack()))
-
-    assert "never volunteer a written copy of something you have already said" in description
-    assert "when they ask for what you just said in writing, that is exactly what" in description
-    assert '"Slack me that"' in description
-
-
-async def test_the_slack_tool_still_sends_when_it_is_called(make_tools):
-    """The rule is about when the model calls it, not about crippling the tool itself."""
-    slack = FakeSlack()
-    tools = make_tools(slack=slack)
-
-    assert await tools.call("send_to_slack", {"message": "the link they asked for"}) == {
-        "status": "sent"
-    }
-    assert slack.sent == ["the link they asked for"]
 
 
 # --- restart_service -------------------------------------------------------
@@ -2084,77 +1711,6 @@ async def test_the_recall_limit_is_clamped_to_something_speakable(make_tools):
     await harness.call("recall", {"query": "orchard", "limit": 99})
 
     assert recaller.queries[0][1] == MAX_RECALL_LIMIT
-
-
-# --- check_email -------------------------------------------------------------
-
-
-class FakeEmail:
-    """Stands in for `EmailReader`: records the question, answers or fails as told."""
-
-    def __init__(self, fail: EmailError | None = None) -> None:
-        self.fail = fail
-        self.asked: list[tuple[str, str | None, str | None]] = []
-
-    async def ask(self, question, *, query=None, day=None):
-        self.asked.append((question, query, day))
-        if self.fail is not None:
-            raise self.fail
-        return {"status": "ok", "scope": "search", "answer": "Ann needs the numbers.", "threads": 1}
-
-
-def test_check_email_is_only_offered_with_a_reader(make_tools):
-    assert "check_email" not in {s["name"] for s in make_tools().registry.schemas()}
-    schema = next(
-        s for s in make_tools(email=FakeEmail()).registry.schemas() if s["name"] == "check_email"
-    )
-    assert schema["parameters"]["required"] == ["question"]
-    assert schema["parameters"]["properties"]["day"]["enum"] == ["today", "yesterday"]
-
-
-async def test_check_email_hands_the_question_over_and_says_the_answer(make_tools):
-    email = FakeEmail()
-    tools = make_tools(email=email)
-
-    result = await tools.call(
-        "check_email",
-        {"question": "did Ann write?", "gmail_query": "from:ann", "day": "Yesterday"},
-    )
-
-    assert result["answer"] == "Ann needs the numbers."
-    assert email.asked == [("did Ann write?", "from:ann", "yesterday")]
-
-
-async def test_check_email_refuses_a_day_it_does_not_read_and_an_empty_ask(make_tools):
-    email = FakeEmail()
-    tools = make_tools(email=email)
-
-    older = await tools.call("check_email", {"question": "x", "day": "last week"})
-    empty = await tools.call("check_email", {})
-
-    assert "gmail_query" in older["error"]
-    assert "question is required" in empty["error"]
-    assert email.asked == []
-
-
-async def test_check_email_failing_is_a_status_and_a_sentence(make_tools):
-    tools = make_tools(email=FakeEmail(fail=EmailError("signed_out", "invalid_grant")))
-
-    result = await tools.call("check_email", {"question": "anything today?"})
-
-    assert result == {"status": "signed_out", "message": EMAIL_MESSAGES["signed_out"]}
-
-
-async def test_check_email_needs_the_pin_on_the_phone(make_tools):
-    email = FakeEmail()
-    tools = make_tools(email=email, pin="123456")
-
-    result = await tools.call(
-        "check_email", {"question": "x"}, channel="phone", caller="+15550001111", authorized=False
-    )
-
-    assert result["status"] == "pin_required"
-    assert email.asked == []
 
 
 # --- set_config -------------------------------------------------------------------------

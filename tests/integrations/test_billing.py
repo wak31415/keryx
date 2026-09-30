@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 
 import pytest
 
-from jarvis.config import Settings
 from jarvis.integrations.billing import (
     ANTHROPIC_COST_URL,
     ANTHROPIC_USAGE_URL,
@@ -114,19 +113,6 @@ def anthropic_costs(*amounts: str) -> dict:
         "has_more": False,
         "next_page": None,
     }
-
-
-def settings(**overrides: object) -> Settings:
-    """A Settings with `.env` shut out, so a developer's real keys cannot join a test.
-
-    `conftest` strips the ambient environment, but `Settings` also reads `.env` from the
-    working directory: without `_env_file=None` a filled-in `.env` supplies the admin key
-    these tests assert is absent, and the assertion prints the real credential when it
-    fails.
-    """
-    return Settings(
-        **{"_env_file": None, "openai_api_key": "sk-proj-abcdefghijkl", **overrides}
-    )
 
 
 # --- the period ------------------------------------------------------------
@@ -551,41 +537,34 @@ def test_the_payload_never_carries_a_credential():
 
 
 def test_auto_is_openai_because_that_is_the_key_this_call_runs_on():
-    reader = build_billing_reader(settings(openai_admin_key=ADMIN_KEY))
+    reader = build_billing_reader(openai_admin_key=ADMIN_KEY)
 
     assert reader.provider == "openai"
+    assert build_billing_reader("auto", openai_admin_key=ADMIN_KEY).provider == "openai"
 
 
-def test_the_default_provider_is_configurable():
-    reader = build_billing_reader(
-        settings(billing_provider="anthropic", anthropic_admin_key="sk-ant-admin01-x")
-    )
+def test_anthropic_is_asked_for_by_name():
+    reader = build_billing_reader("Anthropic", anthropic_admin_key="sk-ant-admin01-x")
 
     assert reader.provider == "anthropic"
 
 
-def test_the_caller_can_override_the_configured_default():
-    config = settings(billing_provider="anthropic", openai_admin_key=ADMIN_KEY)
-
-    assert build_billing_reader(config, "openai").provider == "openai"
-
-
 def test_the_admin_key_wins_over_the_ordinary_one():
-    reader = build_billing_reader(settings(openai_admin_key=ADMIN_KEY))
+    reader = build_billing_reader(openai_admin_key=ADMIN_KEY, openai_api_key="sk-proj-x")
 
     assert reader._api_key == ADMIN_KEY
 
 
 def test_with_no_admin_key_the_ordinary_key_is_tried_rather_than_refusing():
     """A clear 401 from the provider beats "not configured" when we have not looked."""
-    reader = build_billing_reader(settings())
+    reader = build_billing_reader(openai_api_key="sk-proj-abcdefghijkl")
 
     assert reader._api_key == "sk-proj-abcdefghijkl"
 
 
 def test_a_missing_anthropic_credential_names_the_setting_and_no_value():
     with pytest.raises(BillingError) as caught:
-        build_billing_reader(settings(billing_provider="anthropic"))
+        build_billing_reader("anthropic", openai_admin_key=ADMIN_KEY)
 
     assert caught.value.code == "not_configured"
     assert caught.value.detail == "ANTHROPIC_ADMIN_KEY is unset"
@@ -593,28 +572,30 @@ def test_a_missing_anthropic_credential_names_the_setting_and_no_value():
 
 def test_a_placeholder_openai_key_is_not_a_credential():
     with pytest.raises(BillingError) as caught:
-        build_billing_reader(settings(openai_api_key="unset"))
+        build_billing_reader(openai_api_key="unset")
 
     assert caught.value.code == "not_configured"
 
 
 def test_a_provider_nobody_has_heard_of_is_refused_not_guessed():
     with pytest.raises(BillingError) as caught:
-        build_billing_reader(settings(openai_admin_key=ADMIN_KEY), "aws")
+        build_billing_reader("aws", openai_admin_key=ADMIN_KEY)
 
     assert caught.value.code == "not_configured"
 
 
-def test_the_budget_and_scoping_settings_reach_the_reader():
+def test_the_budget_and_scoping_values_reach_the_reader():
     reader = build_billing_reader(
-        settings(
-            openai_admin_key=ADMIN_KEY,
-            openai_billing_project_id="proj_9",
-            openai_billing_api_key_id="key_9",
-            billing_monthly_budget=250.0,
-        )
+        openai_admin_key=ADMIN_KEY,
+        openai_project_id="proj_9",
+        openai_api_key_id="key_9",
+        budget=250.0,
+    )
+    anthropic = build_billing_reader(
+        "anthropic", anthropic_api_key="sk-ant-x", anthropic_workspace_id="wrk_1", budget=9.0
     )
 
     assert reader._project_id == "proj_9"
     assert reader._api_key_id == "key_9"
     assert reader._budget == 250.0
+    assert (anthropic._workspace_id, anthropic._budget) == ("wrk_1", 9.0)

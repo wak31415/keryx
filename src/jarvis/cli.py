@@ -12,8 +12,9 @@ import shlex
 import signal
 import subprocess
 import sys
+import textwrap
 from collections.abc import AsyncIterator, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
@@ -22,6 +23,7 @@ import typer
 import uvicorn
 from pydantic import ValidationError
 
+from jarvis import plugins
 from jarvis.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from jarvis.config import (
@@ -35,7 +37,7 @@ from jarvis.config import (
     secure_dir,
     secure_file,
 )
-from jarvis.config.files import HOME_ENV, XDG_HOMES, xdg_home
+from jarvis.config.files import HOME_ENV, XDG_HOMES, claude_config_dir, xdg_home
 from jarvis.config.migrate import MigrationError, make_plan
 from jarvis.config.migrate import Report as MigrationReport
 from jarvis.config.migrate import Service as MigratingService
@@ -50,6 +52,7 @@ from jarvis.events import EventBus
 from jarvis.local_runner import LocalRunner
 from jarvis.logging_util import mask_number
 from jarvis.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
+from jarvis.plugins import ssh_hosts
 from jarvis.realtime.openai import OpenAIRealtimeClient
 from jarvis.restart.health import health_probe, wait_until_serving
 from jarvis.restart.logscan import errors_since
@@ -74,9 +77,11 @@ from jarvis.setup.sections import repo_root
 from jarvis.setup.ui import Aborted
 from jarvis.setup.wizard import agent_instructions, run_wizard
 from jarvis.tasks.manager import install_default_executor
-from jarvis.tasks.models import Task, TaskStatus
+from jarvis.tasks.models import ProjectUsage, Task, TaskStatus
 from jarvis.tasks.store import TaskStore
 from jarvis.tools import ToolRegistry
+from jarvis.tools.builtin import BUILTIN_TOOL_NAMES
+from jarvis.tools.custom import load_custom_tools
 from jarvis.transports.local_audio import LocalAudioDevice
 from jarvis.transports.wav import WavTransport
 from jarvis.wakeword import (
@@ -97,6 +102,10 @@ auth_app = typer.Typer(help="Sign in to what Jarvis needs: the coding agents and
 app.add_typer(auth_app, name="auth")
 memory_app = typer.Typer(help="What Jarvis remembers between calls.")
 app.add_typer(memory_app, name="memory")
+plugins_app = typer.Typer(
+    help="The optional voice tools (Slack, email, billing, cluster stats): on, off, set up."
+)
+app.add_typer(plugins_app, name="plugins")
 log = logging.getLogger("jarvis.cli")
 
 
@@ -341,6 +350,14 @@ def serve(
             raise typer.Exit(1)
         typer.echo(f"{why}; serving the phone channel only")
         wakeword = False
+    if leftover := plugins.retired_in(ConfigStore()):
+        # Ignored, never fatal: they are plugin settings now, and the plugin is off until
+        # they are moved into its file.
+        log.warning(
+            "config.toml still holds %s, which are plugin settings now: "
+            "`jarvis plugins install --from-settings`",
+            ", ".join(leftover),
+        )
     # Everything this process starts — every subagent — is the service, not the owner, when
     # it runs `jarvis config set` (jarvis.config.permissions).
     os.environ[ACTOR_ENV] = SERVICE
@@ -532,6 +549,7 @@ def restart(
         number=number,
         origin_channel="cli",
         target=target.describe(),
+        quiet=no_callback,
         version=loaded_version(settings.state_dir),
         log_marks=log_marks(settings.state_dir),
     )
@@ -771,6 +789,77 @@ def tasks_show(task_id: Annotated[int, typer.Argument(help="The task id to show.
         _echo_report(Path(task.report_path))
 
 
+#: What `tasks usage` calls the two groups that carry no project name of their own.
+NO_PROJECT_LABEL = "(no project)"
+HOUSEKEEPING_LABEL = "(housekeeping)"
+#: Printed under the table, because every column in it is easy to over-read.
+USAGE_FOOTNOTE = (
+    "Attributed by the project each task was dispatched with; \"(no project)\" is work "
+    "started in the projects folder, which may still have touched one. COST is what the "
+    "agent reported: Claude's list-price estimate, which a subscription login is not "
+    "billed per token, and nothing for Codex. PRICED counts the tasks that reported one. "
+    "Voice calls are not tasks and are not here; check_billing has the provider's total."
+)
+
+
+async def _read_usage(settings: Settings, since: datetime | None) -> list[ProjectUsage]:
+    async with _open_store(settings) as store:
+        return await store.usage_by_project(since=since)
+
+
+def _usage_label(usage: ProjectUsage) -> str:
+    if usage.internal:
+        return HOUSEKEEPING_LABEL
+    return usage.project or NO_PROJECT_LABEL
+
+
+def _usage_line(label: str, usage: ProjectUsage) -> str:
+    cost = "-" if usage.cost_usd is None else f"${usage.cost_usd:,.2f}"
+    tokens = usage.measured > 0
+    return (
+        f"{_shorten(label, 28):<28}  {usage.tasks:>5}  {f'{usage.priced}/{usage.tasks}':>7}  "
+        f"{f'{usage.input_tokens:,}' if tokens else '-':>13}  "
+        f"{f'{usage.output_tokens:,}' if tokens else '-':>11}  {cost:>9}"
+    )
+
+
+@tasks_app.command("usage")
+def tasks_usage(
+    days: Annotated[
+        int,
+        typer.Option("--days", min=0, help="Tasks created in the last N days; 0 for all of them."),
+    ] = 30,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+) -> None:
+    """What the tasks spent, per project: tokens and the agents' own cost estimates."""
+    settings = _configure_readonly()
+    since = datetime.now(UTC) - timedelta(days=days) if days else None
+    groups = asyncio.run(_read_usage(settings, since))
+    if as_json:
+        typer.echo(json.dumps({
+            "since": since.isoformat() if since else None,
+            "projects": [
+                {"label": _usage_label(usage), **dataclasses.asdict(usage)} for usage in groups
+            ],
+        }, indent=2))
+        return
+    window = f"in the last {days} day{'s' if days != 1 else ''}" if days else "ever"
+    if not groups:
+        typer.echo(f"no tasks created {window}")
+        return
+
+    typer.echo(f"Tasks created {window}, by project:\n")
+    typer.echo(
+        f"{'PROJECT':<28}  {'TASKS':>5}  {'PRICED':>7}  {'INPUT TOK':>13}  "
+        f"{'OUTPUT TOK':>11}  {'COST':>9}"
+    )
+    for usage in groups:
+        typer.echo(_usage_line(_usage_label(usage), usage))
+    typer.echo(_usage_line("total", sum(groups[1:], groups[0])))
+    typer.echo("")
+    typer.echo(textwrap.fill(USAGE_FOOTNOTE, width=88))
+
+
 def _echo_report(path: Path) -> None:
     """Print the task's written report, truncated; a report that is gone is simply skipped."""
     try:
@@ -851,6 +940,219 @@ def memory_seed(
             typer.echo(line)
     if code := profile.exit_code(status):
         raise typer.Exit(code)
+
+
+@app.command("tools")
+def tools_command(
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """List your own voice tools (DATA_DIR/tools) and any file the next call would refuse.
+
+    The same load a call makes, against every built-in tool's name, so a name clash or a
+    file that will not import shows up here first. Exits 1 when anything was refused. A
+    new or edited tool is offered from the next call, with no restart.
+
+    Nothing of the service's is built here: a subagent runs this inside the live service's
+    environment, and the application's own objects own its socket and its records.
+    """
+    settings = _configure_readonly()
+    directory = settings.custom_tools_dir
+    loaded = load_custom_tools(directory, taken=BUILTIN_TOOL_NAMES)
+    if as_json:
+        typer.echo(json.dumps({
+            "directory": str(directory),
+            "tools": [
+                {"name": tool.name, "needs_pin": tool.needs_pin, "file": path.name,
+                 "description": tool.description}
+                for path, tool in loaded.tools
+            ],
+            "refused": [{"file": path.name, "reason": why} for path, why in loaded.errors],
+        }, indent=2))
+    else:
+        typer.echo(f"# {directory}")
+        if not loaded.tools and not loaded.errors:
+            typer.echo("no custom tools")
+        for path, tool in loaded.tools:
+            pin = "needs PIN" if tool.needs_pin else "no PIN"
+            typer.echo(f"{tool.name:<24} {pin:<10} {path.name}")
+        for path, why in loaded.errors:
+            typer.echo(f"refused {path.name}: {why}")
+    if loaded.errors:
+        raise typer.Exit(1)
+
+
+# --- plugins ---------------------------------------------------------------
+
+
+@plugins_app.callback(invoke_without_command=True)
+def plugins_command(
+    ctx: typer.Context,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """List the plugins: on or off, their two files, and why one is refused."""
+    if ctx.invoked_subcommand is None:
+        plugins_list(as_json)
+
+
+@plugins_app.command("list")
+def plugins_list(
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """List the plugins: on or off, their two files, and why one is refused."""
+    settings = _configure_readonly()
+    found = plugins.status(settings)
+    if as_json:
+        typer.echo(json.dumps({
+            "directory": str(settings.custom_tools_dir),
+            "plugins": [status.as_dict() for status in found],
+        }, indent=2))
+        return
+    typer.echo(f"# {settings.custom_tools_dir}")
+    for status in found:
+        spec = plugins.PLUGINS[status.name]
+        state = "on" if status.on else ("refused" if status.installed else "off")
+        typer.echo(f"{status.name:<16} {state:<8} {spec.summary}")
+        if status.refused:
+            typer.echo(f"{'':<16} {status.refused}")
+        if status.installed or status.config_file.exists():
+            shown = {key: (status.values or {}).get(key) for key in spec.important}
+            settings_line = ", ".join(f"{key}={_plain(value)}" for key, value in shown.items())
+            typer.echo(f"{'':<16} {status.config_file}" + (f"  ({settings_line})"
+                                                            if settings_line else ""))
+
+
+@plugins_app.command("hosts")
+def plugins_hosts(
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """The hosts in ~/.ssh/config that cluster_stats could ask, and whose master is up now.
+
+    Only hosts with a ControlMaster are offered: Jarvis rides a login you already have open,
+    and never opens its own. Nothing here reaches the network (`ssh -G`, `ssh -O check`).
+    """
+    _configure_readonly()
+    rows = []
+    for host in ssh_hosts.discover():
+        alive = host.control_master and ssh_hosts.master_alive(host.alias)
+        rows.append({**host.as_dict(), "master_alive": alive})
+    if as_json:
+        typer.echo(json.dumps({"hosts": rows}, indent=2))
+        return
+    if not rows:
+        typer.echo(f"no hosts in {ssh_hosts.default_config()}")
+    for row in rows:
+        master = ("up" if row["master_alive"] else "down") if row["control_master"] else "none"
+        who = f"{row['user']}@{row['hostname']}" if row["user"] else row["hostname"]
+        typer.echo(f"{row['alias']:<20} {who:<40} ControlMaster: {master}")
+
+
+@plugins_app.command("install")
+def plugins_install(
+    name: Annotated[str | None, typer.Argument(help="The plugin (`jarvis plugins`).")] = None,
+    assignments: Annotated[
+        list[str] | None,
+        typer.Option("--set", help="KEY=VALUE for one of its settings; repeat for more."),
+    ] = None,
+    clusters: Annotated[
+        list[str] | None,
+        typer.Option("--cluster", help="cluster_stats: ALIAS=PARTITION, the whole [clusters] "
+                     "table; repeat for more."),
+    ] = None,
+    guard: Annotated[
+        str | None, typer.Option("--guard", help="cluster_stats: a guard script of your own.")
+    ] = None,
+    from_settings: Annotated[
+        bool,
+        typer.Option("--from-settings", help="Move the settings it replaced into its file; "
+                     "with no NAME, every plugin that was offered before."),
+    ] = False,
+    template: Annotated[
+        bool,
+        typer.Option("--template", help="Write its settings file and a draft to edit, and "
+                     "leave it off until `jarvis plugins install NAME`."),
+    ] = False,
+) -> None:
+    """Turn a plugin on, from its settings file, the values given here, or the old settings.
+
+    With no values, a settings file already edited by hand (and a `--template` draft) is
+    what is turned on. A secret is never taken here: `jarvis config set KEY --stdin`, or
+    `jarvis auth login gmail`. It is offered from the next call; no restart.
+    """
+    _owner_only("install a plugin")
+    settings = _configure_readonly()
+    try:
+        if from_settings:
+            names = None if name is None else [plugins.plugin(name).name]
+            moved = plugins.move_from_settings(settings, ConfigStore(), names)
+            if not moved:
+                typer.echo("nothing to move: no plugin was set up in the old settings")
+            for one in moved:
+                typer.echo(f"{one.name}: settings in {one.config_file}")
+                if one.problem:
+                    typer.echo(f"  {one.problem}")
+            _echo_plugin_states(settings, [one.name for one in moved])
+            return
+        if name is None:
+            typer.echo("which plugin? (`jarvis plugins`)", err=True)
+            raise typer.Exit(2)
+        spec = plugins.plugin(name)
+        values = plugins.command_line_values(name, assignments or [])
+        if (clusters or guard is not None) and name != "cluster_stats":
+            raise plugins.PluginConfigError("--cluster and --guard are for cluster_stats")
+        if clusters:
+            values["clusters"] = dict(
+                plugins.parse_assignment(text, what="ALIAS=PARTITION") for text in clusters
+            )
+        if guard is not None:
+            values["guard"] = guard
+        if template:
+            path = plugins.write_template(settings, name, values)
+            typer.echo(f"edit {path}, then `jarvis plugins install {name}`")
+            return
+        if values:
+            plugins.write_config(settings, name, values)
+        plugins.install(settings, spec.name)
+    except plugins.PluginConfigError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+    _echo_plugin_states(settings, [name])
+
+
+def _echo_plugin_states(settings: Settings, names: list[str]) -> None:
+    """Whether each of `names` loads now, the way the next call will load it; exit 1 if not."""
+    refused = False
+    for status in plugins.status(settings):
+        if status.name not in names:
+            continue
+        if status.on:
+            typer.echo(f"{status.name} is on, from the next call")
+        elif status.installed:
+            refused = True
+            typer.echo(f"{status.name} is installed but refused: {status.refused}")
+    if refused:
+        raise typer.Exit(1)
+
+
+@plugins_app.command("remove")
+def plugins_remove(
+    name: Annotated[str, typer.Argument(help="The plugin.")],
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask first.")] = False,
+) -> None:
+    """Turn a plugin off. Its settings are set aside, so turning it on again keeps them."""
+    _owner_only("remove a plugin")
+    settings = _configure_readonly()
+    try:
+        plugins.plugin(name)
+    except plugins.PluginConfigError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+    if not yes:
+        typer.confirm(f"turn {name} off?", abort=True)
+    if plugins.remove(settings, name):
+        typer.echo(f"{name} is off from the next call; its settings are kept in "
+                   f"{plugins.off_path(settings, name)}")
+    else:
+        typer.echo(f"{name} was not on")
 
 
 @app.command()
@@ -1322,9 +1624,9 @@ def _rerender(target) -> list[str]:
         installer = scripts / Path(INSTALLERS[target.manager]).name
         code = run_command([str(installer)])
         done.append(f"{installer.name}: {'done' if code == 0 else f'exited {code}, run it again'}")
-    claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
     try:
-        hooked = "jarvis_approval.py" in (claude / "settings.json").read_text(encoding="utf-8")
+        hooks = (claude_config_dir() / "settings.json").read_text(encoding="utf-8")
+        hooked = "jarvis_approval.py" in hooks
     except OSError:
         hooked = False
     if hooked:
@@ -1457,7 +1759,10 @@ def auth_status_command(
     else:
         width = max(map(len, report))
         for name, entry in report.items():
-            typer.echo(f"{name:<{width}}  {entry['state']:<8}  {entry['detail']}")
+            # An agent nobody chose is not a sign-in that is missing. The JSON keeps the
+            # state (and says `enabled`), so a script reading it sees no new value.
+            state = "off" if entry.get("enabled") is False else entry["state"]
+            typer.echo(f"{name:<{width}}  {state:<8}  {entry['detail']}")
     if any(entry["state"] == "failed" for entry in report.values()):
         raise typer.Exit(1)
 
@@ -1507,22 +1812,55 @@ def approvals(
     typer.echo(f"escalation: {"OFF (kill switch)" if switch.exists() else "on"}, "
                f"after {settings.approval_escalate_seconds:g}s, "
                f"at most {settings.approval_max_per_hour}/hour")
-    for line in _audit_lines(state_dir / AUDIT_NAME, limit):
+    entries = _audit_entries(state_dir / AUDIT_NAME)
+    summary = _escalation_summary(entries)
+    if summary:
+        typer.echo(summary)
+    for line in _audit_lines(entries, limit):
         typer.echo(line)
 
 
-def _audit_lines(path: Path, limit: int) -> list[str]:
-    """The tail of the audit log as table rows, or one line saying there is none."""
+def _audit_entries(path: Path) -> list[dict]:
+    """Every readable line of the audit log; a corrupt one is skipped, never fatal."""
     try:
         raw = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return [APPROVALS_EMPTY]
-    rows = [APPROVALS_HEADER]
-    for line in raw[-max(limit, 1):]:
+        return []
+    entries = []
+    for line in raw:
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries
+
+
+def _escalation_summary(entries: list[dict]) -> str | None:
+    """Whether settling a request stopped its call, over every line that records it.
+
+    The `escalation` field is what shows a prompt answered at the keyboard costing no
+    call (`cancelled`), apart from one they were rung about first (issue #56).
+    """
+    settled = [e for e in entries if e.get("event") == "settled" and e.get("escalation")]
+    if not settled:
+        return None
+    cancelled = sum(e["escalation"] == "cancelled" for e in settled)
+    late = sum(
+        e["escalation"] != "cancelled" and e.get("outcome") == "resolved_elsewhere"
+        for e in settled
+    )
+    return (
+        f"{cancelled} answered before the call was due (no call), "
+        f"{late} answered elsewhere after they were told"
+    )
+
+
+def _audit_lines(entries: list[dict], limit: int) -> list[str]:
+    """The tail of the audit log as table rows, or one line saying there is none."""
+    rows = [APPROVALS_HEADER]
+    for entry in entries[-max(limit, 1):]:
         when = str(entry.get("ts", ""))[:16].replace("T", " ")
         what = entry.get("summary") or entry.get("reason") or entry.get("answer") or ""
         rows.append(

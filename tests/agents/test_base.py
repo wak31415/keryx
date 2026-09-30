@@ -1,6 +1,7 @@
 """Tests for what every agent backend shares: summaries, restart markers, the suffix, the fake."""
 
 import asyncio
+import sys
 
 import pytest
 
@@ -15,6 +16,8 @@ from jarvis.agents.base import (
     extract_spoken_summary,
     render_subagent_suffix,
 )
+from jarvis.issues import IssueReporting
+from jarvis.skills import CUSTOM_TOOLS_SKILL
 from jarvis.tasks.models import Task, TaskKind
 
 
@@ -263,6 +266,24 @@ def test_the_subagent_suffix_says_whom_the_work_is_for():
     assert "dispatched on the owner's behalf" in render_subagent_suffix(task)
 
 
+def test_the_subagent_suffix_says_where_the_owners_tools_go_and_how_to_check_them(
+    tmp_path, unwrapped
+):
+    """Their tools are their data: outside the repo, never committed, live without a restart."""
+    task = Task(id=1, kind=TaskKind.AGENT, description="give yourself a tide tool")
+
+    suffix = unwrapped(render_subagent_suffix(task, tools_dir=tmp_path / "tools"))
+
+    assert f"it goes in `{tmp_path / 'tools'}`" in suffix
+    assert "never in the Jarvis repository, and it is never committed" in suffix
+    assert f"Read `{CUSTOM_TOOLS_SKILL}`" in suffix
+    assert CUSTOM_TOOLS_SKILL.is_file()
+    assert f"`{sys.executable} -m jarvis tools`" in suffix
+    assert "needs no restart and no RESTART_REQUIRED: line" in suffix
+    assert "{custom_tools}" not in render_subagent_suffix(task)
+    assert "voice tool" not in render_subagent_suffix(task)
+
+
 def test_the_original_names_are_still_importable_from_tasks_agent_runner():
     """The runner started in `tasks/agent_runner.py`; the move keeps those names."""
     from jarvis.agents import base, claude
@@ -274,3 +295,44 @@ def test_the_original_names_are_still_importable_from_tasks_agent_runner():
     assert agent_runner.FakeAgentRunner is base.FakeAgentRunner
     assert agent_runner.extract_spoken_summary is base.extract_spoken_summary
     assert agent_runner.ClaudeAgentRunner is claude.ClaudeAgentRunner
+
+
+def test_the_subagent_suffix_says_how_to_report_a_problem_with_jarvis(settings, unwrapped):
+    """Where the code, the logs and the skill are, and that the job is an issue, not a fix."""
+    issues = IssueReporting.from_settings(_reporting(settings))
+    assert issues is not None
+
+    suffix = unwrapped(render_subagent_suffix(make_task(), issues=issues))
+
+    assert f"the GitHub repository `{issues.repo}` — a bug report or a feature request" in suffix
+    assert f"Read `{issues.skill}` before anything else" in suffix
+    assert f"the checkout at `{issues.checkout}`" in suffix
+    assert f"its logs are in `{issues.logs}`" in suffix
+    assert f"its command is `{sys.executable} -m jarvis`" in suffix
+    assert "Unless they asked for the fix or the feature as well, change nothing" in suffix
+    assert "The call they asked from" not in suffix
+
+
+def test_the_issue_section_names_the_call_it_came_from(settings, unwrapped):
+    issues = IssueReporting.from_settings(_reporting(settings))
+    assert issues is not None
+    issues.calls.mkdir(parents=True)
+    (issues.calls / "c0ffee.log").write_text("", encoding="utf-8")
+
+    suffix = unwrapped(
+        render_subagent_suffix(make_task(origin_session_id="c0ffee"), issues=issues)
+    )
+
+    assert f"The call they asked from is `{issues.calls / 'c0ffee.log'}`" in suffix
+    assert "never quote it" in suffix
+
+
+def test_without_issue_reporting_the_suffix_has_no_issue_section():
+    suffix = render_subagent_suffix(make_task())
+
+    assert "bug in Jarvis" not in suffix
+    assert "{issues}" not in suffix
+
+
+def _reporting(settings):
+    return settings.model_copy(update={"issue_reporting": True})

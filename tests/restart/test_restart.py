@@ -57,6 +57,7 @@ from jarvis.session import SessionRegistry
 from jarvis.stream_tokens import StreamTokenStore, confers_possession
 from jarvis.tasks.models import Task, TaskKind, TaskStatus
 from jarvis.tasks.store import TaskStore
+from jarvis.trust import TrustLevel
 
 OWNER = "+15550000001"
 CALLER = "+15551234567"
@@ -732,6 +733,72 @@ async def test_a_restart_command_that_fails_is_recorded_and_texted(tmp_path):
     assert harness.twilio.sms and "did not go through" in harness.twilio.sms[0][1]
 
 
+async def test_a_failed_restart_rings_when_it_cannot_text(tmp_path):
+    """SMS off and nobody on the line: a plain spoken call, not only `restart.json`."""
+    twilio = FakeTwilioOut(sms_enabled=False)
+    harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(code=1), twilio=twilio)
+
+    await harness.coordinator.request()
+    await harness.settle()
+
+    assert harness.record().state == "failed"
+    assert twilio.sms == []
+    assert len(twilio.calls) == 1
+    call = twilio.calls[0]
+    assert call["to"] == OWNER
+    assert "<Say" in call["twiml"] and "<Stream" not in call["twiml"]
+    assert "did not go through" in call["twiml"]
+
+
+async def test_a_failed_restart_that_was_texted_does_not_ring_as_well(tmp_path):
+    harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(code=1))
+
+    await harness.coordinator.request()
+    await harness.settle()
+
+    assert harness.twilio.sms and harness.twilio.calls == []
+
+
+async def test_a_failed_restart_never_rings_into_a_live_call(tmp_path):
+    """Nobody on the line could be told, so it is not the owner the call would reach."""
+    twilio = FakeTwilioOut(sms_enabled=False)
+    harness = Harness(
+        make_settings(tmp_path), spawn=FakeSpawn(code=1), sleep=FakeSleep(), twilio=twilio
+    )
+    stranger = FakeVoiceSession(channel="phone", trust=TrustLevel.NONE)
+
+    await harness.coordinator.request(force=True)
+    harness.sessions.add(stranger)
+    await harness.settle()
+
+    assert stranger.announced == []
+    assert twilio.calls == [] and twilio.sms == []
+    assert harness.record().state == "failed"
+
+
+@pytest.mark.parametrize("twilio", [FakeTwilioOut(configured=False, sms_enabled=False), None])
+async def test_a_failed_restart_with_no_way_out_is_still_recorded(tmp_path, twilio):
+    harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(code=1))
+    harness.coordinator._twilio = twilio
+
+    await harness.coordinator.request()
+    await harness.settle()
+
+    assert harness.record().state == "failed"
+
+
+async def test_a_failed_restart_call_that_raises_is_swallowed(tmp_path):
+    twilio = FakeTwilioOut(sms_enabled=False)
+    twilio.call_error = RuntimeError("twilio is down")
+    harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(code=1), twilio=twilio)
+
+    await harness.coordinator.request()
+    await harness.settle()
+
+    assert harness.record().state == "failed"
+    assert twilio.calls == []
+
+
 async def test_a_restart_command_that_is_missing_is_recorded(tmp_path):
     spawn = FakeSpawn(error=FileNotFoundError("systemctl"))
     harness = Harness(make_settings(tmp_path), spawn=spawn)
@@ -1082,6 +1149,29 @@ async def test_a_confirmation_that_cannot_be_delivered_at_all_is_kept(harness):
     record = harness.record()
     assert record.state == "failed"
     assert "could not confirm the restart" in record.error
+
+
+async def test_a_quiet_restart_is_confirmed_in_the_log_and_cleared(harness, caplog):
+    """`--no-callback`: nobody asked to be told, so a restart that worked is not `failed`."""
+    harness.store.save(pending(number=None, quiet=True))
+
+    with caplog.at_level("INFO", logger="jarvis.restart"):
+        await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert harness.record() is None
+    assert harness.twilio.calls == [] and harness.twilio.sms == []
+    assert "restart confirmed" in caplog.text
+
+
+async def test_a_quiet_restart_is_not_announced_into_a_live_call(harness):
+    session = FakeVoiceSession(channel="phone")
+    harness.sessions.add(session)
+    harness.store.save(pending(number=None, quiet=True))
+
+    await harness.coordinator.resume(wait_ready=lambda: ready())
+
+    assert session.announced == []
+    assert harness.record() is None
 
 
 async def test_a_failed_record_is_not_retried(harness):

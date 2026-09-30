@@ -18,6 +18,7 @@ from claude_agent_sdk.types import (
     UserMessage,
 )
 
+from jarvis import plugins
 from jarvis.agents.base import AgentOpenError, RunResult, SteerUnavailable, TokenUsage
 from jarvis.agents.claude import (
     SUBAGENT_MAX_BUFFER_BYTES,
@@ -28,7 +29,15 @@ from jarvis.agents.claude import (
     resolve_model,
 )
 from jarvis.agents.session import AdapterSession
+from jarvis.plugins.slack import slack_route
 from jarvis.tasks.models import Task, TaskKind
+
+
+def turn_on_slack(settings, server: str) -> None:
+    """The `send_to_slack` plugin on, naming `server` as the subagents' Slack."""
+    settings.ensure_dirs()
+    plugins.write_config(settings, "send_to_slack", {"mcp_server": server})
+    plugins.install(settings, "send_to_slack")
 
 
 def make_task(**overrides) -> Task:
@@ -106,11 +115,11 @@ class FakeSdkClient:
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("opus", "claude-opus-5"),
-        ("sonnet", "claude-sonnet-5"),
-        ("fable", "claude-fable-5"),
+        ("opus", "claude-opus-5-5"),
+        ("sonnet", "claude-sonnet-5-5"),
+        ("fable", "claude-fable-5-1"),
         ("haiku", "claude-haiku-4-5-20251001"),
-        (" Opus ", "claude-opus-5"),
+        (" Opus ", "claude-opus-5-5"),
         ("claude-3-5-haiku-20241022", "claude-3-5-haiku-20241022"),
     ],
 )
@@ -136,7 +145,7 @@ def test_build_options_sets_the_shared_agent_configuration(settings):
     assert options.setting_sources == ["user", "project"]
     assert options.max_turns == 42
     assert options.max_budget_usd == 2.5
-    assert options.model == "claude-opus-5"
+    assert options.model == "claude-opus-5-5"
     assert options.resume is None
     assert options.include_partial_messages is False
 
@@ -228,7 +237,7 @@ def test_build_options_prefers_the_api_key_over_the_oauth_token(settings):
 def test_build_options_resolves_the_task_model(settings):
     options = build_options(make_task(model="sonnet"), settings)
 
-    assert options.model == "claude-sonnet-5"
+    assert options.model == "claude-sonnet-5-5"
 
 
 def test_build_options_never_restricts_the_built_in_tools(settings):
@@ -543,7 +552,7 @@ async def test_session_interrupt_and_close_swallow_client_errors():
 
 def test_the_subagent_suffix_makes_slack_opt_in(settings, unwrapped):
     """Subagents reach Slack through the MCP server the owner names; the suffix is the leash."""
-    settings.slack_mcp_server = "team-slack"
+    turn_on_slack(settings, "team-slack")
     options = build_options(make_task(description="review the diff"), settings)
     append = unwrapped(options.system_prompt["append"])
 
@@ -559,7 +568,7 @@ def test_without_a_slack_server_the_suffix_says_nothing_about_slack(settings, un
     options = build_options(make_task(description="review the diff"), settings)
     append = unwrapped(options.system_prompt["append"])
 
-    assert settings.slack_mcp_server is None
+    assert slack_route(settings) is None
     assert "Slack" not in append
     assert "offers to send it" not in append
     assert "{" not in append and "}" not in append
@@ -603,7 +612,7 @@ def test_the_claude_cli_is_the_one_the_sdk_bundles(monkeypatch, tmp_path):
 def test_a_stored_login_is_the_credentials_file_or_the_keychain(monkeypatch, tmp_path):
     from jarvis.agents import claude as claude_module
 
-    monkeypatch.setattr(claude_module.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
     calls: list[list[str]] = []
 
     def keychain(code):
@@ -627,3 +636,15 @@ def test_a_stored_login_is_the_credentials_file_or_the_keychain(monkeypatch, tmp
     calls.clear()
     assert claude_module.claude_stored_login() is True
     assert calls == []  # the file answers; the keychain is never asked
+
+
+def test_a_stored_login_follows_claude_config_dir(monkeypatch, tmp_path):
+    from jarvis.agents import claude as claude_module
+
+    moved = tmp_path / "elsewhere"
+    moved.mkdir()
+    (moved / ".credentials.json").write_text("{}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(moved))
+    monkeypatch.setattr(claude_module.subprocess, "run", lambda *a, **k: 1 / 0)
+
+    assert claude_module.claude_stored_login() is True

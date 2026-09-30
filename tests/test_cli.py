@@ -4,10 +4,11 @@ import asyncio
 import importlib.metadata
 import json
 import logging
+import re
 import shutil
 import stat
 import wave
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from fakes import FakeProvider
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
+from jarvis import plugins
 from jarvis.app import TASK_DB_NAME
 from jarvis.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from jarvis.cli import (
@@ -27,6 +29,7 @@ from jarvis.cli import (
     app,
 )
 from jarvis.config import PLACEHOLDER_KEY, Settings
+from jarvis.config.store import ConfigStore
 from jarvis.continuity.memory import memory_path
 from jarvis.realtime.base import AudioDelta, Transcript
 from jarvis.restart.service import ServiceTarget
@@ -177,8 +180,8 @@ def test_serve_refuses_until_the_old_files_are_migrated(settings_stub, monkeypat
 
 @pytest.mark.parametrize(
     "command",
-    [["tasks", "list"], ["tasks", "show", "1"], ["memory"], ["forget", "--yes"], ["approvals"],
-     ["restart", "--status"], ["auth", "status"]],
+    [["tasks", "list"], ["tasks", "show", "1"], ["tasks", "usage"], ["memory"],
+     ["forget", "--yes"], ["approvals"], ["restart", "--status"], ["auth", "status"]],
 )
 def test_what_reads_the_data_waits_for_the_migration_too(settings_stub, command):
     """It would answer from an empty directory, and `tasks` would make a `tasks.db` there for
@@ -251,6 +254,22 @@ def stub_uvicorn(monkeypatch, built: dict) -> None:
             built["served"] = True
 
     monkeypatch.setattr("jarvis.cli.uvicorn.Server", StubServer)
+
+
+def test_serve_names_settings_a_plugin_replaced_and_starts_anyway(
+    settings_stub, monkeypatch, caplog
+):
+    store = ConfigStore()
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text('SLACK_MCP_SERVER = "chat"\n')
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+
+    with caplog.at_level("WARNING", logger="jarvis.cli"):
+        result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 0, result.output
+    assert "SLACK_MCP_SERVER" in caplog.text and "--from-settings" in caplog.text
 
 
 def test_serve_starts_the_local_runner(settings_stub, monkeypatch, tmp_path):
@@ -589,6 +608,74 @@ def test_tasks_show_tolerates_a_report_that_is_gone(settings_stub, tmp_path):
     assert "--- report ---" not in result.output
 
 
+def test_tasks_usage_prints_a_row_per_project_and_a_total(settings_stub):
+    seed_tasks(
+        settings_stub,
+        make_task(project="orchard", input_tokens=1200, output_tokens=30, cost_usd=1.25),
+        make_task(project="orchard"),
+        make_task(input_tokens=500, output_tokens=5, cost_usd=0.5),
+        make_task(internal=True, input_tokens=100, output_tokens=1, cost_usd=0.25),
+    )
+
+    result = runner.invoke(app, ["tasks", "usage"])
+
+    assert result.exit_code == 0, result.output
+    cells = [re.split(r"\s{2,}", line.strip()) for line in result.output.splitlines()]
+    rows = {row[0]: row[1:] for row in cells if len(row) == 6}
+    assert rows["orchard"] == ["2", "1/2", "1,200", "30", "$1.25"]
+    assert rows["(no project)"] == ["1", "1/1", "500", "5", "$0.50"]
+    assert rows["(housekeeping)"] == ["1", "1/1", "100", "1", "$0.25"]
+    assert rows["total"] == ["4", "3/4", "1,800", "36", "$2.00"]
+    assert "list-price estimate" in result.output  # the dollars are not a bill, and it says so
+
+
+def test_tasks_usage_shows_a_group_with_no_figures_as_unknown(settings_stub):
+    seed_tasks(settings_stub, make_task(project="orchard"))
+
+    result = runner.invoke(app, ["tasks", "usage"])
+
+    assert result.exit_code == 0, result.output
+    row = next(line for line in result.output.splitlines() if line.startswith("orchard"))
+    assert row.split()[1:] == ["1", "0/1", "-", "-", "-"]
+
+
+def test_tasks_usage_only_counts_the_window_asked_for(settings_stub):
+    old = datetime.now(UTC) - timedelta(days=45)
+    seed_tasks(
+        settings_stub,
+        make_task(project="orchard", cost_usd=9.0, created_at=old),
+        make_task(project="beehive", cost_usd=1.0),
+    )
+
+    recent = runner.invoke(app, ["tasks", "usage"])
+    ever = runner.invoke(app, ["tasks", "usage", "--days", "0"])
+
+    assert "orchard" not in recent.output and "beehive" in recent.output
+    assert "last 30 days" in recent.output
+    assert "orchard" in ever.output and "ever" in ever.output
+
+
+def test_tasks_usage_as_json(settings_stub):
+    seed_tasks(settings_stub, make_task(project="orchard", input_tokens=7, output_tokens=1))
+
+    result = runner.invoke(app, ["tasks", "usage", "--days", "1", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["since"] is not None
+    assert payload["projects"] == [{
+        "label": "orchard", "project": "orchard", "internal": False, "tasks": 1,
+        "measured": 1, "priced": 0, "input_tokens": 7, "output_tokens": 1, "cost_usd": None,
+    }]
+
+
+def test_tasks_usage_says_when_there_is_nothing(settings_stub):
+    result = runner.invoke(app, ["tasks", "usage", "--days", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert "no tasks created in the last 1 day" in result.output
+
+
 def test_tasks_show_rejects_an_unknown_id(settings_stub):
     result = runner.invoke(app, ["tasks", "show", "77"])
 
@@ -821,7 +908,8 @@ def test_restart_no_callback_leaves_no_number(restart_settings, ran):
     result = runner.invoke(app, ["restart", "--no-callback"])
 
     assert result.exit_code == 0
-    assert RestartStore(restart_settings.state_dir / RECORD_NAME).load().number is None
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
+    assert record.number is None and record.quiet is True
     assert "no call back was asked for" in result.output
 
 
@@ -1057,6 +1145,31 @@ def test_approvals_ignores_a_corrupt_audit_line_rather_than_failing(settings_stu
     assert "raised" in result.output
 
 
+def test_approvals_counts_the_calls_an_earlier_answer_stopped(settings_stub):
+    _audit(
+        settings_stub,
+        {"event": "settled", "outcome": "answered", "escalation": "call"},
+        {"event": "settled", "outcome": "resolved_elsewhere", "escalation": "cancelled"},
+        {"event": "settled", "outcome": "resolved_elsewhere", "escalation": "cancelled"},
+        {"event": "settled", "outcome": "resolved_elsewhere", "escalation": "call"},
+        {"event": "settled", "outcome": "resolved_elsewhere"},  # written before the field was
+    )
+
+    result = runner.invoke(app, ["approvals"])
+
+    assert result.exit_code == 0, result.output
+    assert "2 answered before the call was due (no call)" in result.output
+    assert "1 answered elsewhere after they were told" in result.output
+
+
+def test_approvals_has_no_summary_before_anything_records_one(settings_stub):
+    _audit(settings_stub, {"ts": "2026-09-02T14:05:00Z", "event": "settled", "request_id": 7})
+
+    result = runner.invoke(app, ["approvals"])
+
+    assert "answered before the call" not in result.output
+
+
 def test_approvals_limit_shows_only_the_tail(settings_stub):
     _audit(settings_stub, *[
         {"ts": f"2026-09-02T14:{index:02d}:00Z", "event": "raised", "request_id": index}
@@ -1280,4 +1393,238 @@ def test_memory_path_prints_only_the_path(settings_stub):
 
     assert result.exit_code == 0, result.output
     assert result.output.strip() == str(memory_path(settings_stub.data_dir))
+
+
+# --- tools -----------------------------------------------------------------
+
+
+def write_tool(settings: Settings, name: str, source: str) -> None:
+    settings.ensure_dirs()
+    path = settings.custom_tools_dir / name
+    path.write_text(source, encoding="utf-8")
+    path.chmod(0o600)
+
+
+MOON_TOOL = (
+    "from jarvis.tools.custom import custom_tool\n\n"
+    "@custom_tool(description='The moon tonight.', needs_pin=False)\n"
+    "def moon_phase(ctx, args):\n    return {}\n"
+)
+
+
+def test_tools_says_so_when_there_are_none(settings_stub):
+    result = runner.invoke(app, ["tools"])
+
+    assert result.exit_code == 0, result.output
+    assert str(settings_stub.custom_tools_dir) in result.output
+    assert "no custom tools" in result.output
+
+
+def test_tools_lists_each_tool_and_exits_1_on_anything_refused(settings_stub):
+    write_tool(settings_stub, "moon.py", MOON_TOOL)
+    write_tool(settings_stub, "pin.py", MOON_TOOL.replace("moon_phase", "submit_pin"))
+
+    result = runner.invoke(app, ["tools"])
+
+    assert result.exit_code == 1, result.output
+    assert re.search(r"moon_phase\s+no PIN\s+moon.py", result.output)
+    assert "refused pin.py: 'submit_pin' is already a tool's name" in result.output
+
+
+def test_tools_refuses_a_built_in_name_this_machine_does_not_offer(settings_stub):
+    write_tool(settings_stub, "restart.py", MOON_TOOL.replace("moon_phase", "restart_service"))
+
+    result = runner.invoke(app, ["tools"])
+
+    assert result.exit_code == 1
+    assert "'restart_service' is already a tool's name" in result.output
+
+
+# --- plugins -------------------------------------------------------------------------
+
+
+def test_plugins_lists_all_four_off_on_a_fresh_machine(settings_stub):
+    result = runner.invoke(app, ["plugins", "--json"])
+
+    assert result.exit_code == 0, result.output
+    found = json.loads(result.output)["plugins"]
+    assert [(one["name"], one["on"]) for one in found] == [
+        ("send_to_slack", False), ("check_email", False),
+        ("check_billing", False), ("cluster_stats", False),
+    ]
+
+
+def test_plugins_install_with_values_turns_one_on(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "check_billing",
+                                 "--set", "monthly_budget=40"])
+
+    assert result.exit_code == 0, result.output
+    assert "check_billing is on, from the next call" in result.output
+    assert plugins.read_config(settings_stub, "check_billing")["monthly_budget"] == 40
+    listed = runner.invoke(app, ["plugins"]).output
+    assert "check_billing    on" in listed and "monthly_budget=40" in listed
+
+
+def test_plugins_install_never_takes_a_secret(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "send_to_slack",
+                                 "--set", "SLACK_BOT_TOKEN=xoxb-secret"])
+
+    assert result.exit_code == 1
+    assert "jarvis config set SLACK_BOT_TOKEN --stdin" in result.output
+    assert "xoxb-secret" not in result.output
+    assert not plugins.config_path(settings_stub, "send_to_slack").exists()
+
+
+def test_plugins_install_says_when_it_is_installed_but_refused(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "send_to_slack",
+                                 "--set", "channel_id=D123"])
+
+    assert result.exit_code == 1
+    assert "send_to_slack is installed but refused" in result.output
+    assert "SLACK_BOT_TOKEN --stdin" in result.output
+
+
+def test_plugins_install_takes_the_clusters_and_the_guard(settings_stub, tmp_path):
+    guard = tmp_path / "guard.sh"
+    guard.write_text("#!/bin/sh\n")
+
+    result = runner.invoke(app, ["plugins", "install", "cluster_stats",
+                                 "--cluster", "Alpha=gpu", "--cluster", "beta=pli",
+                                 "--guard", str(guard)])
+
+    assert result.exit_code == 0, result.output
+    values = plugins.read_config(settings_stub, "cluster_stats")
+    assert values["clusters"] == {"alpha": "gpu", "beta": "pli"}
+    assert values["guard"] == str(guard)
+
+
+def test_the_cluster_flags_are_only_for_cluster_stats(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "check_billing", "--cluster", "a=b"])
+
+    assert result.exit_code == 1 and "for cluster_stats" in result.output
+
+
+def test_a_template_is_written_off_and_activated_once_edited(settings_stub):
+    written = runner.invoke(app, ["plugins", "install", "cluster_stats", "--template"])
+    path = plugins.config_path(settings_stub, "cluster_stats")
+
+    assert written.exit_code == 0 and str(path) in written.output
+    assert "then `jarvis plugins install cluster_stats`" in written.output
+    early = runner.invoke(app, ["plugins", "install", "cluster_stats"])
+    assert early.exit_code == 1 and "names no host" in early.output
+
+    path.write_text(path.read_text().replace("[clusters]\n", '[clusters]\nalpha = "gpu"\n'))
+    activated = runner.invoke(app, ["plugins", "install", "cluster_stats"])
+
+    assert activated.exit_code == 0, activated.output
+    assert not plugins.draft_path(settings_stub, "cluster_stats").exists()
+
+
+def test_from_settings_moves_what_was_offered_and_drops_the_old_keys(settings_stub):
+    store = ConfigStore()
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text(
+        'OPENAI_VOICE = "cedar"\nBILLING_MONTHLY_BUDGET = 55.0\n\n[CLUSTERS]\nalpha = "gpu"\n'
+    )
+
+    result = runner.invoke(app, ["plugins", "install", "--from-settings"])
+
+    assert result.exit_code == 0, result.output
+    assert "check_billing: settings in" in result.output
+    assert "cluster_stats is on, from the next call" in result.output
+    assert plugins.read_config(settings_stub, "check_billing")["monthly_budget"] == 55
+    assert plugins.retired_in(store) == {}
+
+
+def test_from_settings_with_nothing_old_says_so(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "--from-settings"])
+
+    assert result.exit_code == 0
+    assert "nothing to move" in result.output
+
+
+@pytest.mark.parametrize("argv", [["install"], ["install", "send_fax"], ["remove", "send_fax"]])
+def test_plugins_needs_a_plugin_it_knows(settings_stub, argv):
+    result = runner.invoke(app, ["plugins", *argv, "--yes"] if argv[0] == "remove" else
+                           ["plugins", *argv])
+
+    assert result.exit_code in (1, 2)
+    assert "which plugin" in result.output or "no plugin called" in result.output
+
+
+def test_plugins_remove_turns_one_off_and_keeps_its_settings(settings_stub):
+    runner.invoke(app, ["plugins", "install", "check_billing", "--set", "monthly_budget=9"])
+
+    result = runner.invoke(app, ["plugins", "remove", "check_billing", "--yes"])
+    again = runner.invoke(app, ["plugins", "remove", "check_billing", "--yes"])
+
+    assert "check_billing is off from the next call" in result.output
+    assert "was not on" in again.output
+    assert plugins.read_config(settings_stub, "check_billing")["monthly_budget"] == 9
+
+
+@pytest.mark.parametrize("argv", [["install", "check_billing"], ["remove", "check_billing"]])
+def test_the_service_may_not_turn_plugins_on_or_off(settings_stub, monkeypatch, argv):
+    monkeypatch.setenv("JARVIS_ACTOR", "service")
+
+    result = runner.invoke(app, ["plugins", *argv, "--yes"] if argv[0] == "remove" else
+                           ["plugins", *argv])
+
+    assert result.exit_code == 1
+    assert "only the owner" in result.output
+    assert not plugins.tool_path(settings_stub, "check_billing").exists()
+
+
+def test_plugins_hosts_lists_what_ssh_says_and_whose_master_is_up(settings_stub, monkeypatch):
+    from jarvis.plugins.ssh_hosts import SshHost
+
+    monkeypatch.setattr("jarvis.cli.ssh_hosts.discover", lambda: [
+        SshHost("alpha", "login.alpha.example", "me", True, "/tmp/cm"),
+        SshHost("beta", "beta.example", "", False, ""),
+    ])
+    monkeypatch.setattr("jarvis.cli.ssh_hosts.master_alive", lambda alias: alias == "alpha")
+
+    as_json = runner.invoke(app, ["plugins", "hosts", "--json"])
+    text = runner.invoke(app, ["plugins", "hosts"])
+
+    hosts = json.loads(as_json.output)["hosts"]
+    assert [(h["alias"], h["control_master"], h["master_alive"]) for h in hosts] == [
+        ("alpha", True, True), ("beta", False, False),
+    ]
+    assert "me@login.alpha.example" in text.output and "ControlMaster: up" in text.output
+    assert "ControlMaster: none" in text.output
+
+
+def test_plugins_hosts_with_no_ssh_config_says_so(settings_stub, monkeypatch):
+    monkeypatch.setattr("jarvis.cli.ssh_hosts.discover", lambda: [])
+
+    assert "no hosts in" in runner.invoke(app, ["plugins", "hosts"]).output
+
+
+def test_tools_leaves_a_running_service_alone(settings_stub):
+    """A subagent runs it inside the live service's environment: the bridge's socket stays."""
+    settings_stub.ensure_dirs()
+    socket = settings_stub.state_dir / "approvals.sock"
+    socket.write_text("")
+
+    result = runner.invoke(app, ["tools"])
+
+    assert result.exit_code == 0, result.output
+    assert socket.exists()
+
+
+def test_tools_json_is_one_document(settings_stub):
+    write_tool(settings_stub, "moon.py", MOON_TOOL)
+
+    result = runner.invoke(app, ["tools", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {
+        "directory": str(settings_stub.custom_tools_dir),
+        "tools": [
+            {"name": "moon_phase", "needs_pin": False, "file": "moon.py",
+             "description": "The moon tonight."}
+        ],
+        "refused": [],
+    }
 

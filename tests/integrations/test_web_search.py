@@ -50,12 +50,12 @@ async def test_search_posts_the_query_and_returns_a_spoken_answer():
         posted.append({"url": url, "payload": payload, "key": api_key})
         return make_response("Twilio's helper library is on version nine point ten.")
 
-    searcher = OpenAIWebSearch("sk-test", "gpt-5.4-mini", post=fake_post)
+    searcher = OpenAIWebSearch("sk-test", "gpt-6-luna", post=fake_post)
 
     answer = await searcher.search("what version is the twilio library")
 
     assert answer == "Twilio's helper library is on version nine point ten."
-    assert posted[0]["payload"]["model"] == "gpt-5.4-mini"
+    assert posted[0]["payload"]["model"] == "gpt-6-luna"
     assert posted[0]["payload"]["tools"] == [{"type": "web_search"}]
     assert posted[0]["payload"]["input"] == "what version is the twilio library"
     assert posted[0]["key"] == "sk-test"
@@ -65,6 +65,6 @@ async def test_a_failed_search_comes_back_empty_rather_than_raising():
     def explode(url: str, payload: dict, api_key: str) -> dict:
         raise OSError("no route to host")
 
-    searcher = OpenAIWebSearch("sk-test", "gpt-5.4-mini", post=explode)
+    searcher = OpenAIWebSearch("sk-test", "gpt-6-luna", post=explode)
 
     assert await searcher.search("anything") == ""

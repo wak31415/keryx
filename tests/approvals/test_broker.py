@@ -401,6 +401,163 @@ async def test_a_different_tool_call_does_not_resolve_it(broker, tmp_path, hooks
     assert broker.pending_requests()
 
 
+# --- answered at the keyboard before the call (issue #56) --------------------
+#
+# The shapes below are what Claude Code 2.1.284 sends, measured under a pty: the question
+# tools come back from `PostToolUse` with a different input from the one they were raised
+# with, which is why a hash of the whole input never matched and every answered question
+# was rung about anyway.
+
+QUESTION = {
+    "questions": [
+        {
+            "question": "Red or blue?",
+            "header": "Color",
+            "options": [{"label": "Red"}, {"label": "Blue"}],
+            "multiSelect": False,
+        }
+    ]
+}
+PLAN = {"plan": "1. do the thing", "planFilePath": "/home/me/.claude/plans/plan.md"}
+
+
+def post_tool_use(tool, tool_input, session_id="claude1"):
+    return {
+        "hook_event_name": "PostToolUse",
+        "session_id": session_id,
+        "tool_name": tool,
+        "tool_input": tool_input,
+    }
+
+
+def _settled(broker):
+    return [json.loads(line) for line in _audit(broker, "settled")]
+
+
+async def _raise_then_answer_before_the_deadline(broker, twilio, tmp_path, hooks, tool, raised,
+                                                 answered):
+    broker._settings.approval_escalate_seconds = 0.3
+    hook = await hooks.pending_one(tmp_path, tool=tool, tool_input=raised)
+    await hooks.resolve(post_tool_use(tool, answered))
+
+    assert (await hook.reply())["decision"] == "none"
+    assert broker.pending_requests() == []
+    await asyncio.sleep(0.4)  # past the deadline the call would have gone out at
+    assert twilio.calls == []
+    assert broker._timers == {}
+    return _settled(broker)
+
+
+async def test_a_question_answered_at_the_keyboard_is_not_rung_about(
+    broker, twilio, tmp_path, hooks
+):
+    answered = {**QUESTION, "answers": {"Red or blue?": "Red"}, "annotations": {}}
+
+    settled = await _raise_then_answer_before_the_deadline(
+        broker, twilio, tmp_path, hooks, "AskUserQuestion", QUESTION, answered
+    )
+
+    assert settled[-1]["outcome"] == "resolved_elsewhere"
+    assert settled[-1]["via"] == "PostToolUse"
+    assert settled[-1]["escalation"] == "cancelled"
+    assert "waited_s" in settled[-1]
+
+
+async def test_a_plan_approved_at_the_keyboard_is_not_rung_about(broker, twilio, tmp_path, hooks):
+    settled = await _raise_then_answer_before_the_deadline(
+        broker, twilio, tmp_path, hooks, "ExitPlanMode", PLAN, {}
+    )
+
+    assert settled[-1]["escalation"] == "cancelled"
+
+
+async def test_an_edit_approved_at_the_keyboard_is_not_rung_about(broker, twilio, tmp_path, hooks):
+    target = str(tmp_path / "roots" / "myproject" / "notes.md")
+    edit = {"file_path": target, "old_string": "alpha", "new_string": "beta", "replace_all": False}
+
+    settled = await _raise_then_answer_before_the_deadline(
+        broker, twilio, tmp_path, hooks, "Edit", edit, edit
+    )
+
+    assert settled[-1]["escalation"] == "cancelled"
+
+
+async def test_two_questions_asked_together_resolve_one_by_one(broker, tmp_path, hooks):
+    other = {"questions": [{**QUESTION["questions"][0], "question": "Tea or coffee?"}]}
+    await hooks.pending_one(tmp_path, tool="AskUserQuestion", tool_input=QUESTION)
+    await hooks.raise_request(
+        permission_event(
+            tool="AskUserQuestion", tool_input=other, cwd=str(tmp_path / "roots" / "myproject")
+        )
+    )
+    await until(lambda: len(broker.pending_requests()) == 2)
+
+    await hooks.resolve(post_tool_use("AskUserQuestion", {**other, "answers": {}}))
+
+    assert [item["summary"] for item in broker.pending_requests()] == [
+        "Claude is asking: Red or blue?"
+    ]
+
+
+async def test_a_question_the_cli_reshaped_again_still_resolves_and_says_so(
+    broker, twilio, tmp_path, hooks
+):
+    """Should the CLI rewrite `questions` too, the answer still stops the call — audited."""
+    await hooks.pending_one(tmp_path, tool="AskUserQuestion", tool_input=QUESTION)
+
+    await hooks.resolve(post_tool_use("AskUserQuestion", {"questions": [{"question": "?"}]}))
+
+    assert broker.pending_requests() == []
+    assert _audit(broker, "resolve_fallback")
+    assert _settled(broker)[-1]["outcome"] == "resolved_elsewhere"
+
+
+async def test_a_question_in_another_session_is_left_alone(broker, tmp_path, hooks):
+    await hooks.pending_one(tmp_path, tool="AskUserQuestion", tool_input=QUESTION)
+
+    await hooks.resolve(post_tool_use("AskUserQuestion", QUESTION, session_id="somebody-else"))
+
+    assert broker.pending_requests()
+
+
+async def test_a_prompt_answered_while_live_calls_are_asked_is_not_dialled(
+    broker, sessions, twilio, tmp_path, hooks
+):
+    """The last window: an answer landing between the deadline and the dial."""
+
+    @dataclass
+    class AnsweredMeanwhile(FakeSession):
+        async def announce(self, text, *, needs=TrustLevel.FULL):
+            broker._resolve_from_event(post_tool_use("Bash", {"command": "git push"}))
+            return False  # a call that has not proved enough: it would have been dialled
+
+    sessions.sessions.append(AnsweredMeanwhile(trust=TrustLevel.NONE))
+    await hooks.pending_one(tmp_path)
+
+    await until(lambda: _audit(broker, "escalation_skipped"))
+    assert twilio.calls == []
+    assert "answered before the call" in _audit(broker, "escalation_skipped")[0]
+
+
+async def test_rung_and_then_answered_elsewhere_is_told_apart(broker, twilio, tmp_path, hooks):
+    """What is left of the bug — a tool that runs past the deadline — shows in the log."""
+    await hooks.pending_one(tmp_path)
+    await until(lambda: twilio.calls)
+
+    await hooks.resolve(post_tool_use("Bash", {"command": "git push"}))
+
+    assert _settled(broker)[-1]["escalation"] == "call"
+
+
+async def test_a_resolution_that_matches_nothing_is_audited(broker, tmp_path, hooks):
+    await hooks.pending_one(tmp_path)
+
+    await hooks.resolve(post_tool_use("Bash", {"command": "git push --force"}))
+
+    assert broker.pending_requests()
+    assert _audit(broker, "resolve_unmatched")
+
+
 async def test_the_session_ending_clears_everything_it_had_waiting(broker, tmp_path, hooks):
     cwd = str(tmp_path / "roots" / "myproject")
     await hooks.raise_request(permission_event(cwd=cwd))

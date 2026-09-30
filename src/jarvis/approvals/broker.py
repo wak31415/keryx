@@ -23,8 +23,8 @@ Four rules hold the whole design up:
   cannot press a key, and neither can a mis-heard "yeah, sure".
 - **Pending is a fact to be re-checked, never assumed.** The hook is *not* killed when they
   answer at the keyboard, so without the `resolve` path the broker would ring them about
-  prompts they dealt with five minutes ago. Pending is re-checked before dialling and again
-  before any verdict is applied.
+  prompts they dealt with five minutes ago. Settling a request cancels its escalation
+  timer, and pending is re-checked again before dialling and before any verdict is applied.
 """
 
 import asyncio
@@ -37,7 +37,14 @@ from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 
-from jarvis.approvals.models import ApprovalRequest, Kind, Outcome, Verdict, input_digest
+from jarvis.approvals.models import (
+    RESOLUTION_FIELDS,
+    ApprovalRequest,
+    Kind,
+    Outcome,
+    Verdict,
+    resolution_digest,
+)
 from jarvis.approvals.policy import classify
 from jarvis.config import Settings, secure_dir, secure_file
 from jarvis.notify.deliver import announce_to_live_sessions
@@ -154,6 +161,9 @@ class ApprovalBroker:
 
         self._pending: dict[int, ApprovalRequest] = {}
         self._waiters: dict[int, asyncio.Future] = {}
+        #: request_id -> the timer that escalates it, only while it is still sleeping. Once
+        #: it wakes it takes itself out, so settling never cancels a call half-placed.
+        self._timers: dict[int, asyncio.Task] = {}
         #: session_id -> (request_id, expires_at). One armed confirmation per call.
         self._armed: dict[str, tuple[int, float]] = {}
         self._dials: deque[float] = deque()
@@ -227,6 +237,7 @@ class ApprovalBroker:
         for task in list(self._tasks):
             task.cancel()
         self._tasks.clear()
+        self._timers.clear()
         for request in list(self._pending.values()):
             self._settle(request, Outcome.EXPIRED, None, via="shutdown")
         with contextlib.suppress(OSError):
@@ -301,7 +312,9 @@ class ApprovalBroker:
         loop = asyncio.get_running_loop()
         waiter: asyncio.Future = loop.create_future()
         self._waiters[request.id] = waiter
-        self._spawn(self._escalate_later(request), name=f"approval-{request.id}")
+        self._timers[request.id] = self._spawn(
+            self._escalate_later(request), name=f"approval-{request.id}"
+        )
 
         # Whichever comes first: an answer, the hook's process going away (EOF), or the end
         # of the window. Two of those three mean the prompt is left exactly as it was.
@@ -342,16 +355,30 @@ class ApprovalBroker:
         session_id = str(event.get("session_id") or "")
         if name not in RESOLVING_EVENTS or not session_id:
             return
-        tool = event.get("tool_name")
+        tool = str(event.get("tool_name") or "")
         tool_input = event.get("tool_input")
-        sha = input_digest(tool_input) if isinstance(tool_input, dict) else None
+        sha = resolution_digest(tool, tool_input) if isinstance(tool_input, dict) else None
         precise = name in PRECISE_EVENTS and bool(tool) and sha is not None
 
-        for request in list(self._pending.values()):
-            if request.session_id != session_id:
-                continue
-            if precise and (request.tool_name != tool or request.input_sha != sha):
-                continue
+        waiting = [item for item in self._pending.values() if item.session_id == session_id]
+        matched = waiting
+        if precise:
+            same_tool = [item for item in waiting if item.tool_name == tool]
+            matched = [item for item in same_tool if item.match_sha == sha]
+            if not matched and same_tool:
+                # A question tool that reports it ran means the question on that session's
+                # screen was answered: the CLI asks them one at a time. The hash is tried
+                # first so two asked together still resolve one by one; this catches the CLI
+                # reshaping its input again, which is how issue #56 rang them. Anything else
+                # stays pending, and the line says a resolution came in and matched nothing.
+                fallback = tool in RESOLUTION_FIELDS
+                for request in same_tool:
+                    self._audit(
+                        "resolve_fallback" if fallback else "resolve_unmatched", request, via=name
+                    )
+                matched = same_tool if fallback else []
+
+        for request in matched:
             self._settle(request, Outcome.RESOLVED_ELSEWHERE, None, via=name)
 
     # --- escalation --------------------------------------------------------
@@ -360,8 +387,9 @@ class ApprovalBroker:
         """Wait out the grace period, then tell them — if it is still worth telling them."""
         try:
             await asyncio.sleep(self._settings.approval_escalate_seconds)
-        except asyncio.CancelledError:  # pragma: no cover - shutdown
-            return
+        except asyncio.CancelledError:
+            return  # settled before the deadline (`_settle`), or shutting down
+        self._timers.pop(request.id, None)
         if not request.pending:
             return
         reason = self._blocked()
@@ -398,6 +426,10 @@ class ApprovalBroker:
             # only a call that could answer it has any business hearing it.
             needs=TrustLevel.POSSESSION,
         )
+        if not request.pending and not announced.heard:
+            # Answered while the live calls were being asked. There is nothing to ring about.
+            self._audit("escalation_skipped", request, reason="answered before the call")
+            return
         if announced.heard:
             # They are already on the phone. A second call about the same thing is the exact
             # duplicate this feature has to avoid, so it goes into the call they are on. Only a
@@ -565,6 +597,12 @@ class ApprovalBroker:
         request.answered_at = self._now()
         request.answer = answer
         self._pending.pop(request.id, None)
+        # Still asleep means the deadline has not come: nobody has been told, and now nobody
+        # will be. `escalation` on the audit line is how that shows in production.
+        timer = self._timers.pop(request.id, None)
+        cancelled = timer is not None and not timer.done()
+        if cancelled:
+            timer.cancel()
         for session_id, (armed_id, _) in list(self._armed.items()):
             if armed_id == request.id:
                 self._armed.pop(session_id, None)
@@ -572,7 +610,25 @@ class ApprovalBroker:
         if waiter is not None and not waiter.done():
             waiter.set_result(verdict)
         self._touch_marker()
-        self._audit("settled", request, via=via, answer=answer, applied=verdict is not None)
+        waited = request.answered_at - request.raised_at
+        escalation = "cancelled" if cancelled else request.escalated_via
+        log.info(
+            "approval request %s %s via %s after %.0fs (escalation: %s)",
+            request.id,
+            outcome,
+            via or "-",
+            waited,
+            escalation or "none",
+        )
+        self._audit(
+            "settled",
+            request,
+            via=via,
+            answer=answer,
+            applied=verdict is not None,
+            waited_s=round(waited, 1),
+            escalation=escalation,
+        )
 
     def _touch_marker(self) -> None:
         """Keep `PENDING` in step with the table, so the `PostToolUse` hook can stat and exit."""
@@ -612,10 +668,11 @@ class ApprovalBroker:
         except OSError:
             log.warning("could not write the approvals audit line %s", event)
 
-    def _spawn(self, coro, *, name: str) -> None:
+    def _spawn(self, coro, *, name: str) -> asyncio.Task:
         task = asyncio.create_task(coro, name=name)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
 
 def _verdict_for(request: ApprovalRequest, index: int, choice: str) -> tuple[Verdict, str]:

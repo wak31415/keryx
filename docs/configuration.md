@@ -25,8 +25,8 @@ moves them with `jarvis migrate`, and `jarvis serve` refuses to start until it h
 voice model's `set_config` tool, or a subagent running `jarvis config set` in a task — and
 only those marked *yes* below, until you say otherwise with `jarvis config unlock KEY` or
 `jarvis config lock KEY`. The ones marked *never* are protected: every credential, and
-every setting that is a line of defence (who may call, the approval allowlist, spending
-caps, deletion, the network, the debug switches). Nothing unlocks them.
+every setting that is a line of defence (who may call, the approval allowlist, filing
+issues in public, spending caps, deletion, the network, the debug switches). Nothing unlocks them.
 
 ## Voice
 
@@ -36,7 +36,9 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 | `OPENAI_REALTIME_MODEL` | `gpt-realtime-2.1` | no | The realtime speech-to-speech model a call runs on. |
 | `OPENAI_VOICE` | `cedar` | yes | The voice Jarvis speaks in. |
 | `OPENAI_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | no | Transcribes what the caller says, for the call log. |
-| `OPENAI_WEB_SEARCH_MODEL` | `gpt-5.4-mini` | no | Answers the voice model's own `web_search` tool, through the Responses API (the Realtime API has no hosted search tool). |
+| `TRANSCRIPTION_LANGUAGE` | `` | yes | The language you speak on a call, as an ISO-639-1 code (`en`, `de`, `fr`), for the call log's transcription — which `recall` and the memory read. Empty lets the transcriber guess each turn. The voice model itself hears the audio either way. |
+| `CLOCK_FORMAT` | `24h` | yes | How the voice prompt writes the time of day (`14:05` or `2:05 PM`), and so how Jarvis tends to say it. |
+| `OPENAI_WEB_SEARCH_MODEL` | `gpt-6-luna` | no | Answers the voice model's own `web_search` tool, through the Responses API (the Realtime API has no hosted search tool). |
 | `VAD_MODE` | `semantic` | yes | How Jarvis decides you have finished: `semantic` waits on whether the sentence sounds finished, so a pause to think does not cut you off; `server` is a plain silence timer of `VAD_SILENCE_MS`. |
 | `VAD_EAGERNESS` | `medium` | yes | Semantic mode only: `low` waits longest, `high` jumps in soonest, `auto` is `medium`. |
 | `VAD_SILENCE_MS` | `1200` | yes | Server mode only: the silence, in milliseconds, that ends a turn. |
@@ -55,9 +57,9 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 | `SUBAGENT_TIMEOUT_S` | `10800` | yes | The longest one subagent run may take, on any agent, in seconds; 0 is no limit. |
 | `ANTHROPIC_API_KEY` | (secret) | never | Claude, paid per token. Set, it wins over the subscription. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | (secret) | never | Claude on your subscription, for a machine with no browser: the token `claude setup-token` prints. Blank uses the stored `claude` login. |
-| `SUBAGENT_MODEL` | `claude-opus-5` | yes | The model a Claude task runs on when none is named. |
+| `SUBAGENT_MODEL` | `claude-opus-5-5` | yes | The model a Claude task runs on when none is named. |
 | `SUBAGENT_MAX_TURNS` | `200` | no | Agent turns one Claude task may take. |
-| `SUBAGENT_MAX_BUDGET_USD` | `10` | never | Dollars one Claude task may spend. |
+| `SUBAGENT_MAX_BUDGET_USD` | `10` | never | Dollars one Claude task may spend: a runaway cap. On a subscription it is the SDK's estimate of what the task would have cost, not a charge. |
 | `CODEX_API_KEY` | (secret) | never | Codex, paid per token. Jarvis logs in with it once, into its own `CODEX_HOME`; `OPENAI_API_KEY` is never used for Codex. |
 | `CODEX_ACCESS_TOKEN` | (secret) | never | Codex on your ChatGPT plan, for a machine with no browser. Blank uses the stored `codex login`. |
 | `CODEX_MODEL` |  | yes | The model a Codex task runs on; blank is Codex's own default. |
@@ -88,7 +90,7 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 | `HOST` | `127.0.0.1` | never | The address the phone server binds. |
 | `PORT` | `8080` | never | The port the phone server binds. |
 
-## Google and email
+## Google
 
 | Setting | Default | Service may change | What it is |
 |---|---|---|---|
@@ -97,36 +99,14 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 | `GOOGLE_CLIENT_SECRETS_FILE` |  | no | The OAuth client JSON the Google Cloud console downloads (desktop or web shape). Blank: `JARVIS_HOME/google_client_secret.json`, where `jarvis setup` puts it. |
 | `USER_GOOGLE_EMAIL` |  | no | The Google account agents act as; `jarvis setup` fills it in from the sign-in. |
 | `GOOGLE_WORKSPACE_MCP` | `false` | no | Give every subagent the workspace-mcp server (send mail, manage the calendar). Needed for Codex, which has no claude.ai connectors; Claude already has them. |
-| `EMAIL_MODEL` | `claude-opus-5-5` | yes | The model `check_email` answers with, through the bundled `claude` CLI. |
-| `EMAIL_EFFORT` | `low` | yes | How hard it thinks: `low` keeps the answer near five seconds, which is waited for inside a call. |
 
-## Slack
+## Plugin credentials
 
 | Setting | Default | Service may change | What it is |
 |---|---|---|---|
-| `SLACK_BOT_TOKEN` | (secret) | never | The bot token `send_to_slack` posts with. |
-| `SLACK_CHANNEL_ID` |  | no | The DM channel `send_to_slack` posts to. |
-| `SLACK_MCP_SERVER` |  | no | The user-scope MCP server in `~/.claude.json` that gives subagents Slack. Named, subagents are told to use it, and the token and channel above fall back to its config. |
-
-## Billing
-
-| Setting | Default | Service may change | What it is |
-|---|---|---|---|
-| `BILLING_PROVIDER` | `auto` | no | Whose bill `check_billing` reports: `auto` is OpenAI, the key the call runs on. |
-| `OPENAI_ADMIN_KEY` | (secret) | never | An OpenAI *admin* key; the ordinary key gets a 401 on the costs endpoint. |
-| `OPENAI_BILLING_PROJECT_ID` |  | no | Narrows the spend figure to one project (there is no finer filter). |
-| `OPENAI_BILLING_API_KEY_ID` |  | no | Narrows *token usage* (not spend) to one `key_…` id. |
-| `ANTHROPIC_ADMIN_KEY` | (secret) | never | An `sk-ant-admin…` key, for what the subagents have cost. |
-| `ANTHROPIC_BILLING_WORKSPACE_ID` |  | no | Narrows Anthropic spend to one workspace. |
-| `BILLING_MONTHLY_BUDGET` |  | yes | What you call a month's budget. Neither provider serves one over the API, so "…percent of the budget" is only as real as this number. |
-
-## Cluster stats
-
-| Setting | Default | Service may change | What it is |
-|---|---|---|---|
-| `CLUSTER_SSH_GUARD` |  | never | The ssh guard script every Slurm read goes through (its contract is in `jarvis/integrations/cluster.py`). Blank: no `cluster_stats`. |
-| `CLUSTERS` |  | never | The clusters `cluster_stats` may ask about, as `{"name": "partition"}`: the name is the ssh alias and the word you say. |
-| `CLUSTER_QUERY_TIMEOUT_S` | `20` | never | The whole wait, since every cluster is asked at once — inside a call. |
+| `SLACK_BOT_TOKEN` | (secret) | never | The bot token the `send_to_slack` plugin posts with (and the PIN-lockout alert). |
+| `OPENAI_ADMIN_KEY` | (secret) | never | An OpenAI *admin* key for the `check_billing` plugin; the ordinary key gets a 401 on the costs endpoint. |
+| `ANTHROPIC_ADMIN_KEY` | (secret) | never | An `sk-ant-admin…` key, for what the subagents have cost (`check_billing`). |
 
 ## Projects and skills
 
@@ -134,7 +114,10 @@ caps, deletion, the network, the debug switches). Nothing unlocks them.
 |---|---|---|---|
 | `PROJECTS` |  | no | Spoken project names for repositories outside `PROJECTS_ROOT`, as `{"name": "/path"}`. |
 | `PROJECTS_ROOT` | `~/projects` | no | Where a task with no project starts; each subdirectory is a project you can name. Never created: without it, such a task starts in `DATA_DIR/workspace`. |
-| `SKILLS_DIR` | `~/.claude/skills` | never | Where the Claude CLI keeps its skills; listed in the voice prompt so Jarvis knows what the subagents are good at. |
+| `SKILLS_DIR` | `$CLAUDE_CONFIG_DIR/skills` (`~/.claude/skills`) | never | Where the Claude CLI keeps its skills; listed in the voice prompt so Jarvis knows what the subagents are good at. |
+| `JARVIS_CHECKOUT` |  | no | The Jarvis repository on this machine, which a subagent reads when it reports a problem with Jarvis. Unset: the checkout Jarvis runs from, when it runs from one. |
+| `ISSUE_REPORTING` | `false` | never | Whether a bug or a feature request for Jarvis, said on a call, may be filed as a GitHub issue by a subagent, with `gh`. `jarvis setup` asks; only you can turn it on. |
+| `ISSUE_REPO` | `wak31415/jarvis-voice-agent` | never | The GitHub repository (`owner/name`) those issues are filed on. |
 
 ## The approval bridge
 

@@ -41,6 +41,15 @@ def test_dot_directories_and_files_are_not_projects(settings, tmp_path):
     assert list(discover_projects(settings)) == ["real"]
 
 
+def test_package_manager_directories_are_not_projects(settings, tmp_path):
+    root = tmp_path / "projects"
+    for name in ("node_modules", "__pycache__", "real"):
+        (root / name).mkdir(parents=True)
+    settings.projects_root = root
+
+    assert list(discover_projects(settings)) == ["real"]
+
+
 def test_a_missing_root_is_not_an_error(settings, tmp_path):
     settings.projects_root = tmp_path / "nothing-here"
 

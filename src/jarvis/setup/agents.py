@@ -270,14 +270,16 @@ def _sign_in(ctx: SetupContext, state: AgentState) -> AgentState:
         options.insert(0, Choice("keep", f"Keep {state.auth.detail}"))
     how = ctx.ui.select(f"How should {spec.label} sign in?", options, default=options[0].value)
     if how == "api_key":
-        key = ctx.ui.secret(f"{API_KEY[state.name]}", validate=_not_blank)
+        key = ctx.ui.secret(f"{API_KEY[state.name]}", validate=_not_blank,
+                            current=ctx.current(API_KEY[state.name]))
         ctx.save({API_KEY[state.name]: key})
     elif how == "token":
         if state.name == "claude" and ctx.ui.confirm(
             "Run `claude setup-token` now to get one?", default=True
         ):
             ctx.probes.run_login([state.cli, "setup-token"])
-        token = ctx.ui.secret(f"{TOKEN[state.name]} (paste it here)", validate=_not_blank)
+        token = ctx.ui.secret(f"{TOKEN[state.name]} (paste it here)", validate=_not_blank,
+                              current=ctx.current(TOKEN[state.name]))
         ctx.save({TOKEN[state.name]: token})
     elif how == "subscription":
         headless = ctx.probes.headless()
@@ -289,7 +291,8 @@ def _sign_in(ctx: SetupContext, state: AgentState) -> AgentState:
             ctx.ui.warn(f"the login exited with {code}")
         if headless and state.name == "claude":
             ctx.ui.note("`claude setup-token` printed a token; paste it so Jarvis can use it.")
-            token = ctx.ui.secret(TOKEN["claude"], validate=_not_blank)
+            token = ctx.ui.secret(TOKEN["claude"], validate=_not_blank,
+                                  current=ctx.current(TOKEN["claude"]))
             ctx.save({TOKEN["claude"]: token})
     fresh = AgentState(state.name, state.cli, auth_status(state.name, ctx.settings))
     if fresh.auth.ready:

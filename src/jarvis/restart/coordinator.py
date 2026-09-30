@@ -44,7 +44,7 @@ from jarvis.notify.callback import (
     no_trailing_stop,
 )
 from jarvis.notify.deliver import announce_to_live_sessions, safe_send_sms
-from jarvis.notify.twilio_out import stream_twiml
+from jarvis.notify.twilio_out import say_twiml, stream_twiml
 from jarvis.restart.logscan import errors_since, marks
 from jarvis.restart.service import (
     ServiceTarget,
@@ -87,13 +87,14 @@ RESTART_ANNOUNCEMENT = "The restart is done and Jarvis is back up: {status}."
 RESTART_CONTEXT = (
     "You are calling the user back because the Jarvis service — you — has just restarted "
     "and is running again. They asked for the restart {when}{reason}{change}, and this call "
-    "is the confirmation. Status: {status}. Greet them and tell them in one or two sentences "
-    "whether it worked. If the status mentions errors in the log, or says the checkout did "
-    "not change, that is the headline: say plainly that the update may not have taken, say "
-    "what the error was, and offer to put Claude on it. Otherwise say it went through, "
-    "mention anything else in the status they would want to know, and ask if they need "
-    "anything else. Keep it short: they asked for a restart, not a report. This is a new "
-    "call: they may have to give the PIN again before you can start more work."
+    "is the confirmation. Status: {status}. In your first turn, greet them and tell them in "
+    "one or two sentences whether it worked — do not stop after the greeting to wait for "
+    "them. If the status mentions errors in the log, or says the checkout did not change, "
+    "that is the headline: say plainly that the update may not have taken, say what the "
+    "error was, and offer to put Claude on it. Otherwise say it went through, mention "
+    "anything else in the status they would want to know, and ask if they need anything "
+    "else. Keep it short: they asked for a restart, not a report. This is a new call: they "
+    "may have to give the PIN again before you can start more work."
 )
 #: The clause that names the work a restart was loading, for the context above.
 LOADING_TASK = ", to load the work from task {task_id}"
@@ -104,17 +105,24 @@ RESTART_WITH_TASK_CONTEXT = (
     "You are calling the user back about task {task_id}, which they asked you for earlier and "
     "which has now finished — and about the restart it needed, because the work changed "
     "Jarvis's own code and Jarvis has just restarted to load it. What they asked for: "
-    "{request}. Result: {detail}. Restart: {status}.{history} Greet them, remind them in a few "
-    "words what this is about, tell them what came of the work, and then say whether the "
-    "change is actually running. If the restart line mentions errors in the log, or says the "
-    "checkout did not change, that is the headline: say plainly that the update may not have "
-    "taken, say what the error was, and offer to put Claude on it. Call mark_reported for "
-    "task {task_id} once you have told them. Keep it short. This is a new call: they may have "
-    "to give the PIN again before you can start more work."
+    "{request}. Result: {detail}. Restart: {status}.{history} In your first turn — do not stop "
+    "after the greeting to wait for them — greet them, remind them in a few words what this "
+    "is about, tell them what came of the work, and then say whether the change is actually "
+    "running. If the restart line mentions errors in the log, or says the checkout did not "
+    "change, that is the headline: say plainly that the update may not have taken, say what "
+    "the error was, and offer to put Claude on it. Call mark_reported for task {task_id} once "
+    "you have told them. Keep it short. This is a new call: they may have to give the PIN "
+    "again before you can start more work."
 )
 #: The same confirmation as a text, when no call can be placed.
 RESTART_SMS = "Jarvis restarted and is back up: {status}"
 FAILED_SMS = "Jarvis tried to restart and it did not go through: {error}"
+#: The same again as a plain spoken call, when nothing can be texted. Only the headline:
+#: `jarvis restart --status` has the rest.
+FAILED_SPOKEN = (
+    "This is a Jarvis alert. The restart did not go through, and Jarvis is still running "
+    "the old version. Check the machine when you can."
+)
 
 #: What the model is told to say when a restart has to wait for the call to end.
 DEFERRED_MESSAGE = (
@@ -357,7 +365,13 @@ class RestartCoordinator:
         return f"{plan.label} (pid {pid})"
 
     async def _failed(self, error: str) -> None:
-        """Record, announce and text a restart that did not go through."""
+        """Record a restart that did not go through, and tell them: said, texted or rung.
+
+        The ring is a plain `<Say>`, like the watchdog's: the one thing it has to carry is
+        that the restart failed, and `jarvis restart --status` has the rest. It never rings
+        into a live call — whoever is on the line could not be told, so it is not the owner
+        on the phone Jarvis would be ringing.
+        """
         log.error("the restart failed: %s", error)
         record = self._store.load() or RestartRecord()
         record.state = "failed"
@@ -366,7 +380,12 @@ class RestartCoordinator:
         spoken = f"The restart did not go through: {error}."
         if await self._announce(spoken):
             return
-        await self._send_sms(record.number, FAILED_SMS.format(error=error))
+        if await self._send_sms(record.number, FAILED_SMS.format(error=error)):
+            return
+        if self._sessions.live():
+            log.error("a call is live, so the failed restart is only in the log")
+            return
+        await self._ring(record.number, FAILED_SPOKEN)
 
     # --- (2) confirming it afterwards --------------------------------------
 
@@ -416,6 +435,9 @@ class RestartCoordinator:
         phone_up = bool(wait_ready and await wait_ready())
         status = await self.status_summary(record, phone_up=phone_up, wakeword=wakeword)
         log.info("restart confirmed: %s", status)
+        if record.quiet:
+            self._store.clear()
+            return
         await self._deliver(record, status, phone_up=phone_up)
 
     async def status_summary(
@@ -606,8 +628,21 @@ class RestartCoordinator:
         to = number or self._settings.owner_number
         if await safe_send_sms(self._twilio, to, body):
             return True
-        log.error("could not text about the restart (%s); it is only in the log", body)
+        log.warning("could not text about the restart (%s)", body)
         return False
+
+    async def _ring(self, number: str | None, spoken: str) -> None:
+        """Ring them with `spoken` and nothing behind it. Never raises."""
+        to = number or self._settings.owner_number
+        if not to or self._twilio is None or not self._twilio.configured:
+            log.error("no call can be placed either; the failed restart is only in the log")
+            return
+        try:
+            await self._twilio.place_call(to, twiml=say_twiml(spoken))
+        except Exception:
+            log.exception("could not call about the failed restart; it is only in the log")
+            return
+        log.info("called %s about the failed restart", mask_number(to))
 
     async def shutdown(self) -> None:
         """Drop a deferred restart that never got its quiet moment. Idempotent."""

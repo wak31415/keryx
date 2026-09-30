@@ -18,13 +18,16 @@ import asyncio
 import inspect
 import logging
 import re
+import sys
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 from jarvis.config import OWNER_FALLBACK, Settings, secure_dir
+from jarvis.issues import IssueReporting
 from jarvis.prompts import render_prompt
+from jarvis.skills import CUSTOM_TOOLS_SKILL
 from jarvis.tasks.models import Task
 
 log = logging.getLogger("jarvis.agents")
@@ -32,6 +35,9 @@ log = logging.getLogger("jarvis.agents")
 SUBAGENT_SUFFIX_PROMPT = "subagent_suffix.md"
 #: Spliced into the suffix only when a Slack MCP server is configured.
 SUBAGENT_SLACK_PROMPT = "subagent_slack.md"
+SUBAGENT_CUSTOM_TOOLS_PROMPT = "subagent_custom_tools.md"
+#: Spliced in only when there is a repository to file on (`jarvis.issues`).
+SUBAGENT_ISSUES_PROMPT = "subagent_issues.md"
 
 SPOKEN_SUMMARY_MARKER = "SPOKEN_SUMMARY:"
 #: How a subagent says "I changed Jarvis's own code, and only a restart loads it". The
@@ -226,7 +232,12 @@ def failure_summary(error: str | None) -> str:
 
 
 def render_subagent_suffix(
-    task: Task, *, slack_mcp_server: str | None = None, owner: str | None = None
+    task: Task,
+    *,
+    slack_mcp_server: str | None = None,
+    owner: str | None = None,
+    tools_dir: Path | None = None,
+    issues: IssueReporting | None = None,
 ) -> str:
     """The subagent system-prompt suffix, with this task's project, request and number.
 
@@ -234,10 +245,23 @@ def render_subagent_suffix(
     to the sentence they said out loud, which is the one thing `git log` cannot recover. The
     Slack paragraph is there only when `slack_mcp_server` names a route to use. `owner` is
     whom the work is for (`Settings.owner_label`); `OWNER_FALLBACK` when it is not given.
+    `tools_dir` is where the owner's own voice tools live (`jarvis.tools.custom`), and the
+    section on writing one is there only when it is given. `issues` is where a report of a
+    problem with Jarvis goes (`jarvis.issues`), and that section is there only when given.
     """
     slack = (
         render_prompt(SUBAGENT_SLACK_PROMPT, server=slack_mcp_server).strip()
         if slack_mcp_server
+        else ""
+    )
+    custom_tools = (
+        render_prompt(
+            SUBAGENT_CUSTOM_TOOLS_PROMPT,
+            tools_dir=str(tools_dir),
+            skill=str(CUSTOM_TOOLS_SKILL),
+            check=f"{sys.executable} -m jarvis tools",
+        ).strip()
+        if tools_dir is not None
         else ""
     )
     return render_prompt(
@@ -247,7 +271,31 @@ def render_subagent_suffix(
         description=task.description,
         task_id=str(task.id) if task.id is not None else "unknown",
         slack=slack,
+        custom_tools=custom_tools,
+        issues=_issues_section(task, issues),
     )
+
+
+def _issues_section(task: Task, issues: IssueReporting | None) -> str:
+    """How to report a problem with Jarvis, with the call it came from when there is one."""
+    if issues is None:
+        return ""
+    transcript = issues.transcript(task.origin_session_id)
+    call = (
+        f" The call they asked from is `{transcript}`: read it to see what happened, and "
+        "never quote it."
+        if transcript is not None
+        else ""
+    )
+    return render_prompt(
+        SUBAGENT_ISSUES_PROMPT,
+        repo=issues.repo,
+        skill=str(issues.skill),
+        checkout=str(issues.checkout),
+        logs=str(issues.logs),
+        jarvis=f"{sys.executable} -m jarvis",
+        call=call,
+    ).strip()
 
 
 def google_mcp_server_config(settings: Settings) -> dict[str, Any]:

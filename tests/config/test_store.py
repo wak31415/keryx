@@ -284,7 +284,7 @@ def test_import_env_moves_values_and_renames_the_file(store, tmp_path):
     env = write_env(
         tmp_path,
         "OPENAI_API_KEY=sk-live\nOPENAI_VOICE=marin\nPORT=8080\nWHATEVER=1\n"
-        f"DATA_DIR={tmp_path / 'data'}\nSUBAGENT_MODEL=claude-opus-5\n",
+        f"DATA_DIR={tmp_path / 'data'}\nSUBAGENT_MODEL=claude-opus-5-5\n",
     )
 
     report = store.import_env(env, today=date(2026, 9, 27))

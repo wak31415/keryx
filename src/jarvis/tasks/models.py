@@ -130,7 +130,7 @@ class Task:
     status: TaskStatus = TaskStatus.QUEUED
     project: str | None = None
     cwd: str | None = None
-    model: str = "claude-opus-5"
+    model: str = "claude-opus-5-5"
     #: The coding agent this task runs on (`jarvis.agents.registry.BACKENDS`), fixed at
     #: dispatch. Every later run of it — a follow-up, a re-run — goes back to the same one,
     #: because only that agent can resume its session. Rows written before there was more
@@ -220,3 +220,40 @@ class Task:
         if len(description) > 80:
             description = description[:80] + "…"
         return f"task {self.id} ({self.status}): {description}"
+
+
+@dataclass(frozen=True)
+class ProjectUsage:
+    """What the tasks of one project spent, summed from their rows (`TaskStore.usage_by_project`).
+
+    The attribution is the task's `project`, the name it was dispatched with — so `project`
+    None is work dispatched into the projects folder with no name, which may well have
+    touched a project all the same, and `internal` is Jarvis's own housekeeping, which never
+    carries one. `measured` and `priced` say how many of `tasks` reported tokens and
+    dollars: a row that never did (older than schema v6, or a Codex run, which has no
+    price) is left out of the sums rather than counted as free.
+    """
+
+    project: str | None
+    internal: bool
+    tasks: int
+    measured: int
+    priced: int
+    input_tokens: int
+    output_tokens: int
+    #: None when no task in the group reported a price — unknown, not zero.
+    cost_usd: float | None
+
+    def __add__(self, other: "ProjectUsage") -> "ProjectUsage":
+        """The two groups as one, for a total; the project is kept only when both agree."""
+        costs = [cost for cost in (self.cost_usd, other.cost_usd) if cost is not None]
+        return ProjectUsage(
+            project=self.project if self.project == other.project else None,
+            internal=self.internal and other.internal,
+            tasks=self.tasks + other.tasks,
+            measured=self.measured + other.measured,
+            priced=self.priced + other.priced,
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cost_usd=sum(costs) if costs else None,
+        )

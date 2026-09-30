@@ -34,6 +34,47 @@ PIN_RULE = "must be 6 to 8 digits, and nothing but digits"
 #: itself against runs to here, since no further digit could be part of one.
 PIN_MAX_DIGITS = 8
 
+#: Each digit as a caller may say it and a model or a transcriber may write it: the numeral,
+#: or the word ("oh" and a bare "o" for zero too, which is how a phone number is read out).
+DIGIT_WORDS = {
+    "0": ("zero", "oh", "o", "nought"),
+    "1": ("one",),
+    "2": ("two",),
+    "3": ("three",),
+    "4": ("four",),
+    "5": ("five",),
+    "6": ("six",),
+    "7": ("seven",),
+    "8": ("eight",),
+    "9": ("nine",),
+}
+_WORD_DIGITS = {word: digit for digit, words in DIGIT_WORDS.items() for word in words}
+#: What may sit between two digits of a PIN said or typed: spaces, commas, stops and dashes
+#: (the typographic ones too: a model tends to write a grouped number with an en dash).
+_SEPARATOR = r"[\s,.\-\u2010-\u2015]"
+BETWEEN_DIGITS = _SEPARATOR + "*"
+_SEPARATORS = re.compile(_SEPARATOR + "+")
+
+
+def spoken_digits(said: str | None) -> str | None:
+    """The digits of a PIN as it was said, or None when `said` is not only digits.
+
+    A PIN is said in groups — "four two four, two four two" — and whoever writes it down
+    keeps the grouping: a dash, a space, a word per digit. None of that is the PIN being
+    wrong, and comparing it as written refused the right PIN. So the separators go and the
+    words become numerals; anything else at all (a stray word, a non-ASCII numeral) makes
+    it no PIN, rather than a string to pick digits out of.
+    """
+    digits = []
+    for token in _SEPARATORS.split((said or "").strip().lower()):
+        if token.isascii() and token.isdigit():
+            digits.append(token)
+        elif token in _WORD_DIGITS:
+            digits.append(_WORD_DIGITS[token])
+        elif token:
+            return None
+    return "".join(digits) or None
+
 #: Where a PIN came from, for `jarvis doctor` and `jarvis memory seed --json`. Never the
 #: digits.
 PIN_FROM_ENV = "environment"

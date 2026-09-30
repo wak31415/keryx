@@ -42,9 +42,21 @@ from pathlib import Path
 from typing import Protocol
 
 from jarvis.audio.util import ms_for_bytes
-from jarvis.config import PIN_MAX_DIGITS, PIN_PATTERN, Settings, secure_dir, secure_file
+from jarvis.config import (
+    PIN_MAX_DIGITS,
+    PIN_PATTERN,
+    Settings,
+    secure_dir,
+    secure_file,
+    spoken_digits,
+)
 from jarvis.continuity.briefing import Briefing, BriefingSource
-from jarvis.continuity.transcripts import AUTHORIZED_MARKER, redact_pin, session_header
+from jarvis.continuity.transcripts import (
+    AUTHORIZED_MARKER,
+    redact_pin,
+    session_header,
+    transcript_path,
+)
 from jarvis.events import EventBus, PinLockedOut, SessionEnded, SessionStarted
 from jarvis.logging_util import mask_number
 from jarvis.pin_guard import PinGuard
@@ -94,9 +106,18 @@ PIN_REJECTED_MESSAGE = (
     "[system] The caller entered an incorrect PIN on the keypad. Ask them to try again, in "
     "one sentence, without repeating any digits back."
 )
+PIN_SHORT_MESSAGE = (
+    "[system] The caller pressed hash before a whole PIN was keyed, so nothing was checked "
+    "and no attempt was used. Ask them in one sentence to key the whole PIN, without "
+    "repeating any digits back and without mentioning attempts."
+)
 #: What the model is told after a keypad entry, per `submit_pin` status. A lockout is
 #: absent because `submit_pin` has already said its piece.
-KEYPAD_PIN_MESSAGES = {"authorized": PIN_ACCEPTED_MESSAGE, "invalid": PIN_REJECTED_MESSAGE}
+KEYPAD_PIN_MESSAGES = {
+    "authorized": PIN_ACCEPTED_MESSAGE,
+    "invalid": PIN_REJECTED_MESSAGE,
+    "incomplete": PIN_SHORT_MESSAGE,
+}
 #: Enrolling the first PIN: the one state in which the keypad *sets* a PIN rather than
 #: giving one. Not one of these may carry a digit — the caller chooses the PIN, keys it in
 #: twice, and hears it named exactly once — and none of them may ask twice.
@@ -335,11 +356,14 @@ class VoiceSession:
 
     @property
     def transcript_path(self) -> Path:
-        return self._settings.data_dir / "calls" / f"{self.session_id}.log"
+        return transcript_path(self._settings.data_dir, self.session_id)
 
     async def run(self) -> None:
         """Run the session to completion. Returns once the call has been torn down."""
         self._briefing = await self._load_briefing()
+        # The owner's own tools are read from disk here, once per call, so a tool written
+        # since the last call is offered without a restart (`jarvis.tools.custom`).
+        self._tools = await asyncio.to_thread(self._tools.for_call)
         config = self._build_config()
         try:
             await self._provider.connect(config)
@@ -437,8 +461,8 @@ class VoiceSession:
         """Check a PIN and authorize the session if it matches.
 
         The one place a PIN is ever compared, whether it was spoken or typed. Returns
-        `not_configured` / `authorized` / `invalid` (with the attempts left) / `locked`;
-        the digits are never logged and never handed back. After `PIN_MAX_ATTEMPTS`
+        `not_configured` / `authorized` / `invalid` (with the attempts left) / `incomplete` /
+        `locked`; the digits are never logged and never handed back. After `PIN_MAX_ATTEMPTS`
         wrong ones the model is asked for a goodbye and the call ends — a locked session
         stays locked even if the right PIN turns up afterwards.
 
@@ -448,6 +472,13 @@ class VoiceSession:
 
         A blank configured PIN is *no* PIN, and a blank candidate answers nothing: both
         are refused rather than compared, so `submit_pin("")` can never authorize.
+
+        A spoken PIN arrives as the model wrote it down — grouped with a dash or a space,
+        or in words — and is read back to its digits first (`spoken_digits`). What is not
+        six to eight digits even then (half a PIN the line cut off, a blank, a stray word)
+        is `incomplete`: refused *before* it is compared and counted by nothing. It cannot
+        be the PIN, so it spends nothing a guesser could use, and the caller whose PIN was
+        clipped keeps the attempt the line took from them.
         """
         expected = self._settings.pin
         if not expected:
@@ -461,8 +492,11 @@ class VoiceSession:
             await self._lock_out(PIN_PAUSED_MESSAGE)
             return {"status": "locked"}
 
-        candidate = (pin or "").strip()
-        if candidate and hmac.compare_digest(candidate.encode(), expected.encode()):
+        candidate = spoken_digits(pin)
+        if candidate is None or not PIN_PATTERN.fullmatch(candidate):
+            log.info("session %s: that was not a whole PIN; not counted", self.session_id)
+            return {"status": "incomplete"}
+        if hmac.compare_digest(candidate.encode(), expected.encode()):
             self.authorize()
             await self._brief_after_pin()
             return {"status": "authorized"}
@@ -568,9 +602,12 @@ class VoiceSession:
 
         The nudge rides on the opening message rather than on the system prompt alone
         because a realtime model leads with what it was just handed far more reliably
-        than with a section it has to go looking for.
+        than with a section it has to go looking for. On a call Jarvis placed about a task,
+        that task is the opening context itself, and the nudge is about the others only.
         """
-        return (self._opening_context or OPENING_MESSAGE) + self._briefing.opening_nudge()
+        if self._opening_context is None:
+            return OPENING_MESSAGE + self._briefing.opening_nudge()
+        return self._opening_context + self._briefing.opening_nudge(self.opening_task_id)
 
     def _build_config(self) -> SessionConfig:
         """The provider session: transport's audio format, our prompt, our tools."""
@@ -584,7 +621,6 @@ class VoiceSession:
                 opening_context=self._opening_context,
                 pending=self._briefing.pending,
                 memory=self._briefing.memory,
-                tool_names={schema["name"] for schema in schemas},
                 agents=_dispatch_agents(schemas),
             ),
             tools=schemas,
@@ -600,6 +636,7 @@ class VoiceSession:
             # itself: the mic is gated while it speaks and there is nothing to hear.
             interrupt_response=self.channel == "phone",
             transcription_model=self._settings.openai_transcription_model,
+            transcription_language=self._settings.transcription_language or None,
         )
 
     # --- transport -> provider --------------------------------------------

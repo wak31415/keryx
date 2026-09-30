@@ -102,7 +102,7 @@ The modules that sit below the floor, and why, as of 2026-09-02:
 | `approvals/policy.py` | 91% | Individual denylist entries; the classification itself is covered exhaustively |
 | `integrations/cluster.py` | 91% | Parser branches for `sinfo`/`squeue` shapes the fixtures do not contain |
 | `approvals/broker.py` | 91% | Socket-level failures (a client that disconnects mid-request) |
-| `projects.py`, `tools/builtin_billing.py` | 91% | `OSError` paths on project discovery, and two billing error branches |
+| `projects.py` | 91% | `OSError` paths on project discovery |
 | `cli.py` | 93% | Argument-parsing edges and the `serve` loop, which is exercised end to end rather than by unit test |
 
 None of them is a gap in a *rule* — the PIN gate, the `reported_at` contract, the

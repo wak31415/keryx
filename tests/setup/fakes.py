@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from jarvis.agents.base import RunResult
+from jarvis.issues import GhStatus
 from jarvis.notify.twilio_out import TwilioError, TwilioNumber
 from jarvis.setup.context import Probes
 from jarvis.setup.ui import Choice
@@ -24,6 +25,8 @@ class ScriptedPrompter:
         self.said: list[tuple[str, str]] = []
         self.asked: list[tuple[str, str]] = []
         self.choices: dict[str, list[Choice]] = {}
+        #: What each secret question offered to keep.
+        self.currents: dict[str, str] = {}
 
     # --- saying ----------------------------------------------------------------------
 
@@ -33,7 +36,7 @@ class ScriptedPrompter:
     def intro(self, title: str, subtitle: str = "") -> None:
         self._say("intro", f"{title} {subtitle}")
 
-    def section(self, title: str) -> None:
+    def section(self, title: str, step=None) -> None:
         self._say("section", title)
 
     def note(self, text: str) -> None:
@@ -82,6 +85,8 @@ class ScriptedPrompter:
     def select(self, message, choices, *, default=None) -> str:
         self.choices[message] = list(choices)
         answer = self._answer("select", message)
+        if answer is DEFAULT and default is None:
+            raise AssertionError(f"{message!r} has no default to take")
         return default if answer is DEFAULT else answer
 
     def checkbox(self, message, choices) -> list[str]:
@@ -98,8 +103,13 @@ class ScriptedPrompter:
             raise AssertionError(f"{message!r} refused {answer!r}: {problem}")
         return answer
 
-    def secret(self, message, *, validate=None) -> str:
+    def secret(self, message, *, validate=None, current="") -> str:
+        self.currents[message] = current
         answer = self._answer("secret", message)
+        if answer is DEFAULT:
+            if not current:
+                raise AssertionError(f"{message!r} has nothing to keep")
+            return current
         if validate is not None and (problem := validate(answer)):
             raise AssertionError(f"{message!r} refused a secret: {problem}")
         return answer
@@ -155,6 +165,14 @@ class FakeWorld:
     script_code: int = 0
     headless: bool = False
     gmail: str = "sam@example.com"
+    #: `~/.ssh/config` as `plugins.ssh_hosts.discover` would read it, whose masters are up
+    #: now, and what Slurm would say its partitions are.
+    ssh_hosts: list = field(default_factory=list)
+    masters_up: set = field(default_factory=set)
+    partitions: dict = field(default_factory=dict)
+    #: What `gh auth status` says, in order: the last one repeats.
+    gh: list = field(default_factory=lambda: [GhStatus(installed=True, signed_in=True,
+                                                     account="octocat")])
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
@@ -183,6 +201,10 @@ class FakeWorld:
         def post(*args, **kwargs):
             raise AssertionError("no token exchange in this test")
 
+        def gh_status():
+            self.calls.append(("gh",))
+            return self.gh.pop(0) if len(self.gh) > 1 else self.gh[0]
+
         def openai(key):
             self.calls.append(("openai", key))
             return self.openai_problem
@@ -198,4 +220,10 @@ class FakeWorld:
             gmail_address=gmail_address,
             workspace_signin=workspace,
             http_post=post,
+            ssh_hosts=lambda: self.calls.append(("ssh_hosts",)) or list(self.ssh_hosts),
+            ssh_master_alive=lambda alias: self.calls.append(("master", alias))
+            or alias in self.masters_up,
+            cluster_partitions=lambda alias: self.calls.append(("partitions", alias))
+            or list(self.partitions.get(alias, [])),
+            gh_status=gh_status,
         )

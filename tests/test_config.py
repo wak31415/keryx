@@ -115,37 +115,16 @@ def test_an_agent_jarvis_does_not_know_fails_the_load(tmp_path):
         Settings(_env_file=None, openai_api_key="t", data_dir=tmp_path, agent_backend="gemini")
 
 
-def test_clusters_parse_from_json_env(monkeypatch, tmp_path):
-    """Names are what the model says, so they are matched lower-case."""
+def test_a_setting_a_plugin_replaced_no_longer_stops_anything(monkeypatch, tmp_path):
+    """Left in the environment or a file from before plugins, it is ignored, not refused."""
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv("CLUSTERS", '{"Alpha": "shared", "beta": "gpu"}')
-    monkeypatch.setenv("CLUSTER_SSH_GUARD", "~/bin/guard.sh")
+    monkeypatch.setenv("CLUSTERS", '{"alpha; rm -rf ~": "gpu"}')
+    monkeypatch.setenv("SLACK_CHANNEL_ID", "D1")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "jarvis"))
 
     settings = Settings(_env_file=None)
 
-    assert settings.clusters == {"alpha": "shared", "beta": "gpu"}
-    assert settings.cluster_ssh_guard == Path.home() / "bin" / "guard.sh"
-
-
-@pytest.mark.parametrize(
-    "clusters",
-    [{"alpha; rm -rf ~": "gpu"}, {"alpha": "gpu && reboot"}, {"": "gpu"}, {"alpha": " "}],
-)
-def test_a_cluster_that_is_not_a_bare_word_is_refused_at_startup(tmp_path, clusters):
-    """Both halves reach a remote shell, so a bad one fails loudly rather than per call."""
-    with pytest.raises(ValidationError):
-        Settings(
-            _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", clusters=clusters
-        )
-
-
-def test_a_blank_cluster_guard_is_no_guard(tmp_path):
-    settings = Settings(
-        _env_file=None, openai_api_key="test", data_dir=tmp_path / "jarvis", cluster_ssh_guard=""
-    )
-
-    assert settings.cluster_ssh_guard is None
+    assert not hasattr(settings, "clusters") and not hasattr(settings, "slack_channel_id")
 
 
 def test_projects_parses_json_env(monkeypatch, tmp_path):
@@ -325,8 +304,10 @@ def test_defaults_match_spec_table():
     assert settings.openai_realtime_model == "gpt-realtime-2.1"
     assert settings.openai_voice == "cedar"
     assert settings.openai_transcription_model == "gpt-4o-mini-transcribe"
+    assert settings.transcription_language == ""
+    assert settings.clock_format == "24h"
     assert settings.anthropic_api_key is None
-    assert settings.subagent_model == "claude-opus-5"
+    assert settings.subagent_model == "claude-opus-5-5"
     assert settings.subagent_max_turns == 200
     assert settings.subagent_max_budget_usd == 10.0
     assert settings.host == "127.0.0.1"
@@ -347,9 +328,7 @@ def test_defaults_match_spec_table():
     assert settings.log_level == "INFO"
     assert settings.debug_skip_twilio_validation is False
     assert settings.fake_agents is False
-    assert settings.slack_mcp_server is None
-    assert settings.clusters == {}
-    assert settings.cluster_ssh_guard is None
+    assert settings.slack_bot_token is None
 
 
 def test_debug_skip_twilio_validation_env(monkeypatch, tmp_path):
@@ -899,3 +878,15 @@ def test_a_write_that_cannot_finish_leaves_no_usable_pin_and_says_so(tmp_path, m
     assert read_enrolled_pin(jarvis_home()) is None
     assert pin_file(jarvis_home()).exists()  # left exactly where it fell
     assert make(tmp_path).pin_enrolment_open is False
+
+
+@pytest.mark.parametrize("value", ["English", "EN", "e", "en-US", "de "])
+def test_a_transcription_language_is_a_bare_iso_code(value):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, openai_api_key="k", transcription_language=value)
+
+
+@pytest.mark.parametrize("value", ["", "en", "de", "yue"])
+def test_a_transcription_language_may_be_empty_or_a_code(value):
+    settings = Settings(_env_file=None, openai_api_key="k", transcription_language=value)
+    assert settings.transcription_language == value

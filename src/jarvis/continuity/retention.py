@@ -25,12 +25,11 @@ from pathlib import Path
 
 from jarvis.config import Settings
 from jarvis.continuity.memory import memory_path, trim_memory
+from jarvis.continuity.transcripts import calls_dir
 from jarvis.tasks.store import TaskStore
 
 log = logging.getLogger("jarvis.retention")
 
-#: Transcripts live here, one file per session (`jarvis.continuity.transcripts`).
-CALLS_DIR = "calls"
 #: A task's progress log and its written report.
 TASKS_DIR = "tasks"
 
@@ -81,7 +80,7 @@ def prune_transcripts(data_dir: Path, cutoff: datetime | None, *, keep: Iterable
         return 0
     spared = set(keep)
     removed = 0
-    for path in sorted((data_dir / CALLS_DIR).glob("*.log")):
+    for path in sorted(calls_dir(data_dir).glob("*.log")):
         if path.stem in spared:
             continue
         try:

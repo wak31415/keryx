@@ -68,10 +68,22 @@ _DIGEST_HEADING = (
 )
 _DIGEST_MORE = "\n\n(and {count} more waiting; these are the oldest.)"
 #: Appended to the message that opens the session, because a realtime model leads with
-#: what it was just told far more reliably than with a section of its system prompt.
+#: what it was just told far more reliably than with a section of its system prompt. "In
+#: the same turn" is load-bearing: told to lead with it "after your greeting", a model will
+#: greet, promise news and stop, and the owner has to prompt for what it was.
 OPENING_NUDGE = (
     " [system] {count} finished while you were away and the owner has not heard yet — see "
-    '"What the owner has not heard yet" and lead with it, briefly, after your greeting.'
+    '"What the owner has not heard yet" and lead with it, briefly, in the same turn as your '
+    "greeting: do not stop to wait for them before saying what it is."
+)
+#: The nudge on a call Jarvis placed about one task, whose context already carries that
+#: task: it says only that there is *other* news, and that it comes after the result.
+#: Counting the call's own task here told the model the one result twice, once as the
+#: reason for the call and once as news to lead with after a greeting (#63).
+OTHERS_NUDGE = (
+    " [system] Other work also finished while you were away and the owner has not heard it "
+    'yet — see "What the owner has not heard yet". Give the result above first, then mention '
+    "these briefly, all in this first turn."
 )
 #: The same nudge for a phone call, which is briefed only once the PIN is accepted — by
 #: which time they have been greeted and have usually asked for something.
@@ -104,9 +116,18 @@ class Briefing:
         """
         return replace(self, memory="")
 
-    def opening_nudge(self) -> str:
-        """The clause to append to the message that opens the session, if any."""
-        return OPENING_NUDGE.format(count=self._count()) if self.pending_count else ""
+    def opening_nudge(self, opening_task_id: int | None = None) -> str:
+        """The clause to append to the message that opens the session, if any.
+
+        `opening_task_id` is the task a call Jarvis placed opens by saying, which is still
+        unreported — and so in this digest — until the model stamps it. Only the others
+        are news beside it. Whether there are any is exact even when the digest does not
+        name that task: then the digest is full, and every task it names is another.
+        """
+        if opening_task_id is None:
+            return OPENING_NUDGE.format(count=self._count()) if self.pending_count else ""
+        others = self.pending_count - (opening_task_id in self.task_ids)
+        return OTHERS_NUDGE if others > 0 else ""
 
     def after_pin_nudge(self) -> str:
         """The note to hand a phone call once the PIN has let its briefing in, if any."""

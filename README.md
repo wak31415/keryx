@@ -55,6 +55,7 @@ a voice agent you can use across calls:
 | Callbacks when you ask for one | — | — | ✅ |
 | Pro-actively calls you when it needs input from you | — | — | ✅ |
 | Ask it to add a feature during a call | — | — | ✅ |
+| Report a bug in Jarvis by voice, filed as a GitHub issue | — | — | ✅ |
 | Answer Claude Code prompts on your screen by phone | — | — | ✅ |
 
 For example:
@@ -83,12 +84,12 @@ again with the training results.
 ## Quick start
 
 You need Python 3.12, [uv](https://docs.astral.sh/uv/), an OpenAI API key with Realtime
-access, a Twilio number, and Claude Code or Codex.
+access, a Twilio number, and Claude Code or Codex. Install it on a machine that stays on,
+such as a desktop or home server where your projects live: Jarvis answers your calls, keeps
+working after you hang up and calls you back, and none of that happens while it sleeps.
 
 ```bash
-git clone https://github.com/wak31415/jarvis-voice-agent.git
-cd jarvis-voice-agent
-uv sync
+git clone https://github.com/wak31415/jarvis-voice-agent.git && cd jarvis-voice-agent
 uv run jarvis setup
 ```
 
@@ -101,12 +102,34 @@ skill. The full walkthrough is on the [wiki](https://github.com/wak31415/jarvis-
 
 Jarvis hands its work to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or
 [Codex](https://developers.openai.com/codex), signed in with a subscription or an API key.
-`jarvis setup` asks which one to use by default. If you enable both, you can say "have
-Codex do it" on a call. [docs/agents.md](docs/agents.md) compares the two.
+It is most extensively tested with Claude Code on a subscription; other agents are supported
+in principle, but may not have full feature parity. `jarvis setup` asks which one to use by
+default. If you enable both, you can say "have Codex do it" on a call.
+[docs/agents.md](docs/agents.md) compares the two.
+
+## GPT-Live
+
+[GPT-Live](https://developers.openai.com/api/docs/guides/live) (September 2026) is a
+promising fit for Jarvis. It listens while it speaks, keeps the conversation going while a
+backend works, and splits the job the way Jarvis already does: a voice in front, and an
+agent behind it doing the reasoning and calling the tools. I'm looking into moving Jarvis
+onto it, and am working out whether that can be done without losing any features. Until
+then, Jarvis runs on the Realtime API. The reasons why it's not as simple as switching out
+the model name:
+
+- **Tools.** On GPT-Live the voice doesn't call tools itself: every tool goes through the
+  delegated backend. The PIN, the keypad and the callbacks have to hold up there, and quick
+  answers like "what's running?" have to stay quick.
+- **Timing and wording.** Jarvis needs to know when a spoken reply ends, to hang up after
+  goodbye and to stop talking when you interrupt. It also relies on exact wording.
+  GPT-Live has no end-of-reply event, and it paraphrases the text it is handed.
+- **Instructions mid-call.** Giving the PIN changes what a call may do, and Jarvis rewrites
+  the voice's instructions to match. GPT-Live fixes its instructions when the call starts
+  and only accepts additions after that.
 
 ## Documentation
 
-- [Setup](https://github.com/wak31415/jarvis-voice-agent/wiki/Setup): phone, Google, the PIN, where files live, upgrading, costs
+- [Setup](https://github.com/wak31415/jarvis-voice-agent/wiki/Setup): phone, Google, the PIN, where files live, costs
 - [Configuration](docs/configuration.md): every setting
 - [Coding agents](docs/agents.md): signing in, installing only one, what each can do
 - [Tools](docs/tools.md): what the voice model can do, and how to add a tool

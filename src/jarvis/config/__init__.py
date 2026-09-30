@@ -32,10 +32,10 @@ from jarvis.config.pin import (
     pin_file,
     read_enrolled_pin,
     replace_pin_at_keyboard,
+    spoken_digits,
     write_enrolled_pin,
 )
 from jarvis.config.settings import (
-    CLUSTER_WORD,
     GOOGLE_CLIENT_FILE,
     GROUPS,
     OPTIONAL_STR_FIELDS,
@@ -53,7 +53,6 @@ from jarvis.config.settings import (
 )
 
 __all__ = [
-    "CLUSTER_WORD",
     "DATA_DIR_MODE",
     "DATA_FILE_MODE",
     "GOOGLE_CLIENT_FILE",
@@ -86,6 +85,7 @@ __all__ = [
     "secrets_file",
     "secure_dir",
     "secure_file",
+    "spoken_digits",
     "write_enrolled_pin",
     "write_private",
 ]

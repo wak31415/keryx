@@ -49,6 +49,9 @@ PROTECTED_PATTERNS = (
     "APPROVALS_ENABLED",
     "APPROVAL_BASH_ALLOW",
     "APPROVAL_ROOTS",
+    # Publishing: whether Jarvis files issues about itself, which are public, and where.
+    # The owner turns it on by hand (`jarvis setup` or `jarvis config set`), never Jarvis.
+    "ISSUE_*",
     # Spending and deletion.
     "SUBAGENT_MAX_BUDGET_USD",
     "DAILY_TASK_CAP",
@@ -63,7 +66,6 @@ PROTECTED_PATTERNS = (
     "STATE_DIR",
     "CACHE_DIR",
     "SERVICE_*",
-    "CLUSTER*",
     "SKILLS_DIR",
     # Development switches, every one of which turns a check off.
     "DEBUG_*",

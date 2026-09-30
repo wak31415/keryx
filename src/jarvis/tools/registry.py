@@ -80,6 +80,39 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, _Tool] = {}
+        self._loader: Callable[[ToolRegistry], None] | None = None
+
+    def __contains__(self, name: str) -> bool:
+        return name in self._tools
+
+    def names(self) -> list[str]:
+        """Every tool's name, in the order they are offered."""
+        return list(self._tools)
+
+    def set_loader(self, loader: Callable[["ToolRegistry"], None]) -> None:
+        """Run `loader` over a copy of this registry at the top of every call.
+
+        How the owner's own tools (`jarvis.tools.custom`) arrive without a restart: the
+        built-in tools are registered once, and whatever the loader adds is read afresh
+        for each call, into that call's copy alone.
+        """
+        self._loader = loader
+
+    def for_call(self) -> "ToolRegistry":
+        """The tools one call is offered: these, plus whatever the loader adds now.
+
+        A loader that fails costs the call its extra tools, never the call.
+        """
+        if self._loader is None:
+            return self
+        copy = ToolRegistry()
+        copy._tools = dict(self._tools)
+        try:
+            self._loader(copy)
+        except Exception:
+            log.exception("loading the custom tools failed; this call has the built-in ones")
+            copy._tools = dict(self._tools)
+        return copy
 
     def register(
         self,

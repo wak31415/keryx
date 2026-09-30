@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from jarvis.config import secure_file
-from jarvis.tasks.models import Task, TaskStatus, to_utc_iso
+from jarvis.tasks.models import ProjectUsage, Task, TaskStatus, to_utc_iso
 
 log = logging.getLogger("jarvis.tasks.store")
 
@@ -380,6 +380,42 @@ class TaskStore:
                 [*params, limit],
             ).fetchall()
         return [Task.from_row(row) for row in rows]
+
+    async def usage_by_project(self, *, since: datetime | None = None) -> list[ProjectUsage]:
+        """What tasks created since `since` (all of them, when None) spent, per project.
+
+        One row per dispatched project name, one for tasks dispatched with none, and one for
+        Jarvis's housekeeping, whatever project it named. Most expensive first; a group
+        nothing in it priced sorts after every group that was. Every status counts: a
+        cancelled or failed run spent what it spent.
+        """
+        return await asyncio.to_thread(self._usage_by_project_sync, since)
+
+    def _usage_by_project_sync(self, since: datetime | None) -> list[ProjectUsage]:
+        clause, params = ("WHERE created_at >= ? ", [to_utc_iso(since)]) if since else ("", [])
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT CASE WHEN internal THEN NULL ELSE project END AS grouped, "
+                "internal, COUNT(*) AS tasks, COUNT(input_tokens) AS measured, "
+                "COUNT(cost_usd) AS priced, COALESCE(SUM(input_tokens), 0) AS input_tokens, "
+                "COALESCE(SUM(output_tokens), 0) AS output_tokens, SUM(cost_usd) AS cost_usd "
+                f"FROM tasks {clause}GROUP BY grouped, internal "
+                "ORDER BY cost_usd IS NULL, cost_usd DESC, tasks DESC, grouped",
+                params,
+            ).fetchall()
+        return [
+            ProjectUsage(
+                project=row["grouped"],
+                internal=bool(row["internal"]),
+                tasks=row["tasks"],
+                measured=row["measured"],
+                priced=row["priced"],
+                input_tokens=row["input_tokens"],
+                output_tokens=row["output_tokens"],
+                cost_usd=row["cost_usd"],
+            )
+            for row in rows
+        ]
 
     def _list_sync(
         self, status: TaskStatus | None, limit: int, include_internal: bool

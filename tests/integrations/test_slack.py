@@ -64,6 +64,19 @@ def test_without_a_named_server_nothing_is_read_from_the_config(tmp_path):
     assert slack_credentials("xoxb-mine", None, server=None, config_path=config) is None
 
 
+def test_without_a_path_the_config_is_the_claude_clis_own(monkeypatch, tmp_path):
+    """`~/.claude.json`, or inside `CLAUDE_CONFIG_DIR` when that moves it."""
+    write_config(tmp_path / ".claude.json")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert slack_credentials(None, None, server=SERVER) == ("xoxb-test", "D0TEST")
+
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    write_config(moved / ".claude.json", token="xoxb-moved")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(moved))
+    assert slack_credentials(None, None, server=SERVER) == ("xoxb-moved", "D0TEST")
+
+
 def test_no_slack_anywhere_is_not_an_error(tmp_path):
     missing = tmp_path / "missing.json"
     assert slack_credentials(None, None, server=SERVER, config_path=missing) is None

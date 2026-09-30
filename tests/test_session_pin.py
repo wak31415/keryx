@@ -37,6 +37,7 @@ from jarvis.session import (
     PIN_MAX_ATTEMPTS,
     PIN_PAUSED_MESSAGE,
     PIN_REJECTED_MESSAGE,
+    PIN_SHORT_MESSAGE,
     VoiceSession,
 )
 from jarvis.tools import ToolRegistry
@@ -149,6 +150,88 @@ async def test_surrounding_whitespace_is_forgiven(make_session, phone, provider)
 
     async with running(session):
         assert await session.submit_pin(f"  {PIN} ") == {"status": "authorized"}
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "424-242",
+        "424 242",
+        "424, 242",
+        "424.242",
+        "4 2 4 2 4 2",
+        "4-2-4-2-4-2",
+        "424\u2013242",  # the en dash a model writes a grouped number with
+        "four two four two four two",
+        "Four-two-four, two-four-two",
+        "42 four 242",
+    ],
+)
+async def test_a_pin_said_in_groups_or_words_is_still_the_pin(
+    make_session, phone, provider, said
+):
+    """The reported bug: a right PIN, grouped the way people say one, used to be refused."""
+    session = make_session(phone, provider)
+
+    async with running(session):
+        assert await session.submit_pin(said) == {"status": "authorized"}
+
+
+@pytest.mark.parametrize("said", ["four oh five zero six o", "4 o 5 nought 6 0"])
+async def test_zero_may_be_said_as_oh(make_session, phone, provider, said):
+    session = make_session(phone, provider, pin="405060")
+
+    async with running(session):
+        assert await session.submit_pin(said) == {"status": "authorized"}
+
+
+async def test_a_wrong_pin_said_in_groups_is_still_wrong(make_session, phone, provider):
+    session = make_session(phone, provider)
+
+    async with running(session):
+        assert await session.submit_pin("424-243") == {"status": "invalid", "attempts_left": 2}
+        assert await session.submit_pin("one one one one one one") == {
+            "status": "invalid",
+            "attempts_left": 1,
+        }
+        assert session.authorized is False
+
+
+@pytest.mark.parametrize("said", [f"{PIN}1", f"9{PIN}", f"{PIN}{PIN}"[:8]])
+async def test_a_pin_with_digits_around_it_is_a_wrong_pin(make_session, phone, provider, said):
+    """Nothing is picked out of a longer run: seven or eight digits are one guess at them."""
+    session = make_session(phone, provider)
+
+    async with running(session):
+        assert await session.submit_pin(said) == {"status": "invalid", "attempts_left": 2}
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "",
+        "   ",
+        "4242",  # the start of it cut off by the line
+        "two four two",
+        f"it is {PIN}",  # a word in it: not a string to pick the digits out of
+        f"{PIN} or {WRONG}",
+        f"{PIN} {WRONG}",  # twelve digits are not six
+        "\u0664\u0662\u0664\u0662\u0664\u0662",  # a numeral that is not ASCII
+    ],
+)
+async def test_what_is_not_a_whole_pin_is_not_checked_and_not_counted(
+    make_session, phone, provider, said
+):
+    session = make_session(phone, provider)
+
+    async with running(session):
+        for _ in range(PIN_MAX_ATTEMPTS + 1):
+            assert await session.submit_pin(said) == {"status": "incomplete"}
+        assert session.authorized is False
+        assert session.is_live is True  # no lockout
+        assert await session.submit_pin(PIN) == {"status": "authorized"}
+
+    assert PIN_LOCKOUT_MESSAGE not in texts(provider)
 
 
 async def test_a_wrong_pin_counts_the_attempts_down(make_session, phone, provider):
@@ -276,12 +359,14 @@ async def test_a_blank_pin_is_never_accepted(make_session, phone, provider):
         assert session.authorized is False
 
 
-async def test_a_blank_candidate_burns_an_attempt(make_session, phone, provider):
+async def test_a_blank_candidate_costs_no_attempt(make_session, phone, provider):
+    """It cannot be the PIN, so it is not a guess at it: refused, never counted."""
     session = make_session(phone, provider)
 
     async with running(session):
-        assert await session.submit_pin("") == {"status": "invalid", "attempts_left": 2}
-        assert await session.submit_pin("   ") == {"status": "invalid", "attempts_left": 1}
+        assert await session.submit_pin("") == {"status": "incomplete"}
+        assert await session.submit_pin("   ") == {"status": "incomplete"}
+        assert await session.submit_pin(WRONG) == {"status": "invalid", "attempts_left": 2}
         assert session.authorized is False
 
 
@@ -315,13 +400,19 @@ async def test_a_full_keypad_entry_authorizes_without_a_hash(make_session, phone
 
 
 async def test_a_hash_submits_a_short_entry(make_session, phone, provider):
+    """Submitted, and answered — but too short to be a PIN, so it costs no attempt."""
     session = make_session(phone, provider)
 
     async with running(session):
-        await press(phone, "12#")
-        await eventually(lambda: PIN_REJECTED_MESSAGE in texts(provider))
+        for _ in range(PIN_MAX_ATTEMPTS):
+            await press(phone, "12#")
+        await eventually(lambda: texts(provider).count(PIN_SHORT_MESSAGE) == PIN_MAX_ATTEMPTS)
+        assert PIN_REJECTED_MESSAGE not in texts(provider)
         assert session.authorized is False
+        await press(phone, PIN)
+        await eventually(lambda: session.authorized)
 
+    assert PIN_LOCKOUT_MESSAGE not in texts(provider)
     assert_nothing_spoken_had_digits(provider)
 
 
@@ -540,6 +631,20 @@ async def test_a_right_pin_outside_a_lock_works_and_forgives_nothing(
         assert await session.submit_pin(PIN) == {"status": "authorized"}
 
     assert guard.record_failure() is not None  # the three before it still count
+
+
+async def test_what_is_not_a_whole_pin_never_reaches_the_count_across_calls(
+    make_session, phone, provider, guard
+):
+    """A guesser gets nothing from it, so it must not spend the owner's own budget either."""
+    for _ in range(GUARD_LIMIT - 1):
+        guard.record_failure()
+    session = make_session(phone, provider, pin_guard=guard)
+
+    async with running(session):
+        for _ in range(PIN_MAX_ATTEMPTS):
+            assert await session.submit_pin("4242") == {"status": "incomplete"}
+        assert await session.submit_pin("424-242") == {"status": "authorized"}
 
 
 async def test_the_lockout_the_owner_has_not_heard_about_is_published_once(

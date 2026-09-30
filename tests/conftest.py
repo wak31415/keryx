@@ -72,6 +72,8 @@ def _isolated_env(monkeypatch, tmp_path):
         monkeypatch.setenv(name, str(home / relative))
     monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "jarvis-home"))
     monkeypatch.delenv("JARVIS_ACTOR", raising=False)
+    # The Claude CLI's own directory is derived from `HOME` unless this moves it.
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     # And the working directory: a `.env` in the checkout the suite runs from is what
     # `jarvis serve` refuses to start beside, and what `jarvis migrate` would import.
     working = tmp_path / "cwd"
@@ -172,6 +174,15 @@ def _wake_word_models_downloaded(monkeypatch):
         return directory
 
     monkeypatch.setattr("jarvis.doctor._wakeword_models_dir", downloaded)
+
+
+@pytest.fixture(autouse=True)
+def _no_gh_from_doctor(monkeypatch):
+    """`jarvis doctor` runs `gh auth status` while issue reports are on, which asks GitHub.
+    Never from a test: `gh` is not installed, unless a test says what it answers."""
+    from jarvis.issues import GhStatus
+
+    monkeypatch.setattr("jarvis.doctor.gh_status", lambda: GhStatus(installed=False))
 
 
 @pytest.fixture(autouse=True)

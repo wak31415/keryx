@@ -99,9 +99,9 @@ checked is marked, and listed under "possible".
 | Choosing the model by name | ✅ opus, sonnet, fable, haiku | ✅ astra, sol, luna, terra |
 | Wall-clock cap (`SUBAGENT_TIMEOUT_S`) | ✅ | ✅ |
 | Turn cap and dollar cap | ✅ `SUBAGENT_MAX_TURNS`, `SUBAGENT_MAX_BUDGET_USD` | — |
-| Tokens recorded on the task (`jarvis tasks show`) | ✅ | ✅ |
+| Tokens recorded on the task (`jarvis tasks show`, per project in `jarvis tasks usage`) | ✅ | ✅ |
 | Dollar cost recorded on the task | ✅ | — a plan call has no price |
-| Slack, through the server `SLACK_MCP_SERVER` names | ✅ | ✅ handed over from `~/.claude.json` |
+| Slack, through the server the `send_to_slack` plugin names (`mcp_server`) | ✅ | ✅ handed over from `~/.claude.json` |
 | Gmail and Calendar | ✅ claude.ai connectors | ✅ with `GOOGLE_WORKSPACE_MCP=true` |
 | Its own instructions file | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` |
 | Its own skills, listed to the voice model | `SKILLS_DIR` | `~/.codex/skills` |
