@@ -20,10 +20,10 @@ or text you the report when it's done. You can call from a phone, or from a watc
 place calls.
 
 > [!NOTE]
-> Keryx is pre-1.0. It's a single-owner service that you run on your own machine with your
-> own API keys, and it isn't published to PyPI. Whoever gives it your PIN gets a coding
-> agent with your full user access, so read [SECURITY.md](SECURITY.md) before you put the
-> phone line online.
+> Keryx is pre-1.0. It's a single-owner service that runs on your own machine with your own
+> API keys. It only answers calls from your own numbers, and asks for your PIN before it
+> does anything on your behalf, in case someone spoofs one of them.
+> [SECURITY.md](SECURITY.md) has the details.
 
 <p align="center">
   <img src="docs/assets/keryx-incoming-call.jpg" width="480" alt="A Garmin watch showing an incoming call from Lyra.">
