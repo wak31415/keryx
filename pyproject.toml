@@ -73,7 +73,7 @@ codex = [
     # notification types field by field, and the SDK pins its bundled `codex` CLI
     # (openai-codex-cli-bin, ~350 MB installed) to its own version. Move it deliberately,
     # re-recording tests/agents/fixtures/codex_app_*.jsonl.
-    "openai-codex==0.157.1",
+    "openai-codex==0.158.0",
 ]
 all = ["keryx-voice[claude,codex]"]
 
