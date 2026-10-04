@@ -22,7 +22,7 @@ else.
 import os
 import shutil
 import stat
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -36,7 +36,6 @@ from keryx.config import (
     OWNER_FALLBACK,
     PIN_FROM_ENV,
     PIN_FROM_FILE,
-    PLACEHOLDER_KEY,
     Settings,
     env_var_name,
     pin_file,
@@ -45,9 +44,11 @@ from keryx.config.permissions import is_protected
 from keryx.config.settings import LEGACY_ENV_FILE
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path, read_memory
+from keryx.endpoints import Endpoint, Probe, probe, warnings
 from keryx.integrations.gmail import token_path
 from keryx.issues import GH_INSTALL_URL, SKILL, gh_status
 from keryx.logging_util import mask_number
+from keryx.realtime.openai import realtime_problem
 from keryx.restart.service import INSTALLERS, candidate_target, resolve_target
 
 Severity = Literal["hard", "soft"]
@@ -89,6 +90,16 @@ class Check:
         return {**asdict(self), "state": self.state}
 
 
+@dataclass(frozen=True)
+class EndpointReach:
+    """The two reads `doctor` makes of a model server, over the network: the model list, and
+    a Realtime session opened and closed. Only `keryx doctor` hands one in; the wizard, which
+    reads these checks on every screen, stays off the network."""
+
+    models: Callable[[Endpoint], Probe] = probe
+    realtime: Callable[[Endpoint], str | None] = realtime_problem
+
+
 def format_check(check: Check) -> str:
     """One printable line: a marker, the check's name, and the detail behind it."""
     if check.ok:
@@ -111,22 +122,25 @@ def run_doctor_checks(
     config_problems: Mapping[str, str] | None = None,
     store: ConfigStore | None = None,
     twilio: Any | None = None,
+    reach: EndpointReach | None = None,
 ) -> list[Check]:
     """Every check, in the order they are printed. Never raises: problems come back as checks.
 
     `config_problems` maps a `Settings` field name to why its configured value was refused,
     for the fields the CLI had to replace to load at all (see `cli.DOCTOR_FALLBACKS`).
     Without it a rejected value is indistinguishable from an unset one. `twilio` is a
-    `notify.twilio_out.TwilioAdmin`; without one the webhook is not looked at.
+    `notify.twilio_out.TwilioAdmin`; without one the webhook is not looked at, and without
+    `reach` no model server is asked anything.
     """
     problems = config_problems or {}
     store = store or ConfigStore()
     checks = [
         _storage_check(settings),
         _config_check(store),
-        _openai_key_check(settings),
+        *_voice_checks(settings),
         _agent_config_check(settings),
         *_agent_checks(settings),
+        *endpoint_checks(settings, reach),
         _twilio_check(settings),
         _signature_check(settings),
         _public_host_check(settings),
@@ -177,18 +191,35 @@ def _config_check(store: ConfigStore) -> Check:
     return Check("configuration", True, str(where), severity="soft", section="import")
 
 
-def _openai_key_check(settings: Settings) -> Check:
-    """The one required key; `PLACEHOLDER_KEY` means the read-only loader filled it in."""
-    key = settings.openai_api_key
-    if not key or key == PLACEHOLDER_KEY:
-        return Check(
-            "OPENAI_API_KEY",
-            False,
-            "not set — the voice session cannot start",
-            section="voice",
-            unset=True,
-        )
-    return Check("OPENAI_API_KEY", True, "set", section="voice")
+def _voice_checks(settings: Settings) -> list[Check]:
+    """Where a call's voice goes, and the OpenAI key it may or may not need.
+
+    With `VOICE_BASE_URL` blank the key is the voice, and Keryx cannot take a call without
+    it. With a voice server of the owner's own it buys only the voice model's `web_search`,
+    so its absence is a warning.
+    """
+    key = settings.openai_key
+    if not settings.voice_base_url:
+        if key is None:
+            return [
+                Check(
+                    "OPENAI_API_KEY",
+                    False,
+                    "not set — the voice session cannot start",
+                    section="voice",
+                    unset=True,
+                )
+            ]
+        return [Check("OPENAI_API_KEY", True, "set", section="voice")]
+    checks = [Check("voice", True, f"your own server at {settings.voice_base_url}",
+                    section="voice")]
+    if key is None:
+        checks.append(Check("OPENAI_API_KEY", False, "not set — calls have no web_search",
+                            severity="soft", section="voice", unset=True))
+    else:
+        checks.append(Check("OPENAI_API_KEY", True, "set, for web_search", severity="soft",
+                            section="voice"))
+    return checks
 
 
 def _agent_config_check(settings: Settings) -> Check:
@@ -248,6 +279,56 @@ def _agent_checks(settings: Settings) -> list[Check]:
                 unset=not status.ready,
             )
         )
+    return checks
+
+
+def endpoint_checks(settings: Settings, reach: EndpointReach | None = None) -> list[Check]:
+    """A voice server and a local agent's server: where they are, and, given `reach`,
+    whether they answer.
+
+    Where each is only ever warns (`endpoints.warnings`): a public address with no key may
+    be behind a firewall nobody can see from here. Whether it answers is hard for whatever
+    a call or the default agent cannot do without.
+    """
+    checks: list[Check] = []
+    if settings.voice_base_url:
+        voice = settings.voice_endpoint
+        checks += [
+            Check("voice server", False, warning, severity="soft", section="local")
+            for warning in warnings(voice, carries_voice=True)
+        ]
+        if reach is not None:
+            problem = reach.realtime(voice)
+            detail = problem or f"{voice.base_url} opens a Realtime session"
+            checks.append(Check("voice server", problem is None, detail, section="local"))
+    agent = settings.local_agent_endpoint
+    if agent is None:
+        return checks
+    severity: Severity = "hard" if settings.agent_backend == "local" else "soft"
+    name = "local agent server"
+    checks += [
+        Check(name, False, warning, severity="soft", section="local")
+        for warning in warnings(agent)
+    ]
+    if reach is None:
+        if not agent.model:
+            checks.append(Check(name, False, "LOCAL_AGENT_MODEL is not set",
+                                severity=severity, section="local", unset=True))
+        return checks
+    found = reach.models(agent)
+    listed = ", ".join(found.models[:6]) + (", …" if len(found.models) > 6 else "")
+    if not found.ok:
+        checks.append(Check(name, False, found.problem or "no answer", severity=severity,
+                            section="local"))
+    elif not agent.model:
+        checks.append(Check(name, False, f"LOCAL_AGENT_MODEL is not set — it serves {listed}",
+                            severity=severity, section="local", unset=True))
+    elif found.models and agent.model not in found.models:
+        checks.append(Check(name, False, f"{agent.model} is not one it serves ({listed})",
+                            severity=severity, section="local"))
+    else:
+        checks.append(Check(name, True, f"{agent.base_url} serves {agent.model}",
+                            severity=severity, section="local"))
     return checks
 
 

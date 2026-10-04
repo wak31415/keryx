@@ -32,7 +32,7 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 
 | Setting | Default | Service may change | What it is |
 |---|---|---|---|
-| `OPENAI_API_KEY` | *required* (secret) | never | OpenAI API key with Realtime access. The only setting Keryx cannot start without. |
+| `OPENAI_API_KEY` | (secret) | never | OpenAI API key with Realtime access: the voice, unless `VOICE_BASE_URL` names a server of your own, and the voice model's `web_search`. |
 | `OPENAI_REALTIME_MODEL` | `gpt-realtime-2.1` | no | The realtime speech-to-speech model a call runs on. |
 | `ASSISTANT_NAME` | `Lyra` | yes | What the assistant on the phone is called: the name it answers to and introduces itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or `marin`. |
 | `OPENAI_VOICE` | `` | yes | The Realtime voice the assistant speaks in. Empty is the assistant's own (`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail to open. |
@@ -62,6 +62,17 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 | `CODEX_API_KEY` | (secret) | never | Codex, paid per token. Keryx logs in with it once, into its own `CODEX_HOME`; `OPENAI_API_KEY` is never used for Codex. |
 | `CODEX_ACCESS_TOKEN` | (secret) | never | Codex on your ChatGPT plan, for a machine with no browser. Blank uses the stored `codex login`. |
 | `CODEX_MODEL` |  | yes | The model a Codex task runs on; blank is Codex's own default. |
+
+## Local and self-hosted models
+
+| Setting | Default | Service may change | What it is |
+|---|---|---|---|
+| `VOICE_BASE_URL` |  | never | A voice server of your own that speaks the OpenAI Realtime protocol, as its `…/v1` address (`http://127.0.0.1:8765/v1` is the one `keryx setup` installs). Blank is OpenAI. |
+| `VOICE_API_KEY` | (secret) | never | The Bearer key for that voice server, when it checks one. |
+| `LOCAL_AGENT_BASE_URL` |  | never | An inference server for the `local` agent — Ollama, llama.cpp, vLLM, LM Studio — as `http://gpu-box:11434` or its `…/v1` address. Blank is no local agent. |
+| `LOCAL_AGENT_API_KEY` | (secret) | never | The Bearer key for that server, when it checks one. The owner's Anthropic and OpenAI credentials are never sent there. |
+| `LOCAL_AGENT_MODEL` |  | yes | The model a `local` task runs on, by the server's own name for it. |
+| `LOCAL_AGENT_API` | `anthropic-messages` | yes | Which harness drives the local model: `anthropic-messages` runs it inside Claude Code, `openai-responses` inside Codex. The server must speak that API. |
 
 ## Owner, callers and PIN
 

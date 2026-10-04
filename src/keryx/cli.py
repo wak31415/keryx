@@ -47,12 +47,18 @@ from keryx.config.settings import ConfigFileError, tolerate_broken_files
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
 from keryx.continuity.memory import memory_path, read_memory
 from keryx.continuity.retention import cutoff_for, prune, prune_with
-from keryx.doctor import fix_permissions, format_check, has_hard_failure, run_doctor_checks
+from keryx.doctor import (
+    EndpointReach,
+    fix_permissions,
+    format_check,
+    has_hard_failure,
+    run_doctor_checks,
+)
 from keryx.events import EventBus
 from keryx.logging_util import mask_number
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
-from keryx.realtime.openai import OpenAIRealtimeClient
+from keryx.realtime import make_provider
 from keryx.restart.health import health_probe, wait_until_serving
 from keryx.restart.logscan import errors_since
 from keryx.restart.logscan import marks as log_marks
@@ -217,30 +223,36 @@ def _load_settings_reporting() -> tuple[Settings, dict[str, str]]:
     """
     problems: dict[str, str] = {}
     overrides: dict[str, object] = {}
-    while True:
-        try:
-            return load_settings(**overrides), problems
-        except ConfigFileError as error:
-            if "config_file" in problems:
-                raise
-            # Read on without the broken file; doctor's `config.toml` check says what broke.
-            problems["config_file"] = str(error)
-            tolerate_broken_files.set(True)
-        except ValidationError as error:
-            fresh = {
-                field: _validation_message(detail)
-                for detail in error.errors()
-                if (
-                    field := DOCTOR_FALLBACK_NAMES.get(
-                        str(detail["loc"][0]) if detail.get("loc") else "", ""
+    tolerant = None
+    try:
+        while True:
+            try:
+                return load_settings(**overrides), problems
+            except ConfigFileError as error:
+                if "config_file" in problems:
+                    raise
+                # Read on without the broken file; doctor's `config.toml` check says what
+                # broke. Only for this load: the next command in the process reads it again.
+                problems["config_file"] = str(error)
+                tolerant = tolerate_broken_files.set(True)
+            except ValidationError as error:
+                fresh = {
+                    field: _validation_message(detail)
+                    for detail in error.errors()
+                    if (
+                        field := DOCTOR_FALLBACK_NAMES.get(
+                            str(detail["loc"][0]) if detail.get("loc") else "", ""
+                        )
                     )
-                )
-                and field not in overrides
-            }
-            if not fresh:
-                raise
-            problems.update(fresh)
-            overrides.update({field: DOCTOR_FALLBACKS[field] for field in fresh})
+                    and field not in overrides
+                }
+                if not fresh:
+                    raise
+                problems.update(fresh)
+                overrides.update({field: DOCTOR_FALLBACKS[field] for field in fresh})
+    finally:
+        if tolerant is not None:
+            tolerate_broken_files.reset(tolerant)
 
 
 def _load_settings_optional() -> Settings:
@@ -328,6 +340,9 @@ def serve(
         typer.echo(f"keryx cannot start: {refusal}", err=True)
         raise typer.Exit(2)
     if refusal := settings.agent_refusal():
+        typer.echo(f"keryx cannot start: {refusal}", err=True)
+        raise typer.Exit(2)
+    if refusal := settings.voice_refusal():
         typer.echo(f"keryx cannot start: {refusal}", err=True)
         raise typer.Exit(2)
     if refusal := settings.storage_refusal():
@@ -613,7 +628,7 @@ async def _run_loopback(settings: Settings, wav: Path, out: Path, tail_seconds: 
     transport = WavTransport(wav, out_path=out, tail_seconds=tail_seconds)
     session = VoiceSession(
         transport,
-        OpenAIRealtimeClient(settings.openai_api_key, settings.openai_realtime_model),
+        make_provider(settings),
         settings,
         ToolRegistry(),
         EventBus(),
@@ -1204,6 +1219,7 @@ def doctor(
         config_problems=problems,
         store=store,
         twilio=_twilio_admin(settings),
+        reach=EndpointReach(),
     )
     failed = sum(1 for check in checks if not check.ok and check.severity == "hard")
     if as_json:

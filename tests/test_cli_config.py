@@ -151,7 +151,7 @@ def test_list_json_carries_everything_and_never_a_secret(home):
     assert (key["set"], key["secret"], key["value"], key["source"]) == (
         True, True, None, "secrets.toml"
     )
-    assert key["required"] is True and key["protected"] is True
+    assert key["required"] is False and key["protected"] is True
     voice = rows["OPENAI_VOICE"]
     assert (voice["value"], voice["source"], voice["service_writable"]) == (
         "marin", "config.toml", True

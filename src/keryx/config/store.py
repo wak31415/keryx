@@ -41,7 +41,6 @@ from keryx.config.settings import (
     LEGACY_CLIENT_FILE,
     META_TABLES,
     NOT_STORED,
-    PLACEHOLDER_KEY,
     Settings,
     canonical_key,
     env_var_name,
@@ -110,7 +109,6 @@ def validate(values: Mapping[str, Any]) -> dict[str, Any]:
             raise ConfigError(f"there is no setting called {key} (`keryx config list`)")
         fields[name] = key
     arguments = {name: values[key] for name, key in fields.items()}
-    arguments.setdefault("openai_api_key", PLACEHOLDER_KEY)
     try:
         probe = _Probe(**arguments)
     except ValidationError as error:

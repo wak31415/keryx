@@ -73,6 +73,9 @@ PROTECTED_PATTERNS = (
     "CACHE_DIR",
     "SERVICE_*",
     "SKILLS_DIR",
+    # Where a model is. A voice address pointed elsewhere ships every call's audio, the
+    # spoken PIN included, to whoever is there; an agent's, every task and its files.
+    "*_BASE_URL",
     # Development switches, every one of which turns a check off.
     "DEBUG_*",
     "DEMO_MODE",

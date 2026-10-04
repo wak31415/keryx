@@ -80,10 +80,10 @@ def run_voice(ctx: SetupContext) -> None:
     )
     if ctx.warn_if_overridden("OPENAI_API_KEY"):
         return
-    if settings.openai_api_key not in ("", "unset") and not ctx.review:
+    if settings.openai_key and not ctx.review:
         ui.success("OPENAI_API_KEY is set")
         return
-    current = settings.openai_api_key if settings.openai_api_key != "unset" else ""
+    current = settings.openai_key or ""
     for _ in range(3):
         key = ui.secret("OpenAI API key", validate=lambda v: None if v.strip() else "Required.",
                         current=current)

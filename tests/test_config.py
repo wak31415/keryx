@@ -415,7 +415,7 @@ def test_a_config_file_of_blanks_leaves_every_optional_setting_unset(tmp_path):
     blanks = {env_var_name(name): "" for name in Settings.model_fields}
     write_private(config_file(), dump_toml(blanks))
 
-    settings = Settings(openai_api_key="test", data_dir=tmp_path / "keryx")
+    settings = Settings(data_dir=tmp_path / "keryx")
 
     for name in OPTIONAL_STR_FIELDS:
         assert getattr(settings, name) is None, name

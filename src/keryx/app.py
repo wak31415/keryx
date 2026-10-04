@@ -43,8 +43,8 @@ from keryx.notify.pin_alert import PinLockoutAlerter
 from keryx.notify.twilio_out import TwilioOut
 from keryx.pin_guard import PinGuard
 from keryx.plugins.slack import slack_sender
+from keryx.realtime import make_provider
 from keryx.realtime.base import ProviderFactory
-from keryx.realtime.openai import OpenAIRealtimeClient
 from keryx.restart.coordinator import RestartCoordinator
 from keryx.session import SessionRegistry
 from keryx.stream_tokens import StreamTokenStore
@@ -113,7 +113,13 @@ def build_app_state(settings: Settings) -> AppState:
         manager=manager,
         settings=settings,
         inline_waits=inline_waits,
-        searcher=OpenAIWebSearch(settings.openai_api_key, settings.openai_web_search_model),
+        # OpenAI's Responses API is the search; a voice server of the owner's own has none,
+        # so without an OpenAI key the voice model simply has no `web_search` tool.
+        searcher=(
+            OpenAIWebSearch(settings.openai_key, settings.openai_web_search_model)
+            if settings.openai_key
+            else None
+        ),
         restarter=restart,
         recaller=Recaller(settings.data_dir, manager, pin=settings.pin),
         approvals=approvals,
@@ -131,9 +137,7 @@ def build_app_state(settings: Settings) -> AppState:
         bus=bus,
         sessions=sessions,
         registry=registry,
-        provider_factory=lambda: OpenAIRealtimeClient(
-            settings.openai_api_key, settings.openai_realtime_model
-        ),
+        provider_factory=lambda: make_provider(settings),
         stream_tokens=stream_tokens,
         inline_waits=inline_waits,
         store=store,

@@ -13,6 +13,7 @@ from keryx.notify.notifier import Notifier
 from keryx.notify.pin_alert import PinLockoutAlerter
 from keryx.notify.twilio_out import TwilioOut
 from keryx.pin_guard import STATE_NAME, PinGuard
+from keryx.realtime import make_provider
 from keryx.realtime.openai import OpenAIRealtimeClient
 from keryx.restart.coordinator import RestartCoordinator
 from keryx.tasks.agent_runner import ClaudeAgentRunner, FakeAgentRunner
@@ -138,16 +139,49 @@ async def test_the_provider_factory_builds_a_realtime_client_per_call(state):
     assert provider is not state.provider_factory()
 
 
-async def test_the_provider_factory_passes_the_configured_key_and_model(settings, monkeypatch):
-    made: list[tuple] = []
-    monkeypatch.setattr("keryx.app.OpenAIRealtimeClient", lambda *args: made.append(args))
+async def test_the_provider_factory_builds_on_the_voice_endpoint(settings, monkeypatch):
+    made: list = []
+    monkeypatch.setattr("keryx.app.make_provider", lambda given: made.append(given))
     built = build_app_state(settings)
 
     assert made == []  # nothing is connected until a call actually arrives
     built.provider_factory()
 
-    assert made == [(settings.openai_api_key, settings.openai_realtime_model)]
+    assert made == [settings]
     await shutdown_app_state(built)
+
+
+def test_make_provider_speaks_to_openai_with_the_key_and_model(settings):
+    provider = make_provider(settings)
+
+    endpoint = provider._endpoint
+    assert endpoint.is_openai
+    assert (endpoint.api_key, endpoint.model) == (
+        settings.openai_api_key,
+        settings.openai_realtime_model,
+    )
+
+
+def test_make_provider_speaks_to_a_voice_server_of_the_owners_own(settings):
+    local = settings.model_copy(
+        update={"voice_base_url": "http://127.0.0.1:8765/v1", "voice_api_key": "vk"}
+    )
+
+    endpoint = make_provider(local)._endpoint
+
+    assert (endpoint.base_url, endpoint.api_key) == ("http://127.0.0.1:8765/v1", "vk")
+
+
+async def test_web_search_is_offered_only_with_an_openai_key(settings):
+    keyless = settings.model_copy(
+        update={"openai_api_key": None, "voice_base_url": "http://127.0.0.1:8765/v1"}
+    )
+    with_key, without = build_app_state(settings), build_app_state(keyless)
+
+    assert "web_search" in with_key.registry.names()
+    assert "web_search" not in without.registry.names()
+    await shutdown_app_state(with_key)
+    await shutdown_app_state(without)
 
 
 # --- continuity: the briefer, the memory writer and recall ------------------

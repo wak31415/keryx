@@ -194,6 +194,35 @@ what the voice may name. Five rulings:
   `{assistant}` is the exception that proves it: it arrived with the rename, when the
   templates moved to `src/keryx`, where no older build reads them at all.
 
+## A model is an address
+
+Every model Keryx talks to is a `keryx/endpoints.py::Endpoint` — the `…/v1` root of a server,
+an optional Bearer key, the server's own name for the model — which is how every
+OpenAI-compatible client describes one. Four rulings:
+
+- **No provider library in Keryx.** The harnesses carry theirs; Keryx only says where.
+  `endpoints.py` is also the one place the localhost-versus-server rule lives: a private
+  host (loopback, RFC 1918, a tailnet, `.local`, a bare name) may run without a key and is
+  sent `PLACEHOLDER_BEARER` where an SDK refuses none; a public one is *warned* about in
+  `doctor` (`endpoints.warnings`), never refused.
+- **One voice client.** `OpenAIRealtimeClient` speaks to `Settings.voice_endpoint`, which is
+  OpenAI unless `VOICE_BASE_URL` names a server of the owner's own (Hugging Face's
+  speech-to-speech is the one `keryx setup` installs). `realtime.make_provider` is the only
+  place one is built, for the phone and `keryx loopback` alike. Two differences are made for
+  a server that is not OpenAI's, because they were measured to matter (2026-10-04): a call is
+  transcoded µ-law 8 kHz ⇄ PCM16 24 kHz (`audio/codec.py`), and a note goes in as a `user`
+  item marked as not the caller's — that server takes a `system` item as a *new system
+  prompt*, which would wipe the voice prompt. Do not add a third without measuring it.
+  Truncate is accepted and ignored there, and that is accepted, not worked around. The
+  persona's voice is not sent to it (`Settings.voice` is blank), since a server that does
+  not know `marin` speaks nothing.
+- **Every `*_BASE_URL` is protected.** A voice address pointed elsewhere ships every call's
+  audio, the spoken PIN included, to whoever is there.
+- **`OPENAI_API_KEY` is optional.** It is the voice only while `VOICE_BASE_URL` is blank
+  (`Settings.voice_refusal`, which `serve` asks); otherwise it buys the voice model's
+  `web_search` (the Responses API — no local server has a hosted search tool), which is
+  registered only when there is a key.
+
 ## Two names
 
 The service is **Keryx**: the package, the command, the directories, the units, the hook,

@@ -68,6 +68,10 @@ def test_nothing_protected_defaults_to_writable():
         "DEBUG_SKIP_TWILIO_VALIDATION",
         "DEMO_MODE",
         "TWILIO_AUTH_TOKEN",
+        "VOICE_BASE_URL",
+        "VOICE_API_KEY",
+        "LOCAL_AGENT_BASE_URL",
+        "LOCAL_AGENT_API_KEY",
     ],
 )
 def test_the_lines_of_defence_are_protected(key):
@@ -88,6 +92,8 @@ def test_the_writable_defaults_are_the_ones_you_would_say_on_a_call():
         "VAD_PREFIX_MS",
         "NOISE_REDUCTION",
         "TRANSCRIPTION_LANGUAGE",
+        "LOCAL_AGENT_MODEL",
+        "LOCAL_AGENT_API",
         "CLOCK_FORMAT",
         "SUBAGENT_MODEL",
         "CODEX_MODEL",

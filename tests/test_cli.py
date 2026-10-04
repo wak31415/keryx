@@ -28,7 +28,7 @@ from keryx.cli import (
     MAX_REPORT_CHARS,
     app,
 )
-from keryx.config import PLACEHOLDER_KEY, Settings
+from keryx.config import Settings
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path
 from keryx.realtime.base import AudioDelta, Transcript
@@ -317,7 +317,7 @@ def test_loopback_runs_a_session_and_writes_the_reply(settings_stub, monkeypatch
     provider = FakeProvider()
     provider.feed(AudioDelta(item_id="item_1", audio=b"\x01\x02" * 240))
     provider.feed(Transcript(role="assistant", text="hello there", item_id="item_1"))
-    monkeypatch.setattr("keryx.cli.OpenAIRealtimeClient", lambda *args, **kwargs: provider)
+    monkeypatch.setattr("keryx.cli.make_provider", lambda settings: provider)
     wav_in = write_wav(tmp_path / "in.wav")
     out = tmp_path / "reply.wav"
 
@@ -600,7 +600,10 @@ def test_tasks_list_help_documents_its_switches(settings_stub):
 
 
 def optional_key_loader(monkeypatch, tmp_path, calls: list[dict]) -> Settings:
-    """Stub `load_settings` the way a machine with no `OPENAI_API_KEY` behaves."""
+    """Stub `load_settings` the way a machine with no `OPENAI_API_KEY` behaves.
+
+    Optional since the voice could be a server of the owner's own, so the settings load
+    the first time: nothing has to stand in for it."""
 
     def load(**overrides):
         calls.append(overrides)
@@ -616,7 +619,7 @@ def test_read_only_commands_run_without_an_openai_key(monkeypatch, tmp_path):
     result = runner.invoke(app, ["tasks", "list"])
 
     assert result.exit_code == 0, result.output
-    assert calls == [{}, {"openai_api_key": PLACEHOLDER_KEY}]
+    assert calls == [{}]
 
 
 # --- how loud the commands are ---------------------------------------------

@@ -67,6 +67,7 @@ from keryx.config.pin import (
     read_enrolled_pin,
     write_enrolled_pin,
 )
+from keryx.endpoints import OPENAI_BASE_URL, Endpoint
 from keryx.persona import DEFAULT_NAME, DEFAULT_VOICE, PERSONAS, voice_for
 
 log = logging.getLogger("keryx.config")
@@ -84,6 +85,12 @@ OWNER_FALLBACK = "the owner"
 #: Every optional string setting. A blank one means *not configured*, never the empty
 #: string — an empty PIN would otherwise be a PIN that `submit_pin("")` matches.
 OPTIONAL_STR_FIELDS = (
+    "openai_api_key",
+    "voice_base_url",
+    "voice_api_key",
+    "local_agent_base_url",
+    "local_agent_api_key",
+    "local_agent_model",
     "anthropic_api_key",
     "claude_code_oauth_token",
     "codex_api_key",
@@ -108,13 +115,17 @@ OPTIONAL_STR_FIELDS = (
 )
 
 #: The coding agents a task can run on (keryx/agents/registry.py has one entry per name).
-AgentName = Literal["claude", "codex"]
+#: `local` is a model on a server of the owner's, driven by one of the other two harnesses.
+AgentName = Literal["claude", "codex", "local"]
+#: Which harness drives the local agent, named by the API its server must speak.
+LocalAgentApi = Literal["anthropic-messages", "openai-responses"]
 
 #: The sections settings are listed and set up under, in the order `keryx setup` and
 #: `docs/configuration.md` walk them.
 GROUPS: dict[str, str] = {
     "voice": "Voice",
     "agents": "Coding agents",
+    "local": "Local and self-hosted models",
     "owner": "Owner, callers and PIN",
     "phone": "Phone",
     "google": "Google",
@@ -268,9 +279,10 @@ class Settings(BaseSettings):
 
     # --- voice -------------------------------------------------------------------------
 
-    openai_api_key: str = setting(
-        description="OpenAI API key with Realtime access. The only setting Keryx cannot "
-        "start without.",
+    openai_api_key: str | None = setting(
+        None,
+        "OpenAI API key with Realtime access: the voice, unless `VOICE_BASE_URL` names a "
+        "server of your own, and the voice model's `web_search`.",
         group="voice",
         repr=False,
     )
@@ -439,6 +451,50 @@ class Settings(BaseSettings):
     codex_model: str | None = setting(
         None, "The model a Codex task runs on; blank is Codex's own default.",
         group="agents", service_writable=True,
+    )
+
+    # --- local and self-hosted models ------------------------------------------------------
+
+    # Both addresses are protected (`*_BASE_URL`): a voice address pointed elsewhere would
+    # ship every call's audio, the spoken PIN included, to whoever is there.
+    voice_base_url: str | None = setting(
+        None,
+        "A voice server of your own that speaks the OpenAI Realtime protocol, as its `…/v1` "
+        "address (`http://127.0.0.1:8765/v1` is the one `keryx setup` installs). Blank is "
+        "OpenAI.",
+        group="local",
+    )
+    voice_api_key: str | None = setting(
+        None,
+        "The Bearer key for that voice server, when it checks one.",
+        group="local",
+        repr=False,
+    )
+    local_agent_base_url: str | None = setting(
+        None,
+        "An inference server for the `local` agent — Ollama, llama.cpp, vLLM, LM Studio — "
+        "as `http://gpu-box:11434` or its `…/v1` address. Blank is no local agent.",
+        group="local",
+    )
+    local_agent_api_key: str | None = setting(
+        None,
+        "The Bearer key for that server, when it checks one. The owner's Anthropic and "
+        "OpenAI credentials are never sent there.",
+        group="local",
+        repr=False,
+    )
+    local_agent_model: str | None = setting(
+        None,
+        "The model a `local` task runs on, by the server's own name for it.",
+        group="local",
+        service_writable=True,
+    )
+    local_agent_api: LocalAgentApi = setting(
+        "anthropic-messages",
+        "Which harness drives the local model: `anthropic-messages` runs it inside Claude "
+        "Code, `openai-responses` inside Codex. The server must speak that API.",
+        group="local",
+        service_writable=True,
     )
 
     # --- owner, callers and PIN ----------------------------------------------------------
@@ -865,6 +921,14 @@ class Settings(BaseSettings):
             return value
         raise ValueError(PIN_RULE)
 
+    @field_validator("voice_base_url", "local_agent_base_url", mode="after")
+    @classmethod
+    def _base_url_is_an_address(cls, value: str | None) -> str | None:
+        """An `http://` or `https://` address, kept as its `…/v1` root."""
+        if value is None:
+            return None
+        return Endpoint.parse(value).base_url
+
     @field_validator("google_client_secrets_file", "keryx_checkout", mode="before")
     @classmethod
     def _blank_path_is_unset(cls, value: object) -> object:
@@ -1011,8 +1075,50 @@ class Settings(BaseSettings):
 
     @property
     def voice(self) -> str:
-        """The voice a call speaks in: `OPENAI_VOICE`, else the assistant's own."""
-        return self.openai_voice or voice_for(self.assistant_name)
+        """The voice a call speaks in: `OPENAI_VOICE`, else the assistant's own.
+
+        On a voice server of the owner's own the persona's voice is not sent — its names
+        (`marin`, `cedar`) are OpenAI's, and a server that does not know one speaks nothing
+        at all — so blank, which is the server's own default voice.
+        """
+        if self.openai_voice:
+            return self.openai_voice
+        return voice_for(self.assistant_name) if self.voice_endpoint.is_openai else ""
+
+    @property
+    def openai_key(self) -> str | None:
+        """`OPENAI_API_KEY`, or None when it is unset (or the read-only loader's stand-in)."""
+        key = self.openai_api_key
+        return key if key and key != PLACEHOLDER_KEY else None
+
+    @property
+    def voice_endpoint(self) -> Endpoint:
+        """Where a call's voice is: `VOICE_BASE_URL` with its own key, else OpenAI."""
+        if self.voice_base_url:
+            return Endpoint.parse(
+                self.voice_base_url, api_key=self.voice_api_key, model=self.openai_realtime_model
+            )
+        return Endpoint(OPENAI_BASE_URL, self.openai_key, self.openai_realtime_model)
+
+    @property
+    def local_agent_endpoint(self) -> Endpoint | None:
+        """The `local` agent's server, or None when `LOCAL_AGENT_BASE_URL` is blank."""
+        if not self.local_agent_base_url:
+            return None
+        return Endpoint.parse(
+            self.local_agent_base_url,
+            api_key=self.local_agent_api_key,
+            model=self.local_agent_model or "",
+        )
+
+    def voice_refusal(self) -> str | None:
+        """Why no call could open, in one line; None when the voice has somewhere to go."""
+        if self.voice_base_url or self.openai_key:
+            return None
+        return (
+            "OPENAI_API_KEY is not set and VOICE_BASE_URL names no voice server of your own, "
+            "so no call could open — `keryx setup`"
+        )
 
     @property
     def owner_label(self) -> str:

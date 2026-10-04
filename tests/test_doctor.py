@@ -13,11 +13,14 @@ from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path, seed_memory
 from keryx.doctor import (
     Check,
+    EndpointReach,
     _data_dir_privacy_check,
+    endpoint_checks,
     format_check,
     has_hard_failure,
     run_doctor_checks,
 )
+from keryx.endpoints import Probe
 from keryx.integrations.gmail import token_path
 from keryx.issues import GhStatus
 from keryx.logging_util import mask_number
@@ -119,12 +122,32 @@ def test_nothing_legacy_is_fine(healthy):
 
 
 def test_a_missing_openai_key_is_reported_not_raised(healthy, monkeypatch):
-    from keryx import doctor
+    from keryx.config import PLACEHOLDER_KEY
 
-    settings = healthy.model_copy(update={"openai_api_key": doctor.PLACEHOLDER_KEY})
+    for missing in (PLACEHOLDER_KEY, None):
+        settings = healthy.model_copy(update={"openai_api_key": missing})
 
-    check = by_name(run_doctor_checks(settings))["OPENAI_API_KEY"]
-    assert (check.ok, check.severity) == (False, "hard")
+        check = by_name(run_doctor_checks(settings))["OPENAI_API_KEY"]
+        assert (check.ok, check.severity, check.unset) == (False, "hard", True)
+
+
+def test_a_voice_server_of_your_own_needs_no_openai_key(healthy):
+    settings = healthy.model_copy(
+        update={"openai_api_key": None, "voice_base_url": "http://127.0.0.1:8765/v1"}
+    )
+
+    checks = by_name(run_doctor_checks(settings))
+    assert checks["voice"].ok and "127.0.0.1:8765" in checks["voice"].detail
+    key = checks["OPENAI_API_KEY"]
+    assert (key.ok, key.severity) == (False, "soft") and "web_search" in key.detail
+    assert not has_hard_failure([key])
+
+
+def test_with_a_voice_server_of_your_own_the_openai_key_is_for_web_search(healthy):
+    settings = healthy.model_copy(update={"voice_base_url": "http://127.0.0.1:8765/v1"})
+
+    key = by_name(run_doctor_checks(settings))["OPENAI_API_KEY"]
+    assert key.ok and "web_search" in key.detail
 
 
 CLAUDE = "Claude Code agent (default)"
@@ -845,3 +868,97 @@ def test_issue_reports_on_with_no_checkout_to_read(healthy, monkeypatch, tmp_pat
     check = by_name(run_doctor_checks(settings))["issue reports"]
 
     assert check.state == "missing" and "KERYX_CHECKOUT" in check.detail
+
+
+# --- model servers of your own ----------------------------------------------------------
+
+
+def _reach(*, models=("qwen3-coder",), ok=True, problem=None, realtime=None):
+    asked: list[str] = []
+
+    def list_models(endpoint):
+        asked.append(endpoint.base_url)
+        return Probe(ok, tuple(models), problem)
+
+    return EndpointReach(models=list_models, realtime=lambda endpoint: realtime), asked
+
+
+def local_agent(healthy, **update):
+    return healthy.model_copy(
+        update={
+            "local_agent_base_url": "http://127.0.0.1:8080/v1",
+            "local_agent_model": "qwen3-coder",
+            **update,
+        }
+    )
+
+
+def test_no_server_of_your_own_means_no_endpoint_checks(healthy):
+    reach, asked = _reach()
+    assert endpoint_checks(healthy, reach) == [] and asked == []
+
+
+def test_the_wizard_never_reaches_a_server(healthy):
+    """Without `reach`, only what the settings say is checked."""
+    settings = local_agent(healthy, local_agent_model=None)
+
+    checks = endpoint_checks(settings)
+    assert [(c.name, c.state) for c in checks] == [("local agent server", "missing")]
+
+
+def test_a_local_agent_serving_its_model_passes(healthy):
+    reach, asked = _reach()
+
+    (check,) = endpoint_checks(local_agent(healthy), reach)
+    assert check.ok and check.section == "local" and "serves qwen3-coder" in check.detail
+    assert asked == ["http://127.0.0.1:8080/v1"]
+
+
+def test_a_model_the_server_does_not_serve_is_named_with_what_it_does(healthy):
+    reach, _ = _reach(models=("gpt-oss-20b", "llama3"))
+
+    (check,) = endpoint_checks(local_agent(healthy), reach)
+    assert check.state == "failed" and "gpt-oss-20b, llama3" in check.detail
+    assert check.severity == "soft"  # not the default agent
+
+
+def test_an_unreachable_server_is_hard_when_local_is_the_default(healthy):
+    reach, _ = _reach(ok=False, models=(), problem="could not reach 127.0.0.1 (ConnectError)")
+
+    (check,) = endpoint_checks(local_agent(healthy, agent_backend="local"), reach)
+    assert (check.ok, check.severity) == (False, "hard") and "ConnectError" in check.detail
+
+
+def test_an_unset_model_is_missing_and_lists_the_choices(healthy):
+    reach, _ = _reach(models=("a", "b"))
+
+    (check,) = endpoint_checks(local_agent(healthy, local_agent_model=None), reach)
+    assert check.state == "missing" and "a, b" in check.detail
+
+
+def test_a_public_server_without_a_key_is_only_warned_about(healthy):
+    reach, _ = _reach()
+    settings = local_agent(healthy, local_agent_base_url="http://gpu.example.com:8080")
+
+    checks = endpoint_checks(settings, reach)
+    warned = [c for c in checks if c.severity == "soft" and not c.ok]
+    assert len(warned) == 2 and checks[-1].ok
+
+
+def test_a_voice_server_is_asked_for_a_session(healthy):
+    voice = healthy.model_copy(update={"voice_base_url": "http://127.0.0.1:8765/v1"})
+
+    ok, _ = _reach()
+    (opened,) = endpoint_checks(voice, ok)
+    assert opened.ok and "opens a Realtime session" in opened.detail
+
+    refused, _ = _reach(realtime="could not open 127.0.0.1's Realtime socket")
+    (failed,) = endpoint_checks(voice, refused)
+    assert (failed.ok, failed.severity) == (False, "hard")
+
+
+def test_a_lan_voice_server_over_http_warns_about_the_pin(healthy):
+    voice = healthy.model_copy(update={"voice_base_url": "http://192.168.1.20:8765"})
+
+    (warning,) = endpoint_checks(voice)
+    assert warning.severity == "soft" and "PIN" in warning.detail

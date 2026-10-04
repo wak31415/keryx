@@ -5,6 +5,24 @@ Wire details that matter and are easy to get wrong:
 `OpenAI-Beta` header; the session is configured with a single `session.update` whose
 `audio.input` / `audio.output` blocks carry the format, VAD and voice (no beta-era
 `modalities` / `temperature` / `*_audio_format` fields).
+
+The same client speaks to a voice server of the owner's own, because the protocol is the
+standard: Hugging Face's speech-to-speech serves it over a cascade (VAD → speech-to-text →
+any LLM → text-to-speech) at `ws://…/v1/realtime`, and the address is all that changes
+(`Settings.voice_endpoint`). Two differences are made here, and only these two, because
+they are the two that were measured to matter (2026-10-04):
+
+- **Audio.** It reads every input as 16-bit PCM whatever the format says, so `audio/pcmu`
+  becomes noise. A call is transcoded to PCM16 at 24 kHz and back (`audio.codec`), and the
+  session and Twilio never know.
+- **System messages.** It treats a `system` conversation item as a new system prompt,
+  replacing the instructions outright, so an announcement would wipe the whole voice
+  prompt. A note goes in as a `user` item marked as not the caller's words.
+
+Everything else in `session.update` is accepted and ignored where it does not apply (its
+own VAD decides turns), and `conversation.item.truncate` is accepted and ignored too: after
+a barge-in the history can hold the few words the caller did not hear. That is accepted,
+not worked around.
 """
 
 import asyncio
@@ -16,12 +34,14 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import replace
 from typing import Protocol, cast
-from urllib.parse import urlencode
 from uuid import uuid4
 
 import websockets
 from websockets.exceptions import ConnectionClosed
 
+from keryx.audio.codec import Transcoder
+from keryx.audio.util import AudioFormat
+from keryx.endpoints import Endpoint
 from keryx.realtime.base import (
     AudioDelta,
     Disconnected,
@@ -38,7 +58,15 @@ from keryx.realtime.base import (
 
 logger = logging.getLogger("keryx.realtime.openai")
 
-REALTIME_URL = "wss://api.openai.com/v1/realtime"
+#: Where the protocol lives under any server's `…/v1` root.
+REALTIME_PATH = "realtime"
+#: The format a voice server other than OpenAI's is spoken to in (see the module docstring).
+SELF_HOSTED_WIRE_FORMAT: AudioFormat = "audio/pcm"
+#: What a note to a self-hosted voice model is prefixed with, since it arrives as a user
+#: item: the model has to know these are not the caller's words, and not to read it out.
+SELF_HOSTED_NOTE_PREFIX = "[A note to you from the system, not something the caller said] "
+#: How long `handshake` waits for the socket, and then for `session.created`.
+HANDSHAKE_TIMEOUT_S = 10.0
 
 #: Sample rate declared for `audio/pcm` sessions — the local mic/speaker path
 #: (16-bit LE mono 24 kHz).
@@ -153,13 +181,17 @@ def turn_detection_block(config: SessionConfig) -> dict:
     }
 
 
-def build_session_update(config: SessionConfig) -> dict:
+def build_session_update(config: SessionConfig, wire_format: AudioFormat | None = None) -> dict:
     """Build the `session.update` client event for `config`.
 
     The model is selected by the connection URL, so it is deliberately absent here.
+    `wire_format` is what the server is spoken to in when it is not the transport's own
+    (`OpenAIRealtimeClient` transcodes between them), and a blank voice is left out, which
+    is the server's own default.
     """
+    audio_format = wire_format or config.audio_format
     audio_input: dict = {
-        "format": audio_format_block(config.audio_format),
+        "format": audio_format_block(audio_format),
         "turn_detection": turn_detection_block(config),
     }
     if config.noise_reduction is not None:
@@ -173,6 +205,9 @@ def build_session_update(config: SessionConfig) -> dict:
             transcription["language"] = config.transcription_language
         audio_input["transcription"] = transcription
 
+    audio_output: dict = {"format": audio_format_block(audio_format)}
+    if config.voice:
+        audio_output["voice"] = config.voice
     return {
         "type": "session.update",
         "session": {
@@ -180,13 +215,7 @@ def build_session_update(config: SessionConfig) -> dict:
             "instructions": config.instructions,
             "tools": config.tools,
             "tool_choice": "auto",
-            "audio": {
-                "input": audio_input,
-                "output": {
-                    "format": audio_format_block(config.audio_format),
-                    "voice": config.voice,
-                },
-            },
+            "audio": {"input": audio_input, "output": audio_output},
         },
     }
 
@@ -301,10 +330,17 @@ class OpenAIRealtimeClient:
     """
 
     def __init__(
-        self, api_key: str, model: str, *, ws_connect: WebSocketFactory | None = None
+        self,
+        endpoint: Endpoint,
+        *,
+        wire_format: AudioFormat | None = None,
+        ws_connect: WebSocketFactory | None = None,
     ) -> None:
-        self._api_key = api_key
-        self._model = model
+        self._endpoint = endpoint
+        #: OpenAI's own server takes the transport's format and system items as they are.
+        self._native = endpoint.is_openai
+        self._wire_format = wire_format or (None if self._native else SELF_HOSTED_WIRE_FORMAT)
+        self._transcoder: Transcoder | None = None
         self._ws_connect = ws_connect or _default_ws_connect
         self._config: SessionConfig | None = None
         self._ws: RealtimeWebSocket | None = None
@@ -327,10 +363,10 @@ class OpenAIRealtimeClient:
         config = self._config
         if config is None:
             raise RuntimeError("connect() must be called before opening the socket")
-        url = f"{REALTIME_URL}?{urlencode({'model': self._model})}"
-        headers = {"Authorization": f"Bearer {self._api_key}"}
-        self._ws = await self._ws_connect(url, headers)
-        await self._send(build_session_update(config))
+        wire = self._wire_format if self._wire_format != config.audio_format else None
+        self._transcoder = _transcoder_for(config.audio_format, wire)
+        self._ws = await self._ws_connect(realtime_url(self._endpoint), self._endpoint.headers())
+        await self._send(build_session_update(config, wire))
         self._reader = asyncio.create_task(self._read_loop(self._ws))
 
     async def reconnect(self) -> bool:
@@ -433,6 +469,11 @@ class OpenAIRealtimeClient:
         elif event_type == "error":
             await self._on_error(event)
 
+        elif event_type == "response.output_audio.done" and self._transcoder is not None:
+            # The last few milliseconds of the reply are still in the resampler.
+            if tail := self._transcoder.flush():
+                await self._queue.put(AudioDelta(item_id=event.get("item_id", ""), audio=tail))
+
         translate = TRANSLATORS.get(event_type)
         if translate is None:
             logger.debug("ignoring realtime server event: %s", event_type)
@@ -442,6 +483,11 @@ class OpenAIRealtimeClient:
         except Exception:  # one malformed event must not end the session
             logger.warning("could not translate %s event", event_type, exc_info=True)
             return
+        if isinstance(provider_event, AudioDelta) and self._transcoder is not None:
+            audio = self._transcoder.from_wire(provider_event.audio)
+            if not audio:  # the resampler is still filling; the next delta carries it
+                return
+            provider_event = replace(provider_event, audio=audio)
         await self._queue.put(provider_event)
 
     # --- response queue ------------------------------------------------------
@@ -516,6 +562,10 @@ class OpenAIRealtimeClient:
         await self._ws.send(json.dumps(payload))
 
     async def send_audio(self, data: bytes) -> None:
+        if self._transcoder is not None:
+            data = self._transcoder.to_wire(data)
+            if not data:
+                return
         await self._send(
             {
                 "type": "input_audio_buffer.append",
@@ -553,12 +603,15 @@ class OpenAIRealtimeClient:
         respond: bool = True,
         response_instructions: str | None = None,
     ) -> None:
+        role = "system"
+        if not self._native:
+            role, text = "user", SELF_HOSTED_NOTE_PREFIX + text
         await self._send(
             {
                 "type": "conversation.item.create",
                 "item": {
                     "type": "message",
-                    "role": "system",
+                    "role": role,
                     "content": [{"type": "input_text", "text": text}],
                 },
             }
@@ -596,3 +649,54 @@ class OpenAIRealtimeClient:
 
     async def cancel_response(self) -> None:
         await self._send({"type": "response.cancel"})
+
+
+def _transcoder_for(transport: AudioFormat, wire: AudioFormat | None) -> Transcoder | None:
+    """What stands between the transport's audio and the server's, if anything does."""
+    if wire is None:
+        return None
+    if (transport, wire) == ("audio/pcmu", "audio/pcm"):
+        return Transcoder()
+    raise ValueError(f"cannot carry {transport} audio as {wire}")
+
+
+def realtime_url(endpoint: Endpoint) -> str:
+    """The Realtime socket of `endpoint`, with its model in the query as OpenAI wants it."""
+    return endpoint.ws_url(REALTIME_PATH, model=endpoint.model)
+
+
+async def handshake(
+    endpoint: Endpoint, *, ws_connect: WebSocketFactory | None = None
+) -> str | None:
+    """Why a Realtime session cannot open on `endpoint`, in a sentence; None when it can.
+
+    Opens the socket and waits for the `session.created` every Realtime server sends first,
+    then closes: no audio, no response, nothing billed.
+    """
+    connect = ws_connect or _default_ws_connect
+    where = endpoint.host
+    try:
+        ws = await asyncio.wait_for(
+            connect(realtime_url(endpoint), endpoint.headers()), HANDSHAKE_TIMEOUT_S
+        )
+    except Exception as exc:
+        return f"could not open {where}'s Realtime socket ({type(exc).__name__}: {exc})"
+    try:
+        event = json.loads(await asyncio.wait_for(ws.recv(), HANDSHAKE_TIMEOUT_S))
+    except Exception as exc:
+        return f"{where} opened the socket but said nothing usable ({type(exc).__name__})"
+    finally:
+        with contextlib.suppress(Exception):
+            await ws.close()
+    kind = event.get("type") if isinstance(event, dict) else None
+    if kind == "session.created":
+        return None
+    if kind == "error":
+        message = (event.get("error") or {}).get("message") or "no reason"
+        return f"{where} refused the session: {message}"
+    return f"{where} opened with {kind or 'something'} rather than session.created"
+
+
+def realtime_problem(endpoint: Endpoint) -> str | None:
+    """`handshake`, for a caller with no event loop (`keryx doctor`)."""
+    return asyncio.run(handshake(endpoint))

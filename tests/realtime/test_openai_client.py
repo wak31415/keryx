@@ -12,8 +12,11 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from keryx.audio.codec import ulaw_encode
+from keryx.endpoints import OPENAI_BASE_URL, Endpoint
 from keryx.realtime import openai as realtime_openai
 from keryx.realtime.base import (
     AudioDelta,
@@ -35,6 +38,7 @@ from .fake_ws import FakeConnector, FakeWS
 
 MODEL = "gpt-realtime-2.1"
 API_KEY = "sk-test-key"
+OPENAI = Endpoint(OPENAI_BASE_URL, API_KEY, MODEL)
 _FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "realtime"
 
 TOOLS = [
@@ -115,9 +119,11 @@ async def connect():
     """Factory returning a connected `Harness`; every client is closed on teardown."""
     harnesses: list[Harness] = []
 
-    async def _connect(config: SessionConfig | None = None, **kwargs) -> Harness:
+    async def _connect(
+        config: SessionConfig | None = None, *, endpoint: Endpoint = OPENAI, **kwargs
+    ) -> Harness:
         connector = FakeConnector()
-        client = OpenAIRealtimeClient(API_KEY, MODEL, ws_connect=connector, **kwargs)
+        client = OpenAIRealtimeClient(endpoint, ws_connect=connector, **kwargs)
         await client.connect(config or phone_config())
         harness = Harness(client, connector, client.events())
         harnesses.append(harness)
@@ -240,7 +246,7 @@ async def test_connect_sends_session_update_first(connect):
 
 
 async def test_send_before_connect_raises():
-    client = OpenAIRealtimeClient(API_KEY, MODEL, ws_connect=FakeConnector())
+    client = OpenAIRealtimeClient(OPENAI, ws_connect=FakeConnector())
 
     with pytest.raises(RuntimeError):
         await client.send_audio(b"\x00")
@@ -681,7 +687,7 @@ async def test_updated_instructions_survive_a_reconnect(connect):
 
 
 async def test_update_instructions_before_connect_raises():
-    client = OpenAIRealtimeClient(API_KEY, MODEL, ws_connect=FakeConnector())
+    client = OpenAIRealtimeClient(OPENAI, ws_connect=FakeConnector())
 
     with pytest.raises(RuntimeError):
         await client.update_instructions("too early")
@@ -827,7 +833,7 @@ async def test_default_ws_connect_uses_the_documented_websockets_options(monkeyp
 
 
 def test_client_matches_the_realtime_provider_protocol():
-    client = OpenAIRealtimeClient(API_KEY, MODEL)
+    client = OpenAIRealtimeClient(OPENAI)
     method_names = [name for name in vars(RealtimeProvider) if not name.startswith("_")]
 
     assert set(method_names) == {
@@ -924,3 +930,189 @@ def test_noise_reduction_left_off_is_absent_rather_than_null():
     )
 
     assert "noise_reduction" not in build_session_update(config)["session"]["audio"]["input"]
+
+
+# --- a voice server of the owner's own -----------------------------------------------
+
+SELF_HOSTED = Endpoint.parse("http://127.0.0.1:8765", model=MODEL)
+
+
+def ulaw_frame(n: int = 160) -> bytes:
+    """`n` µ-law bytes of a tone: 20 ms of a phone call at the default."""
+    tone = (np.sin(np.arange(n) / 8000 * 2 * np.pi * 440) * 8000).astype("<i2")
+    return ulaw_encode(tone.tobytes())
+
+
+async def test_a_self_hosted_server_is_reached_without_a_key_on_its_own_address(connect):
+    harness = await connect(endpoint=SELF_HOSTED)
+
+    url, headers = harness.connector.calls[0]
+    assert url == "ws://127.0.0.1:8765/v1/realtime?model=gpt-realtime-2.1"
+    assert headers == {}
+
+
+async def test_a_self_hosted_server_with_a_key_gets_it_as_a_bearer(connect):
+    keyed = Endpoint.parse("https://voice.example.com/v1", api_key="vk", model=MODEL)
+    harness = await connect(endpoint=keyed)
+
+    assert harness.connector.calls[0][1] == {"Authorization": "Bearer vk"}
+
+
+async def test_a_phone_call_is_spoken_to_a_self_hosted_server_as_pcm(connect):
+    harness = await connect(phone_config(voice=""), endpoint=SELF_HOSTED)
+
+    audio = harness.ws.sent[0]["session"]["audio"]
+    assert audio["input"]["format"] == {"type": "audio/pcm", "rate": 24000}
+    assert audio["output"] == {"format": {"type": "audio/pcm", "rate": 24000}}
+
+
+async def test_caller_audio_is_transcoded_on_the_way_out(connect):
+    harness = await connect(endpoint=SELF_HOSTED)
+
+    for _ in range(10):
+        await harness.client.send_audio(ulaw_frame())
+
+    sent = b"".join(
+        base64.b64decode(m["audio"]) for m in harness.ws.sent_of_type("input_audio_buffer.append")
+    )
+    # 200 ms of µ-law at 8 kHz is 200 ms of PCM16 at 24 kHz, less what the filter holds
+    # back at 20 ms a frame: a constant delay, under 100 ms (4800 bytes).
+    assert 9600 - 4800 <= len(sent) <= 9600
+
+
+async def test_assistant_audio_is_transcoded_on_the_way_back(connect):
+    harness = await connect(endpoint=SELF_HOSTED)
+    pcm = (np.sin(np.arange(2400) / 24000 * 2 * np.pi * 440) * 8000).astype("<i2").tobytes()
+
+    delta = base64.b64encode(pcm).decode()
+    harness.ws.feed({"type": "response.output_audio.delta", "item_id": "i", "delta": delta})
+    harness.ws.feed({"type": "response.output_audio.done", "item_id": "i"})
+    body, tail = await harness.next_event(), await harness.next_event()
+
+    assert isinstance(body, AudioDelta) and isinstance(tail, AudioDelta)
+    assert tail.item_id == "i"
+    # 100 ms of µ-law, all of it: the end of the reply is not left in the resampler.
+    assert len(body.audio) + len(tail.audio) == 800
+
+
+async def test_a_pcm_transport_is_not_transcoded_for_a_self_hosted_server(connect):
+    harness = await connect(phone_config(audio_format="audio/pcm"), endpoint=SELF_HOSTED)
+
+    await harness.client.send_audio(b"\x01\x02" * 100)
+
+    assert harness.ws.sent_of_type("input_audio_buffer.append")[0]["audio"] == (
+        base64.b64encode(b"\x01\x02" * 100).decode()
+    )
+
+
+async def test_openai_keeps_the_phones_own_format_and_never_transcodes(connect):
+    harness = await connect()
+
+    await harness.client.send_audio(b"\x7f" * 160)
+
+    assert harness.ws.sent[0]["session"]["audio"]["input"]["format"] == {"type": "audio/pcmu"}
+    assert harness.ws.sent_of_type("input_audio_buffer.append")[0]["audio"] == (
+        base64.b64encode(b"\x7f" * 160).decode()
+    )
+
+
+def test_a_pcm_transport_cannot_be_carried_as_pcmu():
+    with pytest.raises(ValueError):
+        realtime_openai._transcoder_for("audio/pcm", "audio/pcmu")
+
+
+async def test_a_note_to_a_self_hosted_model_is_a_marked_user_item(connect):
+    """speech-to-speech takes a system item as a new system prompt, which would wipe the
+    voice prompt; a user item marked as not the caller's is what reaches the model."""
+    harness = await connect(endpoint=SELF_HOSTED)
+
+    await harness.client.inject_message("Task 4 is done.", respond=False)
+
+    item = harness.ws.sent_of_type("conversation.item.create")[0]["item"]
+    assert item["role"] == "user"
+    assert item["content"][0]["text"] == realtime_openai.SELF_HOSTED_NOTE_PREFIX + "Task 4 is done."
+
+
+async def test_a_note_to_openai_stays_a_system_item(connect):
+    harness = await connect()
+
+    await harness.client.inject_message("Task 4 is done.", respond=False)
+
+    item = harness.ws.sent_of_type("conversation.item.create")[0]["item"]
+    assert (item["role"], item["content"][0]["text"]) == ("system", "Task 4 is done.")
+
+
+def test_a_blank_voice_is_left_to_the_server():
+    output = build_session_update(phone_config(voice=""))["session"]["audio"]["output"]
+    assert "voice" not in output
+
+
+async def test_a_recorded_speech_to_speech_call_reads_as_the_same_events(connect):
+    """A call recorded against Hugging Face's speech-to-speech 1.0.0 (2026-10-04): the
+    caller asks the time, the model calls a tool, and speaks the answer."""
+    harness = await connect(phone_config(audio_format="audio/pcm"), endpoint=SELF_HOSTED)
+    for event in server_event("s2s_call"):
+        harness.ws.feed(event)
+
+    seen: list[ProviderEvent] = []
+    while not (seen and isinstance(seen[-1], ResponseDone) and len(
+        [e for e in seen if isinstance(e, ResponseDone)]
+    ) == 2):
+        seen.append(await harness.next_event())
+
+    kinds = [type(event).__name__ for event in seen]
+    assert kinds[0] == "SpeechStarted" and "SpeechStopped" in kinds
+    user = next(e for e in seen if isinstance(e, Transcript) and e.role == "user")
+    assert user.text.strip() == "What time is it right now?"
+    call = next(e for e in seen if isinstance(e, FunctionCall))
+    assert (call.name, call.arguments) == ("get_time", {})
+    assert sum(isinstance(e, AudioDelta) for e in seen) == 3
+    reply = next(e for e in seen if isinstance(e, Transcript) and e.role == "assistant")
+    assert reply.text == "It's 2:05 PM right now."
+    assert [e.status for e in seen if isinstance(e, ResponseDone)] == ["completed", "completed"]
+
+
+# --- the handshake `doctor` makes --------------------------------------------------------
+
+
+async def test_handshake_is_quiet_when_the_session_opens():
+    connector = FakeConnector()
+
+    async def answering(url, headers):
+        ws = await connector(url, headers)
+        ws.feed(server_event("session_created"))
+        return ws
+
+    assert await realtime_openai.handshake(SELF_HOSTED, ws_connect=answering) is None
+    assert connector.ws.closed
+    assert connector.calls[0][0] == "ws://127.0.0.1:8765/v1/realtime?model=gpt-realtime-2.1"
+
+
+async def test_handshake_says_why_a_session_did_not_open():
+    async def refusing(url, headers):
+        ws = FakeWS()
+        ws.feed(server_event("error_invalid_api_key"))
+        return ws
+
+    async def odd(url, headers):
+        ws = FakeWS()
+        ws.feed({"type": "rate_limits.updated"})
+        return ws
+
+    async def silent(url, headers):
+        ws = FakeWS()
+        ws.close_from_server()
+        return ws
+
+    refused = await realtime_openai.handshake(OPENAI, ws_connect=refusing)
+    assert refused is not None and refused.startswith("api.openai.com refused the session")
+    assert "rather than session.created" in (
+        await realtime_openai.handshake(SELF_HOSTED, ws_connect=odd) or ""
+    )
+    assert "said nothing usable" in (
+        await realtime_openai.handshake(SELF_HOSTED, ws_connect=silent) or ""
+    )
+    unreachable = await realtime_openai.handshake(
+        SELF_HOSTED, ws_connect=FakeConnector(fail=True)
+    )
+    assert unreachable is not None and unreachable.startswith("could not open 127.0.0.1")

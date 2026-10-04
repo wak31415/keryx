@@ -1,0 +1,491 @@
+[
+ {
+  "event_id": "event_22b4709c76dd4588af196ea5fe3285af",
+  "session": {
+   "type": "realtime",
+   "audio": {
+    "input": {
+     "format": null,
+     "noise_reduction": null,
+     "transcription": null,
+     "turn_detection": null
+    },
+    "output": {
+     "format": null,
+     "speed": null,
+     "voice": null
+    }
+   },
+   "include": null,
+   "instructions": "You are a helpful and friendly AI assistant. You are polite, respectful, and aim to provide concise responses of less than 20 words.",
+   "max_output_tokens": null,
+   "model": null,
+   "output_modalities": null,
+   "prompt": null,
+   "tool_choice": null,
+   "tools": null,
+   "tracing": null,
+   "truncation": null,
+   "id": "session_bf9bed1513e44ac8b99dbd95c40a1216"
+  },
+  "type": "session.created"
+ },
+ {
+  "event_id": "event_6818216e38a248d4843b045368e3419c",
+  "session": {
+   "type": "realtime",
+   "audio": {
+    "input": {
+     "format": {
+      "rate": 24000,
+      "type": "audio/pcm"
+     },
+     "noise_reduction": null,
+     "transcription": {
+      "language": null,
+      "model": "gpt-4o-mini-transcribe",
+      "prompt": null
+     },
+     "turn_detection": {
+      "type": "server_vad",
+      "create_response": true,
+      "idle_timeout_ms": null,
+      "interrupt_response": true,
+      "prefix_padding_ms": 300,
+      "silence_duration_ms": 500,
+      "threshold": 0.5
+     }
+    },
+    "output": {
+     "format": {
+      "rate": 24000,
+      "type": "audio/pcm"
+     },
+     "speed": null,
+     "voice": null
+    }
+   },
+   "include": null,
+   "instructions": "You are Lyra, a phone assistant. Be brief. Use get_time when asked the time.",
+   "max_output_tokens": null,
+   "model": null,
+   "output_modalities": null,
+   "prompt": null,
+   "tool_choice": "auto",
+   "tools": [
+    {
+     "description": "The current time.",
+     "name": "get_time",
+     "parameters": {
+      "type": "object",
+      "properties": {}
+     },
+     "type": "function"
+    }
+   ],
+   "tracing": null,
+   "truncation": null,
+   "id": "session_bf9bed1513e44ac8b99dbd95c40a1216"
+  },
+  "type": "session.updated"
+ },
+ {
+  "audio_start_ms": 0,
+  "event_id": "event_bba11e2fe26e4d74be8b794735f2d910",
+  "item_id": "item_4114b171cd6c4b4598cf7b3db69a58a5",
+  "type": "input_audio_buffer.speech_started"
+ },
+ {
+  "event_id": "event_2c63e7a966714ff0aed414ac7ce18073",
+  "item_id": "item_4114b171cd6c4b4598cf7b3db69a58a5",
+  "type": "conversation.item.input_audio_transcription.delta",
+  "content_index": 0,
+  "delta": "What",
+  "logprobs": null
+ },
+ {
+  "event_id": "event_21e0fa06cb8349dab096ccc036409f21",
+  "item_id": "item_4114b171cd6c4b4598cf7b3db69a58a5",
+  "type": "conversation.item.input_audio_transcription.delta",
+  "content_index": 0,
+  "delta": " time is it",
+  "logprobs": null
+ },
+ {
+  "audio_end_ms": 2144,
+  "event_id": "event_863b16476919422db18d2821222f55a0",
+  "item_id": "item_4114b171cd6c4b4598cf7b3db69a58a5",
+  "type": "input_audio_buffer.speech_stopped"
+ },
+ {
+  "content_index": 0,
+  "event_id": "event_10da8286c52d49fd965ce2105e4e5472",
+  "item_id": "item_4114b171cd6c4b4598cf7b3db69a58a5",
+  "transcript": " What time is it right now?",
+  "type": "conversation.item.input_audio_transcription.completed",
+  "usage": {
+   "seconds": 2.144,
+   "type": "duration"
+  },
+  "logprobs": null
+ },
+ {
+  "event_id": "event_02f2fd542a6f4e1d80e565f3ac88db54",
+  "response": {
+   "id": "resp_ce3414cbf3aa47ab94c1d2d4347ba5cd",
+   "audio": {
+    "output": {
+     "format": null,
+     "voice": null
+    }
+   },
+   "conversation_id": "conv_24e69d2a622446a7bb85bd205d05afef",
+   "max_output_tokens": null,
+   "metadata": null,
+   "object": "realtime.response",
+   "output": [],
+   "output_modalities": [
+    "audio"
+   ],
+   "status": "in_progress",
+   "status_details": null,
+   "usage": {
+    "input_token_details": {
+     "audio_tokens": 0,
+     "cached_tokens": 0,
+     "cached_tokens_details": null,
+     "image_tokens": 0,
+     "text_tokens": 0
+    },
+    "input_tokens": 0,
+    "output_token_details": {
+     "audio_tokens": 0,
+     "text_tokens": 0
+    },
+    "output_tokens": 0,
+    "total_tokens": 0
+   }
+  },
+  "type": "response.created"
+ },
+ {
+  "event_id": "event_1f40d8f843b1426fb99ba96022b40d15",
+  "item": {
+   "arguments": "",
+   "name": "get_time",
+   "type": "function_call",
+   "id": "fc_d0170286423b45f89417493774bf77ab",
+   "call_id": "call_5fa4b840f33b4ee98ddd3bb455627744",
+   "object": "realtime.item",
+   "status": "in_progress"
+  },
+  "output_index": 0,
+  "response_id": "resp_ce3414cbf3aa47ab94c1d2d4347ba5cd",
+  "type": "response.output_item.added"
+ },
+ {
+  "arguments": "{}",
+  "call_id": "call_5fa4b840f33b4ee98ddd3bb455627744",
+  "event_id": "event_8f500c1f8b2a420b8f3324a6eb6c69c4",
+  "item_id": "fc_d0170286423b45f89417493774bf77ab",
+  "name": "get_time",
+  "output_index": 0,
+  "response_id": "resp_ce3414cbf3aa47ab94c1d2d4347ba5cd",
+  "type": "response.function_call_arguments.done"
+ },
+ {
+  "event_id": "event_21ace2ead24d4fb69a41c4674f5f3cc6",
+  "item": {
+   "arguments": "{}",
+   "name": "get_time",
+   "type": "function_call",
+   "id": "fc_d0170286423b45f89417493774bf77ab",
+   "call_id": "call_5fa4b840f33b4ee98ddd3bb455627744",
+   "object": "realtime.item",
+   "status": "completed"
+  },
+  "output_index": 0,
+  "response_id": "resp_ce3414cbf3aa47ab94c1d2d4347ba5cd",
+  "type": "response.output_item.done"
+ },
+ {
+  "event_id": "event_c191af70418f4bcd89722592939e2977",
+  "response": {
+   "id": "resp_ce3414cbf3aa47ab94c1d2d4347ba5cd",
+   "audio": {
+    "output": {
+     "format": null,
+     "voice": null
+    }
+   },
+   "conversation_id": "conv_24e69d2a622446a7bb85bd205d05afef",
+   "max_output_tokens": null,
+   "metadata": null,
+   "object": "realtime.response",
+   "output": [
+    {
+     "arguments": "{}",
+     "name": "get_time",
+     "type": "function_call",
+     "id": "fc_d0170286423b45f89417493774bf77ab",
+     "call_id": "call_5fa4b840f33b4ee98ddd3bb455627744",
+     "object": "realtime.item",
+     "status": "completed"
+    }
+   ],
+   "output_modalities": [
+    "audio"
+   ],
+   "status": "completed",
+   "status_details": {
+    "error": null,
+    "reason": null,
+    "type": "completed"
+   },
+   "usage": {
+    "input_token_details": {
+     "audio_tokens": 0,
+     "cached_tokens": 0,
+     "cached_tokens_details": null,
+     "image_tokens": 0,
+     "text_tokens": 550
+    },
+    "input_tokens": 550,
+    "output_token_details": {
+     "audio_tokens": 0,
+     "text_tokens": 12
+    },
+    "output_tokens": 12,
+    "total_tokens": 562
+   }
+  },
+  "type": "response.done"
+ },
+ {
+  "event_id": "event_6e6c265efcb64f4eab3fa82cd9f2d9e7",
+  "item": {
+   "call_id": "call_5fa4b840f33b4ee98ddd3bb455627744",
+   "output": "{\"time\": \"14:05\"}",
+   "type": "function_call_output",
+   "id": "fco_c09fcd830a8e44efa3f52a922470d20a",
+   "object": null,
+   "status": null
+  },
+  "type": "conversation.item.created",
+  "previous_item_id": "fc_d0170286423b45f89417493774bf77ab"
+ },
+ {
+  "event_id": "event_ee72013bb39f40fab68fc3cf4d9d7a2c",
+  "response": {
+   "id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+   "audio": {
+    "output": {
+     "format": null,
+     "voice": null
+    }
+   },
+   "conversation_id": "conv_24e69d2a622446a7bb85bd205d05afef",
+   "max_output_tokens": null,
+   "metadata": null,
+   "object": "realtime.response",
+   "output": [],
+   "output_modalities": [
+    "audio"
+   ],
+   "status": "in_progress",
+   "status_details": null,
+   "usage": {
+    "input_token_details": {
+     "audio_tokens": 0,
+     "cached_tokens": 0,
+     "cached_tokens_details": null,
+     "image_tokens": 0,
+     "text_tokens": 0
+    },
+    "input_tokens": 0,
+    "output_token_details": {
+     "audio_tokens": 0,
+     "text_tokens": 0
+    },
+    "output_tokens": 0,
+    "total_tokens": 0
+   }
+  },
+  "type": "response.created"
+ },
+ {
+  "event_id": "event_6ea8c7aa4ac64b8da677c083640a7a5e",
+  "item": {
+   "content": [],
+   "role": "assistant",
+   "type": "message",
+   "id": "item_e1d59ef204394033a9d69086dcd6d550",
+   "object": "realtime.item",
+   "status": "in_progress"
+  },
+  "output_index": 0,
+  "response_id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+  "type": "response.output_item.added"
+ },
+ {
+  "content_index": 0,
+  "event_id": "event_0ac09e5d52644bce90fe735dc73616d4",
+  "item_id": "item_e1d59ef204394033a9d69086dcd6d550",
+  "output_index": 0,
+  "part": {
+   "audio": "",
+   "text": null,
+   "transcript": "",
+   "type": "audio"
+  },
+  "response_id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+  "type": "response.content_part.added"
+ },
+ {
+  "content_index": 0,
+  "delta": "...",
+  "event_id": "event_16786fc669d9406b8378489faf73a72b",
+  "item_id": "item_e1d59ef204394033a9d69086dcd6d550",
+  "output_index": 0,
+  "response_id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+  "type": "response.output_audio_transcript.delta"
+ },
+ {
+  "content_index": 0,
+  "delta": "AACXAyIHlQrlDQUR6xOOFuQY5RqMHNEdsh4qHzgf3R4ZHu4cYht5GTkXqhTVEcQOgAsWCJAE+wBj/dP5WPb+8tDv2ewj6rfnnuXe433igeHs4MHgAOGn4bbiKOT55SLonOpf7WDwl/P49nj6Cv6iATYFtwgcDFcPXhInFacX2BmxGywdRB71Hj4fHB+RHp4dRhyPGn0YGBZpE3cQTg33CX8G8AJZ/8P7O/jO9IbxcO6V6wDpuObH5DLj/uEx4cvg0OA/4RbiUuPw5OrmOenV67Xu0fEc9Yz4Fvyt/0QD0QZGCpkNvhCqE1MWsRi6GmkcuB2iHiMfPB/qHi8eDh2KG6kZcBfpFBoSDg/OC2cI4wRPAbf9Jfqo9kvzGPAc7V/q7OfL5QPkmeKU4fbgwOD24JThmeID5Mvl7Odf6hztGPBL86j2Jfq3/U8B4wRnCM4LDg8aEukUcBepGYobDh0vHuoePB8jH6IeuB1pHLoasRhTFqoTvhCZDUYK0QZEA63/FvyM+Bz10fG17tXrOenq5vDkUuMW4j/h0ODL4DHh/uEy48fkuOYA6ZXrcO6G8c70O/jD+1n/8AJ/BvcJTg13EGkTGBZ9GI8aRhyeHZEeHB8+H/UeRB4sHbEb2BmnFycVXhJXDxwMtwg2BaIBCv54+vj2l/Nh8F/tnOoi6PnlKOS24qfhAOHB4OzggeF94t7jnuW35yPq2ezQ7/7yWPbT+WP9+wCQBBYIgAvEDtURqhQ5F3kZYhvuHBke3R44Hyofsh7RHYwc5RrkGI4W6xMFEeUNlQoiB5cDAABp/N74a/Ub8vvuFexy6RznG+V04y/iTuHW4MjgI+Hn4RLjnuSH5sfoVusr7jzxgPTq93D7Bf+dAi0GqAkCDTAQJxPdFUkYYhoiHIMdfx4UHz8fAB9ZHkod2BsHGt4XZBWhEqAPaQwICYgF9gFe/sr6Sffk86nwou3Z6lnoKOZP5NTivOEL4cLg5OBv4WLiuuNx5YPn6OmX7InvsvIJ9oH5EP2nAD0ExQcyC3oOkBFrFAAXSBk5G84cAh7PHjUfMB/BHuodrhwQGxYZxxYrFEsRLw7kCnQH6gNTALz8L/m69WfyQu9W7K3pT+dG5ZfjSOJe4d3gxOAW4dHh8uJ25FfmkOgX6+bt8vAy9Jn3Hfux/kkC2wVYCbUM6A/kEqEVFBg1Gv0bZx1sHgofQB8KH2weZx39GzUaFBihFeQS6A+1DFgJ2wVJArH+HfuZ9zL08vDm7RfrkOhX5nbk8uLR4RbhxODd4F7h",
+  "event_id": "event_f761dbb964934d309b282d93cf5f4611",
+  "item_id": "item_e1d59ef204394033a9d69086dcd6d550",
+  "output_index": 0,
+  "response_id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+  "type": "response.output_audio.delta"
+ },
+ {
+  "content_index": 0,
+  "delta": "AACXAyIHlQrlDQUR6xOOFuQY5RqMHNEdsh4qHzgf3R4ZHu4cYht5GTkXqhTVEcQOgAsWCJAE+wBj/dP5WPb+8tDv2ewj6rfnnuXe433igeHs4MHgAOGn4bbiKOT55SLonOpf7WDwl/P49nj6Cv6iATYFtwgcDFcPXhInFacX2BmxGywdRB71Hj4fHB+RHp4dRhyPGn0YGBZpE3cQTg33CX8G8AJZ/8P7O/jO9IbxcO6V6wDpuObH5DLj/uEx4cvg0OA/4RbiUuPw5OrmOenV67Xu0fEc9Yz4Fvyt/0QD0QZGCpkNvhCqE1MWsRi6GmkcuB2iHiMfPB/qHi8eDh2KG6kZcBfpFBoSDg/OC2cI4wRPAbf9Jfqo9kvzGPAc7V/q7OfL5QPkmeKU4fbgwOD24JThmeID5Mvl7Odf6hztGPBL86j2Jfq3/U8B4wRnCM4LDg8aEukUcBepGYobDh0vHuoePB8jH6IeuB1pHLoasRhTFqoTvhCZDUYK0QZEA63/FvyM+Bz10fG17tXrOenq5vDkUuMW4j/h0ODL4DHh/uEy48fkuOYA6ZXrcO6G8c70O/jD+1n/8AJ/BvcJTg13EGkTGBZ9GI8aRhyeHZEeHB8+H/UeRB4sHbEb2BmnFycVXhJXDxwMtwg2BaIBCv54+vj2l/Nh8F/tnOoi6PnlKOS24qfhAOHB4OzggeF94t7jnuW35yPq2ezQ7/7yWPbT+WP9+wCQBBYIgAvEDtURqhQ5F3kZYhvuHBke3R44Hyofsh7RHYwc5RrkGI4W6xMFEeUNlQoiB5cDAABp/N74a/Ub8vvuFexy6RznG+V04y/iTuHW4MjgI+Hn4RLjnuSH5sfoVusr7jzxgPTq93D7Bf+dAi0GqAkCDTAQJxPdFUkYYhoiHIMdfx4UHz8fAB9ZHkod2BsHGt4XZBWhEqAPaQwICYgF9gFe/sr6Sffk86nwou3Z6lnoKOZP5NTivOEL4cLg5OBv4WLiuuNx5YPn6OmX7InvsvIJ9oH5EP2nAD0ExQcyC3oOkBFrFAAXSBk5G84cAh7PHjUfMB/BHuodrhwQGxYZxxYrFEsRLw7kCnQH6gNTALz8L/m69WfyQu9W7K3pT+dG5ZfjSOJe4d3gxOAW4dHh8uJ25FfmkOgX6+bt8vAy9Jn3Hfux/kkC2wVYCbUM6A/kEqEVFBg1Gv0bZx1sHgofQB8KH2weZx39GzUaFBihFeQS6A+1DFgJ2wVJArH+HfuZ9zL08vDm7RfrkOhX5nbk8uLR4RbhxODd4F7h",
+  "event_id": "event_002ebb3522bd4fd7b79ca0a406e3dc23",
+  "item_id": "item_e1d59ef204394033a9d69086dcd6d550",
+  "output_index": 0,
+  "response_id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+  "type": "response.output_audio.delta"
+ },
+ {
+  "content_index": 0,
+  "delta": "AACXAyIHlQrlDQUR6xOOFuQY5RqMHNEdsh4qHzgf3R4ZHu4cYht5GTkXqhTVEcQOgAsWCJAE+wBj/dP5WPb+8tDv2ewj6rfnnuXe433igeHs4MHgAOGn4bbiKOT55SLonOpf7WDwl/P49nj6Cv6iATYFtwgcDFcPXhInFacX2BmxGywdRB71Hj4fHB+RHp4dRhyPGn0YGBZpE3cQTg33CX8G8AJZ/8P7O/jO9IbxcO6V6wDpuObH5DLj/uEx4cvg0OA/4RbiUuPw5OrmOenV67Xu0fEc9Yz4Fvyt/0QD0QZGCpkNvhCqE1MWsRi6GmkcuB2iHiMfPB/qHi8eDh2KG6kZcBfpFBoSDg/OC2cI4wRPAbf9Jfqo9kvzGPAc7V/q7OfL5QPkmeKU4fbgwOD24JThmeID5Mvl7Odf6hztGPBL86j2Jfq3/U8B4wRnCM4LDg8aEukUcBepGYobDh0vHuoePB8jH6IeuB1pHLoasRhTFqoTvhCZDUYK0QZEA63/FvyM+Bz10fG17tXrOenq5vDkUuMW4j/h0ODL4DHh/uEy48fkuOYA6ZXrcO6G8c70O/jD+1n/8AJ/BvcJTg13EGkTGBZ9GI8aRhyeHZEeHB8+H/UeRB4sHbEb2BmnFycVXhJXDxwMtwg2BaIBCv54+vj2l/Nh8F/tnOoi6PnlKOS24qfhAOHB4OzggeF94t7jnuW35yPq2ezQ7/7yWPbT+WP9+wCQBBYIgAvEDtURqhQ5F3kZYhvuHBke3R44Hyofsh7RHYwc5RrkGI4W6xMFEeUNlQoiB5cDAABp/N74a/Ub8vvuFexy6RznG+V04y/iTuHW4MjgI+Hn4RLjnuSH5sfoVusr7jzxgPTq93D7Bf+dAi0GqAkCDTAQJxPdFUkYYhoiHIMdfx4UHz8fAB9ZHkod2BsHGt4XZBWhEqAPaQwICYgF9gFe/sr6Sffk86nwou3Z6lnoKOZP5NTivOEL4cLg5OBv4WLiuuNx5YPn6OmX7InvsvIJ9oH5EP2nAD0ExQcyC3oOkBFrFAAXSBk5G84cAh7PHjUfMB/BHuodrhwQGxYZxxYrFEsRLw7kCnQH6gNTALz8L/m69WfyQu9W7K3pT+dG5ZfjSOJe4d3gxOAW4dHh8uJ25FfmkOgX6+bt8vAy9Jn3Hfux/kkC2wVYCbUM6A/kEqEVFBg1Gv0bZx1sHgofQB8KH2weZx39GzUaFBihFeQS6A+1DFgJ2wVJArH+HfuZ9zL08vDm7RfrkOhX5nbk8uLR4RbhxODd4F7h",
+  "event_id": "event_3df15b2b73914f24a6ae9add8ba17e66",
+  "item_id": "item_e1d59ef204394033a9d69086dcd6d550",
+  "output_index": 0,
+  "response_id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+  "type": "response.output_audio.delta"
+ },
+ {
+  "content_index": 0,
+  "event_id": "event_0fa0ff83d34246c292928365df567c63",
+  "item_id": "item_e1d59ef204394033a9d69086dcd6d550",
+  "output_index": 0,
+  "response_id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+  "type": "response.output_audio.done"
+ },
+ {
+  "content_index": 0,
+  "event_id": "event_314a21383d1f4b2c98b3628c25f05de0",
+  "item_id": "item_e1d59ef204394033a9d69086dcd6d550",
+  "output_index": 0,
+  "response_id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+  "transcript": "It's 2:05 PM right now.",
+  "type": "response.output_audio_transcript.done"
+ },
+ {
+  "content_index": 0,
+  "event_id": "event_fb61518436b945d08432658add483b57",
+  "item_id": "item_e1d59ef204394033a9d69086dcd6d550",
+  "output_index": 0,
+  "part": {
+   "audio": "",
+   "text": null,
+   "transcript": "It's 2:05 PM right now.",
+   "type": "audio"
+  },
+  "response_id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+  "type": "response.content_part.done"
+ },
+ {
+  "event_id": "event_71cc1e0e55d2459eac27fc7758e76957",
+  "item": {
+   "content": [
+    {
+     "audio": null,
+     "text": null,
+     "transcript": "It's 2:05 PM right now.",
+     "type": "output_audio"
+    }
+   ],
+   "role": "assistant",
+   "type": "message",
+   "id": "item_e1d59ef204394033a9d69086dcd6d550",
+   "object": "realtime.item",
+   "status": "completed"
+  },
+  "output_index": 0,
+  "response_id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+  "type": "response.output_item.done"
+ },
+ {
+  "event_id": "event_17221c9cc3074284acba3a34ccf5b124",
+  "response": {
+   "id": "resp_9bf353d51e2740c2bc72242b7bd308ab",
+   "audio": {
+    "output": {
+     "format": null,
+     "voice": null
+    }
+   },
+   "conversation_id": "conv_24e69d2a622446a7bb85bd205d05afef",
+   "max_output_tokens": null,
+   "metadata": null,
+   "object": "realtime.response",
+   "output": [
+    {
+     "content": [
+      {
+       "audio": null,
+       "text": null,
+       "transcript": "It's 2:05 PM right now.",
+       "type": "output_audio"
+      }
+     ],
+     "role": "assistant",
+     "type": "message",
+     "id": "item_e1d59ef204394033a9d69086dcd6d550",
+     "object": "realtime.item",
+     "status": "completed"
+    }
+   ],
+   "output_modalities": [
+    "audio"
+   ],
+   "status": "completed",
+   "status_details": {
+    "error": null,
+    "reason": null,
+    "type": "completed"
+   },
+   "usage": {
+    "input_token_details": {
+     "audio_tokens": 0,
+     "cached_tokens": 0,
+     "cached_tokens_details": null,
+     "image_tokens": 0,
+     "text_tokens": 585
+    },
+    "input_tokens": 585,
+    "output_token_details": {
+     "audio_tokens": 0,
+     "text_tokens": 12
+    },
+    "output_tokens": 12,
+    "total_tokens": 597
+   }
+  },
+  "type": "response.done"
+ }
+]
