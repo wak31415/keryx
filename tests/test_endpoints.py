@@ -30,6 +30,12 @@ def test_parse_refuses_what_is_not_an_http_address(bad):
         Endpoint.parse(bad)
 
 
+def test_an_address_carrying_a_key_is_refused_and_not_quoted():
+    with pytest.raises(ValueError) as raised:
+        Endpoint.parse("https://me:s3cret@llm.example.com")
+    assert "s3cret" not in str(raised.value) and "setting of its own" in str(raised.value)
+
+
 def test_root_drops_v1_for_anthropic_base_url():
     assert Endpoint.parse("http://box:8080").root == "http://box:8080"
 

@@ -53,7 +53,10 @@ class Endpoint:
         """
         parts = urlsplit(url.strip())
         if parts.scheme not in ("http", "https") or not parts.hostname:
-            raise ValueError(f"{url!r} is not an http:// or https:// address")
+            raise ValueError("must be an http:// or https:// address")
+        if parts.username or parts.password:
+            # A key in the address would be printed wherever the address is: doctor, logs.
+            raise ValueError("must not carry a user or password; the key has a setting of its own")
         path = parts.path.rstrip("/") or "/v1"
         base = urlunsplit((parts.scheme, parts.netloc, path, "", ""))
         return cls(base, api_key or None, model)

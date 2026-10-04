@@ -638,6 +638,10 @@ class OpenAIRealtimeClient:
         )
 
     async def truncate(self, item_id: str, audio_end_ms: int) -> None:
+        if self._transcoder is not None:
+            # The interrupted reply's last few milliseconds, still in the resampler, would
+            # otherwise open the next reply.
+            self._transcoder.flush()
         await self._send(
             {
                 "type": "conversation.item.truncate",

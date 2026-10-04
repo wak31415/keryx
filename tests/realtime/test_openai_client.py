@@ -995,6 +995,22 @@ async def test_assistant_audio_is_transcoded_on_the_way_back(connect):
     assert len(body.audio) + len(tail.audio) == 800
 
 
+async def test_a_barge_in_leaves_nothing_of_the_old_reply_for_the_next(connect):
+    harness = await connect(endpoint=SELF_HOSTED)
+    pcm = (np.sin(np.arange(2400) / 24000 * 2 * np.pi * 440) * 8000).astype("<i2").tobytes()
+    delta = base64.b64encode(pcm).decode()
+    harness.ws.feed({"type": "response.output_audio.delta", "item_id": "old", "delta": delta})
+    await harness.next_event()
+
+    await harness.client.truncate("old", 50)
+    harness.ws.feed({"type": "response.output_audio.done", "item_id": "new"})
+    harness.ws.feed(server_event("speech_stopped"))
+
+    # Nothing was held back for the next reply to open with: the next event is the next one.
+    assert isinstance(await harness.next_event(), SpeechStopped)
+    assert harness.ws.sent_of_type("conversation.item.truncate")[0]["item_id"] == "old"
+
+
 async def test_a_pcm_transport_is_not_transcoded_for_a_self_hosted_server(connect):
     harness = await connect(phone_config(audio_format="audio/pcm"), endpoint=SELF_HOSTED)
 
