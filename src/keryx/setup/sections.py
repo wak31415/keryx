@@ -72,8 +72,26 @@ def run_import(ctx: SetupContext) -> None:
 
 
 def run_voice(ctx: SetupContext) -> None:
-    """The one key Keryx cannot start without, checked with OpenAI before it is kept."""
+    """OpenAI's key, checked with OpenAI before it is kept — or a voice of your own.
+
+    With a voice server of the owner's own (`VOICE_BASE_URL`, set by the Local models
+    section), the key is optional and buys the assistant's web search alone.
+    """
     ui, settings = ctx.ui, ctx.settings
+    if settings.voice_base_url:
+        ui.success(f"calls use your own voice server at {settings.voice_base_url}")
+        if settings.openai_key or not ui.confirm(
+            "Add an OpenAI key anyway, for the assistant's web search?", default=False
+        ):
+            return
+    elif not settings.openai_key and not ctx.review:
+        how = ui.select("How should calls be voiced?", [
+            Choice("openai", "OpenAI's Realtime API", hint="about $0.06 to $0.11 a minute"),
+            Choice("own", "On my own hardware", hint="the Local models section sets it up"),
+        ], default="openai")
+        if how == "own":
+            ui.note("The Local models section, after the coding agents, sets up the voice.")
+            return
     ui.note(
         "Keryx talks through OpenAI's Realtime API. Calls are billed to this key, roughly "
         "$0.06 to $0.11 a minute."

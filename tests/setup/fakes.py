@@ -13,7 +13,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from keryx.agents.base import RunResult
+from keryx.endpoints import Probe
 from keryx.issues import GhStatus
+from keryx.localmodels.hardware import Hardware
 from keryx.notify.twilio_out import TwilioError, TwilioNumber
 from keryx.setup.context import Probes
 from keryx.setup.ui import Choice
@@ -68,6 +70,12 @@ class ScriptedPrompter:
     def spinner(self, message: str):
         self._say("spinner", message)
         yield
+
+    @contextlib.contextmanager
+    def progress(self, message: str, total: int):
+        self._say("progress", message)
+        self.progressed: list[int] = []
+        yield self.progressed.append
 
     # --- asking ----------------------------------------------------------------------
 
@@ -173,6 +181,22 @@ class FakeWorld:
     #: What `gh auth status` says, in order: the last one repeats.
     gh: list = field(default_factory=lambda: [GhStatus(installed=True, signed_in=True,
                                                      account="octocat")])
+    #: The Local models section's machine, disk, runtimes and servers.
+    machine: Hardware = field(
+        default_factory=lambda: Hardware("cuda", "NVIDIA GeForce RTX 5090", 31.8, 62.0)
+    )
+    free: int = 500 * 10**9
+    found_model: Any = None
+    llama: str | None = "/usr/bin/llama-server"
+    ollama: str | None = None
+    s2s: str | None = None
+    models: Probe = field(default_factory=lambda: Probe(True, ("qwen3-coder", "gpt-oss-20b")))
+    realtime: str | None = None
+    #: What `wait_for_server` says, by kind ("models", "realtime"); None is "it answered".
+    server_problem: dict = field(default_factory=dict)
+    download_error: BaseException | None = None
+    #: What `free_port` hands back for each port asked about; the port itself otherwise.
+    ports: dict = field(default_factory=dict)
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
@@ -226,4 +250,36 @@ class FakeWorld:
             cluster_partitions=lambda alias: self.calls.append(("partitions", alias))
             or list(self.partitions.get(alias, [])),
             gh_status=gh_status,
+            hardware=lambda: self.machine,
+            free_bytes=lambda path: self.free,
+            found_model=lambda entry: self.found_model,
+            download=self._download,
+            llama_server=lambda cache: self.llama,
+            install_llama_cpp=self._install_llama,
+            ollama=lambda: self.ollama,
+            speech_to_speech=lambda: self.s2s,
+            free_port=lambda port: self.ports.get(port, port),
+            endpoint_models=lambda endpoint: self.calls.append(("models", endpoint.base_url))
+            or self.models,
+            realtime_problem=lambda endpoint: self.calls.append(("realtime", endpoint.base_url))
+            or self.realtime,
+            wait_for_server=self._wait,
         )
+
+    def _download(self, url, dest, *, size, sha256, progress):
+        self.calls.append(("download", url))
+        if self.download_error is not None:
+            raise self.download_error
+        progress(size)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"\0")
+        return dest
+
+    def _install_llama(self, cache, machine):
+        self.calls.append(("install_llama_cpp",))
+        self.llama = str(cache / "llama.cpp" / "llama-server")
+        return self.llama
+
+    def _wait(self, endpoint, kind, timeout):
+        self.calls.append(("wait", kind, endpoint.base_url))
+        return self.server_problem.get(kind)

@@ -11,6 +11,7 @@ does.
 import subprocess
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -19,7 +20,12 @@ from keryx.agents.base import RunResult
 from keryx.config import Settings
 from keryx.config.permissions import OWNER
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
+from keryx.endpoints import Endpoint, Probe, probe
 from keryx.issues import GhStatus, gh_status
+from keryx.localmodels import download as model_files
+from keryx.localmodels import hardware as machine
+from keryx.localmodels import runtimes, servers
+from keryx.localmodels.hardware import Hardware
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.setup.ui import Prompter
 
@@ -93,6 +99,12 @@ def _partitions(alias: str) -> list[str]:
     return partitions(alias)
 
 
+def _realtime_problem(endpoint: Endpoint) -> str | None:
+    from keryx.realtime.openai import realtime_problem
+
+    return realtime_problem(endpoint)
+
+
 def _headless() -> bool:
     from keryx.setup.agents import is_headless
 
@@ -119,6 +131,19 @@ class Probes:
     cluster_partitions: Callable[[str], list[str]] = _partitions
     #: `gh auth status`, for the issue reports section (`keryx.issues.gh_status`).
     gh_status: Callable[[], GhStatus] = gh_status
+    #: The Local models section: the machine, its disk, the runtimes, and the servers.
+    hardware: Callable[[], Hardware] = machine.detect
+    free_bytes: Callable[[Path], int] = machine.free_bytes
+    found_model: Callable[..., Path | None] = model_files.already_on_disk
+    download: Callable[..., Path] = model_files.download
+    llama_server: Callable[[Path], str | None] = runtimes.llama_server
+    install_llama_cpp: Callable[[Path, Hardware], str] = runtimes.install_llama_cpp
+    ollama: Callable[[], str | None] = runtimes.ollama
+    speech_to_speech: Callable[[], str | None] = runtimes.speech_to_speech
+    free_port: Callable[[int], int] = servers.free_port
+    endpoint_models: Callable[[Endpoint], Probe] = probe
+    realtime_problem: Callable[[Endpoint], str | None] = _realtime_problem
+    wait_for_server: Callable[[Endpoint, str, float], str | None] = servers.wait_for
 
 
 @dataclass

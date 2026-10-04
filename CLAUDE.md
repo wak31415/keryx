@@ -60,7 +60,13 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Regenerate `docs/configuration.md` with
   `uv run python -m keryx.config.reference > docs/configuration.md`
 - Background service: `scripts/install-systemd.sh [--uninstall]` on Linux,
-  `scripts/install-launchd.sh [--uninstall]` on macOS
+  `scripts/install-launchd.sh [--uninstall]` on macOS; `--llm` / `--voice` install the local
+  model servers' units instead (`keryx models serve llm|voice`)
+- Models on this machine: `uv run keryx models list [--json]` (the catalog against this
+  machine's GPU and memory, the recommended one marked, and the local voices), `models pull
+  NAME` (resumable, checksummed, into `CACHE_DIR/models`; a copy in the Hugging Face cache is
+  linked instead), `models serve llm|voice` (what the units run: it reads the settings and
+  becomes the server)
 
 ## Layout
 
@@ -73,7 +79,7 @@ templates are in `ops/systemd/` (Linux) and `ops/launchd/` (macOS), rendered by 
 (argument parsing, `config_value` — every setting read through `keryx config get`, never a
 grep — the PATH checks, `render`), so an installer is only its platform-specific half.
 
-Nine groups are named here because the file you want is rarely the one whose name you
+Ten groups are named here because the file you want is rarely the one whose name you
 remember:
 
 - **agents** — `agents/` is one module per coding agent (`claude`, `codex`) behind the
@@ -144,6 +150,13 @@ remember:
   Tab skips to the first unanswered one, both by running the section again from a record
   of its answers and probe results, so no probe runs twice), `auth`, and `guides/*.md`, which the wizard renders and the wiki links, so
   each set of instructions is written once.
+- **localmodels** — `localmodels/` is the model on this machine: `hardware` (the GPU, the
+  memory, the disk), `catalog` (the models offered, with verified files and checksums, what
+  fits, the recommendation, the Kokoro voices), `download`, `runtimes` (finding or installing
+  llama.cpp and speech-to-speech, both pinned) and `servers` (each server's command line from
+  the settings, `free_port`, `wait_for`). `setup/local_models.py` is the wizard's section and
+  `keryx models` the command line; every install, download and network read in the wizard
+  goes through `Probes`.
 - **continuity** — `continuity/` is what survives the end of a call: `briefing`, `memory`
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
   `retention`, which prunes exactly those artefacts.
@@ -212,7 +225,7 @@ is ready once it has an address. Six rulings:
 
 Every model Keryx talks to is a `keryx/endpoints.py::Endpoint` — the `…/v1` root of a server,
 an optional Bearer key, the server's own name for the model — which is how every
-OpenAI-compatible client describes one. Four rulings:
+OpenAI-compatible client describes one. Five rulings:
 
 - **No provider library in Keryx.** The harnesses carry theirs; Keryx only says where.
   `endpoints.py` is also the one place the localhost-versus-server rule lives: a private
@@ -230,8 +243,15 @@ OpenAI-compatible client describes one. Four rulings:
   Truncate is accepted and ignored there, and that is accepted, not worked around. The
   persona's voice is not sent to it (`Settings.voice` is blank), since a server that does
   not know `marin` speaks nothing.
-- **Every `*_BASE_URL` is protected.** A voice address pointed elsewhere ships every call's
-  audio, the spoken PIN included, to whoever is there.
+- **Every `*_BASE_URL` is protected**, and `VOICE_SERVER_ARGS` with them. A voice address
+  pointed elsewhere ships every call's audio, the spoken PIN included, to whoever is there;
+  a flag could bind the unauthenticated voice server beyond 127.0.0.1.
+- **The servers on this machine are the settings' to describe.** The `keryx-llm` and
+  `keryx-voice` units run `keryx models serve llm|voice`, which builds the command line from
+  `LLM_SERVER_*` / `VOICE_SERVER_*` and `exec`s it, so no unit holds a model, a port or a voice.
+  Both bind 127.0.0.1. The voice server's words come from the local agent's model, and its key
+  goes in the child's `OPENAI_API_KEY` in place of the owner's — never on argv. Setup saves
+  `VOICE_BASE_URL` only after the server has answered a Realtime handshake.
 - **`OPENAI_API_KEY` is optional.** It is the voice only while `VOICE_BASE_URL` is blank
   (`Settings.voice_refusal`, which `serve` asks); otherwise it buys the voice model's
   `web_search` (the Responses API — no local server has a hosted search tool), which is
@@ -443,8 +463,9 @@ relative one ignored as the specification says (`config/files.py::xdg_home`):
   `codex/`, and `pin-failures.json`.
 - `~/.local/state/keryx` — `STATE_DIR`: `logs/`, `restart.json`, the version stamps,
   `approvals/` and `approvals.sock` together, so the hook needs one directory.
-- `~/.cache/keryx` — `CACHE_DIR`: what can be downloaded again (on `feat/local-wakeword`,
-  the wake-word models).
+- `~/.cache/keryx` — `CACHE_DIR`: what can be downloaded again — the local models
+  (`models/`), a llama.cpp build Keryx installed (`llama.cpp/`), and on `feat/local-wakeword`
+  the wake-word models.
 
 Four rulings:
 

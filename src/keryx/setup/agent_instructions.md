@@ -30,13 +30,22 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    Filing bug reports and feature requests about Keryx as GitHub issues is not yours to
    turn on: it is theirs, in `keryx setup` (Issue reports), and you never set
    `ISSUE_REPORTING` or `ISSUE_REPO`.
-5. **About them, with their permission.** Ask before you read their folders. If they agree,
+5. **Models of their own, if they want them.** `keryx models list --json` shows this
+   machine's GPU and memory and which downloadable models fit, one marked recommended;
+   `keryx models pull NAME` downloads it (or links a copy already on disk). Then
+   `keryx config set LLM_SERVER_MODEL NAME LOCAL_AGENT_BASE_URL http://127.0.0.1:8090
+   LOCAL_AGENT_MODEL NAME` and `scripts/install-systemd.sh --llm` (`install-launchd.sh` on a
+   Mac) runs it; `keryx config set AGENTS_ENABLED claude,local` offers it. A local voice is
+   `--voice` the same way, with `VOICE_BASE_URL` set only once `keryx doctor` says the voice
+   server opens a Realtime session. A server elsewhere is just its address in
+   `LOCAL_AGENT_BASE_URL` or `VOICE_BASE_URL`, its key by `--stdin`.
+6. **About them, with their permission.** Ask before you read their folders. If they agree,
    draft one summary per project into `{projects}/<name>.md` — written to be heard, at
    most {max_brief} characters each and {max_total} in all, and nothing from `.env` files,
    keys or credential stores. A repository's own `.keryx-brief.md` wins over yours.
    Then a few standing facts, one per line: `keryx memory seed --file - --json`.
-6. **Check.** `keryx doctor --json`; exit 0 means nothing stops Keryx from starting.
-7. **Hand over** what only the person can do, by saying: "run `keryx setup`". It walks
+7. **Check.** `keryx doctor --json`; exit 0 means nothing stops Keryx from starting.
+8. **Hand over** what only the person can do, by saying: "run `keryx setup`". It walks
    only what is left — browser sign-ins, choosing the phone PIN (never set it yourself),
    and approving the Twilio webhook.
 

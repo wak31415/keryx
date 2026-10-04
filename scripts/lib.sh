@@ -19,6 +19,10 @@
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 #: Set by `parse_install_args` when `--uninstall` was passed.
 UNINSTALL=0
+#: Set by `parse_install_args` for `--llm` / `--voice`: the local model servers' units
+#: (`keryx models serve llm|voice`) instead of Keryx and its tunnel.
+LLM=0
+VOICE=0
 
 keryx_cli() {
   # keryx_cli ARGS... — run keryx from the repository, the service's working directory.
@@ -74,15 +78,20 @@ require_paths() {
 }
 
 parse_install_args() {
-  # parse_install_args "$@" — sets UNINSTALL=1 for `--uninstall`; exits 2 on anything else.
-  case "${1:-}" in
-    "") ;;
-    --uninstall) UNINSTALL=1 ;;
-    *)
-      echo "usage: $(basename "$0") [--uninstall]" >&2
-      exit 2
-      ;;
-  esac
+  # parse_install_args "$@" — sets UNINSTALL=1 for `--uninstall`, LLM=1 for `--llm` and
+  # VOICE=1 for `--voice`, in any order; exits 2 on anything else.
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --uninstall) UNINSTALL=1 ;;
+      --llm) LLM=1 ;;
+      --voice) VOICE=1 ;;
+      *)
+        echo "usage: $(basename "$0") [--llm] [--voice] [--uninstall]" >&2
+        exit 2
+        ;;
+    esac
+  done
 }
 
 require_command() {

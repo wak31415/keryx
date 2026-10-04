@@ -94,6 +94,11 @@ class Prompter(Protocol):
     ) -> str: ...
     def confirm(self, message: str, *, default: bool = True) -> bool: ...
     def spinner(self, message: str) -> contextlib.AbstractContextManager[None]: ...
+    def progress(
+        self, message: str, total: int
+    ) -> contextlib.AbstractContextManager[Callable[[int], None]]:
+        """A bar to `total` bytes, moved by calling what it yields with the bytes done."""
+        ...
 
 
 #: Under each section's header: the two keys that are not answers.
@@ -300,6 +305,21 @@ class RichPrompter:
     def spinner(self, message: str) -> Iterator[None]:
         with self.console.status(f"[cyan]{_escape(message)}[/]", spinner="dots"):
             yield
+
+    @contextlib.contextmanager
+    def progress(self, message: str, total: int) -> Iterator[Callable[[int], None]]:
+        from rich.progress import (
+            DownloadColumn,
+            Progress,
+            TimeRemainingColumn,
+            TransferSpeedColumn,
+        )
+
+        columns = (*Progress.get_default_columns()[:-1], DownloadColumn(),
+                   TransferSpeedColumn(), TimeRemainingColumn())
+        with Progress(*columns, console=self.console) as bar:
+            task = bar.add_task(_escape(message), total=total)
+            yield lambda done: bar.update(task, completed=done)
 
 
 #: The last line of a checkbox, and the only way on from one.

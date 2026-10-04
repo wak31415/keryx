@@ -4,6 +4,8 @@
 #
 #   scripts/install-launchd.sh              # render the templates and load both agents
 #   scripts/install-launchd.sh --uninstall  # unload both agents and delete the plists
+#   scripts/install-launchd.sh --llm --voice  # the local model servers instead (either one;
+#                                             # with --uninstall, remove them)
 #
 # The templates in ops/launchd/ carry __PLACEHOLDER__ names; this script fills them in
 # from `command -v` and `keryx config get`, writes the result to ~/Library/LaunchAgents/, and hands them
@@ -35,8 +37,33 @@ remove_agents() {
 }
 
 parse_install_args "$@"
+if (( LLM || VOICE )); then
+  LABELS=()
+  (( LLM )) && LABELS+=(dev.keryx.llm)
+  (( VOICE )) && LABELS+=(dev.keryx.voice)
+fi
 if (( UNINSTALL )); then
   remove_agents "${LABELS[@]}"
+  exit 0
+fi
+
+if (( LLM || VOICE )); then
+  # The local model servers: no tunnel, no public host. `keryx models serve` reads the rest.
+  require_command UV uv "https://docs.astral.sh/uv/"
+  make_dirs "$AGENTS"
+  for label in "${LABELS[@]}"; do
+    plist="$AGENTS/$label.plist"
+    render "$TEMPLATES/$label.plist" "$plist" \
+      "UV=$UV" "PATH=$(xml_escape "$PATH")" "LOGS=$(xml_escape "$LOGS")" \
+      "KERYX_HOME=$(xml_escape "$KERYX_HOME_DIR")" \
+      "XDG_CONFIG_HOME=$(xml_escape "$RESOLVED_XDG_CONFIG_HOME")" \
+      "XDG_DATA_HOME=$(xml_escape "$RESOLVED_XDG_DATA_HOME")" \
+      "XDG_STATE_HOME=$(xml_escape "$RESOLVED_XDG_STATE_HOME")" \
+      "XDG_CACHE_HOME=$(xml_escape "$RESOLVED_XDG_CACHE_HOME")"
+    launchctl bootout "gui/$UID/$label" 2>/dev/null || true
+    launchctl bootstrap "gui/$UID" "$plist"
+    echo "loaded $label ($plist)"
+  done
   exit 0
 fi
 

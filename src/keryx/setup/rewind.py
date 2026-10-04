@@ -142,6 +142,14 @@ class Recorder:
         with self.ui.spinner(message):
             yield
 
+    @contextlib.contextmanager
+    def progress(self, message: str, total: int) -> Iterator[Callable[[int], None]]:
+        if self.script:
+            yield lambda _done: None  # a replayed download returns at once
+            return
+        with self.ui.progress(message, total) as advance:
+            yield advance
+
     # --- asking: from the script, else from the terminal ---------------------------------
 
     def _ask(self, kind: str, message: str, ask: Callable[[Entry | None], Any]) -> Any:

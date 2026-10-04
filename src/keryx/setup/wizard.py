@@ -29,6 +29,7 @@ from keryx.setup import (
     agents,
     google,
     issues,
+    local_models,
     phone,
     plugins,
     profile,
@@ -56,6 +57,7 @@ SECTIONS: tuple[Section, ...] = (
     Section("import", "Move to the XDG directories", sections.run_import),
     Section("voice", "Voice", sections.run_voice, required=True),
     Section("agents", "Coding agents", agents.run_section, required=True),
+    Section("local", "Local models", local_models.run_section),
     Section("settings", "Settings", sections.run_settings),
     Section("owner", "Owner and PIN", sections.run_owner),
     Section("phone", "Phone", phone.run_section),
@@ -82,6 +84,10 @@ def statuses(ctx: SetupContext, checks: list[Check]) -> dict[str, str]:
             found[key] = DONE if key in ctx.store.walked_sections() else MISSING
         elif key == "issues" and key not in ctx.store.walked_sections():
             # Off passes `doctor`, but it is a choice the owner has to have made.
+            found[key] = MISSING
+        elif (key == "local" and key not in ctx.store.walked_sections()
+              and not (settings.voice_base_url or settings.local_agent_base_url)):
+            # None passes `doctor` too; offered once, so the owner knows it is there.
             found[key] = MISSING
         elif key == "projects":
             written = summaries_dir(settings)

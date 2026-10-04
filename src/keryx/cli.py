@@ -19,6 +19,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
 
+import rich.progress
 import typer
 import uvicorn
 from pydantic import ValidationError
@@ -55,6 +56,7 @@ from keryx.doctor import (
     run_doctor_checks,
 )
 from keryx.events import EventBus
+from keryx.localmodels import catalog, download, hardware, servers
 from keryx.logging_util import mask_number
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
@@ -105,6 +107,10 @@ plugins_app = typer.Typer(
     help="The optional voice tools (Slack, email, billing, cluster stats): on, off, set up."
 )
 app.add_typer(plugins_app, name="plugins")
+models_app = typer.Typer(
+    help="Models on this machine: which fit, downloading one, and the servers that run them."
+)
+app.add_typer(models_app, name="models")
 log = logging.getLogger("keryx.cli")
 
 
@@ -960,6 +966,103 @@ def plugins_command(
     """List the plugins: on or off, their two files, and why one is refused."""
     if ctx.invoked_subcommand is None:
         plugins_list(as_json)
+
+
+@models_app.command("list")
+def models_list(
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """The models Keryx can download, which fit this machine, and the local voices."""
+    settings = _configure_readonly()
+    machine = hardware.detect()
+    reserve = catalog.VOICE_SERVER_GB if settings.voice_base_url else 0.0
+    best = catalog.recommend(machine, reserve_gb=reserve)
+    rows = [
+        {
+            "name": entry.key,
+            "title": entry.title,
+            "size_gb": entry.size_gb,
+            "needs_gb": entry.memory_gb,
+            "fits": catalog.fits(entry, machine, reserve_gb=reserve),
+            "downloaded": download.is_downloaded(settings.cache_dir, entry),
+            "recommended": entry is best,
+            "tested": entry.tested,
+            "note": entry.note,
+        }
+        for entry in catalog.MODELS
+    ]
+    if as_json:
+        typer.echo(json.dumps({
+            "hardware": {**dataclasses.asdict(machine), "model_memory_gb":
+                         machine.model_memory_gb},
+            "models_dir": str(download.models_dir(settings.cache_dir)),
+            "models": rows,
+            "voices": [{"name": name, "sounds": sounds} for name, sounds in catalog.VOICES],
+        }, indent=2))
+        return
+    typer.echo(f"# {machine.describe()}; models in {download.models_dir(settings.cache_dir)}")
+    for row in rows:
+        marks = "".join([
+            "✓ fits " if row["fits"] else "✗ too big ",
+            "· downloaded " if row["downloaded"] else "",
+            "· recommended " if row["recommended"] else "",
+            "· tested " if row["tested"] else "",
+        ])
+        typer.echo(f"{row['name']:<22} {row['size_gb']:>5} GB  needs {row['needs_gb']:>3} GB  "
+                   f"{marks}— {row['note']}")
+    typer.echo("\n# voices for the local voice server (VOICE_SERVER_VOICE)")
+    for name, sounds in catalog.VOICES:
+        typer.echo(f"{name:<22} {sounds}")
+
+
+@models_app.command("pull")
+def models_pull(
+    name: Annotated[str, typer.Argument(help="A name from `keryx models list`.")],
+) -> None:
+    """Download one model into CACHE_DIR/models, picking up a download that was cut off."""
+    settings = _configure_readonly()
+    entry = catalog.by_key(name)
+    if entry is None:
+        typer.echo(f"there is no model called {name} (`keryx models list`)", err=True)
+        raise typer.Exit(2)
+    dest = download.model_path(settings.cache_dir, entry)
+    if not download.is_downloaded(settings.cache_dir, entry) and (
+        found := download.already_on_disk(entry)
+    ):
+        adopted = download.adopt(settings.cache_dir, entry, found)
+        typer.echo(f"{adopted} (already in {found.parent})")
+        return
+    need = download.remaining_bytes(settings.cache_dir, entry) + download.DISK_MARGIN_BYTES
+    free = hardware.free_bytes(dest.parent)
+    if need > download.DISK_MARGIN_BYTES and free < need:
+        typer.echo(f"{entry.title} needs {need / 1e9:.1f} GB free on {dest.parent} and there "
+                   f"is {free / 1e9:.1f} GB", err=True)
+        raise typer.Exit(1)
+    download.ensure_model_dir(settings.cache_dir, entry)
+    with rich.progress.Progress(
+        *rich.progress.Progress.get_default_columns(), rich.progress.DownloadColumn()
+    ) as bar:
+        task = bar.add_task(entry.title, total=entry.size)
+        try:
+            download.download(entry.url, dest, size=entry.size, sha256=entry.sha256,
+                              progress=lambda done: bar.update(task, completed=done))
+        except download.DownloadError as error:
+            typer.echo(str(error), err=True)
+            raise typer.Exit(1) from None
+    typer.echo(f"{dest}")
+
+
+@models_app.command("serve")
+def models_serve(
+    kind: Annotated[str, typer.Argument(help="llm (llama.cpp) or voice (speech-to-speech).")],
+) -> None:
+    """Become the local llm or voice server, as the settings describe it (what the units run)."""
+    settings = _configure()
+    try:
+        servers.serve(kind, settings)
+    except servers.ServerConfigError as error:
+        typer.echo(f"keryx cannot start the {kind} server: {error}", err=True)
+        raise typer.Exit(2) from None
 
 
 @plugins_app.command("list")

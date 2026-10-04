@@ -54,6 +54,7 @@ from keryx.continuity.memory import memory_path, read_memory
 from keryx.endpoints import Endpoint, Probe, probe, warnings
 from keryx.integrations.gmail import token_path
 from keryx.issues import GH_INSTALL_URL, SKILL, gh_status
+from keryx.localmodels import runtimes, servers
 from keryx.logging_util import mask_number
 from keryx.realtime.openai import realtime_problem
 from keryx.restart.service import INSTALLERS, candidate_target, resolve_target
@@ -147,6 +148,8 @@ def run_doctor_checks(
         *_voice_checks(settings),
         _agent_config_check(settings),
         *_agent_checks(settings),
+        _local_overview_check(settings),
+        *_local_server_checks(settings),
         *endpoint_checks(settings, reach),
         _twilio_check(settings),
         _signature_check(settings),
@@ -292,6 +295,46 @@ def _agent_checks(settings: Settings) -> list[Check]:
                 unset=not status.ready,
             )
         )
+    return checks
+
+
+def _local_overview_check(settings: Settings) -> Check:
+    """Optional, and what the Local models section is for: is anything on your own hardware?"""
+    parts = []
+    if settings.voice_base_url:
+        parts.append(f"voice at {settings.voice_base_url}")
+    if settings.local_agent_endpoint is not None:
+        parts.append(f"agent {settings.local_agent_model or '?'} at "
+                     f"{settings.local_agent_endpoint.base_url}")
+    if not parts:
+        return Check("local models", True, "none (optional) — `keryx setup` can run the voice "
+                     "and the agent on your own hardware", severity="soft", section="local")
+    return Check("local models", True, "; ".join(parts), severity="soft", section="local")
+
+
+def _local_server_checks(settings: Settings) -> list[Check]:
+    """The servers `keryx setup` runs here: the model on disk and the programs installed."""
+    checks = []
+    if settings.llm_server_model:
+        severity: Severity = "hard" if settings.agent_backend == "local" else "soft"
+        try:
+            alias, path, _context = servers.llm_model(settings)
+            problem = None
+        except servers.ServerConfigError as error:
+            problem = str(error)
+        if problem is None and runtimes.llama_server(settings.cache_dir) is None:
+            problem = "llama-server is not installed — `keryx setup` installs it"
+        checks.append(Check("model server", problem is None,
+                            problem or f"{alias} from {path}", severity=severity,
+                            section="local"))
+    own_voice = f"http://{servers.HOST}:{settings.voice_server_port}/v1"
+    if settings.voice_base_url == own_voice:
+        found = runtimes.speech_to_speech()
+        checks.append(Check(
+            "voice server program", found is not None,
+            found or "speech-to-speech is not installed — `keryx setup` installs it",
+            section="local",
+        ))
     return checks
 
 

@@ -72,6 +72,7 @@ def test_nothing_protected_defaults_to_writable():
         "VOICE_API_KEY",
         "LOCAL_AGENT_BASE_URL",
         "LOCAL_AGENT_API_KEY",
+        "VOICE_SERVER_ARGS",
     ],
 )
 def test_the_lines_of_defence_are_protected(key):

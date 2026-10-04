@@ -91,6 +91,7 @@ OPTIONAL_STR_FIELDS = (
     "local_agent_base_url",
     "local_agent_api_key",
     "local_agent_model",
+    "llm_server_model",
     "anthropic_api_key",
     "claude_code_oauth_token",
     "codex_api_key",
@@ -495,6 +496,46 @@ class Settings(BaseSettings):
         "Code, `openai-responses` inside Codex. The server must speak that API.",
         group="local",
         service_writable=True,
+    )
+
+    # The servers `keryx setup` runs on this machine (`keryx models serve llm|voice`). Each
+    # unit reads these when it starts, so a change needs `systemctl --user restart` of it.
+    llm_server_model: str | None = setting(
+        None,
+        "The model the local llama.cpp server runs: a name from `keryx models list`, or a "
+        "GGUF file's path. Blank runs none.",
+        group="local",
+    )
+    llm_server_port: int = setting(
+        8090, "The port the local llama.cpp server binds, on 127.0.0.1.", group="local",
+        ge=1, le=65535,
+    )
+    voice_server_port: int = setting(
+        8765, "The port the local voice server binds, on 127.0.0.1.", group="local",
+        ge=1, le=65535,
+    )
+    voice_server_stt: str = setting(
+        "parakeet-tdt",
+        "How the local voice server hears: speech-to-speech's `--stt` (`parakeet-tdt`, "
+        "`whisper`, …).",
+        group="local",
+    )
+    voice_server_tts: str = setting(
+        "kokoro",
+        "How the local voice server speaks: speech-to-speech's `--tts` (`kokoro`, `qwen3`, …).",
+        group="local",
+    )
+    voice_server_voice: str = setting(
+        "af_heart",
+        "The Kokoro voice the local voice server speaks in (`af_heart`, `bm_george`, …; "
+        "`keryx models list` shows them).",
+        group="local",
+    )
+    voice_server_args: str = setting(
+        "",
+        "More flags for `speech-to-speech serve`, as a command line — a smaller speech model "
+        "(`--stt_model_name openai/whisper-base`), a TTS speed. Never a key: it is on argv.",
+        group="local",
     )
 
     # --- owner, callers and PIN ----------------------------------------------------------

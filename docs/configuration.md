@@ -73,6 +73,13 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 | `LOCAL_AGENT_API_KEY` | (secret) | never | The Bearer key for that server, when it checks one. The owner's Anthropic and OpenAI credentials are never sent there. |
 | `LOCAL_AGENT_MODEL` |  | yes | The model a `local` task runs on, by the server's own name for it. |
 | `LOCAL_AGENT_API` | `anthropic-messages` | yes | Which harness drives the local model: `anthropic-messages` runs it inside Claude Code, `openai-responses` inside Codex. The server must speak that API. |
+| `LLM_SERVER_MODEL` |  | no | The model the local llama.cpp server runs: a name from `keryx models list`, or a GGUF file's path. Blank runs none. |
+| `LLM_SERVER_PORT` | `8090` | no | The port the local llama.cpp server binds, on 127.0.0.1. |
+| `VOICE_SERVER_PORT` | `8765` | no | The port the local voice server binds, on 127.0.0.1. |
+| `VOICE_SERVER_STT` | `parakeet-tdt` | no | How the local voice server hears: speech-to-speech's `--stt` (`parakeet-tdt`, `whisper`, …). |
+| `VOICE_SERVER_TTS` | `kokoro` | no | How the local voice server speaks: speech-to-speech's `--tts` (`kokoro`, `qwen3`, …). |
+| `VOICE_SERVER_VOICE` | `af_heart` | no | The Kokoro voice the local voice server speaks in (`af_heart`, `bm_george`, …; `keryx models list` shows them). |
+| `VOICE_SERVER_ARGS` | `` | never | More flags for `speech-to-speech serve`, as a command line — a smaller speech model (`--stt_model_name openai/whisper-base`), a TTS speed. Never a key: it is on argv. |
 
 ## Owner, callers and PIN
 

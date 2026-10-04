@@ -962,3 +962,55 @@ def test_a_lan_voice_server_over_http_warns_about_the_pin(healthy):
 
     (warning,) = endpoint_checks(voice)
     assert warning.severity == "soft" and "PIN" in warning.detail
+
+
+# --- the servers `keryx setup` runs here -----------------------------------------------
+
+
+def test_local_models_none_passes_and_some_are_described(healthy):
+    checks = by_name(run_doctor_checks(healthy))
+    assert checks["local models"].ok and "optional" in checks["local models"].detail
+
+    both = healthy.model_copy(update={"voice_base_url": "http://127.0.0.1:8765/v1",
+                                      "local_agent_base_url": "http://127.0.0.1:8090/v1",
+                                      "local_agent_model": "qwen"})
+    detail = by_name(run_doctor_checks(both))["local models"].detail
+    assert "voice at http://127.0.0.1:8765/v1" in detail and "agent qwen at" in detail
+
+
+def test_the_model_server_needs_its_file_and_llama_server(healthy, monkeypatch, tmp_path):
+    from keryx.localmodels import runtimes
+    from keryx.localmodels.catalog import by_key
+    from keryx.localmodels.download import model_path
+
+    entry = by_key("gpt-oss-20b")
+    settings = healthy.model_copy(update={"llm_server_model": entry.key,
+                                          "cache_dir": tmp_path / "cache"})
+    missing = by_name(run_doctor_checks(settings))["model server"]
+    assert not missing.ok and "keryx models pull gpt-oss-20b" in missing.detail
+    assert missing.severity == "soft"
+
+    path = model_path(settings.cache_dir, entry)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"gguf")
+    monkeypatch.setattr(runtimes, "llama_server", lambda cache: None)
+    no_binary = by_name(run_doctor_checks(settings))["model server"]
+    assert not no_binary.ok and "llama-server is not installed" in no_binary.detail
+
+    monkeypatch.setattr(runtimes, "llama_server", lambda cache: "/bin/llama-server")
+    ok = by_name(run_doctor_checks(settings))["model server"]
+    assert ok.ok and str(path) in ok.detail
+
+
+def test_the_voice_server_on_this_machine_needs_its_program(healthy, monkeypatch):
+    from keryx.localmodels import runtimes
+
+    settings = healthy.model_copy(update={"voice_base_url": "http://127.0.0.1:8765/v1"})
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: None)
+    check = by_name(run_doctor_checks(settings))["voice server program"]
+    assert (check.ok, check.severity) == (False, "hard")
+
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: "/bin/s2s")
+    assert by_name(run_doctor_checks(settings))["voice server program"].ok
+    elsewhere = healthy.model_copy(update={"voice_base_url": "http://gpu:8765/v1"})
+    assert "voice server program" not in by_name(run_doctor_checks(elsewhere))

@@ -29,8 +29,12 @@ def claude_signed_in(monkeypatch):
 FIRST_RUN = [
     ("What next?", "left"),
     # Voice
+    ("How should calls be voiced?", "openai"),
     ("OpenAI API key", "sk-live"),
     # Coding agents: Claude is installed and signed in already, so nothing is asked
+    # Local models: offered once, and left alone
+    ("local agent's model run", "none"),
+    ("voice on a call", "openai"),
     # Settings
     ("sensible default", "recommended"),
     # Owner and PIN
@@ -85,9 +89,12 @@ def test_esc_goes_back_a_question_and_the_key_is_not_asked_for_twice(
         [
             ("What next?", Back()),  # nothing before it: asked again
             ("What next?", "left"),
+            ("How should calls be voiced?", "openai"),
             ("OpenAI API key", "sk-live"),
-            ("sensible default", Back()),  # back into Voice: the key is typed again
+            ("local agent's model run", Back()),  # back into Voice: the key is typed again
             ("OpenAI API key", "sk-other"),
+            ("local agent's model run", "none"),
+            ("voice on a call", "openai"),
             ("sensible default", "recommended"),
             ("assistant be called", "Lyra"),
             ("call you", "Ada"),
@@ -215,7 +222,7 @@ def test_review_walks_every_section_and_asks_again(make_ctx, claude_signed_in, m
     run_wizard(ctx, review_all=True)
 
     assert [key for key, _ in walked] == [
-        "voice", "agents", "settings", "owner", "phone", "google", "plugins", "issues",
+        "voice", "agents", "local", "settings", "owner", "phone", "google", "plugins", "issues",
         "profile", "projects", "service",
     ]
     assert all(review for _, review in walked)
@@ -235,7 +242,8 @@ def test_nothing_left_offers_a_review(make_ctx, claude_signed_in, monkeypatch):
 
 def test_ctrl_c_propagates_and_what_was_saved_stays(make_ctx, claude_signed_in):
     ctx = make_ctx(
-        [("What next?", "left"), ("OpenAI API key", "sk-1"), ("sensible default", Aborted())]
+        [("What next?", "left"), ("How should calls be voiced?", "openai"),
+         ("OpenAI API key", "sk-1"), ("local agent's model run", Aborted())]
     )
 
     with pytest.raises(Aborted):

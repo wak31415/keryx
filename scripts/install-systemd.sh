@@ -4,6 +4,8 @@
 #
 #   scripts/install-systemd.sh              # render the templates and start both units
 #   scripts/install-systemd.sh --uninstall  # stop both units and delete them
+#   scripts/install-systemd.sh --llm --voice  # the local model servers instead (either one;
+#                                             # with --uninstall, remove them)
 #
 # The templates in ops/systemd/ carry __PLACEHOLDER__ names; this script fills them in from
 # `command -v` and `keryx config get`, writes the result to ~/.config/systemd/user/, and hands
@@ -34,8 +36,37 @@ uninstall() {
 }
 
 parse_install_args "$@"
+if (( LLM || VOICE )); then
+  SERVICES=()
+  (( LLM )) && SERVICES+=(keryx-llm)
+  (( VOICE )) && SERVICES+=(keryx-voice)
+fi
 if (( UNINSTALL )); then
   uninstall
+  exit 0
+fi
+
+if (( LLM || VOICE )); then
+  # The local model servers: no tunnel, no public host. `keryx models serve` reads the rest.
+  require_command UV uv "https://docs.astral.sh/uv/"
+  make_dirs "$UNITS"
+  for name in "${SERVICES[@]}"; do
+    render "$TEMPLATES/$name.service" "$UNITS/$name.service" \
+      "UV=$UV" "PATH=$(systemd_quoted "$PATH")" "LOGS=$(systemd_path "$LOGS")" \
+      "KERYX_HOME=$(systemd_quoted "$KERYX_HOME_DIR")" \
+      "XDG_CONFIG_HOME=$(systemd_quoted "$RESOLVED_XDG_CONFIG_HOME")" \
+      "XDG_DATA_HOME=$(systemd_quoted "$RESOLVED_XDG_DATA_HOME")" \
+      "XDG_STATE_HOME=$(systemd_quoted "$RESOLVED_XDG_STATE_HOME")" \
+      "XDG_CACHE_HOME=$(systemd_quoted "$RESOLVED_XDG_CACHE_HOME")"
+  done
+  systemctl --user daemon-reload
+  for name in "${SERVICES[@]}"; do
+    systemctl --user enable "$name.service"
+    systemctl --user restart "$name.service"
+    echo "started $name.service ($UNITS/$name.service)"
+  done
+  loginctl enable-linger "$USER" 2>/dev/null || true
+  echo "logs: tail -f $LOGS/keryx-llm.err.log $LOGS/keryx-voice.err.log"
   exit 0
 fi
 

@@ -15,7 +15,7 @@ from .fakes import DEFAULT
 
 
 def test_the_key_is_checked_with_openai_and_kept_as_a_secret(make_ctx, world):
-    ctx = make_ctx([("OpenAI API key", "sk-live")])
+    ctx = make_ctx([("voiced", "openai"), ("OpenAI API key", "sk-live")])
 
     sections.run_voice(ctx)
 
@@ -28,7 +28,8 @@ def test_the_key_is_checked_with_openai_and_kept_as_a_secret(make_ctx, world):
 def test_a_refused_key_is_asked_again(make_ctx, world):
     world.openai_problem = "OpenAI does not recognise that key"
     ctx = make_ctx(
-        [("OpenAI API key", "sk-bad"), ("Keep it anyway", False), ("OpenAI API key", "sk-bad2"),
+        [("voiced", "openai"), ("OpenAI API key", "sk-bad"), ("Keep it anyway", False),
+         ("OpenAI API key", "sk-bad2"),
          ("Keep it anyway", True)]
     )
 
@@ -327,7 +328,7 @@ def test_the_service_installer_runs_on_a_yes(make_ctx, world, tmp_path, monkeypa
 
 def test_three_refused_keys_and_no_keep_leave_nothing_saved(make_ctx, world):
     world.openai_problem = "no"
-    ctx = make_ctx([("OpenAI API key", "a"), ("Keep", False)] * 3)
+    ctx = make_ctx([("voiced", "openai"), *[("OpenAI API key", "a"), ("Keep", False)] * 3])
 
     sections.run_voice(ctx)
 

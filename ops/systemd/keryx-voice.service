@@ -1,0 +1,38 @@
+# Template: scripts/install-systemd.sh fills in __UV__ and __REPO__, plus its own PATH,
+# KERYX_HOME, the four XDG base directories and the log directory under STATE_DIR, and
+# writes the result to ~/.config/systemd/user/keryx-voice.service. Do not enable this file
+# directly. (Those last ones are not named here as placeholders: a value rendered into a
+# comment that ended in a backslash would carry the comment onto the next line.)
+
+[Unit]
+Description=Keryx: the local voice server (speech-to-speech)
+# The voice takes its words from the local model; started after it when that is here too.
+After=keryx-llm.service
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+# `keryx models serve` reads the settings and becomes the server, so nothing about the model
+# is written here: change it with `keryx config set` and restart this unit.
+ExecStart=__UV__ run --project __REPO__ keryx models serve voice
+# The user manager's PATH is bare, so the installer's own is rendered here: the server is
+# found where a terminal finds it (~/.local/bin, Homebrew). Re-run the installer after
+# changing it.
+Environment="PATH=__PATH__"
+# Where the settings are (config.toml, secrets.toml, the PIN), and the XDG directories
+# everything else is found under: the installer's, rendered here, so the service resolves
+# exactly what its terminal did. The user manager's own may differ, or be unset.
+Environment="KERYX_HOME=__KERYX_HOME__"
+Environment="XDG_CONFIG_HOME=__XDG_CONFIG_HOME__"
+Environment="XDG_DATA_HOME=__XDG_DATA_HOME__"
+Environment="XDG_STATE_HOME=__XDG_STATE_HOME__"
+Environment="XDG_CACHE_HOME=__XDG_CACHE_HOME__"
+# Restart covers a crash and the "started before the network was up" case at boot.
+Restart=always
+RestartSec=5
+# STATE_DIR/logs, beside the service's own.
+StandardOutput=append:__LOGS__/keryx-voice.out.log
+StandardError=append:__LOGS__/keryx-voice.err.log
+
+[Install]
+WantedBy=default.target
