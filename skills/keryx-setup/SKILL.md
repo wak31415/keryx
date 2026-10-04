@@ -31,7 +31,8 @@ Everything below is those instructions plus the rules for talking to the owner.
   repositories" is exactly the thing this skill exists not to do.
 - **The memory and the briefs are sent to the realtime provider on every call**, as part of
   the system prompt, re-sent each time. Say that to them in those words, before they answer
-  anything, and leave out of both anything they would not send to OpenAI.
+  anything, and leave out of both anything they would not send to OpenAI (unless
+  `VOICE_BASE_URL` is a voice server of their own, when the provider is that server).
 - **A secret never goes on the command line**: `keryx config set KEY --stdin` or
   `--from-env VAR`, never `keryx config set KEY value`. If you do not already have a secret
   in your environment, do not ask them to paste it to you — `keryx setup` asks for it

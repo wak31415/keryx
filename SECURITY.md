@@ -74,6 +74,9 @@ anything behind, or reach a coding agent. In particular:
 - A coding agent's credential appearing on its command line, in a log, or in a spoken
   error. Credentials are passed only in the environment, and a refused key is redacted
   when it is quoted back.
+- Your Anthropic or OpenAI credentials reaching a model server of your own (the `local`
+  agent's or the voice server's), or the running service changing where a model is
+  (see [Models of your own](#models-of-your-own)).
 - Text that reaches a Claude Code session on your machine (an issue, a pull request, a web
   page) and gets the approval bridge to ring you about one command while running another,
   or to run a command its policy should never have offered.
@@ -399,8 +402,8 @@ decision. No value Keryx saves can stop it from starting again. `keryx config lo
 Some settings can never be unlocked: every credential, the PIN, who may call and which
 number is yours, `BRIEFING_BEFORE_PIN`, the approval bridge's switch and allowlist, whether
 and where Keryx files issues about itself (an issue is public), the spending cap, the daily
-task cap, retention, texting, the network settings, where data lives, and every debug
-switch. Each is either a secret or a line of defense. Keryx's own tools must not be able to
+task cap, retention, texting, the network settings, where a model is (every `*_BASE_URL`,
+and the local voice server's flags), where data lives, and every debug switch. Each is either a secret or a line of defense. Keryx's own tools must not be able to
 lower their own guard because someone asked nicely on the phone.
 
 This is **a rule Keryx's own tools obey, not a sandbox.** A coding agent runs as you with a
@@ -409,6 +412,30 @@ buys is that the ordinary paths refuse, and say so: the tool the voice model is 
 the commands a coding agent would reach for. `keryx config set` is limited to the
 service-writable keys. `config import-env`, `auth login`, `memory seed`, `setup`, `migrate`,
 `plugins install`, `plugins remove`, and `config lock|unlock` refuse the service outright.
+
+### Models of your own
+
+With `VOICE_BASE_URL` set, a server of yours hears every call: the audio, and so a spoken
+PIN; with `LOCAL_AGENT_BASE_URL`, a server of yours does the work, with the task and every
+file it reads (see [docs/local-models.md](docs/local-models.md)). Three rules hold that line:
+
+- **Where a model is cannot be changed by Keryx itself.** Every `*_BASE_URL`, and the flags
+  of the voice server it runs, are protected settings: neither `set_config` nor a subagent
+  may write them, and nothing unlocks them. Pointing the voice elsewhere would carry every
+  call to whoever is there.
+- **Your credentials stay with their own providers.** A local server is handed its own key
+  or a placeholder, never `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_API_KEY` or
+  `OPENAI_API_KEY`: each is overridden with an empty value in the agent's environment, and
+  the voice server's process is given its local model's key in place of `OPENAI_API_KEY`.
+  Codex runs a local task in a home of Keryx's own, away from your ChatGPT login.
+- **The servers Keryx runs listen on `127.0.0.1` only.** speech-to-speech checks no key, and
+  llama.cpp is started without one. A server for other machines is one you run, behind a
+  tailnet or a proxy that checks a key.
+
+The accepted risks, which `keryx doctor` warns about rather than refuses: a voice server on
+another machine over plain `http://` carries the call, the spoken PIN included, unencrypted
+across your network (a tailnet encrypts it; so does `https`), and a server on a public
+address with no key can be used by anyone who finds it.
 
 ### Your own tools and plugins
 

@@ -71,7 +71,8 @@ That's the job here. Keryx answers the phone, hands your request to a coding age
 machine, and calls you back with the result. The messenger you talk to on the line is
 called Lyra by default, and you can rename it with `keryx config set ASSISTANT_NAME …`.
 
-The conversation runs on the OpenAI Realtime API. Lyra answers small questions itself.
+The conversation runs on the OpenAI Realtime API, or on a voice server of your own. Lyra
+answers small questions itself.
 Anything larger becomes a task for a coding agent and is handed to Keryx, which keeps running after you hang up.
 
 In this example, one task spans three calls. Keryx calls back once so that Lyra can ask you
@@ -89,7 +90,14 @@ Tasks run on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or
 Keryx is most extensively tested with Claude Code on a subscription. Codex is supported,
 but it may not have every feature. `keryx setup` asks which agent to use by default. If you
 enable both, you can say "have Codex do it" on a call.
-[docs/agents.md](docs/agents.md) compares the two.
+[docs/agents.md](docs/agents.md) compares them.
+
+### Local models
+
+The work and the voice can both run on your own hardware. `keryx setup` shows what your
+machine can hold, recommends an open model that fits, downloads it, and runs it, with a local
+voice beside it if you want one. A server elsewhere on your network works too.
+[docs/local-models.md](docs/local-models.md) covers what is tested and what differs.
 
 ## Quickstart
 
@@ -98,8 +106,8 @@ enable both, you can say "have Codex do it" on a call.
 - Linux or macOS, on a machine that stays on, such as a desktop or home server where your
   projects live. Keryx can't answer calls, keep working, or call you back while it sleeps.
 - Python 3.12 and [uv](https://docs.astral.sh/uv/).
-- An OpenAI API key with Realtime access.
-- Claude Code or Codex.
+- An OpenAI API key with Realtime access, or a GPU for a local voice.
+- Claude Code or Codex, or a GPU for a local model.
 - A Twilio phone number.
 - A tunnel that gives Twilio a public address: Cloudflare Tunnel or ngrok.
 
@@ -131,6 +139,7 @@ each step in detail.
   where files live, and costs
 - [Configuration reference](docs/configuration.md): every setting
 - [Coding agents](docs/agents.md): signing in, installing only one, and what each can do
+- [Local models](docs/local-models.md): the voice and the work on your own hardware
 - [Voice tools](docs/tools.md): what the voice model can do, and how to add a tool
 - [Approval bridge](https://github.com/wak31415/keryx/wiki/The-Approval-Bridge): answer
   Claude Code prompts on your screen by phone

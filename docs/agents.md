@@ -1,11 +1,15 @@
-# Coding agents: Claude Code and Codex
+# Coding agents: Claude Code, Codex, and a model of your own
 
-Keryx does the talking; a coding agent on your machine does the work. Two are supported,
+Keryx does the talking; a coding agent on your machine does the work. Three are supported,
 and a task runs on whichever one it was handed to for its whole life:
 
 - **Claude Code** (`claude`), driven through the Claude Agent SDK. The default.
 - **Codex** (`codex`), driven through OpenAI's `openai-codex` Python SDK, which runs the
   `codex` CLI it bundles as an app-server.
+- **The local model** (`local`): an open model on your own hardware or server, run inside
+  Claude Code or Codex — whichever its server's API suits — pointed at `LOCAL_AGENT_BASE_URL`.
+  [local-models.md](local-models.md) is the whole of it; the column below says how it
+  compares.
 
 Each agent is an optional extra of the same name — `claude`, `codex`, or `all` — and each
 SDK carries its own CLI, so there is nothing else to install. They are large: a complete
@@ -152,6 +156,14 @@ Two more that are true of both, and worth knowing:
   `extra_args={"replay-user-messages": None}` and see whether it echoes a queued message
   when it takes it; if so, the adapter can read on past a result while a steer is
   unacknowledged.
+
+- **Any agent, through ACP.** The [Agent Client Protocol](https://agentclientprotocol.com)
+  (`agent-client-protocol` on PyPI) is how opencode, pi, goose, OpenHands and Gemini CLI are
+  driven, and would let a local model run in a harness with a much smaller system prompt
+  than Claude Code's or Codex's. It is not built: each of those agents brings its own
+  Node or Bun runtime, the protocol has no turn or budget cap and no steering, and its
+  second version is still a draft. It is the next step if local models do badly inside the
+  two large harnesses.
 
 ## Not easily possible
 

@@ -5,11 +5,16 @@
 Run the work and the voice on your own hardware, so a call and what it starts can stay on
 your machine.
 
-- [ ] A local model as a third agent, next to Claude and Codex, chosen per task
-- [ ] A local voice in place of the Realtime API: one speech-to-speech model, or speech
-      recognition, a language model, and speech synthesis joined together
+- [x] A local model as a third agent, next to Claude and Codex, chosen per task
+- [x] A local voice in place of the Realtime API: speech recognition, a language model, and
+      speech synthesis joined together (Hugging Face's speech-to-speech)
 - [ ] The PIN, the keypad, the call-backs, and interruptions working on the local voice
-- [ ] `keryx setup` and `keryx doctor` set up and check the local models
+      (tool calls, announcements and interruptions work over the phone's audio path; a real
+      call through Twilio is next)
+- [x] `keryx setup` and `keryx doctor` set up and check the local models, and pick and
+      download one that fits the machine
+
+See [local-models.md](local-models.md).
 
 ## v0.3.0: talking to it at a Mac
 

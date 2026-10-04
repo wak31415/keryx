@@ -6,6 +6,25 @@ settings: a removed or renamed setting or command is a major bump.
 
 ## [Unreleased]
 
+### Added
+
+- **Local models.** The work and the voice can run on your own hardware, or on a server you
+  can reach. `keryx setup` has a Local models section that shows what your machine can hold,
+  recommends an open model that fits, downloads it from Hugging Face, and runs it under
+  llama.cpp (or Ollama), with a local voice beside it if you want one. `keryx models
+  list|pull|serve` does the same from the command line. See
+  [docs/local-models.md](docs/local-models.md).
+- **A third agent, `local`**: your model, run inside Claude Code or Codex
+  (`LOCAL_AGENT_BASE_URL`, `LOCAL_AGENT_MODEL`, `LOCAL_AGENT_API`). Your Anthropic and OpenAI
+  credentials are never sent to it.
+- **A voice server of your own** (`VOICE_BASE_URL`): any server that speaks the Realtime
+  protocol, such as Hugging Face's speech-to-speech. Keryx converts the phone's audio for it.
+
+### Changed
+
+- `OPENAI_API_KEY` is needed only for OpenAI's voice. With a voice server of your own it is
+  optional, and gives the assistant its web search.
+
 ## [0.1.0] - 2026-09-30
 
 The first public release. You call a phone number and talk to your voice assistant, Lyra
