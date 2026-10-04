@@ -58,7 +58,7 @@ def test_a_later_walk_ticks_only_what_is_on(make_ctx):
 
 
 def test_email_needs_the_claude_extra(make_ctx, monkeypatch):
-    monkeypatch.setattr(registry, "installed", lambda agent: agent != "claude")
+    monkeypatch.setattr(registry, "installed", lambda agent, settings=None: agent != "claude")
     ctx = make_ctx([("Which plugins", [])])
 
     section.run_section(ctx)

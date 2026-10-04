@@ -159,10 +159,16 @@ decision is answer-it-myself (small facts go through its `web_search` tool, back
 Responses API) versus dispatch. Do not reintroduce kinds to express "this one is
 read-only" — the phone PIN gates every dispatch instead.
 
-## Two coding agents, one of them per task
+## Two harnesses, three agent names, one of them per task
 
-`AGENT_BACKEND` (Claude or Codex) runs what nobody named an agent for; `AGENTS_ENABLED` is
-what the voice may name. Five rulings:
+`AGENT_BACKEND` (`claude`, `codex` or `local`) runs what nobody named an agent for;
+`AGENTS_ENABLED` is what the voice may name. `local` is a model on a server of the owner's
+own, run *inside* one of the two harnesses — Claude Code for a server that speaks
+Anthropic's Messages API, Codex for one that speaks the Responses API (`LOCAL_AGENT_API`) —
+by pointing it at `LOCAL_AGENT_BASE_URL` (`ClaudeAgentRunner`/`CodexAgentRunner` with an
+`endpoint`). Its `BackendSpec.harness` says which, and `registry.installed`, `cli_path`,
+`install_command` and `instructions_file` ask the harness. It has no sign-in: `AuthMode.ENDPOINT`
+is ready once it has an address. Six rulings:
 
 - **A task keeps its agent for life.** `Task.agent` is fixed at dispatch, and every resume
   opens on it, never on today's default: a session id belongs to the agent that issued it.
@@ -187,6 +193,14 @@ what the voice may name. Five rulings:
   starts a turn nobody reads, and the manager re-runs instead. Only a refusal is re-queued:
   any other steer failure may have landed. The per-task lock in the manager serializes
   taking a follow-up in with closing the row out; keep it.
+- **A local server is never handed the owner's credentials.** Claude Code gets
+  `ANTHROPIC_BASE_URL` and the local key (or `PLACEHOLDER_BEARER`) as `ANTHROPIC_AUTH_TOKEN`,
+  with `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` blanked and every model family name
+  set to the local model (`claude.local_env`; a test is named after it). Codex gets the server
+  as the thread's `keryx_local` model provider, the key only as `KERYX_LOCAL_API_KEY` in the
+  child's environment, and a `CODEX_HOME` of its own (`data_dir/codex-local`). The dollar cap
+  and the cost are dropped for it, since the SDK would price local tokens at Anthropic's
+  rates. Never Codex's `--oss`, which ignores a remote base URL.
 - **Prompts say "Claude", and code names the agent.** Templates are live under whatever build
   is running, which blanks a placeholder it does not know, so the voice prompt's own wording
   is rewritten to the default agent's name in `prompts._name_the_agent` rather than templated.

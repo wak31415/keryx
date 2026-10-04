@@ -294,7 +294,9 @@ def test_auth_status_json_lists_every_sign_in(home):
     result = run("auth", "status", "--json")
 
     report = json.loads(result.output)
-    assert set(report) == {"openai", "claude", "codex", "gmail", "google-workspace", "twilio"}
+    assert set(report) == {
+        "openai", "claude", "codex", "local", "gmail", "google-workspace", "twilio"
+    }
     assert report["openai"]["state"] == "missing"
     assert report["gmail"]["state"] == "missing"
     assert report["codex"]["enabled"] is False
@@ -340,7 +342,7 @@ def test_auth_login_gmail_without_a_client_says_how_to_get_one(home):
 
 
 def test_auth_login_of_an_agent_that_is_not_installed_says_how(home, monkeypatch):
-    monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: False)
+    monkeypatch.setattr("keryx.agents.registry.installed", lambda agent, settings=None: False)
 
     result = run("auth", "login", "codex")
 

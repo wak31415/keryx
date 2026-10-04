@@ -37,7 +37,11 @@ def sign_in(monkeypatch, **logins: bool) -> dict[str, bool]:
 
 def not_installed(monkeypatch, name):
     original = registry.installed
-    monkeypatch.setattr(registry, "installed", lambda agent: agent != name and original(agent))
+    monkeypatch.setattr(
+        registry,
+        "installed",
+        lambda agent, settings=None: agent != name and original(agent, settings),
+    )
 
 
 # --- the section ----------------------------------------------------------------------
@@ -156,7 +160,7 @@ def test_an_agent_that_is_not_installed_cannot_be_picked_and_says_how(make_ctx, 
 
 
 def test_no_agent_installed_at_all_stops_with_the_install_command(make_ctx, monkeypatch):
-    monkeypatch.setattr(registry, "installed", lambda agent: False)
+    monkeypatch.setattr(registry, "installed", lambda agent, settings=None: False)
     ctx = make_ctx([])
 
     agents.run_section(ctx)

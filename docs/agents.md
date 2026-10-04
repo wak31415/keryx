@@ -85,30 +85,30 @@ proved with a stand-in server rather than Slack or Google themselves. Anything t
 checked is marked, and listed under "possible".
 
 <!-- agents:start -->
-| Capability | claude | codex |
-|---|:---:|:---:|
-| Dispatch by voice, and name the agent out loud | ✅ | ✅ |
-| Follow-ups resume the same session | ✅ | ✅ `thread_resume` |
-| A follow-up reaches a task while it is still running | re-runs after the turn | ✅ into the running turn |
-| Cancel stops the work | ✅ | ✅ `turn/interrupt`, then the app-server is stopped |
-| Progress lines in `DATA_DIR/tasks/<id>.log` | ✅ | ✅ |
-| `SPOKEN_SUMMARY:` / `RESTART_REQUIRED:` | ✅ | ✅ |
-| Project working directory and briefs | ✅ | ✅ |
-| The per-call memory update | ✅ | ✅ when it is the default |
-| API key and stored subscription login | ✅ | ✅ |
-| Headless subscription token | ✅ | 🟡 read from the environment; no real token run yet |
-| Choosing the model by name | ✅ opus, sonnet, fable, haiku | ✅ astra, sol, luna, terra |
-| Wall-clock cap (`SUBAGENT_TIMEOUT_S`) | ✅ | ✅ |
-| Turn cap and dollar cap | ✅ `SUBAGENT_MAX_TURNS`, `SUBAGENT_MAX_BUDGET_USD` | — |
-| Tokens recorded on the task (`keryx tasks show`, per project in `keryx tasks usage`) | ✅ | ✅ |
-| Dollar cost recorded on the task | ✅ | — a plan call has no price |
-| Slack, through the server the `send_to_slack` plugin names (`mcp_server`) | ✅ | ✅ handed over from `~/.claude.json` |
-| Gmail and Calendar | ✅ claude.ai connectors | ✅ with `GOOGLE_WORKSPACE_MCP=true` |
-| Its own instructions file | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` |
-| Its own skills, listed to the voice model | `SKILLS_DIR` | `~/.codex/skills` |
-| Nothing to install beyond `uv sync` (extra `claude` / `codex`) | ✅ | ✅ bundled CLI (~350 MB) |
-| `doctor`, `keryx setup`, `keryx auth`, `--demo` | ✅ | ✅ |
-| Approval bridge for your on-screen sessions | ✅ | — |
+| Capability | claude | codex | local |
+|---|:---:|:---:|:---:|
+| Dispatch by voice, and name the agent out loud | ✅ | ✅ | ✅ "the local model" |
+| Follow-ups resume the same session | ✅ | ✅ `thread_resume` | ✅ as its harness |
+| A follow-up reaches a task while it is still running | re-runs after the turn | ✅ into the running turn | as its harness |
+| Cancel stops the work | ✅ | ✅ `turn/interrupt`, then the app-server is stopped | ✅ |
+| Progress lines in `DATA_DIR/tasks/<id>.log` | ✅ | ✅ | ✅ |
+| `SPOKEN_SUMMARY:` / `RESTART_REQUIRED:` | ✅ | ✅ | 🟡 as well as the model follows the instruction |
+| Project working directory and briefs | ✅ | ✅ | ✅ |
+| The per-call memory update | ✅ | ✅ when it is the default | ✅ when it is the default, and then it stays on your machine |
+| API key and stored subscription login | ✅ | ✅ | — its server's own optional key (`LOCAL_AGENT_API_KEY`) |
+| Headless subscription token | ✅ | 🟡 read from the environment; no real token run yet | — |
+| Choosing the model by name | ✅ opus, sonnet, fable, haiku | ✅ astra, sol, luna, terra | — the one `LOCAL_AGENT_MODEL` names |
+| Wall-clock cap (`SUBAGENT_TIMEOUT_S`) | ✅ | ✅ | ✅ |
+| Turn cap and dollar cap | ✅ `SUBAGENT_MAX_TURNS`, `SUBAGENT_MAX_BUDGET_USD` | — | turn cap in Claude Code; no dollar cap |
+| Tokens recorded on the task (`keryx tasks show`, per project in `keryx tasks usage`) | ✅ | ✅ | ✅ as the server reports them |
+| Dollar cost recorded on the task | ✅ | — a plan call has no price | — a local model has none |
+| Slack, through the server the `send_to_slack` plugin names (`mcp_server`) | ✅ | ✅ handed over from `~/.claude.json` | as its harness |
+| Gmail and Calendar | ✅ claude.ai connectors | ✅ with `GOOGLE_WORKSPACE_MCP=true` | with `GOOGLE_WORKSPACE_MCP=true` |
+| Its own instructions file | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` | its harness's |
+| Its own skills, listed to the voice model | `SKILLS_DIR` | `~/.codex/skills` | its harness's |
+| Nothing to install beyond `uv sync` (extra `claude` / `codex`) | ✅ | ✅ bundled CLI (~350 MB) | a model server: `keryx setup` installs one |
+| `doctor`, `keryx setup`, `keryx auth`, `--demo` | ✅ | ✅ | ✅ (no sign-in: it has an address) |
+| Approval bridge for your on-screen sessions | ✅ | — | — |
 <!-- agents:end -->
 
 Two of those are worth knowing before you switch:

@@ -95,8 +95,8 @@ class AgentState:
 def detect(settings: Settings) -> dict[str, AgentState]:
     """Every agent Keryx knows, as this machine has it right now."""
     return {
-        name: AgentState(name, spec.find_cli(), auth_status(name, settings))
-        for name, spec in BACKENDS.items()
+        name: AgentState(name, registry.cli_path(name, settings), auth_status(name, settings))
+        for name in BACKENDS
     }
 
 
@@ -171,6 +171,11 @@ def parity_notes(settings: Settings, enabled: Sequence[str]) -> list[str]:
             "Codex has no claude.ai connectors, so its tasks have no Gmail or Calendar until "
             "you connect Google for agents (the Google section below)."
         )
+    if "local" in enabled and not settings.google_workspace_mcp:
+        notes.append(
+            "The local model has no claude.ai connectors either: connect Google for agents "
+            "(the Google section below) for Gmail and Calendar in its tasks."
+        )
     if "codex" in enabled:
         notes.append(
             "The approval bridge (`keryx approvals`) covers Claude Code sessions on your "
@@ -191,7 +196,7 @@ def run_section(ctx: SetupContext) -> None:
     )
     states = detect(ctx.settings)
     ui.table(("Agent", "Installed", "Signed in"), [_row(state) for state in states.values()])
-    available = [name for name, state in states.items() if state.installed]
+    available = [name for name, state in states.items() if not _unavailable(name, state)]
     if not available:
         ui.error("No coding agent is installed.")
         ui.note(f"Install one with `{install_command('claude')}` (or codex), then run setup again.")
@@ -213,6 +218,8 @@ def run_section(ctx: SetupContext) -> None:
 
 def _row(state: AgentState) -> tuple[str, str, str]:
     spec = BACKENDS[state.name]
+    if spec.harness is not None and not state.auth.ready:
+        return spec.label, "—", "no server yet: the Local models section"
     if not state.installed:
         return spec.label, f"no — {install_command(state.name)}", ""
     signed = state.auth.detail if state.auth.mode is not AuthMode.NONE else "not yet"
@@ -221,7 +228,7 @@ def _row(state: AgentState) -> tuple[str, str, str]:
 
 def _choose_agents(ctx: SetupContext, states: dict[str, AgentState]) -> list[str]:
     settings = ctx.settings
-    current = [name for name in settings.enabled_agents if states[name].installed]
+    current = [name for name in settings.enabled_agents if not _unavailable(name, states[name])]
     ready = [name for name, state in states.items() if state.ready]
     preset = current or ready or [next(name for name, s in states.items() if s.installed)]
     choices = [
@@ -230,7 +237,7 @@ def _choose_agents(ctx: SetupContext, states: dict[str, AgentState]) -> list[str
             BACKENDS[name].label,
             hint="ready" if state.ready else "",
             checked=name in preset,
-            disabled=None if state.installed else f"not installed: {install_command(name)}",
+            disabled=_unavailable(name, state),
         )
         for name, state in states.items()
     ]
@@ -239,6 +246,15 @@ def _choose_agents(ctx: SetupContext, states: dict[str, AgentState]) -> list[str
         if picked:
             return picked
         ctx.ui.warn("Pick at least one.")
+
+
+def _unavailable(name: str, state: AgentState) -> str | None:
+    """Why `name` cannot be picked, or None: not installed, or (local) no server yet."""
+    if not state.installed:
+        return f"not installed: {install_command(name)}"
+    if BACKENDS[name].harness is not None and not state.auth.ready:
+        return "set up its server in the Local models section first"
+    return None
 
 
 def _choose_default(ctx: SetupContext, enabled: list[str]) -> str:
@@ -255,6 +271,13 @@ def _choose_default(ctx: SetupContext, enabled: list[str]) -> str:
 def _sign_in(ctx: SetupContext, state: AgentState) -> AgentState:
     """Leave an agent that can already run alone; otherwise ask how it should pay."""
     spec = BACKENDS[state.name]
+    if spec.harness is not None:
+        # An address, not a sign-in: the Local models section sets it.
+        if state.auth.ready:
+            ctx.ui.success(f"{spec.label}: {state.auth.detail}")
+        else:
+            ctx.ui.error(f"{spec.label} has no server — the Local models section sets one")
+        return state
     if state.auth.ready and not ctx.review:
         ctx.ui.success(f"{spec.label}: {state.auth.detail}")
         return state

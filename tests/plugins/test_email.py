@@ -100,7 +100,7 @@ def test_not_signed_in_the_file_is_refused_with_the_command(settings):
 
 def test_signed_in_without_the_claude_cli_it_says_how_to_get_it(settings, monkeypatch):
     token_path(settings).write_text("{}")
-    monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: False)
+    monkeypatch.setattr("keryx.agents.registry.installed", lambda agent, settings=None: False)
     turn_on(settings, NAME)
 
     assert "the claude CLI is not installed" in refusal(settings, NAME)
@@ -108,7 +108,7 @@ def test_signed_in_without_the_claude_cli_it_says_how_to_get_it(settings, monkey
 
 def test_signed_in_with_the_cli_it_loads_with_its_model_and_effort(settings, monkeypatch):
     token_path(settings).write_text("{}")
-    monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: True)
+    monkeypatch.setattr("keryx.agents.registry.installed", lambda agent, settings=None: True)
     from keryx.agents.registry import BACKENDS
 
     spec = dataclasses.replace(BACKENDS["claude"], find_cli=lambda: "/bin/claude")

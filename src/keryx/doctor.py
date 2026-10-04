@@ -29,7 +29,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from keryx import plugins
-from keryx.agents.registry import BACKENDS, auth_status, installed
+from keryx.agents.registry import (
+    BACKENDS,
+    auth_status,
+    cli_path,
+    install_command,
+    installed,
+)
+from keryx.agents.registry import harness as agent_harness
 from keryx.config import (
     DATA_DIR_MODE,
     DATA_FILE_MODE,
@@ -242,40 +249,46 @@ def _agent_checks(settings: Settings) -> list[Check]:
     Hard for the default agent — every task nobody named an agent for goes to it — and
     soft for the rest, which only narrow what can be asked for by name. The stored-login
     probe is a heuristic (an odd Keychain setup could hide a working Claude login), and
-    `keryx auth status --smoke` is the test that actually runs one.
+    `keryx auth status --smoke` is the test that actually runs one. The `local` agent's
+    CLI is its harness's, and its "credential" is the address of its server.
     """
     checks = []
     for name in settings.enabled_agents:
         spec = BACKENDS[name]
         severity: Severity = "hard" if name == settings.agent_backend else "soft"
         label = f"{spec.label} agent" + (" (default)" if name == settings.agent_backend else "")
-        cli = spec.find_cli()
-        if not installed(name):
+        section = "local" if spec.harness is not None else "agents"
+        if not installed(name, settings):
+            hint = install_command(name, settings) if spec.harness else spec.install_hint
             checks.append(
                 Check(
                     label,
                     False,
-                    f"not installed — {spec.install_hint}",
+                    f"not installed — {hint}",
                     severity=severity,
-                    section="agents",
+                    section=section,
                     unset=True,
                 )
             )
             continue
+        cli = cli_path(name, settings)
+        harness = BACKENDS[agent_harness(name, settings)]
         if cli is None:
-            detail = f"{name} CLI not found — {spec.install_hint}"
-            checks.append(Check(label, False, detail, severity=severity, section="agents"))
+            detail = f"{harness.name} CLI not found — {harness.install_hint}"
+            checks.append(Check(label, False, detail, severity=severity, section=section))
             continue
         status = auth_status(name, settings)
-        version = spec.cli_version()
+        version = harness.cli_version()
         where = f"{cli} ({version})" if version else cli
+        if spec.harness is not None:
+            where = f"in {harness.label}"
         checks.append(
             Check(
                 label,
                 status.ready,
                 f"{where}; {status.detail}",
                 severity=severity,
-                section="agents",
+                section=section,
                 unset=not status.ready,
             )
         )
@@ -786,12 +799,15 @@ def _google_check(settings: Settings) -> Check:
     enabled, off means its tasks have no mailbox and no calendar at all.
     """
     if not settings.google_workspace_mcp:
-        if "codex" in settings.enabled_agents:
+        without = [
+            BACKENDS[name].label for name in ("codex", "local") if name in settings.enabled_agents
+        ]
+        if without:
             return Check(
                 "Google for agents",
                 False,
-                "not set up (optional) — Codex tasks have no Gmail or Calendar; `keryx "
-                "setup` connects Google",
+                f"not set up (optional) — {' and '.join(without)} tasks have no Gmail or "
+                "Calendar; `keryx setup` connects Google",
                 severity="soft",
                 section="google",
                 unset=True,

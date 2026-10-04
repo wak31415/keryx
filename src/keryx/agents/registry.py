@@ -8,6 +8,11 @@ nothing else (see docs/agents.md, "Adding a third agent").
 Each agent's SDK is an optional extra of the same name (`uv sync --extra codex`), so an
 agent can be simply not installed; `installed` says so, and such an agent is never ready,
 never offered, and refused as the default.
+
+`local` is the third name and no third harness: a model on a server of the owner's own,
+run inside Claude Code or Codex according to the API that server speaks (`LOCAL_AGENT_API`).
+Its spec names that harness (`harness`), and everything asked of an installation — the
+package, the CLI, the install command, the instructions file — is asked of the harness.
 """
 
 import logging
@@ -16,9 +21,21 @@ from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
 
-from keryx.agents.auth import AuthSource, AuthStatus, resolve_auth
-from keryx.agents.base import AgentRunner, FakeAgentRunner, RunResult
-from keryx.agents.claude import CLAUDE_AUTH, CLAUDE_MODELS, ClaudeAgentRunner, claude_cli
+from keryx.agents.auth import AuthSource, AuthStatus, EndpointAuth, resolve_auth
+from keryx.agents.base import (
+    AgentOpenError,
+    AgentRunner,
+    AgentSession,
+    FakeAgentRunner,
+    RunResult,
+)
+from keryx.agents.claude import (
+    CLAUDE_AUTH,
+    CLAUDE_MODELS,
+    LOCAL_AUTH,
+    ClaudeAgentRunner,
+    claude_cli,
+)
 from keryx.agents.codex import (
     CODEX_AUTH,
     CODEX_MODELS,
@@ -30,6 +47,7 @@ from keryx.agents.codex import (
 from keryx.agents.router import RoutingAgentRunner
 from keryx.config import Settings
 from keryx.config.files import claude_config_dir
+from keryx.tasks.models import Task
 
 log = logging.getLogger("keryx.agents.registry")
 
@@ -68,7 +86,7 @@ class BackendSpec:
     #: The model a task runs on when nobody named one; blank is the agent's own default.
     default_model: Callable[[Settings], str]
     make_runner: Callable[[Settings], AgentRunner]
-    auth: AuthSource
+    auth: AuthSource | EndpointAuth
     #: The agent's CLI, or None when it is not installed.
     find_cli: Callable[[], str | None]
     #: How to install that CLI, for when it is not.
@@ -82,6 +100,32 @@ class BackendSpec:
     headless_login_command: tuple[str, ...]
     #: The CLI's version, for `doctor`, when the agent's package says what it is.
     cli_version: Callable[[], str | None] = lambda: None
+    #: For an agent that runs inside another's harness (`local`): which one, today.
+    harness: Callable[[Settings], str] | None = None
+
+
+#: Which harness drives the local model, by the API its server speaks.
+LOCAL_HARNESS = {"anthropic-messages": "claude", "openai-responses": "codex"}
+
+
+def _local_harness(settings: Settings) -> str:
+    return LOCAL_HARNESS[settings.local_agent_api]
+
+
+class NoLocalServer(AgentRunner):
+    """The `local` agent with no `LOCAL_AGENT_BASE_URL`: every task fails, saying why."""
+
+    async def open(self, task: Task, *, resume: str | None = None) -> AgentSession:
+        raise AgentOpenError(f"the local model has no server — {LOCAL_AUTH.login_hint}")
+
+
+def _local_runner(settings: Settings) -> AgentRunner:
+    """Claude Code or Codex, pointed at `LOCAL_AGENT_BASE_URL`."""
+    endpoint = settings.local_agent_endpoint
+    if endpoint is None:
+        return NoLocalServer()
+    runner = CodexAgentRunner if _local_harness(settings) == "codex" else ClaudeAgentRunner
+    return runner(settings, endpoint=endpoint)
 
 
 BACKENDS: dict[str, BackendSpec] = {
@@ -121,6 +165,25 @@ BACKENDS: dict[str, BackendSpec] = {
         headless_login_command=("codex", "login", "--device-auth"),
         cli_version=codex_cli_version,
     ),
+    "local": BackendSpec(
+        name="local",
+        # Not a package of its own: `installed` asks the harness's (`harness`).
+        package="",
+        label="Local model",
+        spoken_name="the local model",
+        models={},
+        model_hint="the server's own model name",
+        default_model=lambda settings: settings.local_agent_model or "",
+        make_runner=_local_runner,
+        auth=LOCAL_AUTH,
+        find_cli=lambda: None,
+        install_hint="uv sync --extra claude (or --extra codex for a Responses API server)",
+        instructions_file=lambda: claude_config_dir() / "CLAUDE.md",
+        skills_dir=lambda settings: BACKENDS[_local_harness(settings)].skills_dir(settings),
+        login_commands=(),
+        headless_login_command=(),
+        harness=_local_harness,
+    ),
 }
 
 
@@ -151,21 +214,49 @@ def auth_status(agent: str, settings: Settings) -> AuthStatus:
     return resolve_auth(BACKENDS[agent].auth, settings)
 
 
-def installed(agent: str) -> bool:
-    """Is `agent`'s SDK — its extra — installed? Checked without importing it."""
-    return find_spec(BACKENDS[agent].package) is not None
+def harness(agent: str, settings: Settings | None = None) -> str:
+    """The agent whose harness runs `agent`: itself, or for `local` the one its server's API
+    names. Without settings, `local` is asked of the default harness, Claude Code."""
+    spec = BACKENDS[agent]
+    if spec.harness is None:
+        return agent
+    return spec.harness(settings) if settings is not None else LOCAL_HARNESS["anthropic-messages"]
 
 
-def install_command(agent: str) -> str:
-    """What installs `agent`: its extra."""
-    return f"uv sync --extra {agent}"
+def installed(agent: str, settings: Settings | None = None) -> bool:
+    """Is `agent`'s SDK — its extra — installed? Checked without importing it.
+
+    For `local`, its harness's; without settings to say which, either one will do.
+    """
+    spec = BACKENDS[agent]
+    if spec.harness is None:
+        return find_spec(spec.package) is not None
+    if settings is not None:
+        return installed(harness(agent, settings))
+    return any(installed(name) for name in set(LOCAL_HARNESS.values()))
+
+
+def install_command(agent: str, settings: Settings | None = None) -> str:
+    """What installs `agent`: its extra, or its harness's."""
+    return f"uv sync --extra {harness(agent, settings)}"
+
+
+def cli_path(agent: str, settings: Settings | None = None) -> str | None:
+    """The CLI that runs `agent` — its harness's for `local` — or None when it is missing."""
+    return BACKENDS[harness(agent, settings)].find_cli()
+
+
+def instructions_file(agent: str, settings: Settings | None = None) -> Path:
+    """The instructions file `agent`'s subagents read: its harness's."""
+    return BACKENDS[harness(agent, settings)].instructions_file()
 
 
 def is_ready(agent: str, settings: Settings) -> bool:
     """Its SDK and CLI are installed and some credential resolves."""
-    spec = BACKENDS[agent]
     return (
-        installed(agent) and spec.find_cli() is not None and auth_status(agent, settings).ready
+        installed(agent, settings)
+        and cli_path(agent, settings) is not None
+        and auth_status(agent, settings).ready
     )
 
 
@@ -187,7 +278,8 @@ def offered_agents(settings: Settings) -> list[str]:
     return [
         name
         for name in settings.enabled_agents
-        if (name == settings.agent_backend and installed(name)) or is_ready(name, settings)
+        if (name == settings.agent_backend and installed(name, settings))
+        or is_ready(name, settings)
     ]
 
 

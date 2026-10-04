@@ -141,7 +141,7 @@ def every_agent_installed(monkeypatch):
     from keryx.agents import registry
 
     for module in (registry, doctor):
-        monkeypatch.setattr(module, "installed", lambda agent: True)
+        monkeypatch.setattr(module, "installed", lambda agent, settings=None: True)
     for name, spec in list(registry.BACKENDS.items()):
         cli = f"/venv/bin/{name}"
         monkeypatch.setitem(

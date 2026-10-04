@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from keryx.agents.auth import AuthSource, AuthStatus, redact, resolve_auth
+from keryx.agents.auth import AuthSource, AuthStatus, EndpointAuth, redact, resolve_auth
 from keryx.agents.base import (
     AgentOpenError,
     AgentRunner,
@@ -144,7 +144,7 @@ class AgentContext:
         task: Task,
         settings: Settings,
         *,
-        auth: AuthSource,
+        auth: AuthSource | EndpointAuth,
         model: str | None,
         mcp_servers: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> "AgentContext":

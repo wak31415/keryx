@@ -887,3 +887,15 @@ def test_the_issues_paragraph_names_the_default_agent(settings, unwrapped):
     assert "and Codex files it as an issue on your own repository" in unwrapped(
         _rendered(codex)
     )
+
+
+def test_the_local_model_is_named_in_the_prompt_and_capitalized_where_a_sentence_opens():
+    from keryx.prompts import _name_the_agent
+
+    text = "Hand it to Claude. Claude works for a while.\n## What Claude can do\nClaude Code"
+    named = _name_the_agent(text, "the local model")
+
+    assert named == (
+        "Hand it to the local model. The local model works for a while.\n"
+        "## What the local model can do\nClaude Code"
+    )

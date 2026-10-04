@@ -18,6 +18,11 @@ spoken is passed through `redact` first, because a provider's 401 can quote the 
 Nothing here falls back from one agent's key to another's. `OPENAI_API_KEY` is the voice
 model's key, and quietly handing it to Codex would move a subscription user onto per-token
 billing without anybody having asked for that.
+
+The `local` agent is the fourth case, and not a tier: a server of the owner's own may check
+no credential at all, so it is ready once it has an address (`EndpointAuth`, mode
+`ENDPOINT`), and its optional key travels the way its harness wants it — never as either
+vendor's credential, which are blanked for it.
 """
 
 import re
@@ -26,6 +31,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from keryx.config import Settings
+from keryx.endpoints import Endpoint
 
 #: What a provider's error makes of a key it refuses: `sk-bogus*********robe`. Masked, but
 #: still the key's first and last characters, which is more than a spoken error needs.
@@ -39,6 +45,8 @@ class AuthMode(StrEnum):
     API_KEY = "api_key"
     TOKEN = "token"
     SUBSCRIPTION = "subscription"
+    #: A server of the owner's own, at an address, with or without a key of its own.
+    ENDPOINT = "endpoint"
     NONE = "none"
 
 
@@ -59,6 +67,20 @@ class AuthSource:
 
 
 @dataclass(frozen=True)
+class EndpointAuth:
+    """Where the `local` agent's server is: ready with an address, whatever its key."""
+
+    endpoint: Callable[[Settings], Endpoint | None]
+    login_hint: str
+
+
+def endpoint_auth(endpoint: Endpoint, login_hint: str = "") -> EndpointAuth:
+    """An `EndpointAuth` for one server already in hand: what a local runner resolves, so the
+    key it redacts is the key of the server it actually talks to."""
+    return EndpointAuth(endpoint=lambda settings: endpoint, login_hint=login_hint)
+
+
+@dataclass(frozen=True)
 class AuthStatus:
     """The credential a backend will run on, and a sentence saying so."""
 
@@ -73,13 +95,27 @@ class AuthStatus:
         return self.mode is not AuthMode.NONE
 
 
-def resolve_auth(source: AuthSource, settings: Settings, *, probe: bool = True) -> AuthStatus:
+def resolve_auth(
+    source: AuthSource | EndpointAuth, settings: Settings, *, probe: bool = True
+) -> AuthStatus:
     """API key, else headless token, else the stored login, else nothing.
 
     `probe=False` skips looking for the stored login and calls it one: a runner does not
     need to know, because the agent's own CLI finds that login by itself, and a runner
     opens a session per task. `doctor` and `keryx auth status` probe.
+
+    An `EndpointAuth` is its address or nothing; its key, if any, is the status's secret, so
+    everything that redacts a credential redacts it too. It goes in no variable here: the
+    harness that runs the local model decides what it travels under.
     """
+    if isinstance(source, EndpointAuth):
+        endpoint = source.endpoint(settings)
+        if endpoint is None:
+            return AuthStatus(AuthMode.NONE, detail=f"no server set — {source.login_hint}")
+        keyed = "with a key" if endpoint.api_key else "no key"
+        return AuthStatus(
+            AuthMode.ENDPOINT, secret=endpoint.api_key, detail=f"{endpoint.base_url} ({keyed})"
+        )
     key = getattr(settings, source.api_key_setting)
     if key:
         return AuthStatus(

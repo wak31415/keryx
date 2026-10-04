@@ -1,22 +1,30 @@
 """Tests for the backend registry: model names and the runner `serve` builds."""
 
+import asyncio
 import dataclasses
 import subprocess
 import sys
 
 import pytest
 
-from keryx.agents.base import FakeAgentRunner
+from keryx.agents.auth import AuthMode
+from keryx.agents.base import AgentOpenError, FakeAgentRunner
 from keryx.agents.claude import ClaudeAgentRunner
 from keryx.agents.codex import CodexAgentRunner
 from keryx.agents.registry import (
     BACKENDS,
     DEMO_DELAY_S,
     DEMO_SUMMARY,
+    NoLocalServer,
     agent_for_model,
     auth_status,
     build_agent_runner,
+    cli_path,
+    harness,
+    install_command,
     installed,
+    instructions_file,
+    is_ready,
     offered_agents,
     ready_backends,
     resolve_model,
@@ -239,3 +247,84 @@ print("ok")
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "ok"
+
+
+# --- the local model -----------------------------------------------------------------
+
+
+def with_local(settings, *, api="anthropic-messages", url="http://127.0.0.1:8080", model="qwen"):
+    settings.local_agent_base_url = url
+    settings.local_agent_model = model
+    settings.local_agent_api = api
+    settings.agents_enabled = ["claude", "local"]
+    return settings
+
+
+@pytest.mark.parametrize(
+    ("api", "harness_name", "runner_type"),
+    [
+        ("anthropic-messages", "claude", ClaudeAgentRunner),
+        ("openai-responses", "codex", CodexAgentRunner),
+    ],
+)
+def test_the_local_model_runs_in_the_harness_its_api_names(
+    settings, api, harness_name, runner_type
+):
+    with_local(settings, api=api)
+
+    runner = build_agent_runner(settings).runners["local"]
+
+    assert harness("local", settings) == harness_name
+    assert isinstance(runner, runner_type) and runner.name == "local"
+    assert runner._endpoint.base_url == "http://127.0.0.1:8080/v1"
+    assert install_command("local", settings) == f"uv sync --extra {harness_name}"
+
+
+def test_a_local_model_with_no_server_fails_its_tasks_saying_why(settings):
+    settings.agents_enabled = ["claude", "local"]
+
+    runner = build_agent_runner(settings).runners["local"]
+
+    assert isinstance(runner, NoLocalServer)
+    with pytest.raises(AgentOpenError, match="LOCAL_AGENT_BASE_URL"):
+        asyncio.run(runner.open(Task(id=1, kind=TaskKind.AGENT, description="x")))
+
+
+def test_the_local_model_is_ready_once_it_has_a_server(settings, every_agent_installed):
+    settings.agents_enabled = ["claude", "local"]
+    assert not is_ready("local", settings)
+    assert not auth_status("local", settings).ready
+
+    with_local(settings)
+
+    status = auth_status("local", settings)
+    assert (status.mode, status.secret) == (AuthMode.ENDPOINT, None)
+    assert "127.0.0.1:8080" in status.detail
+    assert is_ready("local", settings)
+    assert "local" in offered_agents(settings)
+
+
+def test_the_local_models_installation_is_its_harnesses(settings, monkeypatch):
+    with_local(settings, api="openai-responses")
+    uninstall(monkeypatch, "codex")
+
+    assert not installed("local", settings)
+    assert installed("local")  # without settings: either harness will do
+    assert cli_path("local", settings) is None
+
+
+def test_the_local_model_has_no_spoken_aliases_and_defaults_to_its_model(settings):
+    with_local(settings, model="gpt-oss-20b")
+
+    assert BACKENDS["local"].models == {}
+    assert resolve_model("local", None, settings) == "gpt-oss-20b"
+    assert resolve_model("local", "llama3:8b", settings) == "llama3:8b"
+    assert agent_for_model("gpt-oss-20b") is None
+
+
+def test_the_local_models_files_are_its_harnesses(settings, monkeypatch, tmp_path):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    with_local(settings, api="openai-responses")
+
+    assert instructions_file("local", settings) == tmp_path / "codex" / "AGENTS.md"
+    assert BACKENDS["local"].skills_dir(settings) == tmp_path / "codex" / "skills"

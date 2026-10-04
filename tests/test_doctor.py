@@ -215,7 +215,7 @@ def test_the_agents_cli_is_named_when_it_is_there(healthy, monkeypatch):
 
 
 def test_an_agent_that_is_not_installed_says_which_extra_installs_it(healthy, monkeypatch):
-    monkeypatch.setattr("keryx.doctor.installed", lambda agent: agent != "codex")
+    monkeypatch.setattr("keryx.doctor.installed", lambda agent, settings=None: agent != "codex")
     settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
 
     check = by_name(run_doctor_checks(settings))["Codex agent"]

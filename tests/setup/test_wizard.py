@@ -252,7 +252,7 @@ def test_half_a_phone_counts_against_the_summary(make_ctx, claude_signed_in):
 
 
 def test_a_hard_failure_left_at_the_end_is_exit_1(make_ctx, claude_signed_in, monkeypatch):
-    monkeypatch.setattr(registry, "installed", lambda agent: False)
+    monkeypatch.setattr(registry, "installed", lambda agent, settings=None: False)
     ctx = make_ctx([("What next?", "exit")])
     assert run_wizard(ctx) == 0  # exiting at once changes nothing and fails nothing
 

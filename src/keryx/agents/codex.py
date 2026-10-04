@@ -34,6 +34,14 @@ tier is that variable and nothing persisted; the stored login is the owner's own
 `~/.codex`. The SDK hands the app-server a copy of Keryx's whole environment, so every
 credential variable not chosen is overridden with an empty value, which it treats as unset.
 
+Given an `Endpoint`, the same runner is the `local` agent: Codex on a server of the owner's
+own that speaks the Responses API, declared per thread as the `keryx_local` model provider
+(`local_provider_config`; the pinned app-server honours it from `thread/start`, verified
+2026-10-04). Its key, or the placeholder, goes in the child's environment as
+`KERYX_LOCAL_API_KEY` and nowhere else; the three vendor variables are blanked as always;
+and it runs in a `CODEX_HOME` of its own (`data_dir/codex-local`), so the owner's ChatGPT
+login is never involved. Never `--oss`, which ignores a remote base URL.
+
 Codex has no `max_budget_usd` and no `max_turns`; the wall-clock cap every backend shares
 (`SUBAGENT_TIMEOUT_S`, applied by the task manager) is what bounds it. It reports tokens,
 not dollars, so `RunResult.cost_usd` stays None: on the ChatGPT plan a call has no price.
@@ -54,7 +62,13 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Protocol
 
-from keryx.agents.auth import AuthMode, AuthSource, AuthStatus, redact
+from keryx.agents.auth import (
+    AuthMode,
+    AuthSource,
+    AuthStatus,
+    endpoint_auth,
+    redact,
+)
 from keryx.agents.base import SteerUnavailable, TokenUsage, google_mcp_server_config
 from keryx.agents.session import (
     AdapterRunner,
@@ -69,6 +83,7 @@ from keryx.agents.session import (
 )
 from keryx.config import Settings, secure_dir, secure_file
 from keryx.config.files import claude_user_config
+from keryx.endpoints import Endpoint
 from keryx.integrations.slack import mcp_server_config
 from keryx.tasks.models import Task
 
@@ -96,6 +111,12 @@ CREDENTIAL_VARIABLES = ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")
 #: hooks are the owner's automation, with side effects of their own.
 SHARED_HOME_ENTRIES = ("config.toml", "AGENTS.md", "skills")
 _LOGIN_STAMP = ".keryx-login-sha256"
+#: The model provider a local server is declared as, and the variable its key travels in.
+LOCAL_PROVIDER = "keryx_local"
+LOCAL_KEY_ENV = "KERYX_LOCAL_API_KEY"
+#: What a local agent's own `CODEX_HOME` borrows from the owner's: the instructions and the
+#: skills, not `config.toml`, whose provider and profile settings would fight the thread's.
+LOCAL_HOME_ENTRIES = ("AGENTS.md", "skills")
 #: One login at a time: two tasks opening at once must not both log in to the same home.
 _LOGIN_LOCK = threading.Lock()
 #: An MCP server name is kept to a bare word, the only kind Codex config can always spell.
@@ -177,6 +198,34 @@ def private_codex_home(settings: Settings) -> Path:
     return settings.data_dir / "codex"
 
 
+def local_codex_home(settings: Settings, *, owner_home: Path | None = None) -> Path:
+    """The `local` agent's `CODEX_HOME`: owner-only, with their instructions and skills."""
+    home = secure_dir(settings.data_dir / "codex-local")
+    _link_shared(home, owner_home or codex_home(), LOCAL_HOME_ENTRIES)
+    return home
+
+
+def _link_shared(home: Path, owner_home: Path, names: Iterable[str]) -> None:
+    for name in names:
+        link, target = home / name, owner_home / name
+        if target.exists() and not link.exists() and not link.is_symlink():
+            link.symlink_to(target)
+
+
+def local_provider_config(endpoint: Endpoint) -> dict[str, Any]:
+    """The thread's `model_providers` entry for a server that speaks the Responses API."""
+    return {
+        "model_providers": {
+            LOCAL_PROVIDER: {
+                "name": "Keryx local",
+                "base_url": endpoint.base_url,
+                "env_key": LOCAL_KEY_ENV,
+                "wire_api": "responses",
+            }
+        }
+    }
+
+
 def ensure_login_home(
     settings: Settings,
     key: str,
@@ -193,11 +242,7 @@ def ensure_login_home(
     """
     with _LOGIN_LOCK:
         home = secure_dir(private_codex_home(settings))
-        owner_home = owner_home or codex_home()
-        for name in SHARED_HOME_ENTRIES:
-            link, target = home / name, owner_home / name
-            if target.exists() and not link.exists() and not link.is_symlink():
-                link.symlink_to(target)
+        _link_shared(home, owner_home or codex_home(), SHARED_HOME_ENTRIES)
 
         stamp, auth = home / _LOGIN_STAMP, home / "auth.json"
         digest = hashlib.sha256(key.encode()).hexdigest()
@@ -514,7 +559,10 @@ class CodexAdapter:
 
 
 class CodexAgentRunner(AdapterRunner):
-    """Opens Codex conversations (`client_factory` and `login` are injected in tests)."""
+    """Opens Codex conversations (`client_factory` and `login` are injected in tests).
+
+    With an `endpoint` it is the `local` agent (see the module docstring).
+    """
 
     name = "codex"
 
@@ -522,33 +570,44 @@ class CodexAgentRunner(AdapterRunner):
         self,
         settings: Settings,
         *,
+        endpoint: Endpoint | None = None,
         client_factory: CodexFactory = open_codex,
         login: Callable[..., Any] = subprocess.run,
     ) -> None:
         super().__init__(settings)
+        self._endpoint = endpoint
+        if endpoint is not None:
+            self.name = "local"
         self._client_factory = client_factory
         self._login = login
 
     def context(self, task: Task) -> AgentContext:
+        local = self._endpoint
         return AgentContext.build(
             task,
             self.settings,
-            auth=CODEX_AUTH,
-            model=task.model or self.settings.codex_model,
+            auth=CODEX_AUTH if local is None else endpoint_auth(local),
+            model=task.model or (self.settings.codex_model if local is None else local.model),
             mcp_servers=mcp_servers(self.settings),
         )
 
     async def connect(self, context: AgentContext, resume: str | None) -> CodexAdapter:
         """Start an app-server and a thread on it — or resume one — for `context`."""
         config, server_env = mcp_config(context.mcp_servers)
-        env = {**server_env, **await self._credential_env(context.auth)}
-        client = self._client_factory(env, context.cwd)
-        options = {
+        options: dict[str, Any] = {
             "cwd": str(context.cwd),
             "developer_instructions": context.instructions,
             "model": context.model,
-            "config": config,
         }
+        if self._endpoint is None:
+            credentials = await self._credential_env(context.auth)
+        else:
+            credentials = self._local_env(self._endpoint)
+            config = {**(config or {}), **local_provider_config(self._endpoint)}
+            options["model_provider"] = LOCAL_PROVIDER
+        options["config"] = config
+        env = {**server_env, **credentials}
+        client = self._client_factory(env, context.cwd)
         try:
             if resume:
                 thread = await client.thread_resume(resume, **options)
@@ -559,6 +618,14 @@ class CodexAgentRunner(AdapterRunner):
                 await client.close()
             raise
         return CodexAdapter(client, thread, secrets=context.secrets)
+
+    def _local_env(self, endpoint: Endpoint) -> dict[str, str]:
+        """The local server's key, its own home, and every vendor credential empty."""
+        return {
+            **dict.fromkeys(CREDENTIAL_VARIABLES, ""),
+            LOCAL_KEY_ENV: endpoint.bearer,
+            "CODEX_HOME": str(local_codex_home(self.settings)),
+        }
 
     async def _credential_env(self, auth: AuthStatus) -> dict[str, str]:
         """The credential variables for the app-server: the chosen one, the rest empty."""

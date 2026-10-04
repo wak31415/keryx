@@ -40,7 +40,7 @@ def test_smoke_runs_one_task_on_each_ready_enabled_agent(settings, signed_in):
 
 
 def test_an_agent_that_is_not_installed_says_how(settings, monkeypatch):
-    monkeypatch.setattr(registry, "installed", lambda agent: False)
+    monkeypatch.setattr(registry, "installed", lambda agent, settings=None: False)
 
     report = auth.status(settings, ConfigStore())
 

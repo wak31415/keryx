@@ -22,6 +22,7 @@ from keryx import plugins
 from keryx.agents.base import AgentOpenError, RunResult, SteerUnavailable, TokenUsage
 from keryx.agents.claude import (
     SUBAGENT_MAX_BUFFER_BYTES,
+    ClaudeAdapter,
     ClaudeAgentRunner,
     ClaudeAgentSession,
     build_options,
@@ -29,6 +30,7 @@ from keryx.agents.claude import (
     resolve_model,
 )
 from keryx.agents.session import AdapterSession
+from keryx.endpoints import PLACEHOLDER_BEARER, Endpoint
 from keryx.plugins.slack import slack_route
 from keryx.tasks.models import Task, TaskKind
 
@@ -648,3 +650,82 @@ def test_a_stored_login_follows_claude_config_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(claude_module.subprocess, "run", lambda *a, **k: 1 / 0)
 
     assert claude_module.claude_stored_login() is True
+
+
+# ------------------------------------------------------------------ the local model
+
+
+LOCAL = Endpoint.parse("http://127.0.0.1:8080", api_key="lk-local-key", model="qwen3-coder")
+
+
+def local_options(settings, task=None, endpoint=LOCAL) -> list:
+    created: list[FakeSdkClient] = []
+
+    def factory(options):
+        created.append(FakeSdkClient(options))
+        return created[-1]
+
+    return created, ClaudeAgentRunner(settings, endpoint=endpoint, client_factory=factory)
+
+
+async def test_the_owners_anthropic_credentials_never_reach_a_local_server(settings):
+    """Both of them blanked, the local key as the Bearer, and every family name the CLI
+    could ask for — background calls, its own subagents — the local model."""
+    settings.anthropic_api_key = "sk-ant-owner"
+    settings.claude_code_oauth_token = "sk-ant-oat-owner"
+    created, runner = local_options(settings)
+
+    await runner.open(make_task(model=""))
+
+    env = created[0].options.env
+    assert env["ANTHROPIC_API_KEY"] == "" and env["CLAUDE_CODE_OAUTH_TOKEN"] == ""
+    assert "sk-ant" not in " ".join(env.values())
+    assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8080"
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "lk-local-key"
+    for family in ("OPUS", "SONNET", "HAIKU"):
+        assert env[f"ANTHROPIC_DEFAULT_{family}_MODEL"] == "qwen3-coder"
+    assert env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
+
+
+async def test_a_local_server_without_a_key_is_sent_the_placeholder(settings):
+    created, runner = local_options(settings, endpoint=Endpoint.parse("http://box", model="m"))
+
+    await runner.open(make_task())
+
+    assert created[0].options.env["ANTHROPIC_AUTH_TOKEN"] == PLACEHOLDER_BEARER
+
+
+async def test_a_local_task_runs_on_the_servers_model_without_a_dollar_cap(settings):
+    created, runner = local_options(settings)
+
+    await runner.open(make_task(model=""))
+    await runner.open(make_task(model="gpt-oss-20b"))
+
+    assert created[0].options.model == "qwen3-coder"
+    assert created[1].options.model == "gpt-oss-20b"
+    assert created[1].options.env["ANTHROPIC_MODEL"] == "gpt-oss-20b"
+    assert created[0].options.max_budget_usd is None
+    assert created[0].options.max_turns == settings.subagent_max_turns
+    assert runner.name == "local"
+
+
+async def test_a_local_run_has_no_price_however_the_sdk_prices_it(settings):
+    """The SDK prices every token at Anthropic's rates, a local model's included."""
+    client = FakeSdkClient(messages=[result_message(total_cost_usd=0.099)])
+
+    outcome = await AdapterSession(ClaudeAdapter(client, priced=False)).run(
+        "go", on_progress=lambda text: None
+    )
+
+    assert outcome.ok and outcome.cost_usd is None
+
+
+async def test_the_local_key_is_kept_out_of_a_failed_open(settings):
+    def factory(options):
+        raise RuntimeError("401 from http://127.0.0.1:8080 for lk-local-key")
+
+    runner = ClaudeAgentRunner(settings, endpoint=LOCAL, client_factory=factory)
+
+    with pytest.raises(AgentOpenError) as raised:
+        await runner.open(make_task())
+    assert "lk-local-key" not in str(raised.value)

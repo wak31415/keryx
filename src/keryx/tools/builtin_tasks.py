@@ -173,11 +173,6 @@ def register_task_tools(
             "folder, where the subagent finds the repo itself. Use list_projects "
             "only when they ask what exists.",
         },
-        "model": {
-            "type": "string",
-            "enum": [alias for name in offered for alias in BACKENDS[name].models],
-            "description": model_description(offered),
-        },
         "wait_seconds": {
             "type": "number",
             "minimum": 0,
@@ -185,6 +180,15 @@ def register_task_tools(
             "description": WAIT_DESCRIPTION,
         },
     }
+    # Only agents with spoken model names offer a choice; the local model is the one model
+    # its server was set up with, so naming one is not something to ask the caller for.
+    named = [name for name in offered if BACKENDS[name].models]
+    if named:
+        dispatch_properties["model"] = {
+            "type": "string",
+            "enum": [alias for name in named for alias in BACKENDS[name].models],
+            "description": model_description(named),
+        }
     if len(offered) > 1:
         dispatch_properties["agent"] = {
             "type": "string",

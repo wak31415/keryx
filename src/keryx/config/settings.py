@@ -1228,10 +1228,17 @@ class Settings(BaseSettings):
         # Imported here: the registry imports the agents, which import this module.
         from keryx.agents.registry import install_command, installed
 
-        if not self.demo_mode and not installed(self.agent_backend):
+        if self.demo_mode:
+            return None
+        if not installed(self.agent_backend, self):
             return (
                 f"AGENT_BACKEND is {self.agent_backend}, which is not installed — "
-                f"{install_command(self.agent_backend)}"
+                f"{install_command(self.agent_backend, self)}"
+            )
+        if self.agent_backend == "local" and not self.local_agent_base_url:
+            return (
+                "AGENT_BACKEND is local, but LOCAL_AGENT_BASE_URL names no server — set it, "
+                "or `keryx setup`"
             )
         return None
 

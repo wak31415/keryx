@@ -199,7 +199,16 @@ def _name_the_agent(text: str, spoken: str) -> str:
     runs". Substituting here keeps every build's rendering whole. Only our wording is ever
     passed through: the memory, the briefs and the skills are the owner's text.
     """
-    return text if spoken == "Claude" else _CLAUDE_WORD.sub(spoken, text)
+    if spoken == "Claude":
+        return text
+    opening = spoken[:1].upper() + spoken[1:]
+
+    def name(match: re.Match[str]) -> str:
+        # "the local model" opens a sentence, a line or a heading capitalized.
+        before = text[: match.start()].rstrip(" #*-")
+        return opening if not before or before[-1] in ".!?\n" else spoken
+
+    return _CLAUDE_WORD.sub(name, text)
 
 
 def _agents_note(agents: Sequence[str]) -> str:

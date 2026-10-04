@@ -169,7 +169,7 @@ def test_serve_refuses_a_default_agent_whose_extra_is_not_installed(settings_stu
     stub_uvicorn(monkeypatch, built)
     from keryx.agents import registry
 
-    monkeypatch.setattr(registry, "installed", lambda agent: agent != "claude")
+    monkeypatch.setattr(registry, "installed", lambda agent, settings=None: agent != "claude")
 
     result = runner.invoke(app, ["serve"])
 

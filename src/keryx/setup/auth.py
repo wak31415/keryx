@@ -30,6 +30,7 @@ SIGN_INS = {
     "openai": ("OPENAI_API_KEY",),
     "claude": ("Claude Code agent",),
     "codex": ("Codex agent",),
+    "local": ("Local model agent",),
     "gmail": ("email",),
     "google-workspace": ("Google for agents",),
     "twilio": ("Twilio credentials",),
@@ -54,9 +55,9 @@ def status(
     for name in BACKENDS:
         entry = report[name]
         entry["enabled"] = name in settings.enabled_agents
-        entry["installed"] = registry.installed(name)
+        entry["installed"] = registry.installed(name, settings)
         if not entry["installed"]:
-            entry["install_command"] = install_command(name)
+            entry["install_command"] = install_command(name, settings)
         if smoke and entry["enabled"] and entry["state"] == "ok":
             result = asyncio.run(run(settings, name))
             entry["smoke"] = {"ok": agents.passed_smoke(result), "error": result.error}

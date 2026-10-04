@@ -20,6 +20,11 @@ gives us `max_budget_usd`, `max_turns`, the lifted message-size limit and typed 
 
 `claude_agent_sdk` is imported only where a Claude agent actually runs: it is the `claude`
 extra, and a machine installed with Codex alone must still import all of Keryx.
+
+Given an `Endpoint`, the same runner is the `local` agent: Claude Code pointed at a server of
+the owner's own that speaks Anthropic's Messages API (`local_env`). The owner's Anthropic
+credentials are blanked for it — a local server must never be handed them — and the dollar
+cap and the cost go, because the SDK would price a local model's tokens at Anthropic's rates.
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from keryx.agents.auth import AuthSource, child_env
+from keryx.agents.auth import AuthSource, EndpointAuth, child_env, endpoint_auth
 from keryx.agents.base import SteerUnavailable, TokenUsage, google_mcp_server_config
 from keryx.agents.session import (
     AdapterRunner,
@@ -45,6 +50,7 @@ from keryx.agents.session import (
 )
 from keryx.config import Settings
 from keryx.config.files import claude_config_dir
+from keryx.endpoints import Endpoint
 from keryx.tasks.models import Task
 
 if TYPE_CHECKING:
@@ -124,6 +130,39 @@ CLAUDE_AUTH = AuthSource(
 )
 
 
+#: What the `local` agent's server is asked for, when it is driven by Claude Code.
+LOCAL_AUTH = EndpointAuth(
+    endpoint=lambda settings: settings.local_agent_endpoint,
+    login_hint="set LOCAL_AGENT_BASE_URL, or `keryx setup`",
+)
+
+
+def local_env(endpoint: Endpoint, model: str) -> dict[str, str]:
+    """Claude Code's environment for a model on `endpoint`, and nothing of Anthropic's.
+
+    The base URL is the server's root (the CLI adds `/v1/messages`) and the key goes as
+    `ANTHROPIC_AUTH_TOKEN`, a Bearer, or the placeholder. Both of the owner's credentials are
+    set empty so neither is inherited; a stored subscription login is never sent either,
+    since the token wins over it (verified 2026-10-04). Every model the CLI might ask for by
+    a family name — background calls, its own subagents — is the local one, and the traffic
+    it would send to Anthropic for anything else is turned off.
+    """
+    return {
+        "ANTHROPIC_BASE_URL": endpoint.root,
+        "ANTHROPIC_AUTH_TOKEN": endpoint.bearer,
+        "ANTHROPIC_API_KEY": "",
+        "CLAUDE_CODE_OAUTH_TOKEN": "",
+        "ANTHROPIC_MODEL": model,
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+        "ANTHROPIC_SMALL_FAST_MODEL": model,
+        "CLAUDE_CODE_SUBAGENT_MODEL": model,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+    }
+
+
 class SdkClient(Protocol):
     """The slice of `ClaudeSDKClient` this module uses (injectable for tests)."""
 
@@ -145,11 +184,25 @@ def resolve_model(name: str | None, settings: Settings) -> str:
     return CLAUDE_MODELS.get(alias.lower(), alias)
 
 
-def claude_context(task: Task, settings: Settings) -> AgentContext:
-    """Everything a Claude subagent for `task` is started with."""
+def claude_context(
+    task: Task, settings: Settings, endpoint: Endpoint | None = None
+) -> AgentContext:
+    """Everything a Claude subagent for `task` is started with.
+
+    On an `endpoint` (the `local` agent) the model is the server's — the task's or
+    `LOCAL_AGENT_MODEL` — and never one of Anthropic's aliases.
+    """
     servers = {}
     if settings.google_workspace_mcp:
         servers["google"] = google_mcp_server_config(settings)
+    if endpoint is not None:
+        return AgentContext.build(
+            task,
+            settings,
+            auth=endpoint_auth(endpoint),
+            model=task.model or endpoint.model,
+            mcp_servers=servers,
+        )
     return AgentContext.build(
         task,
         settings,
@@ -173,7 +226,12 @@ def build_options(
     return _options(context or claude_context(task, settings), settings, resume)
 
 
-def _options(context: AgentContext, settings: Settings, resume: str | None) -> ClaudeAgentOptions:
+def _options(
+    context: AgentContext,
+    settings: Settings,
+    resume: str | None,
+    endpoint: Endpoint | None = None,
+) -> ClaudeAgentOptions:
     from claude_agent_sdk import ClaudeAgentOptions
 
     options: dict[str, Any] = {
@@ -194,9 +252,12 @@ def _options(context: AgentContext, settings: Settings, resume: str | None) -> C
     if context.mcp_servers:
         options["mcp_servers"] = dict(context.mcp_servers)
         options["allowed_tools"] = list(GOOGLE_MCP_TOOLS)
+    if endpoint is not None:
+        options["max_budget_usd"] = None
+        options["env"] = local_env(endpoint, context.model or endpoint.model)
     # With neither key nor token set, the spawned CLI falls back to the user's stored
     # Claude subscription login — the default, so subagents don't bill per token.
-    if env := child_env(context.auth):
+    elif env := child_env(context.auth):
         options["env"] = env
     return ClaudeAgentOptions(**options)
 
@@ -220,9 +281,13 @@ def claude_usage(usage: Mapping[str, Any] | None) -> TokenUsage | None:
 class ClaudeAdapter:
     """One `ClaudeSDKClient` conversation, as the events `AdapterSession` runs on."""
 
-    def __init__(self, client: SdkClient, *, secrets: Iterable[str | None] = ()) -> None:
+    def __init__(
+        self, client: SdkClient, *, secrets: Iterable[str | None] = (), priced: bool = True
+    ) -> None:
         self._client = client
         self.secrets = list(secrets)
+        #: False for a local model, which the SDK would price at Anthropic's rates.
+        self._priced = priced
 
     async def turn(self, prompt: str) -> AsyncIterator[AgentEvent]:
         from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
@@ -243,7 +308,7 @@ class ClaudeAdapter:
                     result_text=result,
                     error=(result or message.subtype) if message.is_error else None,
                     usage=claude_usage(message.usage),
-                    cost_usd=message.total_cost_usd,
+                    cost_usd=message.total_cost_usd if self._priced else None,
                 )
 
     async def steer(self, text: str) -> None:
@@ -267,7 +332,11 @@ class ClaudeAgentSession(AdapterSession):
 
 
 class ClaudeAgentRunner(AdapterRunner):
-    """Opens real Agent SDK conversations (`client_factory` is injected in tests)."""
+    """Opens real Agent SDK conversations (`client_factory` is injected in tests).
+
+    With an `endpoint` it is the `local` agent: the model is the server's, named by the task
+    or `LOCAL_AGENT_MODEL`, never an Anthropic one.
+    """
 
     name = "claude"
 
@@ -275,19 +344,23 @@ class ClaudeAgentRunner(AdapterRunner):
         self,
         settings: Settings,
         *,
+        endpoint: Endpoint | None = None,
         client_factory: Callable[[ClaudeAgentOptions], SdkClient] | None = None,
     ) -> None:
         super().__init__(settings)
+        self._endpoint = endpoint
+        if endpoint is not None:
+            self.name = "local"
         self._client_factory = client_factory or _default_client_factory
 
     def context(self, task: Task) -> AgentContext:
-        return claude_context(task, self.settings)
+        return claude_context(task, self.settings, self._endpoint)
 
     async def connect(self, context: AgentContext, resume: str | None) -> ClaudeAdapter:
-        options = _options(context, self.settings, resume)
+        options = _options(context, self.settings, resume, self._endpoint)
         client = self._client_factory(options)
         await client.connect()
-        return ClaudeAdapter(client, secrets=context.secrets)
+        return ClaudeAdapter(client, secrets=context.secrets, priced=self._endpoint is None)
 
 
 def _default_client_factory(options: ClaudeAgentOptions) -> SdkClient:

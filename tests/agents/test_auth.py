@@ -4,9 +4,17 @@ import dataclasses
 
 import pytest
 
-from keryx.agents.auth import AuthMode, child_env, redact, resolve_auth
+from keryx.agents.auth import (
+    AuthMode,
+    EndpointAuth,
+    child_env,
+    endpoint_auth,
+    redact,
+    resolve_auth,
+)
 from keryx.agents.claude import CLAUDE_AUTH
 from keryx.agents.codex import CODEX_AUTH
+from keryx.endpoints import Endpoint
 
 
 def with_login(source, present: bool):
@@ -73,3 +81,25 @@ def test_redact_removes_the_secret_and_anything_masked_like_a_key():
     assert "sk-live-12345" not in cleaned
     assert "sk-jarvi" not in cleaned and "fake" not in cleaned
     assert cleaned.count("[redacted]") == 2
+
+
+def test_an_endpoint_is_ready_with_an_address_and_its_key_is_the_secret(settings):
+    source = EndpointAuth(endpoint=lambda s: s.local_agent_endpoint, login_hint="set one")
+    assert resolve_auth(source, settings).mode is AuthMode.NONE
+    assert "set one" in resolve_auth(source, settings).detail
+
+    settings.local_agent_base_url = "http://box:11434"
+    settings.local_agent_api_key = "lk-1"
+    status = resolve_auth(source, settings)
+
+    assert (status.mode, status.secret, status.variable) == (AuthMode.ENDPOINT, "lk-1", None)
+    assert status.ready and "with a key" in status.detail and "lk-1" not in status.detail
+    assert child_env(status) == {}  # the harness decides what it travels under
+
+
+def test_an_endpoint_in_hand_resolves_to_itself_whatever_the_settings(settings):
+    endpoint = Endpoint.parse("http://gpu:8080", api_key="lk-2")
+
+    status = resolve_auth(endpoint_auth(endpoint), settings)
+
+    assert status.secret == "lk-2" and "no key" not in status.detail

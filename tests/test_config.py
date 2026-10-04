@@ -14,6 +14,7 @@ from keryx.config import (
     OWNER_FALLBACK,
     PIN_FROM_ENV,
     PIN_FROM_FILE,
+    PLACEHOLDER_KEY,
     Settings,
     env_var_name,
     keryx_home,
@@ -932,3 +933,70 @@ def test_a_transcription_language_is_a_bare_iso_code(value):
 def test_a_transcription_language_may_be_empty_or_a_code(value):
     settings = Settings(_env_file=None, openai_api_key="k", transcription_language=value)
     assert settings.transcription_language == value
+
+
+# --- models of your own ---------------------------------------------------------------
+
+
+def test_a_base_url_is_kept_as_its_v1_root_and_a_non_address_is_refused(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / "keryx",
+        voice_base_url="http://127.0.0.1:8765",
+        local_agent_base_url="http://gpu-box:11434/v1/",
+    )
+    assert settings.voice_base_url == "http://127.0.0.1:8765/v1"
+    assert settings.local_agent_base_url == "http://gpu-box:11434/v1"
+
+    with pytest.raises(ValidationError):
+        Settings(data_dir=tmp_path / "keryx", voice_base_url="gpu-box:8765")
+
+
+def test_the_voice_endpoint_is_openai_unless_a_server_is_named(tmp_path):
+    openai = Settings(data_dir=tmp_path / "keryx", openai_api_key="sk-x")
+    own = openai.model_copy(update={"voice_base_url": "http://box/v1", "voice_api_key": "vk"})
+
+    assert openai.voice_endpoint.is_openai and openai.voice_endpoint.api_key == "sk-x"
+    assert openai.voice_endpoint.model == openai.openai_realtime_model
+    assert own.voice_endpoint.base_url == "http://box/v1" and own.voice_endpoint.api_key == "vk"
+
+
+def test_a_voice_server_of_your_own_speaks_in_its_own_voice_unless_one_is_set(tmp_path):
+    settings = Settings(data_dir=tmp_path / "keryx", voice_base_url="http://box/v1")
+
+    assert settings.voice == ""
+    assert settings.model_copy(update={"openai_voice": "af_heart"}).voice == "af_heart"
+    assert settings.model_copy(update={"voice_base_url": None}).voice == "marin"
+
+
+def test_the_voice_needs_a_key_or_a_server_of_your_own(tmp_path):
+    keyless = Settings(data_dir=tmp_path / "keryx", openai_api_key=None)
+
+    assert "OPENAI_API_KEY" in (keyless.voice_refusal() or "")
+    assert keyless.model_copy(update={"voice_base_url": "http://box/v1"}).voice_refusal() is None
+    assert keyless.model_copy(update={"openai_api_key": "sk-x"}).voice_refusal() is None
+    assert keyless.model_copy(update={"openai_api_key": PLACEHOLDER_KEY}).openai_key is None
+
+
+def test_the_local_agent_endpoint_carries_its_key_and_model(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path / "keryx",
+        local_agent_base_url="http://box:8080",
+        local_agent_api_key="lk",
+        local_agent_model="qwen",
+    )
+
+    endpoint = settings.local_agent_endpoint
+    assert (endpoint.base_url, endpoint.api_key, endpoint.model) == (
+        "http://box:8080/v1",
+        "lk",
+        "qwen",
+    )
+    assert settings.model_copy(update={"local_agent_base_url": None}).local_agent_endpoint is None
+
+
+def test_local_as_the_default_needs_a_server(tmp_path, every_agent_installed):
+    settings = Settings(data_dir=tmp_path / "keryx", agent_backend="local")
+
+    assert "LOCAL_AGENT_BASE_URL" in (settings.agent_refusal() or "")
+    served = settings.model_copy(update={"local_agent_base_url": "http://box/v1"})
+    assert served.agent_refusal() is None

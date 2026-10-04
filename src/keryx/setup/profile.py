@@ -24,7 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from keryx.agents.registry import BACKENDS, skill_dirs
+from keryx.agents.registry import instructions_file, skill_dirs
 from keryx.config import OWNER_FALLBACK, PIN_FROM_ENV, PIN_FROM_FILE, Settings, pin_file
 from keryx.continuity.memory import (
     MAX_MEMORY_CHARS,
@@ -94,7 +94,7 @@ def subagent_memories(settings: Settings) -> dict[str, str]:
     """Where each enabled agent's subagents learn about the owner's world, the default first."""
     home = str(Path.home())
     return {
-        name: str(BACKENDS[name].instructions_file()).replace(home, "~", 1)
+        name: str(instructions_file(name, settings)).replace(home, "~", 1)
         for name in settings.enabled_agents
     }
 

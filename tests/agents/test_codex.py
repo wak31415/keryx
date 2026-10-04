@@ -38,6 +38,7 @@ from keryx.agents.codex import (
     mcp_config,
 )
 from keryx.agents.session import AdapterSession
+from keryx.endpoints import PLACEHOLDER_BEARER, Endpoint
 from keryx.tasks.models import Task, TaskKind
 
 
@@ -876,3 +877,88 @@ def test_a_login_status_that_hangs_is_no_login(monkeypatch):
 
 async def test_the_session_is_the_shared_one(settings):
     assert isinstance(await open_session(settings, FakeCodex()), AdapterSession)
+
+
+# ------------------------------------------------------------------ the local model
+
+
+LOCAL = Endpoint.parse("http://gpu-box:8080/v1", api_key="lk-local-key", model="qwen3-coder")
+
+
+async def open_local(settings, codex, *, task=None, endpoint=LOCAL, resume=None):
+    runner = CodexAgentRunner(settings, endpoint=endpoint, client_factory=Factory(codex))
+    return runner, await runner.open(task or make_task(agent="local", model=""), resume=resume)
+
+
+async def test_a_local_server_is_declared_on_the_thread_as_a_model_provider(settings):
+    codex = FakeCodex()
+
+    runner, _ = await open_local(settings, codex)
+
+    [options] = codex.started
+    assert options["model"] == "qwen3-coder"
+    assert options["model_provider"] == "keryx_local"
+    assert options["config"]["model_providers"]["keryx_local"] == {
+        "name": "Keryx local",
+        "base_url": "http://gpu-box:8080/v1",
+        "env_key": "KERYX_LOCAL_API_KEY",
+        "wire_api": "responses",
+    }
+    assert runner.name == "local"
+
+
+async def test_the_local_key_is_in_the_environment_only_and_no_vendor_credential_is(settings):
+    settings.codex_api_key = "sk-codex-owner"
+    settings.openai_api_key = "sk-voice-owner"
+    codex = FakeCodex()
+
+    await open_local(settings, codex)
+
+    assert codex.env["KERYX_LOCAL_API_KEY"] == "lk-local-key"
+    for variable in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"):
+        assert codex.env[variable] == ""
+    assert "lk-local-key" not in json.dumps(codex.started)
+
+
+async def test_a_local_task_runs_in_a_codex_home_of_its_own(settings, tmp_path, monkeypatch):
+    owner = tmp_path / "owner-codex"
+    (owner / "skills").mkdir(parents=True)
+    (owner / "AGENTS.md").write_text("mine")
+    (owner / "config.toml").write_text('model_provider = "openai"')
+    monkeypatch.setenv("CODEX_HOME", str(owner))
+    codex = FakeCodex()
+
+    await open_local(settings, codex)
+
+    home = Path(codex.env["CODEX_HOME"])
+    assert home == settings.data_dir / "codex-local"
+    assert stat.S_IMODE(home.stat().st_mode) == 0o700
+    assert (home / "AGENTS.md").read_text() == "mine" and (home / "skills").is_dir()
+    assert not (home / "config.toml").exists()  # its provider would fight the thread's
+
+
+async def test_a_local_resume_declares_the_provider_again(settings):
+    codex = FakeCodex()
+
+    await open_local(settings, codex, resume="thread-9")
+
+    [(thread_id, options)] = codex.resumed
+    assert thread_id == "thread-9" and options["model_provider"] == "keryx_local"
+
+
+async def test_mcp_servers_and_the_local_provider_share_the_config(settings):
+    settings.google_workspace_mcp = True
+    codex = FakeCodex()
+
+    await open_local(settings, codex)
+
+    config = codex.started[0]["config"]
+    assert set(config) == {"mcp_servers", "model_providers"} and "google" in config["mcp_servers"]
+
+
+async def test_a_keyless_local_server_gets_the_placeholder(settings):
+    codex = FakeCodex()
+
+    await open_local(settings, codex, endpoint=Endpoint.parse("http://box", model="m"))
+
+    assert codex.env["KERYX_LOCAL_API_KEY"] == PLACEHOLDER_BEARER
