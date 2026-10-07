@@ -29,8 +29,11 @@ package struct PointHereSheet: View {
 
     private var report: PhoneWebhooks { fresh ?? shown }
 
+    /// Not after a change that failed: what Twilio holds now is unknown until it is asked
+    /// again (Ask Again).
     private var canPointHere: Bool {
-        PhoneWording.canPointHere(fresh: fresh, asking: asking, readFailed: readError != nil, applying: applying)
+        error == nil
+            && PhoneWording.canPointHere(fresh: fresh, asking: asking, readFailed: readError != nil, applying: applying)
     }
 
     package var body: some View {
@@ -57,12 +60,9 @@ package struct PointHereSheet: View {
                 }
                 if let error = error ?? readError {
                     Section {
-                        Label {
-                            Text(error.reported.map(KeryxError.sentence) ?? error.message)
-                                .textSelection(.enabled)
-                        } icon: {
-                            Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-                        }
+                        ErrorText(error: error, sentence: error.reported.flatMap {
+                            AppFacing.isFit($0) ? KeryxError.sentence($0) : nil
+                        })
                     }
                 }
             }
@@ -83,6 +83,13 @@ package struct PointHereSheet: View {
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                     .disabled(applying)
+                if error != nil || readError != nil {
+                    Button("Ask Again") {
+                        error = nil
+                        Task { await ask() }
+                    }
+                    .disabled(asking || applying)
+                }
                 // A click, never Return: the yes is to both addresses, read just now.
                 Button("Point Here", action: apply)
                     .disabled(!canPointHere)

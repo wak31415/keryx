@@ -32,11 +32,11 @@ public struct MigrationView: View {
                         }
                     }
                     .disabled(checking)
-                    Button("Migrate in Terminal") { openMigrate() }
+                    Button("Migrate…") { openMigrate() }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                         .disabled(model.location.value == nil)
-                        .help("Runs keryx migrate in Terminal")
+                        .help("Moves the files in a Terminal window, and asks before it starts")
                 }
                 .fixedSize()
                 if let sentence {

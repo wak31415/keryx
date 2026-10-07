@@ -105,8 +105,36 @@ enum IntegrationsWording {
 
     // MARK: Status
 
-    static func status(_ integration: Integration) -> String {
-        integration.connected ? "Connected" : "Not Connected"
+    /// "Connected"; "Not ready" while something of it is stored and it still does not work
+    /// (a sign-in half done, reports on and `gh` signed out); else "Not connected". The dot
+    /// and the buttons say the same (`tone`, `IntegrationCard`).
+    static func status(_ integration: Integration, config: [ConfigRow]? = nil) -> String {
+        if integration.connected { return "Connected" }
+        return canDisconnect(integration, config: config) ? "Not ready" : "Not connected"
+    }
+
+    /// The card's removal button: Disconnect for what is connected, Turn Off for what is
+    /// only turned on (issue reports, or a sign-in not finished).
+    static func removal(_ integration: Integration) -> String {
+        integration.connected && integration.signin != "gh" ? "Disconnect…" : "Turn Off…"
+    }
+
+    /// The button that adds a card's secret, named by what it is: "Add Key…", "Add Token…".
+    static func addSecret(_ secret: IntegrationSecret) -> String {
+        let noun = secret.title.split(separator: " ").last.map(String.init) ?? "key"
+        return "Add \(Wording.capitalised(noun.lowercased()))…"
+    }
+
+    /// The Gmail card's button while the Google OAuth client is not saved: the sign-in sheet,
+    /// which asks for the file first.
+    static func needsClientFile(_ integration: Integration) -> Bool {
+        integration.signInProvider != nil && integration.clientSaved == false && !integration.connected
+    }
+
+    /// "Used by" beside a card, unless its description already names the plugins.
+    static func showsUsedBy(_ integration: Integration, plugins: PluginsReport?) -> Bool {
+        let titles = integration.usedBy.map { plugins?.plugin($0)?.title ?? $0 }
+        return !titles.isEmpty && !titles.allSatisfy { integration.description.localizedCaseInsensitiveContains($0) }
     }
 
     /// Green when connected; orange when something of it is stored and it still does not
@@ -135,6 +163,14 @@ enum IntegrationsWording {
                     + "gh stays signed in.",
                 button: "Turn Off")
         }
+        guard integration.connected else {
+            return IntegrationQuestion(
+                title: "Turn Off \(integration.title)?",
+                message: integration.signInProvider?.canSignOut == true
+                    ? "What Keryx keeps of it is removed. Your Google OAuth client file stays."
+                    : "What Keryx keeps of it is removed.",
+                button: "Turn Off")
+        }
         var sentences: [String] = []
         switch integration.signInProvider {
         case .googleWorkspace:
@@ -144,7 +180,7 @@ enum IntegrationsWording {
             sentences.append("The stored sign-in is removed. Your Google OAuth client file stays.")
         case .claude, .codex, nil:
             for secret in integration.secrets {
-                sentences.append("The \(secret.title) is removed from secrets.toml.")
+                sentences.append("The \(secret.title) is removed from this Mac.")
             }
         }
         if let stops = stopsWorking(integration.usedBy, plugins: plugins) { sentences.append(stops) }

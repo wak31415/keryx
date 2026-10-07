@@ -187,7 +187,7 @@ enum PhoneWording {
     static func tunnel(_ tunnel: PhoneTunnel) -> Line {
         guard let kind = tunnel.kind else {
             return Line(tone: .warning, text: "Not installed",
-                        hint: "Install cloudflared or ngrok, for example with Homebrew: brew install cloudflared")
+                        hint: "cloudflared or ngrok puts this Mac where Twilio can reach it")
         }
         return Line(tone: .ok, text: kind)
     }

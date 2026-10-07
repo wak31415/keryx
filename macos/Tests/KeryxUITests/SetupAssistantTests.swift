@@ -257,6 +257,14 @@ import KeryxPreview
         #expect(actions(fresh, "voice").primary?.title == "Add OpenAI API Key…")
     }
 
+    @Test func theLastPagesRowsNameTheVerb() {
+        let voice = actions(fresh, "voice").primary!
+        #expect(SetupWording.rowTitle(voice) == "Add Key…")
+        #expect(SetupWording.rowTitle(actions(fresh, "agents").primary!) == "Sign In…")
+        #expect(SetupWording.rowTitle(actions(partway, "phone").primary!) == "Connect…")
+        #expect(SetupWording.rowTitle(SetupAction(title: "Set PIN…", effect: .request(.setPin))) == "Set PIN…")
+    }
+
     @Test func aStepThatWaitsShowsItsOwnButtonsDisabled() {
         let service = actions(fresh, "service", SetupContext(service: PreviewData.service))
         #expect(service.waiting)

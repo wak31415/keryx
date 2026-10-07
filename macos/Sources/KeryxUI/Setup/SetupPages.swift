@@ -293,7 +293,8 @@ struct SetupFinishPage: View {
                                 // Claude…"); a step that waits, or has none, is shown instead.
                                 let action = SetupGuide.actions(step, in: plan, context: context)
                                 if step.kind != .blocked, let primary = action.primary {
-                                    Button(primary.title) { perform(primary) }
+                                    Button(SetupWording.rowTitle(primary)) { perform(primary) }
+                                        .help(primary.title)
                                 } else {
                                     Button("Show Step") { go(.step(step.id)) }
                                 }

@@ -19,7 +19,8 @@ struct IntegrationCard: View {
         Section {
             header(config)
             detail(config)
-            if let usedBy = IntegrationsWording.usedBy(integration.usedBy, plugins: model.plugins.value) {
+            if IntegrationsWording.showsUsedBy(integration, plugins: model.plugins.value),
+               let usedBy = IntegrationsWording.usedBy(integration.usedBy, plugins: model.plugins.value) {
                 LabeledContent("Used by") {
                     Button(usedBy) { model.selection = .plugins }
                         .buttonStyle(.link)
@@ -27,11 +28,17 @@ struct IntegrationCard: View {
                 }
             }
             if let failure {
-                Text(Wording.sentence(Wording.capitalised(failure)))
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                Label {
+                    Text(AppFacing.isFit(failure) ? Wording.sentence(Wording.capitalised(failure))
+                        : "Keryx couldn't do that.")
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                }
+                .font(.callout)
+                if !AppFacing.isFit(failure) { DetailsDisclosure(failure) }
             }
         }
     }
@@ -50,7 +57,7 @@ struct IntegrationCard: View {
             Spacer(minLength: 16)
             HStack(spacing: 6) {
                 StatusDot(IntegrationsWording.tone(integration, config: config))
-                Text(IntegrationsWording.status(integration))
+                Text(IntegrationsWording.status(integration, config: config))
                     .foregroundStyle(.secondary)
             }
             .fixedSize()
@@ -75,7 +82,7 @@ struct IntegrationCard: View {
                 // "Key" when the card is named after it already ("OpenAI admin key").
                 Text(secret.title.caseInsensitiveCompare(integration.title) == .orderedSame
                     ? "Key" : Wording.capitalised(secret.title))
-                Text(secret.set ? "Kept in secrets.toml" : integration.why ?? "Not set")
+                Text(secret.set ? "Set" : integration.why ?? "Not set")
             case .signIn:
                 Text("Sign-in")
                 if integration.connected {
@@ -97,19 +104,26 @@ struct IntegrationCard: View {
     }
 
     @ViewBuilder private func buttons(_ config: [ConfigRow]?) -> some View {
-        let canDisconnect = IntegrationsWording.canDisconnect(integration, config: config)
+        // The buttons agree with the status: Disconnect only for what is connected, Turn Off
+        // for what is only turned on.
+        let canRemove = IntegrationsWording.canDisconnect(integration, config: config)
+        let removal = IntegrationsWording.removal(integration)
         switch IntegrationsWording.connect(integration) {
         case let .secret(secret):
             if secret.set {
-                Button("Disconnect…", action: disconnect)
+                Button(removal, action: disconnect)
                 Button("Change…") { change(secret) }
             } else {
-                if canDisconnect { Button("Disconnect…", action: disconnect) }
-                Button("Connect…", action: connect)
+                if canRemove { Button(removal, action: disconnect) }
+                Button(IntegrationsWording.addSecret(secret), action: connect)
             }
         case .signIn:
-            if canDisconnect { Button("Disconnect…", action: disconnect) }
-            Button(integration.connected ? "Sign In Again…" : "Sign In…", action: connect)
+            if canRemove { Button(removal, action: disconnect) }
+            if IntegrationsWording.needsClientFile(integration) {
+                Button("Add Client File…", action: connect)
+            } else {
+                Button(integration.connected ? "Sign In Again…" : "Sign In…", action: connect)
+            }
         case .issueReports:
             if IntegrationsWording.issueReportsOn(config) ?? integration.connected {
                 Button("Turn Off…", action: disconnect)
@@ -117,7 +131,7 @@ struct IntegrationCard: View {
                 Button("Turn On…", action: connect)
             }
         case nil:
-            if canDisconnect { Button("Disconnect…", action: disconnect) }
+            if canRemove { Button(removal, action: disconnect) }
         }
     }
 }

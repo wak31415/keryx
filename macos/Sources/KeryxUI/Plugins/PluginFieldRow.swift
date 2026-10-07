@@ -17,7 +17,7 @@ struct PluginFieldRow: View {
             if let problem {
                 Text(problem)
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .problemStyle()
             }
         }
         .disabled(disabled)

@@ -119,7 +119,7 @@ private struct ServiceSection: View {
                             if let pending = pendingVersion {
                                 Text(pending)
                                     .font(.callout)
-                                    .foregroundStyle(.orange)
+                                    .problemStyle(.warning)
                                     .help(status.version.checkout ?? "")
                             }
                         }
@@ -135,7 +135,10 @@ private struct ServiceSection: View {
             if status.restart.state == "failed" {
                 LabeledContent("Last restart") {
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text("Failed").foregroundStyle(.red)
+                        HStack(spacing: 6) {
+                            StatusDot(.error)
+                            Text("Failed")
+                        }
                         if let reason = status.restart.failure, !reason.isEmpty {
                             Text(Wording.sentence(reason))
                                 .font(.caption)
@@ -423,7 +426,7 @@ private struct ApprovalCallsSection: View {
             if let failure {
                 Text(failure.message)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .problemStyle()
                     .textSelection(.enabled)
             }
             if let report = model.approvals.value, !report.entries.isEmpty {

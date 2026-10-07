@@ -45,7 +45,7 @@ package struct TwilioAccountSheet: View {
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         if let problem = PhoneWording.sidProblem(sid) {
-                            Text(problem).foregroundStyle(.red)
+                            Text(problem).problemStyle()
                         }
                         if let said = PhoneWording.accountCheck(check) {
                             Label {
@@ -57,12 +57,15 @@ package struct TwilioAccountSheet: View {
                             .textSelection(.enabled)
                         }
                         if let failure {
-                            Text(failure)
-                                .foregroundStyle(.red)
-                                .textSelection(.enabled)
+                            Label {
+                                Text(failure)
+                                    .textSelection(.enabled)
+                            } icon: {
+                                Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                            }
                         }
-                        Text("Both are checked with Twilio before they're saved. The token is kept in "
-                            + "secrets.toml, readable only by you; Keryx never shows it again.")
+                        Text("Both are checked with Twilio before they're saved. The token is stored privately "
+                            + "on this Mac; never shown again.")
                             .foregroundStyle(.secondary)
                     }
                     .font(.callout)

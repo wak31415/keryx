@@ -202,7 +202,7 @@ public struct SignInSheet: View {
     private func problem(_ text: String) -> some View {
         Text(text)
             .font(.callout)
-            .foregroundStyle(.red)
+            .problemStyle()
             .fixedSize(horizontal: false, vertical: true)
     }
 

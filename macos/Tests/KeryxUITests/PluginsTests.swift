@@ -31,10 +31,10 @@ import KeryxPreview
         let integrations = PreviewData.integrations
         let email = PluginsWording.missingAccounts(plugin("check_email"), integrations: integrations)
         #expect(email.map(\.id) == ["gmail"])
-        #expect(PluginsWording.connectFirst(email) == "Connect Gmail First")
+        #expect(PluginsWording.connectFirst(email) == "Connect Gmail…")
         let billing = PluginsWording.missingAccounts(plugin("check_billing"), integrations: integrations)
         #expect(billing.map(\.id) == ["openai-admin", "anthropic-admin"])
-        #expect(PluginsWording.connectFirst(billing) == "Go to Integrations")
+        #expect(PluginsWording.connectFirst(billing) == "Open Integrations")
         #expect(PluginsWording.missingAccounts(plugin("send_to_slack"), integrations: integrations).isEmpty,
                 "Slack is connected")
         #expect(PluginsWording.missingAccounts(plugin("cluster_stats"), integrations: integrations).isEmpty)

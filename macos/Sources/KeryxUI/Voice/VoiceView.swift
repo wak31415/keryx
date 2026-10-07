@@ -104,12 +104,11 @@ private struct OpenAISection: View {
                 HStack(spacing: 8) {
                     Text(voice.openaiKeySet ? "Set" : "Not set")
                         .foregroundStyle(.secondary)
-                    Button(voice.openaiKeySet ? "Change…" : "Set…") { editingKey = true }
+                    Button(voice.openaiKeySet ? "Change Key…" : "Set Key…") { editingKey = true }
                         .accessibilityLabel(voice.openaiKeySet ? "Change OpenAI API Key" : "Set OpenAI API Key")
                 }
             } label: {
                 Text("API key")
-                Text("Kept in secrets.toml")
             }
             SettingMenuRow(key: "OPENAI_REALTIME_MODEL", title: "Realtime model",
                            current: setting("OPENAI_REALTIME_MODEL") ?? voice.realtimeModel) {
@@ -175,17 +174,16 @@ private struct HereSection: View {
             if voice.needsLocalModel, !showing {
                 needsModel(report)
             }
-            LabeledContent("Voice server") {
+            LabeledContent {
                 HStack(spacing: 6) {
                     StatusDot(here.reachable ? .ok : .inactive)
                     Text(VoiceWording.hereState(here))
                         .textSelection(.enabled)
                 }
                 .help(here.program ?? "")
-            }
-            LabeledContent("Starts at login") {
-                Text(here.unitInstalled ? "Yes" : "No")
-                    .foregroundStyle(.secondary)
+            } label: {
+                Text("Voice server")
+                if here.unitInstalled { Text("Starts at login") }
             }
             LabeledContent {
                 VStack(alignment: .trailing, spacing: 2) {
@@ -234,18 +232,20 @@ private struct HereSection: View {
                 }
             }
             if showing {
-                ThisMacProgress { startServer, runtime in start(startServer: startServer, runtime: runtime) }
+                ThisMacProgress(again: { startServer, runtime in start(startServer: startServer, runtime: runtime) },
+                                setUpAgain: askToSetUp)
             }
             if serverElsewhere {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(VoiceWording.serverStartingElsewhere).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Show") { model.show(inModels: ModelsAnchor.modelServer) }
+                    Button("Open Local Models") { model.show(inModels: ModelsAnchor.modelServer) }
                 }
             }
             // While a setup runs, or has failed, its own rows are the ones to act on.
-            if !busy, !ThisMacProgress.failed(model) {
+            // …and once it has worked, its one row offers Set Up Again….
+            if !busy, !ThisMacProgress.failed(model), !ThisMacProgress.finished(model) {
                 PrimaryRow(inUse: false, inUseTitle: "", working: reading ? "Checking the model server…" : nil,
                            failure: nil) {
                     Button(inUse ? "Restart Voice Server" : "Set Up…") {
@@ -399,7 +399,7 @@ package struct ServerSection: View {
                         Button("Remove Key") { clearing = true }
                             .disabled(checking)
                     }
-                    Button("Key…") { editingKey = true }
+                    Button(keySet || key != nil ? "Change Key…" : "Set Key…") { editingKey = true }
                         .disabled(checking)
                         .accessibilityLabel("Set the Voice Server's API Key")
                 }
@@ -419,7 +419,7 @@ package struct ServerSection: View {
                 ForEach(answer.warnings, id: \.self) { warning in
                     Label {
                         Text(VoiceWording.sentence(Wording.named(warning, titles: Wording.titles(model.config.value))))
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(.secondary)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     }
@@ -545,7 +545,7 @@ private struct PrimaryRow<Content: View>: View {
                 Text(working).foregroundStyle(.secondary)
             } else if let failure {
                 Text(failure)
-                    .foregroundStyle(.red)
+                    .problemStyle()
                     .textSelection(.enabled)
                     .lineLimit(3)
             } else if let saved {

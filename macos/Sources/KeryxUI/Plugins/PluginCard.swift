@@ -46,7 +46,7 @@ struct PluginCard: View {
             if let failure {
                 Text(PluginsWording.failure(failure, plugins: model.plugins.value))
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .problemStyle()
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -86,7 +86,11 @@ struct PluginCard: View {
                 if let title = PluginsWording.connectFirst(missing) {
                     // Straight to the account's own Connect, on Integrations.
                     Button(title) {
-                        if let first = missing.first { model.request(.connect(integration: first.id)) }
+                        if missing.count == 1, let first = missing.first {
+                            model.request(.connect(integration: first.id))
+                        } else {
+                            model.selection = .integrations
+                        }
                     }
                 }
             }

@@ -123,7 +123,7 @@ import KeryxPreview
 
     @Test func theTunnelSaysWhatIsMissing() {
         #expect(PhoneWording.tunnel(PreviewData.phoneTunnel).text == "cloudflared")
-        #expect(PhoneWording.tunnel(PreviewData.phoneTunnelUnset).hint?.contains("brew install cloudflared") == true)
+        #expect(PhoneWording.tunnel(PreviewData.phoneTunnelUnset).hint.map(AppFacing.isFit) == true, "no command")
         #expect(PhoneWording.reachable(PreviewData.phoneTunnel).text == "Keryx answers at keryx.example.com")
         #expect(PhoneWording.reachable(PreviewData.phoneTunnelUnset).text == "No public hostname yet")
         var bad = PreviewData.phoneTunnel

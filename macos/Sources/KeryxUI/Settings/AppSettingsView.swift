@@ -63,7 +63,7 @@ public struct AppSettingsView: View {
                 }
                 if let loginError {
                     Text(loginError)
-                        .foregroundStyle(.red)
+                        .problemStyle()
                         .textSelection(.enabled)
                 }
             } header: {
@@ -104,7 +104,7 @@ public struct AppSettingsView: View {
                 if folder != nil, found.source != .preference {
                     Text("The folder you chose isn't a Keryx checkout.")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .problemStyle(.warning)
                 }
             }
         } else if model.location.error != nil {

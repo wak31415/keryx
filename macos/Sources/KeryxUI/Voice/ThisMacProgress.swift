@@ -102,6 +102,12 @@ struct ThisMacProgress: View {
         return model.voiceSetup.phase == nil && model.modelServerRun.failure != nil
     }
 
+    /// It worked, and its one row says so.
+    static func finished(_ model: AppModel) -> Bool {
+        if case .finished = model.voiceSetup.phase { return true }
+        return false
+    }
+
     /// It ended on a refusal that is a step to take first.
     static func refused(_ ending: State.Ending) -> Bool {
         if case let .failed(failure) = ending { return LocalRefusal.of(failure.message) != nil }

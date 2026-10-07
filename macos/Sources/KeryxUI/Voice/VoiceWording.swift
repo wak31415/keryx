@@ -38,7 +38,7 @@ import KeryxKit
         switch mode {
         case .openai: "Use OpenAI Realtime"
         case .here: "Set Up"
-        case .server: "Check & Use"
+        case .server: "Check and Use"
         }
     }
 
@@ -66,8 +66,8 @@ import KeryxKit
 
     /// The key row's state, beside its buttons.
     static func serverKeyState(typed: Bool, clearing: Bool, stored: Bool) -> String {
-        if typed { return "Sent with Check & Use" }
-        if clearing { return "Removed with Check & Use" }
+        if typed { return "Sent with Check and Use" }
+        if clearing { return "Removed with Check and Use" }
         return stored ? "Uses the stored key" : "Not set"
     }
 
@@ -165,6 +165,6 @@ import KeryxKit
 
     static let serverStartingElsewhere = "The model server is starting in Local Models"
     static let speechDownloading = "The speech models are downloading in Local Models"
-    static let keyFootnote = "Sent to Keryx on its standard input when you choose Check & Use, and kept in "
-        + "secrets.toml, readable only by you."
+    static let keyFootnote = "Sent to Keryx when you choose Check and Use, and stored privately on this Mac; "
+        + "never shown again."
 }

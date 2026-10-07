@@ -34,6 +34,7 @@ private struct PhoneForm: View {
     let rows: [ConfigRow]
 
     @Environment(AppModel.self) private var model
+    @Environment(\.openURL) private var openURL
     @State private var editingAccount = false
     @State private var confirmingApply = false
 
@@ -204,8 +205,14 @@ private struct PhoneForm: View {
             if let tunnel = model.phoneTunnel.value {
                 let program = PhoneWording.tunnel(tunnel)
                 LabeledContent {
-                    DotText(line: program)
-                        .help(tunnel.binary ?? "")
+                    HStack(spacing: 10) {
+                        DotText(line: program)
+                            .help(tunnel.binary ?? "")
+                        // cloudflared's own download page: the app installs no tunnel itself.
+                        if let page = FixAction.tunnelPage(tunnel.installUrl) {
+                            Button("How to Install…") { openURL(page) }
+                        }
+                    }
                 } label: {
                     Text("Tunnel")
                     if let hint = program.hint { Text(hint).textSelection(.enabled) }
@@ -273,7 +280,7 @@ private struct NumberPicker: View {
             if let error {
                 Text(error.reported.map(KeryxError.sentence) ?? error.message)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .problemStyle()
                     .textSelection(.enabled)
             }
         }
@@ -300,6 +307,10 @@ private struct HookRow: View {
     let hook: PhoneWording.Hook
 
     var body: some View {
+        rows
+    }
+
+    @ViewBuilder private var rows: some View {
         LabeledContent {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(hook.now ?? "Not set")
@@ -308,18 +319,23 @@ private struct HookRow: View {
                     .truncationMode(.middle)
                     .help(hook.now ?? "")
                     .textSelection(.enabled)
-                if !hook.matches, let expected = hook.expected {
-                    Text("Should be \(expected)")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(expected)
-                        .textSelection(.enabled)
-                }
             }
         } label: {
             Text(hook.title)
+        }
+        if !hook.matches, let expected = hook.expected {
+            LabeledContent {
+                Text(expected)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(expected)
+                    .textSelection(.enabled)
+            } label: {
+                Text("Expected")
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.leading, 12)
         }
     }
 }

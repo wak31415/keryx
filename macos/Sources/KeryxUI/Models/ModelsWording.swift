@@ -53,6 +53,13 @@ enum LocalRefusal: Equatable {
         llm.reachable ? "Running at \(Address.of(llm.url, port: llm.port))" : "Not running"
     }
 
+    /// Under the model server's status: llama.cpp installed or not, and whether it starts at
+    /// login. "llama.cpp installed · starts at login".
+    static func serverCaption(_ llm: LLMServer) -> String {
+        let program = llm.binary == nil ? "llama.cpp not installed; Start Model Server installs it" : "llama.cpp installed"
+        return [program, llm.unitInstalled ? "starts at login" : nil].compactMap { $0 }.joined(separator: " · ")
+    }
+
     /// Where Local Models should be shown when asked to without saying where: the
     /// recommended model while no model is chosen and downloaded, the model server while it
     /// isn't running; `nil` when nothing is left to do here.

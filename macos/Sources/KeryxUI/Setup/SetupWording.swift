@@ -73,6 +73,20 @@ enum SetupWording {
         }
     }
 
+    /// A step's button as a row of the last page says it, beside the step's own title: the
+    /// verb alone where the title already names what it is for ("Add Key…", "Sign In…",
+    /// "Connect…"), else the button's own words.
+    static func rowTitle(_ action: SetupAction) -> String {
+        switch action.effect {
+        case let .secret(_, title, replacing):
+            let noun = title.split(separator: " ").last.map { Wording.capitalised(String($0).lowercased()) } ?? "Key"
+            return "\(replacing ? "Change" : "Add") \(noun)…"
+        case .request(.signIn): return "Sign In…"
+        case .request(.connect), .request(.phoneAccount): return "Connect…"
+        default: return action.title
+        }
+    }
+
     /// "Waits for Voice, Coding Agents and Phone.": the steps a blocked step waits for, by
     /// their titles as the list shows them; the plan's own sentence when none is left open.
     static func waitsFor(_ step: SetupStep, in plan: SetupPlan) -> String? {

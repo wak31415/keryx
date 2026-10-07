@@ -78,7 +78,7 @@ struct OnboardingDetails: View {
             Button {
                 withAnimation(.snappy) { open.toggle() }
             } label: {
-                Label("Details", systemImage: "chevron.right")
+                Label("Show Details", systemImage: "chevron.right")
                     .labelStyle(DisclosureLabelStyle(open: open))
             }
             .buttonStyle(.borderless)

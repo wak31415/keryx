@@ -213,7 +213,7 @@ private struct ModelServerSection: View {
         let run = model.modelServerRun
         let configured = report.servers.localAgent.model ?? llm.model
         Section {
-            LabeledContent("Status") {
+            LabeledContent {
                 VStack(alignment: .trailing, spacing: 2) {
                     HStack(spacing: 6) {
                         StatusDot(llm.reachable ? .ok : .inactive)
@@ -223,27 +223,15 @@ private struct ModelServerSection: View {
                     if let configured, let served = ServedModel.stale(llm, configured: configured, models: report.models) {
                         Text("Serving \(title(of: served)) — restart the model server to load \(title(of: configured))")
                             .font(.callout)
-                            .foregroundStyle(.orange)
+                            .problemStyle(.warning)
                             .multilineTextAlignment(.trailing)
                     }
                 }
-            }
-            LabeledContent {
-                Text(llm.binary.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Not installed")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .help(llm.binary ?? "")
             } label: {
-                Text("llama.cpp")
-                if llm.binary == nil {
-                    Text("Start Model Server installs it")
-                }
-            }
-            LabeledContent("Starts at login") {
-                Text(llm.unitInstalled ? "Yes" : "No")
-                    .foregroundStyle(.secondary)
+                Text("Status")
+                // What runs it, and whether it starts at login, under the one status line; the
+                // program's path is behind Reveal in Finder.
+                Text(ModelsWording.serverCaption(llm))
             }
             progress(run)
             // While a start runs or has failed, its own rows are the ones to act on.
@@ -285,12 +273,16 @@ private struct ModelServerSection: View {
         let llm = servers.llm
         let cannot = ModelsWording.cannotStart(servers)
         HStack(spacing: 8) {
+            if let binary = llm.binary, !stopping {
+                Button("Reveal in Finder") { ThisMacSection.reveal(binary) }
+                    .help("Shows llama.cpp's server program in the Finder")
+            }
             if stopping {
                 ProgressView().controlSize(.small)
                 Text("Stopping…").foregroundStyle(.secondary)
             } else if let failure {
                 Text(VoiceWording.errorText(failure, titles: Wording.titles(model.config.value)))
-                    .foregroundStyle(.red)
+                    .problemStyle()
                     .textSelection(.enabled)
                     .lineLimit(3)
             } else if let cannot {
@@ -426,7 +418,7 @@ private struct VoiceModelsSection: View {
                         .textSelection(.enabled)
                 }
             } else {
-                Button("Go to Voice") { model.selection = .voice }
+                Button("Open Voice") { model.selection = .voice }
             }
         } label: {
             Text("Voice server")

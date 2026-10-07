@@ -89,17 +89,41 @@ import KeryxPreview
     }
 
     @Test func disconnectSaysWhatGoesAndWhatStops() {
-        let google = IntegrationsWording.disconnectQuestion(card("google"), plugins: PreviewData.plugins)
+        var connected = card("google")
+        connected.connected = true
+        let google = IntegrationsWording.disconnectQuestion(connected, plugins: PreviewData.plugins)
         #expect(google.title == "Disconnect Google for agents?")
         #expect(google.message.contains("stored sign-in is removed"))
         #expect(google.message.contains("client file stays"))
         let slack = IntegrationsWording.disconnectQuestion(card("slack"), plugins: PreviewData.plugins)
-        #expect(slack.message == "The Slack bot token is removed from secrets.toml. "
+        #expect(slack.message == "The Slack bot token is removed from this Mac. "
             + "The Slack plugin stops working until you connect it again.")
         #expect(slack.button == "Disconnect")
         let github = IntegrationsWording.disconnectQuestion(card("github"), plugins: PreviewData.plugins)
         #expect(github.title == "Turn Off Issue Reports?")
         #expect(github.button == "Turn Off")
+        // Only turned on, never connected: turned off, and asked so.
+        let half = IntegrationsWording.disconnectQuestion(card("google"), plugins: PreviewData.plugins)
+        #expect(half.title == "Turn Off Google for agents?" && half.button == "Turn Off")
+    }
+
+    @Test func aCardsStatusAndButtonsAgree() {
+        let on = config(["GOOGLE_WORKSPACE_MCP": .bool(true)])
+        #expect(IntegrationsWording.status(card("google"), config: on) == "Not ready")
+        #expect(IntegrationsWording.removal(card("google")) == "Turn Off…")
+        #expect(IntegrationsWording.status(card("openai-admin"), config: PreviewData.config) == "Not connected")
+        #expect(IntegrationsWording.status(card("slack"), config: nil) == "Connected")
+        #expect(IntegrationsWording.removal(card("slack")) == "Disconnect…")
+        #expect(IntegrationsWording.removal(card("github")) == "Turn Off…")
+        var gmail = card("gmail")
+        gmail.clientSaved = false
+        #expect(IntegrationsWording.needsClientFile(gmail))
+        gmail.clientSaved = true
+        #expect(!IntegrationsWording.needsClientFile(gmail))
+        #expect(IntegrationsWording.addSecret(IntegrationSecret(key: "OPENAI_ADMIN_KEY", title: "OpenAI admin key",
+                                                                set: false)) == "Add Key…")
+        #expect(!IntegrationsWording.showsUsedBy(card("gmail"), plugins: PreviewData.plugins),
+                "its description names Email answers already")
     }
 
     @Test func turningOnIssueReportsSaysTheyArePublic() {

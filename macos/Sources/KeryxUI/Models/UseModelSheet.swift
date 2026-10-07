@@ -34,7 +34,7 @@ package struct UseModelSheet: View {
             if let failure {
                 Text(failure.message)
                     .font(.callout)
-                    .foregroundStyle(.red)
+                    .problemStyle()
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }

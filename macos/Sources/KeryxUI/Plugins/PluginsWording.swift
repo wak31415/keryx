@@ -54,7 +54,7 @@ enum PluginsWording {
     /// "Connect Gmail First"; with a choice of accounts, Integrations itself.
     static func connectFirst(_ missing: [Integration]) -> String? {
         guard let first = missing.first else { return nil }
-        return missing.count == 1 ? "Connect \(Wording.titleCase(first.title)) First" : "Go to Integrations"
+        return missing.count == 1 ? "Connect \(Wording.titleCase(first.title))…" : "Open Integrations"
     }
 
     /// Asked before a plugin is turned off.

@@ -84,13 +84,13 @@ import KeryxPreview
         #expect(VoiceMode.allCases.map(VoiceWording.title) == ["OpenAI Realtime", "This Mac", "A Server Elsewhere"])
         #expect(VoiceWording.sectionTitle("Lyra") == "How Lyra Speaks")
         #expect(VoiceWording.sectionTitle(nil) == "How the Assistant Speaks")
-        #expect(VoiceMode.allCases.map(VoiceWording.primary) == ["Use OpenAI Realtime", "Set Up", "Check & Use"])
+        #expect(VoiceMode.allCases.map(VoiceWording.primary) == ["Use OpenAI Realtime", "Set Up", "Check and Use"])
     }
 
     @Test func theFooterSaysWhatIsInUseUntilAnotherIsSaved() {
         #expect(VoiceWording.footer(chosen: .openai, inUse: .openai).hasPrefix("In use now."))
         let other = VoiceWording.footer(chosen: .server, inUse: .openai)
-        #expect(other.contains("Nothing changes until you choose Check & Use"))
+        #expect(other.contains("Nothing changes until you choose Check and Use"))
         #expect(other.contains("OpenAI Realtime stays in use"))
     }
 
@@ -143,8 +143,8 @@ import KeryxPreview
         #expect(VoiceWording.serverKey(typed: nil, clearing: false) == .stored)
         #expect(VoiceWording.serverKeyState(typed: false, clearing: false, stored: true) == "Uses the stored key")
         #expect(VoiceWording.serverKeyState(typed: false, clearing: false, stored: false) == "Not set")
-        #expect(VoiceWording.serverKeyState(typed: false, clearing: true, stored: true) == "Removed with Check & Use")
-        #expect(VoiceWording.serverKeyState(typed: true, clearing: false, stored: true) == "Sent with Check & Use")
+        #expect(VoiceWording.serverKeyState(typed: false, clearing: true, stored: true) == "Removed with Check and Use")
+        #expect(VoiceWording.serverKeyState(typed: true, clearing: false, stored: true) == "Sent with Check and Use")
     }
 
     @Test func aRefusalNamesSettingsByTheirTitles() {
