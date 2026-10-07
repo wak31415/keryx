@@ -354,3 +354,76 @@ def test_the_default_popen_is_resolved_when_it_is_called(settings, monkeypatch):
     run_google_setup(settings, echo=lambda _text: None)
 
     assert spawned and spawned[0][0] == "uvx"
+
+
+#: The client's secret, only in the client file, and what a server echoing it says.
+FILE_SECRET = "cs-file-secret-0007"
+ECHOED = f"oauth client rejected: client_secret={FILE_SECRET}"
+
+
+def _echoing_server() -> FakeProcess:
+    """A server that says the client's secret in chatter, in its probe's text, and fails."""
+    return FakeProcess([
+        f"debug: using {FILE_SECRET}\n",
+        rpc(1, {"protocolVersion": "2025-06-18"}),
+        rpc(2, {"isError": True, "content": [{"type": "text", "text": ECHOED}]}),
+    ])
+
+
+def test_the_terminal_sign_in_never_prints_the_servers_secret(tmp_path, monkeypatch):
+    """`keryx auth login google-workspace` without --json, on the owner's own screen: every
+    line the server says and the failure it ends with are redacted, the client's secret
+    from the file Keryx saved included."""
+    from typer.testing import CliRunner
+
+    from keryx.cli import app
+
+    client = tmp_path / "client.json"
+    client.write_text(json.dumps({"installed": {"client_id": "cid",
+                                                "client_secret": FILE_SECRET}}))
+    monkeypatch.setattr(google.subprocess, "Popen",
+                        make_popen(_echoing_server(), []))
+
+    result = CliRunner().invoke(app, ["auth", "login", "google-workspace",
+                                      "--client-file", str(client)])
+
+    assert result.exit_code == 1
+    said = result.stdout + result.stderr
+    assert FILE_SECRET not in said and "debug: using [redacted]" in said
+    assert "google-workspace sign-in failed: " in result.stderr
+    assert f"{PROBE_TOOL} failed: oauth client rejected: client_secret=[redacted]" in said
+
+
+def test_the_wizards_sign_in_never_prints_the_settings_secret(settings):
+    """The settings' own client secret, echoed back by the server, is not printed either,
+    nor carried in the error the wizard shows."""
+    printed: list[str] = []
+    process = FakeProcess([
+        "debug: client-secret in use\n",
+        rpc(1, {"protocolVersion": "2025-06-18"}),
+        rpc(2, {"isError": True, "content": [{"type": "text", "text": "bad client-secret"}]}),
+    ])
+
+    with pytest.raises(google.WorkspaceRefused) as excinfo:
+        run_google_setup(settings, popen=make_popen(process, []), echo=printed.append)
+
+    assert not [line for line in printed if "client-secret" in line]
+    assert "client-secret" not in str(excinfo.value) and "[redacted]" in str(excinfo.value)
+
+
+def test_secrets_that_cannot_be_gathered_once_are_gathered_for_each_line(settings,
+                                                                        monkeypatch):
+    def broken(settings=None):
+        raise RuntimeError("no")
+
+    monkeypatch.setattr(google, "known_secrets", broken)
+    printed: list[str] = []
+    process = FakeProcess([
+        "debug: client-secret in use\n",
+        rpc(1, {"protocolVersion": "2025-06-18"}),
+        rpc(2, {"content": [{"type": "text", "text": "Calendar: primary"}]}),
+    ])
+
+    run_google_setup(settings, popen=make_popen(process, []), echo=printed.append)
+
+    assert "debug: [redacted] in use" in printed  # each line gathered them for itself

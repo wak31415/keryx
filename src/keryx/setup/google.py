@@ -53,7 +53,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 
 from keryx.agents.base import google_mcp_server_config
-from keryx.child_env import login_env
+from keryx.child_env import known_secrets, login_env, redact_known
 from keryx.config import GOOGLE_CLIENT_FILE, Settings, parse_google_client, write_private
 from keryx.integrations.gmail import SCOPE, TOKEN_URL, HttpGmail, token_path
 
@@ -105,6 +105,18 @@ class GoogleSetupError(RuntimeError):
     """A sign-in that cannot go on, in one sentence to print."""
 
 
+def redacted(text: str, settings: Settings, *, secrets: tuple[str, ...] | None = None) -> str:
+    """`text` without any credential Keryx knows of (`child_env.redact_known`), the Google
+    OAuth client's secret included wherever it came from — the settings or the client file.
+    What the workspace-mcp server says, and Google's own words, pass through here before
+    they are printed or become an error's sentence, the owner's own screen included."""
+    try:
+        client = settings.google_oauth_client()
+    except Exception:  # a client file that will not read: nothing more to take out
+        client = None
+    return redact_known(text, settings, extra=[client[1]] if client else [], secrets=secrets)
+
+
 class WorkspaceRefused(GoogleSetupError):
     """The workspace-mcp server's own words for a sign-in it refused or failed. They are the
     server's, and can quote the OAuth client's secret: shown only redacted, as a detail."""
@@ -141,6 +153,19 @@ def run_google_setup(
     config = google_mcp_server_config(settings)
     credentials = credentials_dir(settings)
     argv = [config["command"], *config["args"]]
+    # Everything echoed, and every error built from the server's words, is redacted first:
+    # the server can quote its own client's secret. The secrets are gathered once.
+    try:
+        gathered: tuple[str, ...] | None = known_secrets(settings)
+    except Exception:  # each line then gathers them itself, and withholds on failure
+        gathered = None
+    print_raw = echo
+
+    def said(text: str) -> str:
+        return redacted(text, settings, secrets=gathered)
+
+    def echo(text: str) -> None:
+        print_raw(said(text))
 
     echo(INSTRUCTIONS)
     echo(f"credentials will be stored under {credentials}")
@@ -166,7 +191,7 @@ def run_google_setup(
                                    "capabilities": {}, "clientInfo": CLIENT_INFO}})
         handshake = _await_reply(replies, _INITIALIZE_ID, deadline, echo)
         if "error" in handshake:
-            raise WorkspaceRefused(f"the server refused: {_error_text(handshake['error'])}")
+            raise WorkspaceRefused(said(f"the server refused: {_error_text(handshake['error'])}"))
 
         _send(process, {"jsonrpc": "2.0", "method": "notifications/initialized"})
         reply = _probe(process, replies, _PROBE_ID, deadline, echo)
@@ -186,7 +211,7 @@ def run_google_setup(
             reply = _probe(process, replies, _CONFIRM_ID, confirm_deadline, echo)
 
         if _is_failure(reply):
-            raise WorkspaceRefused(f"{PROBE_TOOL} failed: {' '.join(_reply_texts(reply))}")
+            raise WorkspaceRefused(said(f"{PROBE_TOOL} failed: {' '.join(_reply_texts(reply))}"))
 
         echo(f"Google access is authorized; credentials are in {credentials}")
         return True
@@ -550,7 +575,7 @@ def _ensure_client(ctx: "SetupContext", *, calendar: bool) -> bool:
         try:
             path = install_client_file(ctx.settings, Path(raw.strip().strip("'\"")))
         except GoogleSetupError as exc:
-            ui.error(str(exc))
+            ui.error(redacted(str(exc), ctx.settings))
             continue
         ui.success(f"client saved to {path}")
         return ctx.save({"GOOGLE_CLIENT_SECRETS_FILE": str(path)})
@@ -572,12 +597,12 @@ def _sign_in_email(ctx: "SetupContext") -> None:
             finish_signin(ctx.settings, answer, post=ctx.probes.http_post)
             break
         except GoogleSetupError as exc:
-            ui.error(str(exc))
+            ui.error(redacted(str(exc), ctx.settings))
     try:
         with ui.spinner("Reading your Gmail profile…"):
             address = asyncio.run(ctx.probes.gmail_address(ctx.settings))
     except GoogleSetupError as exc:
-        ui.error(str(exc))
+        ui.error(redacted(str(exc), ctx.settings))
         return
     ui.success(f"email answers: signed in as {address or 'your account'}")
     if address and not ctx.settings.user_google_email:
@@ -601,6 +626,6 @@ def _sign_in_agents(ctx: "SetupContext") -> None:
     try:
         ctx.probes.workspace_signin(ctx.settings, ui.note)
     except GoogleSetupError as exc:
-        ui.error(f"agents: {exc}")
+        ui.error(f"agents: {redacted(str(exc), ctx.settings)}")
         return
     ui.success("agents: Gmail and Calendar are authorized (list_calendars answered)")

@@ -48,7 +48,7 @@ from typing import IO, Any, Protocol
 from urllib.parse import parse_qs, urlparse
 
 from keryx.agents.auth import redact
-from keryx.child_env import login_env, redact_known
+from keryx.child_env import login_env
 from keryx.config import Settings
 from keryx.config.permissions import OWNER
 from keryx.config.store import ConfigError, ConfigStore
@@ -215,10 +215,10 @@ def stream(
             else:
                 _workspace(settings, store, events, workspace or google.run_google_setup)
     except google.WorkspaceRefused as error:
-        events.error(WORKSPACE_REFUSED, detail=_google_redacted(str(error), settings))
+        events.error(WORKSPACE_REFUSED, detail=google.redacted(str(error), settings))
         return 1
     except google.GoogleSetupError as error:  # its own sentence, a path or Google's word in it
-        events.error(_google_redacted(str(error), settings))
+        events.error(google.redacted(str(error), settings))
         return 1
     except (AuthError, SignInFailed) as error:
         events.error(str(error))
@@ -230,15 +230,6 @@ def stream(
 #: failed the sign-in; what the server said, redacted, is the detail.
 WORKSPACE_REFUSED = "Google's workspace server did not finish the sign-in."
 
-
-def _google_redacted(text: str, settings: Settings) -> str:
-    """`text` without any credential Keryx knows of, the Google OAuth client's secret
-    included wherever it came from — the settings, or the client file."""
-    try:
-        client = settings.google_oauth_client()
-    except Exception:  # a client file that will not read: nothing more to take out
-        client = None
-    return redact_known(text, settings, extra=[client[1]] if client else [])
 
 
 def _https_url(url: str, hosts: frozenset[str] | set[str]) -> str | None:

@@ -159,8 +159,8 @@ def login(
             google.run_google_setup(settings, echo=echo)
         else:
             raise AuthError(f"nothing called {name!r} to sign in to; one of: {', '.join(LOGINS)}")
-    except google.GoogleSetupError as exc:
-        raise AuthError(str(exc)) from None
+    except google.GoogleSetupError as exc:  # Google's or its server's words: redacted
+        raise AuthError(google.redacted(str(exc), settings)) from None
 
 
 def use_client_file(settings: Settings, store: ConfigStore, source: Path) -> Settings:
