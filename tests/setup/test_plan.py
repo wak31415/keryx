@@ -8,7 +8,8 @@ import pytest
 from keryx.agents.registry import BACKENDS
 from keryx.config import write_enrolled_pin
 from keryx.config.store import ConfigStore
-from keryx.doctor import Check, run_doctor_checks
+from keryx.doctor import Check, _webhook_check, run_doctor_checks
+from keryx.notify.twilio_out import TwilioError
 from keryx.setup import plan as setup_plan
 from keryx.setup.plan import (
     BLOCKED,
@@ -21,6 +22,8 @@ from keryx.setup.plan import (
     format_plan,
     mark_step,
 )
+from keryx.setup.wizard import DONE as WIZARD_DONE
+from keryx.setup.wizard import from_checks
 
 REQUIRED = ["voice", "agents", "owner", "pin", "phone", "service"]
 OPTIONALS = ["local", "google", "plugins", "issues", "profile", "projects"]
@@ -269,6 +272,52 @@ def test_a_non_default_local_agent_that_is_down_holds_nothing_back(plan_of, set_
 
     assert steps(plan)["voice"]["state"] == DONE
     assert plan["ready"] is True
+
+
+class Unanswering:
+    """A Twilio account whose every read fails with `error`."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def numbers(self):
+        raise self.error
+
+
+@pytest.mark.parametrize("error", [
+    TwilioError("x", cause="ConnectError"), TwilioError("x", status=503), TimeoutError("x"),
+])
+def test_twilio_not_answering_holds_neither_the_phone_nor_ready(plan_of, set_up, make_ctx,
+                                                               error):
+    """Could not ask is not an answer: a mismatch blocks, a moment's outage does not."""
+    down = _webhook_check(make_ctx([]).settings, Unanswering(error))
+    assert down.unknown and not down.ok
+
+    plan = plan_of(extra=[down])
+
+    phone = steps(plan)["phone"]
+    assert (phone["state"], phone["why"]) == (DONE, None)
+    assert plan["ready"] is True
+    assert phone["checks"][-1]["state"] == "failed"  # still said, as a warning is
+
+
+def test_twilio_refusing_the_credentials_holds_the_phone_back(plan_of, set_up, make_ctx):
+    refused = _webhook_check(make_ctx([]).settings, Unanswering(TwilioError("x", status=401)))
+    assert not refused.unknown
+
+    plan = plan_of(extra=[refused])
+
+    phone = steps(plan)["phone"]
+    assert phone["state"] == FAILED and plan["ready"] is False
+    assert phone["why"] == "Twilio webhook: Twilio didn't accept the account SID and auth token."
+
+
+def test_a_check_that_could_not_be_asked_leaves_a_sections_status_alone():
+    unknown = Check("Twilio webhook", False, "could not ask Twilio", severity="soft",
+                    section="phone", unknown=True)
+    ok = Check("PUBLIC_HOST", True, "keryx.example.com", section="phone")
+
+    assert from_checks([ok, unknown]) == WIZARD_DONE
 
 
 def test_a_hard_failure_no_step_owns_is_the_services_and_not_ready(plan_of, set_up):

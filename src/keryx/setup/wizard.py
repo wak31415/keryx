@@ -111,6 +111,9 @@ def section_statuses(
 
 
 def from_checks(checks: list[Check]) -> str:
+    """A section's status from its checks; one that could not ask (`Check.unknown`) says
+    nothing either way, and counts for neither."""
+    checks = [check for check in checks if not check.unknown]
     if any(check.state == "failed" for check in checks):
         return FAILED
     if any(check.state == "missing" for check in checks):

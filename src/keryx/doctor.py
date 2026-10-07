@@ -90,6 +90,9 @@ class Check:
     #: Not fine because nothing is configured yet, rather than because something configured
     #: does not work.
     unset: bool = False
+    #: Not fine because what it asks did not answer this time (Twilio unreachable): it says
+    #: nothing either way about the setup, so it holds no section or setup step back.
+    unknown: bool = False
 
     @property
     def state(self) -> str:
@@ -485,7 +488,14 @@ def _webhook_check(settings: Settings, twilio: Any) -> Check:
     setup` is what sets it, after asking.
     """
     # Late: `keryx.phone` reads this module.
-    from keryx.phone import BAD_HOST, hostname_problem, matches, twilio_problem, webhook_urls
+    from keryx.phone import (
+        BAD_HOST,
+        hostname_problem,
+        matches,
+        refused_credentials,
+        twilio_problem,
+        webhook_urls,
+    )
 
     if not (settings.twilio_number and settings.public_host):
         return Check("Twilio webhook", True, "not checked — no number or PUBLIC_HOST yet",
@@ -496,8 +506,11 @@ def _webhook_check(settings: Settings, twilio: Any) -> Check:
     try:
         numbers = {number.phone_number: number for number in twilio.numbers()}
     except Exception as exc:  # a warning, never a crash; by its cause: its text may quote the token
+        if refused_credentials(exc):  # an answer: these credentials do not work
+            return Check("Twilio webhook", False, twilio_problem(exc), severity="soft",
+                         section="phone")
         return Check("Twilio webhook", False, f"could not ask Twilio: {twilio_problem(exc)}",
-                     severity="soft", section="phone")
+                     severity="soft", section="phone", unknown=True)
     number = numbers.get(settings.twilio_number)
     if number is None:
         return Check(

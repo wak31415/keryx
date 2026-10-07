@@ -216,7 +216,10 @@ def _walked_sections(store: ConfigStore) -> set[str]:
 
 def _counts(step: Step, check: Check) -> bool:
     """Whether `check` holds a required step back: every hard one, and the soft ones the
-    step says it needs (see `Step`). The rest stay in `checks`, and hold nothing back."""
+    step says it needs (see `Step`). The rest stay in `checks`, and hold nothing back — as
+    does one that could not ask (`Check.unknown`: Twilio not answering is no mismatch)."""
+    if check.unknown:
+        return False
     if check.ok or check.severity == "hard":
         return True
     return step.soft_missing_counts if check.unset else step.soft_failed_counts

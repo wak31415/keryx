@@ -25,7 +25,9 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   (the owner's alone: the new PIN twice on stdin, one per line)
 - Check the machine's setup: `uv run keryx doctor [--json] [--fix]` (`--fix`
   only tightens secret files to 0600/0700; `--json` carries each check's `section`,
-  `state` — ok / missing / failed — and `title`, a setting's own when a key names the check)
+  `state` — ok / missing / failed — `title`, a setting's own when a key names the check, and
+  `unknown`, true for one that could not ask — Twilio not answering — which holds no section
+  or setup step back, where Twilio refusing the credentials or a webhook elsewhere does)
 - Whether it is running, and what it has to say: `uv run keryx status [--json]` (a report,
   so it always exits 0, a `keryx migrate` still to run included; `--json` is the document
   the Mac app's menu bar polls — `keryx/status.py`, schema 1, every part `ok`/`error` with

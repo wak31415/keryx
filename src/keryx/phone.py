@@ -72,11 +72,17 @@ def rest_admin(sid: str, token: str) -> TwilioAdmin:
     return RestTwilioAdmin(sid, token, client=client)
 
 
+def refused_credentials(error: Exception) -> bool:
+    """Whether `error` is Twilio answering that the SID and token do not go together — an
+    answer about the setup, where anything else is Twilio not answering this time."""
+    return isinstance(error, TwilioError) and error.status in TWILIO_REFUSED
+
+
 def twilio_problem(error: Exception) -> str:
     """`error`, from asking Twilio, as one sentence of cause and nothing else."""
+    if refused_credentials(error):
+        return "Twilio didn't accept the account SID and auth token."
     if isinstance(error, TwilioError):
-        if error.status in TWILIO_REFUSED:
-            return "Twilio didn't accept the account SID and auth token."
         if error.status is not None:
             return f"Twilio answered with HTTP {error.status}."
         return f"Keryx couldn't reach Twilio ({error.cause or type(error).__name__})."
