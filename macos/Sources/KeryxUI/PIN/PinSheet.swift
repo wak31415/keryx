@@ -5,7 +5,9 @@ import SwiftUI
 /// typed twice and compared here before they go, twice, on the stdin of `keryx pin set
 /// --stdin [--replace]`. The digits are never shown, logged or put on argv; they live only
 /// in this sheet's two fields, which are emptied once the PIN is saved and whenever the
-/// sheet goes away.
+/// sheet goes away. While a save runs the sheet cannot be closed (Cancel is off, and so is
+/// Escape), so no PIN is set after it has gone; should it go anyway, with its window, the
+/// save is stopped.
 ///
 /// Open it through `pinSheet(isPresented:)` (or `PinButton`), which asks "Are you sure?"
 /// before a working PIN is replaced; the sheet then asks "Replace the PIN?" once the new
@@ -25,6 +27,8 @@ package struct PinSheet: View {
     @State private var saved: PinSetResult?
     /// "Replace the PIN?" is up: the second yes, after the digits and before they go.
     @State private var confirmingReplace = false
+    /// The save under way: the only other holder of the digits, until it answers.
+    @State private var saveTask: Task<Void, Never>?
     @FocusState private var focus: Field?
     /// The owner has said yes to replacing a working PIN (`PinFlow`'s question). Without
     /// it, a working PIN is shown, never offered for replacing.
@@ -98,7 +102,14 @@ package struct PinSheet: View {
         .task { await model.refresh(.pin) }
         .onChange(of: first) { edited() }
         .onChange(of: second) { edited() }
-        .onDisappear(perform: forget)
+        // A save under way stays in front until it has answered.
+        .interactiveDismissDisabled(saving)
+        .onDisappear {
+            // Gone with its window mid-save: stopped, so nothing lands after it.
+            saveTask?.cancel()
+            saveTask = nil
+            forget()
+        }
         .alert(PinWording.replaceTitle, isPresented: $confirmingReplace) {
             // Cancel is the default: Return never replaces a PIN.
             Button("Cancel", role: .cancel) {}
@@ -250,9 +261,11 @@ package struct PinSheet: View {
         saving = true
         failure = nil
         digitsProblem = nil
-        Task {
+        saveTask = Task {
             let answer = await model.setPin(digits, replace: replace)
+            saveTask = nil
             saving = false
+            guard !Task.isCancelled else { return }
             switch answer {
             case let .success(result):
                 forget()

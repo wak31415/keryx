@@ -27,6 +27,8 @@ package struct SecretSheet: View {
     @State private var saving = false
     @State private var error: KeryxError?
     @State private var check: SecretCheck
+    /// The check under way, stopped if the sheet goes first.
+    @State private var verifying: Task<Void, Never>?
 
     init(key: String, title: String, replacing: Bool) {
         self.init(key: key, title: title, replacing: replacing, typed: "")
@@ -115,7 +117,12 @@ package struct SecretSheet: View {
         }
         .frame(width: 460)
         .onChange(of: value) { if check != .checking { check = .unchecked } }
-        .onDisappear { value = "" }
+        // A save under way would land after the sheet had gone: it stays until it has.
+        .interactiveDismissDisabled(saving)
+        .onDisappear {
+            stopVerifying()
+            value = ""
+        }
     }
 
     private var busy: Bool { saving || check == .checking }
@@ -130,8 +137,11 @@ package struct SecretSheet: View {
         let typed = value
         check = .checking
         error = nil
-        Task {
+        verifying = Task {
             let answer = await model.verify(key: key, value: typed)
+            // Cancelled (the sheet went): nothing more, and nothing said.
+            guard !Task.isCancelled else { return }
+            verifying = nil
             // Typed over while it was asked: that answer is about something else.
             guard typed == value else {
                 check = .unchecked
@@ -166,7 +176,16 @@ package struct SecretSheet: View {
         }
     }
 
+    /// Stops a check under way: its child is stopped, and with it the copy of the key the
+    /// call holds.
+    private func stopVerifying() {
+        verifying?.cancel()
+        verifying = nil
+        if check == .checking { check = .unchecked }
+    }
+
     private func close() {
+        stopVerifying()
         value = ""
         dismiss()
     }

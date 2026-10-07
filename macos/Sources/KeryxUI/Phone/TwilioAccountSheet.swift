@@ -6,7 +6,9 @@ import SwiftUI
 /// stdin, neither saved) before they are saved — the SID as a setting, the token as a
 /// secret on `config set --stdin`. A pair Twilio refused may still be saved, by a Save
 /// Anyway that says so. The token lives only in this sheet's state, never shown, logged or
-/// put on argv, and is emptied whenever the sheet goes.
+/// put on argv, and is emptied whenever the sheet goes, and when a save of it fails. A check
+/// under way is stopped (its child with it) when the sheet goes; a save keeps the sheet up
+/// until it has landed.
 package struct TwilioAccountSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -16,6 +18,8 @@ package struct TwilioAccountSheet: View {
     @State private var saving = false
     /// What went wrong saving, in sentences.
     @State private var failure: String?
+    /// The check with Twilio under way, stopped if the sheet goes first.
+    @State private var verifying: Task<Void, Never>?
 
     /// `savedSID`: the account SID saved now, which the field starts with. `token`: the
     /// catalog's dots, never a real token.
@@ -89,8 +93,14 @@ package struct TwilioAccountSheet: View {
         }
         .frame(width: 500)
         .onChange(of: sid) { typedOver() }
-        .onChange(of: token) { typedOver() }
-        .onDisappear { token = "" }
+        // Emptied after a failed save is not typed over: that would clear what it said.
+        .onChange(of: token) { if !token.isEmpty { typedOver() } }
+        // A save under way would land after the sheet had gone: it stays until it has.
+        .interactiveDismissDisabled(saving)
+        .onDisappear {
+            stopVerifying()
+            token = ""
+        }
     }
 
     private var trimmedSID: String { sid.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -112,8 +122,11 @@ package struct TwilioAccountSheet: View {
         let pair = (trimmedSID, token)
         check = .checking
         failure = nil
-        Task {
+        verifying = Task {
             let answer = await model.verifyTwilio(accountSID: pair.0, authToken: pair.1)
+            // Cancelled (the sheet went): nothing more, and nothing said.
+            guard !Task.isCancelled else { return }
+            verifying = nil
             guard pair == (trimmedSID, token) else {
                 check = .unchecked
                 return
@@ -121,6 +134,14 @@ package struct TwilioAccountSheet: View {
             check = SecretCheck(answer)
             if thenSave, case .works = check { save() }
         }
+    }
+
+    /// Stops a check under way: its child is stopped, and with it the copy of the pair the
+    /// call holds.
+    private func stopVerifying() {
+        verifying?.cancel()
+        verifying = nil
+        if check == .checking { check = .unchecked }
     }
 
     /// Checks first; once Twilio has accepted the pair (or the owner saves it anyway), the
@@ -140,11 +161,13 @@ package struct TwilioAccountSheet: View {
             let sidChanged = pair.0 != savedSID
             if sidChanged, let error = await model.set(key: "TWILIO_ACCOUNT_SID", to: pair.0) {
                 saving = false
+                forgetToken()
                 failure = PhoneWording.saveFailure(error)
                 return
             }
             if let error = await model.setSecret("TWILIO_AUTH_TOKEN", value: pair.1) {
                 saving = false
+                forgetToken()
                 failure = sidChanged ? PhoneWording.tokenNotSaved(error) : PhoneWording.saveFailure(error)
                 // The new SID is saved: show it, and read what Twilio says of the pair now.
                 if sidChanged { await model.refresh(.phoneNumbers, .phoneWebhooks) }
@@ -156,7 +179,15 @@ package struct TwilioAccountSheet: View {
         }
     }
 
+    /// A failed save: the token is pasted again from nothing, as the PIN sheet's digits are
+    /// typed again, and the check starts over with it.
+    private func forgetToken() {
+        token = ""
+        check = .unchecked
+    }
+
     private func close() {
+        stopVerifying()
         token = ""
         dismiss()
     }
