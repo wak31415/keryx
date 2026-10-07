@@ -11,8 +11,11 @@ public protocol KeryxClient: Sendable {
     func task(id: Int) async throws -> TaskDetail
     func usage(days: Int) async throws -> UsageReport
     func models() async throws -> ModelsReport
-    /// Progress of a download, as it happens. Cancelling the consumer stops the download.
-    func pull(model: String) -> AsyncThrowingStream<PullEvent, Error>
+    /// Progress of a download, as it happens. `stop()` stops the download, and the events
+    /// go on until it has (for the CLI, until `keryx models pull` has exited — normally
+    /// after a `cancelled` event), so the caller knows nothing is still writing to it.
+    /// Cancelling the consumer stops it too, without waiting.
+    func pull(model: String) -> PullStream
     func use(model: String, defaultAgent: Bool) async throws -> UseResult
     /// Runs `CHECKOUT/scripts/install-launchd.sh --llm`, and returns what it printed.
     func installModelServer() async throws -> String

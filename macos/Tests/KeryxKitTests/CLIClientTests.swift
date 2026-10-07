@@ -67,9 +67,7 @@ import Testing
             return .init(exitCode: 15, stdout: Data(), stderr: Data("Terminated\n".utf8))
         }
 
-        func lines(_ request: CommandRequest) -> AsyncThrowingStream<String, Error> {
-            AsyncThrowingStream { $0.finish() }
-        }
+        func lines(_ request: CommandRequest) -> LineStream { LineStream(AsyncThrowingStream { $0.finish() }) }
     }
 
     @Test func aCancelledReadThrowsCancellationNotAFailure() async throws {

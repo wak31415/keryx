@@ -219,7 +219,7 @@ private struct CatalogSection: View {
                     entry: entry,
                     action: ModelRow.action(for: entry, phase: downloads.active[entry.name],
                                             inUse: report.servers.localAgent.model == entry.name),
-                    busy: downloads.isRunning,
+                    busy: downloads.isBusy,
                     download: { model.download(entry.name) },
                     cancel: { downloads.cancel(entry.name) },
                     use: { choose(entry) })

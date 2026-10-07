@@ -8,6 +8,8 @@ struct ModelRow: View {
     enum Action: Equatable {
         case download
         case downloading(done: Int64, total: Int64)
+        /// Stopping a download: the ring spins and cannot be pressed again.
+        case cancelling
         case failed(String)
         case use
         case inUse
@@ -72,6 +74,9 @@ struct ModelRow: View {
                     .monospacedDigit()
                 DownloadRing(fraction: total > 0 ? Double(done) / Double(total) : nil, stop: cancel)
             }
+        case .cancelling:
+            DownloadRing(fraction: nil, stop: {})
+                .disabled(true)
         case .failed:
             HStack(spacing: 10) {
                 Text("Download failed")
@@ -96,6 +101,7 @@ struct ModelRow: View {
     static func action(for entry: CatalogModel, phase: Downloads.Phase?, inUse: Bool) -> Action {
         switch phase {
         case let .running(done, total): return .downloading(done: done, total: total)
+        case .cancelling: return .cancelling
         case let .failed(message): return .failed(message)
         case .finished, nil: break
         }

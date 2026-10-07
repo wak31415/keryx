@@ -40,14 +40,14 @@ public final class FakeRunner: CommandRunner, @unchecked Sendable {
         return try respond(request)
     }
 
-    public func lines(_ request: CommandRequest) -> AsyncThrowingStream<String, Error> {
+    public func lines(_ request: CommandRequest) -> LineStream {
         let respond = recordAndTakeLineResponder(request)
-        return AsyncThrowingStream { continuation in
+        return LineStream(AsyncThrowingStream { continuation in
             for line in respond(request) {
                 continuation.yield(line)
             }
             continuation.finish()
-        }
+        })
     }
 
     // `NSLock.lock()`/`unlock()` are unavailable called directly inside an `async`

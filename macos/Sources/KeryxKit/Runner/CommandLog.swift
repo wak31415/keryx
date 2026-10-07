@@ -118,7 +118,7 @@ public struct LoggingRunner: CommandRunner {
         }
     }
 
-    public func lines(_ request: CommandRequest) -> AsyncThrowingStream<String, Error> {
+    public func lines(_ request: CommandRequest) -> LineStream {
         Self.logger.info("\(describe(request), privacy: .public) started streaming")
         return base.lines(request)
     }

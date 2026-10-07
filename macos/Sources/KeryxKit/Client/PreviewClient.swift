@@ -9,7 +9,7 @@ public struct PreviewClient: KeryxClient {
     public enum Pull: Sendable {
         /// Yields the events of `PreviewData.pullLines`, then finishes.
         case replay
-        /// Yields one progress event, then waits until the download is cancelled.
+        /// Yields one progress event, then waits until the download is stopped.
         case holding(done: Int64, total: Int64)
         /// Yields these events, then finishes.
         case events([PullEvent])
@@ -65,7 +65,7 @@ public struct PreviewClient: KeryxClient {
     public func approvals(limit: Int) async throws -> ApprovalsReport { try approvalsReply.get() }
     public func memory() async throws -> MemoryDocument { try memoryReply.get() }
 
-    public func pull(model: String) -> AsyncThrowingStream<PullEvent, Error> {
+    public func pull(model: String) -> PullStream {
         let events: [PullEvent]
         var finishes = true
         switch pullBehaviour {
@@ -77,10 +77,14 @@ public struct PreviewClient: KeryxClient {
         case let .events(given):
             events = given
         }
-        return AsyncThrowingStream { continuation in
-            for event in events { continuation.yield(event) }
-            if finishes { continuation.finish() }
-        }
+        let (stream, continuation) = AsyncThrowingStream<PullEvent, Error>.makeStream()
+        for event in events { continuation.yield(event) }
+        if finishes { continuation.finish() }
+        // Stopped, it says what the CLI says, and ends.
+        return PullStream(stream, stop: {
+            continuation.yield(.cancelled)
+            continuation.finish()
+        })
     }
 
     public func use(model: String, defaultAgent: Bool) async throws -> UseResult {

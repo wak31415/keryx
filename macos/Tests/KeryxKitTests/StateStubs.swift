@@ -20,8 +20,8 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         var memory: Result<MemoryDocument, KeryxError> = .success(PreviewData.memory)
         var use: Result<UseResult, KeryxError> = .success(StubClient.useResult(restartNeeded: true))
         var write: KeryxError?
-        var pull: @Sendable (String) -> AsyncThrowingStream<PullEvent, Error> = { _ in
-            AsyncThrowingStream { $0.finish() }
+        var pull: @Sendable (String) -> PullStream = { _ in
+            PullStream(AsyncThrowingStream { $0.finish() })
         }
     }
 
@@ -62,7 +62,7 @@ final class StubClient: KeryxClient, @unchecked Sendable {
     func task(id: Int) async throws -> TaskDetail { try answer("tasks show \(id)") { $0.task } }
     func usage(days: Int) async throws -> UsageReport { try answer("tasks usage") { $0.usage } }
     func models() async throws -> ModelsReport { try answer("models list") { $0.models } }
-    func pull(model: String) -> AsyncThrowingStream<PullEvent, Error> {
+    func pull(model: String) -> PullStream {
         let make = lock.withLock {
             recorded.append("models pull \(model)")
             return replies.pull
@@ -113,23 +113,29 @@ final class StubLocator: Locating, @unchecked Sendable {
 }
 
 /// A pull stream the test drives by hand: it yields what the test sends and finishes when
-/// the test says, and it records whether its consumer went away (which, for the real
-/// client, is what terminates the `keryx models pull` child).
+/// the test says, and it records whether it was asked to stop (which, for the real client,
+/// signals the `keryx models pull` child's group) and whether its consumer went away.
 final class ManualPull: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: AsyncThrowingStream<PullEvent, Error>.Continuation?
     private var terminated = false
+    private var stops = 0
 
     var wasTerminated: Bool { lock.withLock { terminated } }
+    var stopRequests: Int { lock.withLock { stops } }
 
-    func stream() -> AsyncThrowingStream<PullEvent, Error> {
-        AsyncThrowingStream { continuation in
+    func stream() -> PullStream {
+        let events = AsyncThrowingStream<PullEvent, Error> { continuation in
             continuation.onTermination = { [weak self] _ in
                 guard let self else { return }
                 self.lock.withLock { self.terminated = true }
             }
             lock.withLock { self.continuation = continuation }
         }
+        return PullStream(events, stop: { [weak self] in
+            guard let self else { return }
+            self.lock.withLock { self.stops += 1 }
+        })
     }
 
     func send(_ event: PullEvent) { lock.withLock { continuation }?.yield(event) }

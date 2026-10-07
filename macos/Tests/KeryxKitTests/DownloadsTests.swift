@@ -28,15 +28,15 @@ import Testing
     func client(events: [PullEvent], throwing error: Error? = nil) -> StubClient {
         StubClient {
             $0.pull = { _ in
-                AsyncThrowingStream { continuation in
+                PullStream(AsyncThrowingStream { continuation in
                     for event in events { continuation.yield(event) }
                     continuation.finish(throwing: error)
-                }
+                })
             }
         }
     }
 
-    @Test func cancelPullResetsRow() async {
+    @Test func cancelStopsThePullAndKeepsTheRowCancellingUntilItHasStopped() async {
         let downloads = makeDownloads()
         let pull = ManualPull()
         downloads.start("qwen", client: client(pull), onFinish: {})
@@ -46,12 +46,112 @@ import Testing
         #expect(downloads.current?.name == "qwen")
 
         downloads.cancel("qwen")
-        #expect(downloads.active["qwen"] == nil)
+        #expect(pull.stopRequests == 1)
+        #expect(downloads.active["qwen"] == .cancelling)
         #expect(!downloads.isRunning)
+        #expect(downloads.isBusy)
+        #expect(downloads.current?.phase == .cancelling)
+        // A second press does nothing more; a late progress line does not bring it back.
+        downloads.cancel("qwen")
+        #expect(pull.stopRequests == 1)
+        pull.send(.progress(done: 11, total: 100))
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(downloads.active["qwen"] == .cancelling)
+
+        // The CLI says so and exits: only now does the row go.
+        pull.send(.cancelled)
+        pull.finish()
         await downloads.settled()
-        #expect(pull.wasTerminated)
         #expect(downloads.active["qwen"] == nil)
+        #expect(!downloads.isBusy)
         #expect(activities.begun == 1 && activities.ended == 1)
+    }
+
+    @Test func nothingStartsWhileADownloadIsCancelling() async {
+        let downloads = makeDownloads()
+        let first = ManualPull()
+        let stub = client(first)
+        downloads.start("qwen", client: stub, onFinish: {})
+        downloads.cancel("qwen")
+        // Neither the same model (two writers on one .part) nor another.
+        downloads.start("qwen", client: stub, onFinish: {})
+        downloads.start("gemma", client: stub, onFinish: {})
+        #expect(stub.calls == ["models pull qwen"])
+        #expect(downloads.active == ["qwen": .cancelling])
+
+        first.finish()   // killed: no terminal event, and that is not a failure here
+        await downloads.settled()
+        #expect(downloads.active["qwen"] == nil)
+
+        let second = ManualPull()
+        downloads.start("qwen", client: client(second), onFinish: {})
+        second.send(.progress(done: 5, total: 10))
+        #expect(await eventually { downloads.active["qwen"] == .running(done: 5, total: 10) })
+        second.send(.done(path: "/q.gguf"))
+        second.finish()
+        await downloads.settled()
+        #expect(downloads.active["qwen"] == .finished)
+    }
+
+    @Test func aDownloadThatFinishesAsItIsCancelledIsFinished() async {
+        let downloads = makeDownloads()
+        let pull = ManualPull()
+        var finished = 0
+        downloads.start("qwen", client: client(pull), onFinish: { finished += 1 })
+        downloads.cancel("qwen")
+        pull.send(.done(path: "/q.gguf"))
+        pull.finish()
+        await downloads.settled()
+        #expect(downloads.active["qwen"] == .finished)
+        #expect(finished == 1)
+    }
+
+    @Test func aCancelledDownloadThatErrsIsStillJustGone() async {
+        let downloads = makeDownloads()
+        let pull = ManualPull()
+        downloads.start("qwen", client: client(pull), onFinish: {})
+        downloads.cancel("qwen")
+        pull.finish(throwing: KeryxError.launch("gone"))
+        await downloads.settled()
+        #expect(downloads.active["qwen"] == nil)
+    }
+
+    /// End to end, with a shell standing in for `keryx models pull`: progress, a grandchild
+    /// (uv's Python), and `cancelled` on SIGTERM, as the CLI does.
+    @Test func cancellingARealPullWaitsForTheWholeGroupToGo() async throws {
+        let file = NSTemporaryDirectory() + "keryx-pull-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: file) }
+        let script = """
+            trap 'echo "{\\"event\\": \\"cancelled\\"}"; exit 130' TERM
+            sleep 30 & echo $! > '\(file)'
+            echo '{"event": "progress", "done": 1, "total": 4}'
+            wait
+            """
+        var location = KeryxLocation.fixture
+        location.executable = "/bin/sh"
+        location.prefixArguments = ["-c", script, "keryx"]
+        location.checkout = "/tmp"
+        location.workingDirectory = "/tmp"
+        let client = CLIClient(location: location, runner: ProcessRunner())
+        let downloads = makeDownloads()
+        downloads.start("qwen", client: client, onFinish: {})
+        #expect(await eventually { downloads.active["qwen"] == .running(done: 1, total: 4) })
+        let grandchild = try await ProcessRunnerTests.pid(writtenTo: file)
+
+        downloads.cancel("qwen")
+        #expect(downloads.active["qwen"] == .cancelling)
+        await downloads.settled()
+        #expect(downloads.active["qwen"] == nil)
+        #expect(await ProcessRunnerTests.isGone(grandchild))
+    }
+
+    @Test func thePreviewClientStopsWhenAsked() async {
+        let downloads = makeDownloads()
+        downloads.start("qwen", client: PreviewClient(pull: .holding(done: 1, total: 4)), onFinish: {})
+        #expect(await eventually { downloads.active["qwen"] == .running(done: 1, total: 4) })
+        downloads.cancel("qwen")
+        await downloads.settled()
+        #expect(downloads.active["qwen"] == nil)
     }
 
     @Test func doneFinishesAndCallsOnFinish() async {
@@ -158,18 +258,4 @@ import Testing
         #expect(downloads.active["qwen"] == .finished)
     }
 
-    @Test func cancellingThenStartingAgainKeepsTheNewRow() async {
-        let downloads = makeDownloads()
-        let first = ManualPull()
-        downloads.start("qwen", client: client(first), onFinish: {})
-        downloads.cancel("qwen")
-        let second = ManualPull()
-        downloads.start("qwen", client: client(second), onFinish: {})
-        second.send(.progress(done: 5, total: 10))
-        #expect(await eventually { downloads.active["qwen"] == .running(done: 5, total: 10) })
-        second.finish()
-        await downloads.settled()
-        #expect(downloads.active["qwen"] == .failed(
-            "The download stopped without saying why. Run keryx doctor in Terminal."))
-    }
 }

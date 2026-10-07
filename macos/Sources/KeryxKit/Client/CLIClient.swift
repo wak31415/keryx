@@ -64,10 +64,11 @@ public struct CLIClient: KeryxClient {
 
     /// Ends normally only after a terminal event (done, adopted, error, cancelled). A stream
     /// that stops short of one (the CLI crashed, was killed, or printed nothing) throws,
-    /// because "it ended" is not "it finished".
-    public func pull(model: String) -> AsyncThrowingStream<PullEvent, Error> {
+    /// because "it ended" is not "it finished". `stop()` stops the CLI's process group
+    /// (which it answers with `cancelled`), and the stream ends once the CLI has exited.
+    public func pull(model: String) -> PullStream {
         let lines = runner.lines(request(["models", "pull", model, "--json"], timeout: nil))
-        return AsyncThrowingStream { continuation in
+        let events = AsyncThrowingStream<PullEvent, Error> { continuation in
             let task = Task {
                 do {
                     var concluded = false
@@ -89,6 +90,7 @@ public struct CLIClient: KeryxClient {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+        return PullStream(events, stop: { lines.stop() })
     }
 
     public func use(model: String, defaultAgent: Bool) async throws -> UseResult {

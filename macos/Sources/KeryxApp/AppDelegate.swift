@@ -116,11 +116,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
-        // Stop the download's child rather than leave it running without us, and give it a
-        // moment to go; the part already downloaded stays for next time.
+        // Stop the download's child rather than leave it running without us, and wait for
+        // it to go (SIGKILL follows SIGTERM within seconds); the part already downloaded
+        // stays for next time.
         if let current = model.downloads.current { model.downloads.cancel(current.name) }
         Task {
-            try? await Task.sleep(for: .milliseconds(500))
+            let deadline = ContinuousClock.now + .seconds(5)
+            while model.downloads.isBusy, ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

@@ -76,6 +76,12 @@ import Testing
         }
         #expect(model.downloads.active["gemma-4-12b"] == .running(done: 5, total: 10))
         model.downloads.cancel("gemma-4-12b")
+        // Stopping, until the download has stopped: a spinner nobody can press again.
+        #expect(model.downloads.active["gemma-4-12b"] == .cancelling)
+        #expect(ModelRow.action(for: entry("gemma-4-12b"), phase: .cancelling, inUse: false) == .cancelling)
+        for _ in 0..<50 where !model.downloads.active.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(model.downloads.active.isEmpty)
     }
 

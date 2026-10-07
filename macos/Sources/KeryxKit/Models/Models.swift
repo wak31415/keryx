@@ -121,6 +121,9 @@ public enum PullEvent: Equatable, Sendable {
     }
 }
 
+/// A download's events, which can be asked to stop (`KeryxClient.pull`).
+public typealias PullStream = StoppableStream<PullEvent>
+
 /// `keryx models use NAME --json`.
 public struct UseResult: Codable, Sendable, Equatable {
     public var saved: [String: JSONValue]

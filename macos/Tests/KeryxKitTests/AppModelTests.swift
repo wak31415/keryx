@@ -276,7 +276,7 @@ import Testing
 
     @Test func aDownloadThatFinishesRefreshesModels() async {
         let client = StubClient {
-            $0.pull = { _ in AsyncThrowingStream { $0.yield(.done(path: "/m.gguf")); $0.finish() } }
+            $0.pull = { _ in PullStream(AsyncThrowingStream { $0.yield(.done(path: "/m.gguf")); $0.finish() }) }
         }
         let model = makeModel(client: client)
         await model.start()
