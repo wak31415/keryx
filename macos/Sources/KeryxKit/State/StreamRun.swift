@@ -82,6 +82,9 @@ public final class StreamRun<Done: StreamDone> {
     public nonisolated static var starting: String { "Starting…" }
 
     public private(set) var phase: Phase?
+    /// The step the latest run reached, kept once it has ended — so a failure can be shown
+    /// at the step it stopped on. Empty until its first step.
+    public private(set) var lastStep = ""
     @ObservationIgnored private var run: UUID?
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var stream: StoppableStream<StreamEvent<Done>>?
@@ -128,6 +131,7 @@ public final class StreamRun<Done: StreamDone> {
         let run = UUID()
         self.run = run
         stopping = false
+        lastStep = ""
         phase = .running(Activity())
         let stream = make()
         self.stream = stream
@@ -243,6 +247,7 @@ public final class StreamRun<Done: StreamDone> {
         case .done, .error, .cancelled:
             return
         }
+        lastStep = activity.step
         phase = .running(activity)
     }
 
