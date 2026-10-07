@@ -479,15 +479,20 @@ def _public_host_check(settings: Settings) -> Check:
 def _webhook_check(settings: Settings, twilio: Any) -> Check:
     """Is the number pointed at this machine? Read-only, and soft: Twilio may be down.
 
-    Only asked when there is a number and a host to compare; `keryx setup` is what sets
-    it, after asking.
+    Pointed here is both webhooks, the voice URL and the status callback, compared as
+    `keryx phone webhooks` compares them (`phone.matches`), so doctor, `setup plan` and the
+    phone screen agree. Only asked when there is a number and a host to compare; `keryx
+    setup` is what sets it, after asking.
     """
+    # Late: `keryx.phone` reads this module.
+    from keryx.phone import BAD_HOST, hostname_problem, matches, twilio_problem, webhook_urls
+
     if not (settings.twilio_number and settings.public_host):
         return Check("Twilio webhook", True, "not checked — no number or PUBLIC_HOST yet",
                      severity="soft", section="phone")
-    from keryx.phone import twilio_problem  # late: `keryx.phone` reads this module
-
-    want = f"https://{settings.public_host}{VOICE_PATH}"
+    if hostname_problem(settings.public_host):
+        return Check("Twilio webhook", False, BAD_HOST, severity="soft", section="phone")
+    want, want_status = webhook_urls(settings.public_host)
     try:
         numbers = {number.phone_number: number for number in twilio.numbers()}
     except Exception as exc:  # a warning, never a crash; by its cause: its text may quote the token
@@ -501,12 +506,15 @@ def _webhook_check(settings: Settings, twilio: Any) -> Check:
             f"{mask_number(settings.twilio_number)} is not a number on this Twilio account",
             section="phone",
         )
-    if (number.voice_url or "").rstrip("/") != want:
-        current = number.voice_url or "nothing"
+    if not matches(number, settings.public_host):
+        if (number.voice_url or "").rstrip("/") != want:
+            found = f"calls go to {number.voice_url or 'nothing'}, not {want}"
+        else:
+            found = f"call status goes to {number.status_callback or 'nothing'}, not {want_status}"
         return Check(
             "Twilio webhook",
             False,
-            f"calls go to {current}, not {want} — `keryx setup` can point it here",
+            f"{found} — `keryx setup` can point it here",
             severity="soft",
             section="phone",
         )

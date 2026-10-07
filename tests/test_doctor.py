@@ -774,13 +774,17 @@ def test_an_imported_env_left_behind_is_reported(healthy, tmp_path, monkeypatch)
 # --- the Twilio webhook -----------------------------------------------------------
 
 
+HERE_VOICE = "https://keryx.example.com/twilio/voice"
+HERE_STATUS = "https://keryx.example.com/twilio/status"
+
+
 class FakeTwilio:
-    def __init__(self, voice_url=None, *, fail=False, error=None):
+    def __init__(self, voice_url=None, *, status_url=None, fail=False, error=None):
         from keryx.notify.twilio_out import TwilioNumber
 
         self.fail = fail
         self.error = error
-        self.number = TwilioNumber("PN1", "+15550000000", voice_url, None)
+        self.number = TwilioNumber("PN1", "+15550000000", voice_url, status_url)
 
     def numbers(self):
         if self.error is not None:
@@ -795,11 +799,46 @@ def test_the_webhook_is_checked_only_when_a_client_is_given(healthy):
 
 
 def test_a_webhook_pointed_here_passes(healthy):
-    twilio = FakeTwilio("https://keryx.example.com/twilio/voice")
+    twilio = FakeTwilio(HERE_VOICE, status_url=HERE_STATUS)
 
     check = by_name(run_doctor_checks(healthy, twilio=twilio))["Twilio webhook"]
 
     assert check.ok is True
+
+
+def test_a_status_callback_pointed_elsewhere_is_not_pointed_here(healthy):
+    """Call-status data goes wherever it points: both webhooks, as `phone webhooks` says."""
+    twilio = FakeTwilio(HERE_VOICE, status_url="https://old.example.com/status")
+
+    check = by_name(run_doctor_checks(healthy, twilio=twilio))["Twilio webhook"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "old.example.com" in check.detail and HERE_STATUS in check.detail
+
+
+@pytest.mark.parametrize(("voice", "status"), [
+    (HERE_VOICE, HERE_STATUS), (HERE_VOICE + "/", HERE_STATUS), (HERE_VOICE, None),
+    (None, HERE_STATUS), ("https://old.example.com/voice", HERE_STATUS), (None, None),
+])
+def test_doctor_and_phone_webhooks_agree_on_a_match(healthy, voice, status):
+    from keryx import phone
+
+    twilio = FakeTwilio(voice, status_url=status)
+    check = by_name(run_doctor_checks(healthy, twilio=twilio))["Twilio webhook"]
+    report = phone.webhooks_report(healthy, lambda sid, token: twilio)
+
+    assert check.ok is report["matches"] is phone.matches(twilio.number, "keryx.example.com")
+
+
+def test_a_host_that_is_not_a_hostname_never_passes_the_webhook(healthy):
+    host = "good.example@evil.example"
+    twilio = FakeTwilio(f"https://{host}/twilio/voice", status_url=f"https://{host}/twilio/status")
+
+    check = by_name(run_doctor_checks(healthy.model_copy(update={"public_host": host}),
+                                      twilio=twilio))["Twilio webhook"]
+
+    assert (check.ok, check.severity) == (False, "soft")
+    assert "isn't a bare hostname" in check.detail
 
 
 def test_a_webhook_pointed_elsewhere_is_a_warning_that_says_setup_fixes_it(healthy):

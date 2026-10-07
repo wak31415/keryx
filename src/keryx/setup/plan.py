@@ -268,7 +268,7 @@ def _why(own: list[Check], state: str, step: Step) -> str:
 #: What gives a command away, in a detail written for a terminal.
 SHELL_TEXT = ("`", "keryx ", "scripts/", "uv ", "brew ", "$ ")
 #: Details whose first clause is too long for a sentence beside a title, by their start.
-PHRASES = (("calls go to ", "points elsewhere"),)
+PHRASES = (("calls go to ", "points elsewhere"), ("call status goes to ", "points elsewhere"))
 #: The phrase for a check whose detail is nothing but terminal advice.
 GENERIC = {"missing": "not set up", "failed": "not working"}
 

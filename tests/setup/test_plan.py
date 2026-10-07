@@ -212,6 +212,16 @@ def test_failed_shows_through_blocked(plan_of, signed_out):
     assert phone["checks"][-1]["detail"] == webhook.detail  # doctor's own words, untouched
 
 
+def test_a_status_callback_elsewhere_is_said_as_pointing_elsewhere(plan_of, signed_out):
+    webhook = Check("Twilio webhook", False, "call status goes to https://old.example/s, not "
+                    "https://keryx.example.com/twilio/status — `keryx setup` can point it here",
+                    severity="soft", section="phone")
+
+    phone = steps(plan_of(extra=[webhook]))["phone"]
+
+    assert (phone["state"], phone["why"]) == (FAILED, "Twilio webhook: points elsewhere.")
+
+
 def test_soft_checks_of_another_agent_or_web_search_do_not_hold_a_step(plan_of, signed_in):
     ConfigStore().set({"AGENTS_ENABLED": "claude,codex", "VOICE_BASE_URL":
                        "http://127.0.0.1:9000/v1"})
