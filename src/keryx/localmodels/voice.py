@@ -8,6 +8,11 @@ loopback address of `VOICE_SERVER_PORT`) and a server elsewhere (`server`).
 `here` is the long one: install speech-to-speech when it is missing, save its voice and
 port, install its unit, wait for it to answer a Realtime handshake, and only then save it as
 the voice — a `VOICE_BASE_URL` that does not answer is a phone that rings and says nothing.
+It refuses while the local model server, which the voice server takes its words from, does
+not answer: on 2026-10-07 a voice server installed without one crash-looped under launchd's
+KeepAlive on its first request for words. And a server that does not come up, or whose
+start is cancelled, has its unit removed before anything else is said, so no unit is ever
+left restarting in a loop (`removed_if_stopped`, which `keryx models start` shares).
 Each step is told to a `Report` before its slow work starts; the wizard tells it as notes and
 a spinner, `keryx voice use here --json` as JSON lines (`JsonSteps`, on pull's `EventLines`,
 so it ends exactly once on every path). Every install, port, disk and network question is
@@ -17,8 +22,8 @@ asked through `Probes`: the wizard's own, or `machine()` for the command line.
 import re
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -28,7 +33,7 @@ import httpx
 from keryx.config import Settings
 from keryx.config.store import FROM_DEFAULT, ConfigStore
 from keryx.endpoints import Endpoint, warnings
-from keryx.localmodels import catalog, hardware, runtimes, servers
+from keryx.localmodels import catalog, hardware, runtimes, servers, use
 from keryx.localmodels.catalog import VOICE_SERVER_DOWNLOAD_GB
 from keryx.localmodels.pull import EventLines
 from keryx.localmodels.servers import HOST
@@ -42,6 +47,17 @@ SERVER_REACH_S = 2.0
 #: What `needs` says while there is no local model for the voice server's words.
 NEEDS_WORDS = "local_agent_model"
 NO_WORDS = "set up a local model first: keryx models use NAME"
+#: What `here` says, refusing, while the server its words come from does not answer.
+NO_WORDS_SERVER = "The local model server isn't running: start it first."
+#: Said of a unit removed rather than left restarting a server that did not come up.
+REMOVED = "its service was removed, so it does not restart in a loop"
+#: Keryx's own installers, the only commands `run_detached` gives a deadline: a few
+#: `keryx config get`s and the service manager's answers, with room for `uv` to sync the
+#: environment first. A download (uv, brew, ollama) takes as long as it takes.
+INSTALLERS = frozenset({"install-launchd.sh", "install-systemd.sh"})
+INSTALL_TIMEOUT_S = 120.0
+#: The exit code said for an installer stopped at its deadline, as `timeout(1)` says it.
+TIMED_OUT = 124
 #: The exit codes of a set-up: a refusal is one nothing was tried for.
 OK, FAILED, REFUSED = 0, 1, 2
 #: The platform whose service manager installs the units, unless a caller says another.
@@ -61,6 +77,7 @@ class Probes(Protocol):
     free_port: Callable[[int], int]
     wait_for_server: Callable[[Endpoint, str, float], str | None]
     realtime_problem: Callable[[Endpoint], str | None]
+    words_up: Callable[[Endpoint | None], bool]
 
 
 class Steps(Protocol):
@@ -133,6 +150,17 @@ def status(
             "reachable": server_reachable(settings.voice_endpoint) if where == SERVER else None,
         },
     }
+
+
+def words_up(endpoint: Endpoint | None) -> bool:
+    """Whether the server the voice server takes its words from (the local agent's) answers:
+    one on this machine through `use.probe`, on loopback and never through a proxy; one
+    elsewhere as a voice server elsewhere is asked, with its key."""
+    if endpoint is None:
+        return False
+    if endpoint.is_loopback:
+        return use.probe(endpoint.base_url)[0]
+    return server_reachable(endpoint)
 
 
 def server_reachable(endpoint: Endpoint, *, get: Callable[..., httpx.Response] | None = None
@@ -216,12 +244,16 @@ def here(
     `choose_voice` is asked once speech-to-speech is installed; `save` stores values as
     whoever is running this and says why when it cannot (False). `root` is the checkout
     whose `scripts/` installs the unit. 2 for what refuses it before anything is tried —
-    no local model for the words, no installer for the unit — 1 for anything that stopped
-    it, 0 once the server answered and was saved as the voice. A half-done install is left
-    for the next run to finish.
+    no local model for the words, or none answering, no installer for the unit — 1 for
+    anything that stopped it, 0 once the server answered and was saved as the voice. A
+    half-done install is left for the next run to finish; a unit whose server did not come
+    up, or whose start was cancelled, is not.
     """
     if words_model(settings) is None:
         report.error(no_words)
+        return REFUSED
+    if not probes.words_up(settings.local_agent_endpoint):
+        report.error(NO_WORDS_SERVER)
         return REFUSED
     script, problem = installer("--voice", root=root, platform=platform)
     if script is None:
@@ -253,14 +285,16 @@ def here(
     with report.step("unit", "Installing the voice server's service"):
         code = probes.run_script([str(script), "--voice"])
     if code != 0:
-        report.error(f"{script.name} --voice exited with {code}")
+        report.error(exited(f"{script.name} --voice", code))
         return FAILED
     endpoint = Endpoint.parse(f"http://{HOST}:{port}")
     with report.step("start", "Starting the voice server — its first start downloads its "
-                              "speech models, which takes a few minutes"):
+                              "speech models, which takes a few minutes"), \
+            removed_if_stopped("--voice", probes.run_script, root=root, platform=platform):
         problem = probes.wait_for_server(endpoint, "realtime", VOICE_START_S)
     if problem is not None:
-        report.error(f"the voice server did not come up: {problem}",
+        removed = remove_unit("--voice", probes.run_script, root=root, platform=platform)
+        report.error(f"the voice server did not come up: {problem}; {removed}",
                      log=settings.state_dir / "logs" / "keryx-voice.err.log")
         return FAILED
     if not save({"VOICE_BASE_URL": endpoint.base_url, "VOICE_API_KEY": None}):
@@ -298,7 +332,45 @@ def install_unit(
     if script is None:
         return problem
     code = run_script([str(script), flag])
-    return None if code == 0 else f"{script.name} {flag} exited with {code}"
+    return None if code == 0 else exited(f"{script.name} {flag}", code)
+
+
+def remove_unit(
+    flag: str, run_script: Callable[[Sequence[str]], int], *, root: Path,
+    platform: str | None = None,
+) -> str:
+    """Remove the `flag` unit ("--llm" or "--voice"); what became of it, in a clause."""
+    script, problem = installer(flag, root=root, platform=platform)
+    if script is None:
+        return f"its service could not be removed: {problem}"
+    code = run_script([str(script), flag, "--uninstall"])
+    if code != 0:
+        said = exited(f"{script.name} {flag} --uninstall", code)
+        return f"its service could not be removed: {said}"
+    return REMOVED
+
+
+@contextmanager
+def removed_if_stopped(
+    flag: str, run_script: Callable[[Sequence[str]], int], *, root: Path,
+    platform: str | None = None,
+) -> Iterator[None]:
+    """The `flag` unit removed when what this wraps is stopped — a Cancel, which is what an
+    owner does to a server that will not come up — and the stop then goes on: a unit
+    installed and never seen to work is never left behind to restart in a loop."""
+    try:
+        yield
+    except BaseException:
+        with suppress(Exception):
+            remove_unit(flag, run_script, root=root, platform=platform)
+        raise
+
+
+def exited(command: str, code: int) -> str:
+    """How `command` ended, in a clause: stopped at its deadline, or its exit code."""
+    if code == TIMED_OUT:
+        return f"{command} did not finish within {INSTALL_TIMEOUT_S:g} s"
+    return f"{command} exited with {code}"
 
 
 def voice_name_problem(name: str) -> str | None:
@@ -314,10 +386,18 @@ def voice_name_problem(name: str) -> str | None:
 
 def run_detached(argv: Sequence[str]) -> int:
     """Run an installer for the command line: nothing read from its stdin, and its output on
-    stderr (descriptor 2), so stdout stays the JSON lines' alone."""
+    stderr (descriptor 2), so stdout stays the JSON lines' alone. One of Keryx's own unit
+    installers is stopped at `INSTALL_TIMEOUT_S` (`TIMED_OUT`, and a line on stderr saying
+    so); anything else — a download — is given as long as it takes."""
+    name = Path(argv[0]).name if argv else ""
+    timeout = INSTALL_TIMEOUT_S if name in INSTALLERS else None
     try:
-        return subprocess.run(list(argv), stdin=subprocess.DEVNULL, stdout=2,
-                              check=False).returncode
+        return subprocess.run(list(argv), stdin=subprocess.DEVNULL, stdout=2, check=False,
+                              timeout=timeout).returncode
+    except subprocess.TimeoutExpired:
+        print(f"{name} did not finish within {INSTALL_TIMEOUT_S:g} s", file=sys.stderr,
+              flush=True)
+        return TIMED_OUT
     except OSError:
         return 127
 
@@ -338,6 +418,7 @@ class Machine:
     free_port: Callable[[int], int]
     wait_for_server: Callable[[Endpoint, str, float], str | None]
     realtime_problem: Callable[[Endpoint], str | None]
+    words_up: Callable[[Endpoint | None], bool]
 
 
 def machine() -> Machine:
@@ -346,6 +427,7 @@ def machine() -> Machine:
         speech_to_speech=runtimes.speech_to_speech, free_bytes=hardware.free_bytes,
         run_script=run_detached, free_port=servers.free_port,
         wait_for_server=servers.wait_for, realtime_problem=_realtime_problem,
+        words_up=words_up,
     )
 
 

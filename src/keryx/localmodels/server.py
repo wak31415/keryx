@@ -15,8 +15,8 @@ that the server names the chosen model. A server that does not come up, or serve
 model, has its unit removed before the error is told: no unit is left restarting in a loop.
 """
 
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import AbstractContextManager, contextmanager, suppress
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -48,7 +48,7 @@ STEPS = ("runtime", "unit", "start", "check")
 #: What `start` says, first, while there is no model it could serve.
 NOT_READY = "choose and download a model first"
 #: Said of a unit `start` removed rather than leave it restarting a server that fails.
-REMOVED = "its service was removed, so it does not restart in a loop"
+REMOVED = voice.REMOVED
 
 
 class InstallError(RuntimeError):
@@ -157,19 +157,11 @@ def serve_here(
     return True
 
 
-@contextmanager
 def _removed_if_stopped(
     run_script: Callable[[Sequence[str]], int], *, root: Path, platform: str | None
-) -> Iterator[None]:
-    """The model server's unit removed when what this wraps is stopped — a Cancel, which is
-    what an owner does to a server that will not load — and the stop then goes on: a unit
-    installed and never seen to work is never left behind to restart in a loop."""
-    try:
-        yield
-    except BaseException:
-        with suppress(Exception):
-            remove_unit(run_script, root=root, platform=platform)
-        raise
+) -> AbstractContextManager[None]:
+    """The model server's unit removed when what this wraps is stopped (`voice`'s rule)."""
+    return voice.removed_if_stopped("--llm", run_script, root=root, platform=platform)
 
 
 def retire_llama(
@@ -188,14 +180,7 @@ def remove_unit(
     run_script: Callable[[Sequence[str]], int], *, root: Path, platform: str | None = None
 ) -> str:
     """Remove the model server's unit; what became of it, in a clause."""
-    script, problem = voice.installer("--llm", root=root, platform=platform)
-    if script is None:
-        return f"its service could not be removed: {problem}"
-    code = run_script([str(script), "--llm", "--uninstall"])
-    if code != 0:
-        return f"its service could not be removed: {script.name} --llm --uninstall exited " \
-               f"with {code}"
-    return REMOVED
+    return voice.remove_unit("--llm", run_script, root=root, platform=platform)
 
 
 # --- Ollama --------------------------------------------------------------------------------

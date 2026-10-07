@@ -24,6 +24,8 @@ class Machine:
         self.s2s: str | None = None
         self.unit = False
         self.up = False
+        #: Whether the local model server, the voice server's words, answers.
+        self.words = True
         self.server = True
         self.script_code = 0
         self.wait_problem: str | None = None
@@ -51,13 +53,18 @@ def machine(monkeypatch, tmp_path, every_agent_installed):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(runtimes, "speech_to_speech", lambda: found.s2s)
     monkeypatch.setattr(use, "unit_installed", lambda kind: found.unit)
-    monkeypatch.setattr(use, "probe", lambda url: (found.up, None))
+    monkeypatch.setattr(use, "probe", lambda url: (
+        found.words if url == WORDS["LOCAL_AGENT_BASE_URL"] else found.up, None))
     monkeypatch.setattr(voice, "server_reachable",
                         lambda endpoint: found.servers.append(endpoint) or found.server)
     monkeypatch.setattr(voice, "run_detached", found.run)
     monkeypatch.setattr(servers, "free_port", lambda port: port)
-    monkeypatch.setattr(servers, "wait_for",
-                        lambda endpoint, kind, timeout: found.wait_problem)
+    def wait_for(endpoint, kind, timeout):
+        if isinstance(found.wait_problem, BaseException):
+            raise found.wait_problem
+        return found.wait_problem
+
+    monkeypatch.setattr(servers, "wait_for", wait_for)
     monkeypatch.setattr("keryx.realtime.openai.realtime_problem",
                         lambda endpoint: found.realtimes.append(endpoint) or found.realtime)
     monkeypatch.setattr("keryx.localmodels.hardware.free_bytes", lambda path: 10**12)
@@ -359,6 +366,47 @@ def test_use_here_that_does_not_come_up_says_where_its_log_is(machine):
     assert "VOICE_BASE_URL" not in ConfigStore().stored()
 
 
+def test_use_here_whose_server_never_answers_removes_its_unit_first(machine):
+    ConfigStore().set(WORDS)
+    machine.s2s, machine.wait_problem = "/bin/s2s", "no Realtime socket"
+
+    result = runner.invoke(app, ["voice", "use", "here", "--json"])
+
+    assert result.exit_code == 1
+    assert [argv[1:] for argv in machine.scripts] == [["--voice"], ["--voice", "--uninstall"]]
+    assert voice.REMOVED in events_of(result)[-1]["message"]
+
+
+def test_use_here_cancelled_while_its_server_starts_removes_its_unit_then_says_so(machine):
+    """The app's Cancel on a voice server that will not come up: no unit is left for
+    launchd to restart in a loop, and the stream still ends `cancelled`."""
+    ConfigStore().set(WORDS)
+    machine.s2s, machine.wait_problem = "/bin/s2s", KeyboardInterrupt()
+
+    result = runner.invoke(app, ["voice", "use", "here", "--json"])
+
+    assert result.exit_code == 130
+    assert events_of(result)[-1] == {"event": "cancelled"}
+    assert [argv[1:] for argv in machine.scripts] == [["--voice"], ["--voice", "--uninstall"]]
+    assert "VOICE_BASE_URL" not in ConfigStore().stored()
+
+
+@pytest.mark.parametrize("as_json", [True, False])
+def test_use_here_refuses_while_the_local_model_server_does_not_answer(machine, as_json):
+    """What crash-looped on 2026-10-07: refused before any install, unit or save."""
+    ConfigStore().set(WORDS)
+    machine.words = False
+
+    result = runner.invoke(app, ["voice", "use", "here", *(["--json"] if as_json else [])])
+
+    assert result.exit_code == 2
+    if as_json:
+        assert events_of(result) == [{"event": "error", "message": voice.NO_WORDS_SERVER}]
+    else:
+        assert result.stderr.strip() == voice.NO_WORDS_SERVER
+    assert machine.scripts == [] and ConfigStore().stored() == WORDS
+
+
 def test_use_here_in_words_refuses_without_a_local_model(machine):
     result = runner.invoke(app, ["voice", "use", "here"])
 
@@ -457,6 +505,11 @@ def _no_words(monkeypatch, machine, tmp_path):
     pass
 
 
+def _no_words_server(monkeypatch, machine, tmp_path):
+    ConfigStore().set(WORDS)
+    machine.words = False
+
+
 def _install_failed(monkeypatch, machine, tmp_path):
     ConfigStore().set(WORDS)
     machine.script_code = 1
@@ -510,6 +563,7 @@ def _unexpected(monkeypatch, machine, tmp_path):
 @pytest.mark.parametrize(
     ("arrange", "ending", "code", "message"),
     [(_done, "done", 0, None), (_no_words, "error", 2, voice.NO_WORDS),
+     (_no_words_server, "error", 2, "The local model server isn't running"),
      (_no_checkout, "error", 2, "from a clone of Keryx"),
      (_unsupported, "error", 2, "launchd or systemd"),
      (_bad_voice, "error", 2, "is not a Kokoro voice's name"),

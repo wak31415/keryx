@@ -119,9 +119,12 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   exit 1 with the `problem` and nothing saved; the stored key is kept and asked with unless
   `--key-stdin` replaces it — shown as `(set)` — or `--clear-key` forgets it), `voice use here
   [--voice NAME] [--json]` (what the wizard does, through the same `localmodels/voice.py`:
-  install speech-to-speech, its unit, wait for it, then save it; `--json` is JSON lines — a
-  `step` before each slow one, then exactly one of `done`, `error`, `cancelled`; exit 2 for a
-  refusal before anything is tried, 1 for what stopped it, 130 for a SIGTERM)
+  install speech-to-speech, its unit, wait for it, then save it; refused while the local
+  model server its words come from does not answer, and a server that does not come up, or
+  whose start is cancelled, has its unit removed first — no unit is left crash-looping;
+  `--json` is JSON lines — a `step` before each slow one, then exactly one of `done`,
+  `error`, `cancelled`; exit 2 for a refusal before anything is tried, 1 for what stopped
+  it, 130 for a SIGTERM)
 - The Mac app (`macos/`): `macos/scripts/test.sh` (the Swift tests; it adds the Command Line
   Tools' Testing framework path only when they are the developer directory),
   `macos/scripts/build-app.sh [--install]` (`macos/build/Keryx.app`, signed ad hoc;

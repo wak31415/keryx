@@ -24,7 +24,7 @@ from keryx.endpoints import Endpoint, Probe, probe
 from keryx.issues import GhStatus, gh_status
 from keryx.localmodels import download as model_files
 from keryx.localmodels import hardware as machine
-from keryx.localmodels import runtimes, servers, use
+from keryx.localmodels import runtimes, servers, use, voice
 from keryx.localmodels.hardware import Hardware
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.setup.ui import Prompter
@@ -146,6 +146,8 @@ class Probes:
     wait_for_server: Callable[[Endpoint, str, float], str | None] = servers.wait_for
     #: Whether the "llm" or "voice" server's unit is installed: asked, never changed.
     unit_installed: Callable[[str], bool] = use.unit_installed
+    #: Whether the server the voice server takes its words from answers (`voice.words_up`).
+    words_up: Callable[[Endpoint | None], bool] = voice.words_up
 
 
 @dataclass

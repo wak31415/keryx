@@ -197,6 +197,10 @@ class FakeWorld:
     download_error: BaseException | None = None
     #: What `free_port` hands back for each port asked about; the port itself otherwise.
     ports: dict = field(default_factory=dict)
+    #: The servers' units ("llm", "voice") the service manager would say are installed.
+    units: set = field(default_factory=set)
+    #: Whether the local model server, the voice server's words, answers.
+    words: bool = True
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
@@ -264,6 +268,10 @@ class FakeWorld:
             realtime_problem=lambda endpoint: self.calls.append(("realtime", endpoint.base_url))
             or self.realtime,
             wait_for_server=self._wait,
+            unit_installed=lambda kind: self.calls.append(("unit_installed", kind))
+            or kind in self.units,
+            words_up=lambda endpoint: self.calls.append(
+                ("words", endpoint.base_url if endpoint else None)) or self.words,
         )
 
     def _download(self, url, dest, *, size, sha256, progress):
