@@ -1,6 +1,8 @@
 import Foundation
 import Testing
 @testable import KeryxKit
+import KeryxTestSupport
+import KeryxPreview
 
 @Suite struct CLIClientTests {
     static func ok(_ stdout: Data = Data()) -> CommandResult {

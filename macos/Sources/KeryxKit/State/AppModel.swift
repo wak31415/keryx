@@ -38,15 +38,15 @@ public final class AppModel {
     static let usageDays = 30
     static let approvalsLimit = 200
 
-    public private(set) var location: Loadable<KeryxLocation> = .idle
-    public private(set) var status: Loadable<StatusReport> = .idle
-    public private(set) var doctor: Loadable<DoctorReport> = .idle
-    public private(set) var tasks: Loadable<[TaskItem]> = .idle
-    public private(set) var usage: Loadable<UsageReport> = .idle
-    public private(set) var models: Loadable<ModelsReport> = .idle
-    public private(set) var config: Loadable<[ConfigRow]> = .idle
-    public private(set) var approvals: Loadable<ApprovalsReport> = .idle
-    public private(set) var memory: Loadable<MemoryDocument> = .idle
+    public package(set) var location: Loadable<KeryxLocation> = .idle
+    public package(set) var status: Loadable<StatusReport> = .idle
+    public package(set) var doctor: Loadable<DoctorReport> = .idle
+    public package(set) var tasks: Loadable<[TaskItem]> = .idle
+    public package(set) var usage: Loadable<UsageReport> = .idle
+    public package(set) var models: Loadable<ModelsReport> = .idle
+    public package(set) var config: Loadable<[ConfigRow]> = .idle
+    public package(set) var approvals: Loadable<ApprovalsReport> = .idle
+    public package(set) var memory: Loadable<MemoryDocument> = .idle
     public var taskDetail: [Int: Loadable<TaskDetail>] = [:]
 
     public var selection: SidebarItem = .overview
@@ -59,7 +59,7 @@ public final class AppModel {
 
     public let downloads: Downloads
     /// The client for the Keryx that was found; `nil` until one is.
-    public private(set) var client: KeryxClient?
+    public package(set) var client: KeryxClient?
 
     public var menuState: MenuState {
         KeryxKit.menuState(location: location, status: status.value, statusError: status.error)
@@ -71,7 +71,7 @@ public final class AppModel {
     @ObservationIgnored private let timing: Timing
     /// Run with every poll: removes the Terminal scripts nobody ran (`TerminalLauncher`).
     @ObservationIgnored private let sweep: @Sendable () -> Void
-    @ObservationIgnored private var started = false
+    @ObservationIgnored package var started = false
     @ObservationIgnored private var poll: Task<Void, Never>?
     /// Bumped by every locate, so an answer from the Keryx found before is dropped.
     @ObservationIgnored private var generation = 0
@@ -333,49 +333,6 @@ public final class AppModel {
             return nil
         } catch {
             return Self.keryxError(error)
-        }
-    }
-
-    // MARK: - Previews
-
-    /// A model already holding what `client` answers, for previews and snapshots: no
-    /// polling, nothing awaited. With a `.failure` location it is the not-found state.
-    public static func preview(
-        client: PreviewClient = PreviewClient(),
-        location: Result<KeryxLocation, LocateFailure> = .success(.fixture)
-    ) -> AppModel {
-        let model = AppModel(locator: PreviewLocator(location), makeClient: { _ in client },
-                             preferences: Preferences(), timing: Timing(poll: nil))
-        model.started = true
-        switch location {
-        case let .failure(failure):
-            model.location = Loadable(error: .notFound(failure))
-            return model
-        case let .success(found):
-            model.location = Loadable(value: found, updatedAt: Date())
-        }
-        model.client = client
-        model.status = .settled(client.statusReply)
-        model.doctor = .settled(client.doctorReply)
-        model.tasks = .settled(client.tasksReply.map { $0.filter { !$0.internal } })
-        model.usage = .settled(client.usageReply)
-        model.models = .settled(client.modelsReply)
-        model.config = .settled(client.configReply)
-        model.approvals = .settled(client.approvalsReply)
-        model.memory = .settled(client.memoryReply)
-        if case let .success(detail) = client.taskReply {
-            model.taskDetail[detail.task.id] = .settled(.success(detail))
-        }
-        return model
-    }
-}
-
-extension Loadable {
-    /// Loaded, or failed, now.
-    static func settled(_ result: Result<Value, KeryxError>) -> Self {
-        switch result {
-        case let .success(value): Loadable(value: value, updatedAt: Date())
-        case let .failure(error): Loadable(error: error)
         }
     }
 }

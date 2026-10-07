@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import KeryxKit
+import KeryxPreview
 
 /// `Fixtures/contract.json` is what the app needs from each `keryx … --json` command: every
 /// key every model here decodes, by path, with its JSON type ("|null" where the Swift
@@ -71,7 +72,7 @@ import Testing
         .of("memory --json", MemoryDocument.self, ["memory.json"]),
     ]
 
-    /// A preview document (`Sources/KeryxKit/Preview`), or `fixture:NAME` from this target's.
+    /// A preview document (`Sources/KeryxPreview/Preview`), or `fixture:NAME` from this target's.
     static func data(_ name: String) throws -> Data {
         guard name.hasPrefix("fixture:") else { return PreviewData.data(name) }
         let url = try #require(Bundle.module.url(

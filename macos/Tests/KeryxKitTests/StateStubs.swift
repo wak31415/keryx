@@ -1,5 +1,6 @@
 import Foundation
 @testable import KeryxKit
+import KeryxPreview
 
 /// A `KeryxClient` whose every answer is set by the test, and which records what it was
 /// asked, in order, as the CLI subcommand it stands for.

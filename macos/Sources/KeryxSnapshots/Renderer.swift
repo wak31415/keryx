@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import KeryxPreview
 import KeryxUI
 
 /// Writes every catalog entry in light and dark, then the index page.

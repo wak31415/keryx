@@ -3,8 +3,8 @@ import SwiftUI
 
 /// "Use This Model…": chooses a downloaded model for the local agent, then offers to start
 /// the model server that runs it.
-struct UseModelSheet: View {
-    enum Stage: Equatable {
+package struct UseModelSheet: View {
+    package enum Stage: Equatable {
         /// Asking, with the choice of whether it becomes the default agent.
         case asking
         /// Chosen; what is left is starting its server and restarting Keryx.
@@ -20,12 +20,12 @@ struct UseModelSheet: View {
     @State private var working = false
     @State private var failure: KeryxError?
 
-    init(entry: CatalogModel, stage: Stage = .asking) {
+    package init(entry: CatalogModel, stage: Stage = .asking) {
         self.entry = entry
         _stage = State(initialValue: stage)
     }
 
-    var body: some View {
+    package var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             switch stage {
             case .asking: asking

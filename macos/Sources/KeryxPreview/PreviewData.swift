@@ -1,6 +1,7 @@
 import Foundation
+import KeryxKit
 
-/// The sample documents under `Sources/KeryxKit/Preview/`: the CLI's own `--json` output,
+/// The sample documents under `Sources/KeryxPreview/Preview/`: the CLI's own `--json` output,
 /// captured from a seeded sandbox store with its paths scrubbed to `/Users/you`, edited by
 /// hand only for a state no sandbox has (a running service, a running llama-server). They
 /// are bundled resources, read through `Bundle.module`, so previews, snapshots and this

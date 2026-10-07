@@ -1,4 +1,5 @@
 import Foundation
+import KeryxKit
 
 /// A `KeryxClient` that answers from `PreviewData`, for SwiftUI previews and snapshots.
 /// Every document can be replaced (an empty list, a `KeryxError`, the migration status);

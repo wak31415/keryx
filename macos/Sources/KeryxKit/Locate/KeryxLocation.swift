@@ -40,19 +40,6 @@ public struct KeryxLocation: Sendable, Equatable {
     public var runDirectory: String {
         checkout == nil ? Self.noCheckoutDirectory : workingDirectory
     }
-
-    /// A checkout run through `uv`, for previews and tests. Nothing on disk is consulted.
-    public static let fixture = KeryxLocation(
-        checkout: "/Users/you/code/keryx",
-        executable: "/Users/you/.local/bin/uv",
-        prefixArguments: ["run", "--project", "/Users/you/code/keryx", "--no-sync", "keryx"],
-        environment: Sanitise.environment([
-            "HOME": "/Users/you",
-            "PATH": "/Users/you/.local/bin:/opt/homebrew/bin:/usr/bin:/bin",
-            "KERYX_HOME": "/Users/you/.config/keryx",
-        ]),
-        workingDirectory: "/Users/you/code/keryx",
-        source: .launchAgent)
 }
 
 /// Where the locator looked and why each place did not do, one sentence per step.

@@ -17,7 +17,7 @@ public struct ConfigurationView: View {
         self.init(search: "")
     }
 
-    init(search: String, errors: [String: KeryxError] = [:], open: Set<String> = ConfigWording.openGroups) {
+    package init(search: String, errors: [String: KeryxError] = [:], open: Set<String> = ConfigWording.openGroups) {
         _search = State(initialValue: search)
         _open = State(initialValue: open)
         initialErrors = errors

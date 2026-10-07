@@ -1,4 +1,5 @@
 import Foundation
+import KeryxKit
 
 /// A test double for `CommandRunner`. Every request passed to `run` or `lines` is recorded,
 /// in call order, in `requests`. `@unchecked Sendable` is asserted because every mutable

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Testing
 @testable import KeryxKit
+import KeryxPreview
 @testable import KeryxUI
 
 /// Every catalog entry, drawn by the offscreen renderer the snapshots use. The render tests

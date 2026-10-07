@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import KeryxKit
+import KeryxPreview
 
 @Suite struct DecodingTests {
     // MARK: - Every fixture decodes

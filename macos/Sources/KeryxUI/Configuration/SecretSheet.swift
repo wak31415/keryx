@@ -4,7 +4,7 @@ import SwiftUI
 /// Sets or replaces a secret. What is typed lives only in this sheet's state: it reaches the
 /// CLI on its stdin (`AppModel.setSecret`), is never shown, logged or put on argv, and is
 /// cleared whenever the sheet goes away, saved or not.
-struct SecretSheet: View {
+package struct SecretSheet: View {
     let key: String
     /// The setting's name for a person ("OpenAI API key"), which labels the field.
     let title: String
@@ -22,14 +22,14 @@ struct SecretSheet: View {
     }
 
     /// `typed`: what the field starts holding — the catalog's dots, never a real secret.
-    init(key: String, title: String, replacing: Bool, typed: String) {
+    package init(key: String, title: String, replacing: Bool, typed: String) {
         self.key = key
         self.title = title
         self.replacing = replacing
         _value = State(initialValue: typed)
     }
 
-    var body: some View {
+    package var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(replacing ? "Change \(title)" : "Set \(title)")
                 .font(.headline)

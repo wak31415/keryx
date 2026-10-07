@@ -3,11 +3,13 @@ import SwiftUI
 
 /// Every prompt the approval calls have handled, newest first: one row each with what last
 /// happened to it, its history under a disclosure.
-struct ApprovalsSheet: View {
+package struct ApprovalsSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
-    var body: some View {
+    package init() {}
+
+    package var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Approval Calls")

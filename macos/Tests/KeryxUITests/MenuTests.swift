@@ -1,5 +1,6 @@
 import Testing
 @testable import KeryxKit
+import KeryxPreview
 @testable import KeryxUI
 
 @MainActor @Suite struct MenuTests {

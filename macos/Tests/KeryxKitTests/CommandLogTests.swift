@@ -1,6 +1,8 @@
 import Foundation
 import Testing
 @testable import KeryxKit
+import KeryxTestSupport
+import KeryxPreview
 
 @Suite struct CommandLogTests {
     static let uv = "/Users/you/.local/bin/uv"

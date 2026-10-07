@@ -1,4 +1,5 @@
 import KeryxKit
+import KeryxUI
 import SwiftUI
 
 extension ScreenCatalog {

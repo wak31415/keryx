@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import KeryxKit
+import KeryxPreview
 
 @Suite struct MenuStateTests {
     static let found = Loadable<KeryxLocation>(value: .fixture)
