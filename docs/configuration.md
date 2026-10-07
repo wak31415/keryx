@@ -31,9 +31,10 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 **In the Mac app** the settings are on eight tabs, and each section below names its own:
 General, Voice, Agents, Local Models, Phone, Approvals, Integrations, System.
 A tab opens on its *key* settings — what you set to get a first call working, or change
-from time to time — and keeps the rest under an *Advanced* disclosure: tuning and
-internals, such as turn-detection numbers, ports, timeouts, caps, retention, folders, unit
-names and the debug switches.
+from time to time, how long your calls and tasks are kept and how many tasks a day may
+run included — and keeps the rest under an *Advanced* disclosure: tuning and internals,
+such as turn-detection numbers, server addresses, ports, timeouts, per-task caps, folders,
+unit names, the log level and the debug switches.
 
 ## Voice
 
@@ -80,10 +81,10 @@ In the Mac app: the Local Models tab.
 
 | Setting | Title | In the app | Default | Service may change | What it is |
 |---|---|---|---|---|---|
-| `VOICE_BASE_URL` | Voice server URL | key |  | never | A voice server of your own that speaks the OpenAI Realtime protocol, as its `…/v1` address (`http://127.0.0.1:8765/v1` is the one `keryx setup` installs). Blank is OpenAI. |
-| `VOICE_API_KEY` | Voice server API key | key | (secret) | never | The Bearer key for that voice server, when it checks one. |
-| `LOCAL_AGENT_BASE_URL` | Local agent server URL | key |  | never | An inference server for the `local` agent — Ollama, llama.cpp, vLLM, LM Studio — as `http://gpu-box:11434` or its `…/v1` address. Blank is no local agent. |
-| `LOCAL_AGENT_API_KEY` | Local agent API key | key | (secret) | never | The Bearer key for that server, when it checks one. The owner's Anthropic and OpenAI credentials are never sent there. |
+| `VOICE_BASE_URL` | Voice server URL | advanced |  | never | A voice server of your own that speaks the OpenAI Realtime protocol, as its `…/v1` address (`http://127.0.0.1:8765/v1` is the one `keryx setup` installs). Blank is OpenAI. |
+| `VOICE_API_KEY` | Voice server API key | advanced | (secret) | never | The Bearer key for that voice server, when it checks one. |
+| `LOCAL_AGENT_BASE_URL` | Local agent server URL | advanced |  | never | An inference server for the `local` agent — Ollama, llama.cpp, vLLM, LM Studio — as `http://gpu-box:11434` or its `…/v1` address. Blank is no local agent. |
+| `LOCAL_AGENT_API_KEY` | Local agent API key | advanced | (secret) | never | The Bearer key for that server, when it checks one. The owner's Anthropic and OpenAI credentials are never sent there. |
 | `LOCAL_AGENT_MODEL` | Local agent model | key |  | yes | The model a `local` task runs on, by the server's own name for it. |
 | `LOCAL_AGENT_API` | Local agent harness | advanced | `anthropic-messages` | yes | Which harness drives the local model: `anthropic-messages` runs it inside Claude Code, `openai-responses` inside Codex. The server must speak that API. |
 | `LLM_SERVER_MODEL` | Model to serve | key |  | no | The model the local llama.cpp server runs: a name from `keryx models list`, or a GGUF file's path. Blank runs none. |
@@ -184,9 +185,9 @@ In the Mac app: the System tab.
 | `LOCAL_SILENCE_TIMEOUT` | Local session timeout (seconds) | advanced | `30` | yes | Seconds of silence that end a local session; 0 never does. |
 | `MAX_CALL_SECONDS` | Maximum call length (seconds) | advanced | `1800` | yes | The longest a phone call may run; Keryx wraps up 30 s before. 0 is no limit. |
 | `MAX_PHONE_SESSIONS` | Phone calls at once | advanced | `2` | no | Phone calls open at once, each one a realtime session being paid for; another hears that the line is busy. |
-| `DAILY_TASK_CAP` | Tasks per day | advanced | `50` | never | Tasks dispatched per day. |
-| `TRANSCRIPT_RETENTION_DAYS` | Keep transcripts for (days) | advanced | `0` | never | Delete call transcripts older than this many days; 0 keeps everything. |
-| `TASK_RETENTION_DAYS` | Keep finished tasks for (days) | advanced | `0` | never | Delete finished tasks older than this; 0 keeps everything. A result you have not been told about is never deleted. |
+| `DAILY_TASK_CAP` | Tasks per day | key | `50` | never | Tasks dispatched per day. |
+| `TRANSCRIPT_RETENTION_DAYS` | Keep transcripts for (days) | key | `0` | never | Delete call transcripts older than this many days; 0 keeps everything. |
+| `TASK_RETENTION_DAYS` | Keep finished tasks for (days) | key | `0` | never | Delete finished tasks older than this; 0 keeps everything. A result you have not been told about is never deleted. |
 
 ## Service, storage and logging
 
@@ -200,7 +201,7 @@ In the Mac app: the System tab.
 | `SERVICE_MANAGER` | Service manager | advanced | `auto` | never | What `keryx restart` asks to restart this process: `auto` is systemd or launchd, but only for a process actually running under it; `none` refuses. |
 | `SERVICE_UNIT` | Service unit or label | advanced |  | never | The systemd unit or launchd label; blank is the installed default (`keryx.service`, `dev.keryx.agent`). |
 | `REPORT_SECRET` | Report link secret | advanced | (secret) | never | Signs the `/reports/{id}` links texted to you; blank generates one into `DATA_DIR/report_secret`. |
-| `LOG_LEVEL` | Log level | key | `INFO` | yes | How much `STATE_DIR/logs/keryx.log` says. |
+| `LOG_LEVEL` | Log level | advanced | `INFO` | yes | How much `STATE_DIR/logs/keryx.log` says. |
 
 ## Development switches
 

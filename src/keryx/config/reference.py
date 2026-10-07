@@ -67,9 +67,10 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 **In the Mac app** the settings are on eight tabs, and each section below names its own:
 {tabs}.
 A tab opens on its *key* settings — what you set to get a first call working, or change
-from time to time — and keeps the rest under an *Advanced* disclosure: tuning and
-internals, such as turn-detection numbers, ports, timeouts, caps, retention, folders, unit
-names and the debug switches.
+from time to time, how long your calls and tasks are kept and how many tasks a day may
+run included — and keeps the rest under an *Advanced* disclosure: tuning and internals,
+such as turn-detection numbers, server addresses, ports, timeouts, per-task caps, folders,
+unit names, the log level and the debug switches.
 """
 
 

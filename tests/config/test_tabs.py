@@ -85,3 +85,15 @@ def test_the_first_call_settings_are_key():
     by_key = {env_var_name(name): field_advanced(name) for name in Settings.model_fields}
 
     assert {key for key in first_call if by_key[key]} == set()
+
+
+def test_the_owners_rulings_on_key_and_advanced():
+    """Servers are set in context by the Voice and Local Models panes; retention and the
+    daily cap are the owner's privacy and spend; the log level is a debugging knob."""
+    by_key = {env_var_name(name): field_advanced(name) for name in Settings.model_fields}
+    advanced = ("VOICE_BASE_URL", "VOICE_API_KEY", "LOCAL_AGENT_BASE_URL",
+                "LOCAL_AGENT_API_KEY", "LOG_LEVEL")
+    key = ("TRANSCRIPT_RETENTION_DAYS", "TASK_RETENTION_DAYS", "DAILY_TASK_CAP")
+
+    assert [name for name in advanced if not by_key[name]] == []
+    assert [name for name in key if by_key[name]] == []

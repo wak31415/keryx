@@ -212,8 +212,10 @@ def setting(
 
     `advanced` is required, like `title`, so every new field decides it on purpose: key is
     what an owner sets to get a first call working or changes from time to time (keys,
-    numbers, names, models, voices); advanced is tuning and internals (VAD numbers, ports,
-    timeouts, caps, retention, directories, unit names, debug switches, extra flags).
+    numbers, names, models, voices, and the privacy and spend that are theirs: retention,
+    the daily task cap); advanced is tuning and internals (VAD numbers, server addresses an
+    app pane sets in context, ports, timeouts, per-task caps, directories, unit names, the
+    log level, debug switches, extra flags).
     """
     assert title.strip(), "a setting needs a title"
     assert group in GROUPS, group
@@ -543,13 +545,13 @@ class Settings(BaseSettings):
         "address (`http://127.0.0.1:8765/v1` is the one `keryx setup` installs). Blank is "
         "OpenAI.",
         title="Voice server URL",
-        group="local", advanced=False,
+        group="local", advanced=True,
     )
     voice_api_key: str | None = setting(
         None,
         "The Bearer key for that voice server, when it checks one.",
         title="Voice server API key",
-        group="local", advanced=False,
+        group="local", advanced=True,
         repr=False,
     )
     local_agent_base_url: str | None = setting(
@@ -557,14 +559,14 @@ class Settings(BaseSettings):
         "An inference server for the `local` agent — Ollama, llama.cpp, vLLM, LM Studio — "
         "as `http://gpu-box:11434` or its `…/v1` address. Blank is no local agent.",
         title="Local agent server URL",
-        group="local", advanced=False,
+        group="local", advanced=True,
     )
     local_agent_api_key: str | None = setting(
         None,
         "The Bearer key for that server, when it checks one. The owner's Anthropic and "
         "OpenAI credentials are never sent there.",
         title="Local agent API key",
-        group="local", advanced=False,
+        group="local", advanced=True,
         repr=False,
     )
     local_agent_model: str | None = setting(
@@ -948,7 +950,7 @@ class Settings(BaseSettings):
         ge=1,
     )
     daily_task_cap: int = setting(
-        50, "Tasks dispatched per day.", title="Tasks per day", group="limits", advanced=True, ge=0
+        50, "Tasks dispatched per day.", title="Tasks per day", group="limits", advanced=False, ge=0
     )
     # Both off at 0, which is what Keryx has always done: a default that deleted
     # someone's own call transcripts because nobody changed a number is not one worth
@@ -957,14 +959,14 @@ class Settings(BaseSettings):
         0,
         "Delete call transcripts older than this many days; 0 keeps everything.",
         title="Keep transcripts for (days)",
-        group="limits", advanced=True,
+        group="limits", advanced=False,
     )
     task_retention_days: int = setting(
         0,
         "Delete finished tasks older than this; 0 keeps everything. A result you have not "
         "been told about is never deleted.",
         title="Keep finished tasks for (days)",
-        group="limits", advanced=True,
+        group="limits", advanced=False,
     )
 
     # --- service, storage and logging ----------------------------------------------------
@@ -1013,7 +1015,7 @@ class Settings(BaseSettings):
     )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = setting(
         "INFO", "How much `STATE_DIR/logs/keryx.log` says.", title="Log level", group="service",
-        advanced=False,
+        advanced=True,
         service_writable=True,
     )
 
