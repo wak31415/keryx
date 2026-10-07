@@ -99,6 +99,14 @@ machine can hold, recommends an open model that fits, downloads it, and runs it,
 voice beside it if you want one. A server elsewhere on your network works too.
 [docs/local-models.md](docs/local-models.md) covers what is tested and what differs.
 
+### Keryx for Mac
+
+On a Mac, a menu bar app shows whether Keryx is running and what its agent sessions are
+doing, downloads and runs local models, and changes the settings, without a terminal. It is
+a companion to the service, not a replacement: it reads and changes Keryx by running
+`keryx` commands. It's built from the checkout; [macos/README.md](macos/README.md) covers
+building it and what it does and doesn't do.
+
 ## Quickstart
 
 ### Requirements
@@ -140,6 +148,7 @@ each step in detail.
 - [Configuration reference](docs/configuration.md): every setting
 - [Coding agents](docs/agents.md): signing in, installing only one, and what each can do
 - [Local models](docs/local-models.md): the voice and the work on your own hardware
+- [Keryx for Mac](macos/README.md): the menu bar app, and how to build it
 - [Voice tools](docs/tools.md): what the voice model can do, and how to add a tool
 - [Approval bridge](https://github.com/wak31415/keryx/wiki/The-Approval-Bridge): answer
   Claude Code prompts on your screen by phone

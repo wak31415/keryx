@@ -84,6 +84,13 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   [--json]` (a downloaded model as the local agent's: saves what the wizard would, through
   the same `localmodels/use.py`; a restart picks it up), `models serve llm|voice` (what the
   units run: it reads the settings and becomes the server)
+- The Mac app (`macos/`): `macos/scripts/test.sh` (the Swift tests; it adds the Command Line
+  Tools' Testing framework path only when they are the developer directory),
+  `macos/scripts/build-app.sh [--install]` (`macos/build/Keryx.app`, signed ad hoc;
+  `--install` replaces `/Applications/Keryx.app`), `macos/scripts/snapshots.sh [--offscreen]`
+  (every screen, light and dark, into `macos/build/snapshots/`), and
+  `swift macos/scripts/make-icon.swift` from the repository root (the two `.icns` in
+  `macos/Resources`)
 
 ## Layout
 
@@ -96,7 +103,7 @@ templates are in `ops/systemd/` (Linux) and `ops/launchd/` (macOS), rendered by 
 (argument parsing, `config_value` — every setting read through `keryx config get`, never a
 grep — the PATH checks, `render`), so an installer is only its platform-specific half.
 
-Ten groups are named here because the file you want is rarely the one whose name you
+Eleven groups are named here because the file you want is rarely the one whose name you
 remember:
 
 - **agents** — `agents/` is one module per coding agent (`claude`, `codex`) behind the
@@ -180,6 +187,26 @@ remember:
 - **continuity** — `continuity/` is what survives the end of a call: `briefing`, `memory`
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
   `retention`, which prunes exactly those artefacts.
+- **mac app** — `macos/` is Keryx for Mac, a SwiftPM package outside `src/`: `KeryxKit` (the
+  runner, the locator, the client over the CLI, the decoded models and `AppModel`),
+  `KeryxUI` (the screens and the menu), `KeryxApp` (the shell: the window, the menu bar item,
+  the app's own Settings) and `KeryxSnapshots` (the harness that photographs every screen).
+  It runs the `keryx` CLI and nothing else (but `scripts/install-launchd.sh --llm`, to start
+  the model server), so every rule above binds it without a copy: a command it needs gets a
+  `--json`, never a route or a socket, and it writes none of Keryx's files itself. It strips
+  `KERYX_ACTOR` and `JARVIS_ACTOR` (`Sanitise.environment`), because it is the owner at a
+  terminal and never the service. It finds Keryx the way the service runs — the folder
+  chosen in its Settings, then `~/Library/LaunchAgents/dev.keryx.agent.plist`'s program,
+  working directory and environment, then a login shell — with a checkout optional, and
+  runs each command in the checkout, else `HOME`. It has no PIN control (the PIN row shows
+  whether one is set and opens `keryx setup` in Terminal) and cannot approve anything (it
+  can pause the approval calls). A secret goes to `config set KEY --stdin` and nowhere
+  else. Its command log is an allowlist (`CommandLog`): the subcommand, its verb and its
+  flags from fixed lists, every other word `…`, then the exit code and the duration;
+  stdin, the environment and the output never. The snapshots photograph only the app's own
+  windows, by window id. `tests/test_macos_contract.py` holds the JSON contract — the keys
+  the Swift decoders require from each command — so renaming a field fails pytest, not the
+  app at runtime.
 
 `logging_util.mask_number` is the only shape a phone number may take in a log line.
 
@@ -705,6 +732,11 @@ scope, and an agent whose package is missing is `registry.installed() == False`:
 not installed with its `uv sync --extra` command, never offered, refused as `AGENT_BACKEND`
 by `Settings.agent_refusal`. `tests/agents/conftest.py` skips a backend's own tests without
 its SDK, and a test that is not about installation asks for `every_agent_installed`.
+
+The Mac app (`macos/`) is macOS-only, by nature rather than choice: SwiftUI and AppKit, built
+with SwiftPM for macOS 14 and later. The Command Line Tools are enough, so nothing in its
+build or tests needs Xcode, and CI builds and tests it on `macos-latest` beside the Python
+legs.
 
 ## Testing rule
 

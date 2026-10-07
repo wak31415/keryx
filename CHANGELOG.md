@@ -19,6 +19,24 @@ settings: a removed or renamed setting or command is a major bump.
   credentials are never sent to it.
 - **A voice server of your own** (`VOICE_BASE_URL`): any server that speaks the Realtime
   protocol, such as Hugging Face's speech-to-speech. Keryx converts the phone's audio for it.
+- **Keryx for Mac.** A menu bar app and a window for the Keryx install on your Mac: whether
+  it's running, your agent sessions as timelines from what you asked to the result, local
+  models to download, choose and serve, and every setting. It reads and changes Keryx
+  through `keryx` commands, never shows or sets the PIN, and never answers an approval.
+  Build it from the checkout with `macos/scripts/build-app.sh`. See
+  [macos/README.md](macos/README.md).
+- **`keryx status [--json]`**: whether Keryx is running and what it has to say, in one
+  report that always exits 0.
+- **JSON for the Mac app, and for scripts.** `keryx tasks list --json` and `keryx tasks show
+  ID --json`, which carries the task's agent session: its progress log, its follow-ups, and
+  whether it can be resumed. `keryx approvals --json`, `keryx memory --json`, and `keryx
+  models use NAME [--default-agent] [--json]`, which makes a downloaded model the local
+  agent's. `keryx models pull NAME --json` prints its progress as JSON lines, and `keryx
+  models list --json` says whether the model and voice servers are installed and answer.
+- **A title for every setting.** `keryx config list --json` gives each setting its title,
+  its group's title, its type and, for a choice, its choices; `keryx doctor --json` gives
+  each check a title; and [docs/configuration.md](docs/configuration.md) shows the titles
+  beside the keys.
 
 ### Changed
 

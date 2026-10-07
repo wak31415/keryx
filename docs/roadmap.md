@@ -26,6 +26,33 @@ phone and no Twilio. The work is on the
 - [ ] `keryx setup` and `keryx doctor` cover the local channel
 - [ ] Merge `feat/local-wakeword` into `main` (macOS only at first)
 
+## Keryx for Mac
+
+A menu bar app and a window for the Keryx install on a Mac, built from the checkout. It reads
+and changes Keryx through the `keryx` CLI. See [macos/README.md](../macos/README.md).
+
+- [x] The menu bar: whether Keryx is running or needs you, the sessions running or not yet
+      told, the local model, a restart, and pausing the approval calls
+- [x] An overview: the service, what `keryx doctor` says is left to set up, the approval
+      calls, and where the memory is
+- [x] Agent sessions as a timeline: what you asked, the agent's steps, the follow-ups, and
+      the result
+- [x] Local models: what fits the Mac, downloading one, choosing it, and starting its server
+- [x] Every setting by its title, with secrets set on stdin and the PIN left to
+      `keryx setup`
+- [x] Finding Keryx from its launchd service, with or without a checkout, and opening at
+      login
+- [x] Icons for macOS 26 and for 14 and 15, and CI that builds and tests the app
+- [ ] Talking to the assistant at the Mac, once the local channel above is merged
+- [ ] Live updates in place of polling
+- [ ] Continuing a session from the app
+- [ ] The setup wizard in the app, rather than in Terminal
+- [ ] Answering approvals from the Mac, which needs an owner ruling first: today only the
+      phone's keypad approves
+- [ ] Plugins
+- [ ] A hosted relay sign-in
+- [ ] A signed and notarised download, with a layered `.icon`
+
 ## Not scheduled: GPT-Live
 
 [GPT-Live](https://developers.openai.com/api/docs/guides/live) listens while it speaks and
