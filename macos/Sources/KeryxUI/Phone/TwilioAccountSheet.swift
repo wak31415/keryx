@@ -14,7 +14,8 @@ package struct TwilioAccountSheet: View {
     @State private var token: String
     @State private var check: SecretCheck
     @State private var saving = false
-    @State private var error: KeryxError?
+    /// What went wrong saving, in sentences.
+    @State private var failure: String?
 
     /// `savedSID`: the account SID saved now, which the field starts with. `token`: the
     /// catalog's dots, never a real token.
@@ -35,7 +36,8 @@ package struct TwilioAccountSheet: View {
                     TextField("Account SID", text: $sid, prompt: Text("AC…"))
                         .autocorrectionDisabled()
                     SecureField("Auth token", text: $token, prompt: Text("Paste it from Twilio's console"))
-                        .onSubmit(save)
+                        // Return saves, but never anyway: that takes a click.
+                        .onSubmit { if !check.savesAnyway { save() } }
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         if let problem = PhoneWording.sidProblem(sid) {
@@ -50,8 +52,8 @@ package struct TwilioAccountSheet: View {
                             }
                             .textSelection(.enabled)
                         }
-                        if let error {
-                            Text(error.reported.map(KeryxError.sentence) ?? error.message)
+                        if let failure {
+                            Text(failure)
                                 .foregroundStyle(.red)
                                 .textSelection(.enabled)
                         }
@@ -80,7 +82,7 @@ package struct TwilioAccountSheet: View {
                     .disabled(!complete || busy)
                     .help("Checks the pair with Twilio, without saving either")
                 Button(check.saveTitle, action: save)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(check.savesAnyway ? nil : .defaultAction)
                     .disabled(!complete || busy)
             }
             .padding([.horizontal, .bottom], 20)
@@ -102,14 +104,14 @@ package struct TwilioAccountSheet: View {
 
     private func typedOver() {
         if check != .checking { check = .unchecked }
-        error = nil
+        failure = nil
     }
 
     private func verify(thenSave: Bool) {
         guard complete, !busy else { return }
         let pair = (trimmedSID, token)
         check = .checking
-        error = nil
+        failure = nil
         Task {
             let answer = await model.verifyTwilio(accountSID: pair.0, authToken: pair.1)
             guard pair == (trimmedSID, token) else {
@@ -133,20 +135,22 @@ package struct TwilioAccountSheet: View {
         let savedSID = model.config.value?.first { $0.key == "TWILIO_ACCOUNT_SID" }
             .map { ConfigWording.editText($0.value) }
         saving = true
-        error = nil
+        failure = nil
         Task {
-            var failure: KeryxError?
-            if pair.0 != savedSID {
-                failure = await model.set(key: "TWILIO_ACCOUNT_SID", to: pair.0)
-            }
-            if failure == nil {
-                failure = await model.setSecret("TWILIO_AUTH_TOKEN", value: pair.1)
-            }
-            saving = false
-            if let failure {
-                error = failure
+            let sidChanged = pair.0 != savedSID
+            if sidChanged, let error = await model.set(key: "TWILIO_ACCOUNT_SID", to: pair.0) {
+                saving = false
+                failure = PhoneWording.saveFailure(error)
                 return
             }
+            if let error = await model.setSecret("TWILIO_AUTH_TOKEN", value: pair.1) {
+                saving = false
+                failure = sidChanged ? PhoneWording.tokenNotSaved(error) : PhoneWording.saveFailure(error)
+                // The new SID is saved: show it, and read what Twilio says of the pair now.
+                if sidChanged { await model.refresh(.phoneNumbers, .phoneWebhooks) }
+                return
+            }
+            saving = false
             close()
             await model.refresh(.phoneNumbers, .phoneWebhooks, .setupPlan)
         }

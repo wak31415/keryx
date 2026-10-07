@@ -132,7 +132,12 @@ import KeryxPreview
         #expect(ConfigWording.secretRemovalMessage.contains("paste it in again"))
     }
 
-    @Test func thePINOffersNoWriteAndIsStillFound() {
+    @Test func twilioTokenIsChangedWithItsSID() {
+        #expect(ConfigWording.isTwilioToken(row("TWILIO_AUTH_TOKEN", secret: true)))
+        #expect(!ConfigWording.isTwilioToken(row("OPENAI_API_KEY", secret: true)))
+    }
+
+        @Test func thePINOffersNoWriteAndIsStillFound() {
         let pin = row("KERYX_PIN", group: "owner", source: "KERYX_HOME/pin",
                       description: "The PIN a caller gives.", secret: true, title: "Phone PIN")
         #expect(ConfigWording.isPIN(pin))

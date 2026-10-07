@@ -83,7 +83,13 @@ struct ConfigRowView: View {
             invalid = nil
         }
         .sheet(isPresented: $editingSecret) {
-            SecretSheet(key: row.key, title: row.displayTitle, replacing: row.set)
+            if ConfigWording.isTwilioToken(row) {
+                // Checked with its account SID, as the Phone section's account sheet does.
+                TwilioAccountSheet(savedSID: model.config.value?.first { $0.key == "TWILIO_ACCOUNT_SID" }
+                    .map { ConfigWording.editText($0.value) }.flatMap { $0.isEmpty ? nil : $0 })
+            } else {
+                SecretSheet(key: row.key, title: row.displayTitle, replacing: row.set)
+            }
         }
         .confirmationDialog(ConfigWording.removalTitle(row), isPresented: $confirmingRemoval) {
             Button("Remove", role: .destructive) { write { await model.unset(row.key) } }

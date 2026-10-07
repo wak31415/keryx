@@ -22,6 +22,9 @@ import KeryxPreview
         #expect(SecretCheck.unchecked.saveTitle == "Save")
         #expect(SecretCheck.works(detail: nil).saveTitle == "Save")
         #expect(SecretCheck.problem("No.").saveTitle == "Save Anyway")
+        #expect(SecretCheck.problem("No.").savesAnyway, "never on Return")
+        #expect(!SecretCheck.works(detail: nil).savesAnyway)
+        #expect(!SecretCheck.unchecked.savesAnyway)
     }
 
     @Test func anAnswerBecomesAState() {

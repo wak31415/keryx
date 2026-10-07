@@ -8,7 +8,9 @@ import SwiftUI
 /// sheet goes away.
 ///
 /// Open it through `pinSheet(isPresented:)` (or `PinButton`), which asks "Are you sure?"
-/// before a working PIN is replaced.
+/// before a working PIN is replaced; the sheet then asks "Replace the PIN?" once the new
+/// digits are typed, with Cancel as the default, before anything replaces what
+/// `KERYX_HOME/pin` holds.
 package struct PinSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -21,6 +23,8 @@ package struct PinSheet: View {
     /// A refusal about this Mac (exit 1), or Keryx failing, said above them.
     @State private var failure: String?
     @State private var saved: PinSetResult?
+    /// "Replace the PIN?" is up: the second yes, after the digits and before they go.
+    @State private var confirmingReplace = false
     @FocusState private var focus: Field?
     /// The owner has said yes to replacing a working PIN (`PinFlow`'s question). Without
     /// it, a working PIN is shown, never offered for replacing.
@@ -28,7 +32,8 @@ package struct PinSheet: View {
 
     private enum Field { case first, second }
 
-    package init(replaceConfirmed: Bool) {
+    /// Only `PinFlow` opens it empty, after its question.
+    fileprivate init(replaceConfirmed: Bool) {
         self.init(replaceConfirmed: replaceConfirmed, first: "", second: "")
     }
 
@@ -94,6 +99,16 @@ package struct PinSheet: View {
         .onChange(of: first) { edited() }
         .onChange(of: second) { edited() }
         .onDisappear(perform: forget)
+        .alert(PinWording.replaceTitle, isPresented: $confirmingReplace) {
+            // Cancel is the default: Return never replaces a PIN.
+            Button("Cancel", role: .cancel) {}
+                .keyboardShortcut(.defaultAction)
+            Button("Replace PIN", role: .destructive) {
+                if let status = model.pin.value { save(status, agreed: true) }
+            }
+        } message: {
+            Text(PinWording.replaceMessage)
+        }
     }
 
     private var title: String {
@@ -210,17 +225,28 @@ package struct PinSheet: View {
 
     // MARK: - Saving
 
+    /// Typing again clears what was said of the last attempt — not the fields being
+    /// emptied after it, which is what says it.
     private func edited() {
+        guard !first.isEmpty || !second.isEmpty else { return }
         digitsProblem = nil
         failure = nil
     }
 
-    private func save(_ status: PinStatus) {
+    private func save(_ status: PinStatus, agreed: Bool = false) {
         guard !saving else { return }
         submitted = true
-        guard PinWording.ready(first: first, second: second) else { return }
+        let replace: Bool
+        switch PinWording.saveStep(status, first: first, second: second, agreed: agreed) {
+        case .wait:
+            return
+        case .confirm:
+            confirmingReplace = true
+            return
+        case let .save(replacing):
+            replace = replacing
+        }
         let digits = first
-        let replace = PinWording.replaces(status)
         saving = true
         failure = nil
         digitsProblem = nil
@@ -232,8 +258,17 @@ package struct PinSheet: View {
                 forget()
                 saved = result
             case let .failure(error):
+                // Typed again from nothing, whatever went wrong.
+                forget()
+                submitted = false
                 let said = PinWording.failure(error)
-                if said.aboutTheDigits { digitsProblem = said.text } else { failure = said.text }
+                if said.aboutTheDigits {
+                    digitsProblem = said.text
+                } else {
+                    failure = said.text
+                    // This Mac's PIN is not what the sheet thought: read it again.
+                    await model.refresh(.pin)
+                }
             }
         }
     }
@@ -254,7 +289,8 @@ package struct PinSheet: View {
 
 /// Presents the PIN sheet, asking first — "Are you sure?", with a destructive button —
 /// when it would replace a working PIN. Every way into the sheet goes through here, so
-/// replacing always takes the two yeses: this one, then the digits typed twice.
+/// replacing always takes this yes, the digits typed twice, and the sheet's own "Replace
+/// the PIN?".
 struct PinFlow: ViewModifier {
     @Binding var isPresented: Bool
 
@@ -268,8 +304,9 @@ struct PinFlow: ViewModifier {
             .onChange(of: isPresented) {
                 guard isPresented else { return }
                 Task {
-                    // Never the fields for a working PIN before the question: read it first.
-                    if model.pin.value == nil { await model.refresh(.pin) }
+                    // Never the fields for a working PIN before the question: read it as it
+                    // is now, whatever was read before.
+                    await model.refresh(.pin)
                     if let status = model.pin.value, PinWording.asksFirst(status) {
                         confirming = true
                     } else {

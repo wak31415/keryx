@@ -25,7 +25,15 @@ import KeryxPreview
         #expect(PhoneWording.sidProblem("AC0123456789abcdef0123456789abcdeg") != nil)
     }
 
-    @Test func thePairCheckNamesTheAccount() {
+    @Test func aHalfSavedPairIsSaidAsOne() {
+        let error = KeryxError.failed(command: "keryx config set", exitCode: 1, message: "could not write secrets.toml")
+        let said = PhoneWording.tokenNotSaved(error)
+        #expect(said.hasPrefix("The new account SID was saved, but the auth token wasn't: Could not write secrets.toml."))
+        #expect(said.contains("Save again"))
+        #expect(PhoneWording.saveFailure(error) == "Could not write secrets.toml.")
+    }
+
+        @Test func thePairCheckNamesTheAccount() {
         #expect(PhoneWording.accountCheck(.works(detail: "Ada's account"))?.text == "Twilio accepted them: Ada's account.")
         #expect(PhoneWording.accountCheck(.works(detail: nil))?.text == "Twilio accepted them.")
         #expect(PhoneWording.accountCheck(.unchecked) == nil)
@@ -65,6 +73,12 @@ import KeryxPreview
         #expect(PhoneWording.canApply(PreviewData.phoneWebhooks))
         #expect(!PhoneWording.canApply(PreviewData.phoneWebhooksMatching), "already here")
         #expect(!PhoneWording.canApply(PreviewData.phoneWebhooksUnset), "no number, no addresses")
+        var unasked = PreviewData.phoneWebhooks
+        unasked.current = nil
+        #expect(!PhoneWording.canApply(unasked), "the question shows where it points now: Twilio must have said")
+        var failed = PreviewData.phoneWebhooks
+        failed.error = "Twilio didn't answer"
+        #expect(!PhoneWording.canApply(failed))
     }
 
     @Test func theQuestionShowsBothAddressesNowAndNew() {
@@ -96,6 +110,19 @@ import KeryxPreview
 
 /// The Overview's service rows.
 @Suite struct ServiceWordingTests {
+    @Test func quittingAsksWhileTheServiceIsChanging() {
+        let alone = Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
+                                      changingService: .installing)
+        #expect(alone?.message == "Keryx's service is being installed. Quit anyway?")
+        #expect(alone?.detail == "It may stop part way; Install… in the Overview runs it again.")
+        let both = Quitting.question(downloading: true, settingUpVoice: false, assistant: "Lyra",
+                                     changingService: .uninstalling)
+        #expect(both?.message == "A model is downloading. Quit anyway?")
+        #expect(both?.detail.contains("Keryx's service is being uninstalled as well.") == true)
+        #expect(Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
+                                  changingService: nil) == nil)
+    }
+
     @Test func uninstallingSaysWhatStopsAndWhatIsKept() {
         let message = ServiceWording.Change.uninstall.message(assistant: "Lyra", liveCalls: 0)
         #expect(message.contains("Lyra won't answer the phone"))

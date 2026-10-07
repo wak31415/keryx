@@ -32,6 +32,8 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         var voiceServer: Result<VoiceServerResult, KeryxError> = .success(PreviewClient.serverSaved)
         /// Awaited before each `config options` answer: a test's way to hold them.
         var optionsWait: @Sendable () async -> Void = {}
+        /// Awaited before `service install|uninstall` answers, to hold one mid-way.
+        var serviceWait: @Sendable () async -> Void = {}
         var voiceHere: @Sendable (String?) -> VoiceSetupStream = { _ in
             VoiceSetupStream(AsyncThrowingStream { $0.finish() })
         }
@@ -170,9 +172,15 @@ final class StubClient: KeryxClient, @unchecked Sendable {
     func applyPhoneWebhooks() async throws -> WebhooksApplied { try answer("phone webhooks --apply") { $0.applied } }
     func phoneTunnel() async throws -> PhoneTunnel { try answer("phone tunnel") { $0.phoneTunnel } }
     func service() async throws -> ServiceReport { try answer("service") { $0.service } }
-    func installService() async throws -> ServiceResult { try answer("service install") { $0.serviceResult } }
+    func installService() async throws -> ServiceResult {
+        let wait = lock.withLock { replies.serviceWait }
+        await wait()
+        return try answer("service install") { $0.serviceResult }
+    }
     func uninstallService(llm: Bool, voice: Bool) async throws -> ServiceResult {
-        try answer("service uninstall" + (llm ? " --llm" : "") + (voice ? " --voice" : "")) { $0.serviceResult }
+        let wait = lock.withLock { replies.serviceWait }
+        await wait()
+        return try answer("service uninstall" + (llm ? " --llm" : "") + (voice ? " --voice" : "")) { $0.serviceResult }
     }
     func startModelServer(runtime: String?) -> ModelServerStream {
         let make = lock.withLock {

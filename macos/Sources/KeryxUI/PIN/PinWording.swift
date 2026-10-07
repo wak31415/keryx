@@ -187,6 +187,34 @@ package enum PinWording {
         return steps == [1] || steps == [-1]
     }
 
+    // MARK: - Saving
+
+    /// What pressing the sheet's button does next.
+    package enum SaveStep: Equatable, Sendable {
+        /// The digits won't do yet: say why, and wait.
+        case wait
+        /// Ask "Replace the PIN?" first: the second yes `keryx setup` asks for.
+        case confirm
+        /// Run `pin set --stdin`, with `--replace` or not.
+        case save(replace: Bool)
+    }
+
+    /// The step after the button, given what is typed and whether the owner has just said
+    /// yes to "Replace the PIN?" (`agreed`). Anything put in place of what `KERYX_HOME/pin` holds is asked
+    /// about, after the digits are typed and before they go: never on Return.
+    package static func saveStep(_ status: PinStatus, first: String, second: String,
+                                 agreed: Bool) -> SaveStep {
+        guard ready(first: first, second: second) else { return .wait }
+        let replace = replaces(status)
+        if replace, !agreed { return .confirm }
+        return .save(replace: replace)
+    }
+
+    /// The question before a PIN is replaced, as `keryx setup` asks it.
+    package static let replaceTitle = "Replace the PIN?"
+    package static let replaceMessage = "The PIN in KERYX_HOME/pin is replaced by the one you typed. "
+        + "The PIN you use on calls now stops working once Keryx restarts."
+
     // MARK: - What went wrong
 
     /// Where a refusal belongs, and its sentence. Exit 2 is the digits not doing (they

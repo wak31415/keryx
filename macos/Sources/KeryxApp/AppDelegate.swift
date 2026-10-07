@@ -114,7 +114,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard model.isBusy else { return .terminateNow }
         // Only what is still running asks; what is already stopping is just waited for.
         if let question = Quitting.question(downloading: downloads.isRunning, settingUpVoice: setup.isRunning,
-                                            assistant: Wording.assistant(model.status.value)) {
+                                            assistant: Wording.assistant(model.status.value),
+                                            changingService: model.serviceChange) {
             NSApp.activate()
             let alert = NSAlert()
             alert.messageText = question.message

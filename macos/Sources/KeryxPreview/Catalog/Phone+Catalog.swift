@@ -43,17 +43,21 @@ extension ScreenCatalog {
                                    check: .problem("Twilio didn't accept the account SID and auth token."))
                     .environment(AppModel.preview(client: phoneClient()))
             },
-            Entry("phone-point-here-sheet", size: CGSize(width: 560, height: 470)) {
+            Entry("phone-point-here-sheet", size: CGSize(width: 560, height: 418)) {
                 PointHereSheet(report: PreviewData.phoneWebhooks)
                     .environment(AppModel.preview(client: phoneClient()))
             },
-            Entry("phone-point-here-failed", size: CGSize(width: 560, height: 540)) {
+            Entry("phone-point-here-failed", size: CGSize(width: 560, height: 490)) {
                 PointHereSheet(report: PreviewData.phoneWebhooks, error: .failed(
                     command: "keryx phone webhooks", exitCode: 1,
                     message: "The webhooks were not changed. Twilio didn't accept the account SID and auth token."))
                     .environment(AppModel.preview(client: phoneClient()))
             },
-            Entry("window-phone", size: windowSize) {
+            Entry("phone-point-here-unasked", size: CGSize(width: 560, height: 418)) {
+                PointHereSheet(report: unasked)
+                    .environment(AppModel.preview(client: phoneClient(webhooks: unasked)))
+            },
+                        Entry("window-phone", size: windowSize) {
                 RootView().environment(phoneWindowModel)
             },
         ] + pinEntries + secretCheckEntries + serviceEntries
@@ -66,28 +70,28 @@ extension ScreenCatalog {
         let small = CGSize(width: 480, height: 210)
         return [
             Entry("pin-sheet-none", size: size) {
-                PinSheet(replaceConfirmed: false).environment(pinModel(PreviewData.pinNone))
+                PinSheet(replaceConfirmed: false, first: "", second: "").environment(pinModel(PreviewData.pinNone))
             },
             Entry("pin-sheet-change", size: size) {
-                PinSheet(replaceConfirmed: true).environment(pinModel(PreviewData.pinFile))
+                PinSheet(replaceConfirmed: true, first: "", second: "").environment(pinModel(PreviewData.pinFile))
             },
             Entry("pin-sheet-set-unconfirmed", size: small) {
-                PinSheet(replaceConfirmed: false).environment(pinModel(PreviewData.pinFile))
+                PinSheet(replaceConfirmed: false, first: "", second: "").environment(pinModel(PreviewData.pinFile))
             },
             Entry("pin-sheet-locked", size: CGSize(width: 480, height: 400)) {
-                PinSheet(replaceConfirmed: true).environment(pinModel(PreviewData.pinLocked))
+                PinSheet(replaceConfirmed: true, first: "", second: "").environment(pinModel(PreviewData.pinLocked))
             },
             Entry("pin-sheet-unusable", size: size) {
-                PinSheet(replaceConfirmed: false).environment(pinModel(pin(source: "file", set: false)))
+                PinSheet(replaceConfirmed: false, first: "", second: "").environment(pinModel(pin(source: "file", set: false)))
             },
             Entry("pin-sheet-environment", size: small) {
-                PinSheet(replaceConfirmed: false).environment(pinModel(PreviewData.pinEnvironment))
+                PinSheet(replaceConfirmed: false, first: "", second: "").environment(pinModel(PreviewData.pinEnvironment))
             },
             Entry("pin-sheet-environment-malformed", size: CGSize(width: 480, height: 230)) {
-                PinSheet(replaceConfirmed: false).environment(pinModel(pin(source: "environment", set: false)))
+                PinSheet(replaceConfirmed: false, first: "", second: "").environment(pinModel(pin(source: "environment", set: false)))
             },
             Entry("pin-sheet-jarvis", size: small) {
-                PinSheet(replaceConfirmed: false).environment(pinModel(pin(source: "jarvis", set: true)))
+                PinSheet(replaceConfirmed: false, first: "", second: "").environment(pinModel(pin(source: "jarvis", set: true)))
             },
             Entry("pin-sheet-differ", size: size) {
                 PinSheet(replaceConfirmed: false, first: "482915", second: "482916", submitted: true)
@@ -123,7 +127,7 @@ extension ScreenCatalog {
     // MARK: - The secret sheet's check
 
     @MainActor private static var secretCheckEntries: [Entry] {
-        let size = CGSize(width: 460, height: 280)
+        let size = CGSize(width: 460, height: 232)
         return [
             Entry("configuration-secret-sheet-verified", size: size) {
                 SecretSheet(key: "OPENAI_API_KEY", title: "OpenAI API key", replacing: true,
@@ -136,7 +140,7 @@ extension ScreenCatalog {
                             check: .problem("Anthropic didn't accept the key (401)."))
                     .environment(AppModel.preview())
             },
-            Entry("configuration-secret-sheet-checking", size: size) {
+            Entry("configuration-secret-sheet-checking", size: CGSize(width: 460, height: 212)) {
                 SecretSheet(key: "CODEX_API_KEY", title: "Codex API key", replacing: false,
                             typed: "preview-dots-only", check: .checking)
                     .environment(AppModel.preview())

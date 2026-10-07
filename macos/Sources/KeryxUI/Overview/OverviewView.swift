@@ -42,7 +42,6 @@ private struct ServiceSection: View {
     @State private var restarting = false
     /// Installing or uninstalling the service: the question asked, then the run under way.
     @State private var unitChange: ServiceWording.Change?
-    @State private var changingUnit: ServiceWording.Change?
 
     var body: some View {
         Section {
@@ -157,7 +156,7 @@ private struct ServiceSection: View {
                 Button("Reveal Logs") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: status.paths.logs)])
                 }
-                if status.service.installed {
+                if status.service.installed, model.location.value?.checkout != nil {
                     Button("Uninstall…") { unitChange = .uninstall }
                         .disabled(restarting || changingUnit != nil)
                 }
@@ -223,11 +222,9 @@ private struct ServiceSection: View {
     /// Installs or uninstalls Keryx and its tunnel (`keryx service install|uninstall`),
     /// asked first; never the model or voice server, which their own screens start.
     private func run(_ change: ServiceWording.Change) {
-        guard changingUnit == nil else { return }
-        changingUnit = change
+        guard model.serviceChange == nil else { return }
         Task {
             let answer = change == .install ? await model.installService() : await model.uninstallService()
-            changingUnit = nil
             if case let .failure(error) = answer { failure = error }
         }
     }
@@ -253,6 +250,15 @@ private struct ServiceSection: View {
         guard status.health.reachable, let running = status.version.running, let checkout = status.version.checkout,
               running != checkout else { return nil }
         return "Restart to load \(OverviewWording.version(checkout))"
+    }
+
+    /// The install or uninstall under way (`AppModel.serviceChange`), as the Overview says it.
+    private var changingUnit: ServiceWording.Change? {
+        switch model.serviceChange {
+        case .installing?: .install
+        case .uninstalling?: .uninstall
+        case nil: nil
+        }
     }
 
     private var liveCallsTitle: String {

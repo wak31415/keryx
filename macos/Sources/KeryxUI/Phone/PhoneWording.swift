@@ -74,6 +74,19 @@ enum PhoneWording {
         return "The number Keryx answers and calls from."
     }
 
+    /// A write in the account sheet that failed, in its sentence.
+    static func saveFailure(_ error: KeryxError) -> String {
+        error.reported.map(KeryxError.sentence) ?? error.message
+    }
+
+    /// The new account SID was saved and the token was not: Keryx now holds the new SID
+    /// with the old token, which Twilio will refuse.
+    static func tokenNotSaved(_ error: KeryxError) -> String {
+        "The new account SID was saved, but the auth token wasn't: \(saveFailure(error)) "
+            + "Keryx now has the new SID with the old token, which Twilio won't accept together. "
+            + "Save again to put the token beside it, or change the SID back."
+    }
+
     // MARK: - The number
 
     /// One number the picker offers.
@@ -113,17 +126,19 @@ enum PhoneWording {
             return Line(tone: .ok, text: "\(number)'s calls come to this Mac")
         }
         if report.current == nil {
-            return Line(tone: .warning, text: "Couldn't ask Twilio where \(number)'s calls go")
+            return Line(tone: .warning, text: "Couldn't ask Twilio where \(number)'s calls go",
+                        hint: "Point Here is offered once Twilio answers")
         }
         return Line(tone: .warning, text: "\(number)'s calls go elsewhere",
                     hint: "Point Here sends them to this Mac")
     }
 
-    /// Point Here can be offered: there is a number, both addresses to point it at, and it
-    /// does not point there already.
+    /// Point Here can be offered: Twilio has said where the number points now (so the
+    /// question can show both addresses), there is somewhere to point it, and it does not
+    /// point there already.
     static func canApply(_ report: PhoneWebhooks) -> Bool {
-        report.number != nil && report.expected.voiceUrl != nil && report.expected.statusUrl != nil
-            && !report.matches
+        report.error == nil && report.current != nil && report.number != nil
+            && report.expected.voiceUrl != nil && report.expected.statusUrl != nil && !report.matches
     }
 
     /// One webhook, now and as it should be.

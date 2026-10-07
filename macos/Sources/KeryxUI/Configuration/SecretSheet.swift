@@ -60,7 +60,8 @@ package struct SecretSheet: View {
             Form {
                 Section {
                     SecureField(title, text: $value, prompt: Text(replacing ? "New value" : "Paste or type it"))
-                        .onSubmit(save)
+                        // Return saves, but never anyway: that takes a click.
+                        .onSubmit { if !savesAnyway { save() } }
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         if checks, let said = check.said(key: key) {
@@ -107,7 +108,7 @@ package struct SecretSheet: View {
                         .help("Checks the key with its provider, without saving it")
                 }
                 Button(checks ? check.saveTitle : "Save", action: save)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(savesAnyway ? nil : .defaultAction)
                     .disabled(value.isEmpty || busy)
             }
             .padding([.horizontal, .bottom], 20)
@@ -118,6 +119,9 @@ package struct SecretSheet: View {
     }
 
     private var busy: Bool { saving || check == .checking }
+
+    /// Save would save a key that did not work.
+    private var savesAnyway: Bool { checks && check.savesAnyway }
 
     /// Asks Keryx whether what is typed works, saving nothing; `thenSave`: and saves it
     /// when it does.
@@ -201,11 +205,14 @@ package enum SecretCheck: Equatable, Sendable {
     /// Save checks first while nothing has been said of what is typed.
     package var mustCheckFirst: Bool { self == .unchecked }
 
-    /// Save once the key has a problem: saving it is the owner's call.
-    package var saveTitle: String {
-        if case .problem = self { return "Save Anyway" }
-        return "Save"
+    /// Save would save what has a problem: the owner's call, by a click, never Return.
+    package var savesAnyway: Bool {
+        if case .problem = self { return true }
+        return false
     }
+
+    /// Save once the key has a problem: saving it is the owner's call.
+    package var saveTitle: String { savesAnyway ? "Save Anyway" : "Save" }
 
     /// The line under the field, once there is something to say.
     package func said(key: String) -> (text: String, works: Bool)? {

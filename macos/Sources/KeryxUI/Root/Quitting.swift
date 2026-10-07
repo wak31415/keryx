@@ -1,4 +1,5 @@
 import AppKit
+import KeryxKit
 
 /// What quitting asks while something is still running that quitting would stop.
 public enum Quitting {
@@ -7,9 +8,23 @@ public enum Quitting {
         public let detail: String
     }
 
-    /// The question for a download under way, a voice setup under way, or both; `nil` when
-    /// neither is and the app can just quit. `assistant`: the assistant's name ("Lyra").
-    public static func question(downloading: Bool, settingUpVoice: Bool, assistant: String?) -> Question? {
+    /// The question for a download under way, a voice setup under way, Keryx's service
+    /// being installed or uninstalled, or several; `nil` when none is and the app can just
+    /// quit. `assistant`: the assistant's name ("Lyra").
+    public static func question(downloading: Bool, settingUpVoice: Bool, assistant: String?,
+                                changingService: AppModel.ServiceChange? = nil) -> Question? {
+        let base = question(downloading: downloading, settingUpVoice: settingUpVoice, assistant: assistant)
+        guard let changingService else { return base }
+        let (doing, button) = switch changingService {
+        case .installing: ("Keryx's service is being installed", "Install…")
+        case .uninstalling: ("Keryx's service is being uninstalled", "Uninstall…")
+        }
+        let stops = "It may stop part way; \(button) in the Overview runs it again."
+        guard let base else { return Question(message: "\(doing). Quit anyway?", detail: stops) }
+        return Question(message: base.message, detail: "\(base.detail) \(doing) as well. \(stops)")
+    }
+
+    private static func question(downloading: Bool, settingUpVoice: Bool, assistant: String?) -> Question? {
         let voice = "\(possessive(assistant, opening: true)) voice is being set up"
         switch (downloading, settingUpVoice) {
         case (false, false):

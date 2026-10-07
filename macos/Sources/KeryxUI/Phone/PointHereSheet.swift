@@ -3,8 +3,10 @@ import SwiftUI
 
 /// The question before the one write Keryx makes to Twilio (`phone webhooks --apply`):
 /// both of the number's addresses, where they point now and where they would, and a yes.
+/// It asks Twilio again as it opens, and offers Point Here only on that fresh answer.
 package struct PointHereSheet: View {
-    let report: PhoneWebhooks
+    /// What the Phone section showed, until the fresh answer is in.
+    private let shown: PhoneWebhooks
 
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -12,9 +14,12 @@ package struct PointHereSheet: View {
     @State private var error: KeryxError?
 
     package init(report: PhoneWebhooks, error: KeryxError? = nil) {
-        self.report = report
+        shown = report
         _error = State(initialValue: error)
     }
+
+    private var report: PhoneWebhooks { model.phoneWebhooks.value ?? shown }
+    private var reading: Bool { model.phoneWebhooks.isLoading }
 
     package var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -55,9 +60,12 @@ package struct PointHereSheet: View {
             .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
-                if applying {
+                if applying || reading {
                     ProgressView().controlSize(.small)
-                    Text("Changing the number…").foregroundStyle(.secondary)
+                    Text(applying ? "Changing the number…" : "Asking Twilio…").foregroundStyle(.secondary)
+                } else if !PhoneWording.canApply(report) {
+                    Text(report.matches ? "It points here already." : "Twilio couldn't be asked; try again later.")
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
@@ -65,11 +73,12 @@ package struct PointHereSheet: View {
                     .disabled(applying)
                 Button("Point Here", action: apply)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(applying || !PhoneWording.canApply(report))
+                    .disabled(applying || reading || !PhoneWording.canApply(report))
             }
             .padding([.horizontal, .bottom], 20)
         }
         .frame(width: 560)
+        .task { await model.refresh(.phoneWebhooks) }
     }
 
     private func apply() {

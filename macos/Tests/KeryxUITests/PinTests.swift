@@ -102,7 +102,22 @@ import KeryxPreview
         #expect(!PinWording.ready(first: "482915", second: "482916"))
     }
 
-    @Test func aRefusalIsSaidWhereItBelongs() {
+    @Test func replacingAsksASecondTimeAfterTheDigitsAndBeforeTheyGo() {
+        let file = PreviewData.pinFile
+        #expect(PinWording.saveStep(file, first: "482915", second: "48291", agreed: false) == .wait)
+        #expect(PinWording.saveStep(file, first: "123456", second: "123456", agreed: true) == .wait,
+                "a yes never sends digits that won't do")
+        #expect(PinWording.saveStep(file, first: "482915", second: "482915", agreed: false) == .confirm)
+        #expect(PinWording.saveStep(file, first: "482915", second: "482915", agreed: true) == .save(replace: true))
+        let unusable = status("file", set: false)
+        #expect(PinWording.saveStep(unusable, first: "482915", second: "482915", agreed: false) == .confirm,
+                "whatever KERYX_HOME/pin holds is asked about before it is replaced")
+        #expect(PinWording.saveStep(PreviewData.pinNone, first: "482915", second: "482915", agreed: false)
+            == .save(replace: false), "a first PIN replaces nothing")
+        #expect(PinWording.replaceTitle == "Replace the PIN?")
+    }
+
+        @Test func aRefusalIsSaidWhereItBelongs() {
         let differ = PinWording.failure(.failed(command: "keryx pin set", exitCode: 2, message: "The two PINs differ."))
         #expect(differ.aboutTheDigits)
         #expect(differ.text == "The two PINs differ.")

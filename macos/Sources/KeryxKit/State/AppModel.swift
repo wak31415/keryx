@@ -87,6 +87,14 @@ public final class AppModel {
     public var statusFilter: TaskStatus?
     /// A setting was written (or a model chosen) that the running service has yet to load.
     public var configNeedsRestart = false
+    /// Keryx's own service is being installed or uninstalled (`installService`,
+    /// `uninstallService()`), which quitting asks about.
+    public private(set) var serviceChange: ServiceChange?
+
+    /// What is being done to Keryx's own service.
+    public enum ServiceChange: Sendable, Equatable {
+        case installing, uninstalling
+    }
 
     public let downloads: Downloads
     /// Setting up the voice server on this Mac.
@@ -579,6 +587,8 @@ public final class AppModel {
 
     /// Installs Keryx and its tunnel as services, then reads the units and the status again.
     public func installService() async -> Result<ServiceResult, KeryxError> {
+        serviceChange = .installing
+        defer { serviceChange = nil }
         let answer = await answer { try await $0.installService() }
         if case .success = answer { await refresh(.service, .status, .setupPlan) }
         return answer
@@ -586,6 +596,8 @@ public final class AppModel {
 
     /// Removes Keryx and its tunnel, or with `llm`/`voice` that server's unit.
     public func uninstallService(llm: Bool = false, voice: Bool = false) async -> Result<ServiceResult, KeryxError> {
+        if !llm, !voice { serviceChange = .uninstalling }
+        defer { if !llm, !voice { serviceChange = nil } }
         let answer = await answer { try await $0.uninstallService(llm: llm, voice: voice) }
         if case .success = answer { await refresh(.service, .status, .models, .voice, .setupPlan) }
         return answer
@@ -673,10 +685,11 @@ public final class AppModel {
     // MARK: - Work under way
 
     /// Something long-running is going or still stopping: a download, a voice setup, a
-    /// model server start, a speech model download, a sign-in.
+    /// model server start, a speech model download, a sign-in, Keryx's service being
+    /// installed or uninstalled.
     public var isBusy: Bool {
         downloads.isBusy || voiceSetup.isBusy || modelServerRun.isBusy || voiceDownloadRun.isBusy
-            || signInRun.isBusy
+            || signInRun.isBusy || serviceChange != nil
     }
 
     /// Asks the streams this model holds beside the downloads and the voice setup to stop

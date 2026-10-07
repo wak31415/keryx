@@ -173,7 +173,31 @@ import KeryxPreview
         #expect(calls(client, after: mark).contains("models list"))
     }
 
-    @Test func aFailedInstallReadsNothingAgain() async {
+    @Test func installingOrUninstallingTheServiceIsBusyUntilItAnswers() async {
+        let gates = [OptionsGate(), OptionsGate()]
+        let turn = CallCounter()
+        let client = StubClient { $0.serviceWait = { await gates[turn.next() % 2].wait() } }
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        let install = Task { await model.installService() }
+        #expect(await eventually { gates[0].held == 1 })
+        #expect(model.serviceChange == .installing)
+        #expect(model.isBusy, "quitting asks while it runs")
+        gates[0].open()
+        _ = await install.value
+        #expect(model.serviceChange == nil)
+        #expect(!model.isBusy)
+        let uninstall = Task { await model.uninstallService() }
+        #expect(await eventually { gates[1].held == 1 })
+        #expect(model.serviceChange == .uninstalling)
+        gates[1].open()
+        _ = await uninstall.value
+        #expect(model.serviceChange == nil)
+        _ = await model.uninstallService(llm: true)
+        #expect(model.serviceChange == nil, "a server's unit is not Keryx's own service")
+    }
+
+        @Test func aFailedInstallReadsNothingAgain() async {
         let failure = KeryxError.failed(command: "keryx service install", exitCode: 2, message: "no checkout")
         let client = StubClient { $0.serviceResult = .failure(failure) }
         let model = await makeModel(client: client)
@@ -310,5 +334,18 @@ import KeryxPreview
         model.downloadVoiceModels()
         #expect(model.modelServerRun.phase == nil && model.voiceDownloadRun.phase == nil)
         if case .failure(.notFound) = await model.installService() {} else { Issue.record("not refused") }
+    }
+}
+
+/// Counts calls, from any thread.
+final class CallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func next() -> Int {
+        lock.withLock {
+            defer { count += 1 }
+            return count
+        }
     }
 }

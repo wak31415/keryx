@@ -147,6 +147,11 @@ enum ConfigWording {
         row.key == "KERYX_PIN"
     }
 
+    /// Twilio's auth token: changed in the account sheet, which checks it with its SID.
+    static func isTwilioToken(_ row: ConfigRow) -> Bool {
+        row.key == "TWILIO_AUTH_TOKEN"
+    }
+
     /// Whether the row offers any write at all — a control, Set…/Change…/Remove, or Reset
     /// to Default. Not the environment's rows, and never the PIN.
     static func offersWrites(_ row: ConfigRow) -> Bool {
