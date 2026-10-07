@@ -29,6 +29,11 @@ public struct RootView: View {
                 .help("Refresh")
             }
         }
+        // A request that only shows its section is answered by showing it.
+        .onChange(of: model.requested, initial: true) { _, requested in
+            guard let requested, case .shown = RequestAnswer.of(requested) else { return }
+            model.didHandle(requested)
+        }
         .navigationTitle(onboarding ? "Keryx" : model.selection.title)
         .navigationSubtitle(onboarding ? "" : subtitle)
         .frame(minWidth: 860, minHeight: 560)

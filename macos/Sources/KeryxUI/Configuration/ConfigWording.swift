@@ -147,15 +147,13 @@ enum ConfigWording {
         row.key == "KERYX_PIN"
     }
 
-    /// What Configuration does for a request from another window: the tab to show, and
-    /// whether to open the PIN sheet there; `nil` for one it does not answer. `pinTab`: the
-    /// PIN row's tab, once the settings are read.
-    static func answer(_ request: AppRequest, pinTab: String?) -> (tab: String, openPin: Bool)? {
-        switch request {
-        case .setPin: (pinTab ?? "general", true)
-        case let .configure(tab): (tab, false)
-        default: nil
-        }
+    /// What Configuration does for a request from another window (`RequestAnswer`): the tab
+    /// to show, and the sheet to open there — the PIN's, or a coding agent's sign-in on the
+    /// Agents tab; `nil` for one it does not answer. `pinTab`: the PIN row's tab, once the
+    /// settings are read.
+    static func answer(_ request: AppRequest, pinTab: String?) -> (tab: String, sheet: ConfigurationSheet?)? {
+        guard case let .configuration(tab, sheet) = RequestAnswer.of(request) else { return nil }
+        return (tab ?? pinTab ?? "general", sheet)
     }
 
     /// Twilio's auth token: changed in the account sheet, which checks it with its SID.

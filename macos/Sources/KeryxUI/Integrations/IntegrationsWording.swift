@@ -11,6 +11,18 @@ enum IntegrationConnect: Equatable {
     case issueReports
 }
 
+/// What Integrations does for a request from another window.
+enum IntegrationsAnswer: Equatable {
+    /// Opens this sheet.
+    case open(IntegrationSheet)
+    /// Does what the card's own Connect does.
+    case connect(Integration)
+    /// The cards are not read yet: answered once they are.
+    case wait
+    /// No card has that id: the section is shown, and nothing more.
+    case unknown
+}
+
 /// What Disconnect does: the settings `config unset` removes, then the sign-in
 /// `auth logout` removes.
 struct IntegrationDisconnect: Equatable {
@@ -72,6 +84,23 @@ enum IntegrationsWording {
         guard let text = config?.first(where: { $0.key == issueRepoKey })?.value?.displayText,
               !text.isEmpty else { return nil }
         return text
+    }
+
+    // MARK: Requests
+
+    /// What Integrations does for a request from another window (`RequestAnswer`): open a
+    /// Google sign-in's sheet, or press a card's own Connect — `wait` while the cards are
+    /// still being read (`cards` nil), `unknown` for a card there is none of. `nil` for a
+    /// request that is not Integrations'.
+    static func answer(_ request: AppRequest, cards: [Integration]?) -> IntegrationsAnswer? {
+        guard case let .integrations(what) = RequestAnswer.of(request) else { return nil }
+        switch what {
+        case let .signIn(provider):
+            return .open(.signIn(provider))
+        case let .connect(id):
+            guard let cards else { return .wait }
+            return cards.first { $0.id == id }.map(IntegrationsAnswer.connect) ?? .unknown
+        }
     }
 
     // MARK: Status

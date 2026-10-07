@@ -43,6 +43,11 @@ public struct IntegrationsView: View {
             }
             .formStyle(.grouped)
         }
+        // What another window asked of Integrations (the Setup Assistant's Connect Google…,
+        // Connect GitHub…, a Google sign-in): answered once the cards are read.
+        .onChange(of: model.requested, initial: true) { answerRequest() }
+        .onChange(of: model.integrations.value) { answerRequest() }
+        .onChange(of: model.integrations.error) { answerRequest() }
         .task {
             await model.refresh(.integrations, .plugins)
             // What GitHub's card and Disconnect read.
@@ -67,6 +72,20 @@ public struct IntegrationsView: View {
     }
 
     // MARK: - Actions
+
+    private func answerRequest() {
+        guard let request = model.requested else { return }
+        // A failed read has no cards to connect: the section is shown, and that is all.
+        let cards = model.integrations.value?.integrations ?? (model.integrations.error == nil ? nil : [])
+        guard let answer = IntegrationsWording.answer(request, cards: cards) else { return }
+        switch answer {
+        case .wait: return
+        case let .open(requested): sheet = requested
+        case let .connect(integration): connect(integration)
+        case .unknown: break
+        }
+        model.didHandle(request)
+    }
 
     private func connect(_ integration: Integration) {
         switch IntegrationsWording.connect(integration) {

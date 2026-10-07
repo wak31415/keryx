@@ -133,11 +133,12 @@ import KeryxPreview
     }
 
     @Test func configurationAnswersThePinAndTabRequests() {
-        #expect(ConfigWording.answer(.setPin, pinTab: "general")! == ("general", true))
-        #expect(ConfigWording.answer(.setPin, pinTab: nil)! == ("general", true), "before the settings are read")
-        #expect(ConfigWording.answer(.configure(tab: "agents"), pinTab: "general")! == ("agents", false))
+        #expect(ConfigWording.answer(.setPin, pinTab: "general")! == ("general", .pin))
+        #expect(ConfigWording.answer(.setPin, pinTab: nil)! == ("general", .pin), "before the settings are read")
+        #expect(ConfigWording.answer(.configure(tab: "agents"), pinTab: "general")! == ("agents", nil))
         #expect(ConfigWording.answer(.show(.phone), pinTab: "general") == nil)
-        #expect(ConfigWording.answer(.signIn(.claude), pinTab: "general") == nil, "the sign-in sheets answer that")
+        #expect(ConfigWording.answer(.signIn(.claude), pinTab: "general")! == ("agents", .signIn(.claude)))
+        #expect(ConfigWording.answer(.signIn(.gmail), pinTab: "general") == nil, "Integrations answers that")
     }
 
         @Test func twilioTokenIsChangedWithItsSID() {

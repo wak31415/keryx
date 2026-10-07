@@ -32,8 +32,8 @@ public struct ModelsView: View {
                 // The Setup Assistant's "Choose a Model" or "Open Local Models": shown at
                 // what is left to do here.
                 .onChange(of: model.requested, initial: true) { _, requested in
-                    guard requested == .show(.models) else { return }
-                    model.didHandle(.show(.models))
+                    guard let requested, RequestAnswer.of(requested) == .models else { return }
+                    model.didHandle(requested)
                     if let anchor = ModelsWording.nextStep(report) { spotlight(anchor, proxy: proxy) }
                 }
             }

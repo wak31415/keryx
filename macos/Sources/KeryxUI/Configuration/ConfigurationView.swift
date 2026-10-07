@@ -20,6 +20,9 @@ public struct ConfigurationView: View {
     /// The PIN sheet, asked for by another window (`AppRequest.setPin`); through `PinFlow`,
     /// so a working PIN is asked about before it is replaced.
     @State private var pinRequested = false
+    /// Claude's or Codex's sign-in sheet, from the Agents tab or asked for by another window
+    /// (`AppRequest.signIn`).
+    @State private var signingIn: SignInProvider?
 
     public init() {
         self.init(search: "")
@@ -57,10 +60,17 @@ public struct ConfigurationView: View {
             }
         }
         .searchable(text: $search, prompt: "Search Settings")
-        .task { await model.refresh(.config) }
+        .task {
+            await model.refresh(.config)
+            // Whether the coding agents are signed in (the Agents tab's sign-ins).
+            if model.doctor.value == nil { await model.refresh(.doctor) }
+        }
         .onAppear { answer(model.requested) }
         .onChange(of: model.requested) { answer(model.requested) }
         .pinSheet(isPresented: $pinRequested)
+        .sheet(item: $signingIn, onDismiss: { Task { await model.refresh(.doctor, .setupPlan) } }) { provider in
+            SignInSheet(kind: provider)
+        }
     }
 
     /// Does what another window asked of Configuration (`AppModel.requested`): a tab, or
@@ -70,7 +80,11 @@ public struct ConfigurationView: View {
         let pinTab = model.config.value?.first(where: ConfigWording.isPIN)?.tab
         guard let answer = ConfigWording.answer(request, pinTab: pinTab) else { return }
         choose(answer.tab)
-        if answer.openPin { pinRequested = true }
+        switch answer.sheet {
+        case .pin?: pinRequested = true
+        case let .signIn(provider)?: signingIn = provider
+        case nil: break
+        }
         model.didHandle(request)
     }
 
@@ -80,6 +94,9 @@ public struct ConfigurationView: View {
         Form {
             if model.configNeedsRestart {
                 RestartBanner()
+            }
+            if tab.id == RequestAnswer.agentsTab {
+                AgentSignInSection { signingIn = $0 }
             }
             ForEach(tab.groups) { group in
                 Section {

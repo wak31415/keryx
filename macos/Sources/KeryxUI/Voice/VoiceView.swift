@@ -47,7 +47,7 @@ public struct VoiceView: View {
         // The Setup Assistant's "Set Up Voice on This Mac" shows This Mac, whose section
         // asks the question (and says it has been answered).
         .onChange(of: model.requested, initial: true) { _, requested in
-            if requested == .setUpVoiceHere { picked = .here }
+            if requested.map(RequestAnswer.of) == .voiceHere { picked = .here }
         }
     }
 }
@@ -276,8 +276,8 @@ private struct HereSection: View {
         }
         // The Setup Assistant's "Set Up Voice on This Mac": the same question as Set Up….
         .onChange(of: model.requested, initial: true) { _, requested in
-            guard requested == .setUpVoiceHere else { return }
-            model.didHandle(.setUpVoiceHere)
+            guard let requested, RequestAnswer.of(requested) == .voiceHere else { return }
+            model.didHandle(requested)
             if !voice.needsLocalModel, !busy, !downloading { askToSetUp() }
         }
         .confirmationDialog(VoiceWording.setUpQuestion, isPresented: $confirming) {
