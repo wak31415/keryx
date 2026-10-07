@@ -154,7 +154,10 @@ def run_google_setup(
     credentials = credentials_dir(settings)
     argv = [config["command"], *config["args"]]
     # Everything echoed, and every error built from the server's words, is redacted first:
-    # the server can quote its own client's secret. The secrets are gathered once.
+    # the server can quote its own client's secret. The secrets are gathered once, the
+    # client's from the environment the server is handed: the secret it holds is the one
+    # taken out, whatever becomes of the client file while it runs.
+    held = [secret] if (secret := config["env"].get("GOOGLE_OAUTH_CLIENT_SECRET")) else []
     try:
         gathered: tuple[str, ...] | None = known_secrets(settings)
     except Exception:  # each line then gathers them itself, and withholds on failure
@@ -162,7 +165,7 @@ def run_google_setup(
     print_raw = echo
 
     def said(text: str) -> str:
-        return redacted(text, settings, secrets=gathered)
+        return redact_known(text, settings, extra=held, secrets=gathered)
 
     def echo(text: str) -> None:
         print_raw(said(text))

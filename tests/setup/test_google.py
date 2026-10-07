@@ -427,3 +427,28 @@ def test_secrets_that_cannot_be_gathered_once_are_gathered_for_each_line(setting
     run_google_setup(settings, popen=make_popen(process, []), echo=printed.append)
 
     assert "debug: [redacted] in use" in printed  # each line gathered them for itself
+
+
+def test_the_secret_the_server_was_started_with_stays_redacted_if_the_file_changes(
+    settings, tmp_path
+):
+    """The client file is read once, when the server is started: a file changed or removed
+    while the sign-in runs neither un-redacts the secret the server holds nor is read again."""
+    client = tmp_path / "client.json"
+    client.write_text(json.dumps({"installed": {"client_id": "cid",
+                                                "client_secret": FILE_SECRET}}))
+    from_file = settings.model_copy(update={"google_oauth_client_id": None,
+                                            "google_oauth_client_secret": None,
+                                            "google_client_secrets_file": client})
+    printed: list[str] = []
+    started = make_popen(_echoing_server(), [])
+
+    def popen(argv, **kwargs):
+        client.unlink()  # gone the moment the server holds the secret
+        return started(argv, **kwargs)
+
+    with pytest.raises(google.WorkspaceRefused) as excinfo:
+        run_google_setup(from_file, popen=popen, echo=printed.append)
+
+    assert not [line for line in printed if FILE_SECRET in line]
+    assert FILE_SECRET not in str(excinfo.value) and "[redacted]" in str(excinfo.value)
