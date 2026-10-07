@@ -18,7 +18,7 @@ import sys
 from importlib import resources
 
 from keryx.notify.twilio_out import TwilioAdmin, TwilioError, TwilioNumber
-from keryx.phone import hostname_problem, matches, point_here, webhook_urls
+from keryx.phone import BAD_HOST, Refused, hostname_problem, matches, point_here, webhook_urls
 from keryx.setup.context import SetupContext
 from keryx.setup.ui import Choice
 
@@ -92,9 +92,12 @@ def _twilio(ctx: SetupContext) -> tuple[TwilioAdmin, TwilioNumber] | None:
 
 def _tunnel(ctx: SetupContext) -> bool:
     ui, settings = ctx.ui, ctx.settings
-    if settings.public_host and not ctx.review:
-        ui.success(f"PUBLIC_HOST: {settings.public_host}")
+    saved = settings.public_host
+    if saved and not ctx.review and not hostname_problem(saved):
+        ui.success(f"PUBLIC_HOST: {saved}")
         return True
+    if saved and hostname_problem(saved):
+        ui.error(BAD_HOST)
     ui.markdown(guide("tunnel.md"))
     host = ui.text(
         "Public hostname (blank to stop here)",
@@ -131,6 +134,9 @@ def _webhooks(ctx: SetupContext, admin: TwilioAdmin, number: TwilioNumber) -> No
         return
     try:
         point_here(admin, number, settings.public_host)
+    except Refused as why:
+        ui.error(str(why))
+        return
     except TwilioError as exc:
         ui.error(f"Twilio refused the change: {exc}")
         return

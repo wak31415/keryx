@@ -118,7 +118,11 @@ def matches(number: TwilioNumber, public_host: str) -> bool:
 
 
 def point_here(admin: TwilioAdmin, number: TwilioNumber, public_host: str) -> None:
-    """Point `number` at `public_host`: both webhooks, as POST. Raises `TwilioError`."""
+    """Point `number` at `public_host`: both webhooks, as POST. `Refused`, before either URL
+    is built, for a host that is not a bare hostname — checked here, at the write, so no
+    caller can point a number at `good.example@evil.example`; else raises `TwilioError`."""
+    if hostname_problem(public_host):
+        raise Refused(BAD_HOST)
     voice, status = webhook_urls(public_host)
     admin.set_webhooks(number.sid, voice_url=voice, status_url=status)
     log.info("pointed %s at %s", mask_number(number.phone_number), public_host)
@@ -236,6 +240,8 @@ def apply_webhooks(settings: Settings, admin_for: AdminFor | None = None) -> dic
     number = _find(admin, settings.twilio_number or "")
     try:
         point_here(admin, number, host)
+    except Refused:
+        raise
     except Exception as error:  # by its cause only: its text may quote the token
         raise Failed(twilio_problem(error)) from None
     return {"applied": True, "number": number.phone_number}

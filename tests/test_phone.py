@@ -75,6 +75,19 @@ def test_pointing_a_number_here_writes_both_webhooks_and_logs_it_masked(caplog):
     assert "1111" in caplog.text
 
 
+@pytest.mark.parametrize("host", ["good.example@evil.example", "keryx.example.com/x",
+                                  "https://keryx.example.com"])
+def test_pointing_a_number_at_a_host_that_is_not_a_hostname_is_refused_before_twilio(host):
+    """The write's own boundary: whoever calls it, no URL is built from such a host."""
+    admin = FakeAdmin()
+
+    with pytest.raises(phone.Refused) as refused:
+        phone.point_here(admin, TwilioNumber("PN1", NUMBER, None, None), host)
+
+    assert str(refused.value) == phone.BAD_HOST
+    assert admin.updates == []
+
+
 # --- the account's numbers ---------------------------------------------------------------
 
 SID = "AC0123456789abcdef0123456789abcdef"

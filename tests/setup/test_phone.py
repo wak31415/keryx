@@ -110,6 +110,36 @@ def test_a_mac_is_not_asked_for_a_tunnel_name(make_ctx, world, monkeypatch):
     assert "CLOUDFLARE_TUNNEL" not in stored
 
 
+def test_a_saved_host_that_is_not_a_hostname_is_said_and_asked_again(make_ctx, world, linux):
+    """`config set` can save one; the wizard says why and never points a number at it."""
+    ConfigStore().set({"TWILIO_ACCOUNT_SID": "AC1", "TWILIO_AUTH_TOKEN": "t",
+                       "PUBLIC_HOST": "good.example@evil.example"})
+    ctx = make_ctx(
+        [("Set up phone calls", "setup"), ("Which number", DEFAULT),
+         ("Public hostname", "keryx.example.com"), ("tunnel name", DEFAULT),
+         ("Point +15550001111", True), ("send you texts", False)]
+    )
+
+    phone.run_section(ctx)
+
+    assert any("isn't a bare hostname" in line for line in ctx.ui.lines("error"))
+    assert ConfigStore().stored()["PUBLIC_HOST"] == "keryx.example.com"
+    assert world.twilio_admin.updates == [
+        ("PN1", "https://keryx.example.com/twilio/voice",
+         "https://keryx.example.com/twilio/status")
+    ]
+
+
+def test_the_webhooks_are_not_written_for_a_host_point_here_refuses(make_ctx, world):
+    ConfigStore().set({"PUBLIC_HOST": "good.example@evil.example"})
+    ctx = make_ctx([("Point +15550001111", True)])
+
+    phone._webhooks(ctx, world.twilio_admin, TwilioNumber("PN1", "+15550001111", None, None))
+
+    assert world.twilio_admin.updates == []
+    assert any("isn't a bare hostname" in line for line in ctx.ui.lines("error"))
+
+
 def test_credentials_twilio_refuses_stop_the_section_and_store_nothing(make_ctx, world):
     world.twilio_admin.refuse = True
     ctx = make_ctx([("Set up phone calls", "setup"), ("Account SID", "AC1"), ("Auth token", "x")])
