@@ -88,6 +88,13 @@ public enum Wording {
         }.joined(separator: " ")
     }
 
+    /// "Voice, Coding Agents and Phone".
+    public static func list(_ items: [String]) -> String {
+        guard let last = items.last else { return "" }
+        guard items.count > 1 else { return last }
+        return items.dropLast().joined(separator: ", ") + " and " + last
+    }
+
     /// `text` as a sentence: a capital first letter and a closing full stop.
     public static func sentence(_ text: String) -> String {
         KeryxError.sentence(text)

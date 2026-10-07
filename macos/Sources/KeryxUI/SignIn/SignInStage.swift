@@ -22,7 +22,7 @@ enum SignInStage: Equatable {
     /// The code or the address went in; the CLI is checking it.
     case checking
     case cancelling
-    case failed(String)
+    case failed(StreamFailure)
     case finished(SignedIn)
 
     /// `kind`'s stage. `startedHere`: this sheet started the run `signInRun` holds;
@@ -37,8 +37,8 @@ enum SignInStage: Equatable {
             return .ready
         case .cancelling:
             return .cancelling
-        case let .failed(message):
-            return .failed(message)
+        case let .failed(failure):
+            return .failed(failure)
         case let .finished(done):
             return .finished(done)
         case let .running(activity):

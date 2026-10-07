@@ -12,6 +12,11 @@ public struct PhoneView: View {
 
     public init() {}
 
+    /// What this screen does for `request` (`RequestAnswer`); `nil` for another's.
+    static func answers(_ request: AppRequest) -> PhoneRequest? {
+        if case let .phone(what) = RequestAnswer.of(request) { what } else { nil }
+    }
+
     public var body: some View {
         StateView(model.config, section: "Phone", retry: { Task { await model.refresh(.config) } }) { rows in
             PhoneForm(rows: rows)
@@ -61,6 +66,24 @@ private struct PhoneForm: View {
         .onChange(of: phoneSettings) {
             Task { await model.refreshPhone() }
         }
+        // The Setup Assistant's or the Overview's Connect Twilio… and Point Number Here….
+        .onChange(of: model.requested, initial: true) { answerRequest() }
+        .onChange(of: model.phoneWebhooks.value) { answerRequest() }
+    }
+
+    /// Does what another window asked of Phone: the account sheet; or, once Twilio has said
+    /// where the number points, the Point Here question (the section alone while it can't
+    /// be asked).
+    private func answerRequest() {
+        guard let request = model.requested, let answer = PhoneView.answers(request) else { return }
+        switch answer {
+        case .account:
+            editingAccount = true
+        case .pointHere:
+            if model.phoneWebhooks.isLoading, model.phoneWebhooks.value == nil { return }
+            if let report = model.phoneWebhooks.value, PhoneWording.canApply(report) { confirmingApply = true }
+        }
+        model.didHandle(request)
     }
 
     private func row(_ key: String) -> ConfigRow? { rows.first { $0.key == key } }

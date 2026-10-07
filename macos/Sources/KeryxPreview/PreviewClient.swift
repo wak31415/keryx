@@ -181,8 +181,8 @@ public struct PreviewClient: KeryxClient {
 
     /// A server that did not answer the handshake: nothing saved. Worded as the CLI words it.
     public static let serverProblem = VoiceServerResult(
-        saved: nil,
-        problem: "could not open studio.local's Realtime socket (ConnectionRefusedError: [Errno 61] "
+        saved: nil, problem: "The voice server did not open a Realtime session.",
+        detail: "could not open studio.local's Realtime socket (ConnectionRefusedError: [Errno 61] "
             + "Connect call failed ('studio.local', 8000))",
         restartNeeded: false, warnings: [])
 

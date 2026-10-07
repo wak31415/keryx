@@ -10,7 +10,7 @@ struct ModelRow: View {
         case downloading(done: Int64, total: Int64)
         /// Stopping a download: the ring spins and cannot be pressed again.
         case cancelling
-        case failed(String)
+        case failed(StreamFailure)
         case use
         case inUse
         case tooBig
@@ -47,13 +47,16 @@ struct ModelRow: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-                if case let .failed(message) = action {
-                    Text(message)
+                if case let .failed(failure) = action {
+                    Text(Wording.sentence(failure.message))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .textSelection(.enabled)
-                        .help(message)
+                        .help(failure.message)
+                    if let detail = failure.detail {
+                        DetailsDisclosure(detail)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -95,8 +98,11 @@ struct ModelRow: View {
             }
         case .failed:
             HStack(spacing: 10) {
-                Text("Download failed")
-                    .foregroundStyle(.orange)
+                Label {
+                    Text("Download failed")
+                } icon: {
+                    Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                }
                 HStack {
                     Button("Try Again", action: download)
                         .disabled(busy)

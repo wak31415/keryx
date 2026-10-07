@@ -14,6 +14,8 @@ struct PluginCard: View {
     let turnOn: () -> Void
     let askOff: () -> Void
     let save: (PluginValues) -> Void
+    /// Asked for by another window: tinted a moment.
+    var marked = false
 
     @Environment(AppModel.self) private var model
     @State private var problems: [String: String] = [:]
@@ -27,11 +29,17 @@ struct PluginCard: View {
                 header
             }
             .toggleStyle(.switch)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.accentColor.opacity(marked ? 0.14 : 0))
+                    .padding(.horizontal, -6)
+                    .padding(.vertical, -2)
+            }
             .disabled(working || (!plugin.installed && !missing.isEmpty))
             status(missing)
             ForEach(fields.important) { row($0) }
             if !fields.more.isEmpty {
-                DisclosureGroup("More Settings", isExpanded: $showsMore) {
+                DisclosureGroup("Advanced", isExpanded: $showsMore) {
                     ForEach(fields.more) { row($0) }
                 }
             }
@@ -76,7 +84,10 @@ struct PluginCard: View {
                     ProgressView().controlSize(.small)
                 }
                 if let title = PluginsWording.connectFirst(missing) {
-                    Button(title) { model.selection = .integrations }
+                    // Straight to the account's own Connect, on Integrations.
+                    Button(title) {
+                        if let first = missing.first { model.request(.connect(integration: first.id)) }
+                    }
                 }
             }
         } label: {

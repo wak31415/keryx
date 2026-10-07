@@ -25,6 +25,13 @@ public struct DoctorCheck: Codable, Sendable, Equatable, Identifiable {
     /// holding nothing back — not a step's reason, and not `ready`'s. Optional, so a CLI
     /// from before it existed still decodes; see `couldNotAsk`.
     public var unknown: Bool?
+    /// What a terminal would run to mend it, or where the thing is on disk. Never primary
+    /// copy: at most under Show Details ("For the Terminal"). Optional for an older CLI.
+    public var hint: String?
+    /// The app's action for it: one id from the CLI's closed set (`signin:claude`,
+    /// `secret:OPENAI_API_KEY`, `pin`, `phone:tunnel`, …; see `FixAction`), or `nil` when the
+    /// app has nothing to offer. Optional for an older CLI.
+    public var fix: String?
 
     /// `unknown`, false when the CLI did not say.
     public var couldNotAsk: Bool { unknown ?? false }

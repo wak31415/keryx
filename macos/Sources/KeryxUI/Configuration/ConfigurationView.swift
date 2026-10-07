@@ -23,6 +23,9 @@ public struct ConfigurationView: View {
     /// Claude's or Codex's sign-in sheet, from the Agents tab or asked for by another window
     /// (`AppRequest.signIn`).
     @State private var signingIn: SignInProvider?
+    /// The setting asked for by another window (`AppRequest.setting`): scrolled to, and
+    /// marked a moment.
+    @State private var focus: String?
 
     public init() {
         self.init(search: "")
@@ -67,6 +70,8 @@ public struct ConfigurationView: View {
         }
         .onAppear { answer(model.requested) }
         .onChange(of: model.requested) { answer(model.requested) }
+        // A setting asked for before the settings were read: answered once they are.
+        .onChange(of: model.config.value == nil) { answer(model.requested) }
         .pinSheet(isPresented: $pinRequested)
         .sheet(item: $signingIn, onDismiss: { Task { await model.refresh(.doctor, .setupPlan) } }) { provider in
             SignInSheet(kind: provider)
@@ -78,6 +83,10 @@ public struct ConfigurationView: View {
     private func answer(_ request: AppRequest?) {
         guard let request, let answer = Self.answer(request, config: model.config.value) else { return }
         choose(answer.tab)
+        if let key = answer.focus {
+            if model.config.value?.first(where: { $0.key == key })?.advanced == true { advancedOpen.insert(answer.tab) }
+            focus = key
+        }
         switch answer.sheet {
         case .pin?: pinRequested = true
         case let .signIn(provider)?: signingIn = provider
@@ -87,13 +96,15 @@ public struct ConfigurationView: View {
     }
 
     /// What this screen does for `request` (`RequestAnswer`), with the settings as read.
-    static func answer(_ request: AppRequest, config: [ConfigRow]?) -> (tab: String, sheet: ConfigurationSheet?)? {
-        ConfigWording.answer(request, pinTab: config?.first(where: ConfigWording.isPIN)?.tab)
+    static func answer(_ request: AppRequest,
+                       config: [ConfigRow]?) -> (tab: String, sheet: ConfigurationSheet?, focus: String?)? {
+        ConfigWording.answer(request, pinTab: config?.first(where: ConfigWording.isPIN)?.tab, config: config)
     }
 
     // MARK: - A tab
 
     private func tabForm(_ tab: ConfigWording.Tab, titles: [String: String]) -> some View {
+        ScrollViewReader { proxy in
         Form {
             if model.configNeedsRestart {
                 RestartBanner()
@@ -135,6 +146,17 @@ public struct ConfigurationView: View {
             }
         }
         .formStyle(.grouped)
+        .onChange(of: focus, initial: true) { _, key in
+            guard let key else { return }
+            Task {
+                // Once the rows are laid out.
+                await Task.yield()
+                withAnimation { proxy.scrollTo(key, anchor: .center) }
+                try? await Task.sleep(for: .seconds(3))
+                if focus == key { withAnimation(.easeOut(duration: 0.6)) { focus = nil } }
+            }
+        }
+        }
     }
 
     // MARK: - A search
@@ -169,6 +191,13 @@ public struct ConfigurationView: View {
     private func rows(_ rows: [ConfigRow], titles: [String: String]) -> some View {
         ForEach(rows) { row in
             ConfigRowView(row: row, titles: titles, error: initialErrors[row.key])
+                .id(row.key)
+                .background {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.accentColor.opacity(focus == row.key ? 0.14 : 0))
+                        .padding(.horizontal, -6)
+                        .padding(.vertical, -2)
+                }
         }
     }
 

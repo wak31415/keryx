@@ -1,8 +1,8 @@
-{"event": "step", "step": "runtime", "message": "Installing llama.cpp with Homebrew"}
+{"event": "step", "step": "runtime", "message": "Installing llama.cpp with Homebrew", "detail": null}
 {"event": "progress", "step": "runtime", "done": 0, "total": null}
 {"event": "progress", "step": "runtime", "done": 9437184, "total": null}
-{"event": "step", "step": "runtime", "message": "llama.cpp: /opt/homebrew/bin/llama-server"}
-{"event": "step", "step": "unit", "message": "Installing the model server's service"}
-{"event": "step", "step": "start", "message": "Loading the model into llama.cpp at http://127.0.0.1:8090/v1"}
-{"event": "step", "step": "check", "message": "Asking the model server which model it serves, qwen3-coder-30b-a3b"}
+{"event": "step", "step": "runtime", "message": "llama.cpp is installed.", "detail": "/opt/homebrew/bin/llama-server"}
+{"event": "step", "step": "unit", "message": "Installing the model server's service", "detail": null}
+{"event": "step", "step": "start", "message": "Loading the model into llama.cpp at http://127.0.0.1:8090/v1", "detail": null}
+{"event": "step", "step": "check", "message": "Asking the model server which model it serves, qwen3-coder-30b-a3b", "detail": null}
 {"event": "done", "url": "http://127.0.0.1:8090/v1", "served_model": "qwen3-coder-30b-a3b"}

@@ -10,6 +10,8 @@ struct ThisMacProgress: View {
     /// Runs Set Up… again: `startServer` true to start the model server first whatever the
     /// models last said, with `runtime` (`ollama`) when it is not llama.cpp.
     let again: (_ startServer: Bool?, _ runtime: String?) -> Void
+    /// Set Up Again… once it has worked: the question Set Up… asks.
+    var setUpAgain: () -> Void = {}
 
     @Environment(AppModel.self) private var model
 
@@ -24,52 +26,48 @@ struct ThisMacProgress: View {
         let setup = model.voiceSetup
         let state = Self.state(withServer: model.thisMacSetup?.startsServer == true,
                                runtime: model.thisMacSetup?.runtime, server: server.phase,
-                               serverStep: server.lastStep, setup: setup.phase, setupStep: setup.lastStep)
-        // A refusal tried nothing: there are no steps to show it at.
-        if !Self.refused(state.ending) {
-            RunStepList(groups: state.groups, message: state.message, progress: state.progress,
-                        stopping: state.stopping)
-        }
+                               serverStep: server.lastStep, setup: setup.phase, setupStep: setup.lastStep,
+                               setupDetail: setup.stepDetail, serverDetail: server.activity?.detail)
         switch state.ending {
         case .running:
-            RunCancelRow(stopping: state.stopping) { model.cancelThisMacSetup() }
-        case let .failed(message):
-            failure(message)
-        case let .finished(url):
-            Label {
-                Text("Set up at \(VoiceWording.address(url))")
-                Text("Calls use it once Keryx restarts.")
-            } icon: {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            StreamRunView(groups: state.groups,
+                          display: .running(.init(message: state.message, detail: state.detail,
+                                                  progress: state.progress, stopping: state.stopping)),
+                          cancel: { model.cancelThisMacSetup() }) { EmptyView() }
+        case let .failed(failure):
+            if let refusal = LocalRefusal.of(failure.message) {
+                guidance(refusal)
+            } else {
+                StreamRunView(groups: state.groups, display: .failed(failure), failureTitle: VoiceWording.setupFailed,
+                              paths: model.status.value?.paths) {
+                    Button("Dismiss") { model.dismissThisMacSetup() }
+                    Button("Try Again") {
+                        // The model server's part failed: start it again, as it was started.
+                        let server = model.voiceSetup.phase == nil && model.thisMacSetup?.startsServer == true
+                        again(server ? true : nil, server ? model.thisMacSetup?.runtime : nil)
+                    }
+                }
             }
+        case let .finished(url):
+            StreamRunView(groups: state.groups,
+                          display: .finished(title: "Set up at \(VoiceWording.address(url))",
+                                             subtitle: "Calls use it once Keryx restarts."),
+                          again: ("Set Up Again…", setUpAgain)) { EmptyView() }
         }
     }
 
-    @ViewBuilder private func failure(_ message: String) -> some View {
-        switch LocalRefusal.of(message) {
+    /// A refusal that is a step to take first: say it as guidance, with the action that
+    /// takes it. A refusal tried nothing, so there are no steps to show it at.
+    @ViewBuilder private func guidance(_ refusal: LocalRefusal) -> some View {
+        switch refusal {
         case .needsServer:
             needsServer(model.models.value?.wordsServer)
         case .needsModel:
             let recommended = model.models.value?.models.first { $0.recommended }
-            RunFailureRow(title: VoiceWording.needsModelTitle,
-                          message: VoiceWording.needsModelDetail(recommended: recommended), guidance: true) {
+            RunGuidanceRow(title: VoiceWording.needsModelTitle,
+                           message: VoiceWording.needsModelDetail(recommended: recommended)) {
                 Button("Dismiss") { model.dismissThisMacSetup() }
                 Button(VoiceWording.needsModelButton(recommended: recommended)) { model.showRecommendedModel() }
-            }
-        case nil:
-            let said = RunLog.split(message)
-            RunFailureRow(title: VoiceWording.setupFailed,
-                          message: VoiceWording.sentence(Wording.named(said.text, titles: Wording.titles(model.config.value)))) {
-                if let log = said.log.flatMap({ RunLog.file($0, paths: model.status.value?.paths) }) {
-                    Button("Show Log") { RunLog.show(log) }
-                        .help("Shows the log in the Finder")
-                }
-                Button("Dismiss") { model.dismissThisMacSetup() }
-                Button("Try Again") {
-                    // The model server's part failed: start it again, as it was started.
-                    let server = model.voiceSetup.phase == nil && model.thisMacSetup?.startsServer == true
-                    again(server ? true : nil, server ? model.thisMacSetup?.runtime : nil)
-                }
             }
         }
     }
@@ -80,18 +78,17 @@ struct ThisMacProgress: View {
     @ViewBuilder private func needsServer(_ server: WordsServer?) -> some View {
         switch server {
         case let .elsewhere(address):
-            RunFailureRow(title: VoiceWording.serverDownTitle, message: VoiceWording.elsewhereDown(address),
-                          guidance: true) {
+            RunGuidanceRow(title: VoiceWording.serverDownTitle, message: VoiceWording.elsewhereDown(address)) {
                 Button("Dismiss") { model.dismissThisMacSetup() }
                 Button("Try Again") { again(false, nil) }
             }
         case .ollama:
-            RunFailureRow(title: VoiceWording.ollamaDownTitle, message: VoiceWording.ollamaDownDetail, guidance: true) {
+            RunGuidanceRow(title: VoiceWording.ollamaDownTitle, message: VoiceWording.ollamaDownDetail) {
                 Button("Dismiss") { model.dismissThisMacSetup() }
                 Button("Start It and Set Up") { again(true, "ollama") }
             }
         case .modelServer, .noModel, nil:
-            RunFailureRow(title: VoiceWording.serverDownTitle, message: VoiceWording.serverDownDetail, guidance: true) {
+            RunGuidanceRow(title: VoiceWording.serverDownTitle, message: VoiceWording.serverDownDetail) {
                 Button("Dismiss") { model.dismissThisMacSetup() }
                 Button("Start It and Set Up") { again(true, nil) }
             }
@@ -107,7 +104,7 @@ struct ThisMacProgress: View {
 
     /// It ended on a refusal that is a step to take first.
     static func refused(_ ending: State.Ending) -> Bool {
-        if case let .failed(message) = ending { return LocalRefusal.of(message) != nil }
+        if case let .failed(failure) = ending { return LocalRefusal.of(failure.message) != nil }
         return false
     }
 
@@ -116,18 +113,20 @@ struct ThisMacProgress: View {
     struct State: Equatable {
         enum Ending: Equatable {
             case running
-            case failed(String)
+            case failed(StreamFailure)
             case finished(String)
         }
 
         var groups: [RunStepGroup]
         var message: String?
+        var detail: String?
         var progress: (done: Int64, total: Int64?)?
         var stopping: Bool
         var ending: Ending
 
         static func == (a: State, b: State) -> Bool {
-            a.groups == b.groups && a.message == b.message && a.stopping == b.stopping && a.ending == b.ending
+            a.groups == b.groups && a.message == b.message && a.detail == b.detail && a.stopping == b.stopping
+                && a.ending == b.ending
                 && a.progress?.done == b.progress?.done && a.progress?.total == b.progress?.total
         }
     }
@@ -136,11 +135,13 @@ struct ThisMacProgress: View {
     /// run is `server` (at `serverStep`); the voice setup is `setup` (at `setupStep`), and
     /// its having begun means the model server's part is done.
     static func state(withServer: Bool, runtime: String? = nil, server: StreamRun<ModelServerStarted>.Phase?,
-                      serverStep: String, setup: VoiceSetup.Phase?, setupStep: String) -> State {
+                      serverStep: String, setup: VoiceSetup.Phase?, setupStep: String,
+                      setupDetail: String? = nil, serverDetail: String? = nil) -> State {
         let setupStage = RunSteps.stage(setup)
         let voice = RunSteps.steps(RunSteps.voice, reached: setupStep, stage: setupStage)
         var groups = [RunStepGroup(title: withServer ? VoiceWording.voiceSteps : nil, steps: voice)]
         var message: String?
+        var detail: String?
         var progress: (done: Int64, total: Int64?)?
         var stopping = setup == .cancelling
         var ending = State.Ending.running
@@ -156,6 +157,7 @@ struct ThisMacProgress: View {
                 switch server {
                 case let .running(activity):
                     message = activity.message
+                    detail = activity.detail ?? serverDetail
                     progress = activity.progress.map { ($0.done, $0.total) }
                 case .cancelling: stopping = true
                 case let .failed(failure): ending = .failed(failure)
@@ -167,12 +169,14 @@ struct ThisMacProgress: View {
         switch setup {
         case let .running(_, words, sizes):
             message = words
+            detail = setupDetail
             // A total of 0 is a size the source did not say.
             progress = sizes.map { ($0.done, $0.total > 0 ? $0.total : nil) }
         case let .failed(failure): ending = .failed(failure)
         case let .finished(url): ending = .finished(url)
         case .cancelling, nil: break
         }
-        return State(groups: groups, message: message, progress: progress, stopping: stopping, ending: ending)
+        return State(groups: groups, message: message, detail: detail, progress: progress, stopping: stopping,
+                     ending: ending)
     }
 }

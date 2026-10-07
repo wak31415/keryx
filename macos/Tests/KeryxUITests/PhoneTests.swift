@@ -186,6 +186,6 @@ import KeryxPreview
     @Test func theTunnelUnitIsAWord() {
         #expect(ServiceWording.tunnel(PreviewData.service.units.tunnel).text == "Running")
         #expect(ServiceWording.tunnel(PreviewData.service.units.voice).text == "Not installed")
-        #expect(ServiceWording.tunnel(PreviewData.service.units.llm).text == "Stopped")
+        #expect(ServiceWording.tunnel(PreviewData.service.units.llm).text == "Not running")
     }
 }

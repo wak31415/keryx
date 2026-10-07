@@ -40,7 +40,7 @@ struct SetupStepList: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(SetupWording.title(step))
                     .foregroundStyle(waiting ? .secondary : .primary)
-                if waiting, let why = step.why {
+                if waiting, let why = SetupWording.waitsFor(step, in: plan) {
                     Text(why)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -110,7 +110,6 @@ struct SetupStepPage: View {
                     .padding(.top, 4)
                 buttons(actions)
                     .padding(.top, 10)
-                if step.id == "local" { ModelServerProgress(run: model.modelServerRun) }
             }
             .multilineTextAlignment(.center)
             .padding(.horizontal, 40)
@@ -119,12 +118,22 @@ struct SetupStepPage: View {
             .frame(maxWidth: .infinity)
 
             Form {
+                if step.id == "local", let display = RunDisplay.of(model.modelServerRun, finished: {
+                    ("The model server is serving \($0.servedModel).", nil)
+                }) {
+                    Section {
+                        modelServerRun(display)
+                    }
+                }
                 settings
                 if !step.checks.isEmpty {
                     Section {
                         DisclosureGroup(isExpanded: $detailsOpen) {
                             ForEach(Array(step.checks.enumerated()), id: \.offset) { _, check in
-                                SetupCheckRow(check: check, titles: Wording.titles(context.config))
+                                CheckLine(title: check.title, state: check.state, detail: check.detail,
+                                          titles: Wording.titles(context.config),
+                                          action: checkAction(check, besides: actions),
+                                          disabled: actions.waiting, perform: perform)
                             }
                         } label: {
                             Text(step.checks.count == 1 ? "What Keryx Checked" : "What Keryx Checked (\(step.checks.count))")
@@ -137,14 +146,14 @@ struct SetupStepPage: View {
         }
     }
 
-    /// Done; or why not, in the plan's words with a setting's key said by its title.
+    /// Done; or why not, as a plain sentence (`SetupWording.headline`).
     @ViewBuilder private var status: some View {
         let symbol = SetupWording.statusSymbol(step.kind)
         if step.id == "pin", context.pin?.place == .environment {
             Label(SetupWording.pinFromEnvironment, systemImage: "info.circle")
-        } else if let line = step.kind == .done ? SetupWording.done : SetupWording.why(step) {
+        } else if let line = SetupWording.headline(step, in: plan, context: context) {
             Label {
-                Text(Wording.named(line, titles: Wording.titles(context.config)))
+                Text(line)
             } icon: {
                 Image(systemName: symbol.name)
                     .foregroundStyle(symbol.colour)
@@ -168,8 +177,9 @@ struct SetupStepPage: View {
                     }
                 }
                 ForEach(actions.others) { action in
+                    // A step that waits shows its own buttons, not yet to be pressed.
                     Button(action.title) { perform(action) }
-                        .disabled(disabled(action))
+                        .disabled(actions.waiting || disabled(action))
                 }
                 if installing {
                     ProgressView().controlSize(.small)
@@ -179,10 +189,40 @@ struct SetupStepPage: View {
         }
     }
 
+    /// A check's own fix, as a button beside it — unless the step's buttons offer it already.
+    private func checkAction(_ check: SetupCheck, besides actions: SetupActions) -> SetupAction? {
+        guard check.state != "ok", let action = FixAction(check.fix)?.action(context, named: check.title,
+                                                                                 missing: check.state == "missing") else {
+            return nil
+        }
+        if case let .setting(key)? = FixAction(check.fix), SetupGuide.settings(step).contains(key) { return nil }
+        let offered = [actions.primary].compactMap { $0 } + actions.others
+        return offered.contains { $0.effect == action.effect } ? nil : action
+    }
+
+    /// `keryx models start` from this page: its steps, Cancel; then that it serves, or why not.
+    @ViewBuilder private func modelServerRun(_ display: RunDisplay) -> some View {
+        let run = model.modelServerRun
+        if case let .failed(failure) = display, LocalRefusal.of(failure.message) == .needsModel {
+            RunGuidanceRow(title: ModelsWording.chooseModelFirst, message: ModelsWording.chooseModelDetail) {
+                Button("Dismiss") { run.dismiss() }
+            }
+        } else {
+            StreamRunView(groups: [RunStepGroup(steps: RunSteps.steps(RunSteps.modelServer, reached: run.lastStep,
+                                                                      stage: RunSteps.stage(run.phase)))],
+                          display: display, cancel: { model.cancelModelServer() },
+                          failureTitle: ModelsWording.serverFailed, paths: model.status.value?.paths) {
+                Button("Dismiss") { run.dismiss() }
+                Button("Try Again") { model.runModelServer() }
+            }
+        }
+    }
+
     private func disabled(_ action: SetupAction) -> Bool {
         switch action.effect {
         case .installService: busy
         case .startModelServer: !model.canStartModelServer
+        case .downloadVoiceModels: !model.canDownloadVoiceModels
         case .mark: busy
         default: false
         }
@@ -209,107 +249,6 @@ struct SetupStepPage: View {
     }
 }
 
-/// `keryx models start`, as the local models' page follows it: where it has got to with
-/// Cancel, stopping, why it failed, or that the server is up.
-private struct ModelServerProgress: View {
-    let run: StreamRun<ModelServerStarted>
-
-    var body: some View {
-        Group {
-            switch run.phase {
-            case let .running(activity)?:
-                VStack(alignment: .leading, spacing: 6) {
-                    if let fraction = activity.progress?.fraction {
-                        ProgressView(value: fraction)
-                    } else {
-                        ProgressView().progressViewStyle(.linear)
-                    }
-                    HStack {
-                        Text(activity.message)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        Spacer()
-                        Button("Cancel") { run.cancel() }
-                            .controlSize(.small)
-                    }
-                }
-                .frame(width: 380)
-            case .cancelling?:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Stopping…").foregroundStyle(.secondary)
-                }
-            case let .failed(message)?:
-                HStack(spacing: 8) {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .symbolRenderingMode(.multicolor)
-                        .textSelection(.enabled)
-                    Button("Dismiss") { run.dismiss() }
-                        .controlSize(.small)
-                }
-            case let .finished(done)?:
-                Label("The model server is serving \(done.servedModel).", systemImage: "checkmark.circle.fill")
-                    .symbolRenderingMode(.multicolor)
-            case nil:
-                EmptyView()
-            }
-        }
-        .font(.callout)
-        .padding(.top, 8)
-    }
-}
-
-/// One of doctor's checks behind a step: passed, missing or failed, and its detail.
-private struct SetupCheckRow: View {
-    let check: SetupCheck
-    let titles: [String: String]
-
-    var body: some View {
-        let detail = OverviewWording.detail(check.detail, titles: titles)
-        Label {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(check.title)
-                if let path = detail.path {
-                    Text((path as NSString).abbreviatingWithTildeInPath)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(path)
-                }
-                if !detail.text.isEmpty {
-                    Text(detail.text)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-            }
-        } icon: {
-            Image(systemName: Self.symbol(check.state))
-                .foregroundStyle(Self.colour(check.state))
-        }
-        .padding(.vertical, 2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    static func symbol(_ state: String) -> String {
-        switch state {
-        case "ok": "checkmark.circle.fill"
-        case "missing": "exclamationmark.circle"
-        default: "xmark.octagon.fill"
-        }
-    }
-
-    static func colour(_ state: String) -> Color {
-        switch state {
-        case "ok": .green
-        case "missing": .orange
-        default: .red
-        }
-    }
-}
-
 // MARK: - The last page
 
 /// "You're Ready" once the plan is, with the optional steps still open; until then, the
@@ -318,6 +257,8 @@ struct SetupFinishPage: View {
     let plan: SetupPlan
     let context: SetupContext
     let go: (SetupPage) -> Void
+    /// Runs a step's own button from its row.
+    var perform: (SetupAction) -> Void = { _ in }
 
     @Environment(AppModel.self) private var model
 
@@ -348,11 +289,20 @@ struct SetupFinishPage: View {
                     Section(SetupWording.finishListTitle(plan)) {
                         ForEach(list) { step in
                             LabeledContent {
-                                Button("Go") { go(.step(step.id)) }
+                                // The verb that settles it ("Add OpenAI API Key…", "Sign In to
+                                // Claude…"); a step that waits, or has none, is shown instead.
+                                let action = SetupGuide.actions(step, in: plan, context: context)
+                                if step.kind != .blocked, let primary = action.primary {
+                                    Button(primary.title) { perform(primary) }
+                                } else {
+                                    Button("Show Step") { go(.step(step.id)) }
+                                }
                             } label: {
                                 Label {
                                     Text(SetupWording.title(step))
-                                    if let why = step.why { Text(Wording.named(why, titles: Wording.titles(context.config))) }
+                                    if let line = SetupWording.headline(step, in: plan, context: context) {
+                                        Text(line)
+                                    }
                                 } icon: {
                                     Image(systemName: SetupWording.symbol(step.kind))
                                         .foregroundStyle(SetupWording.colour(step.kind))

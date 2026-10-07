@@ -4,5 +4,6 @@
   "public_host": null,
   "unit_installed": false,
   "reachable": null,
-  "error": null
+  "error": null,
+  "install_url": "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
 }

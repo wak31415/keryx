@@ -55,7 +55,7 @@ enum ServiceWording {
         switch (unit.installed, unit.active) {
         case (false, _): (.inactive, "Not installed")
         case (true, true): (.ok, "Running")
-        case (true, false): (.warning, "Stopped")
+        case (true, false): (.warning, "Not running")
         }
     }
 }

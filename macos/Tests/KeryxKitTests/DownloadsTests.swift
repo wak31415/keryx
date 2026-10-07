@@ -149,7 +149,7 @@ import KeryxPreview
         pull.send(.cancelled)
         pull.finish(throwing: RunnerError.stillRunning)
         await downloads.settled()
-        #expect(downloads.active["qwen"] == .failed(RunnerError.stillRunning.localizedDescription))
+        #expect(downloads.active["qwen"] == .failed(StreamFailure(RunnerError.stillRunning.localizedDescription)))
         #expect(!downloads.isBusy)
     }
 
@@ -262,7 +262,7 @@ import KeryxPreview
                         onFinish: { finished = true })
         await downloads.settled()
         #expect(downloads.active["qwen"] == .failed(
-            "The download stopped without saying why. Run keryx doctor in Terminal."))
+            "The download stopped without saying why."))
         #expect(!finished)
         #expect(activities.begun == 1 && activities.ended == 1)
     }

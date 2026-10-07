@@ -10,8 +10,9 @@ import Foundation
 /// key that is missing makes it none too, except the ones said only sometimes (`total`,
 /// Codex's `code`, Claude's `stored`).
 public enum StreamEvent<Done: StreamDone>: Equatable, Sendable {
-    /// A phase begins (or a warning within it): `step` is the CLI's name for it.
-    case step(step: String, message: String)
+    /// A phase begins (or a warning within it): `step` is the CLI's name for it. `detail`
+    /// is what a terminal adds (a path, a command), never shown as the line itself.
+    case step(step: String, message: String, detail: String? = nil)
     /// Bytes so far in `step`; `total` is `nil` when the source does not say.
     case progress(step: String, done: Int64, total: Int64?)
     /// Open `url` in the browser. `code` is what the owner types there (Codex's device code).
@@ -19,7 +20,7 @@ public enum StreamEvent<Done: StreamDone>: Equatable, Sendable {
     /// The command waits for one line on its stdin: the code the owner was shown (Claude).
     case code
     case done(Done)
-    case error(String)
+    case error(StreamFailure)
     case cancelled
 
     /// It ends the command.
@@ -53,7 +54,7 @@ public enum StreamEvent<Done: StreamDone>: Equatable, Sendable {
             guard let step = object["step"] as? String, let message = object["message"] as? String else {
                 return nil
             }
-            return .step(step: step, message: message)
+            return .step(step: step, message: message, detail: object["detail"] as? String)
         case "progress":
             guard let step = object["step"] as? String, let done = integer(object["done"]) else { return nil }
             return .progress(step: step, done: done, total: integer(object["total"]))
@@ -65,8 +66,7 @@ public enum StreamEvent<Done: StreamDone>: Equatable, Sendable {
         case "done":
             return Done(event: object).map { .done($0) }
         case "error":
-            guard let message = object["message"] as? String else { return nil }
-            return .error(message)
+            return StreamFailure(event: object).map { .error($0) }
         case "cancelled":
             return .cancelled
         default:
@@ -79,6 +79,33 @@ public enum StreamEvent<Done: StreamDone>: Equatable, Sendable {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
         return number.int64Value
     }
+}
+
+/// How a long-running command went wrong: `message`, one sentence for a person, said as it
+/// is; `detail`, what a terminal would add (a tool's output, a path, a log), shown only
+/// under Show Details. A string literal is a failure with no detail.
+public struct StreamFailure: Equatable, Sendable, ExpressibleByStringLiteral, CustomStringConvertible {
+    public var message: String
+    public var detail: String?
+
+    public init(_ message: String, detail: String? = nil) {
+        self.message = message
+        let trimmed = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.detail = trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    public init(stringLiteral value: String) {
+        self.init(value)
+    }
+
+    /// From an `error` event's keys: `message` it must have; `detail` it may (null, or
+    /// missing from a CLI older than it).
+    public init?(event: [String: Any]) {
+        guard let message = event["message"] as? String else { return nil }
+        self.init(message, detail: event["detail"] as? String)
+    }
+
+    public var description: String { message }
 }
 
 /// What a stream's `done` event carries.
@@ -106,7 +133,7 @@ public struct ModelServerStarted: StreamDone {
     }
 
     public static let stoppedWithoutSaying =
-        "Starting the model server stopped without saying why. Run keryx doctor in Terminal."
+        "Starting the model server stopped without saying why."
 }
 
 /// `keryx voice download --json`'s `done`: the speech models are in the Hugging Face cache.
@@ -127,7 +154,7 @@ public struct VoiceModelsDownloaded: StreamDone {
     }
 
     public static let stoppedWithoutSaying =
-        "The speech model download stopped without saying why. Run keryx doctor in Terminal."
+        "The speech model download stopped without saying why."
 }
 
 /// `keryx auth login NAME --json`'s `done`.
@@ -152,7 +179,7 @@ public struct SignedIn: StreamDone {
     }
 
     public static let stoppedWithoutSaying =
-        "The sign-in stopped without saying why. Run keryx auth status in Terminal."
+        "The sign-in stopped without saying why."
 }
 
 public typealias ModelServerEvent = StreamEvent<ModelServerStarted>

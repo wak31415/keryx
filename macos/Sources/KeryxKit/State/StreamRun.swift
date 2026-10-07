@@ -22,7 +22,7 @@ public final class StreamRun<Done: StreamDone> {
         case running(Activity)
         /// Asked to stop, and not yet stopped: nothing may start until it has.
         case cancelling
-        case failed(String)
+        case failed(StreamFailure)
         case finished(Done)
     }
 
@@ -33,6 +33,8 @@ public final class StreamRun<Done: StreamDone> {
         public var step: String
         /// What the step is doing, in the CLI's words; `StreamRun.starting` until it says.
         public var message: String
+        /// What a terminal adds to the step (a path), for Show Details only.
+        public var detail: String?
         /// Bytes so far while the step downloads; `nil` between downloads.
         public var progress: Progress?
         /// The last `open`: the page the owner should open, once.
@@ -40,10 +42,11 @@ public final class StreamRun<Done: StreamDone> {
         /// The CLI asked for a code (`code`), and none has been sent since.
         public var wantsCode: Bool
 
-        public init(step: String = "", message: String = StreamRun.starting, progress: Progress? = nil,
-                    link: Link? = nil, wantsCode: Bool = false) {
+        public init(step: String = "", message: String = StreamRun.starting, detail: String? = nil,
+                    progress: Progress? = nil, link: Link? = nil, wantsCode: Bool = false) {
             self.step = step
             self.message = message
+            self.detail = detail
             self.progress = progress
             self.link = link
             self.wantsCode = wantsCode
@@ -127,7 +130,7 @@ public final class StreamRun<Done: StreamDone> {
     }
 
     /// Why the last run went wrong, while it stays failed.
-    public var failure: String? {
+    public var failure: StreamFailure? {
         if case let .failed(message) = phase { message } else { nil }
     }
 
@@ -172,7 +175,7 @@ public final class StreamRun<Done: StreamDone> {
                 update(run, to: nil)
             case let .stillRunning(message):
                 // Something of it outlived SIGKILL: said, never taken for stopped.
-                update(run, to: .failed(message))
+                update(run, to: .failed(StreamFailure(message)))
             }
         }
         return true
@@ -212,7 +215,7 @@ public final class StreamRun<Done: StreamDone> {
         await task?.value
     }
 
-    private enum Outcome { case finished(Done), failed(String), cancelled, stillRunning(String) }
+    private enum Outcome { case finished(Done), failed(StreamFailure), cancelled, stillRunning(String) }
 
     /// The run's outcome once its stream has ended: the terminal event says what it was,
     /// the stream's end that the CLI and all it started have exited.
@@ -236,11 +239,11 @@ public final class StreamRun<Done: StreamDone> {
         } catch let error as RunnerError where error == .stillRunning {
             return .stillRunning(error.localizedDescription)
         } catch let error as KeryxError {
-            return Task.isCancelled ? .cancelled : outcome ?? .failed(error.message)
+            return Task.isCancelled ? .cancelled : outcome ?? .failed(StreamFailure(error))
         } catch {
-            return Task.isCancelled ? .cancelled : outcome ?? .failed(error.localizedDescription)
+            return Task.isCancelled ? .cancelled : outcome ?? .failed(StreamFailure(error.localizedDescription))
         }
-        return Task.isCancelled ? .cancelled : outcome ?? .failed(Done.stoppedWithoutSaying)
+        return Task.isCancelled ? .cancelled : outcome ?? .failed(StreamFailure(Done.stoppedWithoutSaying))
     }
 
     /// One event that is not an ending, folded into the activity — only while `run` is
@@ -248,10 +251,11 @@ public final class StreamRun<Done: StreamDone> {
     private func advance(_ run: UUID, with event: StreamEvent<Done>) {
         guard self.run == run, !stopping, case var .running(activity) = phase else { return }
         switch event {
-        case let .step(step, message):
+        case let .step(step, message, detail):
             if step != activity.step { activity.progress = nil }
             activity.step = step
             activity.message = message
+            activity.detail = detail
         case let .progress(step, done, total):
             activity.step = step
             activity.progress = Progress(done: done, total: total)

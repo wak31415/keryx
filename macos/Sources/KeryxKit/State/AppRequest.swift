@@ -23,12 +23,21 @@ public enum AppRequest: Equatable, Sendable {
     case setPin
     /// The Voice section's setup on this Mac (`keryx voice use here`).
     case setUpVoiceHere
+    /// Configuration, at the setting with this key (`config list`'s spelling): its tab, its
+    /// Advanced disclosure open when it is there, scrolled to it.
+    case setting(key: String)
+    /// The plugin with this name on Plugins, scrolled to.
+    case plugin(name: String)
+    /// Phone's Twilio account sheet.
+    case phoneAccount
+    /// Phone's Point Here question: the Twilio number's calls sent to this Mac.
+    case pointHere
 
     /// The section the main window shows for it.
     public var destination: SidebarItem {
         switch self {
         case let .show(item): item
-        case .configure, .setPin: .configuration
+        case .configure, .setPin, .setting: .configuration
         case let .signIn(provider):
             switch provider {
             case .claude, .codex: .configuration
@@ -36,6 +45,8 @@ public enum AppRequest: Equatable, Sendable {
             }
         case .connect: .integrations
         case .setUpVoiceHere: .voice
+        case .plugin: .plugins
+        case .phoneAccount, .pointHere: .phone
         }
     }
 }

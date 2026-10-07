@@ -3,7 +3,8 @@
     "VOICE_BASE_URL": "http://127.0.0.1:9/v1",
     "VOICE_API_KEY": "(set)"
   },
-  "problem": "could not open 127.0.0.1's Realtime socket (ConnectionRefusedError: [Errno 61] Connect call failed ('127.0.0.1', 9))",
+  "problem": "The voice server did not open a Realtime session.",
+  "detail": "could not open 127.0.0.1's Realtime socket (ConnectionRefusedError: [Errno 61] Connect call failed ('127.0.0.1', 9))",
   "warnings": [],
   "restart_needed": true
 }

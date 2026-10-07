@@ -314,7 +314,8 @@ import KeryxPreview
             for (key, type) in keys { line[key] = type == "integer" ? 7 : "x" }
             let parsed = try #require(PullEvent.parse(Self.line(line)), "\(event)")
             #expect(Self.name(of: parsed) == event)
-            for key in keys.keys {
+            // A key that may be null may be missing too (an older CLI's error has no detail).
+            for key in keys.keys where !keys[key]!.hasSuffix("|null") {
                 var without = line
                 without.removeValue(forKey: key)
                 #expect(try PullEvent.parse(Self.line(without)) == nil, "\(event) without \(key)")

@@ -14,6 +14,8 @@ public struct PluginsView: View {
     /// The settings of plugins that are off, until they are turned on.
     @State private var drafts: [String: PluginDraft] = [:]
     @State private var turningOff: Plugin?
+    /// The plugin asked for by another window (`AppRequest.plugin`), marked a moment.
+    @State private var marked: String?
 
     public init() {
         self.init(failures: [:])
@@ -26,6 +28,7 @@ public struct PluginsView: View {
 
     public var body: some View {
         StateView(model.plugins, section: "Plugins", retry: { Task { await model.refresh(.plugins) } }) { report in
+            ScrollViewReader { proxy in
             Form {
                 ForEach(report.plugins) { plugin in
                     PluginCard(
@@ -36,7 +39,9 @@ public struct PluginsView: View {
                                        set: { drafts[plugin.name] = $0 }),
                         turnOn: { turnOn(plugin) },
                         askOff: { turningOff = plugin },
-                        save: { values in save(plugin, values) })
+                        save: { values in save(plugin, values) },
+                        marked: marked == plugin.name)
+                    .id(plugin.name)
                 }
                 OwnToolsSection(directory: report.directory)
             }
@@ -44,6 +49,19 @@ public struct PluginsView: View {
             // The window would otherwise hand the first plugin's first field the keyboard,
             // its text selected, as the screen appears.
             .background(NoInitialFocus())
+            // A plugin asked for by the Setup Assistant or the Overview: scrolled to.
+            .onChange(of: model.requested, initial: true) { _, requested in
+                guard let requested, let name = Self.answers(requested) else { return }
+                model.didHandle(requested)
+                marked = name
+                Task {
+                    await Task.yield()
+                    withAnimation { proxy.scrollTo(name, anchor: .top) }
+                    try? await Task.sleep(for: .seconds(3))
+                    if marked == name { withAnimation(.easeOut(duration: 0.6)) { marked = nil } }
+                }
+            }
+            }
         }
         .task {
             await model.refresh(.plugins, .tools, .integrations)
@@ -57,6 +75,11 @@ public struct PluginsView: View {
         } message: { _ in
             Text(question?.message ?? "")
         }
+    }
+
+    /// The plugin `request` asks this screen to show (`RequestAnswer`); `nil` for another.
+    static func answers(_ request: AppRequest) -> String? {
+        if case let .plugin(name) = RequestAnswer.of(request) { name } else { nil }
     }
 
     private var question: IntegrationQuestion? {

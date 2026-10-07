@@ -52,7 +52,8 @@ extension ScreenCatalog {
             Entry("voice-here-chain-failed", size: tall) {
                 VoiceView(mode: .here).environment(chain(server: .events([
                     .step(step: "runtime", message: "Installing llama.cpp with Homebrew"),
-                    .error("brew install llama.cpp did not finish"),
+                    .error(StreamFailure("llama.cpp could not be installed.",
+                                         detail: "brew install llama.cpp exited with 1")),
                 ])))
             },
             Entry("voice-here-ollama-down", size: screen) {
@@ -84,7 +85,8 @@ extension ScreenCatalog {
             Entry("voice-here-failed", size: screen) {
                 VoiceView(mode: .here).environment(settingUp(.events([
                     downloading,
-                    .error("Couldn't download the speech models: the connection to huggingface.co was lost"),
+                    .error(StreamFailure("The voice's speech models could not be downloaded.",
+                                         detail: "the connection to huggingface.co was lost")),
                 ])))
             },
             Entry("voice-here-refused", size: screen) {

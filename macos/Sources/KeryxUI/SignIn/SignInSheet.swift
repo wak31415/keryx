@@ -162,16 +162,19 @@ public struct SignInSheet: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        case let .failed(message):
+        case let .failed(failure):
             Section {
                 Label {
-                    Text(SignInWording.failure(message))
+                    Text(SignInWording.failure(failure.message))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
                 }
-                if isGoogle, GoogleClient.isMissing(message) || clientFile != nil {
+                if let detail = failure.detail {
+                    DetailsDisclosure(detail)
+                }
+                if isGoogle, GoogleClient.isMissing(failure.message) || clientFile != nil {
                     clientFileRow(required: true)
                 }
             }
@@ -282,12 +285,12 @@ public struct SignInSheet: View {
             case .cancelling:
                 Button("Cancel", role: .cancel) {}
                     .disabled(true)
-            case let .failed(message):
+            case let .failed(failure):
                 Button("Close", role: .cancel) { close() }
                     .keyboardShortcut(.cancelAction)
                 Button("Try Again", action: start)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(isGoogle && GoogleClient.isMissing(message) && clientFile == nil)
+                    .disabled(isGoogle && GoogleClient.isMissing(failure.message) && clientFile == nil)
             case .finished:
                 Button("Done") { close() }
                     .keyboardShortcut(.defaultAction)

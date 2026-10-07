@@ -168,7 +168,7 @@ import KeryxPreview
         manual.send(.step(step: "runtime", message: "x"))
         manual.finish()
         await run.settled()
-        #expect(run.failure == ModelServerStarted.stoppedWithoutSaying)
+        #expect(run.failure?.message == ModelServerStarted.stoppedWithoutSaying)
     }
 
     @Test func aGroupThatOutlivedSigkillIsSaidNeverTakenForStopped() async {
@@ -178,7 +178,7 @@ import KeryxPreview
         run.cancel()
         manual.finish(throwing: RunnerError.stillRunning)
         await run.settled()
-        #expect(run.failure == RunnerError.stillRunning.localizedDescription)
+        #expect(run.failure?.message == RunnerError.stillRunning.localizedDescription)
     }
 
     @Test func aCLIFailureIsItsMessage() async {
@@ -187,7 +187,7 @@ import KeryxPreview
         run.start(reason: "Signing in", { manual.stream() })
         manual.finish(throwing: KeryxError.launch("no keryx"))
         await run.settled()
-        #expect(run.failure == KeryxError.launch("no keryx").message)
+        #expect(run.failure?.message == KeryxError.launch("no keryx").message)
     }
 
     @Test func thePreviewReplaysEachFixtureToItsEnd() async {

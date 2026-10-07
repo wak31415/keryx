@@ -1,5 +1,5 @@
-{"event": "step", "step": "install", "message": "Installing the voice server"}
-{"event": "step", "step": "configure", "message": "Saving the voice settings"}
-{"event": "step", "step": "unit", "message": "Installing the voice server's service"}
-{"event": "step", "step": "start", "message": "Starting the voice server; the first start can take minutes"}
+{"event": "step", "step": "install", "message": "Installing the voice server", "detail": null}
+{"event": "step", "step": "configure", "message": "Saving the voice settings", "detail": null}
+{"event": "step", "step": "unit", "message": "Installing the voice server's service", "detail": null}
+{"event": "step", "step": "start", "message": "Starting the voice server; the first start can take minutes", "detail": null}
 {"event": "done", "base_url": "http://127.0.0.1:8765/v1"}

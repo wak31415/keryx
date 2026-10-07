@@ -58,10 +58,11 @@ public enum KeryxError: Error, Equatable, Sendable {
         case let .liveCalls(count):
             let calls = count == 1 ? "1 call is" : "\(count) calls are"
             return "\(calls) in progress, and restarting would end \(count == 1 ? "it" : "them")."
-        case let .failed(command, exitCode, message):
-            guard !message.isEmpty else {
-                return "\(command) stopped with exit status \(exitCode). Run keryx doctor in Terminal to see why."
-            }
+        case let .failed(_, _, message):
+            guard !message.isEmpty else { return "Keryx stopped without saying why." }
+            // Words for a terminal (a command, a path, a traceback) are never the sentence:
+            // they are the details.
+            guard AppFacing.isFit(message) else { return "Keryx couldn't do that." }
             return "Keryx reported: “\(message)”."
         case let .decoding(command, _):
             return "This app couldn't read what \(command) printed. Update the app and Keryx to the same version."
@@ -69,6 +70,22 @@ public enum KeryxError: Error, Equatable, Sendable {
             return "\(command) took too long and was stopped. Try again in a moment."
         case let .launch(message), let .terminal(message), let .refused(message):
             return Self.sentence(message)
+        }
+    }
+
+    /// What a person might pass on but should not have to read: what Keryx printed when it
+    /// is not a sentence for the app (a command, a path, a traceback), the exit status of a
+    /// command that said nothing, what could not be decoded. For Show Details only; `nil`
+    /// when the message says it all.
+    public var details: String? {
+        switch self {
+        case let .failed(command, exitCode, message):
+            if message.isEmpty { return "\(command) exited with status \(exitCode)." }
+            return AppFacing.isFit(message) ? nil : message
+        case let .decoding(command, detail):
+            return detail.isEmpty ? nil : "\(command): \(detail)"
+        default:
+            return nil
         }
     }
 
@@ -85,5 +102,30 @@ public enum KeryxError: Error, Equatable, Sendable {
         guard let first = trimmed.first else { return trimmed }
         let capitalised = first.uppercased() + trimmed.dropFirst()
         return ".!?…".contains(capitalised.last!) ? capitalised : capitalised + "."
+    }
+}
+
+/// Whether a line is fit to be the app's own copy: no shell command, no path, no traceback,
+/// no second line. The CLI holds `detail` and `why` to the same rule (`doctor.app_facing`);
+/// anything else goes under Show Details.
+public enum AppFacing {
+    static let shellText = ["`", "keryx ", "brew ", "uv ", "scripts/", "/login", "Traceback", "$ "]
+
+    public static func isFit(_ text: String) -> Bool {
+        if text.contains(where: \.isNewline) { return false }
+        if shellText.contains(where: text.contains) { return false }
+        // A word that is a path: /Users/…, ~/…, ./…
+        return !text.split(whereSeparator: \.isWhitespace).contains { word in
+            let token = word.drop { "(\"'“‘[".contains($0) }
+            return token.hasPrefix("/") && token.count > 1 || token.hasPrefix("~/") || token.hasPrefix("./")
+        }
+    }
+}
+
+extension StreamFailure {
+    /// A `KeryxError` as a run's failure: its sentence, and what it would add under Show
+    /// Details.
+    public init(_ error: KeryxError) {
+        self.init(error.message, detail: error.details)
     }
 }

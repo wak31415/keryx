@@ -427,28 +427,32 @@ package struct ServerSection: View {
                 }
                 // Kept anyway: saved, and what the handshake said is still worth knowing.
                 if let problem = answer.problem, answer.saved != nil {
-                    Label {
-                        Text("Saved without an answer: " + VoiceWording.sentence(
-                            Wording.named(problem, titles: Wording.titles(model.config.value))))
-                            .foregroundStyle(.orange)
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label {
+                            Text("Saved without an answer: " + problemText(problem))
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        }
+                        if let more = details(answer) { DetailsDisclosure(more).padding(.leading, 24) }
                     }
                     .font(.callout)
                 }
                 if let problem = answer.problem, answer.saved == nil {
-                    LabeledContent {
-                        Button("Use Anyway") { check(keepAnyway: true) }
-                            .disabled(checking)
-                    } label: {
-                        Label {
-                            Text("The server didn't answer the handshake")
-                            Text(VoiceWording.sentence(Wording.named(problem, titles: Wording.titles(model.config.value))))
-                                .foregroundStyle(.red)
-                                .textSelection(.enabled)
-                        } icon: {
-                            Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                    VStack(alignment: .leading, spacing: 4) {
+                        LabeledContent {
+                            // Saving one that did not answer is a click, never the default.
+                            Button("Use Anyway") { check(keepAnyway: true) }
+                                .disabled(checking)
+                        } label: {
+                            Label {
+                                Text("The server didn't answer the handshake")
+                                Text(problemText(problem))
+                                    .textSelection(.enabled)
+                            } icon: {
+                                Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                            }
                         }
+                        if let more = details(answer) { DetailsDisclosure(more).padding(.leading, 28) }
                     }
                 }
             }
@@ -476,6 +480,19 @@ package struct ServerSection: View {
 
     private var keySet: Bool {
         model.config.value?.first { $0.key == "VOICE_API_KEY" }?.set ?? false
+    }
+
+    /// The CLI's sentence for what went wrong — or, from a CLI that put the server's own
+    /// words there, a sentence standing in for them (they go under Show Details).
+    private func problemText(_ problem: String) -> String {
+        guard AppFacing.isFit(problem) else { return "It didn't open a Realtime session." }
+        return VoiceWording.sentence(Wording.named(problem, titles: Wording.titles(model.config.value)))
+    }
+
+    /// What the server said, for Show Details: the CLI's `detail`, or an older CLI's
+    /// `problem` when that was the server's own words.
+    private func details(_ answer: VoiceServerResult) -> String? {
+        answer.detail ?? answer.problem.flatMap { AppFacing.isFit($0) ? nil : $0 }
     }
 
 

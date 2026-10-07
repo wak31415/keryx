@@ -151,9 +151,21 @@ enum ConfigWording {
     /// to show, and the sheet to open there — the PIN's, or a coding agent's sign-in on the
     /// Agents tab; `nil` for one it does not answer. `pinTab`: the PIN row's tab, once the
     /// settings are read.
-    static func answer(_ request: AppRequest, pinTab: String?) -> (tab: String, sheet: ConfigurationSheet?)? {
-        guard case let .configuration(tab, sheet) = RequestAnswer.of(request) else { return nil }
-        return (tab ?? pinTab ?? "general", sheet)
+    /// For a setting asked for by its key (`.setting`), the tab it is on and the key to
+    /// show there (`focus`) — `nil` until the settings are read (`config`), and the first tab
+    /// for a key they do not list.
+    static func answer(_ request: AppRequest, pinTab: String?,
+                       config: [ConfigRow]? = nil) -> (tab: String, sheet: ConfigurationSheet?, focus: String?)? {
+        switch RequestAnswer.of(request) {
+        case let .configuration(tab, sheet):
+            return (tab ?? pinTab ?? "general", sheet, nil)
+        case let .setting(key):
+            guard let config else { return nil }
+            guard let row = config.first(where: { $0.key == key }) else { return (config.first?.tab ?? "general", nil, nil) }
+            return (row.tab, nil, key)
+        default:
+            return nil
+        }
     }
 
     /// Twilio's auth token: changed in the account sheet, which checks it with its SID.

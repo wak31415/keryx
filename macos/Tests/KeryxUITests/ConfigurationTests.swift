@@ -133,12 +133,21 @@ import KeryxPreview
     }
 
     @Test func configurationAnswersThePinAndTabRequests() {
-        #expect(ConfigWording.answer(.setPin, pinTab: "general")! == ("general", .pin))
-        #expect(ConfigWording.answer(.setPin, pinTab: nil)! == ("general", .pin), "before the settings are read")
-        #expect(ConfigWording.answer(.configure(tab: "agents"), pinTab: "general")! == ("agents", nil))
+        #expect(ConfigWording.answer(.setPin, pinTab: "general")! == ("general", .pin, nil))
+        #expect(ConfigWording.answer(.setPin, pinTab: nil)! == ("general", .pin, nil), "before the settings are read")
+        #expect(ConfigWording.answer(.configure(tab: "agents"), pinTab: "general")! == ("agents", nil, nil))
         #expect(ConfigWording.answer(.show(.phone), pinTab: "general") == nil)
-        #expect(ConfigWording.answer(.signIn(.claude), pinTab: "general")! == ("agents", .signIn(.claude)))
+        #expect(ConfigWording.answer(.signIn(.claude), pinTab: "general")! == ("agents", .signIn(.claude), nil))
         #expect(ConfigWording.answer(.signIn(.gmail), pinTab: "general") == nil, "Integrations answers that")
+    }
+
+    @Test func configurationAnswersASettingAtItsTab() throws {
+        let rows = PreviewData.config
+        let callers = try #require(rows.first { $0.key == "ALLOWED_CALLERS" })
+        #expect(ConfigWording.answer(.setting(key: "ALLOWED_CALLERS"), pinTab: nil, config: rows)!
+            == (callers.tab, nil, "ALLOWED_CALLERS"))
+        #expect(ConfigWording.answer(.setting(key: "ALLOWED_CALLERS"), pinTab: nil) == nil, "waits for the settings")
+        #expect(ConfigWording.answer(.setting(key: "NO_SUCH_KEY"), pinTab: nil, config: rows)?.focus == nil)
     }
 
         @Test func twilioTokenIsChangedWithItsSID() {

@@ -69,4 +69,8 @@ public struct PhoneTunnel: Codable, Sendable, Equatable {
     /// `error` set for one that is not a bare hostname.
     public var reachable: Bool?
     public var error: String?
+    /// Where to get cloudflared while no tunnel program is on PATH, else `nil`. A page the
+    /// CLI names: opened only through `FixAction.tunnelDownload`'s check. Optional for an
+    /// older CLI.
+    public var installUrl: String?
 }

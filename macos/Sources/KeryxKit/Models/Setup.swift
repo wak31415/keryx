@@ -34,6 +34,9 @@ public struct SetupStep: Codable, Sendable, Equatable, Identifiable {
     public var walked: Bool
     /// The doctor's checks behind the state, each `ok`, `missing` or `failed`.
     public var checks: [SetupCheck]
+    /// The app's action for the check `why` names (`FixAction`); `nil` once done, while it
+    /// waits, or when the app has nothing to offer. Optional for an older CLI.
+    public var fix: String?
 
     /// The state, when this build knows it.
     public var kind: SetupStepState? { SetupStepState(rawValue: state) }
@@ -50,6 +53,8 @@ public struct SetupCheck: Codable, Sendable, Equatable {
     /// `ok`, `missing` or `failed`.
     public var state: String
     public var detail: String
+    /// The app's action for it, as doctor gives it (`FixAction`). Optional for an older CLI.
+    public var fix: String?
 }
 
 /// `keryx setup mark STEP --json`: the step recorded as walked.

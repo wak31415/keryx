@@ -26,6 +26,9 @@ public struct OverviewView: View {
             await model.refresh(.memory)
             await model.refresh(.service)
             if model.config.value == nil { await model.refresh(.config) }
+            // What the checks' buttons say: a PIN to set or change, a tunnel to install, a
+            // plugin's and an account's names.
+            await model.refresh(.pin, .phoneTunnel, .integrations, .plugins)
         }
     }
 }
@@ -209,14 +212,13 @@ private struct ServiceSection: View {
         let s = status.service
         let manager = [s.manager ?? "launchd", s.unit].compactMap { $0 }.joined(separator: ", ")
         if !s.ok {
-            return (.warning, "Unknown", s.error.map(Wording.sentence), "")
+            return (.warning, "Unknown", s.error.flatMap { AppFacing.isFit($0) ? Wording.sentence($0) : nil }, s.error ?? "")
         }
         if !s.installed {
-            let hint = model.location.value?.checkout == nil ? "Install it with keryx setup in Terminal" : nil
-            return (.inactive, "Not installed", hint, "Not installed as a \(s.manager ?? "launchd") service")
+            return (.inactive, "Not installed", nil, "Not installed as a \(s.manager ?? "launchd") service")
         }
         if s.active { return (.ok, "Running", nil, "Running under \(manager)") }
-        return (.inactive, "Stopped", nil, "Stopped (\(manager))")
+        return (.inactive, "Not running", nil, "Not running (\(manager))")
     }
 
     /// Installs or uninstalls Keryx and its tunnel (`keryx service install|uninstall`),
@@ -285,6 +287,8 @@ private struct SetupSection: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
     @State private var expanded: Set<String>?
+    /// A check's button, run by `FixPerformer`.
+    @State private var fixing: SetupAction?
 
     var body: some View {
         Section("Setup") {
@@ -312,6 +316,17 @@ private struct SetupSection: View {
                 }
             }
         }
+        .performsFixes($fixing)
+    }
+
+    /// One of doctor's checks, with the button its `fix` names.
+    private func line(_ check: DoctorCheck, context: SetupContext) -> some View {
+        CheckLine(title: check.displayTitle, state: check.state, detail: check.detail, hint: check.hint,
+                  titles: titles, action: FixAction(check.fix)?.action(context, named: check.displayTitle,
+                                                             missing: check.state == "missing"),
+                  disabled: model.serviceChange != nil) { fixing = $0 }
+            // Under the disclosure's title, not under its chevron.
+            .padding(.leading, 12)
     }
 
     @ViewBuilder private func needsAttention(_ doctor: DoctorReport) -> some View {
@@ -326,16 +341,17 @@ private struct SetupSection: View {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             }
         }
+        let context = SetupContext(model)
         ForEach(Self.sections(of: open), id: \.self) { section in
             DisclosureGroup(isExpanded: binding(section, default: true)) {
-                ForEach(open.filter { $0.section == section }) { CheckRow(check: $0, titles: titles) }
+                ForEach(open.filter { $0.section == section }) { line($0, context: context) }
             } label: {
                 Text(Self.title(ofSection: section))
             }
         }
         if !passed.isEmpty {
             DisclosureGroup(isExpanded: binding("", default: false)) {
-                ForEach(passed) { CheckRow(check: $0, titles: titles) }
+                ForEach(passed) { line($0, context: context) }
             } label: {
                 Text(passed.count == 1 ? "1 check passed" : "\(passed.count) checks passed")
             }
@@ -382,68 +398,6 @@ private struct SetupSection: View {
         case "service": "Background Service"
         case "security": "Security"
         default: Wording.capitalised(section)
-        }
-    }
-}
-
-private struct CheckRow: View {
-    let check: DoctorCheck
-    /// Settings' titles by key, to say a detail's keys in.
-    var titles: [String: String] = [:]
-
-    var body: some View {
-        let detail = OverviewWording.detail(check.detail, titles: titles)
-        Label {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(check.displayTitle)
-                if let path = detail.path {
-                    Text((path as NSString).abbreviatingWithTildeInPath)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(path)
-                        .textSelection(.enabled)
-                }
-                if !detail.text.isEmpty {
-                    Text(detail.text)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-            }
-        } icon: {
-            Image(systemName: symbol)
-                .foregroundStyle(colour)
-                .accessibilityLabel(stateLabel)
-        }
-        // Under the disclosure's title, not under its chevron.
-        .padding(.leading, 12)
-        .padding(.vertical, 2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var symbol: String {
-        switch check.state {
-        case "ok": "checkmark.circle.fill"
-        case "missing": "exclamationmark.circle"
-        default: "xmark.octagon.fill"
-        }
-    }
-
-    private var colour: Color {
-        switch check.state {
-        case "ok": .green
-        case "missing": .orange
-        default: .red
-        }
-    }
-
-    private var stateLabel: String {
-        switch check.state {
-        case "ok": "Passed"
-        case "missing": "Missing"
-        default: "Failed"
         }
     }
 }

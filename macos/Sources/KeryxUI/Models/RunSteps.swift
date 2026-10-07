@@ -120,6 +120,8 @@ struct RunStepList: View {
     let groups: [RunStepGroup]
     /// What the step under way is doing, in the CLI's words.
     var message: String?
+    /// What a terminal adds to it (a path), under Show Details.
+    var detail: String?
     /// Bytes so far in the step under way.
     var progress: (done: Int64, total: Int64?)?
     /// Asked to stop: the step under way says so instead.
@@ -173,6 +175,10 @@ struct RunStepList: View {
                     .lineLimit(2)
                     .textSelection(.enabled)
             }
+            if let detail, !detail.isEmpty {
+                DetailsDisclosure(detail)
+                    .frame(maxWidth: 360, alignment: .leading)
+            }
             if let progress {
                 HStack(spacing: 10) {
                     if let total = progress.total, total > 0 {
@@ -216,6 +222,74 @@ struct RunStepList: View {
     }
 }
 
+/// Every long-running command, drawn one way (`models start`, `voice download`, `voice use
+/// here`, This Mac's Set Up…): its steps as a checklist with the CLI's caption under the one
+/// under way, a bar — determinate once the size is known — and Cancel; once it worked, one
+/// row that says so (and, when given, the button that runs it again); once it failed, the
+/// steps with a cross where it stopped and a row that says why in a sentence, with what the
+/// CLI added under Show Details.
+struct StreamRunView<Actions: View>: View {
+    let groups: [RunStepGroup]
+    let display: RunDisplay
+    var cancel: () -> Void = {}
+    /// The failure row's title ("The model server didn't start").
+    var failureTitle = "It didn't finish"
+    /// Keryx's paths, so a log the failure names can be offered (`RunLog`).
+    var paths: Paths?
+    /// The finished row's button, and what it does ("Set Up Again…").
+    var again: (title: String, action: () -> Void)?
+    /// The failure row's buttons (Dismiss, Try Again).
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        switch display {
+        case let .running(run):
+            RunStepList(groups: groups, message: run.message, detail: run.detail, progress: run.progress,
+                        stopping: run.stopping)
+            RunCancelRow(stopping: run.stopping, cancel: cancel)
+        case let .failed(failure):
+            RunStepList(groups: groups)
+            RunFailureRow(title: failureTitle, failure: failure, paths: paths, actions: actions)
+        case let .finished(title, subtitle):
+            RunSuccessRow(title: title, subtitle: subtitle, again: again)
+        }
+    }
+}
+
+/// Where a run is, as `StreamRunView` draws it.
+enum RunDisplay {
+    case running(RunProgress)
+    case failed(StreamFailure)
+    /// Worked: `title` in a row, `subtitle` under it.
+    case finished(title: String, subtitle: String?)
+
+    /// The steps of a run under way.
+    struct RunProgress {
+        var message: String?
+        var detail: String?
+        var progress: (done: Int64, total: Int64?)?
+        var stopping = false
+    }
+
+    /// A `StreamRun`'s phase; `nil` before it has run.
+    @MainActor static func of<Done>(_ run: StreamRun<Done>, finished: (Done) -> (title: String, subtitle: String?) = { _ in
+        ("Done", nil)
+    }) -> RunDisplay? {
+        switch run.phase {
+        case nil: nil
+        case let .running(activity)?:
+            .running(.init(message: activity.message, detail: activity.detail,
+                           progress: activity.progress.map { ($0.done, $0.total) }))
+        case .cancelling?:
+            .running(.init(stopping: true))
+        case let .failed(failure)?:
+            .failed(failure)
+        case let .finished(done)?:
+            .finished(title: finished(done).title, subtitle: finished(done).subtitle)
+        }
+    }
+}
+
 /// The row under a run's steps while it runs: Cancel, or that it is stopping.
 struct RunCancelRow: View {
     let stopping: Bool
@@ -230,18 +304,20 @@ struct RunCancelRow: View {
     }
 }
 
-/// The log a failure names ("… (its log: /Users/you/…/keryx-llm.err.log)"): the message
-/// without it, and the file, so the row can offer Show Log rather than print a path.
+/// The log a failure's detail names ("…; its log: /Users/you/…/keryx-llm.err.log", or an
+/// older CLI's "(its log: …)" in the message): the text without it, and the file, so the
+/// row can offer Show Log rather than print a path.
 enum RunLog {
     static func split(_ message: String) -> (text: String, log: String?) {
-        guard let match = message.range(of: #"\s*\(its log: [^)]+\)"#, options: .regularExpression) else {
+        guard let match = message.range(of: #"(;\s*|\s*\()?its log: [^)\s;]+\)?"#, options: .regularExpression) else {
             return (message, nil)
         }
-        let path = message[match].drop { $0 != ":" }.dropFirst().dropLast()
-            .trimmingCharacters(in: .whitespaces)
+        let said = message[match]
+        let path = said.range(of: "its log: ").map { said[$0.upperBound...] }?
+            .trimmingCharacters(in: CharacterSet(charactersIn: ") ;")) ?? ""
         var text = message
         text.removeSubrange(match)
-        return (text, path.isEmpty ? nil : path)
+        return (text.trimmingCharacters(in: .whitespaces), path.isEmpty ? nil : path)
     }
 
     /// The log, when it is one Show Log may reveal: a `.log` file in Keryx's logs folder
@@ -256,26 +332,89 @@ enum RunLog {
     }
 }
 
-/// A run that went wrong, under its steps: what the CLI said as a sentence, and the buttons
-/// that go on from it. `guidance` is a refusal that is a step to take first, not an error.
-struct RunFailureRow<Buttons: View>: View {
+/// A run that went wrong, under its steps: a red cross, what happened in a sentence (the
+/// title, then the CLI's message, in secondary colour — colour is for the icon), what the
+/// CLI added under Show Details (with Show Log when it names Keryx's own log), and the
+/// buttons that go on from it.
+struct RunFailureRow<Actions: View>: View {
+    let title: String
+    let failure: StreamFailure
+    var paths: Paths?
+    @ViewBuilder let actions: () -> Actions
+
+    var body: some View {
+        let said = RunLog.split(failure.message)
+        let detail = failure.detail.map(RunLog.split)
+        let log = (said.log ?? detail?.log).flatMap { RunLog.file($0, paths: paths) }
+        let more = [detail?.text].compactMap { $0 }.filter { !$0.isEmpty }.joined()
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent {
+                HStack(spacing: 8) {
+                    if log != nil, more.isEmpty, let log {
+                        Button("Show Log") { RunLog.show(log) }
+                            .help("Shows the log in the Finder")
+                    }
+                    actions()
+                }
+            } label: {
+                Label {
+                    Text(title)
+                    Text(Wording.sentence(said.text))
+                        .textSelection(.enabled)
+                } icon: {
+                    Image(systemName: "xmark.octagon.fill")
+                        .foregroundStyle(.red)
+                        .accessibilityLabel("Failed")
+                }
+            }
+            if !more.isEmpty {
+                DetailsDisclosure(more, log: log)
+                    .padding(.leading, 28)
+            }
+        }
+    }
+}
+
+/// A refusal that is a step to take first (a model to choose, the model server to start),
+/// not an error: an info symbol, what to do, and the button that does it.
+struct RunGuidanceRow<Actions: View>: View {
     let title: String
     let message: String
-    var guidance = false
-    @ViewBuilder let buttons: () -> Buttons
+    @ViewBuilder let actions: () -> Actions
 
     var body: some View {
         LabeledContent {
-            HStack(spacing: 8) { buttons() }
+            HStack(spacing: 8) { actions() }
         } label: {
             Label {
                 Text(title)
                 Text(message)
-                    .foregroundStyle(guidance ? Color.secondary : Color.red)
-                    .textSelection(.enabled)
             } icon: {
-                Image(systemName: guidance ? "info.circle.fill" : "xmark.octagon.fill")
-                    .foregroundStyle(guidance ? Color.accentColor : Color.red)
+                Image(systemName: "info.circle.fill").foregroundStyle(.tint)
+            }
+        }
+    }
+}
+
+/// A run that worked, collapsed to one row: a green check, what it did, and the button that
+/// runs it again.
+struct RunSuccessRow: View {
+    let title: String
+    var subtitle: String?
+    var again: (title: String, action: () -> Void)?
+
+    var body: some View {
+        LabeledContent {
+            if let again {
+                Button(again.title, action: again.action)
+            }
+        } label: {
+            Label {
+                Text(title)
+                if let subtitle { Text(subtitle) }
+            } icon: {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    .accessibilityLabel("Done")
             }
         }
     }

@@ -295,7 +295,7 @@ import KeryxPreview
 
     static let unfinished = KeryxError.failed(
         command: "keryx models pull", exitCode: -1,
-        message: "The download stopped without saying why. Run keryx doctor in Terminal.")
+        message: "The download stopped without saying why.")
 
     @Test func pullEndingWithOnlyProgressThrows() async throws {
         let fake = FakeRunner()

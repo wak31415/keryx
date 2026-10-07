@@ -84,12 +84,12 @@ public enum PullEvent: Equatable, Sendable {
     case progress(done: Int64, total: Int64)
     case done(path: String)
     case adopted(path: String, from: String)
-    case error(String)
+    case error(StreamFailure)
     case cancelled
 
     /// What a pull that ended with none of `done`, `adopted`, `error` or `cancelled` says.
     public static let stoppedWithoutSaying =
-        "The download stopped without saying why. Run keryx doctor in Terminal."
+        "The download stopped without saying why."
 
     public static func parse(_ line: String) -> PullEvent? {
         guard let data = line.data(using: .utf8),
@@ -111,8 +111,7 @@ public enum PullEvent: Equatable, Sendable {
             }
             return .adopted(path: path, from: from)
         case "error":
-            guard let message = object["message"] as? String else { return nil }
-            return .error(message)
+            return StreamFailure(event: object).map { .error($0) }
         case "cancelled":
             return .cancelled
         default:

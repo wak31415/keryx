@@ -95,7 +95,9 @@
         "ok": "boolean",
         "unset": "boolean",
         "title": "string|null",
-        "unknown": "boolean|null"
+        "unknown": "boolean|null",
+        "hint": "string|null",
+        "fix": "string|null"
       }
     },
     "tasks list --json": {
@@ -346,7 +348,8 @@
         "saved": "object|null",
         "problem": "string|null",
         "restart_needed": "boolean",
-        "warnings": "array"
+        "warnings": "array",
+        "detail": "string|null"
       }
     },
     "auth logout gmail --json": {
@@ -414,7 +417,8 @@
         "public_host": "string|null",
         "unit_installed": "boolean",
         "reachable": "boolean|null",
-        "error": "string|null"
+        "error": "string|null",
+        "install_url": "string|null"
       }
     },
     "phone webhooks --apply --json": {
@@ -575,12 +579,14 @@
         "why": "string|null",
         "blocked_by": "array",
         "walked": "boolean",
-        "checks": "array"
+        "checks": "array",
+        "fix": "string|null"
       },
       "steps[].checks[]": {
         "title": "string",
         "state": "string",
-        "detail": "string"
+        "detail": "string",
+        "fix": "string|null"
       }
     },
     "tools --json": {
@@ -612,7 +618,8 @@
           "from": "string"
         },
         "error": {
-          "message": "string"
+          "message": "string",
+          "detail": "string|null"
         },
         "cancelled": {}
       },
@@ -636,13 +643,15 @@
       "events": {
         "step": {
           "step": "string",
-          "message": "string"
+          "message": "string",
+          "detail": "string|null"
         },
         "done": {
           "base_url": "string"
         },
         "error": {
-          "message": "string"
+          "message": "string",
+          "detail": "string|null"
         },
         "cancelled": {},
         "progress": {
@@ -677,7 +686,8 @@
           "stored": "string"
         },
         "error": {
-          "message": "string"
+          "message": "string",
+          "detail": "string|null"
         },
         "cancelled": {}
       },
@@ -706,7 +716,8 @@
           "message": "string"
         },
         "error": {
-          "message": "string"
+          "message": "string",
+          "detail": "string|null"
         },
         "cancelled": {}
       },
@@ -731,7 +742,8 @@
           "message": "string"
         },
         "error": {
-          "message": "string"
+          "message": "string",
+          "detail": "string|null"
         },
         "cancelled": {}
       },
@@ -756,7 +768,8 @@
           "message": "string"
         },
         "error": {
-          "message": "string"
+          "message": "string",
+          "detail": "string|null"
         },
         "cancelled": {}
       },
@@ -775,7 +788,8 @@
       "events": {
         "step": {
           "step": "string",
-          "message": "string"
+          "message": "string",
+          "detail": "string|null"
         },
         "progress": {
           "step": "string",
@@ -787,7 +801,8 @@
           "served_model": "string"
         },
         "error": {
-          "message": "string"
+          "message": "string",
+          "detail": "string|null"
         },
         "cancelled": {}
       },
@@ -809,7 +824,8 @@
       "events": {
         "step": {
           "step": "string",
-          "message": "string"
+          "message": "string",
+          "detail": "string|null"
         },
         "progress": {
           "step": "string",
@@ -821,7 +837,8 @@
           "tts": "string"
         },
         "error": {
-          "message": "string"
+          "message": "string",
+          "detail": "string|null"
         },
         "cancelled": {}
       },

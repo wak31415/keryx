@@ -73,12 +73,12 @@ extension ScreenCatalog {
             },
             Entry("models-server-failed", size: whole) {
                 ModelsView().environment(startingServer(.events([
-                    .step(step: "runtime", message: "llama.cpp: /opt/homebrew/bin/llama-server"),
+                    .step(step: "runtime", message: "llama.cpp is installed.", detail: "/opt/homebrew/bin/llama-server"),
                     .step(step: "unit", message: "Installing the model server's service"),
                     .step(step: "start", message: "Loading the model into llama.cpp at http://127.0.0.1:8090/v1"),
-                    .error("the model server did not come up: no answer from http://127.0.0.1:8090/v1/models within "
-                        + "600 s; its service was removed, so it does not restart in a loop "
-                        + "(its log: /Users/you/.local/state/keryx/logs/keryx-llm.err.log)"),
+                    .error(StreamFailure("The model server did not come up, so its service was removed.",
+                                         detail: "no answer from http://127.0.0.1:8090/v1/models within 600 s; "
+                                             + "its log: /Users/you/.local/state/keryx/logs/keryx-llm.err.log")),
                 ])))
             },
             Entry("models-server-refused", size: whole) {
@@ -95,7 +95,8 @@ extension ScreenCatalog {
             Entry("models-voice-download-failed", size: whole) {
                 ModelsView().environment(downloadingVoice(.events([
                     .step(step: "download", message: "Downloading the voice's speech models"),
-                    .error("couldn't download the speech models: the connection to huggingface.co was lost"),
+                    .error(StreamFailure("The voice's speech models could not be downloaded.",
+                                         detail: "the connection to huggingface.co was lost")),
                 ])))
             },
             Entry("models-voice-ready", size: whole) {

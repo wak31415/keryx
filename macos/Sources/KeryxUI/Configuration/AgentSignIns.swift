@@ -59,8 +59,15 @@ enum AgentSignInWording {
         }
     }
 
+    /// The sign-in's fix id (`signin:claude`): the doctor's own word that it needs one.
+    static func fixId(_ provider: SignInProvider) -> String { "signin:" + provider.rawValue }
+
+    /// Read first from the doctor's fix ids — a check that offers this sign-in is one that is
+    /// not signed in — then from the agent's check: ready, or (offering no fix) not
+    /// installed. A CLI from before fix ids is read from the check's detail.
     static func state(_ provider: SignInProvider, doctor: DoctorReport?) -> State {
         guard let doctor else { return .unknown }
+        if doctor.checks.contains(where: { $0.fix == fixId(provider) }) { return .notSignedIn }
         guard let prefix = checkPrefix(provider),
               let check = doctor.checks.first(where: { $0.name.hasPrefix(prefix) }) else { return .notEnabled }
         let detail = check.detail.trimmingCharacters(in: .whitespaces)
@@ -69,17 +76,25 @@ enum AgentSignInWording {
             let how = detail.range(of: "; ").map { String(detail[$0.upperBound...]) } ?? detail
             return .signedIn(how.isEmpty ? nil : how)
         }
+        // A doctor that gives fix ids offers a sign-in for every agent that wants one: one
+        // that is not ready and offers none is not installed.
+        if speaksFixIds(doctor) { return .notInstalled }
         let missing = detail.hasPrefix("not installed") || detail.hasSuffix("program is missing")
             || detail.contains("CLI not found")
         return missing ? .notInstalled : .notSignedIn
     }
 
+    /// The doctor is one that gives each check a `fix` (and `hint`): some check carries one.
+    static func speaksFixIds(_ doctor: DoctorReport) -> Bool {
+        doctor.checks.contains { $0.fix != nil || $0.hint != nil }
+    }
+
     static func status(_ state: State) -> String {
         switch state {
-        case .signedIn: "Signed In"
-        case .notSignedIn: "Not Signed In"
-        case .notInstalled: "Not Installed"
-        case .notEnabled: "Not Enabled"
+        case .signedIn: "Signed in"
+        case .notSignedIn: "Not signed in"
+        case .notInstalled: "Not installed"
+        case .notEnabled: "Not enabled"
         case .unknown: "Checking…"
         }
     }

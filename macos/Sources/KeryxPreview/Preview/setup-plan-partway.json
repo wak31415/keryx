@@ -10,11 +10,13 @@
       "why": "OpenAI API key: not set.",
       "blocked_by": [],
       "walked": false,
+      "fix": "secret:OPENAI_API_KEY",
       "checks": [
         {
           "title": "OpenAI API key",
           "state": "missing",
-          "detail": "not set \u2014 the voice session cannot start"
+          "detail": "not set \u2014 the voice session cannot start",
+          "fix": "secret:OPENAI_API_KEY"
         }
       ]
     },
@@ -23,19 +25,22 @@
       "title": "Coding agents",
       "required": true,
       "state": "needed",
-      "why": "Claude Code agent (default): no login found.",
+      "why": "Claude Code agent (default): not signed in.",
       "blocked_by": [],
       "walked": false,
+      "fix": "signin:claude",
       "checks": [
         {
           "title": "Coding agents",
           "state": "ok",
-          "detail": "claude by default; enabled: claude"
+          "detail": "claude by default; enabled: claude",
+          "fix": null
         },
         {
           "title": "Claude Code agent (default)",
           "state": "missing",
-          "detail": "/Users/you/code/keryx/.venv/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude; no login found \u2014 run `claude` and `/login` once, or `claude setup-token` for a headless machine, or set ANTHROPIC_API_KEY"
+          "detail": "not signed in",
+          "fix": "signin:claude"
         }
       ]
     },
@@ -47,16 +52,19 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "fix": null,
       "checks": [
         {
           "title": "Allowed callers",
           "state": "ok",
-          "detail": "\u20260100"
+          "detail": "\u20261111",
+          "fix": null
         },
         {
           "title": "Owner name",
           "state": "ok",
-          "detail": "Ada"
+          "detail": "Ada",
+          "fix": null
         }
       ]
     },
@@ -67,12 +75,14 @@
       "state": "done",
       "why": null,
       "blocked_by": [],
-      "walked": true,
+      "walked": false,
+      "fix": null,
       "checks": [
         {
           "title": "PIN",
           "state": "ok",
-          "detail": "set on 2026-10-07, kept in /Users/you/.config/keryx/pin"
+          "detail": "set on 2026-10-07",
+          "fix": null
         }
       ]
     },
@@ -86,26 +96,31 @@
         "owner"
       ],
       "walked": false,
+      "fix": "phone:account",
       "checks": [
         {
           "title": "Twilio credentials",
           "state": "missing",
-          "detail": "missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER \u2014 no phone channel"
+          "detail": "missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER \u2014 no phone channel",
+          "fix": "phone:account"
         },
         {
           "title": "Twilio signatures",
           "state": "ok",
-          "detail": "validated"
+          "detail": "validated",
+          "fix": null
         },
         {
           "title": "Public hostname",
           "state": "missing",
-          "detail": "not set \u2014 Twilio cannot reach this machine"
+          "detail": "not set \u2014 Twilio cannot reach this machine",
+          "fix": "phone:tunnel"
         },
         {
           "title": "Tunnel",
           "state": "missing",
-          "detail": "none of cloudflared, ngrok on PATH \u2014 no tunnel for the phone channel"
+          "detail": "the tunnel program, cloudflared, is not installed \u2014 Twilio cannot reach this machine without one",
+          "fix": "phone:tunnel"
         }
       ]
     },
@@ -121,11 +136,19 @@
         "agents"
       ],
       "walked": false,
+      "fix": null,
       "checks": [
         {
           "title": "Service manager",
-          "state": "missing",
-          "detail": "dev.keryx.agent is not installed (scripts/install-launchd.sh) \u2014 `keryx restart` and the voice's restart_service refuse, and nothing restarts Keryx if it dies"
+          "state": "ok",
+          "detail": "launchd dev.keryx.agent",
+          "fix": null
+        },
+        {
+          "title": "Service running",
+          "state": "ok",
+          "detail": "running",
+          "fix": null
         }
       ]
     },
@@ -137,11 +160,13 @@
       "why": null,
       "blocked_by": [],
       "walked": true,
+      "fix": null,
       "checks": [
         {
           "title": "Local models",
           "state": "ok",
-          "detail": "none (optional) \u2014 `keryx setup` can run the voice and the agent on your own hardware"
+          "detail": "none (optional) \u2014 the voice and the agent can run on your own hardware",
+          "fix": null
         }
       ]
     },
@@ -153,11 +178,13 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "fix": null,
       "checks": [
         {
           "title": "Google for agents",
           "state": "ok",
-          "detail": "Claude's own connectors carry Gmail and Calendar"
+          "detail": "Claude's own connectors carry Gmail and Calendar",
+          "fix": null
         }
       ]
     },
@@ -166,34 +193,40 @@
       "title": "Plugins",
       "required": false,
       "state": "failed",
-      "why": "Email answers: not working.",
+      "why": "Email answers: on, but not signed in to Gmail.",
       "blocked_by": [],
       "walked": false,
+      "fix": "signin:gmail",
       "checks": [
         {
           "title": "Slack",
           "state": "ok",
-          "detail": "on \u2014 posts to D0PLACEHOLD"
+          "detail": "on \u2014 posts to D0PLACEHOLD",
+          "fix": null
         },
         {
           "title": "Email answers",
           "state": "failed",
-          "detail": "on but refused: not signed in to Gmail: `keryx auth login gmail`"
+          "detail": "on, but not signed in to Gmail",
+          "fix": "signin:gmail"
         },
         {
           "title": "Billing",
           "state": "ok",
-          "detail": "on \u2014 openai, budget $60"
+          "detail": "on \u2014 auto",
+          "fix": null
         },
         {
           "title": "Cluster stats",
           "state": "missing",
-          "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install cluster_stats`"
+          "detail": "off (optional)",
+          "fix": "plugin:cluster_stats"
         },
         {
           "title": "Retired settings",
           "state": "ok",
-          "detail": "none"
+          "detail": "none",
+          "fix": null
         }
       ]
     },
@@ -205,11 +238,13 @@
       "why": "Off until you choose: Keryx can file its own bug reports and your ideas.",
       "blocked_by": [],
       "walked": false,
+      "fix": null,
       "checks": [
         {
           "title": "Issue reports",
           "state": "ok",
-          "detail": "off \u2014 `keryx setup` turns them on"
+          "detail": "off",
+          "fix": null
         }
       ]
     },
@@ -221,11 +256,13 @@
       "why": "Memory: nothing remembered yet.",
       "blocked_by": [],
       "walked": false,
+      "fix": null,
       "checks": [
         {
           "title": "Memory",
           "state": "missing",
-          "detail": "nothing remembered yet \u2014 `keryx setup` writes a first memory, and every authorized call adds to it"
+          "detail": "nothing remembered yet \u2014 every authorized call adds to it",
+          "fix": null
         }
       ]
     },
@@ -234,14 +271,16 @@
       "title": "Project context",
       "required": false,
       "state": "optional",
-      "why": "Optional: an agent can write a short brief of each of your projects.",
+      "why": "Projects root: the projects folder does not exist.",
       "blocked_by": [],
       "walked": false,
+      "fix": "setting:PROJECTS_ROOT",
       "checks": [
         {
           "title": "Projects root",
-          "state": "ok",
-          "detail": "/Users/you/projects"
+          "state": "missing",
+          "detail": "the projects folder does not exist \u2014 a task with no project starts in Keryx's own workspace",
+          "fix": "setting:PROJECTS_ROOT"
         }
       ]
     }

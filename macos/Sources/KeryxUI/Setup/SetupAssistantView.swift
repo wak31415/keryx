@@ -18,6 +18,7 @@ public struct SetupAssistantView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.openURL) private var openURL
     @AppStorage(SetupLaunch.hiddenKey) private var hiddenAtLaunch = false
     @State private var page: SetupPage?
     @State private var secret: SecretRequest?
@@ -52,19 +53,14 @@ public struct SetupAssistantView: View {
             .sheet(item: $secret, onDismiss: reloadPlan) { request in
                 SecretSheet(key: request.key, title: request.title, replacing: request.replacing)
             }
-            .confirmationDialog("Install Keryx as a Background Service?", isPresented: $confirmingInstall) {
-                Button("Install") { installService() }
+            .confirmationDialog(ServiceWording.Change.install.question, isPresented: $confirmingInstall) {
+                Button(ServiceWording.Change.install.button) { installService() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Keryx and its tunnel start now, start again at every login, and restart if they stop.")
+                Text(ServiceWording.Change.install.message(
+                    assistant: Wording.assistant(model.status.value) ?? "the assistant", liveCalls: 0))
             }
-            .alert(failure?.title ?? "", isPresented: Binding(
-                get: { failure != nil }, set: { if !$0 { failure = nil } }
-            )) {
-                Button("OK") {}
-            } message: {
-                Text(failure?.message ?? "")
-            }
+            .errorAlert($failure)
     }
 
     @ViewBuilder private var content: some View {
@@ -72,9 +68,10 @@ public struct SetupAssistantView: View {
             ContentUnavailableView {
                 Label("Keryx Wasn't Found", systemImage: "questionmark.folder")
             } description: {
-                Text("Open Keryx to find it. The steps to a first call follow once it's found.")
+                Text("Show this app where Keryx is, and the steps to a first call follow.")
             } actions: {
-                Button("Open Keryx") { showMainWindow() }
+                Button("Locate Keryx…") { showMainWindow() }
+                    .buttonStyle(.borderedProminent)
             }
         } else {
             StateView(model.setupPlan, section: "Setup", retry: reloadPlan) { plan in
@@ -99,7 +96,7 @@ public struct SetupAssistantView: View {
                             .id(id)
                     }
                 case .finish:
-                    SetupFinishPage(plan: plan, context: context) { page = $0 }
+                    SetupFinishPage(plan: plan, context: context, go: { page = $0 }, perform: perform)
                 }
             }
             Divider()
@@ -135,8 +132,15 @@ public struct SetupAssistantView: View {
                     .disabled(busy || model.modelServerRun.isBusy)
             }
             if current == .finish {
-                Button("Done") { dismissWindow(id: KeryxWindowID.setup) }
-                    .keyboardShortcut(.defaultAction)
+                // Not ready: the way on is the first step left, and Done only closes.
+                if !plan.ready, let left = plan.remaining.first {
+                    Button("Done") { dismissWindow(id: KeryxWindowID.setup) }
+                    Button("Go to \(SetupWording.title(left))") { page = .step(left.id) }
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Done") { dismissWindow(id: KeryxWindowID.setup) }
+                        .keyboardShortcut(.defaultAction)
+                }
             } else {
                 Button("Continue") { if let next { page = next } }
                     .keyboardShortcut(settled ? .defaultAction : nil)
@@ -166,6 +170,12 @@ public struct SetupAssistantView: View {
             confirmingInstall = true
         case .startModelServer:
             model.runModelServer()
+        case .downloadVoiceModels:
+            model.downloadVoiceModels()
+            model.show(inModels: ModelsAnchor.voiceModels)
+            showMainWindow()
+        case let .openURL(url):
+            openURL(url)
         case let .go(target):
             page = target
         case .terminal:
@@ -216,7 +226,7 @@ public struct SetupAssistantView: View {
     /// PIN, the units).
     private func refresh() async {
         reloadPlan()
-        await model.refresh(.config, .voice, .models, .pin, .service, .status)
+        await model.refresh(.config, .voice, .models, .pin, .service, .status, .phoneTunnel, .integrations, .plugins)
     }
 
     /// Reads the plan again; asked while a reading is under way, reads it once more after.
@@ -233,13 +243,4 @@ public struct SetupAssistantView: View {
             planReload = nil
         }
     }
-}
-
-/// The secret sheet's subject.
-private struct SecretRequest: Identifiable {
-    let key: String
-    let title: String
-    let replacing: Bool
-
-    var id: String { key }
 }

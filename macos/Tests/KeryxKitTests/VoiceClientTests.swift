@@ -125,7 +125,8 @@ import KeryxPreview
         let result = try await CLIClient(location: .fixture, runner: fake)
             .useVoiceServer(url: "http://studio.local:8000/v1", key: .stored, keepAnyway: false)
         #expect(result.saved == nil)
-        #expect(result.problem?.contains("Realtime socket") == true)
+        #expect(result.problem == "The voice server did not open a Realtime session.")
+        #expect(result.detail?.contains("Realtime socket") == true)
         #expect(!result.restartNeeded)
     }
 

@@ -263,36 +263,20 @@ private struct ModelServerSection: View {
 
     /// A start under way, or one that went wrong; one that worked says so in Status.
     @ViewBuilder private func progress(_ run: StreamRun<ModelServerStarted>) -> some View {
-        switch run.phase {
-        case .running, .cancelling:
-            let activity = run.activity
-            RunStepList(groups: [RunStepGroup(steps: RunSteps.steps(RunSteps.modelServer, reached: run.lastStep,
-                                                                    stage: .running))],
-                        message: activity?.message,
-                        progress: activity?.progress.map { ($0.done, $0.total) },
-                        stopping: run.phase == .cancelling)
-            RunCancelRow(stopping: run.phase == .cancelling) { model.cancelModelServer() }
-        case let .failed(message):
-            if LocalRefusal.of(message) == .needsModel {
-                RunFailureRow(title: ModelsWording.chooseModelFirst, message: ModelsWording.chooseModelDetail,
-                              guidance: true) {
-                    Button("Dismiss") { run.dismiss() }
-                }
-            } else {
-                RunStepList(groups: [RunStepGroup(steps: RunSteps.steps(RunSteps.modelServer, reached: run.lastStep,
-                                                                        stage: .failed))])
-                let said = RunLog.split(message)
-                RunFailureRow(title: ModelsWording.serverFailed, message: sentence(said.text)) {
-                    if let log = said.log.flatMap({ RunLog.file($0, paths: model.status.value?.paths) }) {
-                        Button("Show Log") { RunLog.show(log) }
-                            .help("Shows the log in the Finder")
-                    }
-                    Button("Dismiss") { run.dismiss() }
-                    Button("Try Again") { model.runModelServer() }
-                }
+        if case let .failed(failure)? = run.phase, LocalRefusal.of(failure.message) == .needsModel {
+            RunGuidanceRow(title: ModelsWording.chooseModelFirst, message: ModelsWording.chooseModelDetail) {
+                Button("Dismiss") { run.dismiss() }
             }
-        case .finished, nil:
+        } else if let display = RunDisplay.of(run), case .finished = display {
             EmptyView()
+        } else if let display = RunDisplay.of(run) {
+            StreamRunView(groups: [RunStepGroup(steps: RunSteps.steps(RunSteps.modelServer, reached: run.lastStep,
+                                                                      stage: RunSteps.stage(run.phase)))],
+                          display: display, cancel: { model.cancelModelServer() },
+                          failureTitle: ModelsWording.serverFailed, paths: model.status.value?.paths) {
+                Button("Dismiss") { run.dismiss() }
+                Button("Try Again") { model.runModelServer() }
+            }
         }
     }
 
@@ -342,10 +326,6 @@ private struct ModelServerSection: View {
             if case let .failure(error) = await model.stopModelServer() { failure = error }
             stopping = false
         }
-    }
-
-    private func sentence(_ message: String) -> String {
-        VoiceWording.sentence(Wording.named(message, titles: Wording.titles(model.config.value)))
     }
 
     private func title(of name: String) -> String {
@@ -399,24 +379,15 @@ private struct VoiceModelsSection: View {
         SettingMenuRow(key: "VOICE_SERVER_TTS", title: "Text to speech", subtitle: "How it speaks",
                        current: here.tts) { await model.refresh(.voice) }
             .disabled(busy)
-        switch run.phase {
-        case .running, .cancelling:
-            let activity = run.activity
-            RunStepList(groups: [RunStepGroup(steps: RunSteps.steps(RunSteps.voiceDownload, reached: run.lastStep,
-                                                                    stage: .running))],
-                        message: activity?.message,
-                        progress: activity?.progress.map { ($0.done, $0.total) },
-                        stopping: run.phase == .cancelling)
-            RunCancelRow(stopping: run.phase == .cancelling) { run.cancel() }
-        case let .failed(message):
-            RunStepList(groups: [RunStepGroup(steps: RunSteps.steps(RunSteps.voiceDownload, reached: run.lastStep,
-                                                                    stage: .failed))])
-            RunFailureRow(title: ModelsWording.downloadFailed,
-                          message: VoiceWording.sentence(Wording.named(message, titles: Wording.titles(model.config.value)))) {
+        if let display = RunDisplay.of(run), run.result == nil {
+            StreamRunView(groups: [RunStepGroup(steps: RunSteps.steps(RunSteps.voiceDownload, reached: run.lastStep,
+                                                                      stage: RunSteps.stage(run.phase)))],
+                          display: display, cancel: { run.cancel() }, failureTitle: ModelsWording.downloadFailed,
+                          paths: model.status.value?.paths) {
                 Button("Dismiss") { run.dismiss() }
                 Button("Try Again") { model.downloadVoiceModels() }
             }
-        case .finished, nil:
+        } else {
             // Not beside a voice setup, which fetches them too — nor one waiting on its model server.
             downloadRow(ready: here.modelsReady, settingUp: !model.canDownloadVoiceModels)
         }

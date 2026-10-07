@@ -1,1 +1,1 @@
-{"event": "error", "message": "set up a local model first: keryx models use NAME"}
+{"event": "error", "message": "Set up a local model first: the voice server takes its words from it.", "detail": "`keryx models use NAME` sets one up"}

@@ -16,7 +16,7 @@ public final class Downloads {
         case running(done: Int64, total: Int64)
         /// Asked to stop, and not yet stopped: nothing may start until it has.
         case cancelling
-        case failed(String)
+        case failed(StreamFailure)
         case finished
     }
 
@@ -99,7 +99,7 @@ public final class Downloads {
                 update(model, run: run, to: nil)
             case let .stillRunning(message):
                 // Something of it outlived SIGKILL: said, never taken for stopped.
-                update(model, run: run, to: .failed(message))
+                update(model, run: run, to: .failed(StreamFailure(message)))
             }
         }
     }
@@ -118,7 +118,7 @@ public final class Downloads {
         for task in Array(tasks.values) { await task.value }
     }
 
-    private enum Outcome { case finished, failed(String), cancelled, stillRunning(String) }
+    private enum Outcome { case finished, failed(StreamFailure), cancelled, stillRunning(String) }
 
     /// The download's outcome, once its stream has ended. The terminal event says what it
     /// was, but the stream's end says it is over: for the CLI, that `keryx models pull` and
@@ -144,11 +144,11 @@ public final class Downloads {
         } catch let error as RunnerError where error == .stillRunning {
             return .stillRunning(error.localizedDescription)
         } catch let error as KeryxError {
-            return Task.isCancelled ? .cancelled : outcome ?? .failed(error.message)
+            return Task.isCancelled ? .cancelled : outcome ?? .failed(StreamFailure(error))
         } catch {
-            return Task.isCancelled ? .cancelled : outcome ?? .failed(error.localizedDescription)
+            return Task.isCancelled ? .cancelled : outcome ?? .failed(StreamFailure(error.localizedDescription))
         }
-        return Task.isCancelled ? .cancelled : outcome ?? .failed(stoppedWithoutSaying)
+        return Task.isCancelled ? .cancelled : outcome ?? .failed(StreamFailure(stoppedWithoutSaying))
     }
 
     /// Sets (or, with `nil`, removes) `model`'s row — only while `run` is still its download,

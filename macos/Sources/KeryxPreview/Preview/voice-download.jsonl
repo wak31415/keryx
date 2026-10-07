@@ -1,4 +1,4 @@
-{"event": "step", "step": "download", "message": "Downloading the voice's speech models into the Hugging Face cache: parakeet-tdt to hear, kokoro to speak"}
+{"event": "step", "step": "download", "message": "Downloading the voice's speech models into the Hugging Face cache: parakeet-tdt to hear, kokoro to speak", "detail": null}
 {"event": "progress", "step": "download", "done": 0, "total": 2726297600}
 {"event": "progress", "step": "download", "done": 1363148800, "total": 2726297600}
 {"event": "progress", "step": "download", "done": 2726297600, "total": 2726297600}

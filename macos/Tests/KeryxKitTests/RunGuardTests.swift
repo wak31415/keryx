@@ -61,7 +61,7 @@ import KeryxPreview
         #expect(model.downloadVoiceModels())
         // What a model server's `done` goes on to.
         model.setUpVoiceHere()
-        #expect(model.voiceSetup.phase == .failed(AppModel.speechModelsDownloading))
+        #expect(model.voiceSetup.phase == .failed(StreamFailure(AppModel.speechModelsDownloading)))
         #expect(!client.calls.contains { $0.hasPrefix("voice use here") })
         download.finish()
         await model.voiceDownloadRun.settled()

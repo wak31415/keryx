@@ -132,7 +132,7 @@ import KeryxPreview
         manual.send(.cancelled)
         manual.finish(throwing: RunnerError.stillRunning)
         await setup.settled()
-        #expect(setup.phase == .failed(RunnerError.stillRunning.localizedDescription))
+        #expect(setup.phase == .failed(StreamFailure(RunnerError.stillRunning.localizedDescription)))
         #expect(!setup.isBusy)
     }
 
@@ -159,7 +159,7 @@ import KeryxPreview
         let setup = makeSetup()
         setup.start(voice: nil, client: client(events: [Self.install]), onFinish: {})
         await setup.settled()
-        #expect(setup.phase == .failed(VoiceSetupEvent.stoppedWithoutSaying))
+        #expect(setup.phase == .failed(StreamFailure(VoiceSetupEvent.stoppedWithoutSaying)))
     }
 
     @Test func aCancelledEventEndsWithNoPhase() async {

@@ -11,14 +11,17 @@ import KeryxPreview
     nonisolated static let requests: [AppRequest] =
         SidebarItem.allCases.map(AppRequest.show)
         + [.configure(tab: "agents"), .configure(tab: "general"), .setPin, .setUpVoiceHere,
-           .connect(integration: "google"), .connect(integration: "github")]
+           .connect(integration: "google"), .connect(integration: "github"),
+           .setting(key: "ALLOWED_CALLERS"), .setting(key: "PROJECTS_ROOT"), .plugin(name: "check_email"),
+           .phoneAccount, .pointHere]
         + SignInProvider.allCases.map(AppRequest.signIn)
 
     /// A switch with no `default`: a new `AppRequest` case fails to compile here until it
     /// is added to `requests` above and answered.
     static func isListed(_ request: AppRequest) -> Bool {
         switch request {
-        case .show, .configure, .signIn, .connect, .setPin, .setUpVoiceHere: true
+        case .show, .configure, .signIn, .connect, .setPin, .setUpVoiceHere, .setting, .plugin, .phoneAccount,
+             .pointHere: true
         }
     }
 
@@ -32,6 +35,8 @@ import KeryxPreview
         }
         if VoiceView.answers(request) { screens.insert(.voice) }
         if ModelsView.answers(request) { screens.insert(.models) }
+        if PluginsView.answers(request) != nil { screens.insert(.plugins) }
+        if PhoneView.answers(request) != nil { screens.insert(.phone) }
         if let item = RootView.answers(request) { screens.insert(item) }
         return screens
     }
@@ -94,12 +99,12 @@ import KeryxPreview
         ])
         let claude = AgentSignInWording.state(.claude, doctor: report)
         #expect(claude == .signedIn("stored subscription login"))
-        #expect(AgentSignInWording.status(claude) == "Signed In")
+        #expect(AgentSignInWording.status(claude) == "Signed in")
         #expect(AgentSignInWording.button(claude) == "Sign In Again…")
         #expect(AgentSignInWording.caption(claude) == "Stored subscription login")
         let codex = AgentSignInWording.state(.codex, doctor: report)
         #expect(codex == .notSignedIn)
-        #expect(AgentSignInWording.status(codex) == "Not Signed In")
+        #expect(AgentSignInWording.status(codex) == "Not signed in")
         #expect(AgentSignInWording.button(codex) == "Sign In…")
         let key = doctor([("Claude Code agent (default)", true, "ANTHROPIC_API_KEY set (pay per token)")])
         #expect(AgentSignInWording.caption(AgentSignInWording.state(.claude, doctor: key))
@@ -126,6 +131,19 @@ import KeryxPreview
         ])
         #expect(AgentSignInWording.state(.claude, doctor: report) == .signedIn("stored subscription login"))
         #expect(AgentSignInWording.state(.codex, doctor: report) == .notInstalled)
+    }
+
+    @Test func theFixIdsSayWhichAgentWantsASignIn() {
+        func check(_ name: String, ok: Bool, fix: String?, hint: String? = nil) -> DoctorCheck {
+            DoctorCheck(name: name, detail: ok ? "stored subscription login" : "whatever it says",
+                        severity: "hard", section: "agents", state: ok ? "ok" : "missing", ok: ok, unset: !ok,
+                        hint: hint, fix: fix)
+        }
+        var report = PreviewData.doctor
+        report.checks = [check("Claude Code agent (default)", ok: false, fix: "signin:claude"),
+                         check("Codex agent", ok: false, fix: nil, hint: "uv sync --extra codex")]
+        #expect(AgentSignInWording.state(.claude, doctor: report) == .notSignedIn)
+        #expect(AgentSignInWording.state(.codex, doctor: report) == .notInstalled, "no sign-in offered")
     }
 
     @Test func thePreviewDoctorsClaudeIsNotSignedIn() {

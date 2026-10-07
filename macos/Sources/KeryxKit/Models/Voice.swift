@@ -101,13 +101,18 @@ public struct VoiceUseResult: Codable, Sendable, Equatable {
 public struct VoiceServerResult: Codable, Sendable, Equatable {
     public var saved: [String: JSONValue]?
     public var problem: String?
+    /// What the server or its socket said, on one line, when it opened no session: for Show
+    /// Details only. Optional for an older CLI, whose `problem` said it itself.
+    public var detail: String?
     public var restartNeeded: Bool
     /// What is worth knowing about the server even when it was saved.
     public var warnings: [String]
 
-    public init(saved: [String: JSONValue]?, problem: String?, restartNeeded: Bool, warnings: [String]) {
+    public init(saved: [String: JSONValue]?, problem: String?, detail: String? = nil, restartNeeded: Bool,
+                warnings: [String]) {
         self.saved = saved
         self.problem = problem
+        self.detail = detail
         self.restartNeeded = restartNeeded
         self.warnings = warnings
     }
@@ -118,12 +123,12 @@ public struct VoiceServerResult: Codable, Sendable, Equatable {
 public enum VoiceSetupEvent: Equatable, Sendable {
     /// A phase begins (`install`, `download`, `configure`, `unit`, `start`). `progress` only
     /// when an older CLI nests sizes in the step; a current one says them in `.progress`.
-    case step(step: String, message: String, progress: Progress?)
+    case step(step: String, message: String, progress: Progress?, detail: String? = nil)
     /// Bytes so far while the speech models download (`step` is `download`); `total` is
     /// `nil` when Hugging Face does not say.
     case progress(step: String, done: Int64, total: Int64?)
     case done(baseURL: String)
-    case error(String)
+    case error(StreamFailure)
     case cancelled
 
     public struct Progress: Equatable, Sendable {
@@ -139,7 +144,7 @@ public enum VoiceSetupEvent: Equatable, Sendable {
 
     /// What a setup that ended with none of `done`, `error` or `cancelled` says.
     public static let stoppedWithoutSaying =
-        "The voice setup stopped without saying why. Run keryx doctor in Terminal."
+        "The voice setup stopped without saying why."
 
     /// It ends the setup.
     public var isTerminal: Bool {
@@ -165,7 +170,7 @@ public enum VoiceSetupEvent: Equatable, Sendable {
                let total = (sizes["total"] as? NSNumber)?.int64Value {
                 progress = Progress(done: done, total: total)
             }
-            return .step(step: step, message: message, progress: progress)
+            return .step(step: step, message: message, progress: progress, detail: object["detail"] as? String)
         case "progress":
             guard let step = object["step"] as? String,
                   let done = object["done"] as? NSNumber, CFGetTypeID(done) != CFBooleanGetTypeID()
@@ -178,8 +183,7 @@ public enum VoiceSetupEvent: Equatable, Sendable {
             guard let url = object["base_url"] as? String else { return nil }
             return .done(baseURL: url)
         case "error":
-            guard let message = object["message"] as? String else { return nil }
-            return .error(message)
+            return StreamFailure(event: object).map { .error($0) }
         case "cancelled":
             return .cancelled
         default:

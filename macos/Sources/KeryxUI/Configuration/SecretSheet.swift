@@ -34,7 +34,7 @@ package struct SecretSheet: View {
         self.init(key: key, title: title, replacing: replacing, typed: "")
     }
 
-    static let stored = "Kept in secrets.toml, readable only by you. Keryx never shows it again."
+    static let stored = "Stored privately on this Mac; never shown again."
 
     /// `typed`: what the field starts holding — the catalog's dots, never a real secret.
     /// `check`: where the check starts — the catalog's states; otherwise not yet checked.
@@ -55,7 +55,7 @@ package struct SecretSheet: View {
 
     package var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(replacing ? "Change \(title)" : "Set \(title)")
+            Text(replacing ? "Change \(Wording.titleCase(title))" : "Set \(Wording.titleCase(title))")
                 .font(.headline)
                 .padding([.horizontal, .top], 20)
 
@@ -76,10 +76,9 @@ package struct SecretSheet: View {
                             .textSelection(.enabled)
                         }
                         if let error {
-                            Text(error.reported.map { ConfigWording.errorText($0, key: key, title: title) }
-                                ?? error.message)
-                                .foregroundStyle(.red)
-                                .textSelection(.enabled)
+                            ErrorText(error: error, sentence: error.reported.flatMap {
+                                AppFacing.isFit($0) ? ConfigWording.errorText($0, key: key, title: title) : nil
+                            })
                         }
                         Text(footnote)
                             .foregroundStyle(.secondary)

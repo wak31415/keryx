@@ -104,9 +104,9 @@ extension ScreenCatalog {
             },
             Entry("signin-google-no-client", size: tall) {
                 sheet(SignInSheet(kind: .googleWorkspace, startedHere: true),
-                      signingIn(.googleWorkspace, .events([.error(
+                      signingIn(.googleWorkspace, .events([.error(StreamFailure(
                           "there is no Google OAuth client yet: download one from the Google Cloud console "
-                              + "(Clients → Create client → Desktop app) and pass it with --client-file")])))
+                              + "(Clients → Create client → Desktop app) and pass it with --client-file"))])))
             },
             Entry("signin-failed", size: short) {
                 sheet(SignInSheet(kind: .claude, startedHere: true),

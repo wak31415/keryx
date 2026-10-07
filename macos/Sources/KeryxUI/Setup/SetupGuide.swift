@@ -20,6 +20,10 @@ struct SetupAction: Equatable, Identifiable, Sendable {
         case installService
         /// `keryx models start`, followed here.
         case startModelServer
+        /// `keryx voice download`, followed on Local Models.
+        case downloadVoiceModels
+        /// A page in the browser: one the app trusts (`FixAction.tunnelPage`).
+        case openURL(URL)
         /// Another page of the assistant.
         case go(SetupPage)
         /// `keryx setup` in Terminal, for the sections the app cannot walk yet.
@@ -32,10 +36,13 @@ struct SetupAction: Equatable, Identifiable, Sendable {
     var id: String { title }
 }
 
-/// A step's buttons: the one that settles it, and the others beside it.
+/// A step's buttons: the one that settles it, and the others beside it. `waiting`: the step
+/// waits for another, so its own buttons are shown but not yet enabled — the primary is
+/// the way to what it waits for.
 struct SetupActions: Equatable, Sendable {
     var primary: SetupAction?
     var others: [SetupAction] = []
+    var waiting = false
 }
 
 /// What the assistant knows beside the plan, to say which button settles a step: the
@@ -46,20 +53,35 @@ struct SetupContext: Sendable {
     var models: ModelsReport?
     var pin: PinStatus?
     var service: ServiceReport?
+    var phoneTunnel: PhoneTunnel?
+    var integrations: IntegrationsReport?
+    var plugins: PluginsReport?
 
     @MainActor init(_ model: AppModel) {
         self.init(config: model.config.value, voice: model.voice.value, models: model.models.value,
-                  pin: model.pin.value, service: model.service.value)
+                  pin: model.pin.value, service: model.service.value, phoneTunnel: model.phoneTunnel.value,
+                  integrations: model.integrations.value, plugins: model.plugins.value)
     }
 
     init(config: [ConfigRow]? = nil, voice: VoiceStatus? = nil, models: ModelsReport? = nil,
-         pin: PinStatus? = nil, service: ServiceReport? = nil) {
+         pin: PinStatus? = nil, service: ServiceReport? = nil, phoneTunnel: PhoneTunnel? = nil,
+         integrations: IntegrationsReport? = nil, plugins: PluginsReport? = nil) {
         self.config = config
         self.voice = voice
         self.models = models
         self.pin = pin
         self.service = service
+        self.phoneTunnel = phoneTunnel
+        self.integrations = integrations
+        self.plugins = plugins
     }
+
+    /// cloudflared's download page, while no tunnel program is installed.
+    var tunnelDownload: URL? { FixAction.tunnelPage(phoneTunnel?.installUrl) }
+
+    func pluginTitle(_ name: String) -> String? { plugins?.plugin(name)?.title }
+
+    func integrationTitle(_ id: String) -> String? { integrations?.integration(id)?.title }
 
     func row(_ key: String) -> ConfigRow? { config?.first { $0.key == key } }
 
@@ -149,22 +171,40 @@ enum SetupGuide {
             // Only once the PIN's status is read: from the environment it is not the app's
             // to defer, and the button must not flash before that is known.
             guard step.kind == .needed, let pin = context.pin, pin.place != .environment else { return nil }
-            return SetupAction(title: "Set It on the First Call", effect: .mark("pin"))
+            return SetupAction(title: "Decide on the First Call", effect: .mark("pin"))
         }
         guard !step.required, step.kind == .optional else { return nil }
         return SetupAction(title: "Skip", effect: .mark(step.id))
     }
 
-    /// The step's buttons. A step that waits leads with going to what it waits for; its own
-    /// button follows, since setting a step up early is never wrong. A step that is done
-    /// keeps its buttons, to change what settled it.
+    /// The step's buttons. What the CLI says would mend it (`fix`) leads, then the step's own
+    /// buttons beside it. A step that waits leads with going to what it waits for, and its
+    /// own buttons are shown but disabled until then. A step that is done keeps its own
+    /// buttons, to change what settled it.
     static func actions(_ step: SetupStep, in plan: SetupPlan, context: SetupContext) -> SetupActions {
         var actions = own(step, context: context)
+        if step.kind != .done, step.kind != .blocked, let fix = fixAction(step, context: context) {
+            let rest = ([actions.primary].compactMap { $0 } + actions.others)
+                .filter { $0.effect != fix.effect && $0.title != fix.title }
+            actions = SetupActions(primary: fix, others: rest)
+        }
         if step.kind == .blocked, let first = blockers(of: step, in: plan).first {
-            let go = SetupAction(title: "Go to \(first.title)", effect: .go(.step(first.id)))
-            actions = SetupActions(primary: go, others: [actions.primary].compactMap { $0 } + actions.others)
+            let go = SetupAction(title: "Go to \(Wording.titleCase(first.title))", effect: .go(.step(first.id)))
+            actions = SetupActions(primary: go, others: [actions.primary].compactMap { $0 } + actions.others,
+                                   waiting: true)
         }
         return actions
+    }
+
+    /// The CLI's fix for the step, as a button — not a setting the page already asks for in
+    /// place (the owner's name and numbers, the default agent).
+    static func fixAction(_ step: SetupStep, context: SetupContext) -> SetupAction? {
+        guard let fix = FixAction(step.fix) else { return nil }
+        if case let .setting(key) = fix, settings(step).contains(key) { return nil }
+        // A PIN in the environment is not the app's to set, whatever the plan read.
+        if fix == .pin, context.pin?.place == .environment { return nil }
+        let check = step.checks.first { $0.fix == step.fix }
+        return fix.action(context, named: check?.title, missing: check?.state == "missing")
     }
 
     /// The settings the step's page edits in place: the questions the assistant asks itself.
@@ -180,7 +220,7 @@ enum SetupGuide {
         let done = step.kind == .done
         switch step.id {
         case "migrate":
-            return SetupActions(primary: open("Open Migration", .show(.overview)))
+            return SetupActions(primary: open("Migrate…", .show(.overview)))
         case "voice":
             return voice(context)
         case "agents":
@@ -191,7 +231,7 @@ enum SetupGuide {
             guard context.pin?.place != .environment else { return SetupActions() }
             return SetupActions(primary: open(context.pin?.set == true ? "Change PIN…" : "Set PIN…", .setPin))
         case "phone":
-            return SetupActions(primary: open("Set Up Phone", .show(.phone)))
+            return SetupActions(primary: open("Open Phone", .show(.phone)))
         case "service":
             if done { return SetupActions() }
             let installed = context.service?.units.agent.installed == true
@@ -208,14 +248,14 @@ enum SetupGuide {
         default:
             // `profile`, `projects`, and any step this build does not know: the terminal
             // wizard walks them until the app can.
-            return SetupActions(primary: SetupAction(title: "Open Setup in Terminal", effect: .terminal))
+            return SetupActions(primary: SetupAction(title: "Continue in Terminal…", effect: .terminal))
         }
     }
 
     private static func voice(_ context: SetupContext) -> SetupActions {
         switch context.voice?.kind {
         case .here?:
-            return SetupActions(primary: open("Set Up Voice on This Mac", .setUpVoiceHere),
+            return SetupActions(primary: open("Set Up Voice on This Mac…", .setUpVoiceHere),
                                 others: [open("Open Voice", .show(.voice))])
         case .server?:
             return SetupActions(primary: open("Open Voice", .show(.voice)))

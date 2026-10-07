@@ -8,97 +8,76 @@
       "severity": "hard",
       "section": "import",
       "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
       "state": "ok",
-      "title": "Storage",
-      "unknown": false
+      "title": "Storage"
     },
     {
       "name": "configuration",
       "ok": true,
-      "detail": "/Users/you/.config/keryx/config.toml",
+      "detail": "saved",
       "severity": "soft",
       "section": "import",
       "unset": false,
+      "unknown": false,
+      "hint": "/Users/you/.config/keryx/config.toml",
+      "fix": null,
       "state": "ok",
-      "title": "Configuration",
-      "unknown": false
+      "title": "Configuration"
     },
     {
       "name": "OPENAI_API_KEY",
-      "ok": true,
-      "detail": "set",
+      "ok": false,
+      "detail": "not set \u2014 the voice session cannot start",
       "severity": "hard",
       "section": "voice",
-      "unset": false,
-      "state": "ok",
-      "title": "OpenAI API key",
-      "unknown": false
+      "unset": true,
+      "unknown": false,
+      "hint": null,
+      "fix": "secret:OPENAI_API_KEY",
+      "state": "missing",
+      "title": "OpenAI API key"
     },
     {
       "name": "coding agents",
       "ok": true,
-      "detail": "claude by default; enabled: claude, local",
+      "detail": "claude by default; enabled: claude",
       "severity": "hard",
       "section": "agents",
       "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
       "state": "ok",
-      "title": "Coding agents",
-      "unknown": false
+      "title": "Coding agents"
     },
     {
       "name": "Claude Code agent (default)",
       "ok": false,
-      "detail": "/Users/you/code/keryx/.venv/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude; no login found \u2014 run `claude` and `/login` once, or `claude setup-token` for a headless machine, or set ANTHROPIC_API_KEY",
+      "detail": "not signed in",
       "severity": "hard",
       "section": "agents",
       "unset": true,
+      "unknown": false,
+      "hint": "run `claude` and `/login` once, or `claude setup-token` for a headless machine, or set ANTHROPIC_API_KEY",
+      "fix": "signin:claude",
       "state": "missing",
-      "title": "Claude Code agent (default)",
-      "unknown": false
-    },
-    {
-      "name": "Local model agent",
-      "ok": true,
-      "detail": "in Claude Code; http://127.0.0.1:8090/v1 (no key)",
-      "severity": "soft",
-      "section": "local",
-      "unset": false,
-      "state": "ok",
-      "title": "Local model agent",
-      "unknown": false
+      "title": "Claude Code agent (default)"
     },
     {
       "name": "local models",
       "ok": true,
-      "detail": "agent qwen3-coder-30b-a3b at http://127.0.0.1:8090/v1",
+      "detail": "none (optional) \u2014 the voice and the agent can run on your own hardware",
       "severity": "soft",
       "section": "local",
       "unset": false,
+      "unknown": false,
+      "hint": "`keryx setup` sets them up",
+      "fix": null,
       "state": "ok",
-      "title": "Local models",
-      "unknown": false
-    },
-    {
-      "name": "model server",
-      "ok": false,
-      "detail": "llama-server is not installed \u2014 `keryx setup` installs it",
-      "severity": "soft",
-      "section": "local",
-      "unset": false,
-      "state": "failed",
-      "title": "Model server",
-      "unknown": false
-    },
-    {
-      "name": "local agent server",
-      "ok": false,
-      "detail": "could not reach 127.0.0.1 (ConnectError)",
-      "severity": "soft",
-      "section": "local",
-      "unset": false,
-      "state": "failed",
-      "title": "Local agent server",
-      "unknown": false
+      "title": "Local models"
     },
     {
       "name": "Twilio credentials",
@@ -107,9 +86,11 @@
       "severity": "hard",
       "section": "phone",
       "unset": true,
+      "unknown": false,
+      "hint": null,
+      "fix": "phone:account",
       "state": "missing",
-      "title": "Twilio credentials",
-      "unknown": false
+      "title": "Twilio credentials"
     },
     {
       "name": "Twilio signatures",
@@ -118,86 +99,102 @@
       "severity": "hard",
       "section": "phone",
       "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
       "state": "ok",
-      "title": "Twilio signatures",
-      "unknown": false
+      "title": "Twilio signatures"
     },
     {
       "name": "PUBLIC_HOST",
-      "ok": true,
-      "detail": "keryx.example.com",
+      "ok": false,
+      "detail": "not set \u2014 Twilio cannot reach this machine",
       "severity": "hard",
       "section": "phone",
-      "unset": false,
-      "state": "ok",
-      "title": "Public hostname",
-      "unknown": false
+      "unset": true,
+      "unknown": false,
+      "hint": null,
+      "fix": "phone:tunnel",
+      "state": "missing",
+      "title": "Public hostname"
     },
     {
       "name": "tunnel",
       "ok": false,
-      "detail": "none of cloudflared, ngrok on PATH \u2014 no tunnel for the phone channel",
+      "detail": "the tunnel program, cloudflared, is not installed \u2014 Twilio cannot reach this machine without one",
       "severity": "hard",
       "section": "phone",
       "unset": true,
+      "unknown": false,
+      "hint": "none of cloudflared, ngrok on PATH; `brew install cloudflared`",
+      "fix": "phone:tunnel",
       "state": "missing",
-      "title": "Tunnel",
-      "unknown": false
+      "title": "Tunnel"
     },
     {
       "name": "allowed callers",
-      "ok": false,
-      "detail": "ALLOWED_CALLERS is empty \u2014 every call is refused",
+      "ok": true,
+      "detail": "\u20261111",
       "severity": "hard",
       "section": "owner",
-      "unset": true,
-      "state": "missing",
-      "title": "Allowed callers",
-      "unknown": false
+      "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
+      "state": "ok",
+      "title": "Allowed callers"
     },
     {
       "name": "PIN",
       "ok": true,
-      "detail": "set on 2026-10-07, kept in /Users/you/.config/keryx/pin",
+      "detail": "set on 2026-10-07",
       "severity": "soft",
       "section": "owner",
       "unset": false,
+      "unknown": false,
+      "hint": "kept in /Users/you/.config/keryx/pin",
+      "fix": null,
       "state": "ok",
-      "title": "PIN",
-      "unknown": false
+      "title": "PIN"
     },
     {
       "name": "owner name",
-      "ok": false,
-      "detail": "OWNER_NAME is not set \u2014 the prompts call you \"the owner\"",
+      "ok": true,
+      "detail": "Ada",
       "severity": "soft",
       "section": "owner",
-      "unset": true,
-      "state": "missing",
-      "title": "Owner name",
-      "unknown": false
+      "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
+      "state": "ok",
+      "title": "Owner name"
     },
     {
       "name": "service manager",
       "ok": false,
-      "detail": "dev.keryx.agent is not installed (scripts/install-launchd.sh) \u2014 `keryx restart` and the voice's restart_service refuse, and nothing restarts Keryx if it dies",
+      "detail": "dev.keryx.agent is not installed \u2014 Keryx cannot restart itself, and nothing restarts it if it dies",
       "severity": "soft",
       "section": "service",
       "unset": true,
+      "unknown": false,
+      "hint": "scripts/install-launchd.sh installs it; until then `keryx restart` and the voice's restart_service refuse",
+      "fix": "service:install",
       "state": "missing",
-      "title": "Service manager",
-      "unknown": false
+      "title": "Service manager"
     },
     {
       "name": "data dir writable",
       "ok": true,
-      "detail": "/Users/you/.local/share/keryx",
+      "detail": "yes",
       "severity": "hard",
       "section": "security",
       "unset": false,
+      "unknown": false,
+      "hint": "/Users/you/.local/share/keryx",
+      "fix": null,
       "state": "ok",
-      "title": "Data folder writable",
-      "unknown": false
+      "title": "Data folder writable"
     },
     {
       "name": "data dir private",
@@ -206,9 +203,11 @@
       "severity": "soft",
       "section": "security",
       "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
       "state": "ok",
-      "title": "Data folder private",
-      "unknown": false
+      "title": "Data folder private"
     },
     {
       "name": "secret files private",
@@ -217,9 +216,11 @@
       "severity": "soft",
       "section": "security",
       "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
       "state": "ok",
-      "title": "Secret files private",
-      "unknown": false
+      "title": "Secret files private"
     },
     {
       "name": "outside git",
@@ -228,9 +229,11 @@
       "severity": "soft",
       "section": "security",
       "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
       "state": "ok",
-      "title": "Settings outside Git",
-      "unknown": false
+      "title": "Settings outside Git"
     },
     {
       "name": "config.toml",
@@ -239,9 +242,11 @@
       "severity": "soft",
       "section": "security",
       "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
       "state": "ok",
-      "title": "Settings file",
-      "unknown": false
+      "title": "Settings file"
     },
     {
       "name": "protected settings",
@@ -250,9 +255,11 @@
       "severity": "soft",
       "section": "security",
       "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
       "state": "ok",
-      "title": "Protected settings",
-      "unknown": false
+      "title": "Protected settings"
     },
     {
       "name": "old .env",
@@ -261,86 +268,102 @@
       "severity": "soft",
       "section": "security",
       "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
       "state": "ok",
-      "title": "Old .env file",
-      "unknown": false
+      "title": "Old .env file"
     },
     {
       "name": "Google for agents",
-      "ok": false,
-      "detail": "not set up (optional) \u2014 Local model tasks have no Gmail or Calendar; `keryx setup` connects Google",
+      "ok": true,
+      "detail": "Claude's own connectors carry Gmail and Calendar",
       "severity": "soft",
       "section": "google",
-      "unset": true,
-      "state": "missing",
-      "title": "Google for agents",
-      "unknown": false
+      "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
+      "state": "ok",
+      "title": "Google for agents"
     },
     {
       "name": "memory",
-      "ok": true,
-      "detail": "295 characters in /Users/you/.local/share/keryx/memory.md, sent on every call",
+      "ok": false,
+      "detail": "nothing remembered yet \u2014 every authorized call adds to it",
       "severity": "soft",
       "section": "profile",
-      "unset": false,
-      "state": "ok",
-      "title": "Memory",
-      "unknown": false
+      "unset": true,
+      "unknown": false,
+      "hint": "`keryx setup` writes a first memory",
+      "fix": null,
+      "state": "missing",
+      "title": "Memory"
     },
     {
       "name": "projects root",
-      "ok": true,
-      "detail": "/Users/you/code",
+      "ok": false,
+      "detail": "the projects folder does not exist \u2014 a task with no project starts in Keryx's own workspace",
       "severity": "soft",
       "section": "projects",
-      "unset": false,
-      "state": "ok",
-      "title": "Projects root",
-      "unknown": false
+      "unset": true,
+      "unknown": false,
+      "hint": "/Users/you/projects; tasks start in /Users/you/.local/share/keryx/workspace; set PROJECTS_ROOT",
+      "fix": "setting:PROJECTS_ROOT",
+      "state": "missing",
+      "title": "Projects root"
     },
     {
       "name": "send_to_slack",
-      "ok": false,
-      "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install send_to_slack`",
+      "ok": true,
+      "detail": "on \u2014 posts to D0PLACEHOLD",
       "severity": "soft",
       "section": "plugins",
-      "unset": true,
-      "state": "missing",
-      "title": "Slack",
-      "unknown": false
+      "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
+      "state": "ok",
+      "title": "Slack"
     },
     {
       "name": "check_email",
       "ok": false,
-      "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install check_email`",
+      "detail": "on, but not signed in to Gmail",
       "severity": "soft",
       "section": "plugins",
-      "unset": true,
-      "state": "missing",
-      "title": "Email answers",
-      "unknown": false
+      "unset": false,
+      "unknown": false,
+      "hint": "refused: not signed in to Gmail: `keryx auth login gmail`",
+      "fix": "signin:gmail",
+      "state": "failed",
+      "title": "Email answers"
     },
     {
       "name": "check_billing",
-      "ok": false,
-      "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install check_billing`",
+      "ok": true,
+      "detail": "on \u2014 auto",
       "severity": "soft",
       "section": "plugins",
-      "unset": true,
-      "state": "missing",
-      "title": "Billing",
-      "unknown": false
+      "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
+      "state": "ok",
+      "title": "Billing"
     },
     {
       "name": "cluster_stats",
       "ok": false,
-      "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install cluster_stats`",
+      "detail": "off (optional)",
       "severity": "soft",
       "section": "plugins",
       "unset": true,
+      "unknown": false,
+      "hint": "`keryx setup` \u2192 Plugins, or `keryx plugins install cluster_stats`",
+      "fix": "plugin:cluster_stats",
       "state": "missing",
-      "title": "Cluster stats",
-      "unknown": false
+      "title": "Cluster stats"
     },
     {
       "name": "retired settings",
@@ -349,20 +372,24 @@
       "severity": "soft",
       "section": "plugins",
       "unset": false,
+      "unknown": false,
+      "hint": null,
+      "fix": null,
       "state": "ok",
-      "title": "Retired settings",
-      "unknown": false
+      "title": "Retired settings"
     },
     {
       "name": "issue reports",
       "ok": true,
-      "detail": "off \u2014 `keryx setup` turns them on",
+      "detail": "off",
       "severity": "soft",
       "section": "issues",
       "unset": false,
+      "unknown": false,
+      "hint": "`keryx setup` turns them on",
+      "fix": null,
       "state": "ok",
-      "title": "Issue reports",
-      "unknown": false
+      "title": "Issue reports"
     }
   ]
 }

@@ -14,9 +14,11 @@
         {
           "title": "OpenAI API key",
           "state": "ok",
-          "detail": "set"
+          "detail": "set",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     },
     {
       "id": "agents",
@@ -30,14 +32,17 @@
         {
           "title": "Coding agents",
           "state": "ok",
-          "detail": "claude by default; enabled: claude"
+          "detail": "claude by default; enabled: claude",
+          "fix": null
         },
         {
           "title": "Claude Code agent (default)",
           "state": "ok",
-          "detail": "/Users/you/code/keryx/.venv/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude; signed in"
+          "detail": "/Users/you/code/keryx/.venv/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude; signed in",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     },
     {
       "id": "owner",
@@ -51,14 +56,17 @@
         {
           "title": "Allowed callers",
           "state": "ok",
-          "detail": "\u20260100"
+          "detail": "\u20260100",
+          "fix": null
         },
         {
           "title": "Owner name",
           "state": "ok",
-          "detail": "Ada"
+          "detail": "Ada",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     },
     {
       "id": "pin",
@@ -72,9 +80,11 @@
         {
           "title": "PIN",
           "state": "ok",
-          "detail": "set on 2026-10-07, kept in /Users/you/.config/keryx/pin"
+          "detail": "set on 2026-10-07, kept in /Users/you/.config/keryx/pin",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     },
     {
       "id": "phone",
@@ -88,24 +98,29 @@
         {
           "title": "Twilio credentials",
           "state": "ok",
-          "detail": "set"
+          "detail": "set",
+          "fix": null
         },
         {
           "title": "Twilio signatures",
           "state": "ok",
-          "detail": "checked"
+          "detail": "checked",
+          "fix": null
         },
         {
           "title": "Public hostname",
           "state": "ok",
-          "detail": "keryx.example.com"
+          "detail": "keryx.example.com",
+          "fix": null
         },
         {
           "title": "Tunnel",
           "state": "ok",
-          "detail": "cloudflared"
+          "detail": "cloudflared",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     },
     {
       "id": "service",
@@ -119,9 +134,11 @@
         {
           "title": "Service manager",
           "state": "ok",
-          "detail": "launchd: dev.keryx.agent installed and running"
+          "detail": "launchd: dev.keryx.agent installed and running",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     },
     {
       "id": "local",
@@ -135,9 +152,11 @@
         {
           "title": "Local models",
           "state": "ok",
-          "detail": "none (optional) \u2014 `keryx setup` can run the voice and the agent on your own hardware"
+          "detail": "none (optional) \u2014 `keryx setup` can run the voice and the agent on your own hardware",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     },
     {
       "id": "google",
@@ -151,9 +170,11 @@
         {
           "title": "Google for agents",
           "state": "ok",
-          "detail": "Claude's own connectors carry Gmail and Calendar"
+          "detail": "Claude's own connectors carry Gmail and Calendar",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     },
     {
       "id": "plugins",
@@ -167,29 +188,35 @@
         {
           "title": "Slack",
           "state": "ok",
-          "detail": "on \u2014 posts to D0PLACEHOLD"
+          "detail": "on \u2014 posts to D0PLACEHOLD",
+          "fix": null
         },
         {
           "title": "Email answers",
           "state": "ok",
-          "detail": "on"
+          "detail": "on",
+          "fix": null
         },
         {
           "title": "Billing",
           "state": "ok",
-          "detail": "on \u2014 openai, budget $60"
+          "detail": "on \u2014 openai, budget $60",
+          "fix": null
         },
         {
           "title": "Cluster stats",
           "state": "ok",
-          "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install cluster_stats`"
+          "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install cluster_stats`",
+          "fix": null
         },
         {
           "title": "Retired settings",
           "state": "ok",
-          "detail": "none"
+          "detail": "none",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     },
     {
       "id": "issues",
@@ -203,9 +230,11 @@
         {
           "title": "Issue reports",
           "state": "ok",
-          "detail": "off \u2014 `keryx setup` turns them on"
+          "detail": "off \u2014 `keryx setup` turns them on",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     },
     {
       "id": "profile",
@@ -219,9 +248,11 @@
         {
           "title": "Memory",
           "state": "missing",
-          "detail": "nothing remembered yet \u2014 `keryx setup` writes a first memory, and every authorized call adds to it"
+          "detail": "nothing remembered yet \u2014 `keryx setup` writes a first memory, and every authorized call adds to it",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     },
     {
       "id": "projects",
@@ -235,9 +266,11 @@
         {
           "title": "Projects root",
           "state": "ok",
-          "detail": "/Users/you/projects"
+          "detail": "/Users/you/projects",
+          "fix": null
         }
-      ]
+      ],
+      "fix": null
     }
   ]
 }

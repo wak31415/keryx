@@ -26,6 +26,14 @@ import KeryxPreview
         return plan
     }
 
+    /// `plan` with no step carrying a `fix`: what an older CLI says, and the step's own
+    /// buttons alone.
+    func withoutFixes(_ plan: SetupPlan) -> SetupPlan {
+        var plan = plan
+        for index in plan.steps.indices { plan.steps[index].fix = nil }
+        return plan
+    }
+
     // MARK: - Pages
 
     @Test func theRequiredStepsComeFirstThenTheOptionalOnesThenTheLastPage() {
@@ -104,7 +112,7 @@ import KeryxPreview
 
     @Test func thePinCanBeLeftToTheFirstCall() {
         let action = SetupGuide.skip(step(fresh, "pin"), context: SetupContext(pin: PreviewData.pinNone))
-        #expect(action == SetupAction(title: "Set It on the First Call", effect: .mark("pin")))
+        #expect(action == SetupAction(title: "Decide on the First Call", effect: .mark("pin")))
         #expect(SetupGuide.skip(step(partway, "pin"), context: SetupContext()) == nil, "set already")
         #expect(SetupGuide.skip(step(fresh, "pin"), context: SetupContext()) == nil, "the PIN's status not read yet")
         // A PIN in the environment is not the app's to set or defer.
@@ -131,12 +139,13 @@ import KeryxPreview
                                               effect: .secret(key: "OPENAI_API_KEY", title: "OpenAI API key",
                                                               replacing: false)))
         #expect(openai.others.map(\.effect) == [.request(.show(.voice))])
-        let saved = actions(fresh, "voice", SetupContext(config: PreviewData.config, voice: PreviewData.voice))
+        let saved = actions(withoutFixes(fresh), "voice", SetupContext(config: PreviewData.config, voice: PreviewData.voice))
         #expect(saved.primary?.title == "Change OpenAI API Key…")
 
-        let here = actions(fresh, "voice", SetupContext(voice: PreviewData.voiceHere))
+        let older = withoutFixes(fresh)
+        let here = actions(older, "voice", SetupContext(voice: PreviewData.voiceHere))
         #expect(here.primary?.effect == .request(.setUpVoiceHere))
-        let server = actions(fresh, "voice", SetupContext(voice: PreviewData.voiceServer))
+        let server = actions(older, "voice", SetupContext(voice: PreviewData.voiceServer))
         #expect(server.primary?.effect == .request(.show(.voice)))
     }
 
@@ -145,11 +154,13 @@ import KeryxPreview
         #expect(claude.primary == SetupAction(title: "Sign In to Claude…", effect: .request(.signIn(.claude))))
         #expect(claude.others.first?.effect == .secret(key: "ANTHROPIC_API_KEY", title: "Anthropic API key",
                                                        replacing: false))
-        #expect(actions(partway, "agents", SetupContext(config: backend("codex"))).primary?.effect
+        // Without the CLI's fix, by the default agent the settings name.
+        let older = withoutFixes(partway)
+        #expect(actions(older, "agents", SetupContext(config: backend("codex"))).primary?.effect
             == .request(.signIn(.codex)))
-        #expect(actions(partway, "agents", SetupContext(config: backend("local"))).primary?.effect
+        #expect(actions(older, "agents", SetupContext(config: backend("local"))).primary?.effect
             == .request(.show(.models)))
-        #expect(actions(partway, "agents", SetupContext(config: backend("gemini"))).primary?.effect
+        #expect(actions(older, "agents", SetupContext(config: backend("gemini"))).primary?.effect
             == .request(.configure(tab: "agents")))
         #expect(SetupGuide.settings(step(partway, "agents")) == ["AGENT_BACKEND"])
     }
@@ -215,15 +226,41 @@ import KeryxPreview
 
     @Test func theRestDeepLinkOrOpenTheTerminal() {
         #expect(actions(fresh, "google").primary?.effect == .request(.connect(integration: "google")))
-        #expect(actions(fresh, "plugins").primary?.effect == .request(.show(.plugins)))
+        #expect(actions(withoutFixes(fresh), "plugins").primary?.effect == .request(.show(.plugins)))
         #expect(actions(fresh, "issues").primary?.effect == .request(.connect(integration: "github")))
         #expect(actions(fresh, "profile").primary?.effect == .terminal)
-        #expect(actions(fresh, "projects").primary?.effect == .terminal)
-        var plan = fresh
+        #expect(actions(withoutFixes(fresh), "projects").primary?.effect == .terminal)
+        var plan = withoutFixes(fresh)
         plan.steps[0].id = "migrate"
         #expect(actions(plan, "migrate").primary?.effect == .request(.show(.overview)))
         plan.steps[0].id = "something-new"
         #expect(actions(plan, "something-new").primary?.effect == .terminal)
+    }
+
+    @Test func theCLIsFixLeadsAndTheStepsOwnButtonsFollow() {
+        // The plugins step: Gmail's sign-in, which Email answers waits on, then Plugins.
+        let plugins = actions(partway, "plugins")
+        #expect(plugins.primary == SetupAction(title: "Sign In to Gmail…", effect: .request(.signIn(.gmail))))
+        #expect(plugins.others.map(\.effect) == [.request(.show(.plugins))])
+        // A fix that is what the step's own button does is offered once.
+        let voice = actions(fresh, "voice", SetupContext(config: keyUnset, voice: PreviewData.voice))
+        #expect(voice.others.map(\.effect) == [.request(.show(.voice))])
+        // The phone: Twilio's account sheet, then Phone.
+        let phone = actions(partway, "phone")
+        #expect(phone.primary == SetupAction(title: "Connect Twilio…", effect: .request(.phoneAccount)))
+        #expect(phone.others.map(\.effect) == [.request(.show(.phone))])
+        // A setting the page asks for in place is not a button too.
+        #expect(actions(fresh, "owner").primary == nil)
+        // The projects folder: its setting, then the terminal for the briefs.
+        #expect(actions(fresh, "projects").primary?.effect == .request(.setting(key: "PROJECTS_ROOT")))
+        // Before the settings are read, the check's own title names the key.
+        #expect(actions(fresh, "voice").primary?.title == "Add OpenAI API Key…")
+    }
+
+    @Test func aStepThatWaitsShowsItsOwnButtonsDisabled() {
+        let service = actions(fresh, "service", SetupContext(service: PreviewData.service))
+        #expect(service.waiting)
+        #expect(!actions(fresh, "voice").waiting)
     }
 
     // MARK: - Words

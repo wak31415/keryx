@@ -16,6 +16,12 @@ enum RequestAnswer: Equatable {
     case voiceHere
     /// Local Models: shown at what is left to do there.
     case models
+    /// Configuration, at one setting.
+    case setting(String)
+    /// Plugins, at one plugin.
+    case plugin(String)
+    /// Phone: a sheet of its own.
+    case phone(PhoneRequest)
     /// The section shown, and nothing more.
     case shown(SidebarItem)
 
@@ -35,14 +41,20 @@ enum RequestAnswer: Equatable {
             }
         case let .connect(id): .integrations(.connect(id))
         case .setUpVoiceHere: .voiceHere
+        case let .setting(key): .setting(key)
+        case let .plugin(name): .plugin(name)
+        case .phoneAccount: .phone(.account)
+        case .pointHere: .phone(.pointHere)
         }
     }
 
     /// The section whose screen does it.
     var section: SidebarItem {
         switch self {
-        case .configuration: .configuration
+        case .configuration, .setting: .configuration
         case .integrations: .integrations
+        case .plugin: .plugins
+        case .phone: .phone
         case .voiceHere: .voice
         case .models: .models
         case let .shown(item): item
@@ -64,4 +76,12 @@ enum IntegrationsRequest: Equatable {
     case signIn(SignInProvider)
     /// The Connect of the card with this id (`google`, `github`, …).
     case connect(String)
+}
+
+/// What Phone does for a request.
+enum PhoneRequest: Equatable {
+    /// The Twilio account sheet.
+    case account
+    /// The Point Here question, once Twilio has said where the number points.
+    case pointHere
 }

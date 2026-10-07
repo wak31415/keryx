@@ -19,7 +19,7 @@ public final class VoiceSetup {
         case running(step: String, message: String, progress: VoiceSetupEvent.Progress?)
         /// Asked to stop, and not yet stopped: nothing may start until it has.
         case cancelling
-        case failed(String)
+        case failed(StreamFailure)
         case finished(baseURL: String)
     }
 
@@ -30,6 +30,8 @@ public final class VoiceSetup {
     /// The step the latest setup reached, kept once it has ended — so a failure can be
     /// shown at the step it stopped on. Empty until its first step.
     public private(set) var lastStep = ""
+    /// What a terminal adds to the step under way (a path), for Show Details only.
+    public private(set) var stepDetail: String?
     @ObservationIgnored private var run: UUID?
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var stop: (@Sendable () -> Void)?
@@ -58,6 +60,7 @@ public final class VoiceSetup {
         self.run = run
         stopping = false
         lastStep = ""
+        stepDetail = nil
         phase = .running(step: "", message: Self.starting, progress: nil)
         let stream = client.voiceHere(voice: voice)
         stop = { stream.stop() }
@@ -70,8 +73,10 @@ public final class VoiceSetup {
                     self?.stop = nil
                 }
             }
-            let outcome = await Self.consume(stream) { step, message, progress in
-                self?.update(run, to: .running(step: step, message: message, progress: progress))
+            let outcome = await Self.consume(stream) { step, message, progress, detail in
+                guard let self, self.run == run, !self.stopping else { return }
+                if let detail { self.stepDetail = detail.isEmpty ? nil : detail }
+                self.update(run, to: .running(step: step, message: message, progress: progress))
             }
             guard let self else { return }
             switch outcome {
@@ -85,7 +90,7 @@ public final class VoiceSetup {
                 update(run, to: nil)
             case let .stillRunning(message):
                 // Something of it outlived SIGKILL: said, never taken for stopped.
-                update(run, to: .failed(message))
+                update(run, to: .failed(StreamFailure(message)))
             }
         }
     }
@@ -100,7 +105,7 @@ public final class VoiceSetup {
 
     /// A setup that could not start, shown as one that failed with `message` (why), so the
     /// owner sees it was refused. Nothing while one runs or stops.
-    public func refuse(_ message: String) {
+    public func refuse(_ message: StreamFailure) {
         guard !isBusy else { return }
         run = nil
         lastStep = ""
@@ -118,13 +123,13 @@ public final class VoiceSetup {
         await task?.value
     }
 
-    private enum Outcome { case finished(String), failed(String), cancelled, stillRunning(String) }
+    private enum Outcome { case finished(String), failed(StreamFailure), cancelled, stillRunning(String) }
 
     /// The setup's outcome once its stream has ended: the terminal event says what it was,
     /// the stream's end that the CLI and all it started have exited.
     private static func consume(
         _ stream: VoiceSetupStream,
-        step: @MainActor (String, String, VoiceSetupEvent.Progress?) -> Void
+        step: @MainActor (String, String, VoiceSetupEvent.Progress?, String?) -> Void
     ) async -> Outcome {
         var outcome: Outcome?
         // A progress line says its step, not its words: those of the step it belongs to.
@@ -133,11 +138,12 @@ public final class VoiceSetup {
             for try await event in stream {
                 guard outcome == nil else { continue }
                 switch event {
-                case let .step(name, message, progress):
+                case let .step(name, message, progress, detail):
                     lastMessage = message
-                    step(name, message, progress)
+                    // A new step's words: its own detail, or none ("" clears the last).
+                    step(name, message, progress, detail ?? "")
                 case let .progress(name, done, total):
-                    step(name, lastMessage, .init(done: done, total: total ?? 0))
+                    step(name, lastMessage, .init(done: done, total: total ?? 0), nil)
                 case let .done(url): outcome = .finished(url)
                 case let .error(message): outcome = .failed(message)
                 case .cancelled: outcome = .cancelled
@@ -148,11 +154,11 @@ public final class VoiceSetup {
         } catch let error as RunnerError where error == .stillRunning {
             return .stillRunning(error.localizedDescription)
         } catch let error as KeryxError {
-            return Task.isCancelled ? .cancelled : outcome ?? .failed(error.message)
+            return Task.isCancelled ? .cancelled : outcome ?? .failed(StreamFailure(error))
         } catch {
-            return Task.isCancelled ? .cancelled : outcome ?? .failed(error.localizedDescription)
+            return Task.isCancelled ? .cancelled : outcome ?? .failed(StreamFailure(error.localizedDescription))
         }
-        return Task.isCancelled ? .cancelled : outcome ?? .failed(VoiceSetupEvent.stoppedWithoutSaying)
+        return Task.isCancelled ? .cancelled : outcome ?? .failed(StreamFailure(VoiceSetupEvent.stoppedWithoutSaying))
     }
 
     /// Sets the phase — only while `run` is still the setup, and never back to `.running`

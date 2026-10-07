@@ -599,7 +599,7 @@ public final class AppModel {
         // The setup fetches the speech models too: never beside a download of them. Reached
         // from a model server that has just come up, so said rather than silently dropped.
         guard !voiceDownloadRun.isBusy else {
-            voiceSetup.refuse(Self.speechModelsDownloading)
+            voiceSetup.refuse(StreamFailure(Self.speechModelsDownloading))
             return
         }
         voiceSetup.start(voice: voice, client: client) { [weak self] in
