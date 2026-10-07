@@ -35,6 +35,7 @@ from keryx.integrations.gmail import (
     email_problem,
     fold_search,
     fold_thread,
+    plan_search,
     search,
     token_path,
     worth_reading,
@@ -120,6 +121,25 @@ class FakeGmail:
 
     def fetched(self, prefix: str) -> list[str]:
         return [path for path, _ in self.calls if path.startswith(prefix)]
+
+
+class SearchGmail(FakeGmail):
+    """Gmail whose listing answers by query: `listings` maps a query to its thread ids,
+    newest first, and any other query matches nothing."""
+
+    def __init__(self, threads, listings: dict[str, list[str]], **kw) -> None:
+        super().__init__(threads, **kw)
+        self.listings = listings
+
+    async def get(self, path, params=None):
+        if path != "messages":
+            return await super().get(path, params)
+        self.calls.append((path, dict(params or {})))
+        found = self.listings.get(params["q"], [])
+        return {"messages": [{"id": f"{tid}-x", "threadId": tid} for tid in found]}
+
+    def queries(self) -> list[str]:
+        return [params["q"] for path, params in self.calls if path == "messages"]
 
 
 class FakeSummariser:
@@ -353,21 +373,129 @@ async def test_an_answer_that_takes_too_long_is_stopped_and_said(fixed_day):
 # --------------------------------------------------------------------------- a search
 
 
-async def test_a_search_reads_the_newest_few_threads_in_full(monkeypatch):
+async def test_a_search_reads_the_most_promising_threads_in_full(monkeypatch):
     monkeypatch.setattr(gmail, "MAX_SEARCH_THREADS", 2)
     threads = {
         "t1": [message("a", "t1", 1), message("b", "t1", 2)],
-        "t2": [message("c", "t2", 3)],
+        "t2": [message("c", "t2", 3, sender="News <news@example.org>", mailing_list=True)],
         "t3": [message("d", "t3", 4)],
     }
     api = FakeGmail(threads)
 
-    emails = await search(api, "  from:ann   kickoff ")
+    found = await search(api, "  from:ann   kickoff ")
 
     assert dict(api.calls)["messages"]["q"] == "from:ann kickoff"
-    assert [email.message_id for email in emails] == ["b", "c"]
-    assert all(email.body is not None for email in emails)
-    assert sorted(api.fetched("messages/")) == ["messages/b", "messages/c"]
+    assert [email.message_id for email in found.emails] == ["b", "c", "d"]
+    assert [email.body is not None for email in found.emails] == [True, False, True]
+    assert sorted(api.fetched("messages/")) == ["messages/b", "messages/d"]
+    assert found.loosened is False
+
+
+def test_a_query_of_alternatives_is_run_one_alternative_at_a_time():
+    plan = plan_search("kickoff OR signature OR licence")
+
+    assert plan.exact == ["kickoff", "signature", "licence"]
+    assert plan.loose == []
+
+
+def test_or_binds_tighter_than_the_and_between_words():
+    """`from:ann OR ann kickoff OR grant` is `(from:ann OR ann) (kickoff OR grant)`."""
+    plan = plan_search("from:ann OR ann kickoff OR grant")
+
+    assert plan.exact == ["kickoff OR grant from:ann", "kickoff OR grant ann"]
+    assert plan.loose == ["from:ann", "ann", "kickoff", "grant"]
+
+
+def test_braces_parentheses_and_quotes_are_read_as_gmail_reads_them():
+    assert plan_search("newer_than:30d {kickoff signature}").exact == [
+        "newer_than:30d kickoff",
+        "newer_than:30d signature",
+    ]
+    assert plan_search('subject:"camera ready" (ann OR bob)').exact == [
+        'subject:"camera ready" ann',
+        'subject:"camera ready" bob',
+    ]
+    assert plan_search("(ann bob)").exact == ["(ann bob)"]
+    assert plan_search(" OR ") == gmail.SearchPlan(["OR"], [])  # a dangling OR is a word
+
+
+def test_alternatives_past_the_cap_share_the_last_query(monkeypatch):
+    monkeypatch.setattr(gmail, "MAX_ALTERNATIVES", 3)
+
+    assert plan_search("a OR b OR c OR d OR e").exact == ["a", "b", "c OR d OR e"]
+
+
+def test_loosening_keeps_the_filters_on_every_term():
+    plan = plan_search("newer_than:30d -in:spam from:ann kickoff")
+
+    assert plan.exact == ["newer_than:30d -in:spam from:ann kickoff"]
+    assert plan.loose == ["newer_than:30d -in:spam from:ann", "newer_than:30d -in:spam kickoff"]
+    assert plan_search("newer_than:30d kickoff").loose == []  # one term: nothing looser
+
+
+def topic_and_noise() -> tuple[dict, dict]:
+    """#80's mailbox: a topic word on three older, important threads, and a broad word on
+    ten newer ones that are lists and no-reply mail."""
+    topic = {
+        f"topic{i}": [message(f"p{i}", f"topic{i}", 1 + i, labels=("INBOX", "IMPORTANT"))]
+        for i in range(3)
+    }
+    noise = {
+        f"noise{i}": [
+            message(
+                f"n{i}", f"noise{i}", 10 + i, sender="Lists <no-reply@example.org>",
+                mailing_list=True,
+            )
+        ]
+        for i in range(10)
+    }  # fmt: skip
+    newest_first = sorted(noise, reverse=True)
+    listings = {
+        "contract OR signature": newest_first + sorted(topic, reverse=True),
+        "contract": sorted(topic, reverse=True),
+        "signature": newest_first,
+    }
+    return {**topic, **noise}, listings
+
+
+async def test_a_broad_alternative_cannot_crowd_out_the_one_that_matters():
+    """#80: Gmail lists newest first, so ORing the topic with a broad word filled every
+    slot with newer noise and the threads about the topic were never read."""
+    threads, listings = topic_and_noise()
+    api = SearchGmail(threads, listings)
+
+    found = await search(api, "contract OR signature")
+
+    assert sorted(api.queries()) == ["contract", "signature"]
+    by_thread = {email.thread_id: email for email in found.emails}
+    assert {"topic0", "topic1", "topic2"} <= set(by_thread)
+    assert all(by_thread[f"topic{i}"].body is not None for i in range(3))
+
+
+async def test_a_query_that_matched_nothing_is_loosened_and_says_so():
+    """#80's second search: a name ORed into the wrong clause made the query match nothing."""
+    threads, listings = topic_and_noise()
+    api = SearchGmail(threads, listings)
+    summariser = FakeSummariser("Nothing matched the whole search; the contract is signed.")
+
+    result = await EmailReader(api, summariser).ask(
+        "status of the contract", query="from:ann OR ann contract OR signature"
+    )
+
+    assert "contract" in api.queries()  # the topic word, searched on its own
+    [(_, prompt)] = summariser.calls
+    assert "Nothing matched a search for [from:ann OR ann contract OR signature]" in prompt
+    assert "Full text:\nfull text of p2" in prompt
+    assert result["threads"] > 0
+
+
+async def test_the_question_itself_is_never_loosened_word_by_word():
+    api = SearchGmail({}, {})
+
+    result = await EmailReader(api, FakeSummariser()).ask("did ann write about the grant")
+
+    assert api.queries() == ["did ann write about the grant"]
+    assert result["threads"] == 0
 
 
 def test_a_searched_thread_they_answered_is_kept_and_says_so():
@@ -410,7 +538,8 @@ async def test_a_search_that_finds_nothing_is_said_without_a_model_call():
 
     result = await EmailReader(FakeGmail({}), summariser).ask("x", query="from:nobody")
 
-    assert result["answer"] == "No email matches that search."
+    assert result["answer"].startswith("No email matches a search for [from:nobody].")
+    assert "misheard" in result["answer"]  # a search that missed, not mail that is not there
     assert summariser.calls == []
 
 

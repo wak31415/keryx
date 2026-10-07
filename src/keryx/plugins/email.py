@@ -28,13 +28,16 @@ DESCRIPTION = (
     "Needs the PIN — call it anyway and let it ask. With day it reads that whole day, one "
     "entry per thread, leaving out "
     'threads they already answered: "anything I need to do from today\'s email", "what came '
-    'in yesterday". Without day it searches Gmail and reads the few newest matches in full: '
+    'in yesterday". Without day it searches Gmail and reads the best few matches in full: '
     '"did Susan answer about the kickoff", "when is the camera-ready due", "anything from '
     'the bank this week". Put what they named into gmail_query and their question, in their '
     'words, into question. Say "one moment", call it, then say the answer as it comes back, '
     "once, and stop — no preamble, no summary of the summary, and no caveats about threads "
-    "or replies. Replying, attachments, and anything that needs more than a handful of "
-    "emails go to dispatch_task instead."
+    "or replies. When it finds nothing, that is a search that missed, not proof the email "
+    "does not exist: say in a few words what you searched for, so they can correct a "
+    "misheard word, or search once more on the single most distinctive word. Replying, "
+    "attachments, and anything that needs more than a handful of emails go to dispatch_task "
+    "instead."
 )
 
 PARAMETERS = {
@@ -43,9 +46,14 @@ PARAMETERS = {
         "question": {"type": "string", "description": "What they asked, in their words."},
         "gmail_query": {
             "type": "string",
-            "description": "Gmail search terms for what they asked about: from:name, "
-            "subject:word, is:unread, newer_than:7d, or plain words. Leave it out to search "
-            "on the question itself, or with day for everything that day.",
+            "description": "Gmail search terms for what they asked about: the one or two "
+            "most distinctive words, plus from:name, subject:word, is:unread or newer_than:30d "
+            "when they said so. Fewer is better. Gmail ANDs every word, so each extra one can "
+            "only lose mail, and never add synonyms or related words: one broad word such as "
+            "'signature' matches hundreds of newer emails. If they gave alternatives, write "
+            "them as {a b}. A name you heard is a guess at its spelling, so prefer the topic "
+            "word to it. Leave it out to search on the question itself, or with day for "
+            "everything that day.",
         },
         "day": {
             "type": "string",

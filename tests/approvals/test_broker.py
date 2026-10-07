@@ -52,7 +52,9 @@ class FakeSession:
     #: answer it, which is POSSESSION or better (`keryx.trust`).
     trust: TrustLevel = TrustLevel.FULL
 
-    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
+    async def announce(
+        self, text: str, *, needs: TrustLevel = TrustLevel.FULL, task_id: int | None = None
+    ) -> bool:
         if not self.accepts or self.trust < needs:
             return False
         self.announcements.append(text)
@@ -527,7 +529,7 @@ async def test_a_prompt_answered_while_live_calls_are_asked_is_not_dialled(
 
     @dataclass
     class AnsweredMeanwhile(FakeSession):
-        async def announce(self, text, *, needs=TrustLevel.FULL):
+        async def announce(self, text, *, needs=TrustLevel.FULL, task_id=None):
             broker._resolve_from_event(post_tool_use("Bash", {"command": "git push"}))
             return False  # a call that has not proved enough: it would have been dialled
 

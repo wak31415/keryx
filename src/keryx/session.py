@@ -84,7 +84,18 @@ OPENING_MESSAGE = "[session opened] Greet the user briefly."
 RECONNECT_MESSAGE = "[system] The connection was reset; briefly apologize and continue."
 SILENCE_MESSAGE = "[system] The user has been silent; say a brief goodbye."
 WRAP_UP_MESSAGE = "[system] The call will end in 30 seconds; wrap up."
-ANNOUNCE_INSTRUCTIONS = "Briefly tell the user about this in one or two sentences."
+#: How an announcement is to be said. It rides in the note itself, never as the response's
+#: own `instructions`: the Realtime API's per-response instructions *replace* the session's,
+#: so the whole voice prompt — the persona, and the line that says to call mark_reported on a
+#: result from a "[system]" note — was gone for exactly the turn that needed it (#82).
+ANNOUNCE_INSTRUCTIONS = "Tell them about this briefly, in one or two sentences."
+#: Added when the note is a finished task this call may stamp: told only in the system
+#: prompt, the stamp was missed on every mid-call result in the logs, and the owner heard
+#: each again at the top of the next call.
+ANNOUNCE_REPORT_INSTRUCTIONS = (
+    "In the same turn, call mark_reported with task_ids [{task_id}]; that call is what "
+    "records they heard it, and saying so does not, so never tell them you have."
+)
 
 # What the model is told about a PIN typed on the keypad. Never the digits themselves.
 PIN_LOCKOUT_MESSAGE = (
@@ -416,7 +427,9 @@ class VoiceSession:
             await self._stop_tasks([*pumps, finish], report=True)
             await self._teardown()
 
-    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
+    async def announce(
+        self, text: str, *, needs: TrustLevel = TrustLevel.FULL, task_id: int | None = None
+    ) -> bool:
         """Speak an out-of-band message. False when this call has not earned it.
 
         `needs` is what the announcement itself requires, because they are not alike. A
@@ -428,6 +441,10 @@ class VoiceSession:
         The False matters as much as the True: it is what stops a call counting as having
         told them, so the call-back or the text that would otherwise be skipped still goes
         out (`keryx.notify.deliver`).
+
+        `task_id` is the finished task the note is about. A call that may stamp it (the
+        same `POSSESSION` bar `mark_reported` holds a task outside its digest to) is asked
+        to, in the same turn; the stamp stays the model's to make, after it has spoken.
         """
         if not self.is_live or self.trust < needs:
             return False
@@ -435,12 +452,10 @@ class VoiceSession:
             # Only news gets this far, and the owner has said a stranger may not hear it.
             return False
         log.info("session %s announcing: %s", self.session_id, text)
-        return await self._safe_call(
-            self._provider.inject_message,
-            f"[system] {text}",
-            respond=True,
-            response_instructions=ANNOUNCE_INSTRUCTIONS,
-        )
+        note = f"[system] {text}\n{ANNOUNCE_INSTRUCTIONS}"
+        if task_id is not None and self.trust >= TrustLevel.POSSESSION:
+            note += " " + ANNOUNCE_REPORT_INSTRUCTIONS.format(task_id=task_id)
+        return await self._safe_call(self._provider.inject_message, note, respond=True)
 
     def request_end(self, reason: str = "user") -> None:
         """Ask for the session to end once the response that is speaking has finished."""
