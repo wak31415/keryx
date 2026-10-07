@@ -107,8 +107,7 @@ import KeryxPreview
             == "Set · change it in Keryx Setup")
     }
 
-    @Test func theFirstGroupsOpenAndTheTooltipHasTheKey() {
-        #expect(ConfigWording.openGroups == ["voice", "agents", "local", "owner"])
+    @Test func theTooltipHasTheKey() {
         let mode = row("VAD_MODE", description: "How `semantic` decides")
         #expect(ConfigWording.tooltip(mode) == "How semantic decides\n\nVAD_MODE")
         #expect(Wording.titleCase("Owner, callers and PIN") == "Owner, Callers and PIN")
@@ -190,10 +189,12 @@ import KeryxPreview
 
     @Test func theScreenIsInTheCatalogInEveryState() {
         let ids = Set(ScreenCatalog.entries().map(\.id))
-        for id in ["configuration", "configuration-search", "configuration-write-error",
-                   "configuration-needs-restart", "configuration-secret-sheet", "configuration-lower-groups",
-                   "configuration-agents",
-                   "window-configuration"] {
+        for id in ["configuration", "configuration-search", "configuration-search-tabs", "configuration-search-none",
+                   "configuration-write-error", "configuration-needs-restart", "configuration-secret-sheet",
+                   "configuration-voice-advanced", "configuration-system-advanced",
+                   "configuration-general", "configuration-voice", "configuration-agents", "configuration-local",
+                   "configuration-phone", "configuration-approvals", "configuration-integrations",
+                   "configuration-system", "window-configuration"] {
             #expect(ids.contains(id), "missing \(id)")
         }
     }
