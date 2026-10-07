@@ -37,15 +37,19 @@ struct ConfigRowView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .help(readOnly ? ConfigWording.environmentHelp : "")
+            .help(readOnly ? ConfigWording.environmentHelp(row) : "")
         } label: {
-            Text(row.key)
-                .textSelection(.enabled)
+            Text(row.displayTitle)
             Text(ConfigWording.description(row.description))
                 .lineLimit(2)
                 .help(ConfigWording.plain(row.description))
+            // What the owner types at `keryx config set`.
+            Text(row.key)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
             if let error {
-                Text(error.message)
+                Text(ConfigWording.errorText(error.message, for: row))
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
             }
@@ -60,7 +64,7 @@ struct ConfigRowView: View {
         }
         .onChange(of: row.value) { draft = ConfigWording.editText(row.value) }
         .sheet(isPresented: $editingSecret) {
-            SecretSheet(key: row.key, description: row.description, replacing: row.set)
+            SecretSheet(key: row.key, title: row.displayTitle, description: row.description, replacing: row.set)
         }
     }
 
@@ -72,11 +76,11 @@ struct ConfigRowView: View {
         } else {
             switch row.type {
             case "bool":
-                Toggle(row.key, isOn: boolBinding)
+                Toggle(row.displayTitle, isOn: boolBinding)
                     .toggleStyle(.switch)
                     .labelsHidden()
             case "choice":
-                Picker(row.key, selection: choiceBinding) {
+                Picker(row.displayTitle, selection: choiceBinding) {
                     if ConfigWording.editText(row.value).isEmpty {
                         Text("Not set").tag("")
                     }
@@ -137,14 +141,14 @@ struct ConfigRowView: View {
     }
 
     private func field(width: CGFloat) -> some View {
-        TextField(row.key, text: $draft, prompt: Text("Not set"))
+        TextField(row.displayTitle, text: $draft, prompt: Text("Not set"))
             .labelsHidden()
             .textFieldStyle(.roundedBorder)
             .frame(width: width)
             .focused($focused)
             .onSubmit(commit)
             .onChange(of: focused) { if !focused { commit() } }
-            .help(readOnly ? ConfigWording.environmentHelp : draft)
+            .help(readOnly ? ConfigWording.environmentHelp(row) : draft)
     }
 
     /// Saves the field's text when it differs from what is stored.

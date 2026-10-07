@@ -5,8 +5,9 @@ import Testing
 
 @MainActor @Suite struct ConfigurationTests {
     func row(_ key: String, group: String = "voice", type: String = "string", source: String = "default",
-             value: JSONValue? = nil, description: String = "", secret: Bool = false) -> ConfigRow {
-        ConfigRow(key: key, group: group, description: description, source: source, type: type,
+             value: JSONValue? = nil, description: String = "", secret: Bool = false,
+             title: String? = nil, groupTitle: String? = nil) -> ConfigRow {
+        ConfigRow(key: key, group: group, title: title, groupTitle: groupTitle, description: description, source: source, type: type,
                   required: false, set: source != "default", secret: secret, serviceWritable: false,
                   protected: false, value: value, choices: nil)
     }
@@ -26,6 +27,12 @@ import Testing
         let groups = ConfigWording.groups(rows)
         #expect(groups.map(\.group) == ["phone", "voice"])
         #expect(groups[0].rows.map(\.key) == ["A", "C"])
+        #expect(groups[0].title == "Phone", "an older CLI's group gets this build's title")
+    }
+
+    @Test func groupsTakeTheCLIsTitleWhenItGivesOne() {
+        let groups = ConfigWording.groups([row("LLM_SERVER_PORT", group: "local", groupTitle: "Local and self-hosted models")])
+        #expect(groups.map(\.title) == ["Local and self-hosted models"])
     }
 
     @Test func searchMatchesKeyAndDescriptionIgnoringCase() {
@@ -36,6 +43,28 @@ import Testing
         #expect(ConfigWording.filter(rows, by: "TEXT").map(\.key) == ["SMS_ENABLED"])
         #expect(ConfigWording.filter(rows, by: "  ").count == 3)
         #expect(ConfigWording.filter(rows, by: "nothing like it").isEmpty)
+    }
+
+    @Test func searchMatchesTheTitleToo() {
+        let rows = [row("LLM_SERVER_PORT", description: "The port.", title: "Model server port"),
+                    row("DATA_DIR", description: "Where the memory lives", title: "Data folder")]
+        #expect(ConfigWording.filter(rows, by: "server port").map(\.key) == ["LLM_SERVER_PORT"])
+        #expect(ConfigWording.filter(rows, by: "data_dir").map(\.key) == ["DATA_DIR"])
+    }
+
+    @Test func aRefusalNamesTheSettingByItsTitle() {
+        let silence = row("VAD_SILENCE_MS", title: "Silence before a turn ends (ms)")
+        #expect(ConfigWording.errorText("VAD_SILENCE_MS Input should be a valid integer", for: silence)
+            == "Silence before a turn ends (ms): input should be a valid integer")
+        #expect(ConfigWording.errorText("the store is locked", for: silence) == "the store is locked")
+        #expect(ConfigWording.errorText("VAD_SILENCE_MS Input should be a valid integer", for: row("VAD_SILENCE_MS"))
+            == "VAD_SILENCE_MS Input should be a valid integer", "no title: the CLI's sentence as written")
+    }
+
+    @Test func theEnvironmentNoteNamesTheSettingByItsTitle() {
+        let host = row("PUBLIC_HOST", source: "environment", title: "Public hostname")
+        #expect(ConfigWording.environmentHelp(host)
+            == "Public hostname is set in the environment as PUBLIC_HOST, which wins over the store")
     }
 
     @Test func sourcesReadAsWhereTheValueCameFrom() {

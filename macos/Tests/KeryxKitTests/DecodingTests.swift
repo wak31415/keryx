@@ -82,6 +82,31 @@ import Testing
 
         let vadMode = rows.first { $0.key == "VAD_MODE" }
         #expect(vadMode?.choices == ["server", "semantic"])
+        #expect(rows.allSatisfy { $0.title != nil && $0.groupTitle != nil })
+    }
+
+    @Test func configRowNamesItselfForAPerson() throws {
+        let row = try decodeConfigRow(#""title": "Model server port", "group_title": "Local and self-hosted models","#)
+        #expect(row.displayTitle == "Model server port")
+        #expect(row.displayGroupTitle == "Local and self-hosted models")
+    }
+
+    @Test func configRowFromAnOlderCLIFallsBackToTheKeyAndGroup() throws {
+        let row = try decodeConfigRow("")
+        #expect(row.title == nil)
+        #expect(row.groupTitle == nil)
+        #expect(row.displayTitle == "LLM_SERVER_PORT")
+        #expect(row.displayGroupTitle == "Local Models")
+        #expect(ConfigRow.title(ofGroup: "storage") == "Storage")
+    }
+
+    private func decodeConfigRow(_ titles: String) throws -> ConfigRow {
+        let json = """
+        {"key": "LLM_SERVER_PORT", "group": "local", \(titles) "description": "The port.",
+         "source": "default", "type": "int", "required": false, "set": false, "secret": false,
+         "service_writable": true, "protected": false, "value": 8090, "choices": null}
+        """
+        return try JSON.decoder.decode(ConfigRow.self, from: Data(json.utf8))
     }
 
     @Test func approvalsFixtureDecodes() throws {

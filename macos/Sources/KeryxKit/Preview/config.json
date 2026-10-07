@@ -2,6 +2,8 @@
   {
     "key": "OPENAI_API_KEY",
     "group": "voice",
+    "title": "OpenAI API key",
+    "group_title": "Voice",
     "description": "OpenAI API key with Realtime access: the voice, unless `VOICE_BASE_URL` names a server of your own, and the voice model's `web_search`.",
     "source": "secrets.toml",
     "type": "string",
@@ -16,6 +18,8 @@
   {
     "key": "OPENAI_ADMIN_KEY",
     "group": "voice",
+    "title": "OpenAI admin key",
+    "group_title": "Voice",
     "description": "An OpenAI admin key, for `check_billing`'s read of the organization's costs.",
     "source": "default",
     "type": "string",
@@ -30,6 +34,8 @@
   {
     "key": "ASSISTANT_NAME",
     "group": "voice",
+    "title": "Assistant name",
+    "group_title": "Voice",
     "description": "What the assistant on the phone is called: the name it answers to and introduces itself by.",
     "source": "default",
     "type": "string",
@@ -44,6 +50,8 @@
   {
     "key": "VAD_MODE",
     "group": "voice",
+    "title": "End-of-turn detection",
+    "group_title": "Voice",
     "description": "How the assistant decides you have finished: `semantic` waits on whether the sentence sounds finished; `server` is a plain silence timer.",
     "source": "default",
     "type": "choice",
@@ -58,6 +66,8 @@
   {
     "key": "VAD_SILENCE_MS",
     "group": "voice",
+    "title": "Silence before a turn ends (ms)",
+    "group_title": "Voice",
     "description": "Server mode only: the silence, in milliseconds, that ends a turn.",
     "source": "default",
     "type": "int",
@@ -72,6 +82,8 @@
   {
     "key": "VAD_THRESHOLD",
     "group": "voice",
+    "title": "Speech threshold",
+    "group_title": "Voice",
     "description": "Server mode only: how loud counts as speech (0 to 1).",
     "source": "default",
     "type": "float",
@@ -86,6 +98,8 @@
   {
     "key": "AGENT_BACKEND",
     "group": "agents",
+    "title": "Default coding agent",
+    "group_title": "Coding agents",
     "description": "The coding agent a task runs on when nobody names one out loud.",
     "source": "config.toml",
     "type": "choice",
@@ -100,6 +114,8 @@
   {
     "key": "AGENTS_ENABLED",
     "group": "agents",
+    "title": "Agents the voice may use",
+    "group_title": "Coding agents",
     "description": "Every agent a task may be sent to, comma-separated; blank is `AGENT_BACKEND` alone.",
     "source": "config.toml",
     "type": "list",
@@ -114,6 +130,8 @@
   {
     "key": "SUBAGENT_TIMEOUT_S",
     "group": "agents",
+    "title": "Longest agent run (seconds)",
+    "group_title": "Coding agents",
     "description": "The longest one subagent run may take, on any agent, in seconds; 0 is no limit.",
     "source": "default",
     "type": "int",
@@ -128,6 +146,8 @@
   {
     "key": "DATA_DIR",
     "group": "storage",
+    "title": "Data folder",
+    "group_title": "Storage",
     "description": "Where `tasks.db`, transcripts, the memory and the owner's own tools live.",
     "source": "default",
     "type": "path",
@@ -142,6 +162,8 @@
   {
     "key": "PUBLIC_HOST",
     "group": "phone",
+    "title": "Public hostname",
+    "group_title": "Phone",
     "description": "The hostname Twilio reaches this machine on, through the tunnel.",
     "source": "environment",
     "type": "string",
@@ -156,6 +178,8 @@
   {
     "key": "SMS_ENABLED",
     "group": "phone",
+    "title": "Text messages",
+    "group_title": "Phone",
     "description": "Keryx does not text unless this is on; many accounts lack SMS permission for their region.",
     "source": "default",
     "type": "bool",
@@ -170,6 +194,8 @@
   {
     "key": "OWNER_NUMBER",
     "group": "phone",
+    "title": "Your phone number",
+    "group_title": "Phone",
     "description": "The phone Keryx dials first, and whose own calls confer possession.",
     "source": "config.toml",
     "type": "string",
@@ -184,6 +210,8 @@
   {
     "key": "LLM_SERVER_PORT",
     "group": "local",
+    "title": "Model server port",
+    "group_title": "Local and self-hosted models",
     "description": "The port the local LLM server listens on.",
     "source": "config.toml",
     "type": "int",
@@ -198,6 +226,8 @@
   {
     "key": "LLM_SERVER_MODEL",
     "group": "local",
+    "title": "Model server model file",
+    "group_title": "Local and self-hosted models",
     "description": "The model file the local LLM server was started with.",
     "source": "default",
     "type": "string",
@@ -212,6 +242,8 @@
   {
     "key": "APPROVAL_MAX_PER_HOUR",
     "group": "approvals",
+    "title": "Approval calls per hour",
+    "group_title": "Approval calls",
     "description": "The most escalation calls the approval bridge will place in an hour.",
     "source": "default",
     "type": "int",
@@ -226,6 +258,8 @@
   {
     "key": "APPROVAL_ESCALATE_SECONDS",
     "group": "approvals",
+    "title": "Wait before an approval call (seconds)",
+    "group_title": "Approval calls",
     "description": "How long a pending prompt waits at the keyboard before Keryx rings the owner.",
     "source": "default",
     "type": "float",

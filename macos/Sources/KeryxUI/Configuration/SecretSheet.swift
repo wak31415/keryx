@@ -6,6 +6,8 @@ import SwiftUI
 /// cleared whenever the sheet goes away, saved or not.
 struct SecretSheet: View {
     let key: String
+    /// The setting's name for a person ("OpenAI API key").
+    let title: String
     let description: String
     /// The secret is already set, so saving replaces it.
     let replacing: Bool
@@ -16,13 +18,14 @@ struct SecretSheet: View {
     @State private var saving = false
     @State private var error: KeryxError?
 
-    init(key: String, description: String, replacing: Bool) {
-        self.init(key: key, description: description, replacing: replacing, typed: "")
+    init(key: String, title: String, description: String, replacing: Bool) {
+        self.init(key: key, title: title, description: description, replacing: replacing, typed: "")
     }
 
     /// `typed`: what the field starts holding — the catalog's dots, never a real secret.
-    init(key: String, description: String, replacing: Bool, typed: String) {
+    init(key: String, title: String, description: String, replacing: Bool, typed: String) {
         self.key = key
+        self.title = title
         self.description = description
         self.replacing = replacing
         _value = State(initialValue: typed)
@@ -31,7 +34,7 @@ struct SecretSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(replacing ? "Change \(key)" : "Set \(key)")
+                Text(replacing ? "Change \(title)" : "Set \(title)")
                     .font(.headline)
                 Text(ConfigWording.description(description))
                     .font(.callout)
@@ -47,7 +50,7 @@ struct SecretSheet: View {
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         if let error {
-                            Text(error.message)
+                            Text(ConfigWording.errorText(error.message, key: key, title: title))
                                 .foregroundStyle(.red)
                                 .textSelection(.enabled)
                         }

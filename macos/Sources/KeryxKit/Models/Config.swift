@@ -2,9 +2,15 @@ import Foundation
 
 /// One row of `keryx config list --json`. `value` is `nil` for a secret, whether set or not
 /// — `config list` never prints one — and for anything unset with no default.
+///
+/// `title` and `groupTitle` are the names a person reads ("OpenAI API key", "Local and
+/// self-hosted models"); a CLI older than them omits both, so they are optional and the
+/// `display…` properties fall back to the key and to this build's own group titles.
 public struct ConfigRow: Codable, Sendable, Equatable, Identifiable {
     public var key: String
     public var group: String
+    public var title: String?
+    public var groupTitle: String?
     public var description: String
     public var source: String
     public var type: String
@@ -17,6 +23,38 @@ public struct ConfigRow: Codable, Sendable, Equatable, Identifiable {
     public var choices: [String]?
 
     public var id: String { key }
+
+    /// What the setting is called on screen: the CLI's title, else the key itself.
+    public var displayTitle: String {
+        guard let title, !title.isEmpty else { return key }
+        return title
+    }
+
+    /// The section the setting is shown in: the CLI's group title, else `title(ofGroup:)`.
+    public var displayGroupTitle: String {
+        guard let groupTitle, !groupTitle.isEmpty else { return Self.title(ofGroup: group) }
+        return groupTitle
+    }
+
+    /// A group's title for a CLI that does not name it; a group this build does not know is
+    /// shown as the CLI names it, capitalised.
+    public static func title(ofGroup group: String) -> String {
+        switch group {
+        case "voice": "Voice"
+        case "agents": "Coding Agents"
+        case "local": "Local Models"
+        case "phone": "Phone"
+        case "owner": "You"
+        case "projects": "Projects"
+        case "limits": "Limits"
+        case "approvals": "Approvals"
+        case "plugins": "Plugins"
+        case "google": "Google"
+        case "service": "Service"
+        case "debug": "Debugging"
+        default: group.prefix(1).uppercased() + group.dropFirst()
+        }
+    }
 }
 
 /// A setting's value, or any other loosely-typed JSON the CLI hands back (`UseResult.saved`,

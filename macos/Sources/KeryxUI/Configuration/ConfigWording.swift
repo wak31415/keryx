@@ -9,27 +9,13 @@ enum ConfigWording {
         let rows: [ConfigRow]
 
         var id: String { group }
-        var title: String { ConfigWording.title(ofGroup: group) }
+        /// The CLI's title for the group, from its first row, else this build's own.
+        var title: String { rows.first?.displayGroupTitle ?? ConfigWording.title(ofGroup: group) }
     }
 
-    /// The section title for a settings group; one this build does not know is shown as the
-    /// CLI names it, capitalised.
+    /// A group's title when the CLI does not name it (an older CLI).
     static func title(ofGroup group: String) -> String {
-        switch group {
-        case "voice": "Voice"
-        case "agents": "Coding Agents"
-        case "local": "Local Models"
-        case "phone": "Phone"
-        case "owner": "You"
-        case "projects": "Projects"
-        case "limits": "Limits"
-        case "approvals": "Approvals"
-        case "plugins": "Plugins"
-        case "google": "Google"
-        case "service": "Service"
-        case "debug": "Debugging"
-        default: Wording.capitalised(group)
-        }
+        ConfigRow.title(ofGroup: group)
     }
 
     /// The rows by group, each group where `config list` first names it.
@@ -43,13 +29,15 @@ enum ConfigWording {
         return order.map { Group(group: $0, rows: byGroup[$0] ?? []) }
     }
 
-    /// The rows whose key or description contains `query`, ignoring case; every row for a
-    /// blank query.
+    /// The rows whose title, key or description contains `query`, ignoring case; every row
+    /// for a blank query.
     static func filter(_ rows: [ConfigRow], by query: String) -> [ConfigRow] {
         let query = query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return rows }
         return rows.filter {
-            $0.key.localizedCaseInsensitiveContains(query) || $0.description.localizedCaseInsensitiveContains(query)
+            $0.displayTitle.localizedCaseInsensitiveContains(query)
+                || $0.key.localizedCaseInsensitiveContains(query)
+                || $0.description.localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -69,7 +57,23 @@ enum ConfigWording {
         row.source == "environment"
     }
 
-    static let environmentHelp = "Set in the environment, which wins over the store"
+    /// Why a row is read-only, naming the setting and the variable to unset.
+    static func environmentHelp(_ row: ConfigRow) -> String {
+        "\(row.displayTitle) is set in the environment as \(row.key), which wins over the store"
+    }
+
+    /// The CLI's sentence for a refused write, with the setting it opens on ("VAD_SILENCE_MS
+    /// Input should be…") named by its title instead: "Silence before a turn ends (ms): input
+    /// should be…". Any other sentence is shown as the CLI wrote it.
+    static func errorText(_ message: String, for row: ConfigRow) -> String {
+        errorText(message, key: row.key, title: row.displayTitle)
+    }
+
+    static func errorText(_ message: String, key: String, title: String) -> String {
+        guard title != key, message.hasPrefix(key + " ") else { return message }
+        let rest = message.dropFirst(key.count + 1)
+        return "\(title): " + rest.prefix(1).lowercased() + rest.dropFirst()
+    }
 
     /// A value as the owner types it back: a list comma-separated (the CLI splits on commas
     /// and trims), a whole number without `.0`, nothing for no value.

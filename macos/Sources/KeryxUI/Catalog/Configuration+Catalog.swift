@@ -24,7 +24,7 @@ extension ScreenCatalog {
                 ConfigurationView().environment(needsRestartModel)
             },
             Entry("configuration-secret-sheet", size: CGSize(width: 460, height: 250)) {
-                SecretSheet(key: "OPENAI_API_KEY", description: PreviewData.config[0].description,
+                SecretSheet(key: secretRow.key, title: secretRow.displayTitle, description: secretRow.description,
                             replacing: true, typed: "preview-dots-only")
                     .environment(AppModel.preview())
             },
@@ -32,6 +32,11 @@ extension ScreenCatalog {
                 RootView().environment(windowModel)
             },
         ]
+    }
+
+    /// The fixture's set secret, OPENAI_API_KEY.
+    private static var secretRow: ConfigRow {
+        PreviewData.config.first { $0.secret && $0.set } ?? PreviewData.config[0]
     }
 
     /// What `keryx config set VAD_SILENCE_MS 12oo` says.
