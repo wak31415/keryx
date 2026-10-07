@@ -1243,34 +1243,57 @@ def test_durations_are_spoken_not_printed(seconds, expected):
     assert format_duration(seconds) == expected
 
 
-def test_health_probe_reads_the_live_session_count(monkeypatch):
-    payload = b'{"ok": true, "live_sessions": 2}'
-    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen(payload))
+@pytest.fixture
+def loopback_http(monkeypatch):
+    """urllib's HTTP handler, faked: each request it is handed is recorded and answered with
+    `answer` (bytes for a 200, or an exception to raise), so nothing leaves the process.
+    A proxy is in the environment, as on a machine behind one."""
+    import io
+    import urllib.request
+    import urllib.response
+    from email.message import Message
+
+    monkeypatch.setenv("http_proxy", "http://proxy.example.com:3128")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.com:3128")
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.setattr(urllib.request, "_opener", None)  # no opener built before the proxy
+    seen = SimpleNamespace(requests=[], answer=b"{}")
+
+    def http_open(self, request):
+        seen.requests.append(request)
+        if isinstance(seen.answer, Exception):
+            raise seen.answer
+        response = urllib.response.addinfourl(
+            io.BytesIO(seen.answer), Message(), request.full_url, code=200
+        )
+        response.msg = "OK"
+        return response
+
+    monkeypatch.setattr(urllib.request.HTTPHandler, "http_open", http_open)
+    return seen
+
+
+def test_health_probe_reads_the_live_session_count(loopback_http):
+    loopback_http.answer = b'{"ok": true, "live_sessions": 2}'
 
     assert health_probe(Settings(_env_file=None, openai_api_key="t")) == 2
 
 
-def test_health_probe_of_a_service_that_is_not_running(monkeypatch):
-    def refuse(*args, **kwargs):
-        raise OSError("connection refused")
-
-    monkeypatch.setattr("urllib.request.urlopen", refuse)
+def test_health_probe_of_a_service_that_is_not_running(loopback_http):
+    loopback_http.answer = OSError("connection refused")
 
     assert health_probe(Settings(_env_file=None, openai_api_key="t")) is None
 
 
-def _fake_urlopen(payload: bytes):
-    class Response:
-        def __enter__(self):
-            return self
+def test_health_probe_never_goes_through_a_proxy(loopback_http):
+    """A proxy would carry the localhost GET off the machine, and its answer is not ours."""
+    settings = Settings(_env_file=None, openai_api_key="t", host="127.0.0.1", port=8080)
+    loopback_http.answer = b'{"live_sessions": 0}'
 
-        def __exit__(self, *args):
-            return False
-
-        def read(self):
-            return payload
-
-    return lambda *args, **kwargs: Response()
+    assert health_probe(settings) == 0
+    [request] = loopback_http.requests
+    assert request.host == "127.0.0.1:8080" and not request.has_proxy()
 
 
 async def test_wait_until_serving_gives_up(monkeypatch):
@@ -1776,6 +1799,24 @@ def test_startup_marks_of_the_wrong_shape_read_back_as_none(tmp_path):
     (tmp_path / "startup-log-marks.json").write_text('["a list"]')
 
     assert startup_log_marks(tmp_path) is None
+
+
+def test_git_takes_no_optional_lock_on_the_checkout(tmp_path, monkeypatch):
+    """`git describe --dirty` refreshes the index, which takes `index.lock` — a polled
+    status must not collide with the owner's own `git commit` in the same checkout."""
+    monkeypatch.setenv("KERYX_TEST_MARKER", "kept")
+    asked: list[dict] = []
+
+    def run(argv, **kwargs):
+        asked.append(kwargs)
+        return SimpleNamespace(returncode=0, stdout="v0.1.0-3-g1ad6420\n")
+
+    monkeypatch.setattr("keryx.restart.version.subprocess.run", run)
+
+    assert current_version(tmp_path) == "v0.1.0-3-g1ad6420"
+    [kwargs] = asked
+    assert kwargs["env"]["GIT_OPTIONAL_LOCKS"] == "0"
+    assert kwargs["env"]["KERYX_TEST_MARKER"] == "kept"  # the rest of the environment stays
 
 
 def test_git_that_is_not_there_is_no_version_rather_than_an_error(tmp_path, monkeypatch):

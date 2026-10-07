@@ -33,14 +33,17 @@ def health_probe(settings: Settings, *, timeout: float = 2.0) -> int | None:
 
     Used by `keryx restart` from *outside* the process: the answer is what decides whether
     a restart would cut somebody off mid-call. `urllib` rather than a client library —
-    this is one GET against localhost, on a machine that may be half-broken.
+    this is one GET against localhost, on a machine that may be half-broken. Never through
+    a proxy (`ProxyHandler({})`): `HTTP_PROXY` or the system's would carry it off the
+    machine, and whatever answered there is not this Keryx.
     """
     import urllib.error
     import urllib.request
 
     url = f"http://{settings.host}:{settings.port}/health"
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - localhost
+        with direct.open(url, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (OSError, urllib.error.URLError, json.JSONDecodeError, ValueError):
         return None

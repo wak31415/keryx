@@ -17,6 +17,7 @@ All of it is decoration in the sense that nothing here is allowed to fail a rest
 
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -34,7 +35,12 @@ GIT_TIMEOUT_S = 2.0
 
 
 def current_version(repo: Path | None = None) -> str | None:
-    """`git describe` of the checkout we are running from — decoration, never required."""
+    """`git describe` of the checkout we are running from — decoration, never required.
+
+    `GIT_OPTIONAL_LOCKS=0`: `--dirty` refreshes the index, which takes `index.lock`, and
+    `keryx status` asks this as often as every ten seconds for the Mac app — a lock it held
+    would fail the owner's own `git commit` in the same checkout.
+    """
     root = repo or Path(__file__).resolve().parents[2]
     try:
         done = subprocess.run(
@@ -43,6 +49,7 @@ def current_version(repo: Path | None = None) -> str | None:
             text=True,
             timeout=GIT_TIMEOUT_S,
             check=False,
+            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
         )
     except (OSError, subprocess.SubprocessError):
         return None
