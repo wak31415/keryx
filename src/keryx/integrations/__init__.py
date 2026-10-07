@@ -9,6 +9,9 @@ voice tool: `web_search` behind a built-in (`tools/builtin_comms.py`), the rest 
 plugin (`keryx.plugins`), which is where the tool is built; this package is where the
 client lives.
 
+`accounts` is the one module that is not a client: the list of these accounts, connected
+or not, that `keryx integrations` prints for the Mac app.
+
 They share no code with each other — this is an address, not a module cluster. It is
 `integrations/` and not `services/` because `service` already means "the systemd unit" in
 this codebase (`SERVICE_MANAGER`, `restart/service.py`).

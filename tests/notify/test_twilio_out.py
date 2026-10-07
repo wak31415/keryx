@@ -300,3 +300,27 @@ def test_an_admin_failure_is_a_twilio_error_with_the_number_masked():
 
     assert "+15550001111" not in str(caught.value)
     assert mask_number("+15550001111") in str(caught.value)
+
+
+def test_an_admin_failure_keeps_what_twilio_answered_and_what_failed():
+    """So `keryx config verify` can tell a refused token from an unreachable Twilio without
+    reading the error's text."""
+    from twilio.base.exceptions import TwilioRestException
+
+    from keryx.notify.twilio_out import RestTwilioAdmin
+
+    def refused():
+        raise TwilioRestException(401, "https://api.twilio.com/x", msg="Authenticate")
+
+    def unreachable():
+        raise ConnectionError("down")
+
+    for fetch, status, cause in [(refused, 401, "TwilioRestException"),
+                                 (unreachable, None, "ConnectionError")]:
+        client = FakeAccountClient()
+        client.api = SimpleNamespace(accounts=lambda sid, f=fetch: SimpleNamespace(fetch=f))
+
+        with pytest.raises(TwilioError) as caught:
+            RestTwilioAdmin("AC1", "tok", client=client).account_name()
+
+        assert (caught.value.status, caught.value.cause) == (status, cause)

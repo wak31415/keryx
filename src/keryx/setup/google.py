@@ -111,6 +111,12 @@ NO_CLIENT = (
 )
 
 
+def credentials_dir(settings: Settings) -> Path:
+    """Where `workspace-mcp` keeps the sign-in `keryx auth login google-workspace` leaves:
+    its own directory, holding nothing else (`keryx auth logout` removes it whole)."""
+    return Path(google_mcp_server_config(settings)["env"]["GOOGLE_MCP_CREDENTIALS_DIR"])
+
+
 def run_google_setup(
     settings: Settings,
     *,
@@ -128,11 +134,11 @@ def run_google_setup(
     _require_oauth_client(settings)
 
     config = google_mcp_server_config(settings)
-    credentials_dir = Path(config["env"]["GOOGLE_MCP_CREDENTIALS_DIR"])
+    credentials = credentials_dir(settings)
     argv = [config["command"], *config["args"]]
 
     echo(INSTRUCTIONS)
-    echo(f"credentials will be stored under {credentials_dir}")
+    echo(f"credentials will be stored under {credentials}")
     log.info("starting %s for the google oauth flow", " ".join(argv))
 
     spawn = popen or subprocess.Popen
@@ -147,7 +153,7 @@ def run_google_setup(
     try:
         replies = _start_reader(process)
         deadline = time.monotonic() + timeout_s
-        before = _credentials_snapshot(credentials_dir)
+        before = _credentials_snapshot(credentials)
 
         _send(process, {"jsonrpc": "2.0", "id": _INITIALIZE_ID, "method": "initialize",
                         "params": {"protocolVersion": MCP_PROTOCOL_VERSION,
@@ -164,9 +170,9 @@ def run_google_setup(
         # receive the OAuth callback on localhost while the user signs in.
         if _looks_like_authorization(reply):
             echo(SIGN_IN_INSTRUCTIONS)
-            if not _wait_for_credentials(credentials_dir, before, deadline, sleep, echo):
+            if not _wait_for_credentials(credentials, before, deadline, sleep, echo):
                 raise GoogleSetupError(
-                    f"no new credentials appeared in {credentials_dir} within "
+                    f"no new credentials appeared in {credentials} within "
                     f"{timeout_s:.0f}s — the browser sign-in was not completed"
                 )
             echo("credentials written; checking the access they grant…")
@@ -176,7 +182,7 @@ def run_google_setup(
         if _is_failure(reply):
             raise GoogleSetupError(f"{PROBE_TOOL} failed: {' '.join(_reply_texts(reply))}")
 
-        echo(f"Google access is authorized; credentials are in {credentials_dir}")
+        echo(f"Google access is authorized; credentials are in {credentials}")
         return True
     finally:
         _stop(process)

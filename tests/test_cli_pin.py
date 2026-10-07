@@ -7,6 +7,7 @@ JSON and in every log record, on the paths that succeed and on the ones that ref
 
 import json
 import logging
+import re
 import stat
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ from keryx import cli, status
 from keryx.cli import app
 from keryx.config import Settings, pin_file, read_enrolled_pin, write_enrolled_pin
 from keryx.config.files import legacy_home
+from keryx.config.pin import PIN_PATTERN
 from keryx.pin_guard import PinGuard
 from keryx.restart.service import ServiceTarget
 
@@ -269,6 +271,22 @@ def test_a_pin_that_appears_meanwhile_is_never_overwritten(home, monkeypatch):
     assert read_enrolled_pin(home) == FIRST
 
 
+def test_a_first_write_that_fails_part_way_is_not_called_a_pin(home, monkeypatch):
+    """O_EXCL created the file and the write failed: what is left is no PIN."""
+    def partial(where, digits):
+        pin_file(where).parent.mkdir(parents=True, exist_ok=True)
+        pin_file(where).write_text(digits[:2])
+        return False
+
+    monkeypatch.setattr(cli.pin_flow, "write_enrolled_pin", partial)
+
+    result = run("set", "--stdin", "--json", input=twice(NEW))
+
+    assert result.exit_code == 1
+    assert "could not be written" in result.stderr
+    assert "already set" not in result.stderr
+
+
 def test_a_pin_that_cannot_be_written_says_so(home, monkeypatch):
     monkeypatch.setattr(cli.pin_flow, "write_enrolled_pin", lambda where, digits: False)
 
@@ -300,8 +318,28 @@ def test_a_pin_in_the_environment_wins_and_is_never_shadowed(home, logs, monkeyp
 
     assert result.exit_code == 1
     assert "environment" in result.stderr
+    assert variable in result.stderr  # the one actually set, so the owner knows what to remove
     assert not pin_file(home).exists()
     assert_silent_about(result, logs, FIRST, NEW)
+
+
+@pytest.mark.parametrize("variable", ["KERYX_PIN", "JARVIS_PIN"])
+def test_a_malformed_pin_in_the_environment_is_still_the_environments(
+    home, logs, monkeypatch, variable
+):
+    """`serve` refuses to start on it, so a file written beside it would be a PIN nothing
+    reads, reported as a success."""
+    monkeypatch.setenv(variable, "12345")
+
+    found = pin_status()
+    result = run("set", "--stdin", "--replace", "--json", input=twice(NEW))
+
+    assert found == {"set": False, "source": "environment", "enrolment_open": False,
+                     "locked": False, "locked_until": None}
+    assert result.exit_code == 1
+    assert variable in result.stderr
+    assert not pin_file(home).exists()
+    assert_silent_about(result, logs, NEW)
 
 
 def test_a_pin_still_in_jarvis_waits_for_the_migration(home, logs):
@@ -350,6 +388,31 @@ def test_the_service_is_refused_before_stdin_is_read(home, monkeypatch, capsys, 
     assert not pin_file(home).exists()
 
 
+class Terminal:
+    """A stdin that is a terminal, and fails the test if anything reads it."""
+
+    def isatty(self):
+        return True
+
+    def read(self, *args):
+        raise AssertionError("a PIN was read from a terminal")
+
+
+def test_a_pin_is_never_typed_into_a_terminal_that_echoes_it(home, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", Terminal())
+
+    with pytest.raises(typer.Exit) as refused:
+        cli.pin_set(stdin=True, replace=False, as_json=True)
+
+    assert refused.value.exit_code == 2
+    assert "keryx setup" in capsys.readouterr().err
+    assert not pin_file(home).exists()
+
+
+def test_a_crash_never_prints_the_locals_that_hold_the_digits():
+    assert cli.app.pretty_exceptions_show_locals is False
+
+
 def test_the_service_is_refused_through_the_command_line_too(home, monkeypatch, logs):
     monkeypatch.setenv("KERYX_ACTOR", "service")
 
@@ -368,9 +431,21 @@ def test_no_voice_tool_or_plugin_can_reach_the_setter():
                  source / "session.py", source / "server.py", source / "app.py"]
     for path in reachable:
         text = path.read_text()
-        for name in ("replace_pin_at_keyboard", "set_pin_at_keyboard", "setup.pin",
-                     "setup import pin"):
+        for name in ("replace_pin_at_keyboard", "write_enrolled_pin", "setup.pin"):
             assert name not in text, f"{path} names {name}"
+        for names in FROM_SETUP.findall(text):
+            assert "pin" not in re.findall(r"\w+", names), f"{path} imports keryx.setup.pin"
+
+
+#: `from keryx.setup import …`, on one line or in parentheses, and the names it imports.
+FROM_SETUP = re.compile(r"from\s+keryx\.setup\s+import\s+(\([^)]*\)|[^\n]*)")
+
+
+def test_the_reachability_check_sees_every_way_of_importing_the_setter():
+    for line in ("from keryx.setup import auth, pin",
+                 "from keryx.setup import (\n    auth,\n    pin as flow,\n)"):
+        assert "pin" in re.findall(r"\w+", FROM_SETUP.findall(line)[0])
+    assert "pin" not in re.findall(r"\w+", FROM_SETUP.findall("from keryx.setup import auth")[0])
 
 
 # --- restart_needed ---------------------------------------------------------------------------
@@ -445,6 +520,28 @@ def test_a_pin_still_in_jarvis_is_set_and_shuts_the_door(home):
     assert (found["set"], found["source"], found["enrolment_open"]) == (True, "jarvis", False)
 
 
+@pytest.mark.parametrize("variable", ["KERYX_PIN", "JARVIS_PIN"])
+def test_the_status_text_names_the_variable_actually_set(home, monkeypatch, variable):
+    monkeypatch.setenv(variable, FIRST)
+    usable = run().stdout
+    monkeypatch.setenv(variable, "12345")
+    malformed = run().stdout
+
+    assert f"set by {variable}" in usable
+    assert f"{variable} is set but isn't 6-8 digits" in malformed
+    assert "fix or remove it" in malformed
+    assert FIRST not in usable and "12345" not in malformed
+
+
+def test_a_malformed_environment_pin_is_no_pin_even_beside_a_good_file(home, monkeypatch):
+    write_enrolled_pin(home, FIRST)
+    monkeypatch.setenv("KERYX_PIN", "12345")
+
+    found = pin_status()
+
+    assert (found["set"], found["source"], found["enrolment_open"]) == (False, "environment", False)
+
+
 def test_the_status_text_names_the_state(home):
     write_enrolled_pin(home, FIRST)
 
@@ -460,6 +557,10 @@ def test_the_status_text_says_when_there_is_none(home):
     pin_file(home).parent.mkdir(parents=True, exist_ok=True)
     pin_file(home).write_text("oops\n")
     assert "none usable" in run().stdout
+
+
+def test_digits_no_keypad_has_are_no_pin_in_a_file_either():
+    assert PIN_PATTERN.fullmatch("\u0664\u0668\u0662\u0669\u0661\u0665") is None
 
 
 def lock_pin_entry() -> PinGuard:

@@ -28,7 +28,18 @@ log = logging.getLogger("keryx.notify.twilio_out")
 
 
 class TwilioError(RuntimeError):
-    """A Twilio REST call that failed, in words that carry no phone number."""
+    """A Twilio REST call that failed, in words that carry no phone number.
+
+    `status` is the HTTP status Twilio answered with, when it answered; `cause` the failed
+    call's exception type. Both let a caller say what went wrong without the text, which
+    can quote a request back.
+    """
+
+    def __init__(self, message: str = "", *, status: int | None = None,
+                 cause: str | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+        self.cause = cause
 
 
 def _without_numbers(text: str, number: str) -> str:
@@ -36,6 +47,16 @@ def _without_numbers(text: str, number: str) -> str:
     if number:
         text = text.replace(number, mask_number(number))
     return mask_numbers(text)
+
+
+def _admin_error(error: Exception) -> TwilioError:
+    """`error`, from an account call, as a `TwilioError`: reworded, with what it answered."""
+    status = getattr(error, "status", None)
+    return TwilioError(
+        _without_numbers(str(error), ""),
+        status=status if isinstance(status, int) else None,
+        cause=type(error).__name__,
+    )
 
 
 def stream_twiml(public_host: str, params: dict[str, str]) -> str:
@@ -163,13 +184,13 @@ class RestTwilioAdmin:
         try:
             return str(self._client.api.accounts(self._sid).fetch().friendly_name)
         except Exception as error:
-            raise TwilioError(_without_numbers(str(error), "")) from None
+            raise _admin_error(error) from None
 
     def numbers(self) -> list[TwilioNumber]:
         try:
             listed = self._client.incoming_phone_numbers.list(limit=50)
         except Exception as error:
-            raise TwilioError(_without_numbers(str(error), "")) from None
+            raise _admin_error(error) from None
         return [
             TwilioNumber(
                 sid=number.sid,
@@ -189,4 +210,4 @@ class RestTwilioAdmin:
                 status_callback_method="POST",
             )
         except Exception as error:
-            raise TwilioError(_without_numbers(str(error), "")) from None
+            raise _admin_error(error) from None

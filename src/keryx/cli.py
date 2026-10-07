@@ -44,6 +44,7 @@ from keryx.config import (
     secure_dir,
     secure_file,
 )
+from keryx.config import verify as credentials
 from keryx.config.files import HOME_ENV, XDG_HOMES, claude_config_dir, xdg_home
 from keryx.config.migrate import MigrationError, make_plan, old_target, retire_old_units
 from keryx.config.migrate import Report as MigrationReport
@@ -51,7 +52,7 @@ from keryx.config.migrate import Service as MigratingService
 from keryx.config.migrate import run as run_migration
 from keryx.config.options import has_options, options_for
 from keryx.config.permissions import ACTOR_ENVS, SERVICE, current_actor
-from keryx.config.pin import pin_file
+from keryx.config.pin import pin_file, read_enrolled_pin
 from keryx.config.settings import ConfigFileError, tolerate_broken_files
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
 from keryx.continuity.memory import memory_document, memory_path, read_memory
@@ -65,6 +66,7 @@ from keryx.doctor import (
     run_doctor_checks,
 )
 from keryx.events import EventBus
+from keryx.integrations import accounts
 from keryx.localmodels import (
     catalog,
     download,
@@ -116,7 +118,8 @@ from keryx.tools.builtin import BUILTIN_TOOL_NAMES
 from keryx.tools.custom import load_custom_tools
 from keryx.transports.wav import WavTransport
 
-app = typer.Typer(help="Keryx voice agent.")
+# No locals in a crash: `pin set` holds the digits in one.
+app = typer.Typer(help="Keryx voice agent.", pretty_exceptions_show_locals=False)
 tasks_app = typer.Typer(help="Inspect the tasks handed to subagents.")
 app.add_typer(tasks_app, name="tasks")
 config_app = typer.Typer(
@@ -1075,11 +1078,16 @@ def tools_command(
 
 # --- plugins ---------------------------------------------------------------
 
+PLUGINS_JSON_HELP = (
+    "Print one JSON document; each plugin also says whether it is `ready` — would work on a "
+    "call once turned on (`on` says whether it is) — and `why` not."
+)
+
 
 @plugins_app.callback(invoke_without_command=True)
 def plugins_command(
     ctx: typer.Context,
-    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+    as_json: Annotated[bool, typer.Option("--json", help=PLUGINS_JSON_HELP)] = False,
 ) -> None:
     """List the plugins: on or off, their two files, and why one is refused."""
     if ctx.invoked_subcommand is None:
@@ -1575,15 +1583,23 @@ def _install_units(
 
 @plugins_app.command("list")
 def plugins_list(
-    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+    as_json: Annotated[bool, typer.Option("--json", help=PLUGINS_JSON_HELP)] = False,
 ) -> None:
-    """List the plugins: on or off, their two files, and why one is refused."""
+    """List the plugins: on or off, their two files, and why one is refused.
+
+    `--json` also describes each for the Mac app: its settings as typed fields, the
+    accounts it needs, and `ready` — whether it would work on a call once turned on, which
+    the app reads beside `on` — with `why` when it would not.
+    """
     settings = _configure_readonly()
     found = plugins.status(settings)
     if as_json:
+        needed = dict.fromkeys(name for spec in plugins.PLUGINS.values() for name in spec.needs)
+        connected = accounts.connected(settings, needed)
         typer.echo(json.dumps({
             "directory": str(settings.custom_tools_dir),
-            "plugins": [status.as_dict() for status in found],
+            "plugins": [status.as_dict() | plugins.describe(status, connected)
+                        for status in found],
         }, indent=2))
         return
     typer.echo(f"# {settings.custom_tools_dir}")
@@ -1650,6 +1666,9 @@ def plugins_install(
         typer.Option("--template", help="Write its settings file and a draft to edit, and "
                      "leave it off until `keryx plugins install NAME`."),
     ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print {name, on, message} and nothing else.")
+    ] = False,
 ) -> None:
     """Turn a plugin on, from its settings file, the values given here, or the old settings.
 
@@ -1659,6 +1678,9 @@ def plugins_install(
     """
     _owner_only("install a plugin")
     settings = _configure_readonly()
+    if as_json and from_settings:
+        typer.echo("--json is for one plugin, and --from-settings may move several", err=True)
+        raise typer.Exit(2)
     try:
         if from_settings:
             names = None if name is None else [plugins.plugin(name).name]
@@ -1675,18 +1697,14 @@ def plugins_install(
             typer.echo("which plugin? (`keryx plugins`)", err=True)
             raise typer.Exit(2)
         spec = plugins.plugin(name)
-        values = plugins.command_line_values(name, assignments or [])
-        if (clusters or guard is not None) and name != "cluster_stats":
-            raise plugins.PluginConfigError("--cluster and --guard are for cluster_stats")
-        if clusters:
-            values["clusters"] = dict(
-                plugins.parse_assignment(text, what="ALIAS=PARTITION") for text in clusters
-            )
-        if guard is not None:
-            values["guard"] = guard
+        values = _plugin_values(name, assignments, clusters, guard)
         if template:
             path = plugins.write_template(settings, name, values)
-            typer.echo(f"edit {path}, then `keryx plugins install {name}`")
+            if as_json:
+                _echo_plugin_json(name, False, f"{spec.title} stays off: its settings file "
+                                  "and a draft are written to finish by hand.")
+            else:
+                typer.echo(f"edit {path}, then `keryx plugins install {name}`")
             return
         if values:
             plugins.write_config(settings, name, values)
@@ -1694,7 +1712,40 @@ def plugins_install(
     except plugins.PluginConfigError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
-    _echo_plugin_states(settings, [name])
+    if not as_json:
+        _echo_plugin_states(settings, [name])
+        return
+    status = _plugin_status(settings, name)
+    if not status.on:
+        typer.echo(f"{name} is installed but refused: {status.refused}", err=True)
+        raise typer.Exit(1)
+    _echo_plugin_json(name, True, f"{spec.title} is on from the next call.")
+
+
+def _plugin_values(
+    name: str, assignments: list[str] | None, clusters: list[str] | None, guard: str | None
+) -> dict[str, Any]:
+    """`--set KEY=VALUE`, `--cluster` and `--guard` for plugin `name`, validated as install
+    validates them; a `PluginConfigError` says what is wrong."""
+    values = plugins.command_line_values(name, assignments or [])
+    if (clusters or guard is not None) and name != "cluster_stats":
+        raise plugins.PluginConfigError("--cluster and --guard are for cluster_stats")
+    if clusters:
+        values["clusters"] = dict(
+            plugins.parse_assignment(text, what="ALIAS=PARTITION") for text in clusters
+        )
+    if guard is not None:
+        values["guard"] = guard
+    return values
+
+
+def _plugin_status(settings: Settings, name: str) -> plugins.Status:
+    """The plugin as the next call would load it."""
+    return next(status for status in plugins.status(settings) if status.name == name)
+
+
+def _echo_plugin_json(name: str, on: bool, message: str) -> None:
+    typer.echo(json.dumps({"name": name, "on": on, "message": message}, indent=2))
 
 
 def _echo_plugin_states(settings: Settings, names: list[str]) -> None:
@@ -1716,22 +1767,67 @@ def _echo_plugin_states(settings: Settings, names: list[str]) -> None:
 def plugins_remove(
     name: Annotated[str, typer.Argument(help="The plugin.")],
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask first.")] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print {name, on, message}; asks nothing first.")
+    ] = False,
 ) -> None:
     """Turn a plugin off. Its settings are set aside, so turning it on again keeps them."""
     _owner_only("remove a plugin")
     settings = _configure_readonly()
     try:
-        plugins.plugin(name)
+        spec = plugins.plugin(name)
     except plugins.PluginConfigError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
-    if not yes:
+    if not (yes or as_json):  # the app asks before it runs this
         typer.confirm(f"turn {name} off?", abort=True)
-    if plugins.remove(settings, name):
+    was_on = plugins.remove(settings, name)
+    if as_json:
+        _echo_plugin_json(name, False, f"{spec.title} is off from the next call; its "
+                          "settings are kept." if was_on else f"{spec.title} was not on.")
+    elif was_on:
         typer.echo(f"{name} is off from the next call; its settings are kept in "
                    f"{plugins.off_path(settings, name)}")
     else:
         typer.echo(f"{name} was not on")
+
+
+@plugins_app.command("set")
+def plugins_set(
+    name: Annotated[str, typer.Argument(help="The plugin, which must be installed.")],
+    assignments: Annotated[
+        list[str] | None, typer.Argument(help="KEY=VALUE for one of its settings; several.")
+    ] = None,
+    clusters: Annotated[
+        list[str] | None,
+        typer.Option("--cluster", help="cluster_stats: ALIAS=PARTITION, the whole [clusters] "
+                     "table; repeat for more."),
+    ] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print {name, on, message} and nothing else.")
+    ] = False,
+) -> None:
+    """Change an installed plugin's settings in its file, validated as install validates
+    them. Nothing is reinstalled; a secret is never taken here. From the next call."""
+    _owner_only("change a plugin's settings")
+    settings = _configure_readonly()
+    try:
+        spec = plugins.plugin(name)
+        if not (assignments or clusters):
+            typer.echo(f"give KEY=VALUE for one of {name}'s settings", err=True)
+            raise typer.Exit(2)
+        plugins.change(settings, name, _plugin_values(name, assignments, clusters, None))
+    except plugins.PluginConfigError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+    status = _plugin_status(settings, name)
+    if not as_json:
+        typer.echo(f"{name}: settings saved" + (
+            "" if status.on else f"; it does not load: {status.refused}"))
+        return
+    why = None if status.on else plugins.describe(
+        status, accounts.connected(settings, spec.needs))["why"]
+    _echo_plugin_json(name, status.on, "Settings saved." + (f" {why}" if why else ""))
 
 
 @app.command()
@@ -1929,6 +2025,9 @@ def pin_set(
     if not stdin:
         typer.echo("the PIN is read from stdin only, never the command line: --stdin", err=True)
         raise typer.Exit(2)
+    if sys.stdin.isatty():  # typed there, the digits would stay on the screen and in scrollback
+        typer.echo(pin_flow.TERMINAL, err=True)
+        raise typer.Exit(2)
     text = sys.stdin.read()
     settings = _pin_settings()
     if refusal := pin_flow.set_refusal(settings, replace=replace):
@@ -1946,7 +2045,9 @@ def pin_set(
         written = False
     if not written:
         typer.echo(
-            pin_flow.ALREADY_SET if path.exists() and not replacing
+            # A first write that failed after its O_EXCL create leaves no PIN, just a file.
+            pin_flow.ALREADY_SET
+            if not replacing and read_enrolled_pin(settings.config_dir) is not None
             else pin_flow.NOT_WRITTEN.format(path=path),
             err=True,
         )
@@ -2180,6 +2281,47 @@ def config_options(
         value = option.value or '""'  # blank is a value too: OPENAI_VOICE's own voice
         detail = f" ({option.detail})" if option.detail else ""
         typer.echo(f"{value}  {option.label}{detail}")
+
+
+@config_app.command("verify")
+def config_verify(
+    key: Annotated[str, typer.Argument(help="The key or credential to check, by name.")],
+    stdin: Annotated[
+        bool,
+        typer.Option("--stdin", help="Check the value on standard input (one line), unsaved."),
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+) -> None:
+    """Check that a key or credential works, and save nothing.
+
+    OPENAI_API_KEY, CODEX_API_KEY (an OpenAI key) and ANTHROPIC_API_KEY are asked for their
+    provider's list of models. TWILIO_AUTH_TOKEN is checked with the saved TWILIO_ACCOUNT_SID,
+    and names the account: save the SID first, since it is not checked on its own. With
+    --stdin the value given is checked and not saved (`keryx config set KEY --stdin` saves
+    it); without, the saved one. A key that does not work is still a result (exit 0); a key
+    that cannot be checked exits 2. No key is ever printed.
+    """
+    key = _key_or_exit(key)
+    if not credentials.can_verify(key):
+        hint = "; TWILIO_AUTH_TOKEN checks it with its token" if key == "TWILIO_ACCOUNT_SID" else ""
+        supported = ", ".join(credentials.SUPPORTED)
+        typer.echo(f"{key} can't be checked{hint} (only {supported})", err=True)
+        raise typer.Exit(2)
+    value = _read_secret_line(key) if stdin else None
+    result = credentials.verify(key, value, _load_settings_optional())
+    if as_json:
+        typer.echo(json.dumps(result.as_dict(), indent=2))
+    elif result.ok:
+        typer.echo(f"{key} works" + (f" ({result.detail})" if result.detail else ""))
+    else:
+        typer.echo(f"{key} does not work: {result.problem}")
+
+
+def _read_secret_line(key: str) -> str:
+    """One line of standard input, without its newline (a hidden prompt at a terminal)."""
+    if sys.stdin.isatty():
+        return typer.prompt(key, hide_input=True).strip()
+    return sys.stdin.readline().strip()
 
 
 def _read_secret_input(key: str) -> str:
@@ -2566,6 +2708,52 @@ def auth_status_command(
             typer.echo(f"{name:<{width}}  {state:<8}  {entry['detail']}")
     if any(entry["state"] == "failed" for entry in report.values()):
         raise typer.Exit(1)
+
+
+@auth_app.command("logout")
+def auth_logout(
+    name: Annotated[str, typer.Argument(help="gmail or google-workspace.")],
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+) -> None:
+    """Sign out of Gmail or Google for agents: the tokens that sign-in stored go.
+
+    The OAuth client file stays (it is configuration, and the two share it), and so does
+    the other sign-in. The settings that turn them on are `keryx config unset`'s.
+    """
+    _owner_only("sign out")
+    if name not in auth_flow.LOGOUTS:
+        typer.echo(f"sign out of one of: {', '.join(auth_flow.LOGOUTS)}", err=True)
+        raise typer.Exit(2)
+    settings = _configure_readonly()
+    removed = auth_flow.logout(name, settings)
+    title = next(one.title for one in accounts.INTEGRATIONS.values() if one.signin == name)
+    message = (
+        f"Signed out of {title}: its stored sign-in was removed." if removed
+        else f"{title} was not signed in; there was nothing to remove."
+    )
+    if as_json:
+        typer.echo(json.dumps({"name": name, "signed_in": False, "message": message}, indent=2))
+    else:
+        typer.echo(message)
+
+
+@app.command("integrations")
+def integrations_command(
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+) -> None:
+    """The accounts Keryx connects to — Google, Gmail, Slack, GitHub, the admin keys — and
+    whether each is connected. Only reads; a secret's value is never shown."""
+    settings = _configure_readonly()
+    found = accounts.integrations(settings)
+    if as_json:
+        typer.echo(json.dumps({"integrations": found}, indent=2))
+        return
+    width = max(len(row["id"]) for row in found)
+    for row in found:
+        state = "connected" if row["connected"] else "not connected"
+        typer.echo(f"{row['id']:<{width}}  {state:<13}  {row['title']}")
+        if row["why"]:
+            typer.echo(f"{'':<{width}}  {row['why']}")
 
 
 # --- approvals -------------------------------------------------------------

@@ -197,6 +197,45 @@ def test_a_pin_in_the_environment_is_never_touched(make_ctx, monkeypatch):
     assert not pin_file(ctx.settings.config_dir).exists()
 
 
+@pytest.mark.parametrize("variable", ["KERYX_PIN", "JARVIS_PIN"])
+def test_the_pin_step_names_the_variable_actually_set(make_ctx, monkeypatch, variable):
+    monkeypatch.setenv(variable, "482915")
+    ctx = make_ctx([], review=True)
+
+    sections.run_pin(ctx)
+
+    assert any(f"set by {variable}" in line for line in ctx.ui.lines("success"))
+
+
+def test_a_malformed_pin_in_the_environment_is_called_unusable(make_ctx, monkeypatch):
+    monkeypatch.setenv("JARVIS_PIN", "12345")
+    ctx = make_ctx([], review=True)
+    # The wizard's loader gives up on the field (`DOCTOR_FALLBACKS`); so does this one.
+    ctx.load = lambda: Settings(_env_file=None, openai_api_key="test", pin=None,
+                                data_dir=ctx.store.config_path.parent / "data")
+
+    sections.run_pin(ctx)
+
+    assert ctx.ui.asked == []
+    assert any("JARVIS_PIN is set but isn't 6-8 digits" in line
+               for line in ctx.ui.lines("error"))
+    assert not pin_file(ctx.settings.config_dir).exists()
+
+
+def test_a_pin_still_in_jarvis_waits_for_the_migration(make_ctx):
+    from keryx.config.files import legacy_home
+
+    legacy_home().mkdir(parents=True)
+    pin_file(legacy_home()).write_text("482915\n")
+    ctx = make_ctx([], review=True)
+
+    sections.run_pin(ctx)
+
+    assert ctx.ui.asked == []
+    assert any("keryx migrate" in line for line in ctx.ui.lines("error"))
+    assert not pin_file(ctx.settings.config_dir).exists()
+
+
 def test_an_unusable_pin_file_is_replaced_after_asking(make_ctx):
     ctx = make_ctx([("New PIN", "739104"), ("same PIN", "739104"), ("Replace the PIN", True)])
     ctx.settings.data_dir.mkdir(parents=True)

@@ -36,8 +36,12 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `choices`, and `has_options`; the table keeps the keys, which are what is typed),
   `config options KEY [--json]` (the models or voices a setting can take, read live from
   OpenAI, Anthropic, Codex or a server of the owner's when it can be, else Keryx's own list
-  with `error` saying why — exit 0 either way; `keryx/config/options.py`), `config get
-  KEY… [--shell]` (never a secret), `config set KEY VALUE […]` (a secret only with
+  with `error` saying why — exit 0 either way; `keryx/config/options.py`), `config verify
+  KEY [--stdin] [--json]` (whether OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_API_KEY or
+  TWILIO_AUTH_TOKEN — with the saved SID — works, before it is saved: `--stdin` checks the
+  typed value and saves nothing; a key that does not work is still exit 0, `problem` one
+  sentence of cause and never the key; any other key exits 2; `keryx/config/verify.py`),
+  `config get KEY… [--shell]` (never a secret), `config set KEY VALUE […]` (a secret only with
   `--stdin` or `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every
   directory), `config import-env [PATH]`, `config lock|unlock KEY` (what the running service
   may change)
@@ -47,7 +51,14 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   approval hook, starts it again; `serve` refuses to start until it has run)
 - Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
-  the browser landed on), `uv run keryx auth status [--json] [--smoke]`
+  the browser landed on), `uv run keryx auth status [--json] [--smoke]`, `uv run keryx auth
+  logout gmail|google-workspace [--json]` (the owner's alone: removes the tokens that one
+  sign-in stored — never the OAuth client file, never the other sign-in)
+- The accounts Keryx connects to, as the Mac app's Integrations section shows them: `uv run
+  keryx integrations [--json]` (google, gmail, slack, github, openai-admin, anthropic-admin:
+  connected or not, `why` in the app's words, the secrets — set or not — and settings each
+  card edits, its sign-in, and the plugins that use it; only reads, and asks `gh` only while
+  issue reports are on; `keryx/integrations/accounts.py`)
 - Run the agent: `uv run keryx serve` (`--demo` / `--host` / `--port`; a hidden
   `--no-wakeword` is accepted and ignored, for units installed before it left `main`); `scripts/dev.sh` adds the Cloudflare tunnel
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
@@ -68,7 +79,15 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
   install [NAME] --from-settings` (moves the settings they replaced), `plugins remove NAME
-  [--yes]`; install and remove refuse the running service
+  [--yes]`, `plugins set NAME KEY=VALUE … [--cluster ALIAS=PARTITION …]` (an installed
+  plugin's file settings, with install's validation, nothing reinstalled; not installed
+  exits 1); install, remove and set refuse the running service, and each takes `--json`
+  (`{name, on, message}`; remove then asks nothing). `plugins list --json` also describes
+  each for the Mac app: `title`, `description`, typed `fields`, the integrations it
+  `needs` (any one will do), and `ready` — would it work on a call once turned on, read
+  beside `on` — with `why` in the app's words. `set` can repair a file that does not
+  validate: the change goes over the raw file, and only a result that validates is written
+  (one that does not parse is left for the owner, as the wizard leaves it)
 - The owner's own voice tools: `uv run keryx tools [--json]` (what `DATA_DIR/tools` holds
   and what the next call would refuse; exits 1 while anything is)
 - Start that memory before any call has: `uv run keryx memory seed --file FILE|- [--force]
@@ -198,8 +217,10 @@ remember:
 - **plugins** — `plugins/` is the optional voice tools (`send_to_slack`, `check_email`,
   `check_billing`, `cluster_stats`), none registered from the source tree. `PLUGINS` in
   `plugins/__init__.py` is the table everything reads (its `important` keys are what the
-  wizard asks; `retired` the settings each replaced), with the file helpers (`install`,
-  `remove`, `write_config`, `status`, `move_from_settings`). One module per plugin builds its
+  wizard asks; `retired` the settings each replaced; `needs` the integrations it reads), with
+  the file helpers (`install`, `remove`, `write_config`, `status`, `move_from_settings`) and
+  `describe`, the Mac app's view of one (its fields typed by `FIELD_TYPES`, and whether it
+  is ready, with `app_sentence` keeping commands out of `why`). One module per plugin builds its
   tool (`<name>_tool(config_path, fake=…)`), `ssh_hosts` reads `~/.ssh/config`, and
   `templates/` is data — a one-line `.py` and a commented `.toml` per plugin, copied into
   `DATA_DIR/tools`, never imported from there. So a plugin *is* a custom tool: loaded per
@@ -212,7 +233,10 @@ remember:
 - **integrations** — `integrations/` is one module per outside service (`billing`,
   `cluster`, `gmail`, `slack`, `web_search`): the *clients*, each behind one voice tool —
   `web_search` behind a built-in, the rest behind a plugin, which is where the tool is
-  built. Their builders take explicit values, never a plugin's file.
+  built. Their builders take explicit values, never a plugin's file. `accounts` is the one
+  that is not a client: the accounts `keryx integrations` lists, composed from `auth`'s
+  Google entries, the settings and `issues.gh_status`, with `used_by` read from each
+  plugin's `needs`.
 - **config** — `config/` is the settings and where they live: `settings` (every field with
   a `description`, a `title`, a `group`, `advanced` and a default `service_writable`,
   declared with `setting(...)`; the title is the sentence-case name the Mac app shows in
@@ -551,9 +575,9 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   tries is ignored and reported by `doctor`. The service may tune a limit in
   `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
-  commands that write what the service may not — `config import-env`, `auth login`,
+  commands that write what the service may not — `config import-env`, `auth login|logout`,
   `memory seed`, `setup`, `setup mark`, `pin set`, `config lock|unlock`, `migrate`,
-  `plugins install|remove`, `models use`, `voice use` (before any install, handshake or
+  `plugins install|remove|set`, `models use`, `voice use` (before any install, handshake or
   save), `voice download`, `models start|stop`, `service install|uninstall` — refuse
   outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
@@ -828,6 +852,11 @@ never the real network or hardware, and never a real `codex` process: the Codex
 tests replay `tests/agents/fixtures/codex_app_*.jsonl`, recorded from the bundled
 app-server, into the SDK's own typed models. Heavy imports (an agent's SDK) are guarded
 inside functions, not imported at module scope, so the suite runs without them.
+
+A directory's `conftest.py` must hold however a command line orders the files: pytest 9.1
+gives its fixtures to the first collector made for that directory only, so `tests/plugins/a.py
+tests/b.py tests/plugins/c.py` handed `c.py` the root `settings`. `tests/repeated_directories.py`
+(turned on in `tests/conftest.py`) registers them on every later one; keep it until pytest does.
 
 ## Working agreements
 

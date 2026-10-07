@@ -3,6 +3,9 @@
 `login` takes a name — `claude`, `codex`, `gmail`, `google-workspace` — and does that one
 sign-in on this terminal; `status` reports all of them, read from the same `doctor` checks
 the wizard reads, so the three can never disagree about whether something is signed in.
+Gmail has no check of its own since it became a plugin's, so its state is its token file,
+the one thing `check_email` reads. `logout` undoes the two Google sign-ins: the files each
+left, never the OAuth client (configuration both share) and never the other's.
 
 Gmail is the one in two steps: without `--callback-url` it prints a consent link, and with
 it, it finishes. That is so a coding agent can relay the link to the person and the address
@@ -10,6 +13,7 @@ they land on back, and so it works on a machine with no browser at all.
 """
 
 import asyncio
+import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,22 +24,25 @@ from keryx.agents.registry import BACKENDS, install_command
 from keryx.config import Settings
 from keryx.config.permissions import OWNER
 from keryx.config.store import ConfigStore
-from keryx.doctor import Check, run_doctor_checks
+from keryx.doctor import Check, google_check, run_doctor_checks
 from keryx.setup import agents, google
 
 Echo = Callable[[str], None]
 
-#: Every sign-in, and the doctor checks that say whether it is done.
+#: Every sign-in, and the doctor checks that say whether it is done. The two Google ones
+#: are `sign_in`'s, which needs no other check run.
 SIGN_INS = {
     "openai": ("OPENAI_API_KEY",),
     "claude": ("Claude Code agent",),
     "codex": ("Codex agent",),
     "local": ("Local model agent",),
-    "gmail": ("email",),
+    "gmail": (),
     "google-workspace": ("Google for agents",),
     "twilio": ("Twilio credentials",),
 }
 LOGINS = ("claude", "codex", "gmail", "google-workspace")
+#: The sign-ins `logout` can undo: the ones whose tokens Keryx keeps itself.
+LOGOUTS = ("gmail", "google-workspace")
 
 
 class AuthError(RuntimeError):
@@ -49,6 +56,9 @@ def status(
     checks = run_doctor_checks(settings, store=store)
     report: dict[str, dict[str, Any]] = {}
     for name, prefixes in SIGN_INS.items():
+        if name in LOGOUTS:
+            report[name] = sign_in(name, settings)
+            continue
         found = [check for check in checks if check.name.startswith(prefixes)]
         report[name] = _entry(name, found)
     run = smoke_test or agents.run_smoke
@@ -64,6 +74,45 @@ def status(
             if not entry["smoke"]["ok"]:
                 entry["state"] = "failed"
     return report
+
+
+def sign_in(name: str, settings: Settings) -> dict[str, Any]:
+    """`status`'s entry for one Google sign-in, without the rest of `doctor`: it is fast."""
+    if name == "google-workspace":
+        return _entry(name, [google_check(settings)])
+    if name != "gmail":
+        raise AuthError(f"{name!r} is not a Google sign-in; one of: {', '.join(LOGOUTS)}")
+    path = google.token_path(settings)
+    if path.is_file():
+        return {"state": "ok", "detail": f"signed in (read-only); {path}"}
+    return {"state": "missing", "detail": "not signed in — `keryx auth login gmail`"}
+
+
+def logout(name: str, settings: Settings) -> list[Path]:
+    """Remove what the Google sign-in `name` stored, and nothing else. Returns what went.
+
+    Gmail is its token and a sign-in still waiting for its second step; Google for agents
+    is `workspace-mcp`'s credentials directory, whole (a link to one is unlinked, never
+    followed). The OAuth client in `KERYX_HOME` is configuration, and stays.
+    """
+    if name == "gmail":
+        removed = []
+        for path in (google.token_path(settings), settings.data_dir / google.PENDING_FILE):
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+                removed.append(path)
+        return removed
+    if name != "google-workspace":
+        raise AuthError(f"nothing called {name!r} to sign out of; one of: {', '.join(LOGOUTS)}")
+    credentials = google.credentials_dir(settings)
+    if credentials.is_symlink() or credentials.is_file():
+        credentials.unlink()
+        return [credentials]
+    if not credentials.is_dir():
+        return []
+    removed = sorted(path for path in credentials.rglob("*") if not path.is_dir())
+    shutil.rmtree(credentials)
+    return removed
 
 
 def _entry(name: str, found: list[Check]) -> dict[str, Any]:

@@ -33,11 +33,12 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from keryx import status, units
+from keryx import plugins, status, units
 from keryx.cli import app
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path
+from keryx.issues import GhStatus
 from keryx.localmodels import (
     catalog,
     download,
@@ -80,9 +81,21 @@ COMMANDS = {
     "service --json", "service install --json", "service uninstall --json",
     "models stop --json",
     "setup plan --json", "setup mark STEP --json", "pin --json", "pin set --json",
+    "config verify KEY --json",
+    "integrations --json", "auth logout google-workspace --json", "auth logout gmail --json",
+    "plugins install NAME --json", "plugins remove NAME --json", "plugins set NAME --json",
 }
-#: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice.
-STDIN = {"pin set --json": "482915\n482915\n"}
+#: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
+#: the key to check, unsaved.
+STDIN = {"pin set --json": "482915\n482915\n", "config verify KEY --json": "sk-typed\n"}
+#: A placeholder that stands for something else in one command line: the key to check, the
+#: plugin (the seed's, installed), and for `plugins set` its setting too.
+WORDS_FOR = {
+    "config verify KEY --json": {"KEY": "OPENAI_API_KEY"},
+    "plugins install NAME --json": {"NAME": "check_billing"},
+    "plugins remove NAME --json": {"NAME": "check_billing"},
+    "plugins set NAME --json": {"NAME": "check_billing monthly_budget=40"},
+}
 #: What the placeholders in a contract command line stand for.
 TASK_ID = 1
 MODEL = catalog.by_key("qwen3-coder-30b-a3b")
@@ -122,9 +135,9 @@ def contract() -> dict:
 def argv(command: str) -> list[str]:
     # The realtime model on the seeded voice server: a list read live, the current appended.
     words = {"ID": str(TASK_ID), "NAME": MODEL.key, "KEY": "OPENAI_REALTIME_MODEL",
-             "URL": VOICE_SERVER, "STEP": "google"}
+             "URL": VOICE_SERVER, "STEP": "google", **WORDS_FOR.get(command, {})}
     stdin = ["--stdin"] if command in STDIN else []
-    return [words.get(word, word) for word in command.split()] + stdin
+    return [part for word in command.split() for part in words.get(word, word).split()] + stdin
 
 
 # --- the rules ---------------------------------------------------------------------------
@@ -380,7 +393,8 @@ def llama_server(request: httpx.Request) -> httpx.Response:
 @pytest.fixture
 def seeded(tmp_path, monkeypatch, every_agent_installed):
     """A store with a told task (report, log, usage), a running one, saved settings, a
-    failed restart, approvals, a memory, a model on disk and a model server that answers."""
+    plugin on, a failed restart, approvals, a memory, a model on disk and a model server
+    that answers."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("PROJECTS_ROOT", str(tmp_path / "projects"))
@@ -429,6 +443,11 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
         requested_at=now.isoformat(), state="failed", error="launchctl exited 5",
     ))
 
+    # A plugin on, for the plugin commands to change and turn off.
+    plugins.install(settings, "check_billing")
+    # The integrations: `gh` signed in, though only issue reports turned on would ask it.
+    monkeypatch.setattr("keryx.issues.gh_status",
+                        lambda: GhStatus(installed=True, signed_in=True, account="ada"))
     # The status command's probes: a service installed and running, two calls live.
     monkeypatch.setattr(status, "default_probes", lambda: status.StatusProbes(
         target=lambda settings: ServiceTarget("launchd", "dev.keryx.agent"),
