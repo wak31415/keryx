@@ -33,7 +33,7 @@ public final class AppModel {
     }
 
     /// The doctor is run on every this-many-th poll.
-    static let doctorEvery = 10
+    nonisolated static let doctorEvery = 10
     static let taskLimit = 200
     static let usageDays = 30
     static let approvalsLimit = 200
@@ -73,6 +73,8 @@ public final class AppModel {
     @ObservationIgnored private var poll: Task<Void, Never>?
     /// Bumped by every locate, so an answer from the Keryx found before is dropped.
     @ObservationIgnored private var generation = 0
+    /// Polls since the poll last started.
+    @ObservationIgnored private var pollTicks = 0
 
     public init(locator: Locating, makeClient: @escaping @Sendable (KeryxLocation) -> KeryxClient,
                 preferences: Preferences, timing: Timing = .standard) {
@@ -135,16 +137,26 @@ public final class AppModel {
 
     private func startPolling() {
         guard poll == nil, let interval = timing.poll else { return }
+        pollTicks = 0
         poll = Task { [weak self] in
-            var iteration = 0
             while !Task.isCancelled {
                 do { try await Task.sleep(for: interval) } catch { return }
                 guard let self else { return }
-                iteration += 1
-                await self.refresh(.status)
-                if iteration % Self.doctorEvery == 0 { await self.refresh(.doctor) }
+                await self.pollTick()
             }
         }
+    }
+
+    /// One poll: what `parts(forPoll:)` says, for the next tick.
+    private func pollTick() async {
+        pollTicks += 1
+        for part in Self.parts(forPoll: pollTicks) { await refresh(part) }
+    }
+
+    /// What the `tick`-th poll (from 1) reads: the status, and on every `doctorEvery`-th
+    /// the doctor too.
+    nonisolated static func parts(forPoll tick: Int) -> [Part] {
+        tick % doctorEvery == 0 ? [.status, .doctor] : [.status]
     }
 
     // MARK: - Reading

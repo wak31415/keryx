@@ -96,21 +96,13 @@ import Testing
         #expect(model.menuState == .needsMigration)
     }
 
-    @Test func pollRefreshesStatusAndEveryTenthDoctor() async {
+    @Test func thePollLoopPolls() async {
         let client = StubClient()
         let model = makeModel(client: client, timing: Self.fast)
         await model.start()
         defer { model.stop() }
-        // The poll runs on the main actor, which the render suite holds for most of a full
-        // run (longer with the captured fixtures' 92 settings): wait it out rather than race it.
-        #expect(await eventually(timeout: .seconds(120)) { client.calls.filter { $0 == "doctor" }.count >= 2 })
-        model.stop()
-        let calls = client.calls
-        let statuses = calls.filter { $0 == "status" }.count
-        let doctors = calls.filter { $0 == "doctor" }.count
-        // One of each at start, then a doctor with every tenth status.
-        #expect(statuses >= 11)
-        #expect(doctors == 1 + (statuses - 1) / 10)
+        // One tick is enough to show the loop runs; what a tick does is the test above's.
+        #expect(await eventually { client.calls.filter { $0 == "status" }.count >= 2 })
     }
 
     @Test func errorsAreStoredNotThrown() async {
@@ -373,5 +365,17 @@ import Testing
         for try await event in PreviewClient().pull(model: "qwen") { seen.append(event) }
         #expect(seen == events)
         #expect(!seen.isEmpty)
+    }
+}
+
+/// What each poll reads, with no clock and no main actor: the render suite holds the main
+/// actor for most of a full run, so a test that waited on poll after poll waited it out.
+@Suite struct PollTests {
+    @Test func eachPollReadsTheStatusAndEveryTenthTheDoctor() {
+        let polls = (1...25).map(AppModel.parts(forPoll:))
+        #expect(polls.allSatisfy { $0.first == .status })
+        #expect(polls.indices.filter { polls[$0].contains(.doctor) }.map { $0 + 1 } == [10, 20])
+        #expect(AppModel.parts(forPoll: 9) == [.status])
+        #expect(AppModel.parts(forPoll: 10) == [.status, .doctor])
     }
 }
