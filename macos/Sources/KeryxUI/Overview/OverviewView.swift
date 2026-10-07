@@ -20,9 +20,11 @@ public struct OverviewView: View {
             .formStyle(.grouped)
         }
         .task {
-            // The status and the doctor are already polled; these two are read here.
+            // The status and the doctor are already polled; these are read here — the
+            // settings for the titles doctor's details are said in.
             await model.refresh(.approvals)
             await model.refresh(.memory)
+            if model.config.value == nil { await model.refresh(.config) }
         }
     }
 }
@@ -54,16 +56,23 @@ private struct ServiceSection: View {
             .padding(.vertical, 4)
 
             LabeledContent("Service") {
-                VStack(alignment: .trailing, spacing: 2) {
-                    HStack(spacing: 6) {
-                        StatusDot(service.tone)
-                        Text(service.text)
+                HStack(spacing: 10) {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        HStack(spacing: 6) {
+                            StatusDot(service.tone)
+                            Text(service.text)
+                        }
+                        .help(service.help)
+                        if let hint = service.hint {
+                            Text(hint)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
                     }
-                    if let hint = service.hint {
-                        Text(hint)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
+                    if !status.service.installed, status.service.ok, model.location.value?.checkout != nil {
+                        Button("Install Service…") { installService() }
+                            .help("Runs scripts/install-launchd.sh in Terminal")
                     }
                 }
             }
@@ -86,19 +95,20 @@ private struct ServiceSection: View {
                 LabeledContent("Version") {
                     if status.health.reachable {
                         VStack(alignment: .trailing, spacing: 2) {
-                            Text("Running \(running)")
-                                .textSelection(.enabled)
+                            Text(OverviewWording.version(running))
+                                .help(running)
                             if let pending = pendingVersion {
                                 Text(pending)
-                                    .font(.caption)
+                                    .font(.callout)
                                     .foregroundStyle(.orange)
+                                    .help(status.version.checkout ?? "")
                             }
                         }
                     } else {
                         // The stamp the last start wrote: it says nothing about now.
-                        Text("Last ran \(running)")
+                        Text("Last ran \(OverviewWording.version(running))")
                             .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
+                            .help(running)
                     }
                 }
             }
@@ -108,7 +118,7 @@ private struct ServiceSection: View {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text("Failed").foregroundStyle(.red)
                         if let reason = status.restart.failure, !reason.isEmpty {
-                            Text(Wording.capitalised(reason))
+                            Text(Wording.sentence(reason))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.trailing)
@@ -134,7 +144,7 @@ private struct ServiceSection: View {
         .confirmationDialog("Restart Keryx?", isPresented: $confirmingRestart) {
             Button("Restart") { restart(force: false) }
         } message: {
-            Text("Keryx stops, starts again, and calls you when it's back.")
+            Text(OverviewWording.restartMessage)
         }
         .confirmationDialog(liveCallsTitle, isPresented: Binding(
             get: { liveCalls != nil }, set: { if !$0 { liveCalls = nil } }
@@ -156,25 +166,35 @@ private struct ServiceSection: View {
         status.health.reachable ? "Keryx is running" : model.menuState.headline
     }
 
-    /// "Lyra · Claude · v0.1.0-3-g1ad6420".
+    /// "Lyra · Claude": the assistant, and the agent it sends work to.
     private var byline: String {
-        var parts = [status.assistant.name, Wording.agent(status.agents.default)]
-        if status.health.reachable, let running = status.version.running { parts.append(running) }
-        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+        [status.assistant.name, Wording.agent(status.agents.default)]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
-    private var service: (tone: StatusDot.Tone, text: String, hint: String?) {
+    /// The service in a word, a line under it when there is more to say, and the manager
+    /// and unit in its tooltip.
+    private var service: (tone: StatusDot.Tone, text: String, hint: String?, help: String) {
         let s = status.service
+        let manager = [s.manager ?? "launchd", s.unit].compactMap { $0 }.joined(separator: ", ")
         if !s.ok {
-            return (.warning, "Unknown", s.error.map(Wording.capitalised))
+            return (.warning, "Unknown", s.error.map(Wording.sentence), "")
         }
         if !s.installed {
-            let hint = model.location.value?.checkout != nil
-                ? "Install it with scripts/install-launchd.sh" : nil
-            return (.inactive, "Not installed", hint)
+            let hint = model.location.value?.checkout == nil ? "Install it with keryx setup in Terminal" : nil
+            return (.inactive, "Not installed", hint, "Not installed as a \(s.manager ?? "launchd") service")
         }
-        if s.active { return (.ok, "Running under \(s.manager ?? "launchd")", nil) }
-        return (.inactive, "Stopped", nil)
+        if s.active { return (.ok, "Running", nil, "Running under \(manager)") }
+        return (.inactive, "Stopped", nil, "Stopped (\(manager))")
+    }
+
+    private func installService() {
+        guard let location = model.location.value else { return }
+        do {
+            try TerminalLauncher.openInstallService(location)
+        } catch {
+            failure = (error as? KeryxError) ?? .terminal(error.localizedDescription)
+        }
     }
 
     private var calls: String {
@@ -197,7 +217,7 @@ private struct ServiceSection: View {
     private var pendingVersion: String? {
         guard status.health.reachable, let running = status.version.running, let checkout = status.version.checkout,
               running != checkout else { return nil }
-        return "Restart to load \(checkout)"
+        return "Restart to load \(OverviewWording.version(checkout))"
     }
 
     private var liveCallsTitle: String {
@@ -241,7 +261,7 @@ private struct SetupSection: View {
                 LabeledContent {
                     Button("Try Again") { Task { await model.refresh(.doctor) } }
                 } label: {
-                    Text(error.title)
+                    Text(error.title(loading: "Setup"))
                     Text(error.message).textSelection(.enabled)
                 }
             } else {
@@ -275,19 +295,22 @@ private struct SetupSection: View {
         }
         ForEach(Self.sections(of: open), id: \.self) { section in
             DisclosureGroup(isExpanded: binding(section, default: true)) {
-                ForEach(open.filter { $0.section == section }) { CheckRow(check: $0) }
+                ForEach(open.filter { $0.section == section }) { CheckRow(check: $0, titles: titles) }
             } label: {
                 Text(Self.title(ofSection: section))
             }
         }
         if !passed.isEmpty {
             DisclosureGroup(isExpanded: binding("", default: false)) {
-                ForEach(passed) { CheckRow(check: $0) }
+                ForEach(passed) { CheckRow(check: $0, titles: titles) }
             } label: {
                 Text(passed.count == 1 ? "1 check passed" : "\(passed.count) checks passed")
             }
         }
     }
+
+    /// The settings' titles, for doctor's details.
+    private var titles: [String: String] { OverviewWording.titles(model.config.value) }
 
     /// Whether a disclosure is open. Failing sections start open, the passed checks closed.
     private func binding(_ key: String, default open: Bool) -> Binding<Bool> {
@@ -305,7 +328,7 @@ private struct SetupSection: View {
         do {
             try TerminalLauncher.open(location, arguments: ["setup"])
         } catch {
-            failure = (error as? KeryxError) ?? .launch(error.localizedDescription)
+            failure = (error as? KeryxError) ?? .terminal(error.localizedDescription)
         }
     }
 
@@ -341,13 +364,25 @@ private struct SetupSection: View {
 
 private struct CheckRow: View {
     let check: DoctorCheck
+    /// Settings' titles by key, to say a detail's keys in.
+    var titles: [String: String] = [:]
 
     var body: some View {
+        let detail = OverviewWording.detail(check.detail, titles: titles)
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 Text(check.displayTitle)
-                if !check.detail.isEmpty {
-                    Text(Wording.capitalised(check.detail))
+                if let path = detail.path {
+                    Text((path as NSString).abbreviatingWithTildeInPath)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(path)
+                        .textSelection(.enabled)
+                }
+                if !detail.text.isEmpty {
+                    Text(detail.text)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
@@ -414,7 +449,9 @@ private struct ApprovalCallsSection: View {
                     .textSelection(.enabled)
             }
             if let report = model.approvals.value, !report.entries.isEmpty {
-                ForEach(report.entries.suffix(5).reversed()) { ApprovalRow(entry: $0) }
+                ForEach(ApprovalWording.requests(report.entries).filter { !$0.standalone }.prefix(5)) {
+                    ApprovalRow(request: $0)
+                }
                 HStack {
                     Spacer()
                     Button("Show All…") { showingAll = true }
@@ -466,13 +503,15 @@ enum ApprovalCallsWording {
     static let offWarning = "Keryx won't ring you about Claude Code prompts until you turn this back on."
 }
 
+/// A request in the Overview: what last happened to it, what it was, and when.
 struct ApprovalRow: View {
-    let entry: ApprovalEntry
+    let request: ApprovalWording.Request
 
     var body: some View {
-        let (title, detail) = ApprovalWording.describe(entry)
+        let title = request.outcome
+        let detail = request.summary
         LabeledContent {
-            Text(ApprovalWording.time(entry.ts))
+            Text(ApprovalWording.time(request.latest.ts))
                 .monospacedDigit()
         } label: {
             HStack(spacing: 6) {
@@ -520,6 +559,50 @@ enum ApprovalWording {
 
     private static func detail(_ what: String) -> String? {
         what.isEmpty ? nil : what
+    }
+
+    /// One prompt Claude Code raised, and everything that happened to it.
+    struct Request: Identifiable, Equatable {
+        let id: String
+        /// Its events, newest first; never empty.
+        let events: [ApprovalEntry]
+
+        var latest: ApprovalEntry { events[0] }
+
+        /// What happened to it, in a few words: its last event before it was settled —
+        /// "Settled" alone says nothing about how.
+        var outcome: String {
+            ApprovalWording.title((events.first { $0.event != "settled" } ?? latest).event)
+        }
+
+        /// Not a prompt: the broker starting, and the like.
+        var standalone: Bool { id.hasPrefix("event-") }
+
+        /// What it was about: the request's summary, as its first event carries it.
+        var summary: String? {
+            events.last { !$0.what.trimmingCharacters(in: .whitespaces).isEmpty }?.what
+        }
+    }
+
+    /// The audit's events (oldest first) gathered by request, the request with the newest
+    /// event first. An event that belongs to no request (the broker starting) stands alone.
+    static func requests(_ entries: [ApprovalEntry]) -> [Request] {
+        var order: [String] = []
+        var events: [String: [ApprovalEntry]] = [:]
+        for (index, entry) in entries.enumerated() {
+            let id = key(entry.requestId) ?? "event-\(index)"
+            if let at = order.firstIndex(of: id) { order.remove(at: at) }
+            order.append(id)
+            events[id, default: []].append(entry)
+        }
+        return order.reversed().map { Request(id: $0, events: (events[$0] ?? []).reversed()) }
+    }
+
+    private static func key(_ requestId: JSONValue?) -> String? {
+        switch requestId {
+        case nil, .null?: nil
+        case let value?: "request-" + value.displayText
+        }
     }
 
     /// The entry's time: the time alone today, else the date and time.

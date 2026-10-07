@@ -58,7 +58,30 @@ import Testing
         var report = PreviewData.approvals
         report.cancelledBeforeCall = 2
         report.answeredAfterCall = 1
-        #expect(ApprovalsSheet.summary(report) == "2 answered before Keryx called · 1 answered at the keyboard after")
+        #expect(ApprovalsSheet.summary(report) == "2 answered before Keryx called · 1 at the keyboard after a call")
+    }
+
+    @Test func eventsGatherByRequestNewestFirst() {
+        let entries = [
+            ApprovalEntry(ts: "1", event: "started", what: "", requestId: nil),
+            ApprovalEntry(ts: "2", event: "raised", what: "git push", requestId: .number(17)),
+            ApprovalEntry(ts: "3", event: "raised", what: "rm -rf build/", requestId: .number(18)),
+            ApprovalEntry(ts: "4", event: "escalated", what: "git push", requestId: .number(17)),
+            ApprovalEntry(ts: "5", event: "armed", what: "git push", requestId: .number(17)),
+            ApprovalEntry(ts: "6", event: "settled", what: "git push", requestId: .number(17)),
+        ]
+        let requests = ApprovalWording.requests(entries)
+        #expect(requests.map(\.id) == ["request-17", "request-18", "event-0"])
+        #expect(requests[0].events.map(\.ts) == ["6", "5", "4", "2"])
+        #expect(requests[0].summary == "git push")
+        #expect(requests[0].outcome == "Read out the choices", "settled says nothing about how")
+        #expect(requests[1].outcome == "Claude Code asked")
+        #expect(requests[2].standalone)
+        let rows = ApprovalsSheet.rows(ApprovalsReport(escalationEnabled: true, escalateAfterS: 300, maxPerHour: 4,
+                                                       cancelledBeforeCall: 0, answeredAfterCall: 0,
+                                                       entries: entries))
+        #expect(rows[0].history?.count == 4)
+        #expect(rows[1].history == nil)
     }
 
     @Test func pythonTimestampsParse() {
@@ -72,6 +95,7 @@ import Testing
     @Test func everyScreenOfThisSliceHasEntries() {
         let ids = Set(ScreenCatalog.entries().map(\.id))
         for id in ["overview-running", "overview-needs-setup", "overview-error", "overview-approvals-sheet",
+                   "overview-approvals-off",
                    "window-overview", "onboarding-locate", "onboarding-migration"] {
             #expect(ids.contains(id), "missing \(id)")
         }
