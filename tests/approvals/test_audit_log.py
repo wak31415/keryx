@@ -11,6 +11,7 @@ from keryx.approvals.audit_log import (
     escalation_counts,
     escalation_enabled,
     read_entries,
+    settled_with_escalation,
 )
 from keryx.approvals.broker import KILL_SWITCH_NAME, STATE_DIR_NAME
 
@@ -56,6 +57,31 @@ def test_read_entries_skips_a_json_line_that_is_not_an_object(tmp_path):
 
 def test_read_entries_missing_file_is_empty_not_fatal(tmp_path):
     assert read_entries(tmp_path / "no-such-file.jsonl") == []
+
+
+# --- settled_with_escalation ------------------------------------------------
+
+
+def test_settled_with_escalation_excludes_a_line_with_no_escalation_field():
+    assert settled_with_escalation([{"event": "settled", "request_id": 7}]) == []
+
+
+def test_settled_with_escalation_excludes_non_settled_events():
+    assert settled_with_escalation([{"event": "raised", "escalation": "cancelled"}]) == []
+
+
+def test_settled_with_escalation_includes_a_line_whose_counts_are_both_zero():
+    """A settled request can record an `escalation` outcome (it did ring, or it could
+    have) and still count toward neither `escalation_counts` bucket — e.g. it was
+    escalated *and* answered on the call itself, so it was neither cancelled before the
+    call nor resolved elsewhere after. That line must still show up here: it is the one
+    thing that tells `_escalation_summary` there is something to report at all, which
+    `escalation_counts(...) == (0, 0)` cannot distinguish from no data recorded yet.
+    """
+    entries = [{"event": "settled", "escalation": "call", "outcome": "answered"}]
+
+    assert settled_with_escalation(entries) == entries
+    assert escalation_counts(entries) == (0, 0)
 
 
 # --- escalation_counts ---------------------------------------------------

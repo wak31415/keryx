@@ -31,6 +31,7 @@ from keryx.approvals.audit_log import (
     escalation_counts,
     escalation_enabled,
     read_entries,
+    settled_with_escalation,
 )
 from keryx.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from keryx.config import (
@@ -1981,9 +1982,11 @@ def approvals(
 
 def _escalation_summary(entries: list[dict]) -> str | None:
     """The table's summary line: whether settling a request stopped its call, over every
-    line that records it. `None` while nothing has recorded one yet.
+    line that records it. `None` while nothing has recorded one yet — not the same as
+    `escalation_counts(entries) == (0, 0)`, which a settled-and-escalated request that
+    counted toward neither bucket also produces (see `settled_with_escalation`).
     """
-    if not any(e.get("event") == "settled" and e.get("escalation") for e in entries):
+    if not settled_with_escalation(entries):
         return None
     cancelled, late = escalation_counts(entries)
     return (

@@ -31,15 +31,28 @@ def read_entries(path: Path) -> list[dict]:
     return entries
 
 
+def settled_with_escalation(entries: list[dict]) -> list[dict]:
+    """Every `settled` line that records an `escalation` outcome at all (issue #56: a
+    request they were rung about first is never counted as "no call") — a line settled
+    before that field existed is excluded, which is "no data", not "zero escalations".
+
+    Shared by `escalation_counts` and `cli._escalation_summary`'s gate, so "is there
+    anything to summarize" and "what do the numbers say" can never drift apart: a settled
+    line that counts toward neither bucket (escalated *and* answered on the call) still
+    means there is something to report, which `escalation_counts(entries) == (0, 0)` alone
+    could not tell apart from nothing having recorded one at all.
+    """
+    return [e for e in entries if e.get("event") == "settled" and e.get("escalation")]
+
+
 def escalation_counts(entries: list[dict]) -> tuple[int, int]:
     """How many settled requests were answered before the call that would have asked about
     them, and how many were answered elsewhere after they were told — counted only over
-    lines that record an `escalation` outcome at all (issue #56: a request they were
-    rung about first is never counted as "no call").
+    `settled_with_escalation(entries)`.
 
     Returns `(cancelled_before_call, answered_after_call)`.
     """
-    settled = [e for e in entries if e.get("event") == "settled" and e.get("escalation")]
+    settled = settled_with_escalation(entries)
     cancelled = sum(e["escalation"] == "cancelled" for e in settled)
     late = sum(
         e["escalation"] != "cancelled" and e.get("outcome") == "resolved_elsewhere"

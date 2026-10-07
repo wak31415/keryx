@@ -1194,6 +1194,24 @@ def test_approvals_has_no_summary_before_anything_records_one(settings_stub):
     assert "answered before the call" not in result.output
 
 
+def test_approvals_still_shows_the_summary_when_both_counts_are_zero(settings_stub):
+    """A settled request that was escalated *and* answered on the call itself counts
+    toward neither bucket, but it is still something recorded, unlike the case above
+    (no `escalation` field at all) — so the summary line must still print, with both
+    numbers at zero. A gate that reads `escalation_counts(...) == (0, 0)` instead of
+    `settled_with_escalation(...)` would wrongly suppress it.
+    """
+    _audit(settings_stub, {"event": "settled", "escalation": "call", "outcome": "answered"})
+
+    result = runner.invoke(app, ["approvals"])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "0 answered before the call was due (no call), "
+        "0 answered elsewhere after they were told"
+    ) in result.output
+
+
 def test_approvals_limit_shows_only_the_tail(settings_stub):
     _audit(settings_stub, *[
         {"ts": f"2026-09-02T14:{index:02d}:00Z", "event": "raised", "request_id": index}
