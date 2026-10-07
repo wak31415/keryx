@@ -39,26 +39,31 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   else Keryx's own list with `error` saying why — exit 0 either way;
   `keryx/config/options.py`), `config verify KEY [--stdin] [--pair] [--json]` (whether
   OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_API_KEY or TWILIO_AUTH_TOKEN — with the saved SID,
-  or with `--stdin --pair` the SID and token on two lines, neither saved — works, before it
-  is saved: `--stdin` checks the typed value and saves nothing; a key that does not work is
-  still exit 0, `problem` one sentence of cause and never the key; any other key exits 2;
+  or with `--stdin --pair` the SID and token on two lines, neither saved, an SID not `AC` and
+  32 hex exiting 2 before Twilio is asked — works, before it is saved: `--stdin` checks the
+  typed value and saves nothing; a key that does not work is still exit 0, `problem` one
+  sentence of cause and never the key; any other key exits 2;
   `keryx/config/verify.py`),
   `config get KEY… [--shell]` (never a secret), `config set KEY VALUE […]` (a secret only with
   `--stdin` or `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every
   directory), `config import-env [PATH]`, `config lock|unlock KEY` (what the running service
   may change)
 - The phone without a terminal (the Mac app's phone steps; `keryx/phone.py`, which the
-  wizard's phone section shares): `uv run keryx phone numbers [--json]` (the Twilio
-  account's numbers, each with where its calls go and `points_here`; a report, so Twilio's
-  refusal is its `error` and still exit 0 — `config options TWILIO_NUMBER` lists the same),
-  `phone webhooks [--json]` (where `TWILIO_NUMBER` points against where it should, and
-  `matches`), `phone webhooks --apply [--json]` (the owner's alone: points both webhooks at
-  `PUBLIC_HOST` — the one write to Twilio, which the app confirms first, showing both
-  addresses; exit 1 when Twilio refuses, 2 when something it needs is not saved),
-  `phone tunnel [--json]` (ngrok or cloudflared on PATH, as `doctor` finds them, its unit,
-  and `reachable`: whether Keryx answers at `https://PUBLIC_HOST/health` within 3 s, null
-  with no hostname). The numbers are the owner's own, shown to the owner, and never logged
-  but as `mask_number`
+  wizard's phone section shares, its hostname rule and Twilio client included): `uv run
+  keryx phone numbers [--json]` (the Twilio account's numbers, each with where its calls go
+  and `points_here` — both webhooks here, as `phone webhooks` compares them, so the two
+  screens agree; a report, so Twilio's refusal is its `error` and still exit 0 — `config
+  options TWILIO_NUMBER` lists the same), `phone webhooks [--json]` (where `TWILIO_NUMBER`
+  points against where it should, and `matches`), `phone webhooks --apply [--json]` (the
+  owner's alone: points both webhooks at `PUBLIC_HOST` — the one write to Twilio, which the
+  app confirms first, showing both addresses; exit 1 when Twilio refuses, 2 when something
+  it needs is not saved or `PUBLIC_HOST` is not a bare hostname — `phone.hostname_problem`,
+  the wizard's own rule, since the settings tab can save `https://…` and a webhook written
+  from it would point somewhere else), `phone tunnel [--json]` (ngrok or cloudflared on
+  PATH, as `doctor` finds them, its unit, and `reachable`: whether Keryx answers at
+  `https://PUBLIC_HOST/health` within 3 s, null with no hostname, false with `error` for one
+  that is not a hostname). The numbers are the owner's own, shown to the owner, and never
+  logged but as `mask_number`
 - Move a Jarvis install to Keryx — its XDG directories (`~/.config/jarvis`, …), or an older
   `~/.jarvis` and a checkout `.env`: `uv run keryx migrate [--dry-run] [--yes]` (stops the
   service, moves, retires `jarvis.service` for `keryx.service`, re-renders the unit and the

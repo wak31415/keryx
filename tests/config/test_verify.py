@@ -10,7 +10,7 @@ import json
 import httpx
 import pytest
 
-from keryx.config import verify
+from keryx.config import options, verify
 from keryx.config.verify import Checks, Verified
 from keryx.notify.twilio_out import TwilioError
 
@@ -166,7 +166,7 @@ def test_an_anthropic_key_that_works_is_one_get_that_follows_no_redirect(setting
     assert url.startswith("https://api.anthropic.com/v1/models")
     assert kwargs["headers"] == {"x-api-key": KEY, "anthropic-version": "2023-06-01"}
     assert kwargs["follow_redirects"] is False
-    assert kwargs["timeout"] == verify.TIMEOUT_S
+    assert kwargs["timeout"] == options.TIMEOUT_S
 
 
 @pytest.mark.parametrize(

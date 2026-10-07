@@ -995,6 +995,19 @@ def test_a_pair_is_only_the_twilio_token_on_stdin(home, credential_checks, argv)
     assert result.stdout == "" and credential_checks == []
 
 
+@pytest.mark.parametrize(
+    "sid", ["", "AC123", "PN0123456789abcdef0123456789abcdef", TWILIO_SID + "0",
+            "AC0123456789abcdef0123456789abcdeg"],
+)
+def test_a_pair_whose_sid_is_not_an_account_sid_asks_nobody(home, credential_checks, sid):
+    result = run("config", "verify", "TWILIO_AUTH_TOKEN", "--stdin", "--pair", "--json",
+                 input=f"{sid}\ngood\n")
+
+    assert result.exit_code == 2
+    assert result.stdout == "" and credential_checks == []
+    assert "AC and 32 hexadecimal characters" in result.stderr
+
+
 def test_at_a_terminal_a_pair_asks_for_the_sid_then_the_token_hidden(monkeypatch):
     from types import SimpleNamespace
 

@@ -124,11 +124,16 @@ def test_the_numbers_name_the_account_and_where_each_points(phoned):
     assert factory.pairs == [(SID, TOKEN)]
 
 
-def test_a_number_points_here_by_its_voice_webhook(phoned):
-    """The calls ring here: the status callback is what `webhooks` compares as well."""
-    factory = Factory(FakeAdmin(numbers_=[TwilioNumber("PN1", NUMBER, VOICE + "/", None, "")]))
+def test_a_number_points_here_by_both_webhooks_as_webhooks_compares_them(phoned):
+    """The two screens agree: a number whose status callback goes elsewhere is not here."""
+    factory = Factory(FakeAdmin(numbers_=[
+        TwilioNumber("PN1", NUMBER, VOICE + "/", None, ""),
+        TwilioNumber("PN2", "+15550002222", VOICE + "/", STATUS + "/", ""),
+    ]))
 
-    assert phone.numbers_report(phoned, factory)["numbers"][0]["points_here"] is True
+    listed = phone.numbers_report(phoned, factory)["numbers"]
+
+    assert [number["points_here"] for number in listed] == [False, True]
 
 
 def test_without_a_hostname_no_number_points_here(phoned):
@@ -333,7 +338,7 @@ def test_no_tunnel_and_no_hostname_asks_nothing(settings):
     report = phone.tunnel_report(settings, which=which(), get=get, unit_status=units_with(False))
 
     assert report == {"kind": None, "binary": None, "public_host": None,
-                      "unit_installed": False, "reachable": None}
+                      "unit_installed": False, "reachable": None, "error": None}
     assert get.calls == []
 
 
@@ -396,3 +401,78 @@ def test_the_real_admin_never_reaches_twilio_from_a_test(phoned):
     report = phone.numbers_report(phoned)
 
     assert report["error"] == "Keryx couldn't reach Twilio (AssertionError)."
+
+
+# --- a hostname that is not one ----------------------------------------------------------
+
+#: What the settings tab can save as PUBLIC_HOST, none of it a bare hostname: a scheme, a
+#: path, credentials, a fragment, a control character.
+NOT_HOSTS = [
+    "https://keryx.ngrok.app", "keryx.example.com/twilio", "evil.example@keryx.example.com",
+    "keryx.example.com#x", "keryx.example.com\nx", "keryx.example.com\x00",
+]
+BAD_HOST = "PUBLIC_HOST isn't a bare hostname: just the name, no https:// and no path."
+
+
+@pytest.mark.parametrize("host", NOT_HOSTS)
+def test_applying_to_a_host_that_is_not_a_hostname_is_refused_before_twilio(phoned, host):
+    factory = Factory()
+
+    with pytest.raises(phone.Refused) as refused:
+        phone.apply_webhooks(phoned.model_copy(update={"public_host": host}), factory)
+
+    assert str(refused.value) == BAD_HOST
+    assert factory.pairs == [] and factory.admin.updates == []
+
+
+@pytest.mark.parametrize("host", NOT_HOSTS)
+def test_webhooks_for_a_host_that_is_not_a_hostname_expect_nothing(phoned, host):
+    report = phone.webhooks_report(phoned.model_copy(update={"public_host": host}), Factory())
+
+    assert report["expected"] == {"voice_url": None, "status_url": None}
+    assert report["matches"] is False
+    assert report["error"] == BAD_HOST
+
+
+@pytest.mark.parametrize("host", NOT_HOSTS)
+def test_numbers_for_a_host_that_is_not_a_hostname_point_nowhere(phoned, host):
+    factory = Factory(FakeAdmin(numbers_=[TwilioNumber("PN1", NUMBER, VOICE, STATUS, "")]))
+
+    report = phone.numbers_report(phoned.model_copy(update={"public_host": host}), factory)
+
+    assert report["numbers"][0]["points_here"] is False
+
+
+@pytest.mark.parametrize("host", NOT_HOSTS)
+def test_the_tunnel_for_a_host_that_is_not_a_hostname_asks_nothing(phoned, host):
+    get = FakeGet()
+
+    report = phone.tunnel_report(phoned.model_copy(update={"public_host": host}),
+                                 which=which(), get=get, unit_status=units_with(False))
+
+    assert (report["reachable"], report["error"]) == (False, BAD_HOST)
+    assert get.calls == []
+
+
+def test_a_url_httpx_will_not_take_is_not_reachable(phoned):
+    report = phone.tunnel_report(phoned, which=which(), get=FakeGet(
+        raises=httpx.InvalidURL("bad")), unit_status=units_with(False))
+
+    assert (report["reachable"], report["error"]) == (False, None)
+
+
+def test_the_wizard_checks_the_hostname_with_the_same_rule():
+    from keryx.setup import phone as section
+
+    assert section.hostname_problem is phone.hostname_problem
+
+
+def test_the_wizard_asks_twilio_through_the_same_admin(monkeypatch):
+    from keryx.setup.context import Probes
+
+    built = []
+    monkeypatch.setattr(phone, "rest_admin", lambda sid, token: built.append((sid, token)))
+
+    Probes().twilio(SID, TOKEN)
+
+    assert built == [(SID, TOKEN)]

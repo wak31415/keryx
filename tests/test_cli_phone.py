@@ -203,6 +203,23 @@ def test_apply_with_nowhere_to_point_is_refused_before_twilio(account):
     assert account.pairs == []
 
 
+def test_apply_to_a_public_host_with_a_scheme_is_refused_before_twilio(account):
+    ConfigStore().set({"PUBLIC_HOST": "https://keryx.ngrok.app"})
+
+    result = run("webhooks", "--apply", "--json")
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "PUBLIC_HOST isn't a bare hostname" in result.stderr
+    assert account.pairs == [] and account.updates == []
+
+
+def test_apply_json_is_indented_as_everywhere_else(account):
+    result = run("webhooks", "--apply", "--json")
+
+    assert result.stdout == json.dumps({"applied": True, "number": NUMBER}, indent=2) + "\n"
+
+
 # --- the tunnel --------------------------------------------------------------------------
 
 
@@ -224,7 +241,7 @@ def test_tunnel_json(account, monkeypatch):
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {
         "kind": "ngrok", "binary": "/opt/homebrew/bin/ngrok", "public_host": HOST,
-        "unit_installed": True, "reachable": True,
+        "unit_installed": True, "reachable": True, "error": None,
     }
     assert asked == [f"https://{HOST}/health"]
 
@@ -240,3 +257,15 @@ def test_tunnel_as_text(account, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "no tunnel on PATH" in result.output
     assert f"{HOST} does not answer as Keryx" in result.output
+
+
+def test_tunnel_says_a_public_host_that_is_not_a_hostname(account, monkeypatch):
+    ConfigStore().set({"PUBLIC_HOST": "https://keryx.ngrok.app"})
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr(units, "status", lambda settings: {
+        "manager": None, "units": {"tunnel": {"installed": False, "active": False}}})
+
+    result = run("tunnel")
+
+    assert result.exit_code == 0, result.output
+    assert "PUBLIC_HOST isn't a bare hostname" in result.output

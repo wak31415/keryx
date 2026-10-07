@@ -18,24 +18,16 @@ import sys
 from importlib import resources
 
 from keryx.notify.twilio_out import TwilioAdmin, TwilioError, TwilioNumber
-from keryx.phone import matches, point_here, webhook_urls
+from keryx.phone import hostname_problem, matches, point_here, webhook_urls
 from keryx.setup.context import SetupContext
 from keryx.setup.ui import Choice
 
 E164 = re.compile(r"\+[1-9]\d{6,14}")
-HOSTNAME = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", re.I)
 CONSOLE_NUMBERS = "https://console.twilio.com/us1/develop/phone-numbers/manage/incoming"
 
 
 def guide(name: str) -> str:
     return resources.files("keryx.setup.guides").joinpath(name).read_text(encoding="utf-8")
-
-
-def hostname_problem(value: str) -> str | None:
-    """Why `value` is not a bare public hostname, or None."""
-    if "://" in value or "/" in value:
-        return "Just the hostname: no https:// and no path."
-    return None if HOSTNAME.fullmatch(value) else "That is not a hostname."
 
 
 def run_section(ctx: SetupContext) -> None:

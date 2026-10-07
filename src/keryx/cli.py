@@ -8,6 +8,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -2327,6 +2328,9 @@ def config_verify(
     sid = None
     if pair:
         sid, value = _read_twilio_pair()
+        if not ACCOUNT_SID.fullmatch(sid):
+            typer.echo("The account SID is AC and 32 hexadecimal characters.", err=True)
+            raise typer.Exit(2)
     else:
         value = _read_secret_line(key) if stdin else None
     result = credentials.verify(key, value, _load_settings_optional(), account_sid=sid)
@@ -2343,6 +2347,10 @@ def _read_secret_line(key: str) -> str:
     if sys.stdin.isatty():
         return typer.prompt(key, hide_input=True).strip()
     return sys.stdin.readline().strip()
+
+
+#: A Twilio account SID: checked before Twilio is asked, so a mistyped one is said as such.
+ACCOUNT_SID = re.compile(r"AC[0-9a-fA-F]{32}")
 
 
 def _read_twilio_pair() -> tuple[str, str]:
@@ -2819,7 +2827,7 @@ def phone_webhooks(
             typer.echo(str(why), err=True)
             raise typer.Exit(1) from None
         if as_json:
-            typer.echo(json.dumps(done))
+            typer.echo(json.dumps(done, indent=2))
             return
         voice, _ = phone.webhook_urls(settings.public_host or "")
         typer.echo(f"{done['number']} now rings Keryx at {voice}")
@@ -2853,7 +2861,9 @@ def phone_tunnel(
     typer.echo(f"tunnel: {report['binary'] or 'no tunnel on PATH (ngrok or cloudflared)'}")
     typer.echo(f"its service: {'installed' if report['unit_installed'] else 'not installed'}")
     host = report["public_host"]
-    if host is None:
+    if report["error"]:
+        typer.echo(report["error"])
+    elif host is None:
         typer.echo("PUBLIC_HOST: not set")
     else:
         answers = "answers as Keryx" if report["reachable"] else "does not answer as Keryx"

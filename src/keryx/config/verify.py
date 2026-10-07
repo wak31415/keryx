@@ -27,7 +27,6 @@ from typing import Any
 from keryx.config.options import (
     ANTHROPIC_MODELS_URL,
     ANTHROPIC_VERSION,
-    TIMEOUT_S,  # noqa: F401 -- every check's, Twilio's included (`keryx.phone`)
     Unavailable,
     _get_json,
     http_get,

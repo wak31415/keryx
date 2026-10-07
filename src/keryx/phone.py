@@ -19,6 +19,7 @@ or a number back. The credentials go in the client's auth and nowhere else.
 """
 
 import logging
+import re
 import shutil
 from collections.abc import Callable
 from typing import Any
@@ -41,6 +42,11 @@ TWILIO_REFUSED = (401, 403, 404)
 NOT_ON_ACCOUNT = "TWILIO_NUMBER isn't one of this Twilio account's numbers."
 NO_NUMBER = "There's no TWILIO_NUMBER saved."
 NO_HOST = "There's no PUBLIC_HOST saved, so there's nowhere to point it."
+BAD_HOST = "PUBLIC_HOST isn't a bare hostname: just the name, no https:// and no path."
+#: A bare public hostname: labels and a top-level domain, nothing else — no scheme, port,
+#: path, credentials, fragment or control character, any of which would point a webhook
+#: at another host or path.
+HOSTNAME = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", re.I)
 
 #: `(account_sid, auth_token)` → a `TwilioAdmin`.
 AdminFor = Callable[[str, str], TwilioAdmin]
@@ -80,6 +86,22 @@ def twilio_problem(error: Exception) -> str:
 # --- where a number points ---------------------------------------------------------------
 
 
+def hostname_problem(value: str) -> str | None:
+    """Why `value` is not a bare public hostname, or None. The wizard asks it of what is
+    typed; every webhook written or compared here asks it of `PUBLIC_HOST` as saved."""
+    if "://" in value or "/" in value:
+        return "Just the hostname: no https:// and no path."
+    return None if HOSTNAME.fullmatch(value) else "That is not a hostname."
+
+
+def _host(settings: Settings) -> tuple[str | None, str | None]:
+    """(`PUBLIC_HOST` when it is a bare hostname, why not), the reason None when unset."""
+    host = settings.public_host
+    if not host:
+        return None, None
+    return (None, BAD_HOST) if hostname_problem(host) else (host, None)
+
+
 def webhook_urls(public_host: str) -> tuple[str, str]:
     """The voice webhook and the status callback, for a hostname."""
     return f"https://{public_host}{VOICE_PATH}", f"https://{public_host}{STATUS_PATH}"
@@ -93,11 +115,6 @@ def matches(number: TwilioNumber, public_host: str) -> bool:
     """Whether both of `number`'s webhooks already point at `public_host`."""
     voice, status = webhook_urls(public_host)
     return _same(number.voice_url, voice) and _same(number.status_callback, status)
-
-
-def rings_here(number: TwilioNumber, public_host: str | None) -> bool:
-    """Whether `number`'s calls come here: its voice webhook, whatever its status callback."""
-    return bool(public_host) and _same(number.voice_url, webhook_urls(public_host or "")[0])
 
 
 def point_here(admin: TwilioAdmin, number: TwilioNumber, public_host: str) -> None:
@@ -144,7 +161,9 @@ def account_numbers(
 
 
 def numbers_report(settings: Settings, admin_for: AdminFor | None = None) -> dict[str, Any]:
-    """`keryx phone numbers --json`: a report, so Twilio's refusal is its `error`."""
+    """`keryx phone numbers --json`: a report, so Twilio's refusal is its `error`. A
+    number points here when both its webhooks do, as `webhooks_report` compares them."""
+    host, _ = _host(settings)
     try:
         account, numbers = account_numbers(settings, admin_for)
     except (Refused, Failed) as why:
@@ -156,7 +175,7 @@ def numbers_report(settings: Settings, admin_for: AdminFor | None = None) -> dic
                 "number": number.phone_number,
                 "friendly_name": number.friendly_name,
                 "voice_url": number.voice_url,
-                "points_here": rings_here(number, settings.public_host),
+                "points_here": host is not None and matches(number, host),
             }
             for number in numbers
         ],
@@ -186,14 +205,14 @@ def _find(admin: TwilioAdmin, wanted: str) -> TwilioNumber:
 
 def webhooks_report(settings: Settings, admin_for: AdminFor | None = None) -> dict[str, Any]:
     """`keryx phone webhooks --json`: where the number should point, and where it does."""
-    host = settings.public_host
+    host, bad = _host(settings)
     voice, status = webhook_urls(host) if host else (None, None)
     report: dict[str, Any] = {
         "number": settings.twilio_number or None,
         "expected": {"voice_url": voice, "status_url": status},
         "current": None,
         "matches": False,
-        "error": None if host else NO_HOST,
+        "error": None if host else bad or NO_HOST,
     }
     try:
         _needs(settings)
@@ -202,7 +221,7 @@ def webhooks_report(settings: Settings, admin_for: AdminFor | None = None) -> di
         report["error"] = str(why)
         return report
     report["current"] = {"voice_url": number.voice_url, "status_url": number.status_callback}
-    report["matches"] = bool(host) and matches(number, host or "")
+    report["matches"] = host is not None and matches(number, host)
     return report
 
 
@@ -210,12 +229,13 @@ def apply_webhooks(settings: Settings, admin_for: AdminFor | None = None) -> dic
     """Point `TWILIO_NUMBER` at `PUBLIC_HOST`: `keryx phone webhooks --apply`. The caller
     has had the owner's yes. `Refused` before Twilio is asked; `Failed` once it was."""
     _needs(settings)
-    if not settings.public_host:
-        raise Refused(NO_HOST)
+    host, bad = _host(settings)
+    if host is None:
+        raise Refused(bad or NO_HOST)
     admin = _admin(settings, admin_for)
     number = _find(admin, settings.twilio_number or "")
     try:
-        point_here(admin, number, settings.public_host)
+        point_here(admin, number, host)
     except Exception as error:  # by its cause only: its text may quote the token
         raise Failed(twilio_problem(error)) from None
     return {"applied": True, "number": number.phone_number}
@@ -231,7 +251,7 @@ def _answers_as_keryx(get: Callable[..., Any], public_host: str) -> bool:
             f"https://{public_host}/health", timeout=TUNNEL_TIMEOUT_S, follow_redirects=False
         )
         body = response.json() if response.status_code == 200 else None
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, httpx.InvalidURL, ValueError):
         return False
     return isinstance(body, dict) and body.get("ok") is True
 
@@ -244,7 +264,8 @@ def tunnel_report(
     unit_status: Callable[[Settings], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """`keryx phone tunnel --json`: the tunnel binary on `PATH` (as `doctor` finds it), its
-    unit, the hostname, and whether Keryx answers there — null with no hostname to ask."""
+    unit, the hostname, and whether Keryx answers there — null with no hostname to ask, and
+    false, with `error` saying why, for one that is not a bare hostname."""
     from keryx import units
 
     find = which or shutil.which
@@ -254,11 +275,16 @@ def tunnel_report(
             kind, binary = name, found
             break
     tunnel = (unit_status or units.status)(settings)["units"].get("tunnel", {})
-    host = settings.public_host or None
+    host, bad = _host(settings)
+    if host is not None:
+        reachable: bool | None = _answers_as_keryx(get or httpx.get, host)
+    else:
+        reachable = False if bad else None
     return {
         "kind": kind,
         "binary": binary,
-        "public_host": host,
+        "public_host": settings.public_host or None,
         "unit_installed": bool(tunnel.get("installed")),
-        "reachable": None if host is None else _answers_as_keryx(get or httpx.get, host),
+        "reachable": reachable,
+        "error": bad,
     }
