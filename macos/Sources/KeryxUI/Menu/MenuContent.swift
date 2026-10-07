@@ -32,26 +32,27 @@ public struct MenuContent: View {
 
     public var body: some View {
         Text(header)
+        ForEach(Self.counts(model.status.value), id: \.self) { Text($0) }
+        if let localModel { Text(localModel) }
+        if let download { Text(download) }
 
-        if let running, running > 0 {
-            Text(running == 1 ? "1 session running" : "\(running) sessions running")
-        }
         if !sessions.isEmpty {
-            Section("Sessions") {
+            Section {
                 ForEach(sessions) { task in
                     Button(Self.title(task)) { actions.openSession(task.id) }
                 }
+            } header: {
+                // A menu's section header: small and bold, never mistaken for an item.
+                Text("Sessions").font(.caption.weight(.semibold))
             }
         }
-        if let localModel { Text(localModel) }
-        if let download { Text(download) }
 
         Divider()
 
         Button("Open Keryx") { actions.openWindow() }
             .keyboardShortcut("o")
         Button("Restart Keryx…") { MenuAlerts.restart(model: model) }
-            .disabled(model.client == nil)
+            .disabled(model.client == nil || model.status.value?.service.installed != true)
         Toggle("Pause Approval Calls", isOn: paused)
             .disabled(model.status.value == nil)
 
@@ -63,14 +64,33 @@ public struct MenuContent: View {
             .keyboardShortcut("q")
     }
 
-    /// "Keryx is running — Lyra".
+    /// "Keryx is running — Lyra": the state first, whatever else there is to say.
     private var header: String {
-        let headline = model.menuState.headline
-        guard let assistant = Wording.assistant(model.status.value) else { return headline }
-        return "\(headline) — \(assistant)"
+        let state = Self.stateLine(model.menuState, status: model.status.value)
+        guard let assistant = Wording.assistant(model.status.value) else { return state }
+        return "\(state) — \(assistant)"
     }
 
-    private var running: Int? { model.status.value?.tasks.running }
+    /// Whether Keryx is running, stopped or missing. Results waiting to be told are a count
+    /// under it, not the state itself.
+    static func stateLine(_ state: MenuState, status: StatusReport?) -> String {
+        if case .attention = state, let status, status.storage.ok, status.restart.state != "failed",
+           status.health.reachable || status.service.active {
+            return MenuState.idle.headline
+        }
+        return state.headline
+    }
+
+    /// The lines under the state: "1 session running", "2 results not yet told".
+    static func counts(_ status: StatusReport?) -> [String] {
+        guard let tasks = status?.tasks, tasks.ok else { return [] }
+        var lines: [String] = []
+        if tasks.running > 0 { lines.append(tasks.running == 1 ? "1 session running" : "\(tasks.running) sessions running") }
+        if tasks.unreported > 0 {
+            lines.append(tasks.unreported == 1 ? "1 result not yet told" : "\(tasks.unreported) results not yet told")
+        }
+        return lines
+    }
 
     /// Sessions running, then those finished but not yet told, newest first.
     private var sessions: [TaskItem] {
@@ -80,27 +100,34 @@ public struct MenuContent: View {
         return Array((live + untold).prefix(Self.sessionLimit))
     }
 
-    /// "#41 Track down why the approval hook…".
+    /// "Track down why the approval hook…".
     static func title(_ task: TaskItem) -> String {
-        Wording.truncated("#\(task.id) " + Wording.capitalised(task.description), to: titleLimit)
+        Wording.truncated(Wording.capitalised(task.description), to: titleLimit)
     }
 
-    /// "Local model: Qwen3 Coder 30B — running", when a local agent is configured.
+    /// "Local model running", when a local agent is configured; which model is the
+    /// window's to say.
     private var localModel: String? {
-        guard let report = model.models.value, let name = report.servers.localAgent.model,
+        guard let report = model.models.value, report.servers.localAgent.model != nil,
               report.servers.localAgent.enabled else { return nil }
-        let title = report.models.first { $0.name == name }?.title ?? name
-        return "Local model: \(title) — \(report.servers.llm.reachable ? "running" : "not running")"
+        return report.servers.llm.reachable ? "Local model running" : "Local model stopped"
     }
 
-    /// "Downloading Gemma 3 12B — 42%", while a download runs.
+    /// "Downloading Gemma 4 12B — 42%" while a download runs, "Stopping the download…"
+    /// while one stops.
     private var download: String? {
-        guard let current = model.downloads.current,
-              case let .running(done, total) = current.phase else { return nil }
+        guard let current = model.downloads.current else { return nil }
         let title = model.models.value?.models.first { $0.name == current.name }?.title ?? current.name
-        guard total > 0 else { return "Downloading \(title)" }
-        let percent = Int((Double(done) / Double(total) * 100).rounded(.down))
-        return "Downloading \(title) — \(percent)%"
+        switch current.phase {
+        case let .running(done, total):
+            guard total > 0 else { return "Downloading \(title)" }
+            let percent = Int((Double(done) / Double(total) * 100).rounded(.down))
+            return "Downloading \(title) — \(percent)%"
+        case .cancelling:
+            return "Stopping the download…"
+        case .failed, .finished:
+            return nil
+        }
     }
 
     /// Pausing asks first, as the Overview's switch does; turning calls back on does not.
@@ -126,7 +153,7 @@ public struct MenuContent: View {
         NSApp.activate()
         let confirm = NSAlert()
         confirm.messageText = "Restart Keryx?"
-        confirm.informativeText = "Keryx stops, starts again, and calls you when it's back."
+        confirm.informativeText = OverviewWording.restartMessage
         confirm.addButton(withTitle: "Restart")
         confirm.addButton(withTitle: "Cancel")
         guard confirm.runModal() == .alertFirstButtonReturn else { return }

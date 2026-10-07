@@ -6,10 +6,24 @@ extension ScreenCatalog {
     /// shaped like one, for review.
     @MainActor static var menuEntries: [Entry] {
         [
-            Entry("menu", size: CGSize(width: 360, height: 380)) {
+            Entry("menu", size: CGSize(width: 360, height: 400)) {
                 MenuSheet().environment(AppModel.preview())
             },
+            Entry("menu-not-installed", size: CGSize(width: 360, height: 300)) {
+                MenuSheet().environment(AppModel.preview(client: PreviewClient(status: .success(notInstalled),
+                                                                               tasks: .success([]))))
+            },
         ]
+    }
+
+    /// Keryx run by hand: no service, so nothing for the menu to restart.
+    private static var notInstalled: StatusReport {
+        var status = PreviewData.status
+        status.service.installed = false
+        status.service.active = false
+        status.tasks.running = 0
+        status.tasks.unreported = 0
+        return status
     }
 }
 
@@ -38,10 +52,20 @@ private struct MenuSheet: View {
 
 private struct MenuItemStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 3)
+        MenuItem(label: configuration.label)
+    }
+
+    /// An item in the primary colour, or greyed while it is disabled, as a menu draws it.
+    private struct MenuItem<Label: View>: View {
+        let label: Label
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            label
+                .foregroundStyle(isEnabled ? .primary : .tertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 3)
+        }
     }
 }
 
