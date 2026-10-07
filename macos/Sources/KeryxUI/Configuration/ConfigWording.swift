@@ -3,7 +3,7 @@ import KeryxKit
 
 /// How the Configuration screen names, orders, filters and edits `keryx config list`'s rows.
 enum ConfigWording {
-    /// One `Section` of the screen: a group's rows, in the order `config list` gave them.
+    /// One `Section` of a tab: a group's rows, in the order `config list` gave them.
     struct Group: Identifiable {
         let group: String
         let rows: [ConfigRow]
@@ -97,12 +97,6 @@ enum ConfigWording {
         default: return nil
         }
     }
-
-    // MARK: - Sections
-
-    /// The groups open when the screen first appears: what an owner tunes most. The rest
-    /// start closed, and a search opens every group it matches in.
-    static let openGroups: Set<String> = ["voice", "agents", "local", "owner"]
 
     // MARK: - Choices
 

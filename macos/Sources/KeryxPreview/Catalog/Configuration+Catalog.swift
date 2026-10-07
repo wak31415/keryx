@@ -3,27 +3,34 @@ import KeryxUI
 import SwiftUI
 
 extension ScreenCatalog {
-    /// The Configuration screen: every setting, the groups below the first screenful opened,
-    /// only the coding agents open (the rest closed), a search, a write the CLI refused, a
-    /// change waiting on a restart, the secret sheet, and the whole window around it.
+    /// The Configuration screen: its first tab, each tab in turn, the Advanced disclosure
+    /// open on a tab of one group and on one of several, a search within one tab and across
+    /// several, a write the CLI refused, a change waiting on a restart, the secret sheet, the
+    /// option menus, and the whole window around it.
     @MainActor static var configurationEntries: [Entry] {
         let screen = CGSize(width: 760, height: 900)
         return [
             Entry("configuration", size: screen) {
                 ConfigurationView().environment(AppModel.preview())
             },
-            Entry("configuration-lower-groups", size: screen) {
-                ConfigurationView(search: "", open: Set(lowerGroups.map(\.group)))
-                    .environment(AppModel.preview(client: PreviewClient(config: .success(lowerGroups))))
+        ] + tabEntries(size: screen) + [
+            Entry("configuration-voice-advanced", size: CGSize(width: 760, height: 1180)) {
+                ConfigurationView(search: "", tab: "voice", advancedOpen: ["voice"]).environment(AppModel.preview())
             },
-            Entry("configuration-agents", size: screen) {
-                ConfigurationView(search: "", open: ["agents"]).environment(AppModel.preview())
+            Entry("configuration-system-advanced", size: CGSize(width: 760, height: 1300)) {
+                ConfigurationView(search: "", tab: "system", advancedOpen: ["system"]).environment(AppModel.preview())
             },
-            Entry("configuration-search", size: CGSize(width: 760, height: 460)) {
+            Entry("configuration-search", size: CGSize(width: 760, height: 560)) {
                 ConfigurationView(search: "vad").environment(AppModel.preview())
             },
-            Entry("configuration-write-error", size: screen) {
-                ConfigurationView(search: "", errors: ["VAD_SILENCE_MS": refusal])
+            Entry("configuration-search-tabs", size: CGSize(width: 760, height: 1100)) {
+                ConfigurationView(search: "key").environment(AppModel.preview())
+            },
+            Entry("configuration-search-none", size: CGSize(width: 760, height: 460)) {
+                ConfigurationView(search: "nothing like it").environment(AppModel.preview())
+            },
+            Entry("configuration-write-error", size: CGSize(width: 760, height: 1180)) {
+                ConfigurationView(search: "", tab: "voice", advancedOpen: ["voice"], errors: ["VAD_SILENCE_MS": refusal])
                     .environment(AppModel.preview(client: PreviewClient(writeError: refusal)))
             },
             Entry("configuration-needs-restart", size: screen) {
@@ -70,10 +77,17 @@ extension ScreenCatalog {
         command: "keryx config set", exitCode: 1,
         message: "VAD_SILENCE_MS Input should be a valid integer, unable to parse string as an integer")
 
-    /// The groups below the first screenful, among them a row the environment sets.
-    private static var lowerGroups: [ConfigRow] {
-        let first = Set(["voice", "agents"])
-        return PreviewData.config.filter { !first.contains($0.group) }
+    /// One entry per tab, by its id: `configuration-general` … `configuration-system`.
+    @MainActor private static func tabEntries(size: CGSize) -> [Entry] {
+        var seen: [String] = []
+        for row in PreviewData.config.sorted(by: { $0.tabOrder < $1.tabOrder }) where !seen.contains(row.tab) {
+            seen.append(row.tab)
+        }
+        return seen.map { tab in
+            Entry("configuration-\(tab)", size: size) {
+                ConfigurationView(search: "", tab: tab).environment(AppModel.preview())
+            }
+        }
     }
 
     @MainActor private static var needsRestartModel: AppModel {
