@@ -1,0 +1,332 @@
+"""The voice, set up and asked about: the one implementation `keryx setup` and `keryx voice`
+share (`keryx.localmodels.voice`), driven here through fake probes and a recording report."""
+
+import contextlib
+from pathlib import Path
+
+import pytest
+
+from keryx.config import Settings
+from keryx.config.store import ConfigStore
+from keryx.endpoints import Endpoint
+from keryx.localmodels import voice
+from keryx.localmodels.runtimes import s2s_install_argv
+
+WORDS = {"local_agent_base_url": "http://127.0.0.1:8090/v1",
+         "local_agent_model": "qwen3-coder-30b-a3b"}
+
+
+class Log:
+    """What the probes were asked and what the report was told, in one order."""
+
+    def __init__(self) -> None:
+        self.lines: list[tuple] = []
+
+    def kinds(self) -> list[str]:
+        return [line[0] for line in self.lines]
+
+    def of(self, kind: str) -> list[tuple]:
+        return [line[1:] for line in self.lines if line[0] == kind]
+
+
+class FakeMachine:
+    def __init__(self, log: Log, *, s2s=None, free=500 * 10**9, script_code=0,
+                 ports=None, server_problem=None, realtime=None) -> None:
+        self.log, self.s2s, self.free, self.script_code = log, s2s, free, script_code
+        self.ports, self.server_problem, self.realtime = ports or {}, server_problem, realtime
+
+    def speech_to_speech(self):
+        return self.s2s
+
+    def free_bytes(self, path: Path) -> int:
+        return self.free
+
+    def run_script(self, argv) -> int:
+        self.log.lines.append(("script", list(argv)))
+        return self.script_code
+
+    def free_port(self, port: int) -> int:
+        self.log.lines.append(("free_port", port))
+        return self.ports.get(port, port)
+
+    def wait_for_server(self, endpoint: Endpoint, kind: str, timeout: float):
+        self.log.lines.append(("wait", kind, endpoint.base_url, timeout))
+        return self.server_problem
+
+    def realtime_problem(self, endpoint: Endpoint):
+        self.log.lines.append(("realtime", endpoint.base_url, endpoint.api_key))
+        return self.realtime
+
+
+class Recorder:
+    def __init__(self, log: Log) -> None:
+        self.log = log
+
+    @contextlib.contextmanager
+    def step(self, step: str, message: str):
+        self.log.lines.append(("step", step, message))
+        yield
+
+    def warn(self, message: str) -> None:
+        self.log.lines.append(("warn", message))
+
+    def error(self, message: str, *, log: Path | None = None) -> None:
+        self.log.lines.append(("error", message, log))
+
+    def done(self, base_url: str) -> None:
+        self.log.lines.append(("done", base_url))
+
+
+@pytest.fixture
+def root(tmp_path) -> Path:
+    """A checkout with both installers in it."""
+    scripts = tmp_path / "checkout" / "scripts"
+    scripts.mkdir(parents=True)
+    for name in ("install-launchd.sh", "install-systemd.sh"):
+        (scripts / name).write_text("#!/bin/sh\n")
+    return tmp_path / "checkout"
+
+
+def run_here(settings, machine, log, root, *, chosen="af_heart", save_ok=True,
+             platform="linux", **kwargs):
+    saved: list[dict] = []
+
+    def save(values):
+        log.lines.append(("save", dict(values)))
+        saved.append(dict(values))
+        return save_ok
+
+    code = voice.here(settings, machine, Recorder(log), choose_voice=lambda: chosen, save=save,
+                      root=root, platform=platform, **kwargs)
+    return code, saved
+
+
+# --- here ----------------------------------------------------------------------------------
+
+
+def test_here_installs_saves_installs_the_unit_starts_and_only_then_is_the_voice(
+    settings, root
+):
+    log = Log()
+    machine = FakeMachine(log)
+    words = settings.model_copy(update=WORDS)
+
+    code, saved = run_here(words, machine, log, root)
+
+    assert code == 0
+    steps = [step for step, _message in log.of("step")]
+    assert steps == ["install", "configure", "unit", "start"]
+    # Each step is told before the slow work it names begins.
+    kinds = log.kinds()
+    assert kinds.index("step") < kinds.index("script")
+    install, unit = log.of("script")
+    assert install == (s2s_install_argv(),)
+    assert unit == ([str(root / "scripts" / "install-systemd.sh"), "--voice"],)
+    start = next(i for i, line in enumerate(log.lines) if line[:2] == ("step", "start"))
+    assert log.lines[start + 1][0] == "wait"
+    assert log.of("wait") == [("realtime", "http://127.0.0.1:8765/v1", voice.VOICE_START_S)]
+    assert saved == [
+        {"VOICE_SERVER_VOICE": "af_heart", "VOICE_SERVER_PORT": 8765},
+        {"VOICE_BASE_URL": "http://127.0.0.1:8765/v1", "VOICE_API_KEY": None},
+    ]
+    assert log.of("done") == [("http://127.0.0.1:8765/v1",)]
+    assert log.of("error") == [] and log.of("warn") == []
+
+
+def test_here_already_installed_skips_the_install(settings, root):
+    log = Log()
+    code, _saved = run_here(settings.model_copy(update=WORDS), FakeMachine(log, s2s="/bin/s2s"),
+                            log, root)
+
+    assert code == 0
+    assert "install" not in [step for step, _ in log.of("step")]
+    assert [argv[0][1:] for argv in log.of("script")] == [["--voice"]]
+
+
+def test_here_wants_a_local_model_for_its_words(settings, root):
+    log = Log()
+
+    code, saved = run_here(settings, FakeMachine(log), log, root)
+
+    assert code == voice.REFUSED == 2
+    assert log.lines == [("error", voice.NO_WORDS, None)] and saved == []
+    assert voice.NO_WORDS == "set up a local model first: keryx models use NAME"
+
+
+def test_here_says_no_words_in_the_callers_own_sentence(settings, root):
+    log = Log()
+
+    run_here(settings, FakeMachine(log), log, root, no_words="choose one first")
+
+    assert log.of("error") == [("choose one first", None)]
+
+
+def test_here_with_too_little_disk_installs_nothing(settings, root):
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update=WORDS), FakeMachine(log, free=10**9),
+                           log, root)
+
+    assert code == 1 and saved == [] and log.of("script") == []
+    [(message, _log)] = log.of("error")
+    assert "needs about 5 GB free" in message and "there is 1.0 GB" in message
+
+
+def test_an_install_that_fails_saves_nothing(settings, root):
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update=WORDS), FakeMachine(log, script_code=1),
+                           log, root)
+
+    assert code == 1 and saved == []
+    assert log.of("error") == [("the install did not finish", None)]
+
+
+def test_no_installer_beside_the_code_refuses_before_anything_is_installed(settings, tmp_path):
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update=WORDS), FakeMachine(log), log,
+                           tmp_path / "not-a-checkout")
+
+    assert code == voice.REFUSED
+    [(message, _log)] = log.of("error")
+    assert message.startswith("scripts/install-systemd.sh is not here")
+    assert "from a clone of Keryx" in message
+    assert saved == [] and log.of("script") == [] and log.of("step") == []
+
+
+def test_a_machine_with_neither_launchd_nor_systemd_is_refused(settings, root):
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update=WORDS), FakeMachine(log), log, root,
+                           platform="freebsd14")
+
+    assert code == voice.REFUSED and saved == [] and log.of("script") == []
+    assert log.of("error") == [("Keryx runs its servers under launchd or systemd, and "
+                                "freebsd14 has neither", None)]
+    assert voice.install_unit("--llm", FakeMachine(log).run_script, root=root,
+                              platform="freebsd14").startswith("Keryx runs its servers")
+
+
+def test_a_unit_that_will_not_install_is_said_and_no_voice_is_saved(settings, root):
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update=WORDS),
+                           FakeMachine(log, s2s="/bin/s2s", script_code=3), log, root,
+                           platform="darwin")
+
+    assert code == 1
+    assert log.of("error") == [("install-launchd.sh --voice exited with 3", None)]
+    assert log.of("script")[0][0][0].endswith("install-launchd.sh")
+    assert [values for values in saved if "VOICE_BASE_URL" in values] == []
+
+
+def test_a_server_that_never_answers_points_at_its_log(settings, root):
+    log = Log()
+    problem = "could not open 127.0.0.1's Realtime socket"
+
+    code, saved = run_here(settings.model_copy(update=WORDS),
+                           FakeMachine(log, s2s="/bin/s2s", server_problem=problem), log, root)
+
+    assert code == 1
+    assert log.of("error") == [(f"the voice server did not come up: {problem}",
+                                settings.state_dir / "logs" / "keryx-voice.err.log")]
+    assert [values for values in saved if "VOICE_BASE_URL" in values] == []
+    assert log.of("done") == []
+
+
+def test_a_save_that_is_refused_stops_there(settings, root):
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update=WORDS), FakeMachine(log, s2s="/bin/s2s"),
+                           log, root, save_ok=False)
+
+    assert code == 1 and len(saved) == 1
+    assert log.of("script") == [] and log.of("done") == []
+
+
+def test_a_voice_kokoro_is_not_known_to_have_is_kept_with_a_warning(settings, root):
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update=WORDS), FakeMachine(log, s2s="/bin/s2s"),
+                           log, root, chosen="zf_xiaoxiao")
+
+    assert code == 0 and saved[0]["VOICE_SERVER_VOICE"] == "zf_xiaoxiao"
+    [(warning,)] = log.of("warn")
+    assert "zf_xiaoxiao" in warning
+    # Said while the voice is configured, which is the step it belongs to.
+    configure = next(i for i, line in enumerate(log.lines) if line[:2] == ("step", "configure"))
+    assert log.lines.index(("warn", warning)) > configure
+
+
+def test_a_port_taken_by_another_is_moved_and_our_own_is_kept(settings, root):
+    log = Log()
+    words = settings.model_copy(update=WORDS)
+    _code, saved = run_here(words, FakeMachine(log, s2s="/bin/s2s", ports={8765: 8766}), log, root)
+    assert saved[0]["VOICE_SERVER_PORT"] == 8766
+    assert saved[-1]["VOICE_BASE_URL"] == "http://127.0.0.1:8766/v1"
+
+    log = Log()
+    ours = words.model_copy(update={"voice_base_url": "http://127.0.0.1:18765/v1",
+                                    "voice_server_port": 18765})
+    _code, saved = run_here(ours, FakeMachine(log, s2s="/bin/s2s", ports={18765: 18766}),
+                            log, root)
+    assert saved[0]["VOICE_SERVER_PORT"] == 18765 and log.of("free_port") == []
+
+
+# --- the voice the wizard offers first -----------------------------------------------------
+
+
+def test_the_current_voice_is_the_one_chosen_else_the_personas():
+    store = ConfigStore()
+    assert voice.current_voice(Settings(_env_file=None, openai_api_key="t"), store) == "af_heart"
+
+    store.set({"ASSISTANT_NAME": "Jarvis"})
+    assert voice.current_voice(Settings(_env_file=None, openai_api_key="t"), store) == "bm_george"
+
+    store.set({"VOICE_SERVER_VOICE": "bf_emma"})
+    assert voice.current_voice(Settings(_env_file=None, openai_api_key="t"), store) == "bf_emma"
+
+
+# --- a server elsewhere, and OpenAI --------------------------------------------------------
+
+
+def test_a_server_elsewhere_is_warned_about_and_asked_for_a_session():
+    log = Log()
+    machine = FakeMachine(log, realtime="could not open gpu's Realtime socket")
+
+    check = voice.check_server("http://192.168.1.20:8765", "vk", probes=machine,
+                               report=Recorder(log))
+
+    assert check.endpoint.base_url == "http://192.168.1.20:8765/v1"
+    assert check.problem == "could not open gpu's Realtime socket"
+    assert len(check.warnings) == 1 and "spoken PIN" in check.warnings[0]
+    assert log.of("warn") == [(check.warnings[0],)]
+    assert log.of("realtime") == [("http://192.168.1.20:8765/v1", "vk")]
+    assert log.kinds().index("step") < log.kinds().index("realtime")
+    assert check.values() == {"VOICE_BASE_URL": "http://192.168.1.20:8765/v1",
+                              "VOICE_API_KEY": "vk"}
+    blank = voice.check_server("http://gpu:8765", "", probes=machine, report=Recorder(Log()))
+    assert blank.values()["VOICE_API_KEY"] is None
+
+
+def test_an_address_with_credentials_in_it_is_refused():
+    with pytest.raises(ValueError, match="user or password"):
+        voice.check_server("http://me:pw@gpu:8765", None, probes=FakeMachine(Log()),
+                           report=Recorder(Log()))
+
+
+def test_openai_is_no_voice_server_and_no_key_for_one():
+    assert voice.to_openai() == {"VOICE_BASE_URL": None, "VOICE_API_KEY": None}
+
+
+def test_a_voice_that_answered_but_could_not_be_saved_is_not_done(settings, root):
+    log = Log()
+    answers = iter([True, False])
+    code = voice.here(settings.model_copy(update=WORDS), FakeMachine(log, s2s="/bin/s2s"),
+                      Recorder(log), choose_voice=lambda: "af_heart",
+                      save=lambda values: next(answers), root=root, platform="linux")
+
+    assert code == 1 and log.of("done") == [] and log.of("wait")
+
+
