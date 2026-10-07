@@ -12,7 +12,7 @@ struct ApprovalsSheet: View {
                 Text("Approval Calls")
                     .font(.headline)
                 if let report = model.approvals.value {
-                    Text(summary(report))
+                    Text(Self.summary(report))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -67,8 +67,10 @@ struct ApprovalsSheet: View {
         }
     }
 
-    /// "2 settled before the call · 1 answered on the call".
-    private func summary(_ report: ApprovalsReport) -> String {
-        "\(report.cancelledBeforeCall) settled before the call · \(report.answeredAfterCall) answered on the call"
+    /// "2 answered before Keryx called · 1 answered at the keyboard after": the CLI's two
+    /// counts, both of prompts settled at the keyboard, before and after Keryx rang.
+    static func summary(_ report: ApprovalsReport) -> String {
+        "\(report.cancelledBeforeCall) answered before Keryx called · "
+            + "\(report.answeredAfterCall) answered at the keyboard after"
     }
 }

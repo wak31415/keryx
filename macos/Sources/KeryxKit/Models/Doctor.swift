@@ -17,6 +17,13 @@ public struct DoctorCheck: Codable, Sendable, Equatable, Identifiable {
     public var state: String
     public var ok: Bool
     public var unset: Bool
+    /// What to call the check: a setting's display title when the check is named after one
+    /// ("OpenAI API key" for `OPENAI_API_KEY`), else the name with a capital first letter.
+    /// Optional, so a CLI from before it existed still decodes.
+    public var title: String?
+
+    /// `title`, else the name as doctor gives it.
+    public var displayTitle: String { title ?? name }
 
     public var id: String { section + "/" + name }
 }

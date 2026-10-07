@@ -25,6 +25,20 @@ import Testing
         #expect(report.checks.contains { $0.state == "failed" })
     }
 
+    @Test func doctorCheckTitlesAreForPeople() throws {
+        let key = try #require(PreviewData.doctor.checks.first { $0.name == "OPENAI_API_KEY" })
+        #expect(key.title == "OpenAI API key")
+        #expect(key.displayTitle == "OpenAI API key")
+        #expect(key.id == "voice/OPENAI_API_KEY")
+    }
+
+    @Test func doctorCheckWithoutATitleStillDecodes() throws {
+        let json = #"{"ok": true, "checks": [{"name": "tunnel", "detail": "/opt/homebrew/bin/cloudflared", "severity": "hard", "section": "phone", "state": "ok", "ok": true, "unset": false}]}"#
+        let report = try JSON.decoder.decode(DoctorReport.self, from: Data(json.utf8))
+        #expect(report.checks[0].title == nil)
+        #expect(report.checks[0].displayTitle == "tunnel")
+    }
+
     @Test func tasksFixtureDecodes() throws {
         let list = PreviewData.tasks
         #expect(list.tasks.count == 6)

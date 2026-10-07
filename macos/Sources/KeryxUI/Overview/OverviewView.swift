@@ -345,7 +345,7 @@ private struct CheckRow: View {
     var body: some View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
-                Text(Wording.capitalised(check.name))
+                Text(check.displayTitle)
                 if !check.detail.isEmpty {
                     Text(Wording.capitalised(check.detail))
                         .font(.callout)
@@ -424,7 +424,7 @@ private struct ApprovalCallsSection: View {
         .confirmationDialog("Turn Off Approval Calls?", isPresented: $confirmingOff) {
             Button("Turn Off") { write(false) }
         } message: {
-            Text("Keryx won't ring you about Claude Code prompts until you turn this back on.")
+            Text(ApprovalCallsWording.offWarning)
         }
         .sheet(isPresented: $showingAll) {
             ApprovalsSheet()
@@ -461,6 +461,11 @@ private struct ApprovalCallsSection: View {
     }
 }
 
+/// What turning the approval calls off is said to mean, in the Overview and the menu alike.
+enum ApprovalCallsWording {
+    static let offWarning = "Keryx won't ring you about Claude Code prompts until you turn this back on."
+}
+
 struct ApprovalRow: View {
     let entry: ApprovalEntry
 
@@ -487,36 +492,28 @@ struct ApprovalRow: View {
 
 /// How the approval audit's events read in the app.
 enum ApprovalWording {
-    /// A title for the event, and the detail beneath it (the command, the question).
+    /// A title for the event, and the detail beside it: what `keryx approvals --json` puts in
+    /// `what` — the request's summary (a command, a question), else a reason or an answer —
+    /// as the session wrote it.
     static func describe(_ entry: ApprovalEntry) -> (String, String?) {
-        let what = entry.what.trimmingCharacters(in: .whitespaces)
-        let verdict = ["allow": "Allowed", "deny": "Denied"][what.lowercased()]
-        switch entry.event {
-        case "answered_at_keyboard":
-            return verdict.map { ("\($0) at the keyboard", nil) } ?? ("Answered at the keyboard", detail(what))
-        case "answered_after_call", "answered_on_call":
-            return verdict.map { ("\($0) on the call", nil) } ?? ("Answered on the call", detail(what))
-        case "cancelled", "escalation_skipped", "escalation_failed", "settled":
-            // A reason, written as a sentence.
-            return (title(entry.event), detail(what).map(Wording.capitalised))
-        default:
-            // A command or a question, as the session wrote it.
-            return (title(entry.event), detail(what))
-        }
+        (title(entry.event), detail(entry.what.trimmingCharacters(in: .whitespaces)))
     }
 
+    /// The broker's audit events (`keryx/approvals/broker.py`), in words. An event this build
+    /// does not know is shown as its name, humanised.
     static func title(_ event: String) -> String {
         switch event {
-        case "raised": "Asked"
+        case "started": "Started listening for prompts"
+        case "raised": "Claude Code asked"
         case "escalated": "Called you"
         case "escalation_skipped": "Didn't call"
         case "escalation_failed": "Call failed"
-        case "cancelled": "Cancelled"
-        case "settled": "Settled"
         case "armed": "Read out the choices"
         case "keypad_unrecognised": "Key not recognised"
-        case "verdict_discarded": "Answer discarded"
-        case "started": "Approval bridge started"
+        case "settled": "Settled"
+        case "verdict_discarded": "Answer came too late"
+        case "resolve_fallback": "Answered at the keyboard"
+        case "resolve_unmatched": "Answer matched nothing"
         default: Wording.capitalised(event.replacingOccurrences(of: "_", with: " "))
         }
     }

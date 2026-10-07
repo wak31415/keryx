@@ -31,18 +31,34 @@ import Testing
         ApprovalEntry(ts: "2026-10-05T09:12:03.123456+00:00", event: event, what: what, requestId: nil)
     }
 
-    @Test func verdictsReadAsSentences() {
-        #expect(ApprovalWording.describe(entry("answered_at_keyboard", "allow")) == ("Allowed at the keyboard", nil))
-        #expect(ApprovalWording.describe(entry("answered_after_call", "deny")) == ("Denied on the call", nil))
+    @Test func everyBrokerEventHasItsOwnWords() {
+        // The events keryx/approvals/broker.py writes.
+        let events = ["started", "raised", "escalated", "escalation_skipped", "escalation_failed", "armed",
+                      "keypad_unrecognised", "verdict_discarded", "settled", "resolve_fallback",
+                      "resolve_unmatched"]
+        let titles = events.map(ApprovalWording.title)
+        #expect(Set(titles).count == events.count)
+        for (event, title) in zip(events, titles) {
+            #expect(!title.contains("_"), "\(event) reads as \(title)")
+        }
+        #expect(ApprovalWording.title("escalated") == "Called you")
     }
 
-    @Test func commandsKeepTheirCase() {
+    @Test func unknownEventsAreTheirNameHumanised() {
+        #expect(ApprovalWording.title("answered_at_keyboard") == "Answered at keyboard")
+        #expect(ApprovalWording.title("something_new") == "Something new")
+    }
+
+    @Test func whatIsShownAsTheSessionWroteIt() {
         #expect(ApprovalWording.describe(entry("escalated", "rm -rf build/")) == ("Called you", "rm -rf build/"))
-        #expect(ApprovalWording.describe(entry("cancelled", "settled first")) == ("Cancelled", "Settled first"))
+        #expect(ApprovalWording.describe(entry("settled", "")) == ("Settled", nil))
     }
 
-    @Test func unknownEventsAreShownReadably() {
-        #expect(ApprovalWording.title("resolve_unmatched") == "Resolve unmatched")
+    @Test func theSheetsCountsSayWhatTheCLICounts() {
+        var report = PreviewData.approvals
+        report.cancelledBeforeCall = 2
+        report.answeredAfterCall = 1
+        #expect(ApprovalsSheet.summary(report) == "2 answered before Keryx called · 1 answered at the keyboard after")
     }
 
     @Test func pythonTimestampsParse() {

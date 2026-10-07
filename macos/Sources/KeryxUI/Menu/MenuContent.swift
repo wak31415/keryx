@@ -103,10 +103,12 @@ public struct MenuContent: View {
         return "Downloading \(title) — \(percent)%"
     }
 
+    /// Pausing asks first, as the Overview's switch does; turning calls back on does not.
     private var paused: Binding<Bool> {
         Binding {
             !(model.status.value?.approvals.escalationEnabled ?? true)
         } set: { pause in
+            if pause && !MenuAlerts.confirmPause() { return }
             Task {
                 if let error = await model.setEscalation(enabled: !pause) {
                     MenuAlerts.show(error)
@@ -116,8 +118,9 @@ public struct MenuContent: View {
     }
 }
 
-/// The menu's dialogs, where there is no window to hold one: the restart's
-/// confirmation (and, when calls are in progress, a second one), and errors, as app-modal alerts.
+/// The menu's dialogs, where there is no window to hold one: the restart's confirmation (and,
+/// when calls are in progress, a second one), pausing the approval calls, and errors, as
+/// app-modal alerts.
 @MainActor enum MenuAlerts {
     static func restart(model: AppModel) {
         NSApp.activate()
@@ -143,6 +146,17 @@ public struct MenuContent: View {
                 show(error)
             }
         }
+    }
+
+    /// Whether the owner really means to stop the approval calls.
+    static func confirmPause() -> Bool {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "Turn Off Approval Calls?"
+        alert.informativeText = ApprovalCallsWording.offWarning
+        alert.addButton(withTitle: "Turn Off")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     static func show(_ error: KeryxError) {

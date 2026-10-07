@@ -8,7 +8,8 @@
       "section": "import",
       "state": "ok",
       "ok": true,
-      "unset": false
+      "unset": false,
+      "title": "Storage"
     },
     {
       "name": "configuration",
@@ -17,7 +18,8 @@
       "section": "import",
       "state": "ok",
       "ok": true,
-      "unset": false
+      "unset": false,
+      "title": "Configuration"
     },
     {
       "name": "OPENAI_API_KEY",
@@ -26,7 +28,8 @@
       "section": "voice",
       "state": "ok",
       "ok": true,
-      "unset": false
+      "unset": false,
+      "title": "OpenAI API key"
     },
     {
       "name": "coding agents",
@@ -35,7 +38,8 @@
       "section": "agents",
       "state": "ok",
       "ok": true,
-      "unset": false
+      "unset": false,
+      "title": "Coding agents"
     },
     {
       "name": "Claude Code agent (default)",
@@ -44,7 +48,8 @@
       "section": "agents",
       "state": "ok",
       "ok": true,
-      "unset": false
+      "unset": false,
+      "title": "Claude Code agent (default)"
     },
     {
       "name": "Twilio credentials",
@@ -53,7 +58,8 @@
       "section": "phone",
       "state": "missing",
       "ok": false,
-      "unset": true
+      "unset": true,
+      "title": "Twilio credentials"
     },
     {
       "name": "Twilio webhook",
@@ -62,7 +68,8 @@
       "section": "phone",
       "state": "failed",
       "ok": false,
-      "unset": false
+      "unset": false,
+      "title": "Twilio webhook"
     },
     {
       "name": "tunnel",
@@ -71,7 +78,8 @@
       "section": "phone",
       "state": "ok",
       "ok": true,
-      "unset": false
+      "unset": false,
+      "title": "Tunnel"
     },
     {
       "name": "local models",
@@ -80,7 +88,8 @@
       "section": "local",
       "state": "ok",
       "ok": true,
-      "unset": false
+      "unset": false,
+      "title": "Local models"
     }
   ]
 }
