@@ -42,6 +42,8 @@ class Integration:
     settings: tuple[str, ...] = ()
     #: The sign-in that connects it: an `auth login` name, or `gh` (its own login).
     signin: str | None = None
+    #: Whether it signs in through Google's OAuth client, which the two Google cards share.
+    google_client: bool = False
 
 
 INTEGRATIONS: dict[str, Integration] = {
@@ -52,11 +54,12 @@ INTEGRATIONS: dict[str, Integration] = {
             "Gmail and Calendar for every agent's tasks through Google's workspace server, "
             "which Codex needs and Claude has connectors of its own for.",
             settings=("GOOGLE_WORKSPACE_MCP", "USER_GOOGLE_EMAIL"), signin="google-workspace",
+            google_client=True,
         ),
         Integration(
             "gmail", "Gmail", "Gmail",
             "A read-only look at your mailbox, which Email answers reads on a call.",
-            signin="gmail",
+            signin="gmail", google_client=True,
         ),
         Integration(
             "slack", "Slack", "Slack",
@@ -179,6 +182,9 @@ def integrations(
             "settings": list(spec.settings),
             "signin": spec.signin,
             "used_by": used_by(name),
+            # So the app knows to ask for the client file without reading `why`.
+            "client_saved": (settings.google_oauth_client() is not None
+                             if spec.google_client else None),
         })
     return rows
 
