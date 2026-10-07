@@ -21,12 +21,12 @@ the Anthropic credentials that are not settings.
 
 import os
 
-from keryx.agents.codex import CREDENTIAL_VARIABLES
+from keryx.agents.codex import CREDENTIAL_VARIABLES, LOCAL_KEY_ENV
 from keryx.config import Settings
 from keryx.config.settings import env_var_names
 
-#: Not a setting, but a credential all the same.
-ALSO_SECRET = ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR")
+#: Not settings, but credentials all the same (the last is a local server's key, lent to Codex).
+ALSO_SECRET = ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", LOCAL_KEY_ENV)
 #: Credentials an operational child is owed: a Hugging Face download may be gated.
 OPERATIONAL_KEEPS = frozenset({"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"})
 

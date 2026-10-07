@@ -24,6 +24,7 @@ SECRETS = {
     "TWILIO_AUTH_TOKEN": "twilio-secret",
     "OPENAI_API_KEY": "sk-secret",
     "ANTHROPIC_AUTH_TOKEN": "bearer-secret",
+    "keryx_local_api_key": "local-secret",
 }
 #: What the children are owed.
 KEPT = {
