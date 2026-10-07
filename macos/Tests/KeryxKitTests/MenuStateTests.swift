@@ -36,6 +36,14 @@ import Testing
              expected: .needsMigration),
         Case(name: "migration, from the error", location: found, status: nil,
              statusError: .migrationRequired("run keryx migrate"), expected: .needsMigration),
+        Case(name: "settings unreadable, before anything read through them", location: found,
+             status: status { $0.storage.ok = false; $0.storage.error = "config.toml: bad"
+                 $0.service.installed = false; $0.service.active = false
+                 $0.health.reachable = false; $0.restart.state = "failed" },
+             expected: .attention("Keryx can't read its settings")),
+        Case(name: "migration wins over unreadable settings", location: found,
+             status: status { $0.storage.ok = false; $0.storage.migrationRequired = true },
+             expected: .needsMigration),
         Case(name: "restart failed", location: found,
              status: status { $0.restart.state = "failed"; $0.service.installed = false },
              expected: .attention("Last restart failed")),

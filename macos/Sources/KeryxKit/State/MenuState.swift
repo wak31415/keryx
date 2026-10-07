@@ -33,6 +33,9 @@ public enum MenuState: Equatable, Sendable {
     /// Something to look at; the associated text says what.
     case attention(String)
 
+    /// The attention when the status could not read Keryx's settings.
+    public static let unreadableSettings = "Keryx can't read its settings"
+
     public var headline: String {
         switch self {
         case .locating: "Looking for Keryx…"
@@ -70,6 +73,9 @@ public func menuState(location: Loadable<KeryxLocation>, status: StatusReport?,
         return statusError.map { .attention($0.title) } ?? .locating
     }
     if status.storage.migrationRequired { return .needsMigration }
+    // Without its settings nothing else the status says can be trusted: not installed,
+    // stopped and idle are all read through them.
+    if !status.storage.ok { return .attention(MenuState.unreadableSettings) }
     if status.restart.state == "failed" { return .attention("Last restart failed") }
     if !status.service.installed && !status.health.reachable { return .notInstalled }
     if status.service.installed && !status.service.active && !status.health.reachable {
