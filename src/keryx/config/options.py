@@ -273,7 +273,12 @@ def _server(endpoint: Endpoint | None, get: Callable[..., Any], missing: str) ->
 
 # --- one provider per setting --------------------------------------------------------------
 
-_openai_realtime = _openai("openai_realtime_model", lambda i: "realtime" in i)
+#: Realtime models that do not hold a conversation: they transcribe or translate speech.
+NOT_VOICE = ("whisper", "translate", "transcribe", "audio-preview")
+_openai_realtime = _openai(
+    "openai_realtime_model",
+    lambda i: "realtime" in i and not any(word in i for word in NOT_VOICE),
+)
 
 
 def realtime_models(settings: Settings, sources: Sources) -> Found:
@@ -365,6 +370,11 @@ def _codex_env(settings: Settings) -> dict[str, str]:
     return env
 
 
+#: A blank `CODEX_MODEL` is Codex choosing. `SUBAGENT_MODEL` has no such option: it is a
+#: plain string with a default, and blank names no model at all.
+CODEX_DEFAULT = Option("", "Codex's default")
+
+
 def codex_models(settings: Settings, sources: Sources) -> Found:
     """What Codex lists for the way its tasks sign in; the aliases Keryx knows else."""
     from keryx.agents.codex import CODEX_MODELS
@@ -373,9 +383,13 @@ def codex_models(settings: Settings, sources: Sources) -> Found:
         listed = sources.codex_models(_codex_env(settings), TIMEOUT_S)
         if not listed:
             raise Unavailable("Codex listed no models")
-        return [Option(m.id, m.display_name or m.id, m.description or None) for m in listed]
+        return [
+            CODEX_DEFAULT,
+            *(Option(m.id, m.display_name or m.id, m.description or None) for m in listed),
+        ]
 
-    return _live("codex", read, _aliased(CODEX_MODELS, lambda _, model: _codex_label(model)))
+    known = _aliased(CODEX_MODELS, lambda _, model: _codex_label(model))
+    return _live("codex", read, [CODEX_DEFAULT, *known])
 
 
 def local_agent_models(settings: Settings, sources: Sources) -> Found:

@@ -138,6 +138,18 @@ def test_realtime_models_are_read_from_openai_with_the_key(keyed):
     assert kwargs["follow_redirects"] is False
 
 
+def test_realtime_models_are_only_those_that_can_run_a_voice_session(keyed):
+    body = {"data": [
+        {"id": "gpt-realtime-2.1"}, {"id": "gpt-realtime-whisper"},
+        {"id": "gpt-realtime-translate"}, {"id": "gpt-4o-realtime-preview-2025-06-03"},
+        {"id": "gpt-realtime-transcribe"}, {"id": "gpt-realtime-audio-preview"},
+    ]}
+
+    found = options_for("OPENAI_REALTIME_MODEL", keyed, sources(get=FakeGet(body=body)))
+
+    assert values(found) == ["gpt-realtime-2.1", "gpt-4o-realtime-preview-2025-06-03"]
+
+
 def test_transcription_models_are_the_transcribers_and_whisper(keyed):
     found = options_for("OPENAI_TRANSCRIPTION_MODEL", keyed, sources(get=FakeGet(body=OPENAI_BODY)))
 
@@ -348,6 +360,16 @@ def test_anthropic_listing_no_claude_model_falls_back(settings):
     assert found.error == "Anthropic listed no Claude models" and not found.live
 
 
+def test_claude_has_no_blank_option_since_a_blank_model_is_not_a_default(settings):
+    """`SUBAGENT_MODEL` is a plain string with a default: blank does not mean "Claude's own"."""
+    keyed = settings.model_copy(update={"anthropic_api_key": KEY})
+
+    assert "" not in values(options_for("SUBAGENT_MODEL", settings, sources()))
+    assert "" not in values(
+        options_for("SUBAGENT_MODEL", keyed, sources(get=FakeGet(body=ANTHROPIC_BODY)))
+    )
+
+
 def test_a_claude_model_set_by_hand_is_kept(settings):
     custom = settings.model_copy(update={"subagent_model": "claude-opus-4-1"})
 
@@ -373,8 +395,9 @@ def test_codex_models_are_what_codex_lists(settings):
 
     found = options_for("CODEX_MODEL", settings, sources(codex_models=codex_models))
 
-    assert values(found) == ["gpt-6-astra", "gpt-6-luna"]
-    assert found.options[0] == Option("gpt-6-astra", "GPT-6-Astra", "Frontier intelligence.")
+    assert values(found) == ["", "gpt-6-astra", "gpt-6-luna"]
+    assert found.options[0] == Option("", "Codex's default", None)
+    assert found.options[1] == Option("gpt-6-astra", "GPT-6-Astra", "Frontier intelligence.")
     assert (found.source, found.live, found.error, found.current) == ("codex", True, None, None)
     ((env, timeout),) = asked
     # The stored login: every credential variable blanked, the owner's CODEX_HOME untouched.
@@ -411,8 +434,9 @@ def test_codex_on_an_api_key_uses_keryxs_own_home_once_logged_in(settings):
     # Not logged in yet: a dropdown never logs in, so it says so instead.
     assert asked == []
     assert found.error == "Codex has not logged in with CODEX_API_KEY yet (its first task does)"
-    assert values(found) == ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-terra"]
-    assert found.options[0] == Option("gpt-6-astra", "GPT-6-Astra", "astra")
+    assert values(found) == ["", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-terra"]
+    assert found.options[0] == Option("", "Codex's default", None)
+    assert found.options[1] == Option("gpt-6-astra", "GPT-6-Astra", "astra")
 
     home = private_codex_home(keyed)
     home.mkdir(parents=True)
