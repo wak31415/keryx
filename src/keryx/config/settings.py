@@ -227,6 +227,17 @@ class _TomlLayer(PydanticBaseSettingsSource):
             if tolerate_broken_files.get():
                 return {}
             raise ConfigFileError(f"{self.path} does not parse ({error})") from None
+        except OSError as error:
+            # It is there (`read_toml` already turned "not there" into `{}`) but
+            # permission, a directory in its place, or anything else the OS refused to
+            # open — same treatment as a file that does not parse: every caller that
+            # already handles one handles the other. `strerror`, never the error's own
+            # `str()`, because that quotes the path back and this message already names it.
+            if tolerate_broken_files.get():
+                return {}
+            raise ConfigFileError(
+                f"{self.path} cannot be read ({error.strerror or error})"
+            ) from None
         current = sorted(data.items(), key=lambda item: item[0] in fields and (
             item[0] == env_var_name(fields[item[0]])
         ))

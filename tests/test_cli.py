@@ -28,7 +28,7 @@ from keryx.cli import (
     MAX_REPORT_CHARS,
     app,
 )
-from keryx.config import Settings
+from keryx.config import Settings, config_file
 from keryx.config.settings import ConfigFileError
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path
@@ -1060,6 +1060,39 @@ def test_status_json_with_unreadable_settings_files_is_still_a_document(
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["storage"]["error"] == "secrets.toml is not valid TOML"
+
+
+def test_status_json_with_an_unreadable_config_file_is_still_a_document(
+    monkeypatch, quiet_status_probes
+):
+    """The real path (no monkeypatched `load_settings`): `config.toml` is there but every
+    attempt to open it raises `PermissionError`. `status` must still exit 0 with the whole
+    document — `storage.ok` false, everything else computed normally — never a crash with
+    an empty stdout."""
+    import keryx.config.settings as settings_module
+
+    path = config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("OPENAI_VOICE = \"marin\"\n")
+    original_read_toml = settings_module.read_toml
+
+    def flaky(candidate):
+        if candidate == path:
+            raise PermissionError(13, "Permission denied")
+        return original_read_toml(candidate)
+
+    monkeypatch.setattr("keryx.config.settings.read_toml", flaky)
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert document["schema"] == 1
+    assert document["storage"]["ok"] is False
+    assert "Permission denied" in document["storage"]["error"]
+    # Every other part still computed normally: the broken file did not take the document.
+    assert document["assistant"] == {"ok": True, "error": None, "name": "Lyra"}
+    assert document["paths"]["ok"] is True
 
 
 def test_status_text_says_whether_keryx_is_running(settings_stub, quiet_status_probes):

@@ -2,6 +2,7 @@
 what order it looks."""
 
 import os
+import re
 import stat
 import tomllib
 from datetime import date
@@ -11,7 +12,7 @@ import pytest
 
 from keryx.config import Settings, keryx_home, pin_file, read_enrolled_pin, write_enrolled_pin
 from keryx.config.files import dump_toml, read_toml, write_private
-from keryx.config.settings import ConfigFileError, env_var_name, field_for
+from keryx.config.settings import ConfigFileError, _TomlLayer, env_var_name, field_for
 from keryx.config.store import (
     FROM_DEFAULT,
     FROM_ENV,
@@ -210,6 +211,34 @@ def test_a_config_file_that_does_not_parse_says_so(store):
 
     with pytest.raises(ConfigFileError, match="does not parse"):
         load()
+
+
+def test_a_config_file_that_cannot_be_opened_says_so(tmp_path, monkeypatch):
+    """`PermissionError`, `IsADirectoryError` and friends become `ConfigFileError` too,
+    named by the path and the OS error's `strerror` — never a traceback, and never the
+    file's own content (there is none to leak: the open never got that far)."""
+    path = tmp_path / "config.toml"
+    layer = _TomlLayer(Settings, path)
+    monkeypatch.setattr(
+        "keryx.config.settings.read_toml",
+        lambda _path: (_ for _ in ()).throw(PermissionError(13, "Permission denied")),
+    )
+
+    with pytest.raises(ConfigFileError, match=re.escape(str(path))) as error:
+        layer()
+
+    assert "Permission denied" in str(error.value)
+
+
+def test_an_unparseable_config_file_still_says_does_not_parse(tmp_path, monkeypatch):
+    """The existing behaviour for a file that is there but not valid TOML is unchanged:
+    only a read failure (an `OSError`) gets the new wording above."""
+    path = tmp_path / "config.toml"
+    path.write_text("PORT = = 1\n")
+    layer = _TomlLayer(Settings, path)
+
+    with pytest.raises(ConfigFileError, match="does not parse"):
+        layer()
 
 
 # --- service permissions --------------------------------------------------------------
