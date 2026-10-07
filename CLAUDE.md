@@ -95,8 +95,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   machine's GPU and memory, the recommended one marked, and the local voices; `--json` adds
   `servers`, the model and voice servers' units and whether they answer, asked on loopback
   only, and `served_model`, the model the running server names — `model` is the setting),
-  `models pull NAME [--json]` (resumable, checksummed, into `CACHE_DIR/models`; a copy
-  in the Hugging Face cache is linked instead; `--json` is JSON lines — `progress`, then
+  `models pull NAME [--json]` (resumable, checksummed, into `CACHE_DIR/models`; a copy in
+  the Hugging Face cache is linked instead; `--json` is JSON lines — `progress`, then
   exactly one of `done`, `adopted`, `error`, `cancelled` on every path, a refusal included;
   a SIGTERM cancels, exit 130, and keeps the `.part`), `models use NAME [--default-agent]
   [--json]` (a downloaded model as the local agent's: saves what the wizard would, through
@@ -105,13 +105,14 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   when it is missing, the `--llm` unit, the wait for it, and a check that the server names
   that model — through the wizard's own `localmodels/server.py`; a server that does not come
   up, serves another model, or is cancelled while it loads has its unit removed first, and
-  `--runtime ollama` removes an installed llama.cpp unit once Ollama serves the model; `--json` is JSON lines — `step`
-  (`runtime`, `unit`, `start`, `check`), `progress` while llama.cpp downloads, then exactly
-  one of `done` (`url`, `served_model`), `error`, `cancelled`; exit 2 until a model is chosen
-  and downloaded), `models stop [--json]` (removes the model server's unit), `models serve
-  llm|voice` (what the units run: it reads the settings and becomes the server; the voice
-  server first waits, up to `LLM_START_S`, for the model server its words come from, so the
-  two loading together at login is no crash loop)
+  `--runtime ollama` removes an installed llama.cpp unit once Ollama serves the model;
+  `--json` is JSON lines — `step` (`runtime`, `unit`, `start`, `check`), `progress` while
+  llama.cpp downloads, then exactly one of `done` (`url`, `served_model`), `error`,
+  `cancelled`; exit 2 until a model is chosen and downloaded), `models stop [--json]`
+  (removes the model server's unit), `models serve llm|voice` (what the units run: it reads
+  the settings and becomes the server; the voice server first waits, up to `LLM_START_S`,
+  for the model server its words come from, so the two loading together at login is no crash
+  loop)
 - The voice on a call: `uv run keryx voice [--json]` (where it is — `mode` openai, here or
   server — and the voice server on this machine: installed, its unit, whether it answers on
   loopback, the local model its words come from, its `stt` and `tts` and whether their
@@ -132,11 +133,12 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   models when they are not in the cache — `voice download`'s own step, `progress` and all,
   and a download that stops installs no unit — then its unit, wait for it, then save it;
   refused while the local model server its words come from does not answer, and a server
-  that does not come up, or whose start is cancelled, has its unit removed first — as does
-  a unit install that fails, times out or is cancelled — so no unit is left crash-looping; `--json` is JSON lines — a `step` before each slow one (`install`,
-  `download`, `configure`, `unit`, `start`), `progress` while it downloads, then exactly one
-  of `done`, `error`, `cancelled`; exit 2 for a refusal before anything is tried, 1 for what
-  stopped it, 130 for a SIGTERM)
+  that does not come up, or whose start is cancelled, has its unit removed first — as does a
+  unit install that fails, times out or is cancelled — so no unit is left crash-looping;
+  `--json` is JSON lines — a `step` before each slow one (`install`, `download`,
+  `configure`, `unit`, `start`), `progress` while it downloads, then exactly one of `done`,
+  `error`, `cancelled`; exit 2 for a refusal before anything is tried, 1 for what stopped
+  it, 130 for a SIGTERM)
 - The Mac app (`macos/`): `macos/scripts/test.sh` (the Swift tests; it adds the Command Line
   Tools' Testing framework path only when they are the developer directory),
   `macos/scripts/build-app.sh [--install]` (`macos/build/Keryx.app`, signed ad hoc;

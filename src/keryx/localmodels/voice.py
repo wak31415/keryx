@@ -44,7 +44,7 @@ from keryx.config.store import FROM_DEFAULT, ConfigStore
 from keryx.endpoints import Endpoint, warnings
 from keryx.localmodels import catalog, hardware, runtimes, servers, speech, use
 from keryx.localmodels.catalog import VOICE_SERVER_DOWNLOAD_GB
-from keryx.localmodels.pull import EventLines
+from keryx.localmodels.pull import CANCEL_SIGNALS, EventLines
 from keryx.localmodels.servers import HOST
 
 OPENAI, HERE, SERVER = "openai", "here", "server"
@@ -74,6 +74,8 @@ INSTALL_TIMEOUT_S = 120.0
 TIMED_OUT = 124
 #: How long a killed installer is given to be reaped.
 STOP_S = 5.0
+#: The attribute a stop carries naming the units already removed for it.
+REMOVED_FOR = "keryx_units_removed"
 #: The exit codes of a set-up: a refusal is one nothing was tried for.
 OK, FAILED, REFUSED = 0, 1, 2
 #: The platform whose service manager installs the units, unless a caller says another.
@@ -346,14 +348,17 @@ def here(
             port = probes.free_port(port)
         if not save({"VOICE_SERVER_VOICE": voice, "VOICE_SERVER_PORT": port}):
             return FAILED
-    if not install_unit_step("--voice", "Installing the voice server's service",
-                             probes.run_script, report, root=root, platform=platform):
-        return FAILED
     endpoint = Endpoint.parse(f"http://{HOST}:{port}")
-    with report.step("start", "Starting the voice server and waiting for it to answer — a "
-                              "first start loads its speech models, which takes a minute"), \
-            removed_if_stopped("--voice", probes.run_script, root=root, platform=platform):
-        problem = probes.wait_for_server(endpoint, "realtime", start_s)
+    # One guard from the unit to the server answering: no moment between the two — the
+    # start step being told included — where a Cancel would leave the unit behind.
+    with removed_if_stopped("--voice", probes.run_script, root=root, platform=platform):
+        if not install_unit_step("--voice", "Installing the voice server's service",
+                                 probes.run_script, report, root=root, platform=platform):
+            return FAILED
+        with report.step("start", "Starting the voice server and waiting for it to answer — "
+                                  "a first start loads its speech models, which takes a "
+                                  "minute"):
+            problem = probes.wait_for_server(endpoint, "realtime", start_s)
     if problem is not None:
         removed = remove_unit("--voice", probes.run_script, root=root, platform=platform)
         report.error(f"the voice server did not come up: {problem}; {removed}",
@@ -478,11 +483,19 @@ def remove_unit(
     flag: str, run_script: Callable[[Sequence[str]], int], *, root: Path,
     platform: str | None = None,
 ) -> str:
-    """Remove the `flag` unit ("--llm" or "--voice"); what became of it, in a clause."""
+    """Remove the `flag` unit ("--llm" or "--voice"); what became of it, in a clause.
+
+    Cancel (SIGTERM, SIGINT) is held off while the uninstaller runs and lands once it has
+    finished: a second Cancel arriving now would kill it halfway and keep the very unit it
+    was removing."""
     script, problem = installer(flag, root=root, platform=platform)
     if script is None:
         return f"its service could not be removed: {problem}"
-    code = run_script([str(script), flag, "--uninstall"])
+    held = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+    try:
+        code = run_script([str(script), flag, "--uninstall"])
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, held)
     if code != 0:
         said = exited(f"{script.name} {flag} --uninstall", code)
         return f"its service could not be removed: {said}"
@@ -496,12 +509,17 @@ def removed_if_stopped(
 ) -> Iterator[None]:
     """The `flag` unit removed when what this wraps is stopped — a Cancel, which is what an
     owner does to a server that will not come up — and the stop then goes on: a unit
-    installed and never seen to work is never left behind to restart in a loop."""
+    installed and never seen to work is never left behind to restart in a loop. Guards
+    nest — one spanning unit and start, one around the unit's own install — and the unit
+    is removed once: the stop carries the flags already removed for it."""
     try:
         yield
-    except BaseException:
-        with suppress(Exception):
-            remove_unit(flag, run_script, root=root, platform=platform)
+    except BaseException as stopped:
+        removed: frozenset[str] = getattr(stopped, REMOVED_FOR, frozenset())
+        if flag not in removed:
+            with suppress(Exception):
+                remove_unit(flag, run_script, root=root, platform=platform)
+            setattr(stopped, REMOVED_FOR, removed | {flag})
         raise
 
 

@@ -147,8 +147,9 @@ def test_a_unit_that_will_not_install_is_said_and_not_waited_for(tmp_path):
     assert log.kinds().index("warn") < log.kinds().index("error")
 
 
-@pytest.mark.parametrize("removal", [0, KeyboardInterrupt()])
+@pytest.mark.parametrize("removal", [0, 4, OSError("gone")])
 def test_a_cancel_while_the_unit_installs_removes_it(tmp_path, removal):
+    """…whatever the removal then says: the Cancel goes on."""
     log, root = Recorder(), checkout(tmp_path / "checkout")
     script = str(root / "scripts" / "install-launchd.sh")
 
@@ -156,7 +157,9 @@ def test_a_cancel_while_the_unit_installs_removes_it(tmp_path, removal):
         log.lines.append(("script", list(argv)))
         if argv[-1] == "--llm":
             raise KeyboardInterrupt
-        return 0
+        if isinstance(removal, BaseException):
+            raise removal
+        return removal
 
     with pytest.raises(KeyboardInterrupt):
         server.serve_here(Settings(), log, run_script=run, wait_for_server=log.wait(),
@@ -165,6 +168,47 @@ def test_a_cancel_while_the_unit_installs_removes_it(tmp_path, removal):
     assert [argv for (argv,) in log.of("script")] == [
         [script, "--llm"], [script, "--llm", "--uninstall"]]
     assert not log.of("error") and not log.of("wait")
+
+
+class CancelledAt(Recorder):
+    """A report whose telling of one step is where the Cancel lands."""
+
+    def __init__(self, at: str) -> None:
+        super().__init__()
+        self.at = at
+
+    @contextlib.contextmanager
+    def step(self, step: str, message: str):
+        if step == self.at:
+            raise KeyboardInterrupt
+        with super().step(step, message):
+            yield
+
+
+def test_a_cancel_as_the_start_is_told_still_removes_the_unit(tmp_path):
+    log, root = CancelledAt("start"), checkout(tmp_path / "checkout")
+    script = str(root / "scripts" / "install-launchd.sh")
+
+    with pytest.raises(KeyboardInterrupt):
+        server.serve_here(Settings(), log, run_script=log.script(0), wait_for_server=log.wait(),
+                          root=root, platform="darwin")
+
+    assert [argv for (argv,) in log.of("script")] == [
+        [script, "--llm"], [script, "--llm", "--uninstall"]]
+    assert not log.of("wait")
+
+
+def test_a_cancel_as_the_check_is_told_still_removes_the_unit(chosen, tmp_path):
+    log = CancelledAt("check")
+    machine = Machine(Run())
+    machine.log = log
+
+    with pytest.raises(KeyboardInterrupt):
+        start(chosen, machine, log, tmp_path)
+
+    script = str(tmp_path / "checkout" / "scripts" / "install-launchd.sh")
+    assert [argv for (argv,) in log.of("script")] == [
+        [script, "--llm"], [script, "--llm", "--uninstall"]]
 
 
 def test_no_installer_here_is_said(tmp_path):

@@ -140,13 +140,14 @@ def serve_here(
 ) -> bool:
     """Install the model server's unit from the checkout at `root` and wait for it to load
     `LLM_SERVER_MODEL`; False once the report has been told why it did not."""
-    if not voice.install_unit_step("--llm", "Installing the model server's service", run_script,
-                                   report, root=root, platform=platform):
-        return False
     here = endpoint(settings)
-    with report.step("start", f"Loading the model into llama.cpp at {here.base_url}"), \
-            _removed_if_stopped(run_script, root=root, platform=platform):
-        problem = wait_for_server(here, "models", LLM_START_S)
+    # One guard from the unit to the server answering (`voice.here`'s rule).
+    with _removed_if_stopped(run_script, root=root, platform=platform):
+        if not voice.install_unit_step("--llm", "Installing the model server's service",
+                                       run_script, report, root=root, platform=platform):
+            return False
+        with report.step("start", f"Loading the model into llama.cpp at {here.base_url}"):
+            problem = wait_for_server(here, "models", LLM_START_S)
     if problem is not None:
         removed = remove_unit(run_script, root=root, platform=platform)
         report.error(f"the model server did not come up: {problem}; {removed}",
@@ -234,13 +235,15 @@ def start(
         return REFUSED
     if not _have_llama(settings, probes, report, platform=platform):
         return FAILED
-    if not serve_here(settings, report, run_script=probes.run_script,
-                      wait_for_server=probes.wait_for_server, root=root, platform=platform):
-        return FAILED
     here = endpoint(settings)
-    with report.step("check", f"Asking the model server which model it serves, {alias}"), \
-            _removed_if_stopped(probes.run_script, root=root, platform=platform):
-        _up, served = probes.served(here.base_url)
+    # The unit guarded from its install to the check, with no moment between unguarded.
+    with _removed_if_stopped(probes.run_script, root=root, platform=platform):
+        if not serve_here(settings, report, run_script=probes.run_script,
+                          wait_for_server=probes.wait_for_server, root=root,
+                          platform=platform):
+            return FAILED
+        with report.step("check", f"Asking the model server which model it serves, {alias}"):
+            _up, served = probes.served(here.base_url)
     if served != alias:
         removed = remove_unit(probes.run_script, root=root, platform=platform)
         report.error(f"the model server at {here.base_url} serves {served or 'no model it names'}"

@@ -287,6 +287,73 @@ def test_a_unit_install_that_times_out_is_removed(settings, root):
     assert log.of("script")[-1][0][-1] == "--uninstall"
 
 
+class CancelledAt(Recorder):
+    """A report whose telling of one step is where the Cancel lands."""
+
+    def __init__(self, log, at: str) -> None:
+        super().__init__(log)
+        self.at = at
+
+    @contextlib.contextmanager
+    def step(self, step: str, message: str):
+        if step == self.at:
+            raise KeyboardInterrupt
+        with super().step(step, message):
+            yield
+
+
+def test_a_cancel_as_the_start_is_told_still_removes_the_unit(settings, root):
+    """No window between the unit and the start: the unit is guarded before the start
+    step is told."""
+    log = Log()
+    script = str(root / "scripts" / "install-launchd.sh")
+
+    with pytest.raises(KeyboardInterrupt):
+        voice.here(settings.model_copy(update=WORDS), FakeMachine(log, s2s="/bin/s2s"),
+                   CancelledAt(log, "start"), choose_voice=lambda: "af_heart",
+                   save=lambda values: True, root=root, platform="darwin")
+
+    assert [argv for (argv,) in log.of("script")] == [
+        [script, "--voice"], [script, "--voice", "--uninstall"]]
+    assert log.of("wait") == []
+
+
+def test_a_unit_is_removed_with_cancel_held_off_until_it_is_done(root):
+    """A second Cancel during the removal would kill the uninstaller and keep the unit:
+    SIGTERM and SIGINT wait until it has finished, then land."""
+    import signal
+
+    held: list[set] = []
+
+    def run(argv):
+        held.append(set(signal.pthread_sigmask(signal.SIG_BLOCK, [])))
+        return 0
+
+    before = set(signal.pthread_sigmask(signal.SIG_BLOCK, []))
+
+    assert voice.remove_unit("--voice", run, root=root, platform="darwin") == voice.REMOVED
+
+    assert {signal.SIGTERM, signal.SIGINT} <= held[0]
+    assert set(signal.pthread_sigmask(signal.SIG_BLOCK, [])) == before
+
+
+def test_a_unit_guarded_twice_is_removed_once(root):
+    """Guards nest — the start's inside the one that spans unit and start — and a Cancel
+    removes the unit once."""
+    ran: list = []
+
+    def run(argv):
+        ran.append(list(argv))
+        return 0
+
+    with pytest.raises(KeyboardInterrupt), \
+            voice.removed_if_stopped("--voice", run, root=root, platform="darwin"), \
+            voice.removed_if_stopped("--voice", run, root=root, platform="darwin"):
+        raise KeyboardInterrupt
+
+    assert len(ran) == 1 and ran[0][-1] == "--uninstall"
+
+
 def test_a_cancel_while_the_unit_installs_removes_it(settings, root):
     log = Log()
     machine = FakeMachine(log, s2s="/bin/s2s")
@@ -920,7 +987,7 @@ def test_only_a_units_installer_is_timed_never_a_download(monkeypatch):
     asked: dict = {}
 
     class Child:
-        pid = 1
+        pid = 424242
         returncode = 0
 
         def __init__(self, argv, **kwargs):
@@ -936,6 +1003,7 @@ def test_only_a_units_installer_is_timed_never_a_download(monkeypatch):
         return child
 
     monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr("os.killpg", lambda pgid, sig: pytest.fail("nothing to kill"))
 
     voice.run_detached(["/repo/scripts/install-systemd.sh", "--voice", "--uninstall"])
     voice.run_detached(["uv", "tool", "install", "speech-to-speech"])
