@@ -188,7 +188,8 @@ redaction and the error handling. A new agent is:
   client and returns the adapter;
 - **one `BackendSpec` entry** in `keryx/agents/registry.py::BACKENDS`: its runner, its
   spoken model names, where its credentials come from (`AuthSource`), its install hint,
-  instructions file, skills directory and login commands. The router, the task manager, the
+  instructions file, skills directory and login commands, and `google_connectors` when its
+  tasks reach Gmail and Calendar without workspace-mcp. The router, the task manager, the
   voice tools, `doctor` and `keryx setup` read that table and nothing else;
 - **its name** in `AgentName` in `config/settings.py`, **its settings** in `Settings`
   (`docs/configuration.md` is regenerated from it), **a column** in the table above (a test checks), and **tests** — the

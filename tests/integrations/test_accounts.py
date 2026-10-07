@@ -121,6 +121,27 @@ def test_codex_without_google_is_told_what_it_lacks(settings):
     assert "Codex" in rows(settings)["google"]["why"]
 
 
+@pytest.mark.parametrize("codex_has_connectors", [False, True])
+def test_doctor_and_the_card_name_the_same_agents_without_google(
+    settings, monkeypatch, codex_has_connectors
+):
+    """One list, read from the registry, so the two cannot drift when an agent changes."""
+    import dataclasses
+
+    from keryx.agents.registry import BACKENDS, without_google
+    from keryx.doctor import google_check
+
+    monkeypatch.setitem(BACKENDS, "codex", dataclasses.replace(
+        BACKENDS["codex"], google_connectors=codex_has_connectors))
+    settings = settings.model_copy(update={"agents_enabled": ["claude", "codex"]})
+
+    named = without_google(settings)
+
+    assert named == ([] if codex_has_connectors else ["Codex"])
+    card, check = rows(settings)["google"]["why"], google_check(settings).detail
+    assert ("Codex" in card) is ("Codex" in check) is (not codex_has_connectors)
+
+
 def test_issue_reports_off_never_asks_gh(settings, checkout):
     found = rows(settings.model_copy(update={"keryx_checkout": checkout}))["github"]
 

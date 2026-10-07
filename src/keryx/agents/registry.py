@@ -102,6 +102,9 @@ class BackendSpec:
     cli_version: Callable[[], str | None] = lambda: None
     #: For an agent that runs inside another's harness (`local`): which one, today.
     harness: Callable[[Settings], str] | None = None
+    #: Whether its tasks reach Gmail and Calendar with `GOOGLE_WORKSPACE_MCP` off: Claude's
+    #: claude.ai connectors do. A new agent has none until shown otherwise.
+    google_connectors: bool = False
 
 
 #: Which harness drives the local model, by the API its server speaks.
@@ -110,6 +113,14 @@ LOCAL_HARNESS = {"anthropic-messages": "claude", "openai-responses": "codex"}
 
 def _local_harness(settings: Settings) -> str:
     return LOCAL_HARNESS[settings.local_agent_api]
+
+
+def without_google(settings: Settings) -> list[str]:
+    """The enabled agents, by label in `BACKENDS` order, whose tasks have no Gmail or
+    Calendar while `GOOGLE_WORKSPACE_MCP` is off — what `doctor` and the Integrations card
+    both say, from this one list."""
+    return [spec.label for name, spec in BACKENDS.items()
+            if name in settings.enabled_agents and not spec.google_connectors]
 
 
 class NoLocalServer(AgentRunner):
@@ -133,6 +144,7 @@ BACKENDS: dict[str, BackendSpec] = {
         name="claude",
         package="claude_agent_sdk",
         label="Claude Code",
+        google_connectors=True,
         spoken_name="Claude",
         models=CLAUDE_MODELS,
         model_hint="opus (strongest, the default), sonnet, fable or haiku (fastest)",

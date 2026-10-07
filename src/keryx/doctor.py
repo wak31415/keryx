@@ -35,6 +35,7 @@ from keryx.agents.registry import (
     cli_path,
     install_command,
     installed,
+    without_google,
 )
 from keryx.agents.registry import harness as agent_harness
 from keryx.config import (
@@ -898,10 +899,7 @@ def google_check(settings: Settings) -> Check:
     enabled, off means its tasks have no mailbox and no calendar at all.
     """
     if not settings.google_workspace_mcp:
-        without = [
-            BACKENDS[name].label for name in ("codex", "local") if name in settings.enabled_agents
-        ]
-        if without:
+        if without := without_google(settings):
             return Check(
                 "Google for agents",
                 False,

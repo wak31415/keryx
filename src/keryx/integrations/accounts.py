@@ -89,13 +89,11 @@ def _is_set(settings: Settings, key: str) -> bool:
 
 
 def _google(settings: Settings, gh: GhProbe, spec: Integration) -> State:
-    from keryx.agents.registry import BACKENDS
+    from keryx.agents.registry import without_google
     from keryx.setup.auth import sign_in
 
     if not settings.google_workspace_mcp:
-        without = [BACKENDS[name].label for name in ("codex", "local")
-                   if name in settings.enabled_agents]
-        if without:
+        if without := without_google(settings):
             return False, f"Off, so {' and '.join(without)} tasks have no Gmail or Calendar."
         return False, "Off: Claude's tasks use Claude's own Gmail and Calendar connectors."
     if settings.google_oauth_client() is None:
