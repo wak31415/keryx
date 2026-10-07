@@ -74,25 +74,77 @@ public protocol CommandRunner: Sendable {
     /// consuming task stops it too, without waiting. `request.timeout` is not applied here —
     /// a stream has no natural end time, and the caller decides when to stop it.
     func lines(_ request: CommandRequest) -> LineStream
+
+    /// `lines`, with the child's stdin kept open for the caller to write to: the stream's
+    /// `send(_:)` writes one line to it, and its `closeInput()` closes it (as the stream's
+    /// end does). `request.stdin`, when given, is written first and stdin stays open after
+    /// it. Stopping and finishing are exactly `lines`'s. A runner that cannot give a child
+    /// input answers with `lines` itself: its stream's `send` returns false.
+    func interactiveLines(_ request: CommandRequest) -> LineStream
+}
+
+extension CommandRunner {
+    public func interactiveLines(_ request: CommandRequest) -> LineStream { lines(request) }
+}
+
+/// A stream's way back to its producer: one line at a time, until it is closed. For a
+/// child process, its stdin.
+public struct StreamInput: Sendable {
+    private let write: @Sendable (String) -> Bool
+    private let onClose: @Sendable () -> Void
+
+    /// `send`: takes one line (no newline in it) and says whether it was taken; `close`:
+    /// no more lines, which the producer reads as the end of its input.
+    public init(send: @escaping @Sendable (String) -> Bool, close: @escaping @Sendable () -> Void) {
+        write = send
+        onClose = close
+    }
+
+    /// Hands over `line` — false when it holds a line break (it would be two lines), or
+    /// the input is closed. Nothing keeps the line once it is written.
+    public func send(_ line: String) -> Bool {
+        guard !line.contains(where: \.isNewline) else { return false }
+        return write(line)
+    }
+
+    public func close() { onClose() }
 }
 
 /// A stream that can be asked to stop without being walked away from. `stop()` asks the
 /// producer to wind down — for a child process, a SIGTERM to its process group — and the
 /// elements go on until it has, so the consumer sees the real ending. Cancelling the
 /// consuming task ends the iteration at once instead.
+///
+/// One with `input` can also be written to (`send`), for a command that asks for a line on
+/// its stdin while it runs (a sign-in's code). One without takes nothing: `send` is false.
 public struct StoppableStream<Element: Sendable>: AsyncSequence, Sendable {
     public typealias AsyncIterator = AsyncThrowingStream<Element, Error>.Iterator
 
     private let stream: AsyncThrowingStream<Element, Error>
     private let onStop: @Sendable () -> Void
+    /// The producer's input, for a stream that takes any.
+    public let input: StreamInput?
 
     /// `stop`: what `stop()` does; by default nothing, for a stream that ends by itself.
-    public init(_ stream: AsyncThrowingStream<Element, Error>, stop: @escaping @Sendable () -> Void = {}) {
+    public init(_ stream: AsyncThrowingStream<Element, Error>, stop: @escaping @Sendable () -> Void = {},
+                input: StreamInput? = nil) {
         self.stream = stream
         onStop = stop
+        self.input = input
     }
 
     public func stop() { onStop() }
+
+    /// Whether `send` can ever take a line.
+    public var acceptsInput: Bool { input != nil }
+
+    /// Writes `line` and a newline to the producer's input (a child's stdin). False when
+    /// the stream takes no input, its input is closed, or `line` holds a line break.
+    @discardableResult
+    public func send(_ line: String) -> Bool { input?.send(line) ?? false }
+
+    /// No more input: the producer reads the end of it. Does nothing without input.
+    public func closeInput() { input?.close() }
 
     public func makeAsyncIterator() -> AsyncIterator { stream.makeAsyncIterator() }
 }

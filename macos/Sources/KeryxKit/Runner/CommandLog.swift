@@ -135,6 +135,12 @@ public struct LoggingRunner: CommandRunner {
         return base.lines(request)
     }
 
+    /// Logged as `lines` is; what is sent on the stream's input never is.
+    public func interactiveLines(_ request: CommandRequest) -> LineStream {
+        Self.logger.info("\(describe(request), privacy: .public) started streaming, taking input")
+        return base.interactiveLines(request)
+    }
+
     func describe(_ request: CommandRequest) -> String {
         let prefixed = !prefix.isEmpty && request.arguments.starts(with: prefix)
         return CommandLog.describe(executable: request.executable, arguments: request.arguments,

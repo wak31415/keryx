@@ -68,23 +68,40 @@ public final class ProcessRunner: CommandRunner, Sendable {
     }
 
     public func lines(_ request: CommandRequest) -> LineStream {
+        stream(request, interactive: false)
+    }
+
+    /// `lines`, with stdin a pipe the stream's `send` writes to. It is closed by
+    /// `closeInput()`, by `stop()`, when the child exits, or when the consumer goes away —
+    /// whichever comes first — and a line is written, never kept: once it is in the pipe
+    /// nothing here holds it.
+    public func interactiveLines(_ request: CommandRequest) -> LineStream {
+        stream(request, interactive: true)
+    }
+
+    private func stream(_ request: CommandRequest, interactive: Bool) -> LineStream {
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
         let spawned: Spawned
         do {
             // stderr is discarded, but into `/dev/null`, not a pipe nobody reads: an unread
             // pipe's buffer fills (~64 KB) and blocks the child forever.
-            spawned = try Child.spawn(request, stderr: .discard, grace: grace)
+            spawned = try Child.spawn(request, stderr: .discard, grace: grace, keepInput: interactive)
         } catch {
             continuation.finish(throwing: error)
             return LineStream(stream)
         }
         let child = spawned.child
         observeChild?(child)
+        let writer = interactive ? spawned.stdin.map(InputWriter.init(fd:)) : nil
         let reader = LineReader(continuation: continuation, child: child)
         if let stdout = spawned.stdout { reader.start(reading: stdout) }
-        child.onExit { _ in reader.childExited() }
+        child.onExit { _ in
+            writer?.close()
+            reader.childExited()
+        }
         child.onGroupEnd { end in reader.groupEnded(end) }
         continuation.onTermination = { termination in
+            writer?.close()
             // The consumer went away (cancelled): stop the child, and stop reading. A stream
             // that finished by itself has nothing left to stop.
             if case .cancelled = termination {
@@ -92,8 +109,63 @@ public final class ProcessRunner: CommandRunner, Sendable {
                 reader.abandon()
             }
         }
-        spawned.writeStdin(request.stdin)
-        return LineStream(stream, stop: { child.stop() })
+        guard let writer else {
+            spawned.writeStdin(request.stdin)
+            return LineStream(stream, stop: { child.stop() })
+        }
+        if let data = request.stdin, !data.isEmpty { _ = writer.write(data) }
+        let input = StreamInput(send: { writer.write(Data(($0 + "\n").utf8)) }, close: { writer.close() })
+        return LineStream(stream, stop: {
+            writer.close()
+            child.stop()
+        }, input: input)
+    }
+}
+
+/// A child's stdin, kept open for lines written while it runs. Writes and the close go
+/// through one serial queue, in order, so a line handed over before `close` is written
+/// before the pipe closes; a write blocked on a child that is not reading ends when the
+/// child exits (`EPIPE`, never SIGPIPE). Each line is held only until it is written.
+final class InputWriter: @unchecked Sendable {
+    private let fd: Int32
+    private let queue = DispatchQueue(label: "dev.keryx.app.process-input")
+    private let lock = NSLock()
+    private var closed = false
+
+    init(fd: Int32) {
+        self.fd = fd
+        _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+    }
+
+    /// Queues `data` for the pipe: false, and nothing queued, once it is closed.
+    func write(_ data: Data) -> Bool {
+        guard lock.withLock({ !closed }) else { return false }
+        queue.async { [fd] in
+            data.withUnsafeBytes { buffer in
+                guard var base = buffer.baseAddress else { return }
+                var left = buffer.count
+                while left > 0 {
+                    let written = Darwin.write(fd, base, left)
+                    if written < 0 {
+                        if errno == EINTR { continue }
+                        return
+                    }
+                    left -= written
+                    base += written
+                }
+            }
+        }
+        return true
+    }
+
+    /// Closes the pipe, after whatever was queued before it. Only the first call does.
+    func close() {
+        let first: Bool = lock.withLock {
+            defer { closed = true }
+            return !closed
+        }
+        guard first else { return }
+        queue.async { [fd] in _ = Darwin.close(fd) }
     }
 }
 
@@ -289,11 +361,15 @@ final class Child: @unchecked Sendable {
     }
 
     /// Starts `request` in a new process group: stdout to a pipe; stderr to a pipe or to
-    /// `/dev/null`; stdin from a pipe when there is input to give, else `/dev/null`; the
+    /// `/dev/null`; stdin from a pipe when there is input to give (or `keepInput`), else
+    /// `/dev/null`; the
     /// environment exactly as given (an empty one is empty, not the parent's); in the
     /// working directory asked for; no other descriptor inherited; the signal mask and every
     /// signal's disposition back to the defaults.
-    static func spawn(_ request: CommandRequest, stderr: Output, grace: Duration) throws -> Spawned {
+    /// `keepInput`: stdin is a pipe even with no `request.stdin`, for the caller to write
+    /// to and close (`InputWriter`).
+    static func spawn(_ request: CommandRequest, stderr: Output, grace: Duration,
+                      keepInput: Bool = false) throws -> Spawned {
         var opened: [Int32] = []
         func pipePair() throws -> (read: Int32, write: Int32) {
             var fds: [Int32] = [-1, -1]
@@ -309,7 +385,7 @@ final class Child: @unchecked Sendable {
         do {
             out = try pipePair()
             if stderr == .pipe { err = try pipePair() }
-            if request.stdin != nil { input = try pipePair() }
+            if request.stdin != nil || keepInput { input = try pipePair() }
         } catch {
             opened.forEach { close($0) }
             throw error

@@ -9,6 +9,7 @@ public final class FakeRunner: CommandRunner, @unchecked Sendable {
     private var _requests: [CommandRequest] = []
     private var _responder: (CommandRequest) throws -> CommandResult
     private var _lineResponder: (CommandRequest) -> [String]
+    private var _sessionResponder: ((CommandRequest) -> FakeSession)?
 
     public init(
         responder: @escaping (CommandRequest) throws -> CommandResult = { _ in
@@ -36,6 +37,13 @@ public final class FakeRunner: CommandRunner, @unchecked Sendable {
         set { lock.lock(); _lineResponder = newValue; lock.unlock() }
     }
 
+    /// What `interactiveLines` answers with: by default a session that says the
+    /// `lineResponder`'s lines and ends.
+    public var sessionResponder: ((CommandRequest) -> FakeSession)? {
+        get { lock.lock(); defer { lock.unlock() }; return _sessionResponder }
+        set { lock.lock(); _sessionResponder = newValue; lock.unlock() }
+    }
+
     public func run(_ request: CommandRequest) async throws -> CommandResult {
         let respond = recordAndTakeResponder(request)
         return try respond(request)
@@ -49,6 +57,20 @@ public final class FakeRunner: CommandRunner, @unchecked Sendable {
             }
             continuation.finish()
         })
+    }
+
+    public func interactiveLines(_ request: CommandRequest) -> LineStream {
+        let (lines, session) = recordAndTakeSession(request)
+        return (session?(request) ?? FakeSession(lines: lines(request), finishes: true)).stream()
+    }
+
+    private func recordAndTakeSession(
+        _ request: CommandRequest
+    ) -> ((CommandRequest) -> [String], ((CommandRequest) -> FakeSession)?) {
+        lock.lock()
+        defer { lock.unlock() }
+        _requests.append(request)
+        return (_lineResponder, _sessionResponder)
     }
 
     // `NSLock.lock()`/`unlock()` are unavailable called directly inside an `async`
@@ -70,5 +92,74 @@ public final class FakeRunner: CommandRunner, @unchecked Sendable {
         defer { lock.unlock() }
         _requests.append(request)
         return _lineResponder
+    }
+}
+
+/// A child that takes input, scripted by a test: it says the lines it is given (now or
+/// later), records what was sent to it and whether its input was closed or it was asked to
+/// stop, and can answer each line sent (`onSend`) — a sign-in that says `done` once its
+/// code arrives.
+public final class FakeSession: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: AsyncThrowingStream<String, Error>.Continuation?
+    private var pending: [String]
+    private var finishesAtOnce: Bool
+    private var _sent: [String] = []
+    private var _inputClosed = false
+    private var _stops = 0
+    private var _onSend: (@Sendable (String, FakeSession) -> Void)?
+
+    /// `lines`: said at once; `finishes`: then the stream ends.
+    public init(lines: [String] = [], finishes: Bool = false) {
+        pending = lines
+        finishesAtOnce = finishes
+    }
+
+    /// Every line sent, in order.
+    public var sent: [String] { lock.withLock { _sent } }
+    public var inputClosed: Bool { lock.withLock { _inputClosed } }
+    public var stopRequests: Int { lock.withLock { _stops } }
+
+    /// Called with each line sent (and this session, to answer on).
+    public var onSend: (@Sendable (String, FakeSession) -> Void)? {
+        get { lock.withLock { _onSend } }
+        set { lock.withLock { _onSend = newValue } }
+    }
+
+    public func yield(_ line: String) { lock.withLock { continuation }?.yield(line) }
+
+    public func finish(throwing error: Error? = nil) {
+        lock.withLock { continuation }?.finish(throwing: error)
+    }
+
+    public func stream() -> LineStream {
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        let (lines, finishes) = lock.withLock {
+            self.continuation = continuation
+            return (pending, finishesAtOnce)
+        }
+        for line in lines { continuation.yield(line) }
+        if finishes { continuation.finish() }
+        let input = StreamInput(send: { [weak self] line in
+            guard let self else { return false }
+            let answer: (@Sendable (String, FakeSession) -> Void)?? = lock.withLock {
+                guard !_inputClosed else { return .none }
+                _sent.append(line)
+                return .some(_onSend)
+            }
+            guard case let .some(answer) = answer else { return false }
+            answer?(line, self)
+            return true
+        }, close: { [weak self] in
+            guard let self else { return }
+            lock.withLock { _inputClosed = true }
+        })
+        return LineStream(stream, stop: { [weak self] in
+            guard let self else { return }
+            lock.withLock {
+                _stops += 1
+                _inputClosed = true
+            }
+        }, input: input)
     }
 }

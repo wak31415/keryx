@@ -371,6 +371,95 @@ import Testing
         #expect(result.stdout.isEmpty)
     }
 
+    // MARK: - Input while it runs
+
+    @Test func aLineSentReachesTheChildWhileItRuns() async throws {
+        // It asks, reads one line, says what it read, and ends.
+        let stream = runner.interactiveLines(.init(executable: "/bin/sh", arguments: ["-c", """
+            echo ask
+            read answer
+            echo "got $answer"
+            """], timeout: nil))
+        #expect(stream.acceptsInput)
+        var lines: [String] = []
+        for try await line in stream {
+            lines.append(line)
+            if line == "ask" { #expect(stream.send("c#s 42")) }
+        }
+        #expect(lines == ["ask", "got c#s 42"])
+        // The child has exited: its input is closed, and nothing more is taken.
+        #expect(!stream.send("late"))
+    }
+
+    @Test func startingInputIsWrittenFirstAndStdinStaysOpen() async throws {
+        let stream = runner.interactiveLines(.init(executable: "/bin/sh", arguments: ["-c", """
+            read first; echo "first $first"
+            read second; echo "second $second"
+            """], stdin: Data("one\n".utf8), timeout: nil))
+        var lines: [String] = []
+        for try await line in stream {
+            lines.append(line)
+            if lines.count == 1 { stream.send("two") }
+        }
+        #expect(lines == ["first one", "second two"])
+    }
+
+    @Test func closingTheInputIsTheEndOfIt() async throws {
+        let stream = runner.interactiveLines(.init(executable: "/bin/sh", arguments: ["-c", """
+            echo ready
+            cat
+            echo eof
+            """], timeout: nil))
+        var lines: [String] = []
+        for try await line in stream {
+            lines.append(line)
+            if line == "ready" {
+                stream.send("a")
+                stream.closeInput()
+                #expect(!stream.send("after"))
+            }
+        }
+        #expect(lines == ["ready", "a", "eof"])
+    }
+
+    @Test func aLineWithABreakInItIsNotSent() async throws {
+        let stream = runner.interactiveLines(.init(executable: "/bin/sh", arguments: ["-c", """
+            echo ready
+            read one; echo "got $one"
+            """], timeout: nil))
+        for try await line in stream where line == "ready" {
+            #expect(!stream.send("two\nlines"))
+            #expect(!stream.send("cr\r"))
+            #expect(stream.send("one"))
+        }
+    }
+
+    @Test func stoppingAnInteractiveStreamStopsAChildWaitingOnItsInput() async throws {
+        let stream = runner.interactiveLines(.init(executable: "/bin/sh", arguments: ["-c", """
+            trap 'echo stopping; exit 130' TERM
+            echo $$
+            while :; do sleep 0.05; done
+            """], timeout: nil))
+        var lines: [String] = []
+        let started = ContinuousClock.now
+        for try await line in stream {
+            lines.append(line)
+            if lines.count == 1 { stream.stop() }
+        }
+        #expect(ContinuousClock.now - started < .seconds(10))
+        #expect(lines.last == "stopping")
+        #expect(!stream.send("after"))
+        let child = try #require(pid_t(lines[0]))
+        #expect(kill(child, 0) == -1 && errno == ESRCH)
+    }
+
+    @Test func aPlainStreamTakesNoInput() async throws {
+        let stream = runner.lines(.init(executable: "/bin/sh", arguments: ["-c", "echo a"], timeout: nil))
+        #expect(!stream.acceptsInput)
+        #expect(!stream.send("x"))
+        for try await _ in stream {}
+    }
+
     /// The pid a shell wrote to `file`, once it has.
     static func pid(writtenTo file: String) async throws -> pid_t {
         for _ in 0..<1000 {
