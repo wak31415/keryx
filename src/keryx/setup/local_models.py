@@ -16,8 +16,10 @@ then the work, so the model can be chosen knowing whether the voice will share i
 
 Nothing is saved as the voice until the voice server has answered: a `VOICE_BASE_URL` that
 does not work is a phone that rings and says nothing. The voice's steps are
-`keryx.localmodels.voice`'s, which `keryx voice use` runs too; this section only asks and
-tells. Every download, install and network read goes through `Probes`.
+`keryx.localmodels.voice`'s, which `keryx voice use` runs too, and the model server's —
+llama.cpp installed, its unit, the wait for it — `keryx.localmodels.server`'s, which `keryx
+models start` runs; this section only asks and tells. Every download, install and network
+read goes through `Probes`.
 """
 
 import asyncio
@@ -27,7 +29,7 @@ from pathlib import Path
 
 from keryx.agents.registry import BACKENDS
 from keryx.endpoints import Endpoint, warnings
-from keryx.localmodels import catalog, voice
+from keryx.localmodels import catalog, server, voice
 from keryx.localmodels.catalog import VOICE_SERVER_GB, ModelEntry
 from keryx.localmodels.download import (
     DISK_MARGIN_BYTES,
@@ -41,7 +43,7 @@ from keryx.localmodels.download import (
 )
 from keryx.localmodels.hardware import Hardware
 from keryx.localmodels.runtimes import LLAMA_CPP_BUILD, which
-from keryx.localmodels.use import enable_local, llama_values, messages_harness
+from keryx.localmodels.use import enable_local, llama_values
 from keryx.setup.agents import passed_smoke
 from keryx.setup.context import SetupContext
 from keryx.setup.sections import repo_root
@@ -49,9 +51,6 @@ from keryx.setup.ui import Choice
 
 HERE, ELSEWHERE, OPENAI, NONE, KEEP = "here", "elsewhere", "openai", "none", "keep"
 OWN_FILE = "\0file"
-#: How long a model server may take to load.
-LLM_START_S = 600.0
-OLLAMA_URL = "http://127.0.0.1:11434"
 API_CHOICES = (
     Choice("anthropic-messages", "Anthropic Messages API", hint="Claude Code drives it — "
            "llama.cpp, Ollama 0.14+, LM Studio 0.4.1+"),
@@ -128,11 +127,10 @@ def _agent_here(ctx: SetupContext, machine: Hardware, *, reserve_gb: float) -> N
     if runtime == "ollama":
         assert entry is not None
         ui.note(f"Pulling {entry.title} into Ollama ({entry.size_gb} GB).")
-        if ctx.probes.run_script(["ollama", "pull", entry.ollama]) != 0:
-            ui.error("ollama pull did not finish")
+        if problem := server.pull_into_ollama(entry, ctx.probes.run_script):
+            ui.error(problem)
             return
-        values = {"LOCAL_AGENT_BASE_URL": f"{OLLAMA_URL}/v1", "LOCAL_AGENT_MODEL": entry.ollama,
-                  "LLM_SERVER_MODEL": None, **messages_harness()}
+        values = server.ollama_values(entry)
     else:
         if entry is not None and not _have_model(ctx, entry):
             return
@@ -142,21 +140,29 @@ def _agent_here(ctx: SetupContext, machine: Hardware, *, reserve_gb: float) -> N
             assert own is not None
             model, alias = own, own.rsplit("/", 1)[-1].removesuffix(".gguf")
         values = llama_values(settings, model, alias, free_port=ctx.probes.free_port)
+    llama_before = bool(settings.llm_server_model)
     if not ctx.save(values):
         return
+    if runtime == "ollama":
+        _retire_llama(ctx, installed=llama_before or ctx.probes.unit_installed("llm"))
     if runtime == "llama":
-        if not _install_units(ctx, "--llm"):
-            return
-        endpoint = ctx.settings.local_agent_endpoint
-        assert endpoint is not None
-        with ui.spinner(f"Loading the model into llama.cpp at {endpoint.base_url}…"):
-            problem = ctx.probes.wait_for_server(endpoint, "models", LLM_START_S)
-        if problem is not None:
-            ui.error(f"the model server did not come up: {problem}")
-            ui.note(f"Its log: {settings.state_dir / 'logs' / 'keryx-llm.err.log'}")
+        if not server.serve_here(ctx.settings, _Told(ctx), run_script=ctx.probes.run_script,
+                                 wait_for_server=ctx.probes.wait_for_server, root=repo_root(),
+                                 platform=sys.platform):
             return
         ui.success("the model server is running")
     _use_local(ctx)
+
+
+def _retire_llama(ctx: SetupContext, *, installed: bool) -> None:
+    """The llama.cpp server's unit removed once Ollama serves the model (`server.retire_llama`)."""
+    said = server.retire_llama(ctx.probes.run_script, installed=installed, root=repo_root(),
+                               platform=sys.platform)
+    if said == server.REMOVED:
+        ctx.ui.note("The llama.cpp model server's service was removed: Ollama serves the model "
+                    "now.")
+    elif said is not None:
+        ctx.ui.warn(f"the llama.cpp model server: {said}")
 
 
 def _runtime(ctx: SetupContext, machine: Hardware) -> str | None:
@@ -176,18 +182,17 @@ def _runtime(ctx: SetupContext, machine: Hardware) -> str | None:
             return "ollama"
     if not ui.confirm(f"llama.cpp runs the model; install it ({LLAMA_CPP_BUILD})?", default=True):
         return None
-    if sys.platform == "darwin" and which("brew"):
-        if ctx.probes.run_script(["brew", "install", "llama.cpp"]) != 0:
-            ui.error("brew install llama.cpp did not finish")
-            return None
-        return "llama"
-    with ui.spinner("Downloading llama.cpp…"):
+    brew = server.uses_brew(platform=sys.platform, which=which)
+    with nullcontext() if brew else ui.spinner("Downloading llama.cpp…"):
         try:
-            found = ctx.probes.install_llama_cpp(settings.cache_dir, machine)
-        except Exception as exc:  # a network or archive failure, said in a sentence
-            ui.error(f"could not install llama.cpp: {exc}")
+            found = server.install_llama(settings.cache_dir, machine, brew=brew,
+                                         run_script=ctx.probes.run_script,
+                                         install=ctx.probes.install_llama_cpp)
+        except server.InstallError as error:
+            ui.error(str(error))
             return None
-    ui.success(f"llama.cpp: {found}")
+    if found is not None:
+        ui.success(f"llama.cpp: {found}")
     return "llama"
 
 
@@ -396,14 +401,6 @@ def _voice_to_openai(ctx: SetupContext) -> None:
 
 
 # --- shared ------------------------------------------------------------------------------
-
-
-def _install_units(ctx: SetupContext, flag: str) -> bool:
-    problem = voice.install_unit(flag, ctx.probes.run_script, root=repo_root(),
-                                 platform=sys.platform)
-    if problem is not None:
-        ctx.ui.error(problem)
-    return problem is None
 
 
 def _address(value: str) -> str | None:

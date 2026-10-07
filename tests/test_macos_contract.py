@@ -26,13 +26,14 @@ import asyncio
 import json
 import sys
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 import httpx
 import pytest
 from typer.testing import CliRunner
 
-from keryx import status
+from keryx import status, units
 from keryx.cli import app
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
@@ -57,14 +58,17 @@ TYPES: dict[str, tuple[type, ...]] = {
 NULLABLE = "|null"
 PULL = "models pull --json"
 VOICE_HERE = "voice use here --json"
+MODELS_START = "models start --json"
 #: The command lines the app reads as JSON lines; the pull's is the one every contract has.
-STREAMS = (PULL, VOICE_HERE)
+STREAMS = (PULL, VOICE_HERE, MODELS_START)
 #: The command lines the app reads as one JSON document.
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
     "tasks usage --json", "models list --json", "models use NAME --json",
     "config list --json", "config options KEY --json", "approvals --json", "memory --json",
     "voice --json", "voice use openai --json", "voice use server URL --json",
+    "service --json", "service install --json", "service uninstall --json",
+    "models stop --json",
     "setup plan --json", "setup mark STEP --json", "pin --json", "pin set --json",
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice.
@@ -438,6 +442,16 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     model.parent.mkdir(parents=True, exist_ok=True)
     with model.open("wb") as out:
         out.truncate(MODEL.size)
+    # The service commands: every unit installed, the tunnel stopped, the installers faked.
+    monkeypatch.setattr(units, "status", partial(
+        units.status, installed=lambda target: True,
+        active=lambda target: target.unit != "dev.keryx.tunnel"))
+    monkeypatch.setattr(units, "run_captured", lambda argv: (0, "loaded\n", ""))
+    monkeypatch.setattr(voice, "PLATFORM", "darwin")
+    installers = tmp_path / "checkout" / "scripts"  # `keryx.cli.repo_root`, the suite's own
+    installers.mkdir(parents=True)
+    for name in ("install-launchd.sh", "install-systemd.sh"):
+        (installers / name).write_text("#!/bin/sh\n")
     return settings
 
 
@@ -445,8 +459,15 @@ def test_the_contract_names_every_command_the_app_reads_as_json():
     assert set(contract()["commands"]) == COMMANDS
 
 
+def test_the_contract_names_every_stream_the_app_reads_as_json_lines():
+    assert set(contract()["streams"]) == set(STREAMS)
+
+
 @pytest.mark.parametrize("command", sorted(COMMANDS))
 def test_every_key_the_app_needs_is_printed_with_its_type(command, seeded):
+    if command not in contract()["commands"]:
+        # The cross-check above fails for it, once: a promise the app has yet to make.
+        pytest.skip(f"the contract does not name {command} yet")
     result = runner.invoke(app, argv(command), input=STDIN.get(command))
 
     assert result.exit_code in ((0, 1) if command == "doctor --json" else (0,)), result.output
@@ -635,16 +656,82 @@ def test_a_voice_set_up_streams_the_events_the_app_reads_and_ends_once(
 ):
     stream = contract()["streams"][VOICE_HERE]
     scripts = Scripts()
-    installers = tmp_path / "checkout" / "scripts"  # `keryx.cli.repo_root`, the suite's own
-    installers.mkdir(parents=True)
-    for name in ("install-launchd.sh", "install-systemd.sh"):
-        (installers / name).write_text("#!/bin/sh\n")
     monkeypatch.setattr(runtimes, "speech_to_speech", lambda: None)  # so it is installed
     monkeypatch.setattr(voice, "run_detached", scripts)
     monkeypatch.setattr(servers, "wait_for", lambda endpoint, kind, timeout: None)
     arrange(monkeypatch, seeded, scripts)
 
     result = runner.invoke(app, VOICE_HERE.split())
+
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert events, "no events at all"
+    for event in events:
+        assert event.get("event") in stream["events"], event
+        assert not key_problems(event, stream["events"][event["event"]]), event
+    endings = [event["event"] for event in events if event["event"] in stream["terminal"]]
+    assert endings == [ending] and events[-1]["event"] == ending
+    assert (events[0]["event"] == "step") is stepped
+    allowed = stream["exit"][ending]
+    assert result.exit_code == code
+    assert code in (allowed if isinstance(allowed, list) else [allowed])
+
+
+# --- the stream: models start --json -----------------------------------------------------
+
+
+def _start_done(monkeypatch, settings, scripts):
+    pass
+
+
+def _start_failed(monkeypatch, settings, scripts):
+    monkeypatch.setattr(servers, "wait_for", lambda endpoint, kind, timeout: "no answer")
+
+
+def _start_refused(monkeypatch, settings, scripts):
+    ConfigStore().set({"LLM_SERVER_MODEL": None})
+
+
+def _start_cancelled(monkeypatch, settings, scripts):
+    def interrupted(argv):
+        raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+    monkeypatch.setattr(voice, "run_detached", interrupted)
+
+
+#: Each way `models start` ends: how to arrange it, its ending, its exit code, and whether a
+#: step was told first.
+STARTS = [(_start_done, "done", 0, True), (_start_failed, "error", 1, True),
+          (_start_refused, "error", 2, False), (_start_cancelled, "cancelled", 130, True)]
+
+
+def start_stream() -> dict:
+    """The contract's promise for `models start --json`, once the app has made it."""
+    stream = contract()["streams"].get(MODELS_START)
+    if stream is None:
+        # The streams' cross-check fails for it, once: a promise the app has yet to make.
+        pytest.skip(f"the contract does not name the {MODELS_START} stream yet")
+    return stream
+
+
+def test_the_starts_below_reach_every_event_the_contract_names():
+    stream = start_stream()
+
+    assert {ending for _, ending, _, _ in STARTS} == set(stream["terminal"])
+    assert set(stream["events"]) == {*stream["terminal"], "step", "progress"}
+
+
+@pytest.mark.parametrize(("arrange", "ending", "code", "stepped"), STARTS)
+def test_a_model_server_start_streams_the_events_the_app_reads_and_ends_once(
+    seeded, monkeypatch, arrange, ending, code, stepped
+):
+    stream = start_stream()
+    scripts = Scripts()
+    monkeypatch.setattr(voice, "run_detached", scripts)
+    monkeypatch.setattr(servers, "wait_for", lambda endpoint, kind, timeout: None)
+    monkeypatch.setattr(use, "probe", lambda url: (True, MODEL.key))
+    arrange(monkeypatch, seeded, scripts)
+
+    result = runner.invoke(app, MODELS_START.split())
 
     events = [json.loads(line) for line in result.stdout.splitlines()]
     assert events, "no events at all"

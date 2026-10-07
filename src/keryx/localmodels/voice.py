@@ -284,7 +284,8 @@ def installer(
                       "neither")
     script = root / "scripts" / name
     if not script.is_file():
-        return None, f"scripts/{name} is not here: run it with {flag} from a clone of Keryx"
+        with_flag = f" with {flag}" if flag else ""
+        return None, f"scripts/{name} is not here: run it{with_flag} from a clone of Keryx"
     return script, None
 
 

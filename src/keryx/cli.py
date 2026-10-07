@@ -23,7 +23,7 @@ import typer
 import uvicorn
 from pydantic import ValidationError
 
-from keryx import plugins
+from keryx import plugins, units
 from keryx.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from keryx.approvals.audit_log import (
     entry_json,
@@ -65,7 +65,17 @@ from keryx.doctor import (
     run_doctor_checks,
 )
 from keryx.events import EventBus
-from keryx.localmodels import catalog, download, hardware, pull, runtimes, servers, use, voice
+from keryx.localmodels import (
+    catalog,
+    download,
+    hardware,
+    pull,
+    runtimes,
+    server,
+    servers,
+    use,
+    voice,
+)
 from keryx.logging_util import mask_number
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
@@ -133,6 +143,11 @@ voice_use_app = typer.Typer(
     help="Make OpenAI, a voice server elsewhere, or this machine the voice."
 )
 voice_app.add_typer(voice_use_app, name="use")
+service_app = typer.Typer(
+    help="Keryx's services — itself, its tunnel, the model and voice servers: whether each is "
+    "installed and running, and installing or removing them."
+)
+app.add_typer(service_app, name="service")
 setup_app = typer.Typer(
     help="Set Keryx up: the guided walk, and the plan the Mac app's assistant follows."
 )
@@ -1165,8 +1180,7 @@ def models_use(
     values |= use.enable_local(settings, default=default_agent)
     if not as_json:
         _store_values(values)
-        installer = INSTALLERS["launchd" if sys.platform == "darwin" else "systemd"]
-        typer.echo(f"next: {installer} --llm to run the model server, then `keryx restart`")
+        typer.echo("next: start it with `keryx models start`, then `keryx restart`")
         return
     saved = _store_values(values, echo=False)
     typer.echo(json.dumps({
@@ -1187,6 +1201,67 @@ def models_serve(
     except servers.ServerConfigError as error:
         typer.echo(f"keryx cannot start the {kind} server: {error}", err=True)
         raise typer.Exit(2) from None
+
+
+#: What `models start|stop` are, refused to the service: they install and remove units.
+RUN_THE_MODEL_SERVER = "start or stop the model server"
+
+
+@models_app.command("start")
+def models_start(
+    runtime: Annotated[
+        str,
+        typer.Option("--runtime", help="llama (llama.cpp, installed when it is missing) or "
+                     "ollama (its own copy of the model, pulled)."),
+    ] = server.LLAMA,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Print it as JSON lines: each step, then how it ended."),
+    ] = False,
+) -> None:
+    """Run the chosen model's server here, and check that it serves that model.
+
+    llama.cpp is installed when it is missing, then the model server's unit, then Keryx
+    waits for the model to load. The model comes first: `keryx models pull NAME`, then
+    `keryx models use NAME`. A server that does not come up has its unit removed.
+    """
+    if not as_json:
+        _owner_only(RUN_THE_MODEL_SERVER)
+        try:
+            code = _models_start(_configure_readonly(), runtime, server.TextSteps(typer.echo))
+        except KeyboardInterrupt:
+            typer.echo("cancelled: `keryx models start` again picks up where this stopped",
+                       err=True)
+            code = pull.CANCELLED
+        raise typer.Exit(code)
+    events = server.JsonSteps(typer.echo)
+
+    def run() -> int:
+        # Refused before any install, and as an event: the app reads stdout alone.
+        if refusal := _owner_refusal(RUN_THE_MODEL_SERVER):
+            events.error(refusal)
+            return 1
+        return _models_start(_configure_readonly(refuse=events.error), runtime, events)
+
+    with pull.terminate_as_interrupt():
+        code = events.guard(run)
+    raise typer.Exit(code)
+
+
+def _models_start(settings: Settings, runtime: str, report: server.StartReport) -> int:
+    if runtime not in server.RUNTIMES:
+        report.error(f"--runtime is {' or '.join(server.RUNTIMES)}, not {runtime}")
+        return voice.REFUSED
+    return server.start(settings, server.machine(), report, runtime=runtime,
+                        save=_saver(ConfigStore(), settings, report), root=repo_root())
+
+
+@models_app.command("stop")
+def models_stop(
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Stop the model server and remove its unit; `keryx models start` brings it back."""
+    _install_units(llm_unit=True, uninstall=True, as_json=as_json, verb=RUN_THE_MODEL_SERVER)
 
 
 @voice_app.callback(invoke_without_command=True)
@@ -1356,7 +1431,15 @@ def _voice_here(settings: Settings, name: str | None, report: voice.Report) -> i
         report.error(problem)
         return voice.REFUSED
     store = ConfigStore()
+    return voice.here(settings, voice.machine(), report, save=_saver(store, settings, report),
+                      root=repo_root(),
+                      choose_voice=lambda: name or voice.current_voice(settings, store))
 
+
+def _saver(
+    store: ConfigStore, settings: Settings, report: server.Report
+) -> Callable[[dict[str, Any]], bool]:
+    """Store values as whoever runs this; a refusal told to `report`, and False."""
     def save(values: dict[str, Any]) -> bool:
         try:
             store.set(values, actor=current_actor(), settings=settings)
@@ -1365,8 +1448,82 @@ def _voice_here(settings: Settings, name: str | None, report: voice.Report) -> i
             return False
         return True
 
-    return voice.here(settings, voice.machine(), report, save=save, root=repo_root(),
-                      choose_voice=lambda: name or voice.current_voice(settings, store))
+    return save
+
+
+# --- service ---------------------------------------------------------------
+
+
+#: What `service install|uninstall` is, refused to the service.
+INSTALL_THE_SERVICES = "install or remove Keryx's services"
+
+
+@service_app.callback(invoke_without_command=True)
+def service_command(
+    ctx: typer.Context,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Whether each of Keryx's services is installed, and running."""
+    if ctx.invoked_subcommand is not None:
+        return
+    settings = _configure_readonly()
+    document = units.status(settings)
+    if as_json:
+        typer.echo(json.dumps(document, indent=2))
+        return
+    manager = document["manager"]
+    typer.echo(f"service manager: {manager or 'none on this machine'}")
+    for kind, unit in document["units"].items():
+        name = units.unit_name(settings, manager, kind) if manager else "-"
+        state = ("not installed" if not unit["installed"]
+                 else "running" if unit["active"] else "installed, not running")
+        typer.echo(f"{kind:<7} {name:<22} {state}")
+
+
+@service_app.command("install")
+def service_install(
+    llm_unit: Annotated[
+        bool, typer.Option("--llm", help="The model server's unit, instead of Keryx's.")
+    ] = False,
+    voice_unit: Annotated[
+        bool, typer.Option("--voice", help="The voice server's unit, instead of Keryx's.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Install Keryx and its tunnel as services, or the local model servers' (--llm, --voice),
+    through the checkout's installer."""
+    _install_units(llm_unit=llm_unit, voice_unit=voice_unit, as_json=as_json)
+
+
+@service_app.command("uninstall")
+def service_uninstall(
+    llm_unit: Annotated[
+        bool, typer.Option("--llm", help="The model server's unit, instead of Keryx's.")
+    ] = False,
+    voice_unit: Annotated[
+        bool, typer.Option("--voice", help="The voice server's unit, instead of Keryx's.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Stop and remove Keryx and its tunnel, or the local model servers' (--llm, --voice)."""
+    _install_units(llm_unit=llm_unit, voice_unit=voice_unit, uninstall=True, as_json=as_json)
+
+
+def _install_units(
+    *, llm_unit: bool = False, voice_unit: bool = False, uninstall: bool = False,
+    as_json: bool, verb: str = INSTALL_THE_SERVICES,
+) -> None:
+    _owner_only(verb)
+    settings = _configure_readonly()
+    outcome = units.install(settings=settings, llm=llm_unit, voice=voice_unit,
+                            uninstall=uninstall, root=repo_root(), run=units.run_captured)
+    if outcome.code != 0:
+        typer.echo(outcome.message, err=True)
+        raise typer.Exit(outcome.code)
+    if as_json:
+        typer.echo(json.dumps({"ok": True, "message": outcome.message}, indent=2))
+    else:
+        typer.echo(outcome.message)
 
 
 @plugins_app.command("list")

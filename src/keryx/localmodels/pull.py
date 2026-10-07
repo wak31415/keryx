@@ -114,10 +114,23 @@ class EventLines:
     #: The endings that say the work is done: an interrupt after one is still a success.
     succeeded: frozenset[str] = frozenset({"done"})
 
-    def __init__(self, write: Callable[[str], None]) -> None:
+    def __init__(
+        self, write: Callable[[str], None], *, clock: Callable[[], float] = time.monotonic
+    ) -> None:
         self._write = write
+        self._clock = clock
         #: The one ending told ("done", "error", …), or None; nothing is told after it.
         self.ending: str | None = None
+        self._last: tuple[float, float] | None = None  # (when, percent) of the last progress
+
+    def _progressed(self, done: int, total: int | None, **extra: Any) -> None:
+        """A `progress` line, `extra` keys in it, written at most every `PROGRESS_EVERY_S`
+        unless a whole percent has passed since the last; `total` None when not known."""
+        now, percent = self._clock(), done * 100 / total if total else 0.0
+        last = self._last
+        if last is None or now - last[0] >= PROGRESS_EVERY_S or abs(percent - last[1]) >= 1:
+            self._last = (now, percent)
+            self._emit({"event": "progress", **extra, "done": done, "total": total})
 
     @property
     def ended(self) -> bool:
@@ -174,12 +187,6 @@ class JsonLines(EventLines):
 
     succeeded = SUCCEEDED
 
-    def __init__(
-        self, write: Callable[[str], None], *, clock: Callable[[], float] = time.monotonic
-    ) -> None:
-        super().__init__(write)
-        self._clock = clock
-
     def adopted(self, path: Path, found: Path) -> None:
         self._end({"event": "adopted", "path": str(path), "from": str(found)})
 
@@ -188,17 +195,8 @@ class JsonLines(EventLines):
 
     @contextmanager
     def downloading(self, title: str, total: int) -> Iterator[download.Progress]:
-        last: tuple[float, float] | None = None  # (when, percent) of the last line written
-
-        def progress(done: int) -> None:
-            nonlocal last
-            now, percent = self._clock(), done * 100 / total if total else 100.0
-            if (last is None or now - last[0] >= PROGRESS_EVERY_S
-                    or abs(percent - last[1]) >= 1):
-                last = (now, percent)
-                self._emit({"event": "progress", "done": done, "total": total})
-
-        yield progress
+        self._last = None
+        yield lambda done: self._progressed(done, total)
 
 
 def _interrupt(signum: int, frame: object) -> None:
