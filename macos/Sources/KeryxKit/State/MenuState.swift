@@ -1,8 +1,8 @@
 import Foundation
 
-/// The window's sections.
+/// The window's sections, in the sidebar's order.
 public enum SidebarItem: String, CaseIterable, Identifiable, Sendable {
-    case overview, sessions, voice, models, configuration
+    case overview, sessions, voice, models, phone, integrations, plugins, configuration
 
     public var id: String { rawValue }
 
@@ -12,6 +12,9 @@ public enum SidebarItem: String, CaseIterable, Identifiable, Sendable {
         case .sessions: "Sessions"
         case .voice: "Voice"
         case .models: "Local Models"
+        case .phone: "Phone"
+        case .integrations: "Integrations"
+        case .plugins: "Plugins"
         case .configuration: "Configuration"
         }
     }
@@ -22,6 +25,9 @@ public enum SidebarItem: String, CaseIterable, Identifiable, Sendable {
         case .sessions: "bubble.left.and.text.bubble.right"
         case .voice: "waveform"
         case .models: "cpu"
+        case .phone: "phone"
+        case .integrations: "link"
+        case .plugins: "puzzlepiece.extension"
         case .configuration: "slider.horizontal.3"
         }
     }

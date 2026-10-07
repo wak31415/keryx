@@ -24,6 +24,17 @@ struct KeryxApp: App {
             }
         }
 
+        // The Setup Assistant: opened by id (`KeryxWindow.setup`); what opens it, and when,
+        // is the assistant's own (Task UC).
+        Window("Set Up Keryx", id: KeryxWindow.setup) {
+            SetupAssistantView()
+                .environment(delegate.model)
+                .environment(\.preferences, delegate.preferences)
+                .onAppear { delegate.windowDidAppear(.setup) }
+                .onDisappear { delegate.windowDidDisappear(.setup) }
+        }
+        .windowResizability(.contentSize)
+
         MenuBarExtra {
             MenuBarMenu(delegate: delegate)
                 .environment(delegate.model)
@@ -44,6 +55,8 @@ struct KeryxApp: App {
 
 enum KeryxWindow {
     static let main = "main"
+    /// The Setup Assistant's window.
+    static let setup = "setup"
 }
 
 /// The window's content. SwiftUI opens it at launch; at a login launch it closes again at

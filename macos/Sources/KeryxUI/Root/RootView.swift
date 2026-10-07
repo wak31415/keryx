@@ -46,6 +46,9 @@ public struct RootView: View {
             case .sessions: SessionsView()
             case .voice: VoiceView()
             case .models: ModelsView()
+            case .phone: PhoneView()
+            case .integrations: IntegrationsView()
+            case .plugins: PluginsView()
             case .configuration: ConfigurationView()
             }
         }

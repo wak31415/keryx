@@ -25,7 +25,8 @@ public struct ScreenCatalog {
     /// Every entry: the design kit's first, then each screen's, each list kept in its
     /// screen's own `Catalog/<Screen>+Catalog.swift`.
     @MainActor public static func entries() -> [Entry] {
-        kitEntries + overviewEntries + sessionsEntries + voiceEntries + modelsEntries + configurationEntries
+        kitEntries + overviewEntries + sessionsEntries + voiceEntries + modelsEntries + phoneEntries
+            + integrationsEntries + pluginsEntries + configurationEntries + setupEntries
             + menuEntries + settingsEntries + onboardingEntries
     }
 
