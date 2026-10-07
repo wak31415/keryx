@@ -4,9 +4,11 @@ import Foundation
 /// environment, and the service runs with its installer's `KERYX_HOME` and XDG homes, so a
 /// bare `keryx` on some PATH would read different settings from the service's. In order:
 ///
-/// 1. The owner's chosen folder (`preference`): a checkout, when its `pyproject.toml` names
-///    `keryx`. It runs with the login shell's environment — or, when it is the service's own
-///    checkout, with the service's (its `KERYX_HOME` and XDG homes).
+/// 1. The owner's chosen folder (`preference`): a checkout, by its `pyproject.toml` — a
+///    `keryx` console script in `[project.scripts]`, a `[project]` named `keryx` or
+///    `keryx-voice`, or a `src/keryx/__init__.py` beside it. It runs with the login shell's
+///    environment — or, when it is the service's own checkout, with the service's (its
+///    `KERYX_HOME` and XDG homes).
 /// 2. `~/Library/LaunchAgents/dev.keryx.agent.plist`: the service's own program, folder and
 ///    environment.
 /// 3. The login shell: its environment, and `command -v keryx`; then `~/.local/bin/keryx`.
@@ -68,7 +70,7 @@ public struct KeryxLocator: Locating {
                     return .success(location)
                 }
             } else {
-                lookedAt.append("The folder you chose, \(tilde(preference)), has no pyproject.toml naming keryx.")
+                lookedAt.append("The folder you chose, \(tilde(preference)), doesn't look like a Keryx checkout (no pyproject.toml with a keryx command).")
             }
         } else {
             lookedAt.append("No Keryx folder has been chosen in the app.")
@@ -145,7 +147,7 @@ public struct KeryxLocator: Locating {
             }
             guard isKeryxCheckout(checkout) else {
                 return .failure(Unusable(
-                    sentence: "\(name) points at \(tilde(checkout)), which has no pyproject.toml naming keryx."))
+                    sentence: "\(name) points at \(tilde(checkout)), which doesn't look like a Keryx checkout (no pyproject.toml with a keryx command)."))
             }
             return .success(LaunchAgent(keryx: nil, uv: program, checkout: checkout,
                                         environment: environment))
@@ -267,9 +269,15 @@ public struct KeryxLocator: Locating {
             environment: sanitised, workingDirectory: checkout, source: source)
     }
 
-    /// True when `folder/pyproject.toml` declares `name = "keryx"` in its `[project]` table.
+    /// True when `folder` is a Keryx checkout: its `pyproject.toml` declares a `keryx`
+    /// console script in `[project.scripts]`, or names the project `keryx` or `keryx-voice`
+    /// in `[project]`; or `folder/src/keryx/__init__.py` exists alongside a `pyproject.toml`.
+    /// What makes a folder Keryx's is the command it provides, not what the distribution is
+    /// called — the real distribution is `keryx-voice`, with `keryx` as its console script.
     func isKeryxCheckout(_ folder: String) -> Bool {
         guard let data = fileSystem.contents(atPath: folder + "/pyproject.toml") else { return false }
+        if fileSystem.contents(atPath: folder + "/src/keryx/__init__.py") != nil { return true }
+
         var table = ""
         for rawLine in String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline) {
             let line = rawLine.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
@@ -278,12 +286,16 @@ public struct KeryxLocator: Locating {
                 table = line
                 continue
             }
-            guard table == "[project]" else { continue }
             let parts = line.split(separator: "=", maxSplits: 1).map {
                 $0.trimmingCharacters(in: .whitespaces)
             }
-            if parts.count == 2, parts[0] == "name" {
-                return parts[1] == "\"keryx\"" || parts[1] == "'keryx'"
+            guard parts.count == 2 else { continue }
+            if table == "[project]", parts[0] == "name" {
+                if ["\"keryx\"", "'keryx'", "\"keryx-voice\"", "'keryx-voice'"].contains(parts[1]) {
+                    return true
+                }
+            } else if table == "[project.scripts]", parts[0] == "keryx" {
+                return true
             }
         }
         return false

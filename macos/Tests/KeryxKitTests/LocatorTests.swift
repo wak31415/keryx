@@ -7,13 +7,17 @@ import KeryxPreview
 @Suite struct LocatorTests {
     static let home = "/Users/x"
     static let plistPath = "/Users/x/Library/LaunchAgents/dev.keryx.agent.plist"
+    // The real shape: the distribution is `keryx-voice`, with `keryx` as its console script.
     static let pyproject = Data("""
         [build-system]
         requires = ["hatchling"]
 
         [project]
-        name = "keryx"
+        name = "keryx-voice"
         version = "0.1.0"
+
+        [project.scripts]
+        keryx = "keryx.cli:app"
         """.utf8)
 
     static func fixture(_ name: String) throws -> Data {
@@ -261,6 +265,76 @@ import KeryxPreview
         let location = try await locator.locate(preference: "/Users/x/other").get()
         #expect(location.checkout == "/Users/x/other")
         #expect(location.environment["KERYX_HOME"] == "/elsewhere")
+    }
+
+    // MARK: - What makes a folder a checkout
+
+    @Test func theRealDistributionShapeIsAcceptedAsAChosenFolder() async throws {
+        var fs = FakeFileSystem()
+        fs.files["/Users/x/elsewhere/pyproject.toml"] = Self.pyproject
+        fs.executables = ["/Users/x/elsewhere/.venv/bin/keryx"]
+        let locator = KeryxLocator(fileSystem: fs, runner: Self.shell(), home: Self.home)
+
+        let location = try await locator.locate(preference: "/Users/x/elsewhere").get()
+        #expect(location.source == .preference)
+        #expect(location.checkout == "/Users/x/elsewhere")
+    }
+
+    @Test func theRealDistributionShapeIsAcceptedViaThePlistProject() async throws {
+        var fs = FakeFileSystem()
+        fs.files[Self.plistPath] = try Self.fixture("agent.plist")
+        fs.files["/Users/x/code/keryx/pyproject.toml"] = Self.pyproject
+        fs.executables = ["/Users/x/.local/bin/uv"]
+        let locator = KeryxLocator(fileSystem: fs, runner: Self.shell(), home: Self.home)
+
+        let location = try await locator.locate(preference: nil).get()
+        #expect(location.source == .launchAgent)
+        #expect(location.checkout == "/Users/x/code/keryx")
+    }
+
+    @Test func theRealDistributionShapeIsAcceptedAsAnInferredVenvCheckout() async throws {
+        var fs = FakeFileSystem()
+        fs.files["/Users/x/code/keryx/pyproject.toml"] = Self.pyproject
+        fs.executables = ["/Users/x/code/keryx/.venv/bin/keryx"]
+        let runner = Self.shell(env: ["PATH": "/a:/b", "HOME": "/Users/x"],
+                                keryx: "/Users/x/code/keryx/.venv/bin/keryx")
+        let locator = KeryxLocator(fileSystem: fs, runner: runner, home: Self.home)
+
+        let location = try await locator.locate(preference: nil).get()
+        #expect(location.source == .loginShell)
+        #expect(location.checkout == "/Users/x/code/keryx")
+    }
+
+    @Test func anUnrelatedProjectIsNotAKeryxCheckout() {
+        var fs = FakeFileSystem()
+        fs.files["/Users/x/other/pyproject.toml"] = Data("""
+            [project]
+            name = "other"
+            version = "0.1.0"
+            """.utf8)
+        let locator = KeryxLocator(fileSystem: fs, runner: Self.shell(), home: Self.home)
+        #expect(locator.isKeryxCheckout("/Users/x/other") == false)
+    }
+
+    @Test func aKeryxKeyUnderAnUnrelatedTableIsNotAConsoleScript() {
+        var fs = FakeFileSystem()
+        fs.files["/Users/x/other/pyproject.toml"] = Data("""
+            [project]
+            name = "other"
+
+            [tool.something]
+            keryx = "not a console script"
+            """.utf8)
+        let locator = KeryxLocator(fileSystem: fs, runner: Self.shell(), home: Self.home)
+        #expect(locator.isKeryxCheckout("/Users/x/other") == false)
+    }
+
+    @Test func srcKeryxInitPyBesidePyprojectIsAlsoAccepted() {
+        var fs = FakeFileSystem()
+        fs.files["/Users/x/other/pyproject.toml"] = Data("[project]\nname = \"other\"\n".utf8)
+        fs.files["/Users/x/other/src/keryx/__init__.py"] = Data()
+        let locator = KeryxLocator(fileSystem: fs, runner: Self.shell(), home: Self.home)
+        #expect(locator.isKeryxCheckout("/Users/x/other") == true)
     }
 
     // MARK: - The login shell
