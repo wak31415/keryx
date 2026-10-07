@@ -90,6 +90,20 @@ def existing_pin(settings: Settings) -> str | None:
     return None
 
 
+def environment_pin_usable(settings: Settings) -> bool:
+    """Whether the environment's PIN is one the phone can use. A malformed one leaves the
+    settings to fall back on the file, so this asks where the PIN in hand came from."""
+    return settings.pin_source == PIN_FROM_ENV
+
+
+def environment_pin_said(*, usable: bool) -> str:
+    """The environment's PIN in a sentence, by the variable actually set; never its digits."""
+    name = environment_pin_variable() or "KERYX_PIN"
+    if usable:
+        return f"set by {name} in the environment, which wins over anything here"
+    return f"{name} is set but isn't 6-8 digits, so the phone can't use it; fix or remove it"
+
+
 def pin_problem(digits: str) -> str | None:
     """Why `digits` will not do as a PIN chosen at the keyboard, or None when they will.
 
@@ -165,7 +179,8 @@ def pin_status(settings: Settings, guard: PinGuard | None = None) -> dict[str, A
     until = (guard or PinGuard.for_settings(settings)).locked_until()
     return {
         # A malformed one in the environment is no PIN, and still the one that counts.
-        "set": where in (FILE, JARVIS) or (where == ENVIRONMENT and bool(settings.pin)),
+        "set": where in (FILE, JARVIS)
+        or (where == ENVIRONMENT and environment_pin_usable(settings)),
         "source": {ENVIRONMENT: "environment", FILE: "file", UNUSABLE: "file",
                    JARVIS: "jarvis"}.get(where) if where else None,
         "enrolment_open": settings.pin_enrolment_open and where is None,
@@ -179,7 +194,6 @@ def pin_status(settings: Settings, guard: PinGuard | None = None) -> dict[str, A
 
 #: How the text output says where a PIN is, by `pin_status`'s `source`.
 SOURCES_SAID = {
-    "environment": "set by KERYX_PIN in the environment",
     "file": "set, kept in KERYX_HOME/pin",
     "jarvis": "set, but still in ~/.jarvis until `keryx migrate` moves it",
 }
@@ -187,11 +201,10 @@ SOURCES_SAID = {
 
 def format_pin_status(found: dict[str, Any]) -> list[str]:
     """`pin_status` as a person reads it."""
-    if found["set"]:
+    if found["source"] == "environment":
+        lines = [f"PIN: {environment_pin_said(usable=found['set'])}"]
+    elif found["set"]:
         lines = [f"PIN: {SOURCES_SAID[found['source']]}"]
-    elif found["source"] == "environment":
-        lines = ["PIN: the one in the environment is not 6 to 8 digits, and wins over any "
-                 "other; Keryx will not start until it is fixed or removed"]
     elif found["source"] == "file":
         lines = ["PIN: none usable (the file there is not a PIN, and no call can set one)"]
     else:

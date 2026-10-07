@@ -41,6 +41,8 @@ from keryx.setup.pin import (
     IN_JARVIS,
     JARVIS,
     UNUSABLE,
+    environment_pin_said,
+    environment_pin_usable,
     existing_pin,
     pin_problem,
     write_pin,
@@ -310,7 +312,8 @@ def run_pin(ctx: SetupContext) -> None:
     path = pin_file(settings.config_dir)
     where = existing_pin(settings)
     if where == ENVIRONMENT:
-        ui.success("PIN: set by KERYX_PIN in your environment, which wins over anything here")
+        usable = environment_pin_usable(settings)
+        (ui.success if usable else ui.error)(f"PIN: {environment_pin_said(usable=usable)}")
         return
     if where == JARVIS:  # `keryx migrate` refuses two different PINs: move the old one first
         ui.error(IN_JARVIS.format(path=legacy_home()))

@@ -180,8 +180,9 @@ a PIN is ever set from the phone.
 the two entries match, that is the PIN. Once a PIN exists, enrollment is closed, and the
 file write itself closes it rather than a separate check: Keryx creates `KERYX_HOME/pin` with
 `O_CREAT | O_EXCL`, so the kernel refuses a second write. On purpose, no voice tool and no
-`keryx config set` can change an enrolled PIN. Only you at the keyboard can, with
-`keryx setup` at a terminal or `keryx pin set` from the Mac app.
+`keryx config set` can change an enrolled PIN. Of Keryx's own commands, only you at the
+keyboard can, with `keryx setup` at a terminal or `keryx pin set` from the Mac app. A
+process running as you can still overwrite the file, as described below.
 
 `keryx setup`, run at a terminal, is you at the keyboard. It writes a first PIN the same
 way. It replaces an existing PIN only after you confirm twice and type the new digits twice,
@@ -231,10 +232,13 @@ also write new digits over it. `O_EXCL` keeps Keryx's own code (a voice tool, a 
 retry) from replacing an enrolled PIN, not a process with your file permissions. And
 `keryx pin set` refuses only what `keryx serve` started, by an environment variable that
 such a process could drop. What Keryx guarantees is that none of its own paths swaps the PIN
-for an agent. Deleting the file locks you out and opens enrollment for whoever calls next. That is loud,
-and `keryx doctor` shows it, which is better than a PIN quietly becoming someone else's. If
-this worries you, set `KERYX_PIN` in the service's own environment (the unit's
-`Environment=` line), which always takes precedence over the file.
+for an agent.
+
+Deleting the file is loud: it locks you out, opens enrollment for whoever calls next, and
+`keryx doctor` shows it. Overwriting it is quiet: the PIN simply changes, and nothing tells
+you until your own PIN stops working. If you want the PIN out of reach of the configuration
+directory, set `KERYX_PIN` in the service's own environment (the unit's `Environment=`
+line), which always takes precedence over the file.
 
 `keryx pin set` is refused for a coding agent that Keryx started. Like every owner-only
 command, it checks the `KERYX_ACTOR=service` that `keryx serve` gives everything it starts,

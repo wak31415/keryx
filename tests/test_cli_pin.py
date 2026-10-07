@@ -520,6 +520,28 @@ def test_a_pin_still_in_jarvis_is_set_and_shuts_the_door(home):
     assert (found["set"], found["source"], found["enrolment_open"]) == (True, "jarvis", False)
 
 
+@pytest.mark.parametrize("variable", ["KERYX_PIN", "JARVIS_PIN"])
+def test_the_status_text_names_the_variable_actually_set(home, monkeypatch, variable):
+    monkeypatch.setenv(variable, FIRST)
+    usable = run().stdout
+    monkeypatch.setenv(variable, "12345")
+    malformed = run().stdout
+
+    assert f"set by {variable}" in usable
+    assert f"{variable} is set but isn't 6-8 digits" in malformed
+    assert "fix or remove it" in malformed
+    assert FIRST not in usable and "12345" not in malformed
+
+
+def test_a_malformed_environment_pin_is_no_pin_even_beside_a_good_file(home, monkeypatch):
+    write_enrolled_pin(home, FIRST)
+    monkeypatch.setenv("KERYX_PIN", "12345")
+
+    found = pin_status()
+
+    assert (found["set"], found["source"], found["enrolment_open"]) == (False, "environment", False)
+
+
 def test_the_status_text_names_the_state(home):
     write_enrolled_pin(home, FIRST)
 
