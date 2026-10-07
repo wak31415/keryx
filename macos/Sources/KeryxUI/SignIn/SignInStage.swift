@@ -150,12 +150,42 @@ public enum SignInWording {
         return "\(what) is still going. Finish or cancel it first."
     }
 
-    /// Only an https page is opened, never anything else a CLI might print.
-    static func openable(_ link: StreamRun<SignedIn>.Link?) -> URL? {
-        guard let text = link?.url, let url = URL(string: text), url.scheme == "https", url.host != nil else {
-            return nil
+    /// The page to open for `link`: only one `TrustedLink` allows (https, on a vendor's own
+    /// sign-in host), never anything else a CLI might print.
+    static func page(_ link: StreamRun<SignedIn>.Link?) -> URL? {
+        link.flatMap { try? TrustedLink.url($0.url) }
+    }
+
+    /// The address Google's consent page sends the browser to, as the one line Gmail's
+    /// sign-in reads: http on this Mac (localhost, 127.0.0.1 or [::1]) with a `code` or an
+    /// `error` in its query. `nil` for anything else — stdin closes after one line, so a
+    /// wrong paste would end the sign-in.
+    public static func landingAddress(_ typed: String) -> String? {
+        let text = line(typed)
+        guard !text.isEmpty, let parts = URLComponents(string: text), parts.scheme?.lowercased() == "http",
+              let host = parts.host?.lowercased(), ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host),
+              parts.user == nil, parts.password == nil,
+              parts.queryItems?.contains(where: { ($0.name == "code" || $0.name == "error") && $0.value != nil }) == true
+        else { return nil }
+        return text
+    }
+
+    /// Said under the address field while what is in it is not that address.
+    static let notLandingAddress =
+        "That isn't the address Google sent your browser to. It begins http://localhost and has code= in it."
+
+    /// Said when the line could not be handed to the CLI (it had stopped reading).
+    static let notSent = "The sign-in had stopped listening, so that didn't reach it. Cancel, and start it again."
+
+    /// What quitting during the sign-in to `provider` loses.
+    public static func quitDetail(_ provider: SignInProvider) -> String {
+        switch provider {
+        case .googleWorkspace:
+            "The sign-in stops. Google for agents stays turned on without a sign-in until you sign in again or "
+                + "disconnect it."
+        case .claude, .codex, .gmail:
+            "The sign-in stops, and nothing is saved. You can start it again later."
         }
-        return url
     }
 
     /// What was pasted, as the one line the CLI reads: trimmed, and empty when it holds a

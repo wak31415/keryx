@@ -41,6 +41,9 @@ public struct PluginsView: View {
                 OwnToolsSection(directory: report.directory)
             }
             .formStyle(.grouped)
+            // The window would otherwise hand the first plugin's first field the keyboard,
+            // its text selected, as the screen appears.
+            .background(NoInitialFocus())
         }
         .task {
             await model.refresh(.plugins, .tools, .integrations)
@@ -179,5 +182,27 @@ enum Reveal {
             url.deleteLastPathComponent()
         }
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+}
+
+/// Keeps the window from starting with a text field of this screen focused: the window's
+/// first responder is this empty view, and a field focused as the screen appears is let go.
+struct NoInitialFocus: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Resting() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class Resting: NSView {
+        override var acceptsFirstResponder: Bool { true }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            if !window.isVisible { window.initialFirstResponder = self }
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, let window, let editor = window.firstResponder as? NSTextView, editor.isFieldEditor
+                else { return }
+                window.makeFirstResponder(self)
+            }
+        }
     }
 }

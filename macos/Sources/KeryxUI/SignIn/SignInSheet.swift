@@ -26,17 +26,23 @@ public struct SignInSheet: View {
     @State private var typed = ""
     @State private var clientFile: String?
     @State private var opened: String?
+    /// The last line could not be handed to the CLI.
+    @State private var notSent = false
 
     public init(kind: SignInProvider) {
         self.init(kind: kind, startedHere: false)
     }
 
     /// The catalog's: a sheet already attached to the run its model holds (`startedHere`),
-    /// with its line already sent, or a client file already chosen.
-    package init(kind: SignInProvider, startedHere: Bool, sent: Bool = false, clientFile: String? = nil) {
+    /// with its line already sent (or refused, `notSent`), something already `typed` — never
+    /// a real code or address — or a client file already chosen.
+    package init(kind: SignInProvider, startedHere: Bool, sent: Bool = false, notSent: Bool = false,
+                 typed: String = "", clientFile: String? = nil) {
         self.kind = kind
         _startedHere = State(initialValue: startedHere)
         _sent = State(initialValue: sent)
+        _notSent = State(initialValue: notSent)
+        _typed = State(initialValue: typed)
         _clientFile = State(initialValue: clientFile)
     }
 
@@ -64,7 +70,7 @@ public struct SignInSheet: View {
         .onChange(of: stage.link?.url) { _, url in
             guard let url, url != opened else { return }
             opened = url
-            if let page = SignInWording.openable(stage.link) { openURL(page) }
+            if let page = SignInWording.page(stage.link) { openURL(page) }
         }
         .onDisappear {
             typed = ""
@@ -106,19 +112,21 @@ public struct SignInSheet: View {
             }
         case let .deviceCode(link):
             Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(SignInWording.deviceCodeLead)
-                    HStack(spacing: 12) {
-                        Text(link.code ?? "")
-                            .font(.system(.title, design: .monospaced).weight(.semibold))
-                            .textSelection(.enabled)
-                            .accessibilityLabel("Code \(link.code ?? "")")
-                        Spacer()
-                        Button("Copy Code") { Self.copy(link.code ?? "") }
-                            .disabled(link.code == nil)
+                if SignInWording.page(link) != nil {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(SignInWording.deviceCodeLead)
+                        HStack(spacing: 12) {
+                            Text(link.code ?? "")
+                                .font(.system(.title, design: .monospaced).weight(.semibold))
+                                .textSelection(.enabled)
+                                .accessibilityLabel("Code \(link.code ?? "")")
+                            Spacer()
+                            Button("Copy Code") { Self.copy(link.code ?? "") }
+                                .disabled(link.code == nil)
+                        }
                     }
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
                 waitingRow(stage)
                 openAgainRow(link)
             }
@@ -126,6 +134,7 @@ public struct SignInSheet: View {
             Section {
                 TextField("Code", text: $typed, prompt: Text(SignInWording.codePrompt))
                     .onSubmit(send)
+                if notSent { problem(SignInWording.notSent) }
                 openAgainRow(link)
             } footer: {
                 Text("Goes straight to Claude's sign-in, and is never kept.")
@@ -134,8 +143,17 @@ public struct SignInSheet: View {
             }
         case let .wantsAddress(link):
             Section {
-                TextField("Address", text: $typed, prompt: Text(SignInWording.addressPrompt))
-                    .onSubmit(send)
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField("Address", text: $typed, prompt: Text(SignInWording.addressPrompt), axis: .vertical)
+                        .labelsHidden()
+                        .lineLimit(2...3)
+                        .onSubmit(send)
+                    if notSent {
+                        problem(SignInWording.notSent)
+                    } else if !SignInWording.line(typed).isEmpty, SignInWording.landingAddress(typed) == nil {
+                        problem(SignInWording.notLandingAddress)
+                    }
+                }
                 openAgainRow(link)
             } footer: {
                 Text("After you approve, Google sends your browser to an address beginning http://localhost that "
@@ -177,36 +195,55 @@ public struct SignInSheet: View {
         }
     }
 
-    /// The page again, for a browser that did not open it (or a tab closed too soon).
-    private func openAgainRow(_ link: StreamRun<SignedIn>.Link) -> some View {
-        LabeledContent {
-            HStack(spacing: 8) {
-                Button("Copy Link") { Self.copy(link.url) }
-                Button("Open Again") {
-                    if let page = SignInWording.openable(link) { openURL(page) }
+    /// A sentence under a field, in red.
+    private func problem(_ text: String) -> some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.red)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The page again, for a browser that did not open it (or a tab closed too soon) — or,
+    /// for a page `TrustedLink` refuses, that it was not opened, and nothing to copy.
+    @ViewBuilder private func openAgainRow(_ link: StreamRun<SignedIn>.Link) -> some View {
+        if let page = SignInWording.page(link) {
+            LabeledContent {
+                HStack(spacing: 8) {
+                    Button("Copy Link") { Self.copy(page.absoluteString) }
+                    Button("Open Again") { openURL(page) }
                 }
-                .disabled(SignInWording.openable(link) == nil)
+            } label: {
+                Text("Browser didn't open?")
+                    .foregroundStyle(.secondary)
             }
-        } label: {
-            Text("Browser didn't open?")
-                .foregroundStyle(.secondary)
+        } else {
+            Label {
+                Text(TrustedLink.refusal)
+                Text("The sign-in asked for a page that isn't one of the sign-in sites Keryx knows. Cancel, and "
+                    + "try again.")
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            }
         }
     }
 
     /// Google's OAuth client: the file chosen, or the button that chooses it.
     private func clientFileRow(required: Bool) -> some View {
         LabeledContent {
-            Button(clientFile == nil ? "Choose File…" : "Change…") { chooseClientFile() }
+            Button(clientFile != nil ? "Change…"
+                : !required && GoogleClient.saved(model.integrations.value) == true ? "Replace…" : "Choose File…") {
+                chooseClientFile()
+            }
         } label: {
             Text("OAuth client file")
             if let clientFile {
                 Text((clientFile as NSString).lastPathComponent)
             } else if required {
                 Text("Needed once: a Desktop app client made in Google Cloud, downloaded as JSON")
-            } else if model.integrations.value == nil {
-                Text("Needed once; choose it if Google's sign-in asks for it")
-            } else {
+            } else if GoogleClient.saved(model.integrations.value) == true {
                 Text("Saved; choose another only to replace it")
+            } else {
+                Text("Needed once; choose it if Google's sign-in asks for it")
             }
         }
     }
@@ -214,6 +251,7 @@ public struct SignInSheet: View {
     @ViewBuilder private func buttons(_ stage: SignInStage) -> some View {
         HStack(spacing: 8) {
             if case .ready = stage, isGoogle, GoogleClient.needsFile(model.integrations.value) {
+                // Our own constant, not a page a CLI printed: no `TrustedLink` needed.
                 Link("How to Make One", destination: GoogleClient.console)
                     .font(.callout)
             }
@@ -237,7 +275,7 @@ public struct SignInSheet: View {
                     .keyboardShortcut(.cancelAction)
                 Button("Continue", action: send)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(SignInWording.line(typed).isEmpty)
+                    .disabled(lineToSend == nil || notSent)
             case .starting, .browser, .deviceCode, .checking:
                 Button("Cancel", role: .cancel) { model.signInRun.cancel() }
                     .keyboardShortcut(.cancelAction)
@@ -267,19 +305,28 @@ public struct SignInSheet: View {
 
     private func start() {
         sent = false
+        notSent = false
         typed = ""
         opened = nil
         model.signInRun.dismiss()
         if model.signIn(kind, clientFile: isGoogle ? clientFile : nil) { startedHere = true }
     }
 
-    /// The code or address, as one line, to the CLI's stdin; the field is emptied whether
-    /// or not it went.
-    private func send() {
+    /// What would be sent now: Claude's code as typed, Gmail's address only once it is the
+    /// address Google sent the browser to (stdin closes after one line, so a wrong one would
+    /// end the sign-in).
+    private var lineToSend: String? {
+        if kind == .gmail { return SignInWording.landingAddress(typed) }
         let line = SignInWording.line(typed)
+        return line.isEmpty ? nil : line
+    }
+
+    /// The code or address, as one line, to the CLI's stdin; the field is emptied once it
+    /// is sent, or could not be.
+    private func send() {
+        guard let line = lineToSend, !notSent else { return }
         typed = ""
-        guard !line.isEmpty else { return }
-        if model.signInRun.send(line) { sent = true }
+        if model.signInRun.send(line) { sent = true } else { notSent = true }
     }
 
     private func close() {

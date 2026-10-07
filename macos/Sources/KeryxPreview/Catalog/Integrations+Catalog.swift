@@ -77,6 +77,27 @@ extension ScreenCatalog {
             Entry("signin-gmail-address", size: CGSize(width: 480, height: 330)) {
                 sheet(SignInSheet(kind: .gmail, startedHere: true), signingIn(.gmail, .holding([googleOpen])))
             },
+            Entry("signin-gmail-address-wrong", size: CGSize(width: 480, height: 380)) {
+                sheet(SignInSheet(kind: .gmail, startedHere: true, typed: "https://mail.google.com/mail/u/0/#inbox"),
+                      signingIn(.gmail, .holding([googleOpen])))
+            },
+            Entry("signin-gmail-address-ready", size: CGSize(width: 480, height: 350)) {
+                sheet(SignInSheet(kind: .gmail, startedHere: true,
+                                  typed: "http://localhost:1/?state=example&code=example&scope=gmail.readonly"),
+                      signingIn(.gmail, .holding([googleOpen])))
+            },
+            Entry("signin-gmail-not-sent", size: CGSize(width: 480, height: 380)) {
+                sheet(SignInSheet(kind: .gmail, startedHere: true, notSent: true),
+                      signingIn(.gmail, .holding([googleOpen])))
+            },
+            Entry("signin-gmail-client-saved", size: tall) {
+                sheet(SignInSheet(kind: .gmail), AppModel.preview(client: PreviewClient(
+                    integrations: .success(clientSaved))))
+            },
+            Entry("signin-refused-link", size: tall) {
+                sheet(SignInSheet(kind: .codex, startedHere: true), signingIn(.codex, .holding([
+                    .open(url: "https://auth.openai.com.example.net/codex/device", code: "K7QF-2MXRA")])))
+            },
             Entry("signin-google-workspace-waiting", size: short) {
                 sheet(SignInSheet(kind: .googleWorkspace, startedHere: true),
                       signingIn(.googleWorkspace, .holding([googleOpen])))
@@ -152,6 +173,16 @@ extension ScreenCatalog {
                 return secret
             }
             return integration
+        }
+        return report
+    }
+
+    /// The Google client saved, and neither Google card signed in yet.
+    private static var clientSaved: IntegrationsReport {
+        var report = PreviewData.integrations
+        for index in report.integrations.indices where report.integrations[index].clientSaved != nil {
+            report.integrations[index].clientSaved = true
+            if report.integrations[index].id == "gmail" { report.integrations[index].why = "Not signed in." }
         }
         return report
     }

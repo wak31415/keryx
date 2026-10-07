@@ -28,12 +28,13 @@ public enum Quitting {
     }
 
     /// `question` with a sign-in under way added (`signingIn`: what it signs in to,
-    /// "Claude"): asked on its own when nothing else would ask, else said in the detail.
-    public static func adding(signIn signingIn: String?, to question: Question?) -> Question? {
+    /// "Claude"; `detail`: what stopping it loses): asked on its own when nothing else would
+    /// ask, else said in the detail.
+    public static func adding(signIn signingIn: String?, detail: String? = nil, to question: Question?) -> Question? {
         guard let signingIn else { return question }
         guard let question else {
             return Question(message: "A sign-in to \(signingIn) is still going. Quit anyway?",
-                            detail: "The sign-in stops, and nothing is saved. You can start it again later.")
+                            detail: detail ?? "The sign-in stops. You can start it again later.")
         }
         return Question(message: question.message, detail: question.detail + " The sign-in to \(signingIn) stops too.")
     }

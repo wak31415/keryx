@@ -44,10 +44,12 @@ enum IntegrationsWording {
     }
 
     /// Everything Disconnect removes: its secrets and settings, and for the two Google
-    /// sign-ins their stored tokens.
+    /// sign-ins their stored tokens. GitHub's Turn Off unsets only `ISSUE_REPORTING`, which is
+    /// what turns reports off, and keeps a repository of the owner's choosing.
     static func disconnect(_ integration: Integration) -> IntegrationDisconnect {
-        IntegrationDisconnect(unset: integration.secrets.map(\.key) + integration.settings,
-                              signOut: integration.signInProvider.flatMap { $0.canSignOut ? $0 : nil })
+        if integration.signin == "gh" { return IntegrationDisconnect(unset: [issueReportsKey], signOut: nil) }
+        return IntegrationDisconnect(unset: integration.secrets.map(\.key) + integration.settings,
+                                     signOut: integration.signInProvider.flatMap { $0.canSignOut ? $0 : nil })
     }
 
     /// Something of it is stored for Disconnect to remove: it is connected, one of its
@@ -171,11 +173,20 @@ enum IntegrationsWording {
 
 /// Google's sign-ins share one OAuth client file of the owner's own.
 enum GoogleClient {
-    /// No client is saved yet, as the Gmail or Google card says: the sign-in sheet asks for
-    /// the downloaded file first. `false` until the accounts are read; a sign-in that then
-    /// finds none says so, and the sheet asks then (`isMissing`).
+    /// Whether the client is saved: the Google cards' `client_saved`, or, from a CLI older
+    /// than that field, `false` when a card's `why` asks for the file. `nil` when unknown —
+    /// before the accounts are read, or when an older CLI does not say.
+    static func saved(_ report: IntegrationsReport?) -> Bool? {
+        let cards = ["gmail", "google"].compactMap { report?.integration($0) }
+        if let saved = cards.lazy.compactMap(\.clientSaved).first { return saved }
+        return cards.contains { $0.why?.contains("OAuth client file") == true } ? false : nil
+    }
+
+    /// No client is saved: the sign-in sheet asks for the downloaded file first. A sign-in
+    /// that finds none when this could not tell says so, and the sheet asks then
+    /// (`isMissing`).
     static func needsFile(_ report: IntegrationsReport?) -> Bool {
-        ["gmail", "google"].contains { report?.integration($0)?.why?.contains("OAuth client file") == true }
+        saved(report) == false
     }
 
     /// A sign-in failed for want of a client file (`google.NO_CLIENT`).
@@ -183,6 +194,7 @@ enum GoogleClient {
         failure.contains("no Google OAuth client")
     }
 
-    /// Where the client is made.
+    /// Where the client is made. Ours, not a CLI's output, so it is a plain `Link` and not
+    /// passed through `TrustedLink`.
     static let console = URL(string: "https://console.cloud.google.com/auth/clients")!
 }

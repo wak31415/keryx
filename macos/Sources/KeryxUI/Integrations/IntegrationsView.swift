@@ -102,12 +102,10 @@ public struct IntegrationsView: View {
         }
     }
 
-    /// The card's settings unset, then its sign-in removed; the first failure stops it.
+    /// The card's settings unset in one command, then its sign-in removed; a failure stops it.
     private func disconnect(_ integration: Integration) async -> String? {
         let plan = IntegrationsWording.disconnect(integration)
-        for key in plan.unset {
-            if let error = await model.unset(key) { return error.message }
-        }
+        if let error = await model.unset(keys: plan.unset) { return error.message }
         if let provider = plan.signOut, case let .failure(error) = await model.signOut(provider) {
             return error.message
         }

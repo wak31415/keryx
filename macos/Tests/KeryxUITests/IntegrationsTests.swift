@@ -27,6 +27,8 @@ import KeryxPreview
                    "integrations-error", "window-integrations", "signin-claude-ready", "signin-claude-browser",
                    "signin-claude-code", "signin-claude-checking", "signin-claude-done", "signin-codex-code",
                    "signin-gmail-needs-client", "signin-gmail-client-chosen", "signin-gmail-address",
+                   "signin-gmail-address-wrong", "signin-gmail-address-ready", "signin-gmail-not-sent",
+                   "signin-gmail-client-saved", "signin-refused-link",
                    "signin-google-workspace-waiting", "signin-google-no-client", "signin-failed", "signin-cancelling",
                    "signin-busy"] {
             #expect(ids.contains(id), "missing \(id)")
@@ -49,8 +51,9 @@ import KeryxPreview
         #expect(IntegrationsWording.disconnect(card("gmail")) == IntegrationDisconnect(unset: [], signOut: .gmail))
         #expect(IntegrationsWording.disconnect(card("slack"))
             == IntegrationDisconnect(unset: ["SLACK_BOT_TOKEN"], signOut: nil))
+        // Turning reports off keeps a repository of the owner's choosing.
         #expect(IntegrationsWording.disconnect(card("github"))
-            == IntegrationDisconnect(unset: ["ISSUE_REPORTING", "ISSUE_REPO"], signOut: nil))
+            == IntegrationDisconnect(unset: ["ISSUE_REPORTING"], signOut: nil))
     }
 
     @Test func disconnectIsOfferedWhenSomethingIsStored() {
@@ -107,11 +110,28 @@ import KeryxPreview
     }
 
     @Test func aGoogleClientIsAskedForWhenNoneIsSaved() {
+        #expect(PreviewData.integrations.integration("gmail")?.clientSaved == false)
+        #expect(PreviewData.integrations.integration("slack")?.clientSaved == nil)
+        #expect(GoogleClient.saved(PreviewData.integrations) == false)
         #expect(GoogleClient.needsFile(PreviewData.integrations), "the sandbox has none")
+        #expect(GoogleClient.saved(nil) == nil)
         #expect(!GoogleClient.needsFile(nil))
-        var signedIn = PreviewData.integrations
-        for index in signedIn.integrations.indices { signedIn.integrations[index].why = nil }
-        #expect(!GoogleClient.needsFile(signedIn))
+
+        // `client_saved` decides, whatever `why` says.
+        var saved = PreviewData.integrations
+        for index in saved.integrations.indices where saved.integrations[index].clientSaved != nil {
+            saved.integrations[index].clientSaved = true
+        }
+        #expect(GoogleClient.saved(saved) == true)
+        #expect(!GoogleClient.needsFile(saved))
+
+        // An older CLI says nothing of it: `why` is read, and silence is not knowing.
+        var older = PreviewData.integrations
+        for index in older.integrations.indices { older.integrations[index].clientSaved = nil }
+        #expect(GoogleClient.saved(older) == false)
+        for index in older.integrations.indices { older.integrations[index].why = nil }
+        #expect(GoogleClient.saved(older) == nil)
+        #expect(!GoogleClient.needsFile(older))
         #expect(GoogleClient.isMissing("there is no Google OAuth client yet: download one … --client-file"))
         #expect(!GoogleClient.isMissing("Signed in to Gmail, read-only."))
         #expect(SignInWording.failure("there is no Google OAuth client yet: pass it with --client-file")
@@ -172,13 +192,36 @@ import KeryxPreview
         #expect(SignInWording.finished(done) == nil)
     }
 
-    @Test func onlyAnHttpsPageIsOpened() {
-        #expect(SignInWording.openable(Link(url: "https://accounts.google.com/o/oauth2/auth"))?.host
+    @Test func onlyATrustedPageIsOpened() {
+        #expect(SignInWording.page(Link(url: "https://accounts.google.com/o/oauth2/auth"))?.host
             == "accounts.google.com")
-        #expect(SignInWording.openable(Link(url: "http://example.com")) == nil)
-        #expect(SignInWording.openable(Link(url: "file:///etc/passwd")) == nil)
-        #expect(SignInWording.openable(Link(url: "javascript:alert(1)")) == nil)
-        #expect(SignInWording.openable(nil) == nil)
+        #expect(SignInWording.page(Link(url: "https://auth.openai.com/codex/device", code: "K7QF"))?.host
+            == "auth.openai.com")
+        #expect(SignInWording.page(Link(url: "https://auth.openai.com.example.net/codex/device")) == nil,
+                "a lookalike host")
+        #expect(SignInWording.page(Link(url: "https://example.com/oauth")) == nil)
+        #expect(SignInWording.page(Link(url: "http://accounts.google.com/")) == nil)
+        #expect(SignInWording.page(Link(url: "file:///etc/passwd")) == nil)
+        #expect(SignInWording.page(Link(url: "javascript:alert(1)")) == nil)
+        #expect(SignInWording.page(nil) == nil)
+    }
+
+    @Test func onlyGooglesLandingAddressIsSent() {
+        let landed = "http://localhost:1/?state=s&code=4%2F0Ab&scope=https://www.googleapis.com/auth/gmail.readonly"
+        #expect(SignInWording.landingAddress("  \(landed)\n") == landed)
+        #expect(SignInWording.landingAddress("http://127.0.0.1:8080/?code=c") != nil)
+        #expect(SignInWording.landingAddress("http://[::1]:1/?code=c") != nil)
+        #expect(SignInWording.landingAddress("http://localhost:1/?error=access_denied") != nil, "a refusal is an answer")
+        #expect(SignInWording.landingAddress("http://localhost:1/") == nil, "no code")
+        #expect(SignInWording.landingAddress("http://localhost:1/?state=s") == nil)
+        #expect(SignInWording.landingAddress("https://localhost:1/?code=c") == nil, "Google lands on http")
+        #expect(SignInWording.landingAddress("http://example.com/?code=c") == nil)
+        #expect(SignInWording.landingAddress("http://localhost.example.com/?code=c") == nil)
+        #expect(SignInWording.landingAddress("http://user@localhost:1/?code=c") == nil)
+        #expect(SignInWording.landingAddress("https://mail.google.com/mail/u/0/#inbox") == nil)
+        #expect(SignInWording.landingAddress("4/0AbCdEf") == nil, "the code alone")
+        #expect(SignInWording.landingAddress("http://localhost:1/?code=c\nhttp://localhost:1/?code=d") == nil)
+        #expect(SignInWording.landingAddress("") == nil)
     }
 
     @Test func whatIsPastedGoesAsOneLine() {
@@ -198,8 +241,14 @@ import KeryxPreview
 
     @Test func quittingDuringASignInAsksFirst() {
         #expect(Quitting.adding(signIn: nil, to: nil) == nil)
-        let alone = Quitting.adding(signIn: "Claude", to: nil)
+        let alone = Quitting.adding(signIn: "Claude", detail: SignInWording.quitDetail(.claude), to: nil)
         #expect(alone?.message == "A sign-in to Claude is still going. Quit anyway?")
+        #expect(alone?.detail == "The sign-in stops, and nothing is saved. You can start it again later.")
+        // Google for agents is turned on as its sign-in starts: something is kept.
+        let workspace = SignInWording.quitDetail(.googleWorkspace)
+        #expect(!workspace.contains("nothing is saved"))
+        #expect(workspace.contains("stays turned on"))
+        #expect(Quitting.adding(signIn: "Google for agents", detail: workspace, to: nil)?.detail == workspace)
         let download = Quitting.question(downloading: true, settingUpVoice: false, assistant: "Lyra")
         let both = Quitting.adding(signIn: "Gmail", to: download)
         #expect(both?.message == download?.message)
