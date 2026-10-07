@@ -61,11 +61,12 @@ public struct StateView<Value, Content: View>: View {
 
 extension StateView {
     /// The screen for one of `AppModel`'s documents: its value, its error in words, and
-    /// whether a load is under way.
-    public init(_ loadable: Loadable<Value>, retry: (() -> Void)? = nil,
+    /// whether a load is under way. `section` names what failed to load ("Sessions"), for
+    /// the title of a failure that is about the document rather than about Keryx.
+    public init(_ loadable: Loadable<Value>, section: String, retry: (() -> Void)? = nil,
                 @ViewBuilder content: @escaping (Value) -> Content) where Value: Sendable {
         self.init(value: loadable.value, isLoading: loadable.isLoading,
-                  failure: loadable.error.map { Failure(title: $0.title, message: $0.message) },
+                  failure: loadable.error.map { Failure(title: $0.title(loading: section), message: $0.message) },
                   retry: retry, content: content)
     }
 }

@@ -26,7 +26,7 @@ public enum Wording {
         switch state {
         case .locating: nil
         case .notFound: "not found"
-        case .needsMigration: "needs keryx migrate"
+        case .needsMigration: "needs to move its files"
         case .stopped: "stopped"
         case .notInstalled: "not installed"
         case .idle: "running"
@@ -38,6 +38,24 @@ public enum Wording {
     /// The first letter of a sentence the CLI wrote in lower case, raised.
     public static func capitalised(_ text: String) -> String {
         text.prefix(1).uppercased() + text.dropFirst()
+    }
+
+    /// A heading in title case, as the CLI's sentence-case group titles become section
+    /// titles: "Local and self-hosted models" → "Local and Self-Hosted Models". Short joining
+    /// words stay lower case after the first; a word already capitalised (PIN) is kept.
+    public static func titleCase(_ text: String) -> String {
+        let minor: Set<String> = ["a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to"]
+        let words = text.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
+        return words.enumerated().map { index, word in
+            if index > 0, minor.contains(word) { return word }
+            return word.split(separator: "-", omittingEmptySubsequences: false)
+                .map { capitalised(String($0)) }.joined(separator: "-")
+        }.joined(separator: " ")
+    }
+
+    /// `text` as a sentence: a capital first letter and a closing full stop.
+    public static func sentence(_ text: String) -> String {
+        KeryxError.sentence(text)
     }
 
     /// `text` cut to `limit` characters, ending in an ellipsis when it was cut.

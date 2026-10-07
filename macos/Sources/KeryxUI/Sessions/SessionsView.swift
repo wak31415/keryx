@@ -13,7 +13,7 @@ public struct SessionsView: View {
 
     public var body: some View {
         @Bindable var model = model
-        StateView(model.tasks, retry: { Task { await model.refresh(.tasks) } }) { tasks in
+        StateView(model.tasks, section: "Sessions", retry: { Task { await model.refresh(.tasks) } }) { tasks in
             let sessions = SessionWording.visible(tasks, filter: model.statusFilter,
                                                   housekeeping: model.includeHousekeeping)
             if sessions.isEmpty {
@@ -84,7 +84,7 @@ public struct SessionsView: View {
                 SessionTimeline(task: task, detail: detail, assistant: assistant)
                     .id(id)
             } else {
-                StateView(detail ?? Loadable(isLoading: true),
+                StateView(detail ?? Loadable(isLoading: true), section: "Session",
                           retry: { Task { await model.loadTask(id) } }) { value in
                     SessionTimeline(task: value.task, detail: detail, assistant: assistant)
                 }

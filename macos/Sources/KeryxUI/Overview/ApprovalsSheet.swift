@@ -20,7 +20,7 @@ struct ApprovalsSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding([.horizontal, .top], 20)
             .padding(.bottom, 12)
-            StateView(model.approvals, retry: { Task { await model.refresh(.approvals) } }) { report in
+            StateView(model.approvals, section: "Approval Calls", retry: { Task { await model.refresh(.approvals) } }) { report in
                 Table(rows(report)) {
                     TableColumn("Time") { row in
                         Text(ApprovalWording.time(row.entry.ts))

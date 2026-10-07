@@ -11,7 +11,7 @@ public struct ModelsView: View {
     public init() {}
 
     public var body: some View {
-        StateView(model.models, retry: { Task { await model.refresh(.models) } }) { report in
+        StateView(model.models, section: "Local Models", retry: { Task { await model.refresh(.models) } }) { report in
             Form {
                 ThisMacSection(report: report)
                 LocalAgentSection(report: report)

@@ -20,7 +20,7 @@ public struct ConfigurationView: View {
     }
 
     public var body: some View {
-        StateView(model.config, retry: { Task { await model.refresh(.config) } }) { rows in
+        StateView(model.config, section: "Configuration", retry: { Task { await model.refresh(.config) } }) { rows in
             let groups = ConfigWording.groups(ConfigWording.filter(rows, by: search))
             if groups.isEmpty, !rows.isEmpty {
                 ContentUnavailableView.search(text: search)

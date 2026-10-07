@@ -87,8 +87,8 @@ private struct KitSheet: View {
                 }
                 panel {
                     StateView(value: nil as String?, isLoading: false,
-                              failure: .init(title: "Keryx Did Not Answer",
-                                             message: "keryx status took too long, and was stopped."),
+                              failure: .init(title: KeryxError.timedOut(command: "keryx status").title,
+                                             message: KeryxError.timedOut(command: "keryx status").message),
                               retry: {}) { Text($0) }
                 }
                 panel {

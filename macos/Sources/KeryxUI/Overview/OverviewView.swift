@@ -10,7 +10,7 @@ public struct OverviewView: View {
     public init() {}
 
     public var body: some View {
-        StateView(model.status, retry: { Task { await model.refresh(.status) } }) { status in
+        StateView(model.status, section: "Overview", retry: { Task { await model.refresh(.status) } }) { status in
             Form {
                 ServiceSection(status: status)
                 SetupSection()
