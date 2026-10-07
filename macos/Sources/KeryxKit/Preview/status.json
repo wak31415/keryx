@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "storage": {"ok": true, "error": null, "migration_required": false},
+  "service": {"ok": true, "error": null, "manager": "launchd", "unit": "dev.keryx.agent", "installed": true, "active": true},
+  "health": {"ok": true, "error": null, "reachable": true, "live_sessions": 0},
+  "version": {"ok": true, "error": null, "running": "v0.1.0-3-g1ad6420", "checkout": "v0.1.0-5-gabc1234"},
+  "restart": {"ok": true, "error": null, "state": null, "requested_at": null, "failure": null},
+  "assistant": {"ok": true, "error": null, "name": "Lyra"},
+  "agents": {"ok": true, "error": null, "default": "claude", "enabled": ["claude", "local"]},
+  "tasks": {"ok": true, "error": null, "running": 1, "queued": 0, "unreported": 2},
+  "approvals": {"ok": true, "error": null, "escalation_enabled": true},
+  "paths": {
+    "ok": true, "error": null,
+    "config": "/Users/you/.config/keryx",
+    "data": "/Users/you/.local/share/keryx",
+    "state": "/Users/you/.local/state/keryx",
+    "cache": "/Users/you/.cache/keryx",
+    "logs": "/Users/you/.local/state/keryx/logs",
+    "memory": "/Users/you/.local/share/keryx/memory.md"
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "ok": false,
+  "checks": [
+    {
+      "name": "storage",
+      "detail": "the XDG directories",
+      "severity": "hard",
+      "section": "import",
+      "state": "ok",
+      "ok": true,
+      "unset": false
+    },
+    {
+      "name": "configuration",
+      "detail": "/Users/you/.config/keryx/config.toml",
+      "severity": "soft",
+      "section": "import",
+      "state": "ok",
+      "ok": true,
+      "unset": false
+    },
+    {
+      "name": "OPENAI_API_KEY",
+      "detail": "set",
+      "severity": "hard",
+      "section": "voice",
+      "state": "ok",
+      "ok": true,
+      "unset": false
+    },
+    {
+      "name": "coding agents",
+      "detail": "claude by default; enabled: claude",
+      "severity": "hard",
+      "section": "agents",
+      "state": "ok",
+      "ok": true,
+      "unset": false
+    },
+    {
+      "name": "Claude Code agent (default)",
+      "detail": "/Users/you/.local/share/uv/tools/claude-agent-sdk/claude; stored subscription login",
+      "severity": "hard",
+      "section": "agents",
+      "state": "ok",
+      "ok": true,
+      "unset": false
+    },
+    {
+      "name": "Twilio credentials",
+      "detail": "not set",
+      "severity": "hard",
+      "section": "phone",
+      "state": "missing",
+      "ok": false,
+      "unset": true
+    },
+    {
+      "name": "Twilio webhook",
+      "detail": "could not reach the voice URL: connection refused",
+      "severity": "hard",
+      "section": "phone",
+      "state": "failed",
+      "ok": false,
+      "unset": false
+    },
+    {
+      "name": "tunnel",
+      "detail": "/opt/homebrew/bin/cloudflared",
+      "severity": "hard",
+      "section": "phone",
+      "state": "ok",
+      "ok": true,
+      "unset": false
+    },
+    {
+      "name": "local models",
+      "detail": "none (optional) — `keryx setup` can run the voice and the agent on your own hardware",
+      "severity": "soft",
+      "section": "local",
+      "state": "ok",
+      "ok": true,
+      "unset": false
+    }
+  ]
+}

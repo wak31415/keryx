@@ -1,0 +1,166 @@
+import Foundation
+import Testing
+@testable import KeryxKit
+
+@Suite struct DecodingTests {
+    // MARK: - Every fixture decodes
+
+    @Test func statusFixtureDecodes() throws {
+        let report = PreviewData.status
+        #expect(report.schema == 1)
+        #expect(report.assistant.name == "Lyra")
+    }
+
+    @Test func statusMigrationFixtureDecodes() throws {
+        let report = PreviewData.statusMigration
+        #expect(report.storage.migrationRequired == true)
+        #expect(report.tasks.ok == false)
+    }
+
+    @Test func doctorFixtureDecodes() throws {
+        let report = PreviewData.doctor
+        #expect(report.checks.count >= 8)
+        #expect(Set(report.checks.map(\.section)).count >= 4)
+        #expect(report.checks.contains { $0.state == "missing" })
+        #expect(report.checks.contains { $0.state == "failed" })
+    }
+
+    @Test func tasksFixtureDecodes() throws {
+        let list = PreviewData.tasks
+        #expect(list.tasks.count == 6)
+        #expect(Set(list.tasks.map(\.status)) == Set(TaskStatus.allCases))
+        #expect(list.tasks.contains { $0.internal })
+        #expect(list.tasks.contains { $0.told == false })
+
+        let task = list.tasks.first { $0.id == 40 }
+        #expect(task?.createdAt == isoDate("2026-10-05T21:03:44+00:00"))
+    }
+
+    @Test func taskDetailFixtureDecodes() throws {
+        let detail = PreviewData.taskDetail
+        #expect(detail.report != nil)
+        #expect(detail.report!.components(separatedBy: "\n\n").count >= 3)
+        #expect(detail.reportTruncated == false)
+        #expect(detail.log.count >= 12)
+        #expect(detail.log.contains { $0.kind == .followup })
+        // ids are assigned by position
+        #expect(detail.log.map(\.id) == Array(0..<detail.log.count))
+        #expect(detail.logTruncated == false)
+        #expect(detail.resumable == false)
+    }
+
+    @Test func usageFixtureDecodes() throws {
+        let report = PreviewData.usage
+        #expect(report.since != nil)
+        #expect(report.projects.count >= 2)
+        #expect(report.projects.contains { $0.label == "(housekeeping)" })
+    }
+
+    @Test func modelsFixtureDecodes() throws {
+        let report = PreviewData.models
+        #expect(report.models.count == 8)
+        #expect(report.models.filter(\.recommended).count == 1)
+        #expect(report.models.filter(\.downloaded).count == 2)
+        #expect(report.models.filter { !$0.fits }.count == 2)
+        #expect(report.servers.llm.reachable == true)
+        #expect(report.servers.llm.model != nil)
+    }
+
+    @Test func modelsEmptyServersFixtureDecodes() throws {
+        let report = PreviewData.modelsEmptyServers
+        #expect(report.servers.llm.model == nil)
+        #expect(report.servers.llm.reachable == false)
+        #expect(report.servers.localAgent.enabled == false)
+    }
+
+    @Test func configFixtureDecodes() throws {
+        let rows = PreviewData.config
+        #expect(rows.count >= 15)
+        #expect(Set(rows.map(\.group)).count >= 5)
+        #expect(rows.contains { $0.secret && $0.set })
+        #expect(rows.contains { $0.secret && !$0.set })
+
+        let vadMode = rows.first { $0.key == "VAD_MODE" }
+        #expect(vadMode?.choices == ["server", "semantic"])
+    }
+
+    @Test func approvalsFixtureDecodes() throws {
+        let report = PreviewData.approvals
+        #expect(report.entries.count >= 4)
+        #expect(report.cancelledBeforeCall == 2)
+        #expect(report.answeredAfterCall == 1)
+        // one entry carries a string requestId, another an int, both survive as JSONValue
+        #expect(report.entries.contains { if case .string = $0.requestId { return true }; return false })
+        #expect(report.entries.contains { if case .number = $0.requestId { return true }; return false })
+    }
+
+    @Test func memoryFixtureDecodes() throws {
+        let document = PreviewData.memory
+        #expect(document.exists == true)
+        #expect(document.text != nil)
+    }
+
+    // MARK: - Unknown keys are ignored
+
+    @Test func decodingToleratesAnUnknownKey() throws {
+        let json = """
+        {"path": "/tmp/memory.md", "exists": true, "text": "hi", "a_future_field": 42}
+        """
+        let document = try JSON.decoder.decode(MemoryDocument.self, from: Data(json.utf8))
+        #expect(document.path == "/tmp/memory.md")
+        #expect(document.text == "hi")
+    }
+
+    // MARK: - JSONValue.displayText
+
+    @Test func jsonValueDisplayText() {
+        #expect(JSONValue.string("claude").displayText == "claude")
+        #expect(JSONValue.number(1200).displayText == "1200")
+        #expect(JSONValue.number(0.5).displayText == "0.5")
+        #expect(JSONValue.bool(true).displayText == "On")
+        #expect(JSONValue.bool(false).displayText == "Off")
+        #expect(JSONValue.array([.string("claude"), .string("local")]).displayText == "claude, local")
+        #expect(JSONValue.null.displayText == "")
+    }
+
+    // MARK: - PullEvent.parse
+
+    @Test func pullEventParsesEveryEventInTheFixture() {
+        let events = PreviewData.pullLines.compactMap(PullEvent.parse)
+        #expect(events.count == PreviewData.pullLines.count)
+        #expect(events.filter { if case .progress = $0 { return true }; return false }.count == 3)
+        #expect(events.last == .done(path: "/Users/you/.cache/keryx/models/qwen3-coder-30b-a3b.gguf"))
+    }
+
+    @Test func pullEventParsesEveryEventKind() {
+        #expect(PullEvent.parse(#"{"event": "progress", "done": 10, "total": 100}"#)
+            == .progress(done: 10, total: 100))
+        #expect(PullEvent.parse(#"{"event": "done", "path": "/x"}"#) == .done(path: "/x"))
+        #expect(PullEvent.parse(#"{"event": "adopted", "path": "/x", "from": "/y"}"#)
+            == .adopted(path: "/x", from: "/y"))
+        #expect(PullEvent.parse(#"{"event": "error", "message": "disk full"}"#) == .error("disk full"))
+        #expect(PullEvent.parse(#"{"event": "cancelled"}"#) == .cancelled)
+    }
+
+    @Test func pullEventParseIsNilForGarbage() {
+        #expect(PullEvent.parse("not json at all") == nil)
+        #expect(PullEvent.parse("") == nil)
+        #expect(PullEvent.parse(#"{"event": "something-new"}"#) == nil)
+        #expect(PullEvent.parse(#"{"no_event_key": true}"#) == nil)
+    }
+
+    // MARK: - Contract fixture parses as a sanity check that it stays valid JSON
+
+    @Test func contractFixtureIsWellFormedJSON() throws {
+        let url = Bundle.module.url(forResource: "contract", withExtension: "json", subdirectory: "Fixtures")!
+        let data = try Data(contentsOf: url)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(object?["status --json"] != nil)
+    }
+}
+
+private func isoDate(_ string: String) -> Date {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter.date(from: string)!
+}

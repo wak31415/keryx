@@ -1,0 +1,51 @@
+{
+  "escalation_enabled": true,
+  "escalate_after_s": 300.0,
+  "max_per_hour": 4,
+  "cancelled_before_call": 2,
+  "answered_after_call": 1,
+  "entries": [
+    {
+      "ts": "2026-10-05T09:12:03+00:00",
+      "event": "escalated",
+      "request_id": 17,
+      "what": "git push origin main"
+    },
+    {
+      "ts": "2026-10-05T09:12:41+00:00",
+      "event": "answered_at_keyboard",
+      "request_id": 17,
+      "what": "allow"
+    },
+    {
+      "ts": "2026-10-05T10:03:10+00:00",
+      "event": "cancelled",
+      "request_id": 18,
+      "what": "settled before the call connected"
+    },
+    {
+      "ts": "2026-10-05T10:40:55+00:00",
+      "event": "escalated",
+      "request_id": "ask-user-question-2",
+      "what": "rename the module or keep the old name as an alias?"
+    },
+    {
+      "ts": "2026-10-05T10:41:30+00:00",
+      "event": "cancelled",
+      "request_id": "ask-user-question-2",
+      "what": "answered at the keyboard before the call connected"
+    },
+    {
+      "ts": "2026-10-05T11:44:02+00:00",
+      "event": "escalated",
+      "request_id": 19,
+      "what": "rm -rf build/"
+    },
+    {
+      "ts": "2026-10-05T11:49:02+00:00",
+      "event": "answered_after_call",
+      "request_id": 19,
+      "what": "deny"
+    }
+  ]
+}
