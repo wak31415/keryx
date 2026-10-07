@@ -14,6 +14,11 @@ public struct ModelsView: View {
 
     public init() {}
 
+    /// This screen answers `request` (`RequestAnswer`): shown at what is left to do here.
+    static func answers(_ request: AppRequest) -> Bool {
+        RequestAnswer.of(request) == .models
+    }
+
     public var body: some View {
         StateView(model.models, section: "Local Models", retry: { Task { await model.refresh(.models) } }) { report in
             ScrollViewReader { proxy in
@@ -32,7 +37,7 @@ public struct ModelsView: View {
                 // The Setup Assistant's "Choose a Model" or "Open Local Models": shown at
                 // what is left to do here.
                 .onChange(of: model.requested, initial: true) { _, requested in
-                    guard let requested, RequestAnswer.of(requested) == .models else { return }
+                    guard let requested, Self.answers(requested) else { return }
                     model.didHandle(requested)
                     if let anchor = ModelsWording.nextStep(report) { spotlight(anchor, proxy: proxy) }
                 }

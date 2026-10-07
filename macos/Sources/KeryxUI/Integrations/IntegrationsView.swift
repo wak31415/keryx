@@ -71,13 +71,18 @@ public struct IntegrationsView: View {
         }
     }
 
+    /// What this screen does for `request` (`RequestAnswer`), with the cards as read: a
+    /// failed read has no cards to connect, so the section is shown and that is all.
+    static func answer(_ request: AppRequest, integrations: Loadable<IntegrationsReport>) -> IntegrationsAnswer? {
+        let cards = integrations.value?.integrations ?? (integrations.error == nil ? nil : [])
+        return IntegrationsWording.answer(request, cards: cards)
+    }
+
     // MARK: - Actions
 
     private func answerRequest() {
-        guard let request = model.requested else { return }
-        // A failed read has no cards to connect: the section is shown, and that is all.
-        let cards = model.integrations.value?.integrations ?? (model.integrations.error == nil ? nil : [])
-        guard let answer = IntegrationsWording.answer(request, cards: cards) else { return }
+        guard let request = model.requested, let answer = Self.answer(request, integrations: model.integrations)
+        else { return }
         switch answer {
         case .wait: return
         case let .open(requested): sheet = requested

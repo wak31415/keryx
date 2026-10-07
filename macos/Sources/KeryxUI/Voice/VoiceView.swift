@@ -6,6 +6,11 @@ import SwiftUI
 /// is saved until that section's button (Use OpenAI Realtime, Set Up…, Check & Use). Once
 /// one is, the banner at the top offers the restart that loads it.
 public struct VoiceView: View {
+    /// This screen answers `request` (`RequestAnswer`): This Mac's Set Up… question.
+    static func answers(_ request: AppRequest?) -> Bool {
+        request.map(RequestAnswer.of) == .voiceHere
+    }
+
     @Environment(AppModel.self) private var model
     /// The way picked on screen; `nil` until the owner picks one, which shows the one in use.
     @State private var picked: VoiceMode?
@@ -47,7 +52,7 @@ public struct VoiceView: View {
         // The Setup Assistant's "Set Up Voice on This Mac" shows This Mac, whose section
         // asks the question (and says it has been answered).
         .onChange(of: model.requested, initial: true) { _, requested in
-            if requested.map(RequestAnswer.of) == .voiceHere { picked = .here }
+            if VoiceView.answers(requested) { picked = .here }
         }
     }
 }
@@ -276,7 +281,7 @@ private struct HereSection: View {
         }
         // The Setup Assistant's "Set Up Voice on This Mac": the same question as Set Up….
         .onChange(of: model.requested, initial: true) { _, requested in
-            guard let requested, RequestAnswer.of(requested) == .voiceHere else { return }
+            guard let requested, VoiceView.answers(requested) else { return }
             model.didHandle(requested)
             if !voice.needsLocalModel, !busy, !downloading { askToSetUp() }
         }

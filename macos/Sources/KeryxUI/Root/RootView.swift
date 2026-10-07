@@ -8,6 +8,11 @@ public struct RootView: View {
 
     public init() {}
 
+    /// The section `request` only shows, which the main window answers by showing it.
+    static func answers(_ request: AppRequest) -> SidebarItem? {
+        if case let .shown(item) = RequestAnswer.of(request) { item } else { nil }
+    }
+
     public var body: some View {
         @Bindable var model = model
         NavigationSplitView {
@@ -31,7 +36,7 @@ public struct RootView: View {
         }
         // A request that only shows its section is answered by showing it.
         .onChange(of: model.requested, initial: true) { _, requested in
-            guard let requested, case .shown = RequestAnswer.of(requested) else { return }
+            guard let requested, Self.answers(requested) != nil else { return }
             model.didHandle(requested)
         }
         .navigationTitle(onboarding ? "Keryx" : model.selection.title)

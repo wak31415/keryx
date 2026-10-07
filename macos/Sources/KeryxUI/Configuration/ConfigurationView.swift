@@ -76,9 +76,7 @@ public struct ConfigurationView: View {
     /// Does what another window asked of Configuration (`AppModel.requested`): a tab, or
     /// the PIN sheet on the PIN's tab.
     private func answer(_ request: AppRequest?) {
-        guard let request else { return }
-        let pinTab = model.config.value?.first(where: ConfigWording.isPIN)?.tab
-        guard let answer = ConfigWording.answer(request, pinTab: pinTab) else { return }
+        guard let request, let answer = Self.answer(request, config: model.config.value) else { return }
         choose(answer.tab)
         switch answer.sheet {
         case .pin?: pinRequested = true
@@ -86,6 +84,11 @@ public struct ConfigurationView: View {
         case nil: break
         }
         model.didHandle(request)
+    }
+
+    /// What this screen does for `request` (`RequestAnswer`), with the settings as read.
+    static func answer(_ request: AppRequest, config: [ConfigRow]?) -> (tab: String, sheet: ConfigurationSheet?)? {
+        ConfigWording.answer(request, pinTab: config?.first(where: ConfigWording.isPIN)?.tab)
     }
 
     // MARK: - A tab

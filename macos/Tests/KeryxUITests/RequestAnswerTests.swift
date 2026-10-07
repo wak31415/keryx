@@ -22,23 +22,17 @@ import KeryxPreview
         }
     }
 
-    /// The screens that would act on `request`, read exactly as each screen reads it.
+    /// The screens that would act on `request`: each screen's own check.
     static func screensAnswering(_ request: AppRequest) -> Set<SidebarItem> {
         var screens: Set<SidebarItem> = []
-        // ConfigurationView.answer
-        if ConfigWording.answer(request, pinTab: "general") != nil { screens.insert(.configuration) }
-        // IntegrationsView.answerRequest, with the cards read
-        if let answer = IntegrationsWording.answer(request, cards: PreviewData.integrations.integrations),
-           answer != .unknown, answer != .wait {
+        if ConfigurationView.answer(request, config: PreviewData.config) != nil { screens.insert(.configuration) }
+        let read = Loadable(value: PreviewData.integrations)
+        if let answer = IntegrationsView.answer(request, integrations: read), answer != .unknown, answer != .wait {
             screens.insert(.integrations)
         }
-        let answer = RequestAnswer.of(request)
-        // VoiceView and its This Mac section
-        if answer == .voiceHere { screens.insert(.voice) }
-        // ModelsView
-        if answer == .models { screens.insert(.models) }
-        // RootView: a section only shown
-        if case let .shown(item) = answer { screens.insert(item) }
+        if VoiceView.answers(request) { screens.insert(.voice) }
+        if ModelsView.answers(request) { screens.insert(.models) }
+        if let item = RootView.answers(request) { screens.insert(item) }
         return screens
     }
 
@@ -71,8 +65,11 @@ import KeryxPreview
         let github = cards.first { $0.id == "github" }!
         #expect(IntegrationsWording.connect(github) == .issueReports)
         #expect(IntegrationsWording.answer(.connect(integration: "nothing"), cards: cards) == .unknown)
-        #expect(IntegrationsWording.answer(.connect(integration: "google"), cards: []) == .unknown,
+        #expect(IntegrationsWording.answer(.connect(integration: "google"), cards: []) == .unknown)
+        let failed = Loadable<IntegrationsReport>(error: .timedOut(command: "keryx integrations"))
+        #expect(IntegrationsView.answer(.connect(integration: "google"), integrations: failed) == .unknown,
                 "a failed read: shown, and nothing more")
+        #expect(IntegrationsView.answer(.connect(integration: "google"), integrations: .idle) == .wait)
         #expect(IntegrationsWording.answer(.setPin, cards: cards) == nil)
     }
 }
@@ -88,11 +85,12 @@ import KeryxPreview
         return report
     }
 
+    // The shapes `doctor.py`'s `_agent_checks` writes.
     @Test func eachAgentIsReadFromItsOwnCheck() {
         let report = doctor([
             ("coding agents", true, "claude by default; enabled: claude, codex"),
-            ("Claude Code agent (default)", true, "/usr/local/bin/claude (2.1); stored subscription login"),
-            ("Codex agent", false, "/usr/local/bin/codex; no login found — run codex login"),
+            ("Claude Code agent (default)", true, "stored subscription login"),
+            ("Codex agent", false, "not signed in"),
         ])
         let claude = AgentSignInWording.state(.claude, doctor: report)
         #expect(claude == .signedIn("stored subscription login"))
@@ -103,14 +101,31 @@ import KeryxPreview
         #expect(codex == .notSignedIn)
         #expect(AgentSignInWording.status(codex) == "Not Signed In")
         #expect(AgentSignInWording.button(codex) == "Sign In…")
+        let key = doctor([("Claude Code agent (default)", true, "ANTHROPIC_API_KEY set (pay per token)")])
+        #expect(AgentSignInWording.caption(AgentSignInWording.state(.claude, doctor: key))
+            == "ANTHROPIC_API_KEY set (pay per token)")
     }
 
     @Test func notInstalledNotEnabledAndNotYetRead() {
-        let report = doctor([("Claude Code agent (default)", false, "not installed — uv sync --extra claude")])
+        let report = doctor([
+            ("Claude Code agent (default)", false, "not installed"),
+            ("Codex agent", false, "the codex program is missing"),
+        ])
         #expect(AgentSignInWording.state(.claude, doctor: report) == .notInstalled)
-        #expect(AgentSignInWording.state(.codex, doctor: report) == .notEnabled)
+        #expect(AgentSignInWording.state(.codex, doctor: report) == .notInstalled, "its program is missing")
+        let claudeOnly = doctor([("Claude Code agent (default)", false, "not signed in")])
+        #expect(AgentSignInWording.state(.codex, doctor: claudeOnly) == .notEnabled)
         #expect(AgentSignInWording.state(.codex, doctor: nil) == .unknown)
         #expect(AgentSignInWording.button(.notEnabled) == "Sign In…", "signing in is never refused here")
+    }
+
+    @Test func anOlderCLIsDetailStillReads() {
+        let report = doctor([
+            ("Claude Code agent (default)", true, "/usr/local/bin/claude (2.1); stored subscription login"),
+            ("Codex agent", false, "codex CLI not found — npm install -g @openai/codex"),
+        ])
+        #expect(AgentSignInWording.state(.claude, doctor: report) == .signedIn("stored subscription login"))
+        #expect(AgentSignInWording.state(.codex, doctor: report) == .notInstalled)
     }
 
     @Test func thePreviewDoctorsClaudeIsNotSignedIn() {

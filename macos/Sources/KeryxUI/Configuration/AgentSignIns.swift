@@ -31,13 +31,15 @@ struct AgentSignInSection: View {
 
 /// Whether a coding agent is signed in, as `keryx auth status` reads it: from the doctor's
 /// check for that agent (`Claude Code agent`, `Codex agent`, " (default)" after the
-/// default's), which an agent that is not enabled has none of.
+/// default's), which an agent that is not enabled has none of. Its detail is the credential
+/// when it is ready ("stored subscription login"), else "not installed", "the claude program
+/// is missing" or "not signed in".
 enum AgentSignInWording {
     enum State: Equatable {
-        /// Ready, and on what: the credential the doctor names ("stored login").
+        /// Ready, and on what: the credential the doctor names ("stored subscription login").
         case signedIn(String?)
         case notSignedIn
-        /// Its CLI is not installed.
+        /// Its SDK, or the program it runs, is not installed.
         case notInstalled
         /// Not among the agents enabled, so the doctor does not check it.
         case notEnabled
@@ -61,12 +63,15 @@ enum AgentSignInWording {
         guard let doctor else { return .unknown }
         guard let prefix = checkPrefix(provider),
               let check = doctor.checks.first(where: { $0.name.hasPrefix(prefix) }) else { return .notEnabled }
+        let detail = check.detail.trimmingCharacters(in: .whitespaces)
         if check.ok {
-            // "<where the CLI is>; <the credential>": the credential.
-            let how = check.detail.range(of: "; ").map { String(check.detail[$0.upperBound...]) }
-            return .signedIn(how.flatMap { $0.isEmpty ? nil : $0 })
+            // The credential; after "; " when a CLI from before put where the program is first.
+            let how = detail.range(of: "; ").map { String(detail[$0.upperBound...]) } ?? detail
+            return .signedIn(how.isEmpty ? nil : how)
         }
-        return check.detail.hasPrefix("not installed") ? .notInstalled : .notSignedIn
+        let missing = detail.hasPrefix("not installed") || detail.hasSuffix("program is missing")
+            || detail.contains("CLI not found")
+        return missing ? .notInstalled : .notSignedIn
     }
 
     static func status(_ state: State) -> String {
@@ -90,7 +95,7 @@ enum AgentSignInWording {
         switch state {
         case let .signedIn(how): how.map(Wording.capitalised)
         case .notSignedIn: "Its tasks can't run until it is signed in."
-        case .notInstalled: "Its command-line tool isn't installed."
+        case .notInstalled: "It isn't installed on this Mac."
         case .notEnabled: "Not among the agents Keryx may use."
         case .unknown: nil
         }
