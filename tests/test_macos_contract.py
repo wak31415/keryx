@@ -5,15 +5,15 @@ with the JSON type the decoder needs.
 keys the Swift side decodes, by path, each with its type: `""` is the document,
 `"servers.llm"` a nested object, `"tasks[]"` each element of a list (and `"[]"` each
 element of a document that is one). A type is `string`, `integer`, `number`, `boolean`,
-`array` or `object`, and `|null` after it is a key the decoder also takes as null; without
-it, null is a broken promise. Its `streams` block is the same promise for the JSON lines
+`array`, `object` or `any` (a key the decoder takes in whatever JSON type it comes), and
+`|null` after it is a key the decoder also takes as null; without it, null is a broken
+promise. Its `streams` block is the same promise for the JSON lines
 of `models pull --json`: each event's keys, exactly one ending, and the exit code each
 ending carries. Renaming a field here without the app fails this test, not the owner's
 menu bar.
 
-Until the Swift side writes schema 2, the contract read is
-`tests/fixtures/macos_contract_v2_sample.json`, a small one that exercises every rule; the
-sample is held to the schema either way, so it cannot rot unnoticed.
+That file is the only source: one that is missing, will not parse, or is not schema 2 fails
+the test, naming the file and what is wrong.
 
 Each command runs against a store seeded so that no list it walks is empty and as few
 values as possible are their defaults — a running task and a told one, a setting saved, a
@@ -45,7 +45,6 @@ from keryx.tasks.models import Task, TaskKind, TaskStatus, task_log_path
 from keryx.tasks.store import TaskStore
 
 CONTRACT = Path(__file__).parents[1] / "macos/Tests/KeryxKitTests/Fixtures/contract.json"
-SAMPLE = Path(__file__).parent / "fixtures/macos_contract_v2_sample.json"
 SCHEMA = 2
 #: Each contract type, as the Python value `json.loads` gives for it. A bool is an int to
 #: Python and never to the decoder, so `type_problem` refuses one as a number. `any` is a
@@ -72,17 +71,8 @@ SERVED = "qwen3-coder-q4"
 runner = CliRunner()
 
 
-def _read(path: Path) -> dict:
-    return json.loads(path.read_text())
-
-
 def load_contract(path: Path) -> tuple[dict | None, str | None]:
-    """The contract at `path` and None, or None and why it cannot be read.
-
-    Schema 2 is the contract. A v1 file — one that parses and has no `schema` at all — is
-    the Swift side's older one, and the sample stands in for it (`(None, None)`). Anything
-    else is a broken contract, never a reason to fall back quietly.
-    """
+    """The schema 2 contract at `path` and None, or None and why it is not one."""
     try:
         real = json.loads(path.read_text())
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -90,19 +80,18 @@ def load_contract(path: Path) -> tuple[dict | None, str | None]:
     if not isinstance(real, dict):
         return None, f"{path} is a JSON {type(real).__name__}, not an object"
     if "schema" not in real:
-        return None, None
+        return None, f"{path} has no schema (a v1 contract); this test reads schema {SCHEMA}"
     if real["schema"] != SCHEMA:
         return None, f"{path} says schema {real['schema']!r}; this test reads schema {SCHEMA}"
     return real, None
 
 
 def contract() -> dict:
-    """The Swift side's contract once it is schema 2, the sample while it is still v1, and
-    a failure naming the file for anything else."""
+    """The Swift side's contract, or a failure naming the file and what is wrong with it."""
     real, problem = load_contract(CONTRACT)
     if problem:
         pytest.fail(problem, pytrace=False)
-    return real if real is not None else _read(SAMPLE)
+    return real
 
 
 def argv(command: str) -> list[str]:
@@ -209,48 +198,56 @@ def shape_problems(doc: object) -> list[str]:
     return problems
 
 
-def test_the_sample_is_a_schema_2_contract_that_exercises_every_rule():
-    sample = _read(SAMPLE)
+#: The smallest schema 2 contract, every rule in it: the document (`""`), a nested path, a
+#: list's elements, a root list (`"[]"`), every type, `|null`, and the pull stream.
+SMALL_V2 = {
+    "schema": 2,
+    "commands": {
+        "status --json": {"": {"schema": "integer"}, "restart": {"failure": "string|null"}},
+        "tasks list --json": {"tasks[]": {"id": "integer", "cost_usd": "number|null"}},
+        "models list --json": {"servers.llm": {"reachable": "boolean"}},
+        "config list --json": {"[]": {"choices": "array|null", "value": "any|null"}},
+        "models use NAME --json": {"": {"saved": "object"}},
+    },
+    "streams": {PULL: {
+        "events": {"progress": {"done": "integer", "total": "integer"}, "cancelled": {}},
+        "terminal": ["cancelled"], "exit": {"cancelled": 130},
+    }},
+}
 
-    assert shape_problems(sample) == []
-    paths = [path for command in sample["commands"].values() for path in command]
-    types = [kind for command in sample["commands"].values()
+
+def test_the_small_contract_is_schema_2_and_has_every_rule():
+    paths = [path for command in SMALL_V2["commands"].values() for path in command]
+    types = [kind for command in SMALL_V2["commands"].values()
              for keys in command.values() for kind in keys.values()]
+
+    assert shape_problems(SMALL_V2) == []
     assert "" in paths and "[]" in paths
     assert any("." in path for path in paths) and any(path.endswith("[]") for path in paths)
     assert {kind.removesuffix(NULLABLE) for kind in types} == set(TYPES)
     assert any(kind.endswith(NULLABLE) for kind in types)
-    assert set(sample["commands"]) == COMMANDS
 
 
 def test_the_contract_read_is_schema_2():
     assert shape_problems(contract()) == []
 
 
-def test_a_v1_contract_stands_aside_for_the_sample(tmp_path, monkeypatch):
-    v1 = tmp_path / "contract.json"
-    v1.write_text(json.dumps({"status --json": {"": ["schema"]}}))
-    monkeypatch.setattr(sys.modules[__name__], "CONTRACT", v1)
-
-    assert load_contract(v1) == (None, None)
-    assert contract() == _read(SAMPLE)
-
-
 def test_a_schema_2_contract_is_read_as_it_is(tmp_path, monkeypatch):
     v2 = tmp_path / "contract.json"
-    v2.write_text(json.dumps(_read(SAMPLE)))
+    v2.write_text(json.dumps(SMALL_V2))
     monkeypatch.setattr(sys.modules[__name__], "CONTRACT", v2)
 
-    assert contract() == _read(SAMPLE)
+    assert contract() == SMALL_V2
 
 
 @pytest.mark.parametrize(
     ("text", "why"),
     [("{not json", "cannot be read as JSON"), ("[]", "is a JSON list, not an object"),
+     ('{"status --json": {"": ["schema"]}}', "has no schema \\(a v1 contract\\)"),
      ('{"schema": 3, "commands": {}}', "says schema 3; this test reads schema 2"),
      ('{"schema": "2"}', "says schema '2'")],
 )
-def test_a_contract_that_is_neither_v1_nor_v2_fails_naming_the_file(
+def test_a_contract_that_is_not_schema_2_fails_naming_the_file(
     tmp_path, monkeypatch, text, why
 ):
     broken = tmp_path / "contract.json"
