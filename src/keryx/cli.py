@@ -56,6 +56,7 @@ from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
 from keryx.continuity.memory import memory_document, memory_path, read_memory
 from keryx.continuity.retention import cutoff_for, prune, prune_with
 from keryx.doctor import (
+    Check,
     EndpointReach,
     fix_permissions,
     format_check,
@@ -98,6 +99,7 @@ from keryx.setup import auth as auth_flow
 from keryx.setup import profile
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
+from keryx.setup.plan import StepRefused, build_plan, failed_plan, format_plan, mark_step
 from keryx.setup.sections import repo_root
 from keryx.setup.ui import Aborted
 from keryx.setup.wizard import agent_instructions, run_wizard
@@ -144,6 +146,10 @@ service_app = typer.Typer(
     "installed and running, and installing or removing them."
 )
 app.add_typer(service_app, name="service")
+setup_app = typer.Typer(
+    help="Set Keryx up: the guided walk, and the plan the Mac app's assistant follows."
+)
+app.add_typer(setup_app, name="setup")
 log = logging.getLogger("keryx.cli")
 
 
@@ -1749,6 +1755,19 @@ def _twilio_admin(settings: Settings) -> TwilioAdmin | None:
     return RestTwilioAdmin(settings.twilio_account_sid, settings.twilio_auth_token)
 
 
+def _doctor_checks(
+    settings: Settings, problems: Mapping[str, str], store: ConfigStore
+) -> list[Check]:
+    """Every check `keryx doctor` makes, Twilio's webhook and the model servers included."""
+    return run_doctor_checks(
+        settings,
+        config_problems=problems,
+        store=store,
+        twilio=_twilio_admin(settings),
+        reach=EndpointReach(),
+    )
+
+
 @app.command()
 def doctor(
     as_json: Annotated[
@@ -1766,13 +1785,7 @@ def doctor(
         if not as_json:
             for line in changed or ["nothing to tighten"]:
                 typer.echo(f"fix: {line}")
-    checks = run_doctor_checks(
-        settings,
-        config_problems=problems,
-        store=store,
-        twilio=_twilio_admin(settings),
-        reach=EndpointReach(),
-    )
+    checks = _doctor_checks(settings, problems, store)
     failed = sum(1 for check in checks if not check.ok and check.severity == "hard")
     if as_json:
         typer.echo(
@@ -1814,8 +1827,9 @@ def status(
 # --- setup, config, auth ---------------------------------------------------
 
 
-@app.command()
+@setup_app.callback(invoke_without_command=True)
 def setup(
+    ctx: typer.Context,
     review_all: Annotated[
         bool, typer.Option("--all", help="Walk every section, and ask again about what is set.")
     ] = False,
@@ -1832,6 +1846,8 @@ def setup(
     Everything it saves goes to KERYX_HOME as you go, so stopping part way loses nothing.
     A coding agent setting Keryx up uses the commands instead: --agent-instructions.
     """
+    if ctx.invoked_subcommand is not None:
+        return
     settings = _configure_readonly(migrated=False)  # the wizard says so, in its own words
     if instructions:
         typer.echo(agent_instructions(settings, ConfigStore()))
@@ -1854,6 +1870,62 @@ def setup(
         raise typer.Exit(130) from None
     if code:
         raise typer.Exit(code)
+
+
+@setup_app.command("plan")
+def setup_plan(
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """The steps to a first working call, and which are done: a report, so it exits 0.
+
+    What the Mac app's Setup Assistant walks. It asks what `keryx doctor` asks, Twilio
+    included; a migration still to run is its first step, and settings that will not load
+    fail every step with the reason, as `keryx status` reports them — never a refusal.
+    """
+    try:
+        settings, problems = _load_settings_reporting()
+    except ConfigFileError as error:
+        plan = failed_plan(str(error))
+    except ValidationError as error:
+        plan = failed_plan(_config_summary(error))
+    else:
+        store = ConfigStore()
+        plan = build_plan(settings, store, _doctor_checks(settings, problems, store))
+    if as_json:
+        typer.echo(json.dumps(plan, indent=2))
+        return
+    for line in format_plan(plan):
+        typer.echo(line)
+
+
+@setup_app.command("mark")
+def setup_mark(
+    step: Annotated[str, typer.Argument(help="The step, by its id in `keryx setup plan`.")],
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Record a step as walked: an optional one skipped, or the PIN left to the first call."""
+    _owner_only("mark a setup step")
+    try:
+        settings = _load_settings_optional()
+    except (ConfigFileError, ValidationError) as error:
+        summary = _config_summary(error) if isinstance(error, ValidationError) else str(error)
+        typer.echo(f"nothing is marked while the settings do not load: {summary}", err=True)
+        raise typer.Exit(1) from None
+    if (refusal := settings.storage_refusal()) is not None:
+        # What it saves would land where `keryx migrate` is about to move the old files.
+        typer.echo(f"nothing is marked until the old files have moved: {refusal}", err=True)
+        raise typer.Exit(2)
+    store = ConfigStore()
+    try:
+        marked = mark_step(store, step)
+    except StepRefused as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(2) from None
+    except (OSError, ValueError) as error:
+        typer.echo(f"nothing is marked: {store.config_path} cannot be read ({error}); "
+                   "fix it by hand", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(json.dumps(marked) if as_json else f"{marked['id']}: walked")
 
 
 def _interactive() -> bool:

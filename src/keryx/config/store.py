@@ -42,12 +42,15 @@ from keryx.config.settings import (
     LEGACY_CLIENT_FILE,
     META_TABLES,
     NOT_STORED,
+    TABS,
     Settings,
     canonical_key,
     env_var_name,
     env_var_names,
+    field_advanced,
     field_for,
     field_group,
+    field_tab,
     field_title,
     is_secret,
     parse_google_client,
@@ -236,18 +239,24 @@ class ConfigStore:
 
         overrides = self.overrides()
         dumped = settings.model_dump(mode="json")
+        tab_order = {key: index for index, key in enumerate(TABS)}
         rows = []
         for name, info in Settings.model_fields.items():
             key = env_var_name(name)
             secret = is_secret(name)
             source = self.source_of(key, settings)
             kind, choices = field_type(name)
+            tab = field_tab(name)
             rows.append(
                 {
                     "key": key,
                     "title": field_title(name),
                     "group": field_group(name),
                     "group_title": GROUPS[field_group(name)],
+                    "tab": tab,
+                    "tab_title": TABS[tab].title,
+                    "tab_order": tab_order[tab],
+                    "advanced": field_advanced(name),
                     "description": info.description or "",
                     "required": info.is_required(),
                     "set": source != FROM_DEFAULT,

@@ -69,6 +69,7 @@ COMMANDS = {
     "voice --json", "voice use openai --json", "voice use server URL --json",
     "service --json", "service install --json", "service uninstall --json",
     "models stop --json",
+    "setup plan --json", "setup mark STEP --json",
 }
 #: What the placeholders in a contract command line stand for.
 TASK_ID = 1
@@ -109,7 +110,7 @@ def contract() -> dict:
 def argv(command: str) -> list[str]:
     # The realtime model on the seeded voice server: a list read live, the current appended.
     words = {"ID": str(TASK_ID), "NAME": MODEL.key, "KEY": "OPENAI_REALTIME_MODEL",
-             "URL": VOICE_SERVER}
+             "URL": VOICE_SERVER, "STEP": "google"}
     return [words.get(word, word) for word in command.split()]
 
 
@@ -468,9 +469,10 @@ def test_every_key_the_app_needs_is_printed_with_its_type(command, seeded):
 
     assert result.exit_code in ((0, 1) if command == "doctor --json" else (0,)), result.output
     document = json.loads(result.stdout)
+    # A command the contract has yet to name is the cross-check's failure, not this one's.
     problems = [
         f"{path or 'the document'} {problem}"
-        for path, keys in contract()["commands"][command].items()
+        for path, keys in contract()["commands"].get(command, {}).items()
         for node in nodes_at(document, path)
         for problem in key_problems(node, keys)
     ]

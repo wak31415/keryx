@@ -16,6 +16,10 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Set a machine up: `uv run keryx setup [--all]` (the wizard: walks only the sections still
   missing, saves as it goes; needs a terminal). A coding agent: `uv run keryx setup
   --agent-instructions`, which prints the command-line path below
+- The steps to a first working call, as the Mac app's Setup Assistant shows them:
+  `uv run keryx setup plan [--json]` (a report, so it exits 0; it asks what `doctor` asks, and
+  a migration still to run is its first step), `uv run keryx setup mark STEP [--json]` (an
+  optional step skipped, or `pin` left to the first call; an unknown step exits 2)
 - Check the machine's setup: `uv run keryx doctor [--json] [--fix]` (`--fix`
   only tightens secret files to 0600/0700; `--json` carries each check's `section`,
   `state` — ok / missing / failed — and `title`, a setting's own when a key names the check)
@@ -24,7 +28,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   the Mac app's menu bar polls — `keryx/status.py`, schema 1, every part `ok`/`error` with
   its fields present either way)
 - Settings: `uv run keryx config list [--json] [--group G]` (`--json` gives each row its
-  `title` and `group_title`, its `type` — `keryx/config/types.py` — and a choice's
+  `title` and `group_title`, the Mac app's `tab`, `tab_title` and `tab_order` and whether
+  it is `advanced`, its `type` — `keryx/config/types.py` — and a choice's
   `choices`, and `has_options`; the table keeps the keys, which are what is typed),
   `config options KEY [--json]` (the models or voices a setting can take, read live from
   OpenAI, Anthropic, Codex or a server of the owner's when it can be, else Keryx's own list
@@ -189,8 +194,10 @@ remember:
   `web_search` behind a built-in, the rest behind a plugin, which is where the tool is
   built. Their builders take explicit values, never a plugin's file.
 - **config** — `config/` is the settings and where they live: `settings` (every field with
-  a `description`, a `title`, a `group` and a default `service_writable`, declared with
-  `setting(...)`; the title is the sentence-case name the Mac app shows in place of the key),
+  a `description`, a `title`, a `group`, `advanced` and a default `service_writable`,
+  declared with `setting(...)`; the title is the sentence-case name the Mac app shows in
+  place of the key, `TABS` is the one table of the app's tabs and the groups each holds,
+  and `advanced` puts a field under its tab's "Advanced" disclosure),
   `store` (`KERYX_HOME/config.toml` and `secrets.toml`, the only writer of either),
   `permissions` (what the running service may change; `PROTECTED_KEYS`), `pin`
   (`KERYX_HOME/pin`), `files` (the XDG directories, the modes and atomic writes), `migrate`
@@ -203,8 +210,9 @@ remember:
   the network, a login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
   rich/questionary one, one question to a screen), `rewind` (Esc goes back a question and
   Tab skips to the first unanswered one, both by running the section again from a record
-  of its answers and probe results, so no probe runs twice), `auth`, and `guides/*.md`, which the wizard renders and the wiki links, so
-  each set of instructions is written once.
+  of its answers and probe results, so no probe runs twice), `auth`, `plan` (`keryx setup
+  plan`/`mark`: the wizard's `section_statuses` cut into the app's steps), and `guides/*.md`,
+  which the wizard renders and the wiki links, so each set of instructions is written once.
 - **localmodels** — `localmodels/` is the model on this machine: `hardware` (the GPU, the
   memory, the disk), `catalog` (the models offered, with verified files and checksums, what
   fits, the recommendation, the Kokoro voices), `download`, `runtimes` (finding or installing
@@ -520,9 +528,9 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
   commands that write what the service may not — `config import-env`, `auth login`,
-  `memory seed`, `setup`, `config lock|unlock`, `migrate`, `plugins install|remove`,
-  `models use`, `voice use` (before any install, handshake or save), `models start|stop`,
-  `service install|uninstall` — refuse outright under
+  `memory seed`, `setup`, `setup mark`, `config lock|unlock`, `migrate`,
+  `plugins install|remove`, `models use`, `voice use` (before any install, handshake or
+  save), `models start|stop`, `service install|uninstall` — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
@@ -537,7 +545,13 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
 (`[setup] walked`) so an optional section left for later is not asked about on every run.
 It never assumes what the machine lacks: an agent that is signed in is not asked how to pay.
 The one write it makes outside the machine — the Twilio webhooks — comes after showing both
-addresses and a yes.
+addresses and a yes. `keryx setup plan` is the same decision for the Mac app
+(`setup/plan.py` over `wizard.section_statuses`), so the two cannot drift: decide a section's
+status in the wizard, and the plan follows. `walked` there only ever settles an optional step,
+or `pin` (the owner's "let the first call set it"); a required step is done by its checks,
+and `setup mark` refuses one. A soft warning never holds a step or `ready` back, a hard
+failure no step owns is the service's (no hard failure beside `ready: true`), and the plan
+always answers — exit 0, a document — whatever the settings.
 
 ## Storage follows XDG
 
@@ -795,8 +809,8 @@ inside functions, not imported at module scope, so the suite runs without them.
 - Only `config/store.py` writes the configuration, and a secret is never on argv, in a log
   or in output. Never print or paste `secrets.toml` or an old `.env`. `docs/configuration.md`
   is generated from `Settings` (`python -m keryx.config.reference`); a new field gets a
-  description, a group and a title, and `tests/test_docs_sync.py` fails until the doc is
-  regenerated.
+  description, a group, a title, and whether it is advanced, and `tests/test_docs_sync.py`
+  fails until the doc is regenerated.
 - The database runs ahead of the code. `_migrate` upgrades `tasks.db` from whichever process
   opens it first, and `keryx serve` holds the `Task` it imported at startup, so a new column
   reaches the file while the service is still a build behind. `Task.from_row` drops columns it

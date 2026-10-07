@@ -72,6 +72,6 @@ def test_a_title_is_in_sentence_case(name):
 
 def test_a_setting_cannot_be_declared_without_a_title():
     with pytest.raises(TypeError):
-        setting(1, "A number.", group="voice")  # type: ignore[call-arg]
+        setting(1, "A number.", group="voice", advanced=False)  # type: ignore[call-arg]
     with pytest.raises(AssertionError):
-        setting(1, "A number.", title=" ", group="voice")
+        setting(1, "A number.", title=" ", group="voice", advanced=False)

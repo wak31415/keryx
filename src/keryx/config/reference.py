@@ -12,8 +12,11 @@ from keryx.config.files import XDG_HOMES
 from keryx.config.permissions import PROTECTED_KEYS
 from keryx.config.settings import (
     GROUPS,
+    TAB_OF_GROUP,
+    TABS,
     Settings,
     env_var_name,
+    field_advanced,
     field_group,
     field_title,
     is_secret,
@@ -26,8 +29,9 @@ SYMBOLIC_DEFAULTS = {
     for kind in ("data", "state", "cache")
 } | {"skills_dir": "`$CLAUDE_CONFIG_DIR/skills` (`~/.claude/skills`)"}
 
-#: Each entry's key, then its title: the name the Mac app shows in place of the key.
-HEADER = "| Setting | Title | Default | Service may change | What it is |"
+#: Each entry's key, then its title: the name the Mac app shows in place of the key, and
+#: where on its tab the app shows it.
+HEADER = "| Setting | Title | In the app | Default | Service may change | What it is |"
 
 INTRO = """\
 # Configuration
@@ -59,6 +63,14 @@ only those marked *yes* below, until you say otherwise with `keryx config unlock
 `keryx config lock KEY`. The ones marked *never* are protected: every credential, and
 every setting that is a line of defence (who may call, the approval allowlist, filing
 issues in public, spending caps, deletion, the network, the debug switches). Nothing unlocks them.
+
+**In the Mac app** the settings are on eight tabs, and each section below names its own:
+{tabs}.
+A tab opens on its *key* settings — what you set to get a first call working, or change
+from time to time, how long your calls and tasks are kept and how many tasks a day may
+run included — and keeps the rest under an *Advanced* disclosure: tuning and internals,
+such as turn-detection numbers, server addresses, ports, timeouts, per-task caps, folders,
+unit names, the log level and the debug switches.
 """
 
 
@@ -80,10 +92,15 @@ def _cell(text: str) -> str:
 
 def render() -> str:
     """The whole of `docs/configuration.md`."""
-    lines = [INTRO]
+    tabs = ", ".join(tab.title for tab in TABS.values())
+    lines = [INTRO.format(tabs=tabs)]
     for group, title in GROUPS.items():
         names = [name for name in Settings.model_fields if field_group(name) == group]
-        lines += [f"## {title}", "", HEADER, "|---|---|---|---|---|"]
+        tab = TABS[TAB_OF_GROUP[group]].title
+        lines += [
+            f"## {title}", "", f"In the Mac app: the {tab} tab.", "",
+            HEADER, "|---|---|---|---|---|---|",
+        ]
         for name in names:
             info = Settings.model_fields[name]
             key = env_var_name(name)
@@ -99,8 +116,10 @@ def render() -> str:
             writable = "never" if key in PROTECTED_KEYS else (
                 "yes" if extra.get("service_writable") else "no"
             )
+            shown = "advanced" if field_advanced(name) else "key"
             lines.append(
-                f"| `{key}` | {_cell(field_title(name))} | {_cell(default)} | {writable} | "
+                f"| `{key}` | {_cell(field_title(name))} | {shown} | {_cell(default)} | "
+                f"{writable} | "
                 f"{_cell(info.description or '')} |"
             )
         lines.append("")

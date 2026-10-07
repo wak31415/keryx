@@ -192,6 +192,26 @@ def test_list_json_carries_a_title_for_each_setting_and_its_group(home):
     assert by_key["PORT"]["group_title"] == "Phone"
 
 
+def test_list_json_carries_each_settings_tab_and_whether_it_is_advanced(home):
+    """The Mac app's tabs: a tab per row, its title and place, and key or advanced."""
+    rows = json.loads(run("config", "list", "--json").output)
+    by_key = {row["key"]: row for row in rows}
+
+    for row in rows:
+        assert isinstance(row["tab"], str) and isinstance(row["tab_title"], str)
+        assert isinstance(row["tab_order"], int) and isinstance(row["advanced"], bool)
+    owner = by_key["OWNER_NAME"]
+    assert (owner["tab"], owner["tab_title"], owner["tab_order"]) == ("general", "General", 0)
+    assert (by_key["DEMO_MODE"]["tab"], by_key["DEMO_MODE"]["tab_order"]) == ("system", 7)
+    assert by_key["LLM_SERVER_PORT"]["tab_title"] == "Local Models"
+    assert (by_key["OPENAI_API_KEY"]["advanced"], by_key["VAD_THRESHOLD"]["advanced"]) == (
+        False, True
+    )
+    # The rows of one tab all agree on its title and its place.
+    tabs = {(row["tab"], row["tab_title"], row["tab_order"]) for row in rows}
+    assert len(tabs) == 8 == len({tab for tab, _, _ in tabs})
+
+
 def test_list_as_a_table_still_shows_the_keys(home):
     """The command line is where keys are typed, so it keeps them."""
     result = run("config", "list", "--group", "voice")
@@ -413,6 +433,114 @@ def test_setup_needs_a_terminal_and_says_what_an_agent_should_run(home):
     assert "--agent-instructions" in result.output
 
 
+def test_setup_plan_json_is_the_document_the_app_reads(home):
+    result = run("setup", "plan", "--json")
+
+    assert result.exit_code == 0, result.output
+    plan = json.loads(result.stdout)
+    assert plan["schema"] == 1 and plan["ready"] is False
+    voice = plan["steps"][0]
+    assert (voice["id"], voice["state"]) == ("voice", "needed")
+
+
+def test_setup_plan_prints_a_checklist(home):
+    result = run("setup", "plan")
+
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("Not ready:")
+    assert "○  Voice — OpenAI API key: not set" in result.output
+
+
+def test_setup_plan_shows_a_pending_migration_as_its_first_step(home, tmp_path):
+    (tmp_path / ".env").write_text("OWNER_NAME=Ada\n")
+
+    result = run("setup", "plan", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["steps"][0]["id"] == "migrate"
+
+
+def test_setup_plan_answers_without_settings_to_plan_from(home):
+    result = run("setup", "plan", "--json", env={"PORT": "not-a-port"})
+
+    assert result.exit_code == 0, result.output
+    plan = json.loads(result.stdout)
+    assert plan["schema"] == 1 and plan["ready"] is False
+    assert plan["steps"][0]["state"] == "failed"
+    assert plan["steps"][0]["why"].startswith("Settings: PORT ")
+    assert "not-a-port" not in result.stdout
+
+
+def test_setup_plan_answers_with_a_config_that_does_not_parse(home):
+    home.home.mkdir(parents=True, exist_ok=True)
+    home.config_path.write_text("this = = is not toml\n")
+
+    result = run("setup", "plan", "--json")
+
+    assert result.exit_code == 0, result.output
+    plan = json.loads(result.stdout)
+    assert plan["ready"] is False
+    service = next(step for step in plan["steps"] if step["id"] == "service")
+    assert service["state"] == "failed" and "Settings file" in service["why"]
+
+
+def test_setup_mark_says_when_the_config_does_not_parse(home):
+    home.home.mkdir(parents=True, exist_ok=True)
+    home.config_path.write_text("this = = is not toml\n")
+
+    result = run("setup", "mark", "google")
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "config.toml" in result.output
+
+
+def test_setup_mark_refuses_a_required_step(home):
+    result = run("setup", "mark", "owner", "--json")
+
+    assert result.exit_code == 2
+    assert "Owner is required; finish it in the app" in result.output
+    assert home.walked_sections() == []
+
+
+def test_setup_plan_asks_the_checks_doctor_asks(home, monkeypatch):
+    from keryx import cli
+
+    asked = []
+    monkeypatch.setattr(cli, "_twilio_admin", lambda settings: asked.append("twilio"))
+
+    run("setup", "plan", "--json")
+
+    assert asked == ["twilio"]
+
+
+def test_setup_mark_records_a_step(home):
+    result = run("setup", "mark", "google", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"id": "google", "walked": True}
+    assert "google" in home.walked_sections()
+    assert run("setup", "mark", "pin").output == "pin: walked\n"
+
+
+def test_setup_mark_refuses_a_step_that_is_not_one(home):
+    result = run("setup", "mark", "nope", "--json")
+
+    assert result.exit_code == 2
+    assert "no setup step called nope" in result.output
+    assert home.walked_sections() == []
+
+
+def test_setup_mark_waits_for_the_migration(home, tmp_path):
+    (tmp_path / ".env").write_text("OWNER_NAME=Ada\n")
+
+    result = run("setup", "mark", "google")
+
+    assert result.exit_code == 2
+    assert "keryx migrate" in result.output
+    assert not home.config_path.exists()
+
+
 def test_setup_agent_instructions_print_without_asking(home):
     result = run("setup", "--agent-instructions")
 
@@ -542,6 +670,7 @@ def test_auth_status_says_off_for_an_agent_that_is_not_enabled(home, monkeypatch
         ("auth", "login", "google-workspace"),
         ("memory", "seed", "--file", "-", "--force"),
         ("setup",),
+        ("setup", "mark", "pin", "--json"),
     ],
 )
 def test_inside_a_task_the_owners_commands_are_refused(home, tmp_path, monkeypatch, args):
