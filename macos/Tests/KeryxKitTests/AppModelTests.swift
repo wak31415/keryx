@@ -101,7 +101,9 @@ import Testing
         let model = makeModel(client: client, timing: Self.fast)
         await model.start()
         defer { model.stop() }
-        #expect(await eventually { client.calls.filter { $0 == "doctor" }.count >= 2 })
+        // The poll runs on the main actor, which the render suite holds for most of a full
+        // run (longer with the captured fixtures' 92 settings): wait it out rather than race it.
+        #expect(await eventually(timeout: .seconds(120)) { client.calls.filter { $0 == "doctor" }.count >= 2 })
         model.stop()
         let calls = client.calls
         let statuses = calls.filter { $0 == "status" }.count

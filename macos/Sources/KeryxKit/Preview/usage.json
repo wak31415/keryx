@@ -1,12 +1,12 @@
 {
-  "since": "2026-09-07T03:23:19.620297+00:00",
+  "since": "2026-09-07T05:17:37.025602+00:00",
   "projects": [
     {
       "label": "keryx",
       "project": "keryx",
       "internal": false,
       "tasks": 14,
-      "measured": 14,
+      "measured": 13,
       "priced": 12,
       "input_tokens": 912044,
       "output_tokens": 118320,
@@ -17,8 +17,8 @@
       "project": "keryx-macos",
       "internal": false,
       "tasks": 5,
-      "measured": 5,
-      "priced": 5,
+      "measured": 4,
+      "priced": 4,
       "input_tokens": 204811,
       "output_tokens": 31902,
       "cost_usd": 9.15

@@ -1,4 +1,4 @@
-{"event": "progress", "done": 1048576, "total": 18500000000}
-{"event": "progress", "done": 2097152, "total": 18500000000}
-{"event": "progress", "done": 4194304, "total": 18500000000}
-{"event": "done", "path": "/Users/you/.cache/keryx/models/qwen3-coder-30b-a3b.gguf"}
+{"event": "progress", "done": 4639172392, "total": 18556689568}
+{"event": "progress", "done": 9278344784, "total": 18556689568}
+{"event": "progress", "done": 13917517176, "total": 18556689568}
+{"event": "done", "path": "/Users/you/.cache/keryx/models/unsloth--Qwen3-Coder-30B-A3B-Instruct-GGUF/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"}

@@ -1,8 +1,9 @@
 import Foundation
 
-/// The sample documents under `Sources/KeryxKit/Preview/`, hand-written now from the plan's
-/// Tasks 1–5 (Task 15 replaces them with output actually captured from the CLI). They are
-/// bundled resources, read through `Bundle.module`, so previews, snapshots and this
+/// The sample documents under `Sources/KeryxKit/Preview/`: the CLI's own `--json` output,
+/// captured from a seeded sandbox store with its paths scrubbed to `/Users/you`, edited by
+/// hand only for a state no sandbox has (a running service, a running llama-server). They
+/// are bundled resources, read through `Bundle.module`, so previews, snapshots and this
 /// package's own tests all read the one copy rather than three.
 ///
 /// A fixture failing to load or decode is this package's own bug, not a caller's mistake —

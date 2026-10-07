@@ -3,93 +3,333 @@
   "checks": [
     {
       "name": "storage",
+      "ok": true,
       "detail": "the XDG directories",
       "severity": "hard",
       "section": "import",
-      "state": "ok",
-      "ok": true,
       "unset": false,
+      "state": "ok",
       "title": "Storage"
     },
     {
       "name": "configuration",
+      "ok": true,
       "detail": "/Users/you/.config/keryx/config.toml",
       "severity": "soft",
       "section": "import",
-      "state": "ok",
-      "ok": true,
       "unset": false,
+      "state": "ok",
       "title": "Configuration"
     },
     {
       "name": "OPENAI_API_KEY",
+      "ok": true,
       "detail": "set",
       "severity": "hard",
       "section": "voice",
-      "state": "ok",
-      "ok": true,
       "unset": false,
+      "state": "ok",
       "title": "OpenAI API key"
     },
     {
       "name": "coding agents",
-      "detail": "claude by default; enabled: claude",
+      "ok": true,
+      "detail": "claude by default; enabled: claude, local",
       "severity": "hard",
       "section": "agents",
-      "state": "ok",
-      "ok": true,
       "unset": false,
+      "state": "ok",
       "title": "Coding agents"
     },
     {
       "name": "Claude Code agent (default)",
-      "detail": "/Users/you/.local/share/uv/tools/claude-agent-sdk/claude; stored subscription login",
+      "ok": false,
+      "detail": "/Users/you/code/keryx/.venv/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude; no login found \u2014 run `claude` and `/login` once, or `claude setup-token` for a headless machine, or set ANTHROPIC_API_KEY",
       "severity": "hard",
       "section": "agents",
-      "state": "ok",
-      "ok": true,
-      "unset": false,
+      "unset": true,
+      "state": "missing",
       "title": "Claude Code agent (default)"
     },
     {
-      "name": "Twilio credentials",
-      "detail": "not set",
-      "severity": "hard",
-      "section": "phone",
-      "state": "missing",
-      "ok": false,
-      "unset": true,
-      "title": "Twilio credentials"
-    },
-    {
-      "name": "Twilio webhook",
-      "detail": "could not reach the voice URL: connection refused",
-      "severity": "hard",
-      "section": "phone",
-      "state": "failed",
-      "ok": false,
-      "unset": false,
-      "title": "Twilio webhook"
-    },
-    {
-      "name": "tunnel",
-      "detail": "/opt/homebrew/bin/cloudflared",
-      "severity": "hard",
-      "section": "phone",
-      "state": "ok",
+      "name": "Local model agent",
       "ok": true,
+      "detail": "in Claude Code; http://127.0.0.1:8090/v1 (no key)",
+      "severity": "soft",
+      "section": "local",
       "unset": false,
-      "title": "Tunnel"
+      "state": "ok",
+      "title": "Local model agent"
     },
     {
       "name": "local models",
-      "detail": "none (optional) — `keryx setup` can run the voice and the agent on your own hardware",
+      "ok": true,
+      "detail": "agent qwen3-coder-30b-a3b at http://127.0.0.1:8090/v1",
       "severity": "soft",
       "section": "local",
-      "state": "ok",
-      "ok": true,
       "unset": false,
+      "state": "ok",
       "title": "Local models"
+    },
+    {
+      "name": "model server",
+      "ok": false,
+      "detail": "llama-server is not installed \u2014 `keryx setup` installs it",
+      "severity": "soft",
+      "section": "local",
+      "unset": false,
+      "state": "failed",
+      "title": "Model server"
+    },
+    {
+      "name": "local agent server",
+      "ok": false,
+      "detail": "could not reach 127.0.0.1 (ConnectError)",
+      "severity": "soft",
+      "section": "local",
+      "unset": false,
+      "state": "failed",
+      "title": "Local agent server"
+    },
+    {
+      "name": "Twilio credentials",
+      "ok": false,
+      "detail": "missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER \u2014 no phone channel",
+      "severity": "hard",
+      "section": "phone",
+      "unset": true,
+      "state": "missing",
+      "title": "Twilio credentials"
+    },
+    {
+      "name": "Twilio signatures",
+      "ok": true,
+      "detail": "validated",
+      "severity": "hard",
+      "section": "phone",
+      "unset": false,
+      "state": "ok",
+      "title": "Twilio signatures"
+    },
+    {
+      "name": "PUBLIC_HOST",
+      "ok": true,
+      "detail": "keryx.example.com",
+      "severity": "hard",
+      "section": "phone",
+      "unset": false,
+      "state": "ok",
+      "title": "Public hostname"
+    },
+    {
+      "name": "tunnel",
+      "ok": false,
+      "detail": "none of cloudflared, ngrok on PATH \u2014 no tunnel for the phone channel",
+      "severity": "hard",
+      "section": "phone",
+      "unset": true,
+      "state": "missing",
+      "title": "Tunnel"
+    },
+    {
+      "name": "allowed callers",
+      "ok": false,
+      "detail": "ALLOWED_CALLERS is empty \u2014 every call is refused",
+      "severity": "hard",
+      "section": "owner",
+      "unset": true,
+      "state": "missing",
+      "title": "Allowed callers"
+    },
+    {
+      "name": "PIN",
+      "ok": true,
+      "detail": "set on 2026-10-07, kept in /Users/you/.config/keryx/pin",
+      "severity": "soft",
+      "section": "owner",
+      "unset": false,
+      "state": "ok",
+      "title": "PIN"
+    },
+    {
+      "name": "owner name",
+      "ok": false,
+      "detail": "OWNER_NAME is not set \u2014 the prompts call you \"the owner\"",
+      "severity": "soft",
+      "section": "owner",
+      "unset": true,
+      "state": "missing",
+      "title": "Owner name"
+    },
+    {
+      "name": "service manager",
+      "ok": false,
+      "detail": "dev.keryx.agent is not installed (scripts/install-launchd.sh) \u2014 `keryx restart` and the voice's restart_service refuse, and nothing restarts Keryx if it dies",
+      "severity": "soft",
+      "section": "service",
+      "unset": true,
+      "state": "missing",
+      "title": "Service manager"
+    },
+    {
+      "name": "data dir writable",
+      "ok": true,
+      "detail": "/Users/you/.local/share/keryx",
+      "severity": "hard",
+      "section": "security",
+      "unset": false,
+      "state": "ok",
+      "title": "Data folder writable"
+    },
+    {
+      "name": "data dir private",
+      "ok": true,
+      "detail": "0700 (owner only)",
+      "severity": "soft",
+      "section": "security",
+      "unset": false,
+      "state": "ok",
+      "title": "Data folder private"
+    },
+    {
+      "name": "secret files private",
+      "ok": true,
+      "detail": "owner only",
+      "severity": "soft",
+      "section": "security",
+      "unset": false,
+      "state": "ok",
+      "title": "Secret files private"
+    },
+    {
+      "name": "outside git",
+      "ok": true,
+      "detail": "not in a git work tree",
+      "severity": "soft",
+      "section": "security",
+      "unset": false,
+      "state": "ok",
+      "title": "Settings outside Git"
+    },
+    {
+      "name": "config.toml",
+      "ok": true,
+      "detail": "no secrets in it",
+      "severity": "soft",
+      "section": "security",
+      "unset": false,
+      "state": "ok",
+      "title": "Settings file"
+    },
+    {
+      "name": "protected settings",
+      "ok": true,
+      "detail": "none unlocked",
+      "severity": "soft",
+      "section": "security",
+      "unset": false,
+      "state": "ok",
+      "title": "Protected settings"
+    },
+    {
+      "name": "old .env",
+      "ok": true,
+      "detail": "none left behind",
+      "severity": "soft",
+      "section": "security",
+      "unset": false,
+      "state": "ok",
+      "title": "Old .env file"
+    },
+    {
+      "name": "Google for agents",
+      "ok": false,
+      "detail": "not set up (optional) \u2014 Local model tasks have no Gmail or Calendar; `keryx setup` connects Google",
+      "severity": "soft",
+      "section": "google",
+      "unset": true,
+      "state": "missing",
+      "title": "Google for agents"
+    },
+    {
+      "name": "memory",
+      "ok": true,
+      "detail": "295 characters in /Users/you/.local/share/keryx/memory.md, sent on every call",
+      "severity": "soft",
+      "section": "profile",
+      "unset": false,
+      "state": "ok",
+      "title": "Memory"
+    },
+    {
+      "name": "projects root",
+      "ok": true,
+      "detail": "/Users/you/code",
+      "severity": "soft",
+      "section": "projects",
+      "unset": false,
+      "state": "ok",
+      "title": "Projects root"
+    },
+    {
+      "name": "send_to_slack",
+      "ok": false,
+      "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install send_to_slack`",
+      "severity": "soft",
+      "section": "plugins",
+      "unset": true,
+      "state": "missing",
+      "title": "Slack"
+    },
+    {
+      "name": "check_email",
+      "ok": false,
+      "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install check_email`",
+      "severity": "soft",
+      "section": "plugins",
+      "unset": true,
+      "state": "missing",
+      "title": "Email answers"
+    },
+    {
+      "name": "check_billing",
+      "ok": false,
+      "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install check_billing`",
+      "severity": "soft",
+      "section": "plugins",
+      "unset": true,
+      "state": "missing",
+      "title": "Billing"
+    },
+    {
+      "name": "cluster_stats",
+      "ok": false,
+      "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install cluster_stats`",
+      "severity": "soft",
+      "section": "plugins",
+      "unset": true,
+      "state": "missing",
+      "title": "Cluster stats"
+    },
+    {
+      "name": "retired settings",
+      "ok": true,
+      "detail": "none",
+      "severity": "soft",
+      "section": "plugins",
+      "unset": false,
+      "state": "ok",
+      "title": "Retired settings"
+    },
+    {
+      "name": "issue reports",
+      "ok": true,
+      "detail": "off \u2014 `keryx setup` turns them on",
+      "severity": "soft",
+      "section": "issues",
+      "unset": false,
+      "state": "ok",
+      "title": "Issue reports"
     }
   ]
 }

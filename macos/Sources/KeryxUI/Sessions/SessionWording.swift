@@ -73,7 +73,8 @@ enum SessionWording {
 
     // MARK: - The timeline
 
-    /// "Claude · keryx · started 2 hours ago · via phone", under the session's title.
+    /// "Claude (claude-opus-5-5) · keryx · started 2 hours ago · via phone", under the
+    /// session's title; the model is left out when the CLI names none.
     static func headerByline(_ task: TaskItem, now: Date = .now, locale: Locale = .autoupdatingCurrent) -> String {
         var parts = [Wording.agent(task.agent)]
         if let model = task.model, !model.isEmpty { parts[0] += " (\(model))" }

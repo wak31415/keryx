@@ -49,7 +49,7 @@ import Testing
     @Test func headerBylineSaysWhereItWasAsked() {
         let task = tasks[2]
         let byline = SessionWording.headerByline(task, now: task.startedAt!.addingTimeInterval(7200), locale: us)
-        #expect(byline == "Claude · keryx · started 2 hours ago · via phone")
+        #expect(byline == "Claude (claude-opus-5-5) · keryx · started 2 hours ago · via phone")
         #expect(SessionWording.channel("local") == "on this Mac")
         #expect(SessionWording.channel(nil) == nil)
     }
@@ -89,6 +89,18 @@ import Testing
             .paragraph("Added `x`.\nSecond line."),
             .paragraph("•  one\n•  two"),
             .code("let a = 1"),
+            .paragraph("After"),
+        ])
+    }
+
+    /// The header `TaskManager._write_report` puts above every report ends in a rule, which
+    /// is a break between blocks, not a paragraph reading "---".
+    @Test func aRuleSeparatesBlocksAndIsNotText() {
+        #expect(ReportText.blocks("# Task 40\n\nadd the flag\n\n---\n\n## What I did\n\nDone.\n* * *\nAfter") == [
+            .heading("Task 40"),
+            .paragraph("add the flag"),
+            .heading("What I did"),
+            .paragraph("Done."),
             .paragraph("After"),
         ])
     }

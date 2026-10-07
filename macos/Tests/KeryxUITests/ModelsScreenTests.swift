@@ -20,9 +20,20 @@ import Testing
     }
 
     @Test func recommendedFirstThenWhatFitsThenTheRest() {
+        // As captured, the recommendation is also the largest model that fits.
         let names = ModelsOrder.sorted(PreviewData.models.models).map(\.name)
-        #expect(names == ["gemma-4-12b", "qwen3-coder-30b-a3b", "qwen3.8-27b", "gpt-oss-20b",
+        #expect(names == ["qwen3-coder-30b-a3b", "qwen3.8-27b", "gpt-oss-20b", "gemma-4-12b",
                           "qwen3.5-9b", "qwen3.5-4b", "gpt-oss-120b", "qwen3.6-35b-a3b"])
+
+        // A smaller recommendation still comes first, ahead of the larger models that fit.
+        let smaller = PreviewData.models.models.map { model in
+            var model = model
+            model.recommended = model.name == "gemma-4-12b"
+            return model
+        }
+        #expect(ModelsOrder.sorted(smaller).map(\.name) == [
+            "gemma-4-12b", "qwen3-coder-30b-a3b", "qwen3.8-27b", "gpt-oss-20b",
+            "qwen3.5-9b", "qwen3.5-4b", "gpt-oss-120b", "qwen3.6-35b-a3b"])
     }
 
     @Test func eachRowOffersOneThing() {

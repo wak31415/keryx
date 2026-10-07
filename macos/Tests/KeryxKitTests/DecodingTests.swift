@@ -128,9 +128,17 @@ import Testing
         #expect(report.entries.count >= 4)
         #expect(report.cancelledBeforeCall == 2)
         #expect(report.answeredAfterCall == 1)
-        // one entry carries a string requestId, another an int, both survive as JSONValue
-        #expect(report.entries.contains { if case .string = $0.requestId { return true }; return false })
+        // The broker numbers its requests; the `started` line carries none.
         #expect(report.entries.contains { if case .number = $0.requestId { return true }; return false })
+        #expect(report.entries.contains { $0.event == "started" && $0.requestId == nil })
+    }
+
+    /// The broker writes an int, but `request_id` is whatever the audit line holds: a string
+    /// survives as one rather than failing the whole document.
+    @Test func approvalEntryKeepsAStringRequestId() throws {
+        let json = #"{"ts": "2026-10-05T10:40:55+00:00", "event": "raised", "request_id": "ask-2", "what": "x"}"#
+        let entry = try JSON.decoder.decode(ApprovalEntry.self, from: Data(json.utf8))
+        #expect(entry.requestId == .string("ask-2"))
     }
 
     @Test func memoryFixtureDecodes() throws {
@@ -168,7 +176,8 @@ import Testing
         let events = PreviewData.pullLines.compactMap(PullEvent.parse)
         #expect(events.count == PreviewData.pullLines.count)
         #expect(events.filter { if case .progress = $0 { return true }; return false }.count == 3)
-        #expect(events.last == .done(path: "/Users/you/.cache/keryx/models/qwen3-coder-30b-a3b.gguf"))
+        #expect(events.last == .done(path: "/Users/you/.cache/keryx/models/"
+            + "unsloth--Qwen3-Coder-30B-A3B-Instruct-GGUF/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"))
     }
 
     @Test func pullEventParsesEveryEventKind() {
