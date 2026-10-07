@@ -451,8 +451,8 @@ def test_use_says_what_it_saved_and_what_comes_next(models_settings, downloaded,
     assert result.exit_code == 0, result.output
     assert "LLM_SERVER_MODEL saved to config.toml" in result.stdout
     assert "LOCAL_AGENT_API_KEY unset" in result.stdout
-    assert "scripts/install-launchd.sh --llm" in result.stdout
-    assert "keryx restart" in result.stdout
+    assert "next: start it with `keryx models start`, then `keryx restart`" in result.stdout
+    assert "install-launchd.sh" not in result.stdout
 
 
 def test_use_without_a_llama_server_says_so(models_settings, downloaded, monkeypatch):

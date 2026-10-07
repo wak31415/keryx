@@ -279,6 +279,7 @@ def test_start_is_cancelled_by_a_terminate(machine, monkeypatch):
     assert result.exit_code == 130
     assert events_of(result)[-1] == {"event": "cancelled"}
     assert signal.getsignal(signal.SIGTERM) is before
+    assert machine.scripts[-1][-2:] == ["--llm", "--uninstall"]  # no unit left behind
 
 
 def _done(monkeypatch, machine, tmp_path):

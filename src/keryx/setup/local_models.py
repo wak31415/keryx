@@ -140,8 +140,11 @@ def _agent_here(ctx: SetupContext, machine: Hardware, *, reserve_gb: float) -> N
             assert own is not None
             model, alias = own, own.rsplit("/", 1)[-1].removesuffix(".gguf")
         values = llama_values(settings, model, alias, free_port=ctx.probes.free_port)
+    llama_before = bool(settings.llm_server_model)
     if not ctx.save(values):
         return
+    if runtime == "ollama":
+        _retire_llama(ctx, installed=llama_before or ctx.probes.unit_installed("llm"))
     if runtime == "llama":
         if not server.serve_here(ctx.settings, _Told(ctx), run_script=ctx.probes.run_script,
                                  wait_for_server=ctx.probes.wait_for_server, root=repo_root(),
@@ -149,6 +152,17 @@ def _agent_here(ctx: SetupContext, machine: Hardware, *, reserve_gb: float) -> N
             return
         ui.success("the model server is running")
     _use_local(ctx)
+
+
+def _retire_llama(ctx: SetupContext, *, installed: bool) -> None:
+    """The llama.cpp server's unit removed once Ollama serves the model (`server.retire_llama`)."""
+    said = server.retire_llama(ctx.probes.run_script, installed=installed, root=repo_root(),
+                               platform=sys.platform)
+    if said == server.REMOVED:
+        ctx.ui.note("The llama.cpp model server's service was removed: Ollama serves the model "
+                    "now.")
+    elif said is not None:
+        ctx.ui.warn(f"the llama.cpp model server: {said}")
 
 
 def _runtime(ctx: SetupContext, machine: Hardware) -> str | None:

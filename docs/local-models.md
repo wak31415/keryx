@@ -62,10 +62,11 @@ and `local` among `AGENTS_ENABLED` — and refuses a model that is not downloade
 `keryx models start` then does what the wizard does next, through the same code: it installs
 llama.cpp when the machine has none (with Homebrew on a Mac that has it, else its pinned
 release build), installs the model server's unit, waits for the model to load, and checks
-that the server names the chosen model. A server that does not come up, or answers with
-another model, has its unit removed rather than left restarting; its log is
-`keryx-llm.err.log`. `--runtime ollama` pulls Ollama's own copy of the chosen model and points
-the local agent at it instead. `keryx models stop` removes the unit, and `keryx service`
+that the server names the chosen model. A server that does not come up, answers with
+another model, or is cancelled while it loads has its unit removed rather than left
+restarting; its log is `keryx-llm.err.log`. `--runtime ollama` pulls Ollama's own copy of the
+chosen model and points the local agent at it instead, and removes the llama.cpp server's
+unit if one is installed (the wizard does the same). `keryx models stop` removes the unit, and `keryx service`
 shows Keryx's, its tunnel's and both servers' units, installed and running.
 
 For a program driving these: `keryx models list --json` adds `servers` (the model server,

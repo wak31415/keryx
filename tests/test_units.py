@@ -134,3 +134,24 @@ def test_the_real_runner_captures_the_scripts_output(tmp_path):
 
     assert units.run_captured([str(script)]) == (3, "out\n", "err\n")
     assert units.run_captured([str(tmp_path / "missing")])[0] == 127
+
+
+def test_a_renamed_agent_unit_is_the_one_named(tmp_path):
+    outcome = units.install(settings=Settings(service_unit="mine"), root=checkout(tmp_path / "c"),
+                            platform="darwin", run=Script())
+
+    assert outcome.message == "installed mine, dev.keryx.tunnel"
+
+
+def test_an_installer_that_hangs_is_stopped_and_said(tmp_path, monkeypatch):
+    script = tmp_path / "s.sh"
+    script.write_text("#!/bin/sh\nsleep 5\n")
+    script.chmod(0o755)
+    monkeypatch.setattr(units, "INSTALL_TIMEOUT_S", 0.2)
+
+    code, _out, err = units.run_captured([str(script)])
+
+    assert code != 0 and err == "s.sh did not finish within 0.2 s"
+    outcome = units.install(root=checkout(tmp_path / "c"), platform="darwin",
+                            run=lambda argv: (code, "", err))
+    assert outcome == units.Outcome(1, "s.sh did not finish within 0.2 s")

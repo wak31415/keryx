@@ -1168,9 +1168,7 @@ def models_use(
     values |= use.enable_local(settings, default=default_agent)
     if not as_json:
         _store_values(values)
-        installer = INSTALLERS["launchd" if sys.platform == "darwin" else "systemd"]
-        typer.echo(f"next: `keryx models start` to run the model server — llama.cpp when it "
-                   f"is missing, then {installer} --llm — and then `keryx restart`")
+        typer.echo("next: start it with `keryx models start`, then `keryx restart`")
         return
     saved = _store_values(values, echo=False)
     typer.echo(json.dumps({
@@ -1504,9 +1502,9 @@ def _install_units(
     as_json: bool, verb: str = INSTALL_THE_SERVICES,
 ) -> None:
     _owner_only(verb)
-    _configure_readonly()
-    outcome = units.install(llm=llm_unit, voice=voice_unit, uninstall=uninstall,
-                            root=repo_root(), run=units.run_captured)
+    settings = _configure_readonly()
+    outcome = units.install(settings=settings, llm=llm_unit, voice=voice_unit,
+                            uninstall=uninstall, root=repo_root(), run=units.run_captured)
     if outcome.code != 0:
         typer.echo(outcome.message, err=True)
         raise typer.Exit(outcome.code)

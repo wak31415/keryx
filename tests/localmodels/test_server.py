@@ -201,9 +201,13 @@ class Machine:
     """The machine `start` asks, faked: what it has, and what each question answers."""
 
     def __init__(self, log: Run, *, llama="/usr/bin/llama-server", ollama=None, brew=None,
-                 codes=None, wait=None, served=CODER.key, listed=()) -> None:
+                 codes=None, wait=None, served=CODER.key, listed=(), unit=False) -> None:
         self.log, self.llama, self._ollama, self.brew = log, llama, ollama, brew
         self.codes, self.wait, self._served, self.listed = codes or {}, wait, served, listed
+        self.unit = unit
+
+    def unit_installed(self, kind: str) -> bool:
+        return self.unit
 
     def llama_server(self, cache: Path) -> str | None:
         return self.llama
@@ -233,10 +237,14 @@ class Machine:
 
     def wait_for_server(self, endpoint: Endpoint, kind: str, timeout: float):
         self.log.lines.append(("wait", kind, endpoint.base_url))
+        if isinstance(self.wait, BaseException):
+            raise self.wait
         return self.wait
 
     def served(self, url: str):
         self.log.lines.append(("served", url))
+        if isinstance(self._served, BaseException):
+            raise self._served
         return self._served is not None, self._served
 
     def models(self, endpoint: Endpoint):
@@ -474,3 +482,89 @@ def test_the_terminal_hears_the_steps_and_the_ending_but_no_progress_bar():
     assert lines == [("Installing the model server's service…", False),
                      ("the model server is running at http://127.0.0.1:8090/v1, serving m; "
                       "`keryx restart` to have Keryx take it up", False)]
+
+
+@pytest.mark.parametrize("where", ["wait", "served"])
+def test_a_cancel_while_the_server_loads_or_is_checked_removes_its_unit(chosen, tmp_path,
+                                                                        where):
+    log = Run()
+    machine = Machine(log, **{where: KeyboardInterrupt()})
+
+    with pytest.raises(KeyboardInterrupt):
+        start(chosen, machine, log, tmp_path)
+
+    script = str(tmp_path / "checkout" / "scripts" / "install-launchd.sh")
+    assert [argv for (argv,) in log.of("script")] == [
+        [script, "--llm"], [script, "--llm", "--uninstall"]]
+    assert not endings(log)  # the cancel is the caller's to tell
+
+
+def test_a_cancel_whose_removal_fails_is_still_a_cancel(chosen, tmp_path):
+    log = Run()
+    machine = Machine(log, wait=KeyboardInterrupt())
+
+    def run(argv):
+        if argv[-1] == "--uninstall":
+            raise OSError("gone")
+        return 0
+
+    machine.run_script = run
+
+    with pytest.raises(KeyboardInterrupt):
+        start(chosen, machine, log, tmp_path)
+
+
+def test_ollama_over_an_installed_llama_server_removes_its_unit(tmp_path):
+    log, saved = Run(), {}
+    machine = Machine(log, ollama="/o", listed=[ENTRY.ollama], unit=True)
+
+    code = start(Settings(llm_server_model=ENTRY.key), machine, log, tmp_path,
+                 runtime="ollama", saved=saved)
+
+    assert code == 0 and saved == server.ollama_values(ENTRY)
+    script = str(tmp_path / "checkout" / "scripts" / "install-launchd.sh")
+    assert log.of("script") == [(["ollama", "pull", ENTRY.ollama],),
+                                ([script, "--llm", "--uninstall"],)]
+    assert log.kinds()[-1] == "done"
+
+
+def test_ollama_whose_old_unit_will_not_go_says_so_and_still_ends_done(tmp_path):
+    log = Run()
+    machine = Machine(log, ollama="/o", listed=[ENTRY.ollama], unit=True,
+                      codes={"install-launchd.sh": 3})
+
+    assert start(Settings(llm_server_model=ENTRY.key), machine, log, tmp_path,
+                 runtime="ollama", saved={}) == 0
+    assert any("could not be removed" in line[0] for line in log.of("warn"))
+
+
+def test_retire_llama_runs_only_when_there_is_a_unit(tmp_path):
+    root = checkout(tmp_path / "checkout")
+    assert server.retire_llama(lambda argv: pytest.fail("no unit"), installed=False,
+                               root=root, platform="darwin") is None
+    assert server.retire_llama(lambda argv: 0, installed=True, root=root,
+                               platform="darwin") == server.REMOVED
+
+
+ON_OLLAMA = {"local_agent_base_url": "http://127.0.0.1:11434/v1",
+             "local_agent_model": ENTRY.ollama}
+
+
+def test_ollama_already_serving_is_started_again_from_its_own_model(tmp_path):
+    log, saved = Run(), {}
+    machine = Machine(log, ollama="/o", listed=[ENTRY.ollama])
+
+    code = start(Settings(**ON_OLLAMA), machine, log, tmp_path, runtime="ollama", saved=saved)
+
+    assert code == 0 and saved == server.ollama_values(ENTRY)
+
+
+def test_llama_while_ollama_serves_the_model_says_so(tmp_path):
+    log = Run()
+
+    code = start(Settings(**ON_OLLAMA), Machine(log), log, tmp_path)
+
+    assert code == 2
+    [(kind, message, _)] = log.lines
+    assert kind == "error" and message.startswith(
+        f"Ollama serves {ENTRY.ollama}; there is no llama.cpp server to start")

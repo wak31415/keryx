@@ -96,7 +96,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   llama|ollama] [--json]` (the chosen, downloaded model served here: llama.cpp installed
   when it is missing, the `--llm` unit, the wait for it, and a check that the server names
   that model — through the wizard's own `localmodels/server.py`; a server that does not come
-  up, or serves another model, has its unit removed first; `--json` is JSON lines — `step`
+  up, serves another model, or is cancelled while it loads has its unit removed first, and
+  `--runtime ollama` removes an installed llama.cpp unit once Ollama serves the model; `--json` is JSON lines — `step`
   (`runtime`, `unit`, `start`, `check`), `progress` while llama.cpp downloads, then exactly
   one of `done` (`url`, `served_model`), `error`, `cancelled`; exit 2 until a model is chosen
   and downloaded), `models stop [--json]` (removes the model server's unit), `models serve

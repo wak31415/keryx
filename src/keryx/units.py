@@ -21,6 +21,11 @@ from keryx.localmodels.voice import FAILED, OK, REFUSED, installer
 from keryx.restart import service
 from keryx.restart.service import LAUNCHD_LABEL, SYSTEMD_UNIT, ServiceTarget
 
+#: How long an installer may run: a few `keryx config get`s and the service manager's
+#: answers, with room for `uv` to sync the environment first.
+INSTALL_TIMEOUT_S = 120.0
+#: The exit code said for an installer stopped at the timeout, as `timeout(1)` says it.
+TIMED_OUT = 124
 #: The units, in the order `keryx service` lists them.
 KINDS = ("agent", "tunnel", "llm", "voice")
 #: Each unit's name, by service manager: what `scripts/install-*.sh` installs (the agent's
@@ -85,10 +90,14 @@ class Outcome:
 
 
 def run_captured(argv: Sequence[str]) -> tuple[int, str, str]:
-    """Run an installer, nothing read from its stdin; its exit code, stdout and stderr."""
+    """Run an installer, nothing read from its stdin; its exit code, stdout and stderr. One
+    that has not finished within `INSTALL_TIMEOUT_S` is stopped, and says so on stderr."""
     try:
         done = subprocess.run(list(argv), stdin=subprocess.DEVNULL, capture_output=True,
-                              text=True, check=False)
+                              text=True, check=False, timeout=INSTALL_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        name = Path(argv[0]).name
+        return TIMED_OUT, "", f"{name} did not finish within {INSTALL_TIMEOUT_S:g} s"
     except OSError as error:
         return 127, "", str(error)
     return done.returncode, done.stdout, done.stderr
@@ -101,6 +110,7 @@ def _last_line(text: str) -> str | None:
 
 def install(
     *,
+    settings: Settings | None = None,
     llm: bool = False,
     voice: bool = False,
     uninstall: bool = False,
@@ -121,6 +131,7 @@ def install(
         return Outcome(FAILED, _last_line(err) or f"{script.name} {' '.join(argv[1:])} exited "
                                                   f"with {code}")
     kinds = [flag.removeprefix("--") for flag in flags] or ["agent", "tunnel"]
-    names = NAMES["launchd" if script.name == "install-launchd.sh" else "systemd"]
-    return Outcome(OK, f"{'removed' if uninstall else 'installed'} "
-                       f"{', '.join(names[kind] for kind in kinds)}")
+    found = "launchd" if script.name == "install-launchd.sh" else "systemd"
+    settings = settings or Settings()
+    names = ", ".join(unit_name(settings, found, kind) for kind in kinds)
+    return Outcome(OK, f"{'removed' if uninstall else 'installed'} {names}")

@@ -455,6 +455,10 @@ def test_the_contract_names_every_command_the_app_reads_as_json():
     assert set(contract()["commands"]) == COMMANDS
 
 
+def test_the_contract_names_every_stream_the_app_reads_as_json_lines():
+    assert set(contract()["streams"]) == set(STREAMS)
+
+
 @pytest.mark.parametrize("command", sorted(COMMANDS))
 def test_every_key_the_app_needs_is_printed_with_its_type(command, seeded):
     if command not in contract()["commands"]:
@@ -699,6 +703,7 @@ def start_stream() -> dict:
     """The contract's promise for `models start --json`, once the app has made it."""
     stream = contract()["streams"].get(MODELS_START)
     if stream is None:
+        # The streams' cross-check fails for it, once: a promise the app has yet to make.
         pytest.skip(f"the contract does not name the {MODELS_START} stream yet")
     return stream
 

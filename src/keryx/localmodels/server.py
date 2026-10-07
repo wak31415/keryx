@@ -15,8 +15,8 @@ that the server names the chosen model. A server that does not come up, or serve
 model, has its unit removed before the error is told: no unit is left restarting in a loop.
 """
 
-from collections.abc import Callable, Sequence
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -70,6 +70,8 @@ class StartReport(Report, Protocol):
 
     def done(self, url: str, served_model: str) -> None: ...
 
+    def warn(self, message: str) -> None: ...
+
 
 class Probes(Protocol):
     """What `start` asks of the machine: `machine()`, or a test's fakes."""
@@ -83,6 +85,7 @@ class Probes(Protocol):
     wait_for_server: Callable[[Endpoint, str, float], str | None]
     served: Callable[[str], tuple[bool, str | None]]
     models: Callable[[Endpoint], Probe]
+    unit_installed: Callable[[str], bool]
 
 
 # --- llama.cpp -----------------------------------------------------------------------------
@@ -143,7 +146,8 @@ def serve_here(
         report.error(problem)
         return False
     here = endpoint(settings)
-    with report.step("start", f"Loading the model into llama.cpp at {here.base_url}"):
+    with report.step("start", f"Loading the model into llama.cpp at {here.base_url}"), \
+            _removed_if_stopped(run_script, root=root, platform=platform):
         problem = wait_for_server(here, "models", LLM_START_S)
     if problem is not None:
         removed = remove_unit(run_script, root=root, platform=platform)
@@ -151,6 +155,33 @@ def serve_here(
                      log=log_path(settings))
         return False
     return True
+
+
+@contextmanager
+def _removed_if_stopped(
+    run_script: Callable[[Sequence[str]], int], *, root: Path, platform: str | None
+) -> Iterator[None]:
+    """The model server's unit removed when what this wraps is stopped — a Cancel, which is
+    what an owner does to a server that will not load — and the stop then goes on: a unit
+    installed and never seen to work is never left behind to restart in a loop."""
+    try:
+        yield
+    except BaseException:
+        with suppress(Exception):
+            remove_unit(run_script, root=root, platform=platform)
+        raise
+
+
+def retire_llama(
+    run_script: Callable[[Sequence[str]], int], *, installed: bool, root: Path,
+    platform: str | None = None,
+) -> str | None:
+    """Once Ollama serves the model, the llama.cpp server's unit is removed when there is one:
+    with `LLM_SERVER_MODEL` cleared it cannot start, and its manager would start it again and
+    again. None when there was none; else what became of it, in a clause."""
+    if not installed:
+        return None
+    return remove_unit(run_script, root=root, platform=platform)
 
 
 def remove_unit(
@@ -205,7 +236,11 @@ def start(
     """
     platform = platform or voice.PLATFORM
     if runtime == OLLAMA:
-        return _start_ollama(settings, probes, report, save=save)
+        return _start_ollama(settings, probes, report, save=save, root=root, platform=platform)
+    if not settings.llm_server_model and on_ollama(settings):
+        report.error(f"Ollama serves {settings.local_agent_model}; there is no llama.cpp "
+                     "server to start (`keryx models use NAME` moves the model back to it)")
+        return REFUSED
     if problem := _not_ready(settings):
         report.error(f"{NOT_READY}: {problem}")
         return REFUSED
@@ -220,7 +255,8 @@ def start(
                       wait_for_server=probes.wait_for_server, root=root, platform=platform):
         return FAILED
     here = endpoint(settings)
-    with report.step("check", f"Asking the model server which model it serves, {alias}"):
+    with report.step("check", f"Asking the model server which model it serves, {alias}"), \
+            _removed_if_stopped(probes.run_script, root=root, platform=platform):
         _up, served = probes.served(here.base_url)
     if served != alias:
         removed = remove_unit(probes.run_script, root=root, platform=platform)
@@ -270,9 +306,10 @@ def _have_llama(settings: Settings, probes: Probes, report: StartReport, *, plat
 
 
 def _start_ollama(settings: Settings, probes: Probes, report: StartReport, *,
-                  save: Callable[[dict[str, Any]], bool]) -> int:
-    """Ollama's own copy of the chosen catalog model, made the local agent's once listed."""
-    entry = catalog.by_key(settings.llm_server_model or "")
+                  save: Callable[[dict[str, Any]], bool], root: Path, platform: str) -> int:
+    """Ollama's own copy of the chosen catalog model, made the local agent's once listed —
+    or, once Ollama serves it, the one it serves — and the llama.cpp server's unit removed."""
+    entry = _ollama_entry(settings)
     if entry is None:
         report.error(f"{NOT_READY}: Ollama runs a model from Keryx's list (keryx models "
                      "list), and LLM_SERVER_MODEL names none")
@@ -297,8 +334,30 @@ def _start_ollama(settings: Settings, probes: Probes, report: StartReport, *,
         return FAILED
     if not save(ollama_values(entry)):
         return FAILED
+    if probes.unit_installed("llm"):
+        with report.step("unit", "Removing the llama.cpp model server's service: Ollama "
+                                 "serves the model now"):
+            said = retire_llama(probes.run_script, installed=True, root=root,
+                                platform=platform)
+        if said != REMOVED:
+            report.warn(f"the llama.cpp model server: {said}")
     report.done(here.base_url, entry.ollama)
     return OK
+
+
+def on_ollama(settings: Settings) -> bool:
+    """Whether the local agent's model is Ollama's, on this machine."""
+    current = settings.local_agent_endpoint
+    return current is not None and current.base_url == f"{OLLAMA_URL}/v1"
+
+
+def _ollama_entry(settings: Settings) -> ModelEntry | None:
+    """The catalog model to serve under Ollama: the chosen one, else the one it serves."""
+    entry = catalog.by_key(settings.llm_server_model or "")
+    if entry is None and on_ollama(settings):
+        entry = next((e for e in catalog.MODELS if e.ollama == settings.local_agent_model),
+                     None)
+    return entry
 
 
 # --- the command line ----------------------------------------------------------------------
@@ -317,6 +376,7 @@ class Machine:
     wait_for_server: Callable[[Endpoint, str, float], str | None]
     served: Callable[[str], tuple[bool, str | None]]
     models: Callable[[Endpoint], Probe]
+    unit_installed: Callable[[str], bool]
 
 
 def machine() -> Machine:
@@ -330,6 +390,7 @@ def machine() -> Machine:
             cache, machine, get=partial(runtimes.fetch, progress=progress)),
         run_script=voice.run_detached, wait_for_server=servers.wait_for, served=use.probe,
         models=partial(endpoints.probe, get=partial(httpx.get, trust_env=False)),
+        unit_installed=use.unit_installed,
     )
 
 
