@@ -270,5 +270,21 @@
     "protected": true,
     "value": 300.0,
     "choices": null
+  },
+  {
+    "key": "KERYX_PIN",
+    "group": "owner",
+    "title": "Phone PIN",
+    "group_title": "Owner, callers and PIN",
+    "description": "The 6-8 digit PIN a caller gives before Keryx acts on what they say.",
+    "source": "KERYX_HOME/pin",
+    "type": "string",
+    "required": false,
+    "set": true,
+    "secret": true,
+    "service_writable": false,
+    "protected": true,
+    "value": null,
+    "choices": null
   }
 ]
