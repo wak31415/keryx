@@ -1,3 +1,4 @@
+import KeryxKit
 import SwiftUI
 
 /// A screen's three states: its content once there is a value, a `ContentUnavailableView`
@@ -55,5 +56,16 @@ public struct StateView<Value, Content: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityLabel("Loading")
         }
+    }
+}
+
+extension StateView {
+    /// The screen for one of `AppModel`'s documents: its value, its error in words, and
+    /// whether a load is under way.
+    public init(_ loadable: Loadable<Value>, retry: (() -> Void)? = nil,
+                @ViewBuilder content: @escaping (Value) -> Content) where Value: Sendable {
+        self.init(value: loadable.value, isLoading: loadable.isLoading,
+                  failure: loadable.error.map { Failure(title: $0.title, message: $0.message) },
+                  retry: retry, content: content)
     }
 }
