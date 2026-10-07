@@ -153,6 +153,8 @@ import KeryxPreview
         #expect(rows == PreviewData.config)
         try await client.unset(key: "OPENAI_VOICE")
         #expect(last() == ["config", "unset", "OPENAI_VOICE"])
+        try await client.unset(keys: ["GOOGLE_WORKSPACE_MCP", "USER_GOOGLE_EMAIL"])
+        #expect(last() == ["config", "unset", "GOOGLE_WORKSPACE_MCP", "USER_GOOGLE_EMAIL"], "one command for both")
         _ = try await client.approvals(limit: 20)
         #expect(last() == ["approvals", "--json", "--limit", "20"])
         try await client.setEscalation(enabled: false)
@@ -243,7 +245,7 @@ import KeryxPreview
             .notFound(LocateFailure(lookedAt: ["a."])), .migrationRequired("x"), .liveCalls(1),
             .failed(command: "keryx status", exitCode: 1, message: ""),
             .decoding(command: "keryx status", detail: "d"), .timedOut(command: "keryx status"),
-            .launch("l"), .terminal("t"),
+            .launch("l"), .terminal("t"), .refused("r"),
         ]
         for error in errors {
             #expect(!error.title.isEmpty)
@@ -260,6 +262,7 @@ import KeryxPreview
             .failed(command: "keryx status", exitCode: 3, message: ""),
             .decoding(command: "keryx status", detail: "d"), .timedOut(command: "keryx status"),
             .launch("no such file"), .terminal("Terminal could not be opened"),
+            .refused(TrustedLink.refusal),
         ]
         for error in errors {
             #expect(error.message.hasSuffix("."), "\(error.message)")

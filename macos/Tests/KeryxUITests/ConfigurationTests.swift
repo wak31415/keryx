@@ -132,7 +132,15 @@ import KeryxPreview
         #expect(ConfigWording.secretRemovalMessage.contains("paste it in again"))
     }
 
-    @Test func twilioTokenIsChangedWithItsSID() {
+    @Test func configurationAnswersThePinAndTabRequests() {
+        #expect(ConfigWording.answer(.setPin, pinTab: "general")! == ("general", true))
+        #expect(ConfigWording.answer(.setPin, pinTab: nil)! == ("general", true), "before the settings are read")
+        #expect(ConfigWording.answer(.configure(tab: "agents"), pinTab: "general")! == ("agents", false))
+        #expect(ConfigWording.answer(.show(.phone), pinTab: "general") == nil)
+        #expect(ConfigWording.answer(.signIn(.claude), pinTab: "general") == nil, "the sign-in sheets answer that")
+    }
+
+        @Test func twilioTokenIsChangedWithItsSID() {
         #expect(ConfigWording.isTwilioToken(row("TWILIO_AUTH_TOKEN", secret: true)))
         #expect(!ConfigWording.isTwilioToken(row("OPENAI_API_KEY", secret: true)))
     }

@@ -42,6 +42,18 @@ public enum Quitting {
         }
     }
 
+    /// `question` with a sign-in under way added (`signingIn`: what it signs in to,
+    /// "Claude"; `detail`: what stopping it loses): asked on its own when nothing else would
+    /// ask, else said in the detail.
+    public static func adding(signIn signingIn: String?, detail: String? = nil, to question: Question?) -> Question? {
+        guard let signingIn else { return question }
+        guard let question else {
+            return Question(message: "A sign-in to \(signingIn) is still going. Quit anyway?",
+                            detail: detail ?? "The sign-in stops. You can start it again later.")
+        }
+        return Question(message: question.message, detail: question.detail + " The sign-in to \(signingIn) stops too.")
+    }
+
     /// "Lyra's", or "the assistant's" before a name is known ("The" opening a sentence).
     private static func possessive(_ name: String?, opening: Bool) -> String {
         guard let name, !name.isEmpty else { return opening ? "The assistant's" : "the assistant's" }

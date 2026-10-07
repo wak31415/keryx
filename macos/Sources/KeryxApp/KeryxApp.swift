@@ -24,8 +24,8 @@ struct KeryxApp: App {
             }
         }
 
-        // The Setup Assistant: opened by id (`KeryxWindow.setup`); what opens it, and when,
-        // is the assistant's own (Task UC).
+        // The Setup Assistant: opened from the menu, from the Overview, and by itself at
+        // launch while setup is not finished (`AppDelegate.openSetupIfNeeded`).
         Window("Set Up Keryx", id: KeryxWindow.setup) {
             SetupAssistantView()
                 .environment(delegate.model)
@@ -33,6 +33,7 @@ struct KeryxApp: App {
                 .onAppear { delegate.windowDidAppear(.setup) }
                 .onDisappear { delegate.windowDidDisappear(.setup) }
         }
+        .defaultSize(width: 820, height: 600)
         .windowResizability(.contentSize)
 
         MenuBarExtra {
@@ -54,9 +55,9 @@ struct KeryxApp: App {
 }
 
 enum KeryxWindow {
-    static let main = "main"
+    static let main = KeryxWindowID.main
     /// The Setup Assistant's window.
-    static let setup = "setup"
+    static let setup = KeryxWindowID.setup
 }
 
 /// The window's content. SwiftUI opens it at launch; at a login launch it closes again at
@@ -94,11 +95,12 @@ private struct MenuBarMenu: View {
                 delegate.model.selectedTaskID = id
                 open()
             },
-            quit: { NSApp.terminate(nil) }))
+            quit: { NSApp.terminate(nil) },
+            openSetup: { open(KeryxWindow.setup) }))
     }
 
-    private func open() {
-        openWindow(id: KeryxWindow.main)
+    private func open(_ id: String = KeryxWindow.main) {
+        openWindow(id: id)
         NSApp.activate()
     }
 }
@@ -116,6 +118,10 @@ private struct MenuBarLabel: View {
             .task {
                 delegate.openMainWindow = {
                     openWindow(id: KeryxWindow.main)
+                    NSApp.activate()
+                }
+                delegate.openSetupWindow = {
+                    openWindow(id: KeryxWindow.setup)
                     NSApp.activate()
                 }
             }

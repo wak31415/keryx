@@ -80,7 +80,15 @@ public final class AppModel {
     public package(set) var options: [String: Loadable<ConfigOptions>] = [:]
     public var taskDetail: [Int: Loadable<TaskDetail>] = [:]
 
-    public var selection: SidebarItem = .overview
+    public var selection: SidebarItem = .overview {
+        // Choosing another section drops a request nobody there answered, so it cannot
+        // spring open later.
+        didSet { if let requested, requested.destination != selection { self.requested = nil } }
+    }
+    /// What another window (the Setup Assistant) asked the main window to do, until the
+    /// screen that does it says so (`request(_:)`, `didHandle(_:)`) or another section is
+    /// chosen.
+    public private(set) var requested: AppRequest?
     public var selectedTaskID: Int?
     /// Whether the task list includes the tasks Keryx asked for itself (`--internal`).
     public var includeHousekeeping = false
@@ -105,8 +113,10 @@ public final class AppModel {
     public let voiceDownloadRun: StreamRun<VoiceModelsDownloaded>
     /// A sign-in (`keryx auth login NAME`), one at a time whichever it is.
     public let signInRun: StreamRun<SignedIn>
-    /// The provider of the sign-in `signInRun` holds, while it holds one.
-    public private(set) var signingIn: SignInProvider?
+    /// The provider of the sign-in `signInRun` holds — running, stopping, failed or
+    /// finished — and `nil` once it holds none (cancelled, or dismissed).
+    public var signingIn: SignInProvider? { signInRun.phase == nil ? nil : lastSignIn }
+    @ObservationIgnored private var lastSignIn: SignInProvider?
     /// The client for the Keryx that was found; `nil` until one is.
     public package(set) var client: KeryxClient?
 
@@ -441,6 +451,12 @@ public final class AppModel {
         await writeSetting { try await $0.unset(key: key) }
     }
 
+    /// Removes several settings from the store in one command (a card's, to disconnect it).
+    public func unset(keys: [String]) async -> KeryxError? {
+        guard !keys.isEmpty else { return nil }
+        return await writeSetting { try await $0.unset(keys: keys) }
+    }
+
     /// Turns the approval calls on or off (the kill switch; no restart needed).
     public func setEscalation(enabled: Bool) async -> KeryxError? {
         if let error = await perform({ try await $0.setEscalation(enabled: enabled) }) { return error }
@@ -532,6 +548,19 @@ public final class AppModel {
     }
 
     // MARK: - Setup
+
+    /// Shows `request`'s section and holds the request for the screen there to answer; a
+    /// later request replaces one not yet answered.
+    public func request(_ request: AppRequest) {
+        selection = request.destination
+        requested = request
+    }
+
+    /// The screen has answered `request` (or will not): it is no longer pending. A different
+    /// request asked for since is left alone.
+    public func didHandle(_ request: AppRequest) {
+        if requested == request { requested = nil }
+    }
 
     /// Records a setup step as walked (an optional one skipped, or the PIN left to the first
     /// call), then reads the plan again.
@@ -634,19 +663,22 @@ public final class AppModel {
     // MARK: - Accounts
 
     /// Signs in to `provider` in `signInRun`, one sign-in at a time: false when one is
-    /// already going. Its `open` is the page to open, its `send` takes the line it asks for.
+    /// already going. Its `open` is the page to open (through `TrustedLink`), its `send`
+    /// takes the one line Claude's and Gmail's ask for; the others' stdin is closed at once.
     /// Once it has worked the accounts are read again; a token stored as a setting
     /// (Claude's) is loaded by the next restart.
     @discardableResult
     public func signIn(_ provider: SignInProvider, clientFile: String? = nil) -> Bool {
         guard let client else { return false }
-        let started = signInRun.start(reason: "Signing in", { client.signIn(provider, clientFile: clientFile) }) {
+        let takes: StreamRun<SignedIn>.Input = provider.readsALine ? .oneLine : .none
+        let started = signInRun.start(reason: "Signing in", takes: takes,
+                                      { client.signIn(provider, clientFile: clientFile) }) {
             [weak self] done in
             if done.stored != nil { self?.configNeedsRestart = true }
             self?.invalidateOptions()
             Task { await self?.refresh(.integrations, .plugins, .tools, .config, .doctor, .setupPlan) }
         }
-        if started { signingIn = provider }
+        if started { lastSignIn = provider }
         return started
     }
 

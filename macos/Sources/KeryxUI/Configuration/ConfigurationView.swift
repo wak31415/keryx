@@ -17,6 +17,9 @@ public struct ConfigurationView: View {
     @State private var advancedOpen: Set<String>
     /// Errors to show under rows when the screen first appears (the catalog's write error).
     private let initialErrors: [String: KeryxError]
+    /// The PIN sheet, asked for by another window (`AppRequest.setPin`); through `PinFlow`,
+    /// so a working PIN is asked about before it is replaced.
+    @State private var pinRequested = false
 
     public init() {
         self.init(search: "")
@@ -55,6 +58,20 @@ public struct ConfigurationView: View {
         }
         .searchable(text: $search, prompt: "Search Settings")
         .task { await model.refresh(.config) }
+        .onAppear { answer(model.requested) }
+        .onChange(of: model.requested) { answer(model.requested) }
+        .pinSheet(isPresented: $pinRequested)
+    }
+
+    /// Does what another window asked of Configuration (`AppModel.requested`): a tab, or
+    /// the PIN sheet on the PIN's tab.
+    private func answer(_ request: AppRequest?) {
+        guard let request else { return }
+        let pinTab = model.config.value?.first(where: ConfigWording.isPIN)?.tab
+        guard let answer = ConfigWording.answer(request, pinTab: pinTab) else { return }
+        choose(answer.tab)
+        if answer.openPin { pinRequested = true }
+        model.didHandle(request)
     }
 
     // MARK: - A tab

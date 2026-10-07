@@ -51,6 +51,15 @@ REALTIME_VOICES = (
 #: models of its own package's choosing.
 VOICE_SERVER_STT = ("parakeet-tdt", "whisper")
 VOICE_SERVER_TTS = ("kokoro", "qwen3")
+#: Each one's name for a person and a line on what it is, true of the models
+#: `localmodels.speech` fetches for it (Parakeet TDT 0.6B v3, Distil-Whisper large-v3,
+#: Kokoro-82M, Qwen3-TTS 1.7B).
+SPEECH_ABOUT = {
+    "parakeet-tdt": ("Parakeet TDT", "NVIDIA's fast recogniser, in 25 European languages"),
+    "whisper": ("Distil-Whisper", "A smaller, faster Whisper; English only"),
+    "kokoro": ("Kokoro", "Small and quick, with natural voices"),
+    "qwen3": ("Qwen3 TTS", "Larger and more expressive; slower to answer"),
+}
 #: What an OpenAI id holds when it is not a chat model the Responses API can search with.
 NOT_CHAT = (
     "realtime", "audio", "transcribe", "tts", "image", "search-preview", "embedding",
@@ -483,13 +492,16 @@ def kokoro_voices(settings: Settings, sources: Sources) -> Found:
 
 
 def _speech(kind: str, values: tuple[str, ...]) -> Callable[[Settings, Sources], Found]:
-    """The voice server's speech models Keryx offers, each marked "downloaded" once its
-    models are in the Hugging Face cache (`keryx voice download` fetches them)."""
+    """The voice server's speech models Keryx offers, by name and what each is, marked
+    "downloaded" once its models are in the Hugging Face cache (`keryx voice download`
+    fetches them)."""
+    def option(value: str, ready: bool) -> Option:
+        label, about = SPEECH_ABOUT[value]
+        return Option(value, label, f"{about} · downloaded" if ready else about)
+
     def found(settings: Settings, sources: Sources) -> Found:
-        return Found([
-            Option(v, v, "downloaded" if sources.speech_ready(kind, v) else None)
-            for v in values
-        ], "builtin", False)
+        return Found([option(v, sources.speech_ready(kind, v)) for v in values],
+                     "builtin", False)
 
     return found
 
