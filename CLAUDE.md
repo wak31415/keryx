@@ -77,7 +77,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Models on this machine: `uv run keryx models list [--json]` (the catalog against this
   machine's GPU and memory, the recommended one marked, and the local voices; `--json` adds
   `servers`, the model and voice servers' units and whether they answer, asked on loopback
-  only), `models pull NAME [--json]` (resumable, checksummed, into `CACHE_DIR/models`; a copy
+  only, and `served_model`, the model the running server names — `model` is the setting),
+  `models pull NAME [--json]` (resumable, checksummed, into `CACHE_DIR/models`; a copy
   in the Hugging Face cache is linked instead; `--json` is JSON lines — `progress`, then
   exactly one of `done`, `adopted`, `error`, `cancelled` on every path, a refusal included;
   a SIGTERM cancels, exit 130, and keeps the `.part`), `models use NAME [--default-agent]

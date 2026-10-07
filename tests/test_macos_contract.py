@@ -84,7 +84,7 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     # The models commands: a known machine, no server asked, and one model on disk (sparse).
     monkeypatch.setattr(hardware, "detect", lambda: Hardware("metal", "Apple silicon", 0.0, 36.0))
     monkeypatch.setattr(use, "unit_installed", lambda kind: False)
-    monkeypatch.setattr(use, "reachable", lambda url: False)
+    monkeypatch.setattr(use, "probe", lambda url: (False, None))
     monkeypatch.setattr(servers, "free_port", lambda preferred: preferred)
     monkeypatch.setattr("keryx.localmodels.runtimes.llama_server", lambda cache_dir, **_: None)
     model = download.model_path(settings.cache_dir, MODEL)

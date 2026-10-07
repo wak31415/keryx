@@ -29,7 +29,7 @@ def models_settings(monkeypatch, tmp_path, every_agent_installed):
     monkeypatch.setattr(hardware, "detect", lambda: RTX)
     monkeypatch.setattr(hardware, "free_bytes", lambda path: 10**12)
     monkeypatch.setattr(use, "unit_installed", lambda kind: False)
-    monkeypatch.setattr(use, "reachable", lambda url: False)
+    monkeypatch.setattr(use, "probe", lambda url: (False, None))
     return settings
 
 
@@ -128,12 +128,15 @@ def test_list_json_says_which_servers_are_set_up_and_answering(models_settings, 
     models_settings.local_agent_model = CODER.key
     models_settings.agents_enabled = ["claude", "local"]
     monkeypatch.setattr(use, "unit_installed", lambda kind: kind == "llm")
-    monkeypatch.setattr(use, "reachable", lambda url: url == "http://127.0.0.1:8090/v1")
+    monkeypatch.setattr(use, "probe", lambda url: (url == "http://127.0.0.1:8090/v1",
+                                                   "qwen3-coder"))
 
     servers_part = json.loads(runner.invoke(app, ["models", "list", "--json"]).output)["servers"]
 
     assert servers_part["llm"]["url"] == "http://127.0.0.1:8090/v1"
     assert servers_part["llm"]["unit_installed"] and servers_part["llm"]["reachable"]
+    assert servers_part["llm"]["model"] == CODER.key  # the setting
+    assert servers_part["llm"]["served_model"] == "qwen3-coder"  # what the server says
     assert servers_part["voice"] == {"url": None, "port": 8765, "unit_installed": False,
                                      "reachable": False}
     assert servers_part["local_agent"]["enabled"] and not servers_part["local_agent"]["default"]

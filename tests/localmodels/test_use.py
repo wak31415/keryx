@@ -77,12 +77,12 @@ def test_as_the_default_it_does_what_nobody_named_an_agent_for(settings):
 
 
 def test_with_nothing_set_up_every_server_is_absent_and_nothing_is_asked(settings):
-    status = use.server_status(settings, installed=lambda kind: False, reachable=never,
+    status = use.server_status(settings, installed=lambda kind: False, probe=never,
                                which=lambda name: None)
 
     assert status == {
         "llm": {"model": None, "port": 8090, "url": None, "binary": None,
-                "unit_installed": False, "reachable": False},
+                "unit_installed": False, "reachable": False, "served_model": None},
         "voice": {"url": None, "port": 8765, "unit_installed": False, "reachable": False},
         "local_agent": {"base_url": None, "model": None, "api": "anthropic-messages",
                         "enabled": False, "default": False},
@@ -98,18 +98,20 @@ def test_a_model_server_and_a_voice_here_are_asked_whether_they_answer(settings)
     settings.agent_backend = "local"
     asked: list[str] = []
 
-    def reachable(url: str) -> bool:
+    def probe(url: str) -> tuple[bool, str | None]:
         asked.append(url)
-        return url.endswith(":8090/v1")
+        # The voice server answers too, and names a model; only the model server's counts.
+        return (True, "qwen3-coder") if url.endswith(":8090/v1") else (False, "kokoro")
 
     status = use.server_status(
-        settings, installed=lambda kind: kind == "llm", reachable=reachable,
+        settings, installed=lambda kind: kind == "llm", probe=probe,
         which=lambda name: f"/opt/homebrew/bin/{name}",
     )
 
     assert status["llm"] == {
         "model": CODER.key, "port": 8090, "url": "http://127.0.0.1:8090/v1",
         "binary": "/opt/homebrew/bin/llama-server", "unit_installed": True, "reachable": True,
+        "served_model": "qwen3-coder",
     }
     assert status["voice"] == {"url": "http://127.0.0.1:8765/v1", "port": 8765,
                                "unit_installed": False, "reachable": False}
@@ -127,7 +129,7 @@ def test_the_status_carries_no_key(settings):
     settings.voice_api_key = "vk-secret"
 
     status = use.server_status(settings, installed=lambda kind: False,
-                               reachable=lambda url: False, which=lambda name: None)
+                               probe=lambda url: (False, None), which=lambda name: None)
 
     assert "secret" not in repr(status)
 
@@ -139,17 +141,17 @@ def test_the_llama_server_keryx_installed_is_found_off_path(settings):
     build.chmod(0o755)
 
     status = use.server_status(settings, installed=lambda kind: False,
-                               reachable=never, which=lambda name: None)
+                               probe=never, which=lambda name: None)
 
     assert status["llm"]["binary"] == str(build)
 
 
-# --- reachable ---------------------------------------------------------------------------
+# --- probe: whether it answers -----------------------------------------------------------
 
 
 def test_a_remote_address_is_not_reachable_and_is_never_asked():
-    assert use.reachable("http://gpu-box:8000/v1", get=never) is False
-    assert use.reachable("http://100.101.102.103:8000/v1", get=never) is False
+    assert use.probe("http://gpu-box:8000/v1", get=never) == (False, None)
+    assert use.probe("http://100.101.102.103:8000/v1", get=never) == (False, None)
 
 
 def test_a_loopback_server_is_asked_for_its_models_within_a_second():
@@ -160,8 +162,8 @@ def test_a_loopback_server_is_asked_for_its_models_within_a_second():
         asked.append((url, timeout))
         return httpx.Response(200, json={"data": []})
 
-    assert use.reachable("http://127.0.0.1:8090/v1", get=get) is True
-    assert use.reachable("http://localhost:8765/v1", get=get) is True
+    assert use.probe("http://127.0.0.1:8090/v1", get=get)[0] is True
+    assert use.probe("http://localhost:8765/v1", get=get)[0] is True
     assert asked == [("http://127.0.0.1:8090/v1/models", 1.0),
                      ("http://localhost:8765/v1/models", 1.0)]
 
@@ -171,14 +173,14 @@ def test_a_loopback_server_that_does_not_answer_is_not_reachable(answer):
     def get(url, *, timeout, trust_env):
         raise answer
 
-    assert use.reachable("http://127.0.0.1:8090/v1", get=get) is False
+    assert use.probe("http://127.0.0.1:8090/v1", get=get)[0] is False
 
 
 def test_a_server_that_answers_with_an_error_is_not_reachable():
     def get(url, *, timeout, trust_env):
         return httpx.Response(503)
 
-    assert use.reachable("http://127.0.0.1:8090/v1", get=get) is False
+    assert use.probe("http://127.0.0.1:8090/v1", get=get)[0] is False
 
 
 def test_a_server_without_a_model_list_still_answers():
@@ -188,11 +190,94 @@ def test_a_server_without_a_model_list_still_answers():
     def get(url, *, timeout, trust_env):
         return httpx.Response(404)
 
-    assert use.reachable("http://127.0.0.1:8765/v1", get=get) is True
+    assert use.probe("http://127.0.0.1:8765/v1", get=get)[0] is True
 
 
 def test_an_address_that_is_not_one_is_not_reachable():
-    assert use.reachable("not a url", get=never) is False
+    assert use.probe("not a url", get=never) == (False, None)
+
+
+def test_a_model_server_that_is_up_but_not_serving_its_model_says_so(settings):
+    """The setting says which model ought to be served; `served_model` is what is."""
+    settings.llm_server_model = CODER.key
+
+    status = use.server_status(settings, installed=lambda kind: True,
+                               probe=lambda url: (True, None), which=lambda name: None)
+
+    assert status["llm"]["model"] == CODER.key
+    assert status["llm"]["reachable"] is True and status["llm"]["served_model"] is None
+
+
+# --- probe: which model it serves --------------------------------------------------------
+
+
+def llama_models(*ids: str) -> dict:
+    """What llama-server answers on `GET /v1/models`: the OpenAI list, one entry a model."""
+    return {"object": "list",
+            "data": [{"id": id_, "object": "model", "owned_by": "llamacpp"} for id_ in ids]}
+
+
+def test_a_loopback_server_names_the_first_model_it_serves():
+    asked: list = []
+
+    def get(url, *, timeout, trust_env):
+        assert trust_env is False
+        asked.append((url, timeout))
+        return httpx.Response(200, json=llama_models("qwen3-coder", "other"))
+
+    assert use.probe("http://127.0.0.1:8090/v1", get=get) == (True, "qwen3-coder")
+    assert asked == [("http://127.0.0.1:8090/v1/models", 1.0)]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [httpx.Response(200, json=llama_models()),  # up, nothing loaded
+     httpx.Response(200, json={"models": []}),  # no OpenAI list
+     httpx.Response(200, json=[{"id": "a-list-not-an-object"}]),
+     httpx.Response(200, json={"data": ["not-an-object"]}),
+     httpx.Response(200, json={"data": [{"id": 7}]}),
+     httpx.Response(200, json={"data": [{"id": ""}]}),
+     httpx.Response(200, text="not json"),
+     httpx.Response(404, json=llama_models("qwen3-coder"))],  # up, but no model list
+)
+def test_a_server_that_answers_without_a_model_is_up_and_serves_none(answer):
+    assert use.probe("http://127.0.0.1:8090/v1", get=lambda url, **_: answer) == (True, None)
+
+
+@pytest.mark.parametrize("answer", [httpx.ConnectError("refused"), httpx.Response(503)])
+def test_a_server_that_is_not_up_serves_nothing(answer):
+    def get(url, *, timeout, trust_env):
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    assert use.probe("http://127.0.0.1:8090/v1", get=get) == (False, None)
+
+
+def test_the_served_model_is_read_through_the_transport_without_a_proxy(monkeypatch):
+    """End to end over httpx's own client, its transport faked. With a proxy in the
+    environment (or macOS's system settings), httpx would send even a 127.0.0.1 request to
+    it, and a proxy's 407 would read as a server that is up."""
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.com:3128")
+    monkeypatch.setenv("ALL_PROXY", "http://proxy.example.com:3128")
+    proxies: list = []
+    seen: list[str] = []
+    real_init = httpx.HTTPTransport.__init__
+
+    def recording_init(self, *args, proxy=None, **kwargs):
+        proxies.append(proxy)
+        real_init(self, *args, proxy=proxy, **kwargs)
+
+    def answer(self, request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json=llama_models("qwen3-coder"), request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "__init__", recording_init)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", answer)
+
+    assert use.probe("http://127.0.0.1:8090/v1") == (True, "qwen3-coder")
+    assert seen == ["http://127.0.0.1:8090/v1/models"]
+    assert proxies and all(proxy is None for proxy in proxies)
 
 
 # --- unit_installed ----------------------------------------------------------------------
@@ -219,24 +304,3 @@ def test_each_server_is_its_own_unit(platform, kind, target):
 def test_a_platform_with_no_service_manager_has_no_unit():
     assert use.unit_installed("llm", platform="win32", is_installed=never) is False
 
-
-def test_the_loopback_probe_never_goes_through_a_proxy(monkeypatch):
-    """With a proxy in the environment (or macOS's system settings), httpx would send even a
-    127.0.0.1 request to it, and a proxy's 407 would read as a server that is up."""
-    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.com:3128")
-    monkeypatch.setenv("ALL_PROXY", "http://proxy.example.com:3128")
-    proxies: list = []
-    real_init = httpx.HTTPTransport.__init__
-
-    def recording_init(self, *args, proxy=None, **kwargs):
-        proxies.append(proxy)
-        real_init(self, *args, proxy=proxy, **kwargs)
-
-    def answer(self, request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"data": []}, request=request)
-
-    monkeypatch.setattr(httpx.HTTPTransport, "__init__", recording_init)
-    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", answer)
-
-    assert use.reachable("http://127.0.0.1:8090/v1") is True
-    assert proxies and all(proxy is None for proxy in proxies)

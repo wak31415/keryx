@@ -1079,7 +1079,7 @@ def models_list(
             "models": rows,
             "voices": [{"name": name, "sounds": sounds} for name, sounds in catalog.VOICES],
             "servers": use.server_status(settings, installed=use.unit_installed,
-                                         reachable=use.reachable, which=runtimes.which),
+                                         probe=use.probe, which=runtimes.which),
         }, indent=2))
         return
     typer.echo(f"# {machine.describe()}; models in {download.models_dir(settings.cache_dir)}")

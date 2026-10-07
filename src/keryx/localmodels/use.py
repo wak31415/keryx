@@ -7,7 +7,9 @@ what they return, so the two cannot drift into describing the same model two way
 
 `server_status` is read by the Mac app every time it shows the models. Reachability is a
 loopback question only: an address elsewhere answers False without being asked, so showing
-the list never reaches out to another machine.
+the list never reaches out to another machine. The model server's `served_model` comes from
+the same GET as its `reachable` (`probe`), so the two cannot disagree: `model` is what the
+settings say should be served, `served_model` what the running server says it serves.
 """
 
 import sys
@@ -72,14 +74,15 @@ def server_status(
     settings: Settings,
     *,
     installed: Callable[[str], bool],
-    reachable: Callable[[str], bool],
+    probe: Callable[[str], tuple[bool, str | None]],
     which: Callable[[str], str | None],
 ) -> dict[str, Any]:
     """The model server, the voice server and the local agent, as the settings describe
-    them and as the machine finds them. `installed` is asked "llm" or "voice"; `reachable`
-    is asked a `…/v1` address. No key is in it."""
+    them and as the machine finds them. `installed` is asked "llm" or "voice"; `probe` is
+    asked a `…/v1` address, and only when the settings name one. No key is in it."""
     model = settings.llm_server_model
     llm_url = f"http://{HOST}:{settings.llm_server_port}/v1" if model else None
+    llm_up, served = probe(llm_url) if llm_url else (False, None)
     voice_url = settings.voice_base_url or None
     return {
         "llm": {
@@ -88,13 +91,14 @@ def server_status(
             "url": llm_url,
             "binary": runtimes.llama_server(settings.cache_dir, lookup=which),
             "unit_installed": installed("llm"),
-            "reachable": bool(llm_url) and reachable(llm_url),
+            "reachable": llm_up,
+            "served_model": served,
         },
         "voice": {
             "url": voice_url,
             "port": settings.voice_server_port,
             "unit_installed": installed("voice"),
-            "reachable": bool(voice_url) and reachable(voice_url),
+            "reachable": bool(voice_url) and probe(voice_url)[0],
         },
         "local_agent": {
             "base_url": settings.local_agent_base_url,
@@ -106,29 +110,48 @@ def server_status(
     }
 
 
-def reachable(url: str, *, get: Callable[..., httpx.Response] | None = None) -> bool:
-    """Whether a server on this machine answers `GET {url}/models` within a second.
+def probe(
+    url: str, *, get: Callable[..., httpx.Response] | None = None
+) -> tuple[bool, str | None]:
+    """Whether a server on this machine answers `GET {url}/models` within a second, and the
+    first model id it lists there (llama-server's own name for what it has loaded), or None.
 
-    Any answer short of a server error counts: the voice server speaks the Realtime socket
-    and need not list models, and a 404 from it is still a server that is up. An address
-    that is not on this machine is False without being asked, and the question never goes
-    through a proxy (`trust_env=False`): `HTTP_PROXY`, `ALL_PROXY` or macOS's system proxy
-    would carry even a 127.0.0.1 request off the machine, and the proxy's 407 would read as
-    a server that is up.
+    Any answer short of a server error counts as up: the voice server speaks the Realtime
+    socket and need not list models, and a 404 from it is still a server that is up. An
+    address that is not on this machine is not up and is never asked, and the question
+    never goes through a proxy (`trust_env=False`): `HTTP_PROXY`, `ALL_PROXY` or macOS's
+    system proxy would carry even a 127.0.0.1 request off the machine, and the proxy's 407
+    would read as a server that is up.
     """
     try:
         endpoint = Endpoint.parse(url)
     except ValueError:
-        return False
+        return False, None
     if not endpoint.is_loopback:
-        return False
+        return False, None
     try:
         response = (get or httpx.get)(
             endpoint.url("models"), timeout=REACH_TIMEOUT_S, trust_env=False
         )
     except httpx.HTTPError:
-        return False
-    return response.status_code < 500
+        return False, None
+    if response.status_code >= 500:
+        return False, None
+    return True, _first_model_id(response)
+
+
+def _first_model_id(response: httpx.Response) -> str | None:
+    """`data[0].id` of an OpenAI model list, or None for any other answer."""
+    if not response.is_success:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    data = body.get("data") if isinstance(body, dict) else None
+    first = data[0] if isinstance(data, list) and data else None
+    model = first.get("id") if isinstance(first, dict) else None
+    return model if isinstance(model, str) and model else None
 
 
 def unit_installed(
