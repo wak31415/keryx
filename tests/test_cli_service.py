@@ -238,8 +238,8 @@ def test_start_installs_llama_cpp_when_it_is_missing_and_tells_the_download(
     assert result.exit_code == 0, result.output
     progress = [e for e in events_of(result) if e["event"] == "progress"]
     assert progress[0] == {"event": "progress", "step": "runtime", "done": 1, "total": 4}
-    assert {"event": "step", "step": "runtime",
-            "message": f"llama.cpp: {settings.cache_dir / 'llama.cpp' / 'llama-server'}"} \
+    assert {"event": "step", "step": "runtime", "message": "llama.cpp is installed.",
+            "detail": str(settings.cache_dir / "llama.cpp" / "llama-server")} \
         in events_of(result)
 
 
@@ -406,6 +406,9 @@ def test_start_json_ends_with_exactly_one_ending(
         assert message in told(events[-1])
     if ending == "error":  # a sentence for a person; what a tool said is the detail
         assert "detail" in events[-1] and for_the_app(events[-1]["message"]), events[-1]
+    for event in events:  # every step and warning too: a path or a command is the detail
+        if event["event"] == "step":
+            assert "detail" in event and for_the_app(event["message"]), event
     assert result.exit_code == code
     assert result.stderr == ""
     if code == 2 or ending == "error" and "only the owner" in events[-1]["message"]:

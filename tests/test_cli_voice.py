@@ -685,6 +685,9 @@ def test_use_here_json_ends_with_exactly_one_ending(
         assert message in told(events[-1])
     if ending == "error":  # a sentence for a person; what a tool said is the detail
         assert "detail" in events[-1] and for_the_app(events[-1]["message"]), events[-1]
+    for event in events:  # every step and warning too: a path or a command is the detail
+        if event["event"] == "step":
+            assert "detail" in event and for_the_app(event["message"]), event
     assert result.exit_code == code
     assert result.stderr == ""
     if code == 2 or ending == "error" and "only the owner" in events[-1]["message"]:
@@ -804,6 +807,9 @@ def test_download_json_ends_with_exactly_one_ending(machine, monkeypatch, arrang
         assert message in told(events[-1])
     if ending == "error":  # a sentence for a person; what a tool said is the detail
         assert "detail" in events[-1] and for_the_app(events[-1]["message"]), events[-1]
+    for event in events:  # every step and warning too: a path or a command is the detail
+        if event["event"] == "step":
+            assert "detail" in event and for_the_app(event["message"]), event
     assert result.exit_code == code
     assert result.stderr == ""
     if code == 2:  # a refusal: nothing was tried

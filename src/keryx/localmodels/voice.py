@@ -126,11 +126,13 @@ class DownloadProbes(Installs, Protocol):
 
 
 class Steps(Protocol):
-    """How the work is told while it runs: each step before its slow work, and warnings."""
+    """How the work is told while it runs: each step before its slow work, and warnings.
+    `message` is for a person; a path or a command is the `detail`."""
 
-    def step(self, step: str, message: str) -> AbstractContextManager[None]: ...
+    def step(self, step: str, message: str, *,
+             detail: str | None = None) -> AbstractContextManager[None]: ...
 
-    def warn(self, message: str) -> None: ...
+    def warn(self, message: str, *, detail: str | None = None) -> None: ...
 
 
 class Told(Steps, Protocol):
@@ -351,7 +353,8 @@ def here(
     with report.step("configure", f"Saving the voice server's voice, {voice}, and its port"):
         if voice not in [name for name, _sounds in catalog.VOICES]:
             report.warn(f"{voice} is not one of the Kokoro voices Keryx lists; Kokoro takes "
-                        "others, so it is kept — `keryx models list` shows the listed ones")
+                        "others, so it is kept.",
+                        detail="`keryx models list` shows the listed ones")
         if not is_ours(settings.voice_base_url, port):
             port = probes.free_port(port)
         if not save({"VOICE_SERVER_VOICE": voice, "VOICE_SERVER_PORT": port}):
@@ -483,7 +486,7 @@ def install_unit_step(
         no_installer(report, problem)
         return False
     if code != 0:
-        report.warn(remove_unit(flag, run_script, root=root, platform=platform))
+        warn_removed(report, flag, remove_unit(flag, run_script, root=root, platform=platform))
         report.error(f"{SERVERS.get(flag, 'The server')}'s service could not be installed.",
                      detail=exited(f"{script.name} {flag}", code))
         return False
@@ -492,6 +495,17 @@ def install_unit_step(
 
 #: What each unit's server is called in a sentence.
 SERVERS = {"--llm": "The model server", "--voice": "The voice server"}
+
+
+def warn_removed(report: Steps, flag: str, said: str) -> None:
+    """Warn what became of the `flag` unit (`remove_unit`'s clause): removed, or still
+    installed — in plain words, the installer's own the `detail`."""
+    server = SERVERS.get(flag, "The server")
+    if said == REMOVED:
+        report.warn(f"{server}'s service was removed, so it does not restart in a loop.")
+    else:
+        report.warn(f"{server}'s service is still installed: it could not be removed, and may "
+                    "start again at the next login.", detail=said)
 
 
 def no_installer(report: Told, problem: str | None) -> None:
@@ -655,10 +669,11 @@ def machine() -> Machine:
 class Silent:
     """For one JSON document: nothing said while it runs, since what matters is in it."""
 
-    def step(self, step: str, message: str) -> AbstractContextManager[None]:
+    def step(self, step: str, message: str, *,
+             detail: str | None = None) -> AbstractContextManager[None]:
         return nullcontext()
 
-    def warn(self, message: str) -> None:
+    def warn(self, message: str, *, detail: str | None = None) -> None:
         pass
 
 
@@ -670,8 +685,8 @@ class TextSteps:
         self._said = -1
 
     @contextmanager
-    def step(self, step: str, message: str):
-        self._echo(f"{message}…")
+    def step(self, step: str, message: str, *, detail: str | None = None):
+        self._echo(f"{message}…" if detail is None else f"{message} {detail}")
         yield
 
     def progress(self, done: int, total: int | None) -> None:
@@ -683,8 +698,8 @@ class TextSteps:
             self._said = tenth
             self._echo(f"{done / 1e9:.1f} of {total / 1e9:.1f} GB")
 
-    def warn(self, message: str) -> None:
-        self._echo(f"warning: {message}", err=True)
+    def warn(self, message: str, *, detail: str | None = None) -> None:
+        self._echo(f"warning: {message}" + (f" ({detail})" if detail else ""), err=True)
 
     def error(self, message: str, *, log: Path | None = None,
               detail: str | None = None) -> None:
@@ -707,13 +722,17 @@ class JsonSteps(EventLines):
         super().__init__(write)
         self._current = STEPS[0]
 
-    def step(self, step: str, message: str) -> AbstractContextManager[None]:
+    def step(self, step: str, message: str, *,
+             detail: str | None = None) -> AbstractContextManager[None]:
+        """A step: `message` for a person, and `detail` — always there, null when there is
+        nothing more — a path or a command, which the app does not lead with."""
         self._current = step
-        self._emit({"event": "step", "step": step, "message": message})
+        self._emit({"event": "step", "step": step, "message": message, "detail": detail})
         return nullcontext()
 
-    def warn(self, message: str) -> None:
-        self._emit({"event": "step", "step": self._current, "message": message})
+    def warn(self, message: str, *, detail: str | None = None) -> None:
+        self._emit({"event": "step", "step": self._current, "message": message,
+                    "detail": detail})
 
     def progress(self, done: int, total: int | None) -> None:
         """The speech models' bytes while they download (`total` null when not known)."""

@@ -22,6 +22,8 @@ class Recorder:
 
     def __init__(self) -> None:
         self.lines: list[tuple] = []
+        #: Each step's or warning's `detail` that was not None, as (message, detail).
+        self.details: list[tuple[str, str]] = []
 
     def kinds(self) -> list[str]:
         return [line[0] for line in self.lines]
@@ -30,12 +32,19 @@ class Recorder:
         return [line[1:] for line in self.lines if line[0] == kind]
 
     @contextlib.contextmanager
-    def step(self, step: str, message: str):
+    def step(self, step: str, message: str, *, detail: str | None = None):
+        # A step and a warning are shown by the app as they are: no command, no path.
+        assert for_the_app(message), message
         self.lines.append(("step", step, message))
+        if detail is not None:
+            self.details.append((message, detail))
         yield
 
-    def warn(self, message: str) -> None:
+    def warn(self, message: str, *, detail: str | None = None) -> None:
+        assert for_the_app(message), message
         self.lines.append(("warn", message))
+        if detail is not None:
+            self.details.append((message, detail))
 
     def error(self, message: str, *, log: Path | None = None,
               detail: str | None = None) -> None:
@@ -147,8 +156,11 @@ def test_a_unit_that_will_not_install_is_said_and_not_waited_for(tmp_path):
     # Its installer writes the unit before loading it: what it left is removed, and said.
     script = str(root / "scripts" / "install-systemd.sh")
     assert log.of("script")[-1] == ([script, "--llm", "--uninstall"],)
-    assert log.of("warn") == [("its service could not be removed: install-systemd.sh --llm "
-                               "--uninstall exited with 3",)]
+    left = ("The model server's service is still installed: it could not be removed, and "
+            "may start again at the next login.")
+    assert log.of("warn") == [(left,)]
+    assert log.details == [(left, "its service could not be removed: install-systemd.sh "
+                                  "--llm --uninstall exited with 3")]
     assert log.kinds().index("warn") < log.kinds().index("error")
 
 
@@ -183,10 +195,10 @@ class CancelledAt(Recorder):
         self.at = at
 
     @contextlib.contextmanager
-    def step(self, step: str, message: str):
+    def step(self, step: str, message: str, *, detail: str | None = None):
         if step == self.at:
             raise KeyboardInterrupt
-        with super().step(step, message):
+        with super().step(step, message, detail=detail):
             yield
 
 
@@ -401,7 +413,9 @@ def test_llama_cpp_missing_is_downloaded_with_its_progress(chosen, tmp_path):
     assert log.of("progress") == [(5, 10), (10, 10)]
     runtime = [line[2] for line in log.lines if line[:2] == ("step", "runtime")]
     assert runtime[0].startswith("Installing llama.cpp build")
-    assert runtime[1] == f"llama.cpp: {chosen.cache_dir / 'llama.cpp' / 'llama-server'}"
+    assert runtime[1] == "llama.cpp is installed."
+    assert ("llama.cpp is installed.",
+            str(chosen.cache_dir / "llama.cpp" / "llama-server")) in log.details
 
 
 def test_llama_cpp_missing_on_a_mac_with_homebrew(chosen, tmp_path):
@@ -411,7 +425,8 @@ def test_llama_cpp_missing_on_a_mac_with_homebrew(chosen, tmp_path):
 
     assert code == 0
     assert log.of("script")[0] == (["brew", "install", "llama.cpp"],)
-    assert ("step", "runtime", "llama.cpp: /opt/homebrew/bin/llama-server") in log.lines
+    assert ("step", "runtime", "llama.cpp is installed.") in log.lines
+    assert ("llama.cpp is installed.", "/opt/homebrew/bin/llama-server") in log.details
 
 
 def test_an_install_that_fails_stops_before_the_unit(chosen, tmp_path):
@@ -616,6 +631,7 @@ def test_ollama_whose_old_unit_will_not_go_says_so_and_still_ends_done(tmp_path)
     assert start(Settings(llm_server_model=ENTRY.key), machine, log, tmp_path,
                  runtime="ollama", saved={}) == 0
     assert any("could not be removed" in line[0] for line in log.of("warn"))
+    assert any("install-launchd.sh" in detail for _, detail in log.details)
 
 
 def test_retire_llama_runs_only_when_there_is_a_unit(tmp_path):

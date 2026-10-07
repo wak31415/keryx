@@ -58,9 +58,10 @@ class InstallError(RuntimeError):
 class Report(Protocol):
     """How the steps are told: each before its slow work, warnings, and what stopped them."""
 
-    def step(self, step: str, message: str) -> AbstractContextManager[None]: ...
+    def step(self, step: str, message: str, *,
+             detail: str | None = None) -> AbstractContextManager[None]: ...
 
-    def warn(self, message: str) -> None: ...
+    def warn(self, message: str, *, detail: str | None = None) -> None: ...
 
     def error(self, message: str, *, log: Path | None = None,
               detail: str | None = None) -> None: ...
@@ -290,7 +291,7 @@ def _have_llama(settings: Settings, probes: Probes, report: StartReport, *, plat
             report.error("llama.cpp was installed, but its llama-server cannot be found.",
                          detail="not on PATH, nor in CACHE_DIR/llama.cpp")
             return False
-    with report.step("runtime", f"llama.cpp: {found}"):
+    with report.step("runtime", "llama.cpp is installed.", detail=found):
         pass
     return True
 
@@ -330,7 +331,8 @@ def _start_ollama(settings: Settings, probes: Probes, report: StartReport, *,
             said = retire_llama(probes.run_script, installed=True, root=root,
                                 platform=platform)
         if said != REMOVED:
-            report.warn(f"the llama.cpp model server: {said}")
+            report.warn("The llama.cpp model server's service is still installed: it could "
+                        "not be removed, and may start again at the next login.", detail=said)
     report.done(here.base_url, entry.ollama)
     return OK
 

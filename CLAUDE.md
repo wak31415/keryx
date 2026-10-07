@@ -162,7 +162,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   exactly one of `done`, `adopted`, `error`, `cancelled` on every path, a refusal included —
   on this stream and every other JSON-lines one, `error` is `message`, one sentence for a
   person and never a tool's output, and `detail`, always there: null, or what the tool said,
-  a path, the log (`EventLines.error`);
+  a path, the log (`EventLines.error`); a `step` event (a warning is one) is the same, a
+  sentence and its `detail` (`voice.JsonSteps`);
   a SIGTERM cancels, exit 130, and keeps the `.part`), `models use NAME [--default-agent]
   [--json]` (a downloaded model as the local agent's: saves what the wizard would, through
   the same `localmodels/use.py`; a restart picks it up), `models start [--runtime

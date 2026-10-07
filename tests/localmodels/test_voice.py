@@ -23,6 +23,8 @@ class Log:
 
     def __init__(self) -> None:
         self.lines: list[tuple] = []
+        #: Each step's or warning's `detail` that was not None, as (message, detail).
+        self.details: list[tuple[str, str]] = []
 
     def kinds(self) -> list[str]:
         return [line[0] for line in self.lines]
@@ -93,12 +95,19 @@ class Recorder:
         self.log = log
 
     @contextlib.contextmanager
-    def step(self, step: str, message: str):
+    def step(self, step: str, message: str, *, detail: str | None = None):
+        # A step and a warning are shown by the app as they are: no command, no path.
+        assert for_the_app(message), message
         self.log.lines.append(("step", step, message))
+        if detail is not None:
+            self.log.details.append((message, detail))
         yield
 
-    def warn(self, message: str) -> None:
+    def warn(self, message: str, *, detail: str | None = None) -> None:
+        assert for_the_app(message), message
         self.log.lines.append(("warn", message))
+        if detail is not None:
+            self.log.details.append((message, detail))
 
     def error(self, message: str, *, log: Path | None = None,
               detail: str | None = None) -> None:
@@ -278,6 +287,7 @@ def test_a_unit_that_will_not_install_is_said_and_no_voice_is_saved(settings, ro
     script = str(root / "scripts" / "install-launchd.sh")
     assert log.of("script")[-1] == ([script, "--voice", "--uninstall"],)
     assert len(log.of("warn")) == 1 and "could not be removed" in log.of("warn")[0][0]
+    assert "install-launchd.sh --voice --uninstall exited with 3" in log.details[0][1]
     assert log.kinds().index("warn") < log.kinds().index("error")
 
 
@@ -292,7 +302,8 @@ def test_a_unit_install_that_times_out_is_removed(settings, root):
 
     assert code == 1
     assert log.of("error")[0][1] == "install-launchd.sh --voice did not finish within 120 s"
-    assert log.of("warn") == [(voice.REMOVED,)]
+    assert log.of("warn") == [("The voice server's service was removed, so it does not "
+                               "restart in a loop.",)]
     assert log.of("script")[-1][0][-1] == "--uninstall"
 
 
@@ -304,10 +315,10 @@ class CancelledAt(Recorder):
         self.at = at
 
     @contextlib.contextmanager
-    def step(self, step: str, message: str):
+    def step(self, step: str, message: str, *, detail: str | None = None):
         if step == self.at:
             raise KeyboardInterrupt
-        with super().step(step, message):
+        with super().step(step, message, detail=detail):
             yield
 
 
@@ -503,7 +514,8 @@ def test_a_voice_kokoro_is_not_known_to_have_is_kept_with_a_warning(settings, ro
 
     assert code == 0 and saved[0]["VOICE_SERVER_VOICE"] == "zf_xiaoxiao"
     [(warning,)] = log.of("warn")
-    assert "zf_xiaoxiao" in warning
+    assert "zf_xiaoxiao" in warning and "keryx" not in warning
+    assert log.details == [(warning, "`keryx models list` shows the listed ones")]
     # Said while the voice is configured, which is the step it belongs to.
     configure = next(i for i, line in enumerate(log.lines) if line[:2] == ("step", "configure"))
     assert log.lines.index(("warn", warning)) > configure
