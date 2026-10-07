@@ -433,6 +433,78 @@ def test_setup_needs_a_terminal_and_says_what_an_agent_should_run(home):
     assert "--agent-instructions" in result.output
 
 
+def test_setup_plan_json_is_the_document_the_app_reads(home):
+    result = run("setup", "plan", "--json")
+
+    assert result.exit_code == 0, result.output
+    plan = json.loads(result.stdout)
+    assert plan["schema"] == 1 and plan["ready"] is False
+    voice = plan["steps"][0]
+    assert (voice["id"], voice["state"]) == ("voice", "needed")
+
+
+def test_setup_plan_prints_a_checklist(home):
+    result = run("setup", "plan")
+
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("Not ready:")
+    assert "○  Voice — OpenAI API key: not set" in result.output
+
+
+def test_setup_plan_shows_a_pending_migration_as_its_first_step(home, tmp_path):
+    (tmp_path / ".env").write_text("OWNER_NAME=Ada\n")
+
+    result = run("setup", "plan", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["steps"][0]["id"] == "migrate"
+
+
+def test_setup_plan_says_why_there_are_no_settings_to_plan_from(home):
+    result = run("setup", "plan", "--json", env={"PORT": "not-a-port"})
+
+    assert result.exit_code == 1
+    assert "PORT" in result.output and not result.stdout.startswith("{")
+
+
+def test_setup_plan_asks_the_checks_doctor_asks(home, monkeypatch):
+    from keryx import cli
+
+    asked = []
+    monkeypatch.setattr(cli, "_twilio_admin", lambda settings: asked.append("twilio"))
+
+    run("setup", "plan", "--json")
+
+    assert asked == ["twilio"]
+
+
+def test_setup_mark_records_a_step(home):
+    result = run("setup", "mark", "google", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"id": "google", "walked": True}
+    assert "google" in home.walked_sections()
+    assert run("setup", "mark", "pin").output == "pin: walked\n"
+
+
+def test_setup_mark_refuses_a_step_that_is_not_one(home):
+    result = run("setup", "mark", "nope", "--json")
+
+    assert result.exit_code == 2
+    assert "no setup step called nope" in result.output
+    assert home.walked_sections() == []
+
+
+def test_setup_mark_waits_for_the_migration(home, tmp_path):
+    (tmp_path / ".env").write_text("OWNER_NAME=Ada\n")
+
+    result = run("setup", "mark", "google")
+
+    assert result.exit_code == 2
+    assert "keryx migrate" in result.output
+    assert not home.config_path.exists()
+
+
 def test_setup_agent_instructions_print_without_asking(home):
     result = run("setup", "--agent-instructions")
 
@@ -562,6 +634,7 @@ def test_auth_status_says_off_for_an_agent_that_is_not_enabled(home, monkeypatch
         ("auth", "login", "google-workspace"),
         ("memory", "seed", "--file", "-", "--force"),
         ("setup",),
+        ("setup", "mark", "pin", "--json"),
     ],
 )
 def test_inside_a_task_the_owners_commands_are_refused(home, tmp_path, monkeypatch, args):

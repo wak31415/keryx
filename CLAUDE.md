@@ -16,6 +16,10 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Set a machine up: `uv run keryx setup [--all]` (the wizard: walks only the sections still
   missing, saves as it goes; needs a terminal). A coding agent: `uv run keryx setup
   --agent-instructions`, which prints the command-line path below
+- The steps to a first working call, as the Mac app's Setup Assistant shows them:
+  `uv run keryx setup plan [--json]` (a report, so it exits 0; it asks what `doctor` asks, and
+  a migration still to run is its first step), `uv run keryx setup mark STEP [--json]` (an
+  optional step skipped, or `pin` left to the first call; an unknown step exits 2)
 - Check the machine's setup: `uv run keryx doctor [--json] [--fix]` (`--fix`
   only tightens secret files to 0600/0700; `--json` carries each check's `section`,
   `state` — ok / missing / failed — and `title`, a setting's own when a key names the check)
@@ -193,8 +197,9 @@ remember:
   the network, a login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
   rich/questionary one, one question to a screen), `rewind` (Esc goes back a question and
   Tab skips to the first unanswered one, both by running the section again from a record
-  of its answers and probe results, so no probe runs twice), `auth`, and `guides/*.md`, which the wizard renders and the wiki links, so
-  each set of instructions is written once.
+  of its answers and probe results, so no probe runs twice), `auth`, `plan` (`keryx setup
+  plan`/`mark`: the wizard's `section_statuses` cut into the app's steps), and `guides/*.md`,
+  which the wizard renders and the wiki links, so each set of instructions is written once.
 - **localmodels** — `localmodels/` is the model on this machine: `hardware` (the GPU, the
   memory, the disk), `catalog` (the models offered, with verified files and checksums, what
   fits, the recommendation, the Kokoro voices), `download`, `runtimes` (finding or installing
@@ -508,7 +513,8 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
   commands that write what the service may not — `config import-env`, `auth login`,
-  `memory seed`, `setup`, `config lock|unlock`, `migrate`, `plugins install|remove`,
+  `memory seed`, `setup`, `setup mark`, `config lock|unlock`, `migrate`,
+  `plugins install|remove`,
   `models use`, `voice use` (before any install, handshake or save) — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
@@ -524,7 +530,10 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
 (`[setup] walked`) so an optional section left for later is not asked about on every run.
 It never assumes what the machine lacks: an agent that is signed in is not asked how to pay.
 The one write it makes outside the machine — the Twilio webhooks — comes after showing both
-addresses and a yes.
+addresses and a yes. `keryx setup plan` is the same decision for the Mac app
+(`setup/plan.py` over `wizard.section_statuses`), so the two cannot drift: decide a section's
+status in the wizard, and the plan follows. `walked` there only ever settles an optional step,
+or `pin` (the owner's "let the first call set it"); a required step is done by its checks.
 
 ## Storage follows XDG
 

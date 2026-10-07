@@ -72,7 +72,14 @@ SECTIONS: tuple[Section, ...] = (
 
 def statuses(ctx: SetupContext, checks: list[Check]) -> dict[str, str]:
     """Every visible section's status; the import section only while there is a `.env`."""
-    settings = ctx.settings
+    return section_statuses(ctx.settings, ctx.store, checks)
+
+
+def section_statuses(
+    settings: Settings, store: ConfigStore, checks: list[Check]
+) -> dict[str, str]:
+    """`statuses` without a terminal: what `keryx setup plan` reads as well."""
+    walked = store.walked_sections()
     found: dict[str, str] = {}
     for section in SECTIONS:
         key = section.key
@@ -81,11 +88,11 @@ def statuses(ctx: SetupContext, checks: list[Check]) -> dict[str, str]:
                 found[key] = MISSING
             continue
         if key == "settings":
-            found[key] = DONE if key in ctx.store.walked_sections() else MISSING
-        elif key == "issues" and key not in ctx.store.walked_sections():
+            found[key] = DONE if key in walked else MISSING
+        elif key == "issues" and key not in walked:
             # Off passes `doctor`, but it is a choice the owner has to have made.
             found[key] = MISSING
-        elif (key == "local" and key not in ctx.store.walked_sections()
+        elif (key == "local" and key not in walked
               and not (settings.voice_base_url or settings.local_agent_base_url)):
             # None passes `doctor` too; offered once, so the owner knows it is there.
             found[key] = MISSING
@@ -94,11 +101,11 @@ def statuses(ctx: SetupContext, checks: list[Check]) -> dict[str, str]:
             has = written.is_dir() and any(written.glob("*.md"))
             found[key] = DONE if has else MISSING
         else:
-            found[key] = _from_checks([check for check in checks if check.section == key])
+            found[key] = from_checks([check for check in checks if check.section == key])
     return found
 
 
-def _from_checks(checks: list[Check]) -> str:
+def from_checks(checks: list[Check]) -> str:
     if any(check.state == "failed" for check in checks):
         return FAILED
     if any(check.state == "missing" for check in checks):
