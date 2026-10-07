@@ -23,7 +23,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   so it always exits 0, a `keryx migrate` still to run included; `--json` is the document
   the Mac app's menu bar polls — `keryx/status.py`, schema 1, every part `ok`/`error` with
   its fields present either way)
-- Settings: `uv run keryx config list [--json] [--group G]`, `config get KEY… [--shell]`
+- Settings: `uv run keryx config list [--json] [--group G]` (`--json` gives each row its
+  `type` — `keryx/config/types.py` — and a choice's `choices`), `config get KEY… [--shell]`
   (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
   `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
   `config import-env [PATH]`, `config lock|unlock KEY` (what the running service may change)
@@ -47,7 +48,9 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - What the tasks spent, per project: `uv run keryx tasks usage [--days N] [--json]` (by the
   project each was dispatched with; the dollars are the agents' own estimates, and the
   voice calls are not tasks)
-- Read what the assistant remembers between calls: `uv run keryx memory` (`--path` for the file)
+- Read what the assistant remembers between calls: `uv run keryx memory` (`--path` for the file;
+  `--json` for `path`, `exists` and `text`, which is null when there is none or it cannot
+  be read)
 - The plugins (Slack, email, billing, cluster stats): `uv run keryx plugins [list] [--json]`,
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins

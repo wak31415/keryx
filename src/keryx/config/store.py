@@ -50,6 +50,7 @@ from keryx.config.settings import (
     is_secret,
     parse_google_client,
 )
+from keryx.config.types import field_type
 
 CONFIG_HEADER = (
     "Keryx's settings. `keryx config set KEY VALUE` changes one, and `keryx config list`\n"
@@ -234,6 +235,7 @@ class ConfigStore:
             key = env_var_name(name)
             secret = is_secret(name)
             source = self.source_of(key, settings)
+            kind, choices = field_type(name)
             rows.append(
                 {
                     "key": key,
@@ -246,6 +248,8 @@ class ConfigStore:
                     "service_writable": permissions.service_writable(key, overrides),
                     "protected": permissions.is_protected(key),
                     "value": None if secret else dumped[name],
+                    "type": kind,
+                    "choices": choices,
                 }
             )
         return rows

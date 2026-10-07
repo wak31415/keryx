@@ -52,7 +52,7 @@ from keryx.config.migrate import run as run_migration
 from keryx.config.permissions import ACTOR_ENVS, SERVICE, current_actor
 from keryx.config.settings import ConfigFileError, tolerate_broken_files
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
-from keryx.continuity.memory import memory_path, read_memory
+from keryx.continuity.memory import memory_document, memory_path, read_memory
 from keryx.continuity.retention import cutoff_for, prune, prune_with
 from keryx.doctor import (
     EndpointReach,
@@ -928,6 +928,7 @@ def memory(
     path_only: Annotated[
         bool, typer.Option("--path", help="Print where the memory lives and nothing else.")
     ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
 ) -> None:
     """Print what Keryx remembers between calls.
 
@@ -941,6 +942,10 @@ def memory(
     path = memory_path(settings.data_dir)
     if path_only:
         typer.echo(str(path))
+        return
+    if as_json:
+        document = memory_document(settings.data_dir, max_chars=MAX_MEMORY_PRINT_CHARS)
+        typer.echo(json.dumps(document, indent=2))
         return
 
     text = read_memory(settings.data_dir, max_chars=MAX_MEMORY_PRINT_CHARS)

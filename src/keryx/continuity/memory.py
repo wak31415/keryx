@@ -29,7 +29,7 @@ import logging
 import re
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from keryx.config import Settings, secure_dir, secure_file, write_private
 from keryx.continuity.transcripts import transcript_path
@@ -239,9 +239,27 @@ def read_memory(data_dir: Path, *, max_chars: int = MAX_MEMORY_CHARS) -> str:
         text = memory_path(data_dir).read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+    return _trimmed(text, max_chars)
+
+
+def _trimmed(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars].rstrip() + _TRIMMED_NOTE
+
+
+def memory_document(data_dir: Path, *, max_chars: int) -> dict[str, Any]:
+    """`keryx memory --json`: where the memory lives, whether it is there, and its text.
+
+    `text` is None both when there is no memory and when one is there that cannot be read
+    (a directory in its place, bytes that are not UTF-8); `exists` tells the two apart.
+    """
+    path = memory_path(data_dir)
+    try:
+        text: str | None = _trimmed(path.read_text(encoding="utf-8").strip(), max_chars)
+    except (OSError, UnicodeDecodeError):
+        text = None
+    return {"path": str(path), "exists": path.exists(), "text": text}
 
 
 class MemoryWriter:

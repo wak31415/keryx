@@ -159,6 +159,20 @@ def test_list_json_carries_everything_and_never_a_secret(home):
     assert rows["PORT"]["set"] is False and rows["PORT"]["group"] == "phone"
 
 
+def test_list_json_says_what_kind_of_value_each_setting_takes(home):
+    """What the Mac app builds each row's control from."""
+    rows = {row["key"]: row for row in json.loads(run("config", "list", "--json").output)}
+
+    assert (rows["VAD_MODE"]["type"], rows["VAD_MODE"]["choices"]) == (
+        "choice", ["server", "semantic"]
+    )
+    assert (rows["SMS_ENABLED"]["type"], rows["SMS_ENABLED"]["choices"]) == ("bool", None)
+    assert rows["PORT"]["type"] == "int"
+    assert rows["DATA_DIR"]["type"] == "path"
+    assert rows["AGENTS_ENABLED"]["type"] == "list"
+    assert rows["OPENAI_API_KEY"]["type"] == "string"
+
+
 def test_list_by_group_as_a_table(home):
     run("config", "set", "OPENAI_API_KEY", "--stdin", input="sk-live")
 

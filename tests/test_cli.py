@@ -1554,6 +1554,47 @@ def test_memory_path_prints_only_the_path(settings_stub):
     assert result.output.strip() == str(memory_path(settings_stub.data_dir))
 
 
+def test_memory_json_carries_the_path_and_the_text(settings_stub):
+    settings_stub.ensure_dirs()
+    memory_path(settings_stub.data_dir).write_text("# What Keryx knows\n\nThey hate jargon.\n")
+
+    result = runner.invoke(app, ["memory", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {
+        "path": str(memory_path(settings_stub.data_dir)),
+        "exists": True,
+        "text": "# What Keryx knows\n\nThey hate jargon.",
+    }
+
+
+def test_memory_json_with_nothing_remembered_has_no_text(settings_stub):
+    result = runner.invoke(app, ["memory", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {
+        "path": str(memory_path(settings_stub.data_dir)),
+        "exists": False,
+        "text": None,
+    }
+
+
+@pytest.mark.parametrize("unreadable", ["directory", "not utf-8"])
+def test_memory_json_says_a_memory_it_cannot_read_is_there(settings_stub, unreadable):
+    settings_stub.ensure_dirs()
+    path = memory_path(settings_stub.data_dir)
+    if unreadable == "directory":
+        path.mkdir()
+    else:
+        path.write_bytes(b"\xff\xfe not utf-8")
+
+    result = runner.invoke(app, ["memory", "--json"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert (document["exists"], document["text"]) == (True, None)
+
+
 # --- tools -----------------------------------------------------------------
 
 
