@@ -34,11 +34,31 @@ extension ScreenCatalog {
                             typed: "preview-dots-only")
                     .environment(AppModel.preview())
             },
+            Entry("configuration-model-menus", size: CGSize(width: 760, height: 640)) {
+                ConfigurationView(search: "model").environment(AppModel.preview())
+            },
+            Entry("configuration-options-unavailable", size: CGSize(width: 760, height: 640)) {
+                ConfigurationView(search: "model").environment(AppModel.preview(client: PreviewClient(
+                    options: Dictionary(uniqueKeysWithValues: optionKeys.map { ($0, .failure(noOptions)) }))))
+            },
+            Entry("configuration-other-sheet", size: CGSize(width: 420, height: 210)) {
+                OtherValueSheet(title: "Realtime model", current: "gpt-realtime-2.1", choose: { _ in })
+                    .environment(AppModel.preview())
+            },
             Entry("window-configuration", size: windowSize) {
                 RootView().environment(windowModel)
             },
         ]
     }
+
+    /// The settings `config options` can list.
+    private static var optionKeys: [String] {
+        PreviewData.config.filter(\.hasOptions).map(\.key)
+    }
+
+    /// What an older `keryx` says when asked for options it has no command for.
+    private static let noOptions = KeryxError.failed(
+        command: "keryx config options", exitCode: 2, message: "No such command 'options'.")
 
     /// The fixture's set secret, OPENAI_API_KEY.
     private static var secretRow: ConfigRow {

@@ -118,6 +118,12 @@ enum ConfigWording {
         return Wording.capitalised(spaced)
     }
 
+    /// A setting `keryx config options` can list the values of (a model, a voice): shown as
+    /// a menu of them rather than a text field.
+    static func hasMenu(_ row: ConfigRow) -> Bool {
+        row.hasOptions && !row.secret && row.type == "string"
+    }
+
     /// A list setting with a fixed set of choices (`AGENTS_ENABLED`): a checkbox per choice.
     static func isChecklist(_ row: ConfigRow) -> Bool {
         row.type == "list" && !(row.choices ?? []).isEmpty

@@ -55,6 +55,11 @@ struct ConfigRowView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
+            if ConfigWording.hasMenu(row), let note = OptionWording.note(model.options[row.key], titles: titles) {
+                Text(note)
+                    .lineLimit(2)
+                    .help(note)
+            }
             if let problem {
                 Text(problem)
                     .foregroundStyle(.red)
@@ -102,6 +107,12 @@ struct ConfigRowView: View {
     private var caption: String? {
         if ConfigWording.isPIN(row) { return ConfigWording.pinCaption(row) }
         if row.secret { return ConfigWording.secretCaption(row) }
+        if ConfigWording.hasMenu(row) {
+            let detail = OptionWording.detail(of: ConfigWording.editText(pending ?? row.value),
+                                              in: model.options[row.key]?.value)
+            let parts = [detail, ConfigWording.source(row.source)].compactMap { $0 }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        }
         return ConfigWording.source(row.source)
     }
 
@@ -118,6 +129,12 @@ struct ConfigRowView: View {
             secret
         } else if ConfigWording.isChecklist(row) {
             checklist
+        } else if ConfigWording.hasMenu(row) {
+            OptionMenu(key: row.key, title: row.displayTitle, current: ConfigWording.editText(pending ?? row.value)) {
+                value in
+                pending = value.isEmpty ? .null : .string(value)
+                write { await model.choose(row.key, option: value) }
+            }
         } else {
             switch row.type {
             case "bool":
