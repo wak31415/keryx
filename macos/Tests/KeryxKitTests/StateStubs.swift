@@ -360,7 +360,7 @@ final class OptionsGate: @unchecked Sendable {
 /// progress). It returns as soon as `condition` holds; the generous timeout is for a main
 /// actor kept busy by the suites that render views, never a wait in the passing case.
 @MainActor
-func eventually(timeout: Duration = .seconds(30), _ condition: @MainActor () -> Bool) async -> Bool {
+func eventually(timeout: Duration = .seconds(180), _ condition: @MainActor () -> Bool) async -> Bool {
     let clock = ContinuousClock()
     let deadline = clock.now + timeout
     while clock.now < deadline {

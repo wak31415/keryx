@@ -68,7 +68,15 @@ public final class AppModel {
     public package(set) var options: [String: Loadable<ConfigOptions>] = [:]
     public var taskDetail: [Int: Loadable<TaskDetail>] = [:]
 
-    public var selection: SidebarItem = .overview
+    public var selection: SidebarItem = .overview {
+        // Choosing another section drops a request nobody there answered, so it cannot
+        // spring open later.
+        didSet { if let requested, requested.destination != selection { self.requested = nil } }
+    }
+    /// What another window (the Setup Assistant) asked the main window to do, until the
+    /// screen that does it says so (`request(_:)`, `didHandle(_:)`) or another section is
+    /// chosen.
+    public private(set) var requested: AppRequest?
     /// What Local Models should scroll to and mark when it next shows: a catalog model's
     /// name, or one of its sections. Local Models clears it once shown.
     public var modelsSpotlight: String?
@@ -511,6 +519,19 @@ public final class AppModel {
     }
 
     // MARK: - Setup
+
+    /// Shows `request`'s section and holds the request for the screen there to answer; a
+    /// later request replaces one not yet answered.
+    public func request(_ request: AppRequest) {
+        selection = request.destination
+        requested = request
+    }
+
+    /// The screen has answered `request` (or will not): it is no longer pending. A different
+    /// request asked for since is left alone.
+    public func didHandle(_ request: AppRequest) {
+        if requested == request { requested = nil }
+    }
 
     /// Records a setup step as walked (an optional one skipped, or the PIN left to the first
     /// call), then reads the plan again.
