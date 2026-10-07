@@ -31,7 +31,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from setup.test_auth_stream import (
+from setup.auth_fakes import (
     CONSENT,
     DEVICE_AUTH,
     SIGN_IN,

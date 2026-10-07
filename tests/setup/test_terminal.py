@@ -6,6 +6,7 @@ thing under test, and no agent's CLI is ever started.
 
 import errno
 import os
+import signal
 import sys
 import time
 
@@ -111,3 +112,49 @@ def test_typing_into_a_child_that_has_gone_is_harmless():
     child.submit("too late")
     assert child.read(0.1) is None
     child.stop()
+
+
+#: Starts a grandchild in its own process group (the session's), says its pid, and exits.
+ORPHANING = (
+    "import subprocess, sys; "
+    "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+    "print('grandchild', p.pid, flush=True)"
+)
+
+
+def gone(pid: int, seconds: float = 5.0) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_stop_ends_what_a_child_left_running_after_it_exited():
+    child = PtyChild([sys.executable, "-c", ORPHANING], None, stop_after=0.5)
+    seen = drain(child, until="grandchild")
+    grandchild = int(seen.split("grandchild")[1].split()[0])
+    assert child.wait(5) == 0
+
+    child.stop()
+
+    assert gone(grandchild)
+
+
+def test_a_second_cancel_while_stopping_still_kills():
+    child = PtyChild([sys.executable, "-c", STUBBORN], None, stop_after=30)
+    time.sleep(0.2)  # long enough for the handler to be set
+    real_wait = child.wait
+
+    def interrupted(timeout):
+        child.wait = real_wait
+        raise KeyboardInterrupt  # Cancel, again, during the grace period
+
+    child.wait = interrupted
+
+    with pytest.raises(KeyboardInterrupt):
+        child.stop()
+    assert child.wait(5) == -signal.SIGKILL

@@ -17,7 +17,7 @@ import pytest
 from keryx.agents.registry import BACKENDS
 from keryx.config.store import ConfigStore
 from keryx.integrations.gmail import token_path
-from keryx.setup import auth_stream, google
+from keryx.setup import auth_stream, google, terminal
 from keryx.setup.auth_stream import (
     CLAUDE_CHANGED,
     CODE_REFUSED,
@@ -31,122 +31,23 @@ from keryx.setup.auth_stream import (
     LoginEvents,
     StdinLines,
 )
-
-# --- what the CLIs print ------------------------------------------------------------------
-
-
-def ink(text: str) -> str:
-    """A line the way Ink draws it: each word placed by a cursor move, not a space."""
-    column, out = 2, []
-    for word in text.split(" "):
-        out.append(f"\x1b[{column}G{word}")
-        column += len(word) + 1
-    return "".join(out) + "\r\r\n"
-
-
-def link(url: str) -> str:
-    """A link the way Ink draws it: an OSC 8 hyperlink around the same text, dimmed."""
-    return f"\x1b]8;id=1hp4g7j;{url}\x07\x1b[38;5;246m{url}\x1b[39m\x1b]8;;\x07\r\r\n"
-
-
-URL = (
-    "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-"
-    "5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth"
-    "%2Fcode%2Fcallback&scope=user%3Ainference&code_challenge=XTIPxqyiJ6K3l0-YcRJJ&"
-    "code_challenge_method=S256&state=NbsRsB5KxumPSWIbX6Z5ebx0YOkB2j"
+from setup.auth_fakes import (
+    CANARY,
+    CONSENT,
+    DEVICE_AUTH,
+    DEVICE_CODE,
+    DEVICE_URL,
+    SIGN_IN,
+    TOKEN,
+    TOKEN_SHOWN,
+    TYPED,
+    URL,
+    Clock,
+    FakeChild,
+    FakeLines,
+    ink,
+    link,
 )
-TOKEN = "sk-ant-oat01-" + "Zq9_x-" * 16 + "AA"
-#: Something only the screen says: it must never reach the output either.
-CANARY = "Welcome to Claude Code"
-SPINNER = "\r\x1b[1C\x1b[1A\x1b[38;5;231m✢\x1b[39m\r\r\n"
-SIGN_IN = [
-    "\x1b7\x1b[r\x1b8\x1b[?25l\x1b[?2004h" + ink(f"{CANARY} v2.1.281"),
-    ink("This will guide you through long-lived (1-year) auth token setup for your Claude "
-        "account. Claude subscription required."),
-    ink("· Opening browser to sign in…") + "\x1b[>0q\x1b[?u\x1b[c",
-    SPINNER * 3,
-    ink("Browser didn't open? Use the url below to sign in (c to copy)") + "\r\r\n" + link(URL),
-    ink("Hold Shift (Option in iTerm2, Fn in Terminal.app) while selecting"),
-    ink("Paste code here if prompted >"),
-]
-TOKEN_SHOWN = [
-    ink("✓ Long-lived authentication token created successfully!"),
-    ink("Your OAuth token (valid for 1 year):") + "\r\r\n",
-    f"\x1b[2G\x1b[38;5;114m{TOKEN}\x1b[39m\r\r\n",
-    ink("Store this token securely. You won't be able to see it again."),
-    ink("Use this token by setting: export CLAUDE_CODE_OAUTH_TOKEN=<token>"),
-]
-DEVICE_URL = "https://auth.openai.com/codex/device"
-DEVICE_CODE = "K7QF-2MXRA"
-B, G, R = "\x1b[94m", "\x1b[90m", "\x1b[0m"
-DEVICE_AUTH = (
-    f"\nWelcome to Codex [v{G}0.157.1{R}]\n{G}OpenAI's command-line coding agent{R}\n\n"
-    "Follow these steps to sign in with ChatGPT using device code authorization:\n\n"
-    f"1. Open this link in your browser and sign in to your account\n   {B}{DEVICE_URL}{R}\n\n"
-    f"2. Enter this one-time code {G}(expires in 15 minutes){R}\n   {B}{DEVICE_CODE}{R}\n\n"
-    f"{G}Continue only if you started this login in Codex. If a website or another person "
-    f"gave you this code, cancel.{R}\n"
-).replace("\n", "\r\n")
-
-# --- the fakes ----------------------------------------------------------------------------
-
-#: A step in a child's script: wait here until a line has been typed into it.
-TYPED = object()
-
-
-class Clock:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        return self.now
-
-
-class FakeChild:
-    """A child that prints its script a chunk per read, and then ends (or hangs)."""
-
-    def __init__(self, steps, clock: Clock, *, code: int = 0, hang: bool = False) -> None:
-        self.steps, self.clock, self.code, self.hang = list(steps), clock, code, hang
-        self.typed: list[str] = []
-        self.stopped = False
-
-    def read(self, timeout: float) -> bytes | None:
-        if self.stopped:
-            return None
-        if not self.steps or (self.steps[0] is TYPED and not self.typed):
-            if self.steps or self.hang:
-                self.clock.now += timeout
-                return b""
-            return None
-        step = self.steps.pop(0)
-        if step is TYPED:
-            return b""
-        if isinstance(step, BaseException):
-            raise step
-        return step.encode()
-
-    def submit(self, line: str) -> None:
-        self.typed.append(line)
-
-    def wait(self, timeout: float) -> int | None:
-        return self.code
-
-    def stop(self) -> None:
-        self.stopped = True
-
-
-class FakeLines:
-    """The app's stdin: these lines, then the end of input (or, `waiting`, nothing yet)."""
-
-    def __init__(self, *lines: str, waiting: bool = False) -> None:
-        self.lines, self.waiting = list(lines), waiting
-
-    def get(self, timeout: float) -> str | None:
-        if self.lines:
-            return self.lines.pop(0)
-        if self.waiting:
-            raise TimeoutError
-        return None
 
 
 class Run:
@@ -196,11 +97,36 @@ def ending(run: Run) -> dict:
 # --- claude -------------------------------------------------------------------------------
 
 
+#: Every secret Keryx's own environment may hold, by the name it travels under.
+AMBIENT = {
+    "OPENAI_API_KEY": "sk-proj-ambient", "CODEX_API_KEY": "sk-codex-ambient",
+    "CODEX_ACCESS_TOKEN": "codex-access-ambient", "ANTHROPIC_API_KEY": "sk-ant-api-ambient",
+    "ANTHROPIC_AUTH_TOKEN": "ant-auth-ambient", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-ambient",
+    "KERYX_PIN": "48291573", "JARVIS_PIN": "73829154", "TWILIO_AUTH_TOKEN": "twilio-ambient",
+    "SLACK_BOT_TOKEN": "xoxb-ambient", "OPENAI_ADMIN_KEY": "sk-admin-ambient",
+    "VOICE_API_KEY": "voice-ambient", "GOOGLE_OAUTH_CLIENT_SECRET": "gocspx-ambient",
+}
+
+
+@pytest.fixture
+def ambient(monkeypatch):
+    """Keryx's environment holding every secret it can, as a service's might."""
+    for name, value in AMBIENT.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("KERYX_HARMLESS", "kept")
+
+
+def assert_holds_no_secret(env: dict[str, str]) -> None:
+    assert not set(AMBIENT.values()) & set(env.values()), env
+    # Codex reads these three from its environment: blank, so nothing inherited is lent.
+    assert {env[name] for name in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")} \
+        == {""}
+    assert env["KERYX_HARMLESS"] == "kept"
+
+
 def test_claude_opens_the_link_asks_for_the_code_and_stores_the_token(
-    settings, agents, clock, monkeypatch
+    settings, agents, clock, ambient
 ):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api-ambient")
-    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-ambient")
     child = FakeChild([*SIGN_IN, TYPED, *TOKEN_SHOWN], clock)
     run = Run(child)
 
@@ -219,9 +145,94 @@ def test_claude_opens_the_link_asks_for_the_code_and_stores_the_token(
     argv, env = run.spawned[0]
     assert argv == ["/venv/bin/claude", "setup-token"]
     # The app opens the link; the CLI must not open a second tab, nor see a credential.
-    assert env["BROWSER"] and "ANTHROPIC_API_KEY" not in env
-    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert env["BROWSER"]
+    assert_holds_no_secret(env)
     assert child.stopped
+    assert run.lines[-1]["message"] == auth_stream.CLAUDE_SIGNED_IN
+
+
+def test_a_stored_api_key_is_said_to_come_first(settings, agents, clock):
+    keyed = settings.model_copy(update={"anthropic_api_key": "sk-ant-api03-stored"})
+    run = Run(FakeChild([*SIGN_IN, TYPED, *TOKEN_SHOWN], clock))
+
+    assert run("claude", keyed, lines=FakeLines("c#s"), clock=clock) == 0
+    assert ending(run)["message"] == auth_stream.CLAUDE_SIGNED_IN_KEY_FIRST
+    assert "sk-ant-api03-stored" not in run.text
+
+
+@pytest.mark.parametrize("line", ["c#s; rm -rf ~", "c#s\x1b[2J", "c\x03s", "c#s with space"])
+def test_a_line_that_is_not_a_code_is_never_typed(settings, agents, clock, line):
+    child = FakeChild([*SIGN_IN, TYPED], clock)
+    run = Run(child)
+
+    assert run("claude", settings, lines=FakeLines(line), clock=clock) == 2
+    assert ending(run) == {"event": "error", "message": auth_stream.NOT_A_CODE}
+    assert child.typed == [] and child.stopped
+    assert "rm -rf" not in run.text
+
+
+def test_a_terminal_that_closes_as_the_code_is_typed_has_changed(settings, agents, clock):
+    child = FakeChild([*SIGN_IN, TYPED], clock)
+
+    def closed(line):
+        raise OSError(5, "Input/output error")
+
+    child.submit = closed
+    run = Run(child)
+
+    assert run("claude", settings, lines=FakeLines("c#s"), clock=clock) == 1
+    assert ending(run) == {"event": "error", "message": CLAUDE_CHANGED}
+
+
+def test_a_token_wrapped_over_two_lines_is_not_stored_cut_short(settings, agents, clock):
+    wrapped = [ink("Your OAuth token (valid for 1 year):"),
+               f"\x1b[2G{TOKEN[:60]}\r\r\n", f"\x1b[2G{TOKEN[60:]}\r\r\n"]
+    run = Run(FakeChild([*SIGN_IN, TYPED, *wrapped], clock))
+
+    assert run("claude", settings, lines=FakeLines("c#s"), clock=clock) == 1
+    assert ending(run)["message"] == CLAUDE_CHANGED
+    assert TOKEN_KEY not in ConfigStore().stored()
+    assert TOKEN[:30] not in run.text
+
+
+def test_a_token_not_yet_drawn_to_the_end_of_its_line_is_waited_for(settings, agents, clock):
+    heading = ink("Your OAuth token (valid for 1 year):")
+    pieces = [heading, f"\x1b[2G{TOKEN[:95]}", TOKEN[95:], "\x1b[39m", "\r\r\n"]
+    run = Run(FakeChild([*SIGN_IN, TYPED, *pieces], clock))
+
+    assert run("claude", settings, lines=FakeLines("c#s"), clock=clock) == 0
+    assert ConfigStore().stored()[TOKEN_KEY] == TOKEN
+
+
+#: Links that are not Claude's sign-in, however they are dressed: a parser differential
+#: (`\` is `/` to a browser, so the host is evil.example), user info, ports, another scheme
+#: or host, a control character, and one that will not parse at all.
+CLAUDE_QUERY = "/cai/oauth/authorize?client_id=a&code_challenge=b&state=c"
+FOREIGN_CLAUDE_LINKS = [
+    f"https://evil.example\\@claude.com{CLAUDE_QUERY}",
+    f"https://user:pw@claude.com{CLAUDE_QUERY}",
+    f"https://claude.com@evil.example{CLAUDE_QUERY}",
+    f"https://claude.com:99999{CLAUDE_QUERY}",
+    f"https://claude.com:443{CLAUDE_QUERY}",
+    f"http://claude.com{CLAUDE_QUERY}",
+    f"https://claude.com.evil.example{CLAUDE_QUERY}",
+    f"https://evil.claude.com{CLAUDE_QUERY}",
+    f"https://claude.com{CLAUDE_QUERY}\x01x",
+    f"https://claude.com{CLAUDE_QUERY}<script>",
+    "https://[",
+    "https://claude.com/cai/oauth/authorize?client_id=a&state=c",
+]
+
+
+@pytest.mark.parametrize("url", FOREIGN_CLAUDE_LINKS)
+def test_a_link_that_is_not_claudes_own_is_never_opened(settings, agents, clock, url):
+    child = FakeChild([SIGN_IN[0], link(url), ink("Paste code here if prompted >")], clock,
+                      hang=True)
+    run = Run(child)
+
+    assert run("claude", settings, clock=clock) == 1
+    assert ending(run) == {"event": "error", "message": CLAUDE_CHANGED}
+    assert [line["event"] for line in run.lines] == ["error"]
 
 
 def test_claude_reads_a_link_and_a_token_that_arrive_in_pieces(settings, agents, clock):
@@ -387,6 +398,36 @@ def test_codex_hands_over_its_link_and_code_and_finishes(settings, agents, clock
     assert ending(run)["name"] == "codex" and ending(run)["event"] == "done"
     assert run.spawned[0][0] == ["/venv/bin/codex", "login", "--device-auth"]
     assert child.stopped
+    # Its pty closed: it gets as long to be reaped as a stop would give it.
+    assert child.waits[0] == terminal.STOP_AFTER_S
+
+
+def test_codex_is_lent_no_secret_of_keryxs(settings, agents, clock, ambient):
+    run = Run(FakeChild([DEVICE_AUTH], clock))
+
+    assert run("codex", settings, clock=clock) == 0
+    assert_holds_no_secret(run.spawned[0][1])
+
+
+FOREIGN_DEVICE_LINKS = [
+    "https://evil.example\\@auth.openai.com/codex/device",
+    "https://user@auth.openai.com/codex/device",
+    "https://auth.openai.com:8443/codex/device",
+    "http://auth.openai.com/codex/device",
+    "https://auth.openai.com.evil.example/codex/device",
+    "https://evil.openai.com/codex/device",
+    "https://auth.openai.com/elsewhere",
+    "https://[",
+]
+
+
+@pytest.mark.parametrize("url", FOREIGN_DEVICE_LINKS)
+def test_a_device_link_that_is_not_openais_own_is_never_opened(settings, agents, clock, url):
+    run = Run(FakeChild([DEVICE_AUTH.replace(DEVICE_URL, url)], clock, code=0))
+
+    assert run("codex", settings, clock=clock) == 1
+    assert ending(run) == {"event": "error", "message": CODEX_CHANGED}
+    assert [line["event"] for line in run.lines] == ["error"]
 
 
 @pytest.mark.parametrize(
@@ -508,7 +549,6 @@ def test_a_client_file_that_is_not_one_is_refused(settings, tmp_path):
 
 # --- google-workspace ---------------------------------------------------------------------
 
-CONSENT = "https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=cid&state=s"
 
 
 def test_google_workspace_opens_the_consent_link_then_waits_for_the_credentials(
@@ -594,3 +634,10 @@ def test_a_codex_that_cannot_start_is_an_error(settings, agents, clock):
     run.spawn = broken
     assert run("codex", settings, clock=clock) == 1
     assert ending(run)["message"] == "Codex's sign-in could not start (Permission denied)."
+
+
+def test_a_codex_terminal_that_fails_under_it_has_changed(settings, agents, clock):
+    run = Run(FakeChild([DEVICE_AUTH[:90], OSError(5, "Input/output error")], clock))
+
+    assert run("codex", settings, clock=clock) == 1
+    assert ending(run) == {"event": "error", "message": CODEX_CHANGED}

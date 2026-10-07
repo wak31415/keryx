@@ -31,6 +31,9 @@ SUBMIT_PAUSE_S = 0.3
 #: How long a child gets to go after SIGTERM before SIGKILL.
 STOP_AFTER_S = 2.0
 
+#: What Cancel sends: held off while the last of a child is killed.
+_CANCEL_SIGNALS = frozenset({signal.SIGTERM, signal.SIGINT})
+
 #: OSC (`ESC ]`, to BEL or ST): a title or a hyperlink's target, never on screen.
 _OSC = r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
 #: CSI (`ESC [`): colour, and the cursor moves Ink spaces its words with.
@@ -82,6 +85,7 @@ class PtyChild:
         finally:
             os.close(slave)
         self._master: int | None = master
+        self._stopped = False
 
     def read(self, timeout: float) -> bytes | None:
         if self._master is None:
@@ -112,12 +116,24 @@ class PtyChild:
             return None
 
     def stop(self) -> None:
-        if self._process.poll() is None:
+        """SIGTERM to the whole session, `stop_after` seconds' grace, then SIGKILL to whatever
+        is left of it — sent even when the child itself has already exited (its group id is
+        still its pid, and what it started may live on), and even when a second Cancel
+        lands during the grace."""
+        if self._stopped:
+            return
+        self._stopped = True
+        try:
             self._signal(signal.SIGTERM)
-            if self.wait(self._stop_after) is None:
+            self.wait(self._stop_after)
+        finally:
+            held = signal.pthread_sigmask(signal.SIG_BLOCK, _CANCEL_SIGNALS)
+            try:
                 self._signal(signal.SIGKILL)
                 self._process.wait()
-        self._close()
+                self._close()
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, held)
 
     def _signal(self, signum: int) -> None:
         with suppress(ProcessLookupError, PermissionError):

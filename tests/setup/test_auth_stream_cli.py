@@ -12,8 +12,7 @@ from typer.testing import CliRunner
 from keryx.cli import app
 from keryx.config.store import ConfigStore
 from keryx.setup import auth_stream
-
-from .test_auth_stream import SIGN_IN, TOKEN, TOKEN_SHOWN, TYPED, URL, Clock, FakeChild
+from setup.auth_fakes import SIGN_IN, TOKEN, TOKEN_SHOWN, TYPED, URL, Clock, FakeChild
 
 runner = CliRunner()
 

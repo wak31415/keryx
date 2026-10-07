@@ -12,17 +12,22 @@ there), `code` asks it for the one line Keryx then reads from stdin. The termina
   (an OSC 8 hyperlink around the same text), and "Paste code here if prompted >". What it
   prints once the code is accepted is read from its own strings, never seen: "Your OAuth
   token (valid for 1 year):", the token, "Store this token securely…". So the parser is
-  strict — Claude's sign-in host and path, the question, the heading before the token, the
-  token's `sk-ant-oat` shape — and anything else is `CLAUDE_CHANGED`, which sends the owner
-  to the API-key field. The screen is never echoed, logged or put in an error, because it
-  ends with the token on it; the token goes straight to `ConfigStore`, and only a fixed
-  sentence ever leaves. The CLI's own browser is pointed at nothing (`BROWSER`): the app
-  opens the link, once.
+  strict — an https link on exactly Claude's host, with no user info, no port and nothing a
+  browser would read another way (`_https_url`); the question; the heading before the
+  token; the token's `sk-ant-oat` shape at its full length, alone on its line — and
+  anything else is `CLAUDE_CHANGED`, which sends the owner to the API-key field. The code
+  typed back is a code's characters only (`NOT_A_CODE`, exit 2, otherwise). The screen is
+  never echoed, logged or put in an error, because it ends with the token on it; the token
+  goes straight to `ConfigStore`, and only a fixed sentence ever leaves. The CLI's own
+  browser is pointed at nothing (`BROWSER`): the app opens the link, once.
 - **codex** runs `codex login --device-auth` (the headless login, `agents.login_argv`). It
   prints "1. Open this link in your browser and sign in to your account", the link, "2.
   Enter this one-time code (expires in 15 minutes)", the code — read from the bundled
   binary's strings and the open-source CLI that prints them, never run, since asking for a
   code is a request to OpenAI — then waits, and exits 0 once the browser has finished.
+  Its link must be exactly `https://auth.openai.com/codex/device`.
+
+Every login child gets `_login_env`: Keryx's environment with no secret of Keryx's in it.
 - **gmail** is the two-step sign-in as one stream: the consent link, then the address the
   browser landed on, as one line on stdin.
 - **google-workspace** is `run_google_setup`, whose consent link is passed on as `open`
@@ -42,13 +47,15 @@ from typing import IO, Any, Protocol
 from urllib.parse import parse_qs, urlparse
 
 from keryx.agents.auth import redact
+from keryx.agents.codex import CREDENTIAL_VARIABLES
 from keryx.config import Settings
 from keryx.config.permissions import OWNER
+from keryx.config.settings import env_var_names
 from keryx.config.store import ConfigError, ConfigStore
 from keryx.localmodels.pull import EventLines
 from keryx.setup import agents, google
 from keryx.setup.auth import LOGINS, AuthError, agent_cli, use_client_file
-from keryx.setup.terminal import Child, PtyChild, visible
+from keryx.setup.terminal import STOP_AFTER_S, Child, PtyChild, visible
 
 #: Where the Claude token goes: the headless subscription tier (`agents/auth.py`).
 TOKEN_KEY = "CLAUDE_CODE_OAUTH_TOKEN"
@@ -64,6 +71,12 @@ POLL_S = 0.2
 KEEP_CHARS = 64_000
 
 CLAUDE_CHANGED = "Claude's sign-in changed; use an API key instead."
+CLAUDE_SIGNED_IN = "Signed in to Claude with your subscription."
+CLAUDE_SIGNED_IN_KEY_FIRST = (
+    "Signed in to Claude with your subscription; an Anthropic API key is also set, and it "
+    "is used first."
+)
+NOT_A_CODE = "That is not a sign-in code; copy the whole code Claude showed, and start again."
 CODE_REFUSED = "Claude did not accept that code; start the sign-in again."
 NO_CODE = "No code came back, so the sign-in was stopped; start it again."
 CODEX_CHANGED = "Codex's sign-in changed; use an API key instead."
@@ -72,21 +85,30 @@ CODEX_UNFINISHED = "Codex's sign-in did not finish; start it again."
 NO_ADDRESS = "No address came back, so the sign-in was stopped; start it again."
 TIMED_OUT = "The sign-in took too long, so it was stopped; start it again."
 
-#: Every sign-in link Claude has used, and the path it is on.
-CLAUDE_HOSTS = frozenset({"claude.com", "claude.ai", "platform.claude.com",
-                          "console.anthropic.com"})
+#: The hosts Claude's sign-in link is on (claude.com today, claude.ai before), exactly, and
+#: the path it ends in.
+CLAUDE_HOSTS = frozenset({"claude.com", "claude.ai"})
 CLAUDE_AUTHORIZE_PATH = "/oauth/authorize"
 #: The parameters a PKCE authorization link cannot be without.
 CLAUDE_AUTHORIZE_PARAMS = frozenset({"client_id", "code_challenge", "state"})
-#: Codex's device page, and the hosts it may be on.
-CODEX_HOSTS = ("openai.com", "chatgpt.com")
+#: Codex's device page, exactly.
+CODEX_DEVICE_HOST, CODEX_DEVICE_PATH = "auth.openai.com", "/codex/device"
+#: Every character a URL may hold (RFC 3986's unreserved and reserved sets, and `%`):
+#: anything else — `\`, which a browser reads as `/`, whitespace, a control character — is
+#: a link that parses one way here and another in the browser, and is refused.
+_URL_CHARS = re.compile(r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
+#: A sign-in code as Claude shows it (`code#state`): nothing a terminal would act on.
+_CODE = re.compile(r"[A-Za-z0-9#_.\-]+")
+#: Not a setting, but a credential all the same: never in a login child's environment.
+_ALSO_SECRET = ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR")
 
 #: A link on a raw screen, whole: it ends at a BEL (an OSC 8 target), an escape or a space.
 _LINK = re.compile(r"https://[^\s\x07\x1b]+(?=[\s\x07\x1b])")
 _ASKS_FOR_CODE = re.compile(r"Paste\s+code\s+here")
 _TOKEN_HEADING = re.compile(r"Your\s+OAuth\s+token")
-#: The token, whole: ended by something that cannot be part of it.
-_TOKEN = re.compile(r"sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}(?=[^A-Za-z0-9_-])")
+#: The token, whole: alone at the end of its line, and as long as one is (`sk-ant-oat01-`
+#: and about ninety-five characters), so a token wrapped or half drawn is never taken.
+_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])(sk-ant-oat\d{2}-[A-Za-z0-9_-]{80,})[ \t]*\n")
 _OAUTH_ERROR = re.compile(r"OAuth\s+error")
 _DEVICE_LINK = re.compile(r"Open\s+this\s+link[^\n]*\n\s*(https://\S+)\s")
 _DEVICE_CODE = re.compile(
@@ -97,7 +119,11 @@ _GOOGLE_CONSENT = re.compile(r"https://accounts\.google\.com/[^\s\"'<>)\]]+")
 
 
 class SignInFailed(RuntimeError):
-    """A sign-in that stopped, in one fixed sentence the app can show."""
+    """A sign-in that stopped, in one fixed sentence the app can show, and its exit code."""
+
+    def __init__(self, message: str, *, code: int = 1) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class Lines(Protocol):
@@ -180,7 +206,7 @@ def stream(
         return 2
     try:
         if name == "claude":
-            _claude(agent_cli(name), store, events, lines, spawn or PtyChild, clock)
+            _claude(agent_cli(name), settings, store, events, lines, spawn or PtyChild, clock)
         elif name == "codex":
             _codex(agent_cli(name), events, spawn or PtyChild, clock)
         else:
@@ -192,22 +218,55 @@ def stream(
                 _workspace(settings, store, events, workspace or google.run_google_setup)
     except (AuthError, SignInFailed, google.GoogleSetupError) as error:
         events.error(str(error))
-        return 1
+        return error.code if isinstance(error, SignInFailed) else 1
     return 0
+
+
+def _login_env(**extra: str) -> dict[str, str]:
+    """Keryx's environment for a login child, with no secret of Keryx's in it: every secret
+    setting's variable (the PIN under both its names, Twilio's, Slack's, the admin keys, the
+    voice key) and the Anthropic ones gone, and Codex's three credential variables blank —
+    as `agents/codex.py` blanks them for every other Codex child — so nothing is lent."""
+    secret = {name for field, info in Settings.model_fields.items() if not info.repr
+              for name in env_var_names(field)}
+    secret |= {*env_var_names("pin"), *_ALSO_SECRET}
+    env = {key: value for key, value in os.environ.items() if key not in secret}
+    return {**env, **dict.fromkeys(CREDENTIAL_VARIABLES, ""), **extra}
+
+
+def _https_url(url: str, hosts: frozenset[str] | set[str]) -> str | None:
+    """`url`'s path and query when it is https on exactly one of `hosts` — no user info, no
+    port, no character a browser would read differently — else None."""
+    if not _URL_CHARS.fullmatch(url):
+        return None
+    try:
+        parts = urlparse(url)
+        host, port = parts.hostname, parts.port
+    except ValueError:  # a port out of range, or a host that is not one
+        return None
+    if (parts.scheme != "https" or host is None or port is not None or parts.netloc != host
+            or host not in hosts):
+        return None
+    return parts.path + (f"?{parts.query}" if parts.query else "")
 
 
 # --- claude -------------------------------------------------------------------------------
 
 
-def _claude(cli: str, store: ConfigStore, events: LoginEvents, lines: Lines, spawn: Spawn,
-            clock: Callable[[], float]) -> None:
+def _claude(cli: str, settings: Settings, store: ConfigStore, events: LoginEvents,
+            lines: Lines, spawn: Spawn, clock: Callable[[], float]) -> None:
     argv = agents.login_argv("claude", cli, headless=True)
+    # The app opens the link: the CLI's own browser is pointed at nothing, so one tab opens.
+    env = _login_env(BROWSER=shutil.which("true") or "true",
+                     TERM=os.environ.get("TERM") or "xterm-256color")
     try:
-        child = spawn(argv, _claude_env())
+        child = spawn(argv, env)
     except OSError as error:
         raise SignInFailed(f"Claude's sign-in could not start ({error.strerror}).") from None
     try:
         token = _setup_token(child, events, lines, clock)
+    except OSError:  # the terminal closed under it: what it was doing is unknown
+        raise SignInFailed(CLAUDE_CHANGED) from None
     finally:
         child.stop()
     try:
@@ -215,17 +274,10 @@ def _claude(cli: str, store: ConfigStore, events: LoginEvents, lines: Lines, spa
     except ConfigError as error:
         raise SignInFailed(f"The token could not be saved: {redact(str(error), [token])}") \
             from None
-    events.done("claude", "Signed in to Claude with your subscription.", stored=TOKEN_KEY)
-
-
-def _claude_env() -> dict[str, str]:
-    """Keryx's environment, less any Claude credential (the sign-in needs none, and must not
-    see one), with the CLI's own browser pointed at nothing: the app opens the link."""
-    env = {key: value for key, value in os.environ.items()
-           if key not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", TOKEN_KEY)}
-    env["BROWSER"] = shutil.which("true") or "true"
-    env.setdefault("TERM", "xterm-256color")
-    return env
+    # An API key is the first tier (`agents/auth.py`): the owner should not think the
+    # subscription is what their tasks now run on.
+    message = CLAUDE_SIGNED_IN_KEY_FIRST if settings.anthropic_api_key else CLAUDE_SIGNED_IN
+    events.done("claude", message, stored=TOKEN_KEY)
 
 
 class Screen:
@@ -253,9 +305,12 @@ class Screen:
 def _authorize_url(screen: Screen) -> str | None:
     """Claude's sign-in link, whole, on Claude's own host; None until there is one."""
     for url in screen.links():
-        parts = urlparse(url)
-        if (parts.hostname in CLAUDE_HOSTS and parts.path.endswith(CLAUDE_AUTHORIZE_PATH)
-                and CLAUDE_AUTHORIZE_PARAMS <= parse_qs(parts.query).keys()):
+        rest = _https_url(url, CLAUDE_HOSTS)
+        if rest is None:
+            continue
+        path, _, query = rest.partition("?")
+        if (path.endswith(CLAUDE_AUTHORIZE_PATH)
+                and CLAUDE_AUTHORIZE_PARAMS <= parse_qs(query).keys()):
             return url
     return None
 
@@ -267,7 +322,7 @@ def _token(screen: Screen) -> str | None:
     if heading is None:
         return None
     found = _TOKEN.search(words, heading.end())
-    return found.group(0) if found else None
+    return found.group(1) if found else None
 
 
 def _setup_token(child: Child, events: LoginEvents, lines: Lines,
@@ -304,6 +359,8 @@ def _setup_token(child: Child, events: LoginEvents, lines: Lines,
             code = (line or "").strip()
             if not code:
                 raise SignInFailed(NO_CODE)
+            if not _CODE.fullmatch(code):
+                raise SignInFailed(NOT_A_CODE, code=2)
             screen.clear()
             child.submit(code)
             typed = True
@@ -315,11 +372,13 @@ def _setup_token(child: Child, events: LoginEvents, lines: Lines,
 def _codex(cli: str, events: LoginEvents, spawn: Spawn, clock: Callable[[], float]) -> None:
     argv = agents.login_argv("codex", cli, headless=True)
     try:
-        child = spawn(argv, None)
+        child = spawn(argv, _login_env())
     except OSError as error:
         raise SignInFailed(f"Codex's sign-in could not start ({error.strerror}).") from None
     try:
         _device_auth(child, events, clock)
+    except OSError:
+        raise SignInFailed(CODEX_CHANGED) from None
     finally:
         child.stop()
     events.done("codex", "Signed in to Codex with ChatGPT.")
@@ -332,11 +391,7 @@ def _device_link(screen: Screen) -> tuple[str, str] | None:
     if link is None or code is None:
         return None
     url = link.group(1)
-    parts = urlparse(url)
-    host = parts.hostname or ""
-    if parts.scheme != "https" or not any(
-        host == allowed or host.endswith(f".{allowed}") for allowed in CODEX_HOSTS
-    ):
+    if _https_url(url, {CODEX_DEVICE_HOST}) != CODEX_DEVICE_PATH:
         return None
     return url, code.group(1)
 
@@ -352,7 +407,8 @@ def _device_auth(child: Child, events: LoginEvents, clock: Callable[[], float]) 
             raise SignInFailed(CODEX_CHANGED)
         chunk = child.read(POLL_S)
         if chunk is None:
-            if shown and child.wait(POLL_S) == 0:
+            # Its terminal has closed; give it as long to be reaped as a stop would.
+            if shown and child.wait(STOP_AFTER_S) == 0:
                 return
             if shown:
                 raise SignInFailed(CODEX_UNFINISHED)
