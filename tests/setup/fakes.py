@@ -197,6 +197,13 @@ class FakeWorld:
     download_error: BaseException | None = None
     #: What `free_port` hands back for each port asked about; the port itself otherwise.
     ports: dict = field(default_factory=dict)
+    #: The servers' units ("llm", "voice") the service manager would say are installed.
+    units: set = field(default_factory=set)
+    #: Whether the local model server, the voice server's words, answers.
+    words: bool = True
+    #: Whether the voice's speech models are in the cache, and what fetching them says.
+    speech_ready: bool = True
+    fetched: str | None = None
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
@@ -264,6 +271,14 @@ class FakeWorld:
             realtime_problem=lambda endpoint: self.calls.append(("realtime", endpoint.base_url))
             or self.realtime,
             wait_for_server=self._wait,
+            unit_installed=lambda kind: self.calls.append(("unit_installed", kind))
+            or kind in self.units,
+            words_up=lambda endpoint: self.calls.append(
+                ("words", endpoint.base_url if endpoint else None)) or self.words,
+            speech_python=lambda: "/tools/s2s/bin/python",
+            fetch_speech=lambda python, repos, progress: self.calls.append(
+                ("fetch", [repo.id for repo in repos])) or self.fetched,
+            models_ready=lambda settings: self.speech_ready,
         )
 
     def _download(self, url, dest, *, size, sha256, progress):

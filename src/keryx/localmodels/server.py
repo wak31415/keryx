@@ -15,8 +15,8 @@ that the server names the chosen model. A server that does not come up, or serve
 model, has its unit removed before the error is told: no unit is left restarting in a loop.
 """
 
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import AbstractContextManager, contextmanager, suppress
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -48,7 +48,7 @@ STEPS = ("runtime", "unit", "start", "check")
 #: What `start` says, first, while there is no model it could serve.
 NOT_READY = "choose and download a model first"
 #: Said of a unit `start` removed rather than leave it restarting a server that fails.
-REMOVED = "its service was removed, so it does not restart in a loop"
+REMOVED = voice.REMOVED
 
 
 class InstallError(RuntimeError):
@@ -56,9 +56,11 @@ class InstallError(RuntimeError):
 
 
 class Report(Protocol):
-    """How the steps are told: each before its slow work, and what stopped them."""
+    """How the steps are told: each before its slow work, warnings, and what stopped them."""
 
     def step(self, step: str, message: str) -> AbstractContextManager[None]: ...
+
+    def warn(self, message: str) -> None: ...
 
     def error(self, message: str, *, log: Path | None = None) -> None: ...
 
@@ -69,8 +71,6 @@ class StartReport(Report, Protocol):
     def progress(self, done: int, total: int | None) -> None: ...
 
     def done(self, url: str, served_model: str) -> None: ...
-
-    def warn(self, message: str) -> None: ...
 
 
 class Probes(Protocol):
@@ -140,15 +140,14 @@ def serve_here(
 ) -> bool:
     """Install the model server's unit from the checkout at `root` and wait for it to load
     `LLM_SERVER_MODEL`; False once the report has been told why it did not."""
-    with report.step("unit", "Installing the model server's service"):
-        problem = voice.install_unit("--llm", run_script, root=root, platform=platform)
-    if problem is not None:
-        report.error(problem)
-        return False
     here = endpoint(settings)
-    with report.step("start", f"Loading the model into llama.cpp at {here.base_url}"), \
-            _removed_if_stopped(run_script, root=root, platform=platform):
-        problem = wait_for_server(here, "models", LLM_START_S)
+    # One guard from the unit to the server answering (`voice.here`'s rule).
+    with _removed_if_stopped(run_script, root=root, platform=platform):
+        if not voice.install_unit_step("--llm", "Installing the model server's service",
+                                       run_script, report, root=root, platform=platform):
+            return False
+        with report.step("start", f"Loading the model into llama.cpp at {here.base_url}"):
+            problem = wait_for_server(here, "models", LLM_START_S)
     if problem is not None:
         removed = remove_unit(run_script, root=root, platform=platform)
         report.error(f"the model server did not come up: {problem}; {removed}",
@@ -157,19 +156,11 @@ def serve_here(
     return True
 
 
-@contextmanager
 def _removed_if_stopped(
     run_script: Callable[[Sequence[str]], int], *, root: Path, platform: str | None
-) -> Iterator[None]:
-    """The model server's unit removed when what this wraps is stopped — a Cancel, which is
-    what an owner does to a server that will not load — and the stop then goes on: a unit
-    installed and never seen to work is never left behind to restart in a loop."""
-    try:
-        yield
-    except BaseException:
-        with suppress(Exception):
-            remove_unit(run_script, root=root, platform=platform)
-        raise
+) -> AbstractContextManager[None]:
+    """The model server's unit removed when what this wraps is stopped (`voice`'s rule)."""
+    return voice.removed_if_stopped("--llm", run_script, root=root, platform=platform)
 
 
 def retire_llama(
@@ -188,14 +179,7 @@ def remove_unit(
     run_script: Callable[[Sequence[str]], int], *, root: Path, platform: str | None = None
 ) -> str:
     """Remove the model server's unit; what became of it, in a clause."""
-    script, problem = voice.installer("--llm", root=root, platform=platform)
-    if script is None:
-        return f"its service could not be removed: {problem}"
-    code = run_script([str(script), "--llm", "--uninstall"])
-    if code != 0:
-        return f"its service could not be removed: {script.name} --llm --uninstall exited " \
-               f"with {code}"
-    return REMOVED
+    return voice.remove_unit("--llm", run_script, root=root, platform=platform)
 
 
 # --- Ollama --------------------------------------------------------------------------------
@@ -251,13 +235,15 @@ def start(
         return REFUSED
     if not _have_llama(settings, probes, report, platform=platform):
         return FAILED
-    if not serve_here(settings, report, run_script=probes.run_script,
-                      wait_for_server=probes.wait_for_server, root=root, platform=platform):
-        return FAILED
     here = endpoint(settings)
-    with report.step("check", f"Asking the model server which model it serves, {alias}"), \
-            _removed_if_stopped(probes.run_script, root=root, platform=platform):
-        _up, served = probes.served(here.base_url)
+    # The unit guarded from its install to the check, with no moment between unguarded.
+    with _removed_if_stopped(probes.run_script, root=root, platform=platform):
+        if not serve_here(settings, report, run_script=probes.run_script,
+                          wait_for_server=probes.wait_for_server, root=root,
+                          platform=platform):
+            return FAILED
+        with report.step("check", f"Asking the model server which model it serves, {alias}"):
+            _up, served = probes.served(here.base_url)
     if served != alias:
         removed = remove_unit(probes.run_script, root=root, platform=platform)
         report.error(f"the model server at {here.base_url} serves {served or 'no model it names'}"
@@ -413,9 +399,6 @@ class JsonSteps(voice.JsonSteps):
     def __init__(self, write: Callable[[str], None]) -> None:
         super().__init__(write)
         self._current = STEPS[0]
-
-    def progress(self, done: int, total: int | None) -> None:
-        self._progressed(done, total, step=self._current)
 
     def done(self, url: str, served_model: str) -> None:  # type: ignore[override]
         self._end({"event": "done", "url": url, "served_model": served_model})

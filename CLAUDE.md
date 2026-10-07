@@ -35,16 +35,35 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   it is `advanced`, its `type` — `keryx/config/types.py` — and a choice's
   `choices`, and `has_options`; the table keeps the keys, which are what is typed),
   `config options KEY [--json]` (the models or voices a setting can take, read live from
-  OpenAI, Anthropic, Codex or a server of the owner's when it can be, else Keryx's own list
-  with `error` saying why — exit 0 either way; `keryx/config/options.py`), `config verify
-  KEY [--stdin] [--json]` (whether OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_API_KEY or
-  TWILIO_AUTH_TOKEN — with the saved SID — works, before it is saved: `--stdin` checks the
+  OpenAI, Anthropic, Codex, a server of the owner's or the Twilio account when it can be,
+  else Keryx's own list with `error` saying why — exit 0 either way;
+  `keryx/config/options.py`), `config verify KEY [--stdin] [--pair] [--json]` (whether
+  OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_API_KEY or TWILIO_AUTH_TOKEN — with the saved SID,
+  or with `--stdin --pair` the SID and token on two lines, neither saved, an SID not `AC` and
+  32 hex exiting 2 before Twilio is asked — works, before it is saved: `--stdin` checks the
   typed value and saves nothing; a key that does not work is still exit 0, `problem` one
-  sentence of cause and never the key; any other key exits 2; `keryx/config/verify.py`),
+  sentence of cause and never the key; any other key exits 2;
+  `keryx/config/verify.py`),
   `config get KEY… [--shell]` (never a secret), `config set KEY VALUE […]` (a secret only with
   `--stdin` or `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every
   directory), `config import-env [PATH]`, `config lock|unlock KEY` (what the running service
   may change)
+- The phone without a terminal (the Mac app's phone steps; `keryx/phone.py`, which the
+  wizard's phone section shares, its hostname rule and Twilio client included): `uv run
+  keryx phone numbers [--json]` (the Twilio account's numbers, each with where its calls go
+  and `points_here` — both webhooks here, as `phone webhooks` compares them, so the two
+  screens agree; a report, so Twilio's refusal is its `error` and still exit 0 — `config
+  options TWILIO_NUMBER` lists the same), `phone webhooks [--json]` (where `TWILIO_NUMBER`
+  points against where it should, and `matches`), `phone webhooks --apply [--json]` (the
+  owner's alone: points both webhooks at `PUBLIC_HOST` — the one write to Twilio, which the
+  app confirms first, showing both addresses; exit 1 when Twilio refuses, 2 when something
+  it needs is not saved or `PUBLIC_HOST` is not a bare hostname — `phone.hostname_problem`,
+  the wizard's own rule, since the settings tab can save `https://…` and a webhook written
+  from it would point somewhere else), `phone tunnel [--json]` (ngrok or cloudflared on
+  PATH, as `doctor` finds them, its unit, and `reachable`: whether Keryx answers at
+  `https://PUBLIC_HOST/health` within 3 s, null with no hostname, false with `error` for one
+  that is not a hostname). The numbers are the owner's own, shown to the owner, and never
+  logged but as `mask_number`
 - Move a Jarvis install to Keryx — its XDG directories (`~/.config/jarvis`, …), or an older
   `~/.jarvis` and a checkout `.env`: `uv run keryx migrate [--dry-run] [--yes]` (stops the
   service, moves, retires `jarvis.service` for `keryx.service`, re-renders the unit and the
@@ -125,8 +144,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   machine's GPU and memory, the recommended one marked, and the local voices; `--json` adds
   `servers`, the model and voice servers' units and whether they answer, asked on loopback
   only, and `served_model`, the model the running server names — `model` is the setting),
-  `models pull NAME [--json]` (resumable, checksummed, into `CACHE_DIR/models`; a copy
-  in the Hugging Face cache is linked instead; `--json` is JSON lines — `progress`, then
+  `models pull NAME [--json]` (resumable, checksummed, into `CACHE_DIR/models`; a copy in
+  the Hugging Face cache is linked instead; `--json` is JSON lines — `progress`, then
   exactly one of `done`, `adopted`, `error`, `cancelled` on every path, a refusal included;
   a SIGTERM cancels, exit 130, and keeps the `.part`), `models use NAME [--default-agent]
   [--json]` (a downloaded model as the local agent's: saves what the wizard would, through
@@ -135,23 +154,40 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   when it is missing, the `--llm` unit, the wait for it, and a check that the server names
   that model — through the wizard's own `localmodels/server.py`; a server that does not come
   up, serves another model, or is cancelled while it loads has its unit removed first, and
-  `--runtime ollama` removes an installed llama.cpp unit once Ollama serves the model; `--json` is JSON lines — `step`
-  (`runtime`, `unit`, `start`, `check`), `progress` while llama.cpp downloads, then exactly
-  one of `done` (`url`, `served_model`), `error`, `cancelled`; exit 2 until a model is chosen
-  and downloaded), `models stop [--json]` (removes the model server's unit), `models serve
-  llm|voice` (what the units run: it reads the settings and becomes the server)
+  `--runtime ollama` removes an installed llama.cpp unit once Ollama serves the model;
+  `--json` is JSON lines — `step` (`runtime`, `unit`, `start`, `check`), `progress` while
+  llama.cpp downloads, then exactly one of `done` (`url`, `served_model`), `error`,
+  `cancelled`; exit 2 until a model is chosen and downloaded), `models stop [--json]`
+  (removes the model server's unit), `models serve llm|voice` (what the units run: it reads
+  the settings and becomes the server; the voice server first waits, up to `LLM_START_S`,
+  for the model server its words come from, so the two loading together at login is no crash
+  loop)
 - The voice on a call: `uv run keryx voice [--json]` (where it is — `mode` openai, here or
   server — and the voice server on this machine: installed, its unit, whether it answers on
-  loopback, the local model its words come from; `needs` says `local_agent_model` while there
-  is none; a server elsewhere is asked only while it is the voice, never with its key in the
-  output), `voice use openai [--json]`, `voice use server URL [--key-stdin | --clear-key]
-  [--keep-anyway] [--json]` (saved only once it opens a Realtime session, unless kept anyway;
-  exit 1 with the `problem` and nothing saved; the stored key is kept and asked with unless
-  `--key-stdin` replaces it — shown as `(set)` — or `--clear-key` forgets it), `voice use here
-  [--voice NAME] [--json]` (what the wizard does, through the same `localmodels/voice.py`:
-  install speech-to-speech, its unit, wait for it, then save it; `--json` is JSON lines — a
-  `step` before each slow one, then exactly one of `done`, `error`, `cancelled`; exit 2 for a
-  refusal before anything is tried, 1 for what stopped it, 130 for a SIGTERM)
+  loopback, the local model its words come from, its `stt` and `tts` and whether their
+  models are downloaded, `models_ready`; `needs` says `local_agent_model` while there is
+  none; a server elsewhere is asked only while it is the voice, never with its key in the
+  output), `voice download [--json]` (the speech models `VOICE_SERVER_STT`, `_TTS` and
+  `_VOICE` need, fetched into the Hugging Face cache by speech-to-speech's own Python, which
+  is installed first when missing — `localmodels/speech.py`; `--json` is JSON lines — a
+  `step` (`install`, `download`), `progress` in bytes, then exactly one of `done` (`stt`,
+  `tts`), `error`, `cancelled`; exit 2 for a speech model Keryx cannot name; `config options
+  VOICE_SERVER_STT|TTS` offers only the ones it can name — never whisper-mlx, though one set
+  before is kept — and marks the downloaded ones), `voice use openai [--json]`, `voice use
+  server URL [--key-stdin | --clear-key] [--keep-anyway] [--json]` (saved only once it opens
+  a Realtime session, unless kept anyway; exit 1 with the `problem` and nothing saved; the
+  stored key is kept and asked with unless `--key-stdin` replaces it — shown as `(set)` — or
+  `--clear-key` forgets it), `voice use here [--voice NAME] [--json]` (what the wizard does,
+  through the same `localmodels/voice.py`: install speech-to-speech, download its speech
+  models when they are not in the cache — `voice download`'s own step, `progress` and all,
+  and a download that stops installs no unit — then its unit, wait for it, then save it;
+  refused while the local model server its words come from does not answer, and a server
+  that does not come up, or whose start is cancelled, has its unit removed first — as does a
+  unit install that fails, times out or is cancelled — so no unit is left crash-looping;
+  `--json` is JSON lines — a `step` before each slow one (`install`, `download`,
+  `configure`, `unit`, `start`), `progress` while it downloads, then exactly one of `done`,
+  `error`, `cancelled`; exit 2 for a refusal before anything is tried, 1 for what stopped
+  it, 130 for a SIGTERM)
 - The Mac app (`macos/`): `macos/scripts/test.sh` (the Swift tests; it adds the Command Line
   Tools' Testing framework path only when they are the developer directory),
   `macos/scripts/build-app.sh [--install]` (`macos/build/Keryx.app`, signed ad hoc;
@@ -263,10 +299,14 @@ remember:
   model server's steps — llama.cpp installed when missing, its `--llm` unit, the wait for
   it, or Ollama's pull — which the wizard and `keryx models start` both run) and `voice` (the
   voice's three places, its status, and the steps that set each up, which the wizard and
-  `keryx voice use` both run: the wizard only asks and tells). `setup/local_models.py` is the
-  wizard's section and `keryx models` and `keryx voice` the command line; every install,
-  download and network read in the wizard goes through `Probes`, and in `keryx voice use`
-  through `voice.machine()`.
+  `keryx voice use` both run: the wizard only asks and tells; and `keryx voice download`'s),
+  `speech` (the Hugging Face repositories speech-to-speech fetches for each `--stt` and
+  `--tts`, read from its own source and never guessed — one it cannot name is said, not
+  fetched — whether they are in the cache, and the fetch) and `speech_fetch` (the script
+  that fetch runs with speech-to-speech's own Python; Keryx never imports it to run it).
+  `setup/local_models.py` is the wizard's section and `keryx models` and `keryx voice` the
+  command line; every install, download and network read in the wizard goes through
+  `Probes`, and in `keryx voice use` and `voice download` through `voice.machine()`.
 - **continuity** — `continuity/` is what survives the end of a call: `briefing`, `memory`
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
   `retention`, which prunes exactly those artefacts.
@@ -569,7 +609,9 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   commands that write what the service may not — `config import-env`, `auth login|logout`,
   `memory seed`, `setup`, `setup mark`, `pin set`, `config lock|unlock`, `migrate`,
   `plugins install|remove|set`, `models use`, `voice use` (before any install, handshake or
-  save), `models start|stop`, `service install|uninstall` — refuse outright under
+  save), `voice download`, `models start|stop`, `service install|uninstall`, `phone
+  webhooks --apply` (before Twilio is asked anything) — refuse
+  outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
@@ -584,7 +626,8 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
 (`[setup] walked`) so an optional section left for later is not asked about on every run.
 It never assumes what the machine lacks: an agent that is signed in is not asked how to pay.
 The one write it makes outside the machine — the Twilio webhooks — comes after showing both
-addresses and a yes. `keryx setup plan` is the same decision for the Mac app
+addresses and a yes, through `keryx/phone.py`, which `keryx phone webhooks --apply` calls
+after the Mac app has shown the same two addresses and had the same yes. `keryx setup plan` is the same decision for the Mac app
 (`setup/plan.py` over `wizard.section_statuses`), so the two cannot drift: decide a section's
 status in the wizard, and the plan follows. `walked` there only ever settles an optional step,
 or `pin` (the owner's "let the first call set it"); a required step is done by its checks,

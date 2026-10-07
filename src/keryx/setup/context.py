@@ -24,9 +24,9 @@ from keryx.endpoints import Endpoint, Probe, probe
 from keryx.issues import GhStatus, gh_status
 from keryx.localmodels import download as model_files
 from keryx.localmodels import hardware as machine
-from keryx.localmodels import runtimes, servers, use
+from keryx.localmodels import runtimes, servers, speech, use, voice
 from keryx.localmodels.hardware import Hardware
-from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
+from keryx.notify.twilio_out import TwilioAdmin
 from keryx.setup.ui import Prompter
 
 #: The one read OpenAI answers for any working key.
@@ -111,12 +111,19 @@ def _headless() -> bool:
     return is_headless()
 
 
+def _rest_admin(sid: str, token: str) -> TwilioAdmin:
+    from keryx import phone
+
+    return phone.rest_admin(sid, token)
+
+
 @dataclass
 class Probes:
     """Everything the wizard does to the outside world. Each is replaced in the tests."""
 
     openai_key_problem: Callable[[str], str | None] = openai_key_problem
-    twilio: Callable[[str, str], TwilioAdmin] = RestTwilioAdmin
+    #: `keryx phone`'s own admin client, with its timeout; late-bound through the module.
+    twilio: Callable[[str, str], TwilioAdmin] = lambda sid, token: _rest_admin(sid, token)
     smoke: Callable[[Settings, str], Awaitable[RunResult]] = _smoke
     run_task: Callable[[Settings, str, str], Awaitable[RunResult]] = _task
     run_login: Callable[[Sequence[str]], int] = run_command
@@ -146,6 +153,13 @@ class Probes:
     wait_for_server: Callable[[Endpoint, str, float], str | None] = servers.wait_for
     #: Whether the "llm" or "voice" server's unit is installed: asked, never changed.
     unit_installed: Callable[[str], bool] = use.unit_installed
+    #: Whether the server the voice server takes its words from answers (`voice.words_up`).
+    words_up: Callable[[Endpoint | None], bool] = voice.words_up
+    #: The voice server's speech models: speech-to-speech's own Python, the fetch it runs,
+    #: and whether they are all in the Hugging Face cache (`localmodels.speech`).
+    speech_python: Callable[[], str | None] = runtimes.speech_to_speech_python
+    fetch_speech: Callable[..., str | None] = speech.fetch
+    models_ready: Callable[[Settings], bool] = speech.models_ready
 
 
 @dataclass

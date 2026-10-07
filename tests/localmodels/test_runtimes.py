@@ -121,3 +121,54 @@ def test_a_fetch_tells_its_progress_with_the_size_when_it_is_given(
 
     assert (tmp_path / "a").read_bytes() == b"abcdef"
     assert told[-1] == (6, total)
+
+
+def tool(tmp_path):
+    """speech-to-speech as `uv tool install` leaves it: an environment with its command and
+    its Python in `bin/`, and the command linked from the tool bin directory."""
+    env = tmp_path / "uv" / "tools" / "speech-to-speech" / "bin"
+    env.mkdir(parents=True)
+    (env / "python").write_text("")
+    command = env / "speech-to-speech"
+    command.write_text(f"#!{env / 'python'}\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "speech-to-speech").symlink_to(command)
+    return env, bin_dir / "speech-to-speech"
+
+
+def test_speech_to_speechs_python_is_the_one_in_its_own_environment(tmp_path, monkeypatch):
+    env, linked = tool(tmp_path)
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: str(linked))
+
+    assert runtimes.speech_to_speech_python() == str(env / "python")
+    assert runtimes.speech_to_speech_python(str(linked)) == str(env / "python")
+
+
+def test_speech_to_speechs_python_is_read_from_its_first_line_when_it_is_a_copy(tmp_path):
+    env, _linked = tool(tmp_path)
+    copy = tmp_path / "copied" / "speech-to-speech"
+    copy.parent.mkdir()
+    copy.write_text(f"#!{env / 'python'} -E\nimport sys\n")
+
+    assert runtimes.speech_to_speech_python(str(copy)) == str(env / "python")
+
+
+def test_no_speech_to_speech_has_no_python(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: None)
+    assert runtimes.speech_to_speech_python() is None
+
+    odd = tmp_path / "speech-to-speech"
+    odd.write_bytes(b"\x7fELF binary")
+    assert runtimes.speech_to_speech_python(str(odd)) is None
+    assert runtimes.speech_to_speech_python(str(tmp_path / "gone")) is None
+    shebang = tmp_path / "other"
+    shebang.write_text("#!/no/such/python\n")
+    assert runtimes.speech_to_speech_python(str(shebang)) is None
+
+
+def test_a_loop_of_links_has_no_python(tmp_path):
+    (tmp_path / "a").symlink_to(tmp_path / "b")
+    (tmp_path / "b").symlink_to(tmp_path / "a")
+
+    assert runtimes.speech_to_speech_python(str(tmp_path / "a")) is None

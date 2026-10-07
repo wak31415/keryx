@@ -6,6 +6,7 @@ Nothing here reaches the network or starts a `codex` process.
 """
 
 import dataclasses
+import json
 import sys
 import threading
 import types
@@ -697,6 +698,54 @@ def test_the_voice_servers_speech_models_are_built_in(settings):
     assert stt.source == tts.source == "builtin" and stt.free_form and tts.free_form
 
 
+def test_a_speech_model_already_downloaded_says_so(settings):
+    cached = {("stt", "whisper"), ("tts", "kokoro")}
+    asked: list[tuple] = []
+    found = sources(speech_ready=lambda kind, value: asked.append((kind, value))
+                    or (kind, value) in cached)
+
+    stt = options_for("VOICE_SERVER_STT", settings, found)
+    tts = options_for("VOICE_SERVER_TTS", settings, found)
+
+    assert [(o.value, o.detail) for o in stt.options] == [
+        ("parakeet-tdt", None), ("whisper", "downloaded")]
+    assert [(o.value, o.detail) for o in tts.options] == [("kokoro", "downloaded"),
+                                                         ("qwen3", None)]
+    assert asked == [("stt", "parakeet-tdt"), ("stt", "whisper"),
+                     ("tts", "kokoro"), ("tts", "qwen3")]
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_only_speech_models_keryx_can_set_up_are_offered(platform):
+    """Each one offered has models `keryx voice download` can name and fetch."""
+    from keryx.localmodels import speech
+
+    assert all(speech.stt_repos(v, platform=platform) is not None
+               for v in options.VOICE_SERVER_STT)
+    assert all(speech.tts_repos(v, "af_heart", platform=platform) is not None
+               for v in options.VOICE_SERVER_TTS)
+    assert "whisper-mlx" not in options.VOICE_SERVER_STT
+
+
+def test_a_speech_model_no_longer_offered_is_still_the_current_one(settings):
+    """An owner's whisper-mlx, set before: kept, shown, never offered to anyone else."""
+    chosen = settings.model_copy(update={"voice_server_stt": "whisper-mlx"})
+
+    found = options_for("VOICE_SERVER_STT", chosen, sources())
+
+    assert found.current == "whisper-mlx" and found.free_form
+    assert found.options[-1] == Option("whisper-mlx", "whisper-mlx", "current")
+
+
+def test_the_real_sources_ask_the_hugging_face_cache(settings, monkeypatch):
+    from keryx.localmodels import speech
+
+    monkeypatch.setattr(speech, "ready", lambda chosen, kind, value: (chosen, kind, value))
+
+    assert options.default_sources(settings).speech_ready("stt", "whisper") == (
+        settings, "stt", "whisper")
+
+
 def test_the_default_sources_are_the_real_ones(settings):
     real = options.default_sources(settings)
 
@@ -808,3 +857,96 @@ def test_a_server_says_what_went_wrong_by_status(settings, status, says):
     found = options_for("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(status=status)))
 
     assert found.error == says
+
+
+# --- TWILIO_NUMBER: the account's own numbers ---------------------------------------------
+
+TWILIO_SID = "AC0123456789abcdef0123456789abcdef"
+TWILIO_TOKEN = "tok-planted-0123456789abcdef"
+
+
+class FakeTwilio:
+    """`(sid, token)` → an admin with these numbers, or one that raises `error`."""
+
+    def __init__(self, numbers=(), error=None):
+        self.numbers_, self.error = list(numbers), error
+        self.pairs: list[tuple[str, str]] = []
+
+    def __call__(self, sid, token):
+        self.pairs.append((sid, token))
+        return self
+
+    def account_name(self):
+        if self.error:
+            raise self.error
+        return "Ada's account"
+
+    def numbers(self):
+        if self.error:
+            raise self.error
+        return self.numbers_
+
+
+@pytest.fixture
+def twilio_saved(settings):
+    return settings.model_copy(update={
+        "twilio_account_sid": TWILIO_SID, "twilio_auth_token": TWILIO_TOKEN,
+        "twilio_number": "+15550001111",
+    })
+
+
+def test_twilio_numbers_are_the_accounts_own(twilio_saved):
+    from keryx.notify.twilio_out import TwilioNumber
+
+    twilio = FakeTwilio([TwilioNumber("PN1", "+15550001111", None, None, "Office"),
+                         TwilioNumber("PN2", "+15550002222", None, None, "")])
+
+    found = options_for("TWILIO_NUMBER", twilio_saved, sources(twilio=twilio))
+
+    assert (found.source, found.live, found.error) == ("twilio", True, None)
+    assert found.current == "+15550001111"
+    assert found.options == [Option("+15550001111", "+15550001111", "Office"),
+                             Option("+15550002222", "+15550002222", None)]
+    assert twilio.pairs == [(TWILIO_SID, TWILIO_TOKEN)]
+
+
+def test_without_twilio_credentials_only_the_current_number_is_offered(twilio_saved):
+    twilio = FakeTwilio()
+    bare = twilio_saved.model_copy(update={"twilio_auth_token": None})
+
+    found = options_for("TWILIO_NUMBER", bare, sources(twilio=twilio))
+
+    assert (found.source, found.live) == ("builtin", False)
+    assert found.options == [Option("+15550001111", "+15550001111", "current")]
+    assert found.error == "There's no TWILIO_AUTH_TOKEN saved, so Keryx can't ask Twilio."
+    assert twilio.pairs == []
+
+
+def test_twilio_refusing_is_a_cause_and_never_the_token(twilio_saved):
+    from keryx.notify.twilio_out import TwilioError
+
+    twilio = FakeTwilio(error=TwilioError(f"Authenticate {TWILIO_TOKEN}", status=401))
+
+    found = options_for("TWILIO_NUMBER", twilio_saved, sources(twilio=twilio))
+
+    assert (found.source, found.live) == ("builtin", False)
+    assert found.error == "Twilio didn't accept the account SID and auth token."
+    assert TWILIO_TOKEN not in json.dumps(found.as_dict())
+
+
+def test_an_account_with_no_numbers_says_so(twilio_saved):
+    found = options_for("TWILIO_NUMBER", twilio_saved, sources(twilio=FakeTwilio()))
+
+    assert found.error == "That Twilio account has no phone numbers."
+
+
+def test_the_twilio_source_is_the_phones_admin(twilio_saved, monkeypatch):
+    from keryx import phone
+    from keryx.notify.twilio_out import TwilioNumber
+
+    twilio = FakeTwilio([TwilioNumber("PN1", "+15550001111", None, None, "Office")])
+    monkeypatch.setattr(phone, "rest_admin", twilio)
+
+    found = options_for("TWILIO_NUMBER", twilio_saved, sources())
+
+    assert found.live and twilio.pairs == [(TWILIO_SID, TWILIO_TOKEN)]

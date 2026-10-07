@@ -956,6 +956,73 @@ def test_verify_a_twilio_token_with_the_stored_sid(home, credential_checks):
     assert store_bytes(home) == before
 
 
+def test_verify_a_twilio_pair_checks_both_and_saves_neither(home, credential_checks):
+    run("config", "set", "TWILIO_ACCOUNT_SID", "AC" + "0" * 32)
+    before = store_bytes(home)
+
+    result = run("config", "verify", "TWILIO_AUTH_TOKEN", "--stdin", "--pair", "--json",
+                 input=f"{TWILIO_SID}\ngood\n")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {
+        "key": "TWILIO_AUTH_TOKEN", "ok": True, "problem": None, "detail": "Ada's account",
+    }
+    assert credential_checks == [("twilio", f"{TWILIO_SID}:good")]
+    assert store_bytes(home) == before
+
+
+def test_a_twilio_pair_refused_is_a_result_and_quotes_nothing(home, credential_checks):
+    result = run("config", "verify", "TWILIO_AUTH_TOKEN", "--stdin", "--pair", "--json",
+                 input=f"{TWILIO_SID}\n{PLANTED}\n")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {
+        "key": "TWILIO_AUTH_TOKEN", "ok": False,
+        "problem": "Twilio didn't accept the account SID and auth token.", "detail": None,
+    }
+    assert PLANTED not in result.output
+    assert not home.config_path.exists() and not home.secrets_path.exists()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["OPENAI_API_KEY", "--stdin", "--pair"], ["TWILIO_AUTH_TOKEN", "--pair"]],
+)
+def test_a_pair_is_only_the_twilio_token_on_stdin(home, credential_checks, argv):
+    result = run("config", "verify", *argv, "--json", input=f"{TWILIO_SID}\ngood\n")
+
+    assert result.exit_code == 2
+    assert result.stdout == "" and credential_checks == []
+
+
+@pytest.mark.parametrize(
+    "sid", ["", "AC123", "PN0123456789abcdef0123456789abcdef", TWILIO_SID + "0",
+            "AC0123456789abcdef0123456789abcdeg"],
+)
+def test_a_pair_whose_sid_is_not_an_account_sid_asks_nobody(home, credential_checks, sid):
+    result = run("config", "verify", "TWILIO_AUTH_TOKEN", "--stdin", "--pair", "--json",
+                 input=f"{sid}\ngood\n")
+
+    assert result.exit_code == 2
+    assert result.stdout == "" and credential_checks == []
+    assert "AC and 32 hexadecimal characters" in result.stderr
+
+
+def test_at_a_terminal_a_pair_asks_for_the_sid_then_the_token_hidden(monkeypatch):
+    from types import SimpleNamespace
+
+    from keryx import cli
+
+    asked = []
+    answers = iter([" AC1 ", " tok "])
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(cli.typer, "prompt", lambda text, hide_input=False: asked.append(
+        (text, hide_input)) or next(answers))
+
+    assert cli._read_twilio_pair() == ("AC1", "tok")
+    assert asked == [("TWILIO_ACCOUNT_SID", False), ("TWILIO_AUTH_TOKEN", True)]
+
+
 def test_verify_without_stdin_checks_the_stored_value(home, credential_checks):
     run("config", "set", "ANTHROPIC_API_KEY", "--stdin", input="good\n")
 

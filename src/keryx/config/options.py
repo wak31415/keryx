@@ -2,9 +2,10 @@
 
 The Mac app fills a dropdown from this the moment it is opened, so the list is read live
 where there is something to ask — OpenAI's and Anthropic's model lists, Codex's own, a
-server of the owner's — and built in where there is not. Each source is one small function
-here; whatever reaches outside the process (the HTTP getter, Codex, the hardware and the
-disk) comes in through `Sources`, which the tests replace wholesale.
+server of the owner's, the Twilio account's numbers — and built in where there is not.
+Each source is one small function here; whatever reaches outside the process (the HTTP
+getter, Codex, Twilio, the hardware and the disk) comes in through `Sources`, which the
+tests replace wholesale.
 
 A list that cannot be read is never a failure of the command: it falls back to the values
 Keryx knows, `live` false and `error` one sentence saying why, and only why (the app says
@@ -43,10 +44,12 @@ ANTHROPIC_VERSION = "2023-06-01"
 REALTIME_VOICES = (
     "alloy", "ash", "ballad", "cedar", "coral", "echo", "marin", "sage", "shimmer", "verse",
 )
-#: speech-to-speech's `--stt` and `--tts` handlers that run on this machine: the ones the
-#: settings name, and Whisper on MLX for a Mac. The command takes others, so the field is
-#: free-form; these are the ones worth offering.
-VOICE_SERVER_STT = ("parakeet-tdt", "whisper", "whisper-mlx")
+#: speech-to-speech's `--stt` and `--tts` handlers Keryx can set up: the ones whose models
+#: `keryx voice download` can name and fetch (`localmodels.speech`). The command takes
+#: others, so the field is free-form and a value set before is kept; these are the ones
+#: offered. Not whisper-mlx: Lightning Whisper MLX is an extra Keryx does not install, with
+#: models of its own package's choosing.
+VOICE_SERVER_STT = ("parakeet-tdt", "whisper")
 VOICE_SERVER_TTS = ("kokoro", "qwen3")
 #: What an OpenAI id holds when it is not a chat model the Responses API can search with.
 NOT_CHAT = (
@@ -54,7 +57,7 @@ NOT_CHAT = (
     "moderation",
 )
 
-Source = Literal["openai", "anthropic", "codex", "server", "catalog", "builtin"]
+Source = Literal["openai", "anthropic", "codex", "server", "twilio", "catalog", "builtin"]
 
 
 class Unavailable(Exception):
@@ -112,6 +115,11 @@ class Sources:
     codex_models: Callable[[dict[str, str], float], list[CodexModel]]
     hardware: Callable[[], Hardware]
     downloaded: Callable[[ModelEntry], bool]
+    #: `(kind, value)` → whether `VOICE_SERVER_STT` ("stt") or `_TTS` ("tts") at `value`
+    #: has its speech models in the Hugging Face cache (`localmodels.speech.ready`).
+    speech_ready: Callable[[str, str], bool] = lambda kind, value: False
+    #: `(account_sid, auth_token)` → a `TwilioAdmin` (`keryx.phone.rest_admin`).
+    twilio: Callable[[str, str], Any] = lambda sid, token: _rest_twilio(sid, token)
 
 
 @dataclass(frozen=True)
@@ -178,6 +186,12 @@ def sdk_codex_models(env: dict[str, str], timeout: float) -> list[CodexModel]:
     return result
 
 
+def _rest_twilio(sid: str, token: str) -> Any:
+    from keryx import phone
+
+    return phone.rest_admin(sid, token)
+
+
 def default_sources(settings: Settings) -> Sources:
     """The real network, Codex, hardware and disk."""
 
@@ -191,8 +205,14 @@ def default_sources(settings: Settings) -> Sources:
 
         return download.is_downloaded(settings.cache_dir, entry)
 
+    def speech_ready(kind: str, value: str) -> bool:
+        from keryx.localmodels import speech
+
+        return speech.ready(settings, kind, value)
+
     return Sources(
-        get=http_get, codex_models=sdk_codex_models, hardware=hardware, downloaded=downloaded
+        get=http_get, codex_models=sdk_codex_models, hardware=hardware, downloaded=downloaded,
+        speech_ready=speech_ready,
     )
 
 
@@ -462,8 +482,36 @@ def kokoro_voices(settings: Settings, sources: Sources) -> Found:
     )
 
 
-def _builtin(values: tuple[str, ...]) -> Callable[[Settings, Sources], Found]:
-    return lambda settings, sources: Found([Option(v, v) for v in values], "builtin", False)
+def _speech(kind: str, values: tuple[str, ...]) -> Callable[[Settings, Sources], Found]:
+    """The voice server's speech models Keryx offers, each marked "downloaded" once its
+    models are in the Hugging Face cache (`keryx voice download` fetches them)."""
+    def found(settings: Settings, sources: Sources) -> Found:
+        return Found([
+            Option(v, v, "downloaded" if sources.speech_ready(kind, v) else None)
+            for v in values
+        ], "builtin", False)
+
+    return found
+
+
+def twilio_numbers(settings: Settings, sources: Sources) -> Found:
+    """The Twilio account's own numbers, as `keryx phone numbers` lists them."""
+    from keryx import phone
+
+    def read() -> list[Option]:
+        try:
+            _, numbers = phone.account_numbers(settings, sources.twilio)
+        except phone.Refused as why:
+            raise Unavailable(f"{str(why).removesuffix('.')}, so Keryx can't ask Twilio.") from None
+        except phone.Failed as why:
+            raise Unavailable(str(why)) from None
+        if not numbers:
+            raise Unavailable("That Twilio account has no phone numbers.")
+        return [
+            Option(n.phone_number, n.phone_number, n.friendly_name or None) for n in numbers
+        ]
+
+    return _live("twilio", read, [])
 
 
 PROVIDERS: dict[str, Callable[[Settings, Sources], Found]] = {
@@ -476,8 +524,9 @@ PROVIDERS: dict[str, Callable[[Settings, Sources], Found]] = {
     "LOCAL_AGENT_MODEL": local_agent_models,
     "LLM_SERVER_MODEL": served_models,
     "VOICE_SERVER_VOICE": kokoro_voices,
-    "VOICE_SERVER_STT": _builtin(VOICE_SERVER_STT),
-    "VOICE_SERVER_TTS": _builtin(VOICE_SERVER_TTS),
+    "VOICE_SERVER_STT": _speech("stt", VOICE_SERVER_STT),
+    "VOICE_SERVER_TTS": _speech("tts", VOICE_SERVER_TTS),
+    "TWILIO_NUMBER": twilio_numbers,
 }
 OPTION_KEYS = frozenset(PROVIDERS)
 #: The one setting whose value must be on the list: a voice the key may not use makes

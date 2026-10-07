@@ -21,11 +21,10 @@ from keryx.localmodels.voice import FAILED, OK, REFUSED, installer
 from keryx.restart import service
 from keryx.restart.service import LAUNCHD_LABEL, SYSTEMD_UNIT, ServiceTarget
 
-#: How long an installer may run: a few `keryx config get`s and the service manager's
-#: answers, with room for `uv` to sync the environment first.
-INSTALL_TIMEOUT_S = 120.0
-#: The exit code said for an installer stopped at the timeout, as `timeout(1)` says it.
-TIMED_OUT = 124
+#: How long an installer may run, and the exit code said for one stopped then: `voice`'s,
+#: which gives its own installer runs the same deadline.
+INSTALL_TIMEOUT_S = voice_setup.INSTALL_TIMEOUT_S
+TIMED_OUT = voice_setup.TIMED_OUT
 #: The units, in the order `keryx service` lists them.
 KINDS = ("agent", "tunnel", "llm", "voice")
 #: Each unit's name, by service manager: what `scripts/install-*.sh` installs (the agent's

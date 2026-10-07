@@ -1,5 +1,5 @@
 """Everything Keryx sends *out* through Twilio: one SMS, one outbound call —
-plus `TwilioAdmin`, the account calls `keryx setup` and `keryx doctor` make.
+plus `TwilioAdmin`, the account calls `keryx setup`, `keryx phone` and `keryx doctor` make.
 
 The Twilio helper library is synchronous, so every REST call goes through
 `asyncio.to_thread` — a text or a call-back must never stall the event loop that is
@@ -153,12 +153,14 @@ class TwilioOut:
 
 @dataclass(frozen=True)
 class TwilioNumber:
-    """One number on the account, and where its calls go now."""
+    """One number on the account, where its calls go now, and the name the owner gave it
+    in the Twilio console (Twilio's own default is the number, formatted)."""
 
     sid: str
     phone_number: str
     voice_url: str | None
     status_callback: str | None
+    friendly_name: str = ""
 
 
 class TwilioAdmin(Protocol):
@@ -172,8 +174,9 @@ class TwilioAdmin(Protocol):
 class RestTwilioAdmin:
     """`TwilioAdmin` over the Twilio REST client. Synchronous: setup and doctor are.
 
-    Reads, apart from `set_webhooks`, which `keryx setup` calls only after the owner has
-    said yes to exactly the two URLs it is about to write.
+    Reads, apart from `set_webhooks`, which `keryx setup` and `keryx phone webhooks --apply`
+    (`keryx.phone.point_here`) call only after the owner has said yes to exactly the two
+    URLs about to be written.
     """
 
     def __init__(self, account_sid: str, auth_token: str, client: Any | None = None) -> None:
@@ -197,6 +200,7 @@ class RestTwilioAdmin:
                 phone_number=number.phone_number,
                 voice_url=number.voice_url or None,
                 status_callback=number.status_callback or None,
+                friendly_name=number.friendly_name or "",
             )
             for number in listed
         ]

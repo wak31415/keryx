@@ -32,9 +32,11 @@ class Log:
 
 class FakeMachine:
     def __init__(self, log: Log, *, s2s=None, free=500 * 10**9, script_code=0,
-                 ports=None, server_problem=None, realtime=None) -> None:
+                 ports=None, server_problem=None, realtime=None, words=True,
+                 ready=True) -> None:
         self.log, self.s2s, self.free, self.script_code = log, s2s, free, script_code
         self.ports, self.server_problem, self.realtime = ports or {}, server_problem, realtime
+        self.words, self.ready = words, ready
 
     def speech_to_speech(self):
         return self.s2s
@@ -52,7 +54,33 @@ class FakeMachine:
 
     def wait_for_server(self, endpoint: Endpoint, kind: str, timeout: float):
         self.log.lines.append(("wait", kind, endpoint.base_url, timeout))
+        if isinstance(self.server_problem, BaseException):
+            raise self.server_problem
         return self.server_problem
+
+    def words_up(self, endpoint: Endpoint | None) -> bool:
+        self.log.lines.append(("words", endpoint.base_url if endpoint else None))
+        return self.words
+
+    #: speech-to-speech's own Python, and what fetching the speech models says.
+    python: str | None = "/tools/s2s/bin/python"
+    fetched: str | None = None
+
+    def speech_python(self) -> str | None:
+        return self.python
+
+    def fetch_speech(self, python, repos, progress) -> str | None:
+        self.log.lines.append(("fetch", python, [repo.id for repo in repos]))
+        progress(0, 100)
+        if isinstance(self.fetched, BaseException):
+            raise self.fetched
+        progress(100, 100)
+        self.repos = list(repos)
+        return self.fetched
+
+    def models_ready(self, settings) -> bool:
+        self.log.lines.append(("ready", settings.voice_server_stt))
+        return self.ready
 
     def realtime_problem(self, endpoint: Endpoint):
         self.log.lines.append(("realtime", endpoint.base_url, endpoint.api_key))
@@ -74,8 +102,11 @@ class Recorder:
     def error(self, message: str, *, log: Path | None = None) -> None:
         self.log.lines.append(("error", message, log))
 
-    def done(self, base_url: str) -> None:
-        self.log.lines.append(("done", base_url))
+    def done(self, *ended: str) -> None:
+        self.log.lines.append(("done", *ended))
+
+    def progress(self, done: int, total: int | None) -> None:
+        self.log.lines.append(("progress", done, total))
 
 
 @pytest.fixture
@@ -125,7 +156,10 @@ def test_here_installs_saves_installs_the_unit_starts_and_only_then_is_the_voice
     assert unit == ([str(root / "scripts" / "install-systemd.sh"), "--voice"],)
     start = next(i for i, line in enumerate(log.lines) if line[:2] == ("step", "start"))
     assert log.lines[start + 1][0] == "wait"
-    assert log.of("wait") == [("realtime", "http://127.0.0.1:8765/v1", voice.VOICE_START_S)]
+    # Its models are in the cache: the start loads them, and downloads nothing.
+    assert log.of("wait") == [("realtime", "http://127.0.0.1:8765/v1",
+                               voice.VOICE_READY_START_S)]
+    assert voice.VOICE_READY_START_S == 180.0
     assert saved == [
         {"VOICE_SERVER_VOICE": "af_heart", "VOICE_SERVER_PORT": 8765},
         {"VOICE_BASE_URL": "http://127.0.0.1:8765/v1", "VOICE_API_KEY": None},
@@ -205,8 +239,11 @@ def test_a_machine_with_neither_launchd_nor_systemd_is_refused(settings, root):
     assert code == voice.REFUSED and saved == [] and log.of("script") == []
     assert log.of("error") == [("Keryx runs its servers under launchd or systemd, and "
                                 "freebsd14 has neither", None)]
-    assert voice.install_unit("--llm", FakeMachine(log).run_script, root=root,
-                              platform="freebsd14").startswith("Keryx runs its servers")
+    told = Log()
+    assert voice.install_unit_step("--llm", "Installing", FakeMachine(told).run_script,
+                                   Recorder(told), root=root, platform="freebsd14") is False
+    assert told.of("error")[0][0].startswith("Keryx runs its servers")
+    assert told.of("script") == []
 
 
 @pytest.mark.parametrize(("name", "problem"), [
@@ -228,6 +265,114 @@ def test_a_unit_that_will_not_install_is_said_and_no_voice_is_saved(settings, ro
     assert log.of("error") == [("install-launchd.sh --voice exited with 3", None)]
     assert log.of("script")[0][0][0].endswith("install-launchd.sh")
     assert [values for values in saved if "VOICE_BASE_URL" in values] == []
+    # Its installer writes the plist before loading it: what it left is removed, and said.
+    script = str(root / "scripts" / "install-launchd.sh")
+    assert log.of("script")[-1] == ([script, "--voice", "--uninstall"],)
+    assert len(log.of("warn")) == 1 and "could not be removed" in log.of("warn")[0][0]
+    assert log.kinds().index("warn") < log.kinds().index("error")
+
+
+def test_a_unit_install_that_times_out_is_removed(settings, root):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s")
+    machine.run_script = lambda argv: (log.lines.append(("script", list(argv)))
+                                       or (0 if argv[-1] == "--uninstall" else voice.TIMED_OUT))
+
+    code, _saved = run_here(settings.model_copy(update=WORDS), machine, log, root,
+                            platform="darwin")
+
+    assert code == 1
+    assert log.of("error")[0][0] == "install-launchd.sh --voice did not finish within 120 s"
+    assert log.of("warn") == [(voice.REMOVED,)]
+    assert log.of("script")[-1][0][-1] == "--uninstall"
+
+
+class CancelledAt(Recorder):
+    """A report whose telling of one step is where the Cancel lands."""
+
+    def __init__(self, log, at: str) -> None:
+        super().__init__(log)
+        self.at = at
+
+    @contextlib.contextmanager
+    def step(self, step: str, message: str):
+        if step == self.at:
+            raise KeyboardInterrupt
+        with super().step(step, message):
+            yield
+
+
+def test_a_cancel_as_the_start_is_told_still_removes_the_unit(settings, root):
+    """No window between the unit and the start: the unit is guarded before the start
+    step is told."""
+    log = Log()
+    script = str(root / "scripts" / "install-launchd.sh")
+
+    with pytest.raises(KeyboardInterrupt):
+        voice.here(settings.model_copy(update=WORDS), FakeMachine(log, s2s="/bin/s2s"),
+                   CancelledAt(log, "start"), choose_voice=lambda: "af_heart",
+                   save=lambda values: True, root=root, platform="darwin")
+
+    assert [argv for (argv,) in log.of("script")] == [
+        [script, "--voice"], [script, "--voice", "--uninstall"]]
+    assert log.of("wait") == []
+
+
+def test_a_unit_is_removed_with_cancel_held_off_until_it_is_done(root):
+    """A second Cancel during the removal would kill the uninstaller and keep the unit:
+    SIGTERM and SIGINT wait until it has finished, then land."""
+    import signal
+
+    held: list[set] = []
+
+    def run(argv):
+        held.append(set(signal.pthread_sigmask(signal.SIG_BLOCK, [])))
+        return 0
+
+    before = set(signal.pthread_sigmask(signal.SIG_BLOCK, []))
+
+    assert voice.remove_unit("--voice", run, root=root, platform="darwin") == voice.REMOVED
+
+    assert {signal.SIGTERM, signal.SIGINT} <= held[0]
+    assert set(signal.pthread_sigmask(signal.SIG_BLOCK, [])) == before
+
+
+def test_a_unit_guarded_twice_is_removed_once(root):
+    """Guards nest — the start's inside the one that spans unit and start — and a Cancel
+    removes the unit once."""
+    ran: list = []
+
+    def run(argv):
+        ran.append(list(argv))
+        return 0
+
+    with pytest.raises(KeyboardInterrupt), \
+            voice.removed_if_stopped("--voice", run, root=root, platform="darwin"), \
+            voice.removed_if_stopped("--voice", run, root=root, platform="darwin"):
+        raise KeyboardInterrupt
+
+    assert len(ran) == 1 and ran[0][-1] == "--uninstall"
+
+
+def test_a_cancel_while_the_unit_installs_removes_it(settings, root):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s")
+    script = str(root / "scripts" / "install-launchd.sh")
+
+    def run(argv):
+        log.lines.append(("script", list(argv)))
+        if argv[-1] == "--voice":
+            raise KeyboardInterrupt
+        return 0
+
+    machine.run_script = run
+
+    with pytest.raises(KeyboardInterrupt):
+        run_here(settings.model_copy(update=WORDS), machine, log, root, platform="darwin")
+
+    assert [argv for (argv,) in log.of("script")] == [
+        [script, "--voice"], [script, "--voice", "--uninstall"]]
+    assert log.of("error") == [] and log.of("wait") == []
 
 
 def test_a_server_that_never_answers_points_at_its_log(settings, root):
@@ -238,10 +383,95 @@ def test_a_server_that_never_answers_points_at_its_log(settings, root):
                            FakeMachine(log, s2s="/bin/s2s", server_problem=problem), log, root)
 
     assert code == 1
-    assert log.of("error") == [(f"the voice server did not come up: {problem}",
+    assert log.of("error") == [(f"the voice server did not come up: {problem}; {voice.REMOVED}",
                                 settings.state_dir / "logs" / "keryx-voice.err.log")]
     assert [values for values in saved if "VOICE_BASE_URL" in values] == []
     assert log.of("done") == []
+
+
+def test_a_server_that_never_answers_has_its_unit_removed_before_the_error(settings, root):
+    """No unit is left behind for launchd's KeepAlive to restart in a loop."""
+    log = Log()
+    script = str(root / "scripts" / "install-launchd.sh")
+
+    code, _saved = run_here(settings.model_copy(update=WORDS),
+                            FakeMachine(log, s2s="/bin/s2s", server_problem="no answer"),
+                            log, root, platform="darwin")
+
+    assert code == 1
+    assert [argv for (argv,) in log.of("script")] == [
+        [script, "--voice"], [script, "--voice", "--uninstall"]]
+    assert log.kinds().index("error") > max(
+        i for i, kind in enumerate(log.kinds()) if kind == "script")
+
+
+def test_a_unit_that_cannot_be_removed_says_so(settings, root):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s", server_problem="no answer")
+    machine.run_script = lambda argv: (log.lines.append(("script", list(argv)))
+                                       or (4 if argv[-1] == "--uninstall" else 0))
+
+    run_here(settings.model_copy(update=WORDS), machine, log, root, platform="darwin")
+
+    [(message, _log)] = log.of("error")
+    assert message.endswith("its service could not be removed: install-launchd.sh --voice "
+                            "--uninstall exited with 4")
+
+
+@pytest.mark.parametrize("removal", [0, 4, OSError("gone")])
+def test_a_cancel_while_the_server_starts_removes_its_unit_and_stays_a_cancel(
+    settings, root, removal
+):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s", server_problem=KeyboardInterrupt())
+    script = str(root / "scripts" / "install-launchd.sh")
+
+    def run(argv):
+        log.lines.append(("script", list(argv)))
+        if argv[-1] == "--uninstall" and isinstance(removal, BaseException):
+            raise removal
+        return removal if argv[-1] == "--uninstall" else 0
+
+    machine.run_script = run
+
+    with pytest.raises(KeyboardInterrupt):
+        run_here(settings.model_copy(update=WORDS), machine, log, root, platform="darwin")
+
+    assert [argv for (argv,) in log.of("script")] == [
+        [script, "--voice"], [script, "--voice", "--uninstall"]]
+    assert log.of("error") == [] and log.of("done") == []  # the cancel is the caller's to tell
+
+
+def test_here_refuses_while_its_words_server_does_not_answer(settings, root):
+    """The crash loop of 2026-10-07: a voice server installed while nothing served its
+    words. Refused before anything is installed, saved or started."""
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update=WORDS), FakeMachine(log, words=False),
+                           log, root)
+
+    assert code == voice.REFUSED
+    assert voice.NO_WORDS_SERVER == "The local model server isn't running: start it first."
+    assert log.lines == [("words", "http://127.0.0.1:8090/v1"),
+                         ("error", voice.NO_WORDS_SERVER, None)]
+    assert saved == []
+
+
+def test_the_words_server_is_asked_on_loopback_without_a_proxy_and_elsewhere_with_its_key(
+    monkeypatch
+):
+    from keryx.localmodels import use
+
+    asked: list = []
+    monkeypatch.setattr(use, "probe", lambda url: asked.append(("probe", url)) or (True, "m"))
+    monkeypatch.setattr(voice, "server_reachable",
+                        lambda endpoint: asked.append(("server", endpoint.api_key)) or False)
+
+    assert voice.words_up(Endpoint.parse("http://127.0.0.1:8090/v1")) is True
+    assert voice.words_up(Endpoint.parse("http://gpu-box:11434/v1", api_key="lk")) is False
+    assert voice.words_up(None) is False
+    assert asked == [("probe", "http://127.0.0.1:8090/v1"), ("server", "lk")]
+    assert voice.machine().words_up is voice.words_up
 
 
 def test_a_save_that_is_refused_stops_there(settings, root):
@@ -281,6 +511,286 @@ def test_a_port_taken_by_another_is_moved_and_our_own_is_kept(settings, root):
     _code, saved = run_here(ours, FakeMachine(log, s2s="/bin/s2s", ports={18765: 18766}),
                             log, root)
     assert saved[0]["VOICE_SERVER_PORT"] == 18765 and log.of("free_port") == []
+
+
+def test_here_downloads_the_speech_models_before_it_configures_anything(settings, root):
+    """The server's first start is never a long silent download: the models come first, as
+    `voice download` fetches them, for the voice chosen."""
+    log = Log()
+    machine = FakeMachine(log, ready=False)
+
+    code, saved = run_here(settings.model_copy(update=WORDS), machine, log, root,
+                           chosen="bm_george", platform="darwin")
+
+    assert code == 0
+    assert [step for step, _message in log.of("step")] == [
+        "install", "download", "configure", "unit", "start"]
+    assert log.of("progress") == [(0, 100), (100, 100)]
+    assert "voices/bm_george.safetensors" in machine.repos[1].needs
+    assert log.of("wait")[0][-1] == voice.VOICE_READY_START_S  # just fetched: loaded, quickly
+    assert log.kinds().index("fetch") < log.kinds().index("save")
+    assert len(log.of("script")) == 2  # the install and the unit
+
+
+def test_here_with_its_models_downloaded_does_not_download(settings, root):
+    log = Log()
+
+    run_here(settings.model_copy(update=WORDS), FakeMachine(log, s2s="/bin/s2s"), log, root)
+
+    assert log.of("fetch") == [] and log.of("ready") == [("parakeet-tdt",)]
+
+
+@pytest.mark.parametrize("fetched", ["a/one could not be downloaded: OSError: full",
+                                     KeyboardInterrupt()])
+def test_here_whose_download_stops_installs_no_unit_and_saves_nothing(settings, root, fetched):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s", ready=False)
+    machine.fetched = fetched
+
+    if isinstance(fetched, BaseException):
+        with pytest.raises(KeyboardInterrupt):
+            run_here(settings.model_copy(update=WORDS), machine, log, root)
+        assert log.of("error") == []  # the cancel is the caller's to tell
+    else:
+        code, _saved = run_here(settings.model_copy(update=WORDS), machine, log, root)
+        assert code == 1 and log.of("error") == [(fetched, None)]
+    assert log.of("script") == [] and log.of("save") == [] and log.of("done") == []
+
+
+def test_here_without_speech_to_speechs_python_installs_no_unit(settings, root):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s", ready=False)
+    machine.python = None
+
+    code, _saved = run_here(settings.model_copy(update=WORDS), machine, log, root)
+
+    assert code == 1 and log.of("script") == [] and log.of("save") == []
+
+
+def test_here_with_a_speech_model_keryx_cannot_name_leaves_it_to_the_first_start(
+    settings, root
+):
+    """An owner's whisper-mlx, kept from before: it is no longer offered, but it is still
+    set up — its models come with its first start, as they always did."""
+    log = Log()
+    chosen = settings.model_copy(update={**WORDS, "voice_server_stt": "whisper-mlx"})
+
+    code, _saved = run_here(chosen, FakeMachine(log, s2s="/bin/s2s", ready=False), log, root)
+
+    assert code == 0 and log.of("fetch") == []
+    [(warning,)] = log.of("warn")
+    assert "--stt whisper-mlx" in warning
+    # Its first start downloads them: it is given the long wait.
+    assert log.of("wait")[0][-1] == voice.VOICE_START_S == 1200.0
+
+
+def test_models_ready_is_asked_of_the_voice_chosen_not_the_one_before(settings, root):
+    """A Kokoro voice is a file of its own: the models ready for af_heart are not ready for
+    a newly chosen bm_george whose file is missing."""
+    from keryx.localmodels import speech
+
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s")
+    asked: list[str] = []
+
+    def models_ready(chosen):
+        asked.append(chosen.voice_server_voice)
+        return chosen.voice_server_voice == "af_heart"
+
+    machine.models_ready = models_ready
+
+    run_here(settings.model_copy(update=WORDS), machine, log, root, chosen="bm_george",
+             platform="darwin")
+
+    assert asked == ["bm_george"] and log.of("fetch")
+    assert "voices/bm_george.safetensors" in machine.repos[1].needs
+    # And the real check says so, with only that voice's file missing.
+    [kokoro] = speech.tts_repos("kokoro", "bm_george", platform="darwin")
+    assert "voices/bm_george.safetensors" in kokoro.needs
+
+
+def test_an_installer_that_times_out_is_killed_with_everything_it_started(
+    tmp_path, monkeypatch
+):
+    """A timed-out install leaves no launchctl or uv running behind it."""
+    import os
+    import sys
+    import time
+
+    monkeypatch.setattr(voice, "INSTALL_TIMEOUT_S", 0.5)
+    pidfile = tmp_path / "child.pid"
+    script = tmp_path / "install-launchd.sh"
+    script.write_text(f"#!/bin/sh\n{sys.executable} -c 'import time; time.sleep(60)' &\n"
+                      f"echo $! > {pidfile}\nwait\n")
+    script.chmod(0o755)
+
+    assert voice.run_detached([str(script), "--voice"]) == voice.TIMED_OUT
+
+    child = int(pidfile.read_text())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("the installer's own child outlived it")
+
+
+def test_an_installer_cancelled_is_stopped_with_everything_it_started(tmp_path, monkeypatch):
+    import subprocess
+
+    killed: list = []
+    monkeypatch.setattr("os.killpg", lambda pgid, sig: killed.append((pgid, sig)))
+
+    class Child:
+        pid = 4242
+        waited = 0
+
+        def wait(self, timeout=None):
+            self.waited += 1
+            if self.waited == 1:
+                raise KeyboardInterrupt
+            return -9
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: Child())
+
+    with pytest.raises(KeyboardInterrupt):
+        voice.run_detached(["/repo/scripts/install-launchd.sh", "--voice"])
+
+    assert killed and killed[0][0] == 4242
+
+
+# --- the speech models --------------------------------------------------------------------
+
+
+def run_download(settings, machine, log, **kwargs):
+    return voice.download(settings, machine, Recorder(log), platform="darwin", **kwargs)
+
+
+def test_download_installs_speech_to_speech_then_fetches_what_the_settings_need(settings):
+    from keryx.localmodels import speech
+
+    log = Log()
+
+    code = run_download(settings, FakeMachine(log), log)
+
+    assert code == 0
+    assert [step for step, _message in log.of("step")] == ["install", "download"]
+    assert log.of("script") == [(s2s_install_argv(),)]
+    assert log.of("fetch") == [("/tools/s2s/bin/python",
+                                [repo.id for repo in speech.needed(settings, platform="darwin")])]
+    assert log.of("progress") == [(0, 100), (100, 100)]
+    assert log.of("done") == [("parakeet-tdt", "kokoro")]
+    # Each step is told before the slow work it names begins.
+    assert log.kinds().index("step") < log.kinds().index("script")
+    assert log.kinds().index("fetch") > [i for i, k in enumerate(log.kinds()) if k == "step"][1]
+
+
+def test_download_with_speech_to_speech_installed_only_fetches(settings):
+    log = Log()
+
+    code = run_download(settings, FakeMachine(log, s2s="/bin/s2s"), log)
+
+    assert code == 0 and log.of("script") == []
+    assert [step for step, _message in log.of("step")] == ["download"]
+
+
+def test_download_of_models_keryx_cannot_name_is_refused_before_anything(settings):
+    log = Log()
+
+    code = run_download(settings.model_copy(update={"voice_server_stt": "whisper-mlx"}),
+                        FakeMachine(log), log)
+
+    assert code == voice.REFUSED
+    [(message, _log)] = log.of("error")
+    assert "--stt whisper-mlx" in message
+    assert log.of("script") == [] and log.of("step") == [] and log.of("fetch") == []
+
+
+@pytest.mark.parametrize(("arrange", "said"), [
+    ({"script_code": 1}, "the install did not finish"),
+    ({"free": 10**9}, "needs about 5 GB free"),
+])
+def test_download_whose_install_fails_fetches_nothing(settings, arrange, said):
+    log = Log()
+
+    code = run_download(settings, FakeMachine(log, **arrange), log)
+
+    assert code == 1 and log.of("fetch") == [] and log.of("done") == []
+    assert said in log.of("error")[0][0]
+
+
+def test_download_without_speech_to_speechs_own_python_says_so(settings):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s")
+    machine.python = None
+
+    code = run_download(settings, machine, log)
+
+    assert code == 1 and log.of("fetch") == []
+    assert "its own Python" in log.of("error")[0][0]
+
+
+def test_download_that_stops_says_why_and_is_not_done(settings):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s")
+    machine.fetched = "a/one could not be downloaded: OSError: disk full"
+
+    code = run_download(settings, machine, log)
+
+    assert code == 1 and log.of("done") == []
+    assert log.of("error") == [("a/one could not be downloaded: OSError: disk full", None)]
+
+
+def test_the_machine_downloads_through_speech_to_speechs_own_python(monkeypatch):
+    from keryx.localmodels import runtimes, speech
+
+    monkeypatch.setattr(runtimes, "speech_to_speech_python", lambda: "/tool/bin/python")
+    monkeypatch.setattr(speech, "fetch", lambda python, repos, progress: f"{python} asked")
+    machine = voice.machine()
+
+    assert machine.speech_python() == "/tool/bin/python"
+    assert machine.fetch_speech("/p", [], lambda done, total: None) == "/p asked"
+
+
+def test_the_download_is_told_as_json_lines_ending_once():
+    lines: list[str] = []
+    events = voice.DownloadJsonSteps(lines.append)
+
+    events.step("install", "Installing")
+    events.progress(5, None)
+    events.step("download", "Downloading")
+    events.progress(50, 100)
+    events.done("parakeet-tdt", "kokoro")
+    events.error("late")
+
+    import json
+
+    told = [json.loads(line) for line in lines]
+    assert told[1] == {"event": "progress", "step": "install", "done": 5, "total": None}
+    assert told[-2] == {"event": "progress", "step": "download", "done": 50, "total": 100}
+    assert told[-1] == {"event": "done", "stt": "parakeet-tdt", "tts": "kokoro"}
+
+
+def test_the_download_is_told_in_lines_on_a_terminal():
+    said: list[tuple] = []
+    steps = voice.DownloadTextSteps(lambda message, err=False: said.append((message, err)))
+
+    steps.progress(0, None)
+    steps.progress(1 * 10**9, 4 * 10**9)
+    steps.progress(int(1.1 * 10**9), 4 * 10**9)  # not a tenth further on: not said
+    steps.progress(4 * 10**9, 4 * 10**9)
+    steps.done("parakeet-tdt", "kokoro")
+
+    assert [message for message, _err in said] == [
+        "1.0 of 4.0 GB", "4.0 of 4.0 GB",
+        "the voice's speech models are downloaded: parakeet-tdt to hear, kokoro to speak",
+    ]
 
 
 # --- the voice the wizard offers first -----------------------------------------------------
@@ -333,8 +843,10 @@ def test_openai_is_no_voice_server_and_no_key_for_one():
 
 
 class Asked:
-    def __init__(self, *, program=None, unit=False, up=False, server=True) -> None:
+    def __init__(self, *, program=None, unit=False, up=False, server=True,
+                 ready=False) -> None:
         self.program, self.unit, self.up, self.server = program, unit, up, server
+        self.ready = ready
         self.probed: list[str] = []
         self.servers: list[Endpoint] = []
 
@@ -344,6 +856,7 @@ class Asked:
             installed=lambda kind: kind == "voice" and self.unit,
             probe=lambda url: self.probed.append(url) or (self.up, None),
             server_reachable=lambda endpoint: self.servers.append(endpoint) or self.server,
+            models_ready=lambda settings: self.ready,
         )
 
 
@@ -358,7 +871,8 @@ def test_status_on_openai_without_a_local_model_needs_one(settings):
         "assistant": settings.assistant_name, "openai_key_set": True,
         "here": {"installed": False, "program": None, "voice": settings.voice_server_voice,
                  "port": 8765, "unit_installed": False, "reachable": False,
-                 "words_model": None},
+                 "words_model": None, "stt": "parakeet-tdt", "tts": "kokoro",
+                 "models_ready": False},
         "needs": "local_agent_model",
         "server": {"reachable": None},
     }
@@ -366,7 +880,7 @@ def test_status_on_openai_without_a_local_model_needs_one(settings):
 
 
 def test_status_here_is_the_voice_server_on_this_machine(settings):
-    asked = Asked(program="/bin/s2s", unit=True, up=True)
+    asked = Asked(program="/bin/s2s", unit=True, up=True, ready=True)
     here = settings.model_copy(update={**WORDS, "voice_base_url": "http://127.0.0.1:8765/v1",
                                        "voice_server_voice": "bm_george"})
 
@@ -376,7 +890,8 @@ def test_status_here_is_the_voice_server_on_this_machine(settings):
     assert document["base_url"] == "http://127.0.0.1:8765/v1"
     assert document["here"] == {"installed": True, "program": "/bin/s2s", "voice": "bm_george",
                                 "port": 8765, "unit_installed": True, "reachable": True,
-                                "words_model": "qwen3-coder-30b-a3b"}
+                                "words_model": "qwen3-coder-30b-a3b", "stt": "parakeet-tdt",
+                                "tts": "kokoro", "models_ready": True}
     assert document["needs"] is None and document["server"] == {"reachable": None}
     assert asked.probed == ["http://127.0.0.1:8765/v1"]
 
@@ -443,3 +958,56 @@ def test_an_installer_runs_with_nothing_on_its_stdin_and_its_output_off_stdout(c
     out, err = capfd.readouterr()
     assert code == 0 and out == "" and err.split() == ["installing", "True"]
     assert voice.run_detached(["/no/such/installer"]) == 127
+
+
+def test_a_units_installer_that_hangs_is_stopped_and_said_to_have_failed(
+    tmp_path, monkeypatch, capfd
+):
+    import sys
+
+    monkeypatch.setattr(voice, "INSTALL_TIMEOUT_S", 0.2)
+    script = tmp_path / "install-launchd.sh"
+    script.write_text(f"#!{sys.executable}\nimport time; time.sleep(30)\n")
+    script.chmod(0o755)
+
+    code = voice.run_detached([str(script), "--voice"])
+
+    assert code == voice.TIMED_OUT == 124
+    assert "install-launchd.sh did not finish within 0.2 s" in capfd.readouterr().err
+    assert voice.exited("install-launchd.sh --voice", voice.TIMED_OUT) == (
+        "install-launchd.sh --voice did not finish within 0.2 s")
+    assert voice.exited("install-launchd.sh --voice", 3) == "install-launchd.sh --voice exited " \
+                                                            "with 3"
+
+
+def test_only_a_units_installer_is_timed_never_a_download(monkeypatch):
+    """uv installing speech-to-speech, brew or ollama pulling take as long as they take."""
+    import subprocess
+
+    asked: dict = {}
+
+    class Child:
+        pid = 424242
+        returncode = 0
+
+        def __init__(self, argv, **kwargs):
+            asked[argv[0]] = kwargs.get("start_new_session", False)
+
+        def wait(self, timeout=None):
+            asked[f"{self.argv0} timeout"] = timeout
+            return 0
+
+    def popen(argv, **kwargs):
+        child = Child(argv, **kwargs)
+        child.argv0 = argv[0]
+        return child
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr("os.killpg", lambda pgid, sig: pytest.fail("nothing to kill"))
+
+    voice.run_detached(["/repo/scripts/install-systemd.sh", "--voice", "--uninstall"])
+    voice.run_detached(["uv", "tool", "install", "speech-to-speech"])
+
+    assert asked == {"/repo/scripts/install-systemd.sh": True,
+                     "/repo/scripts/install-systemd.sh timeout": voice.INSTALL_TIMEOUT_S,
+                     "uv": False, "uv timeout": None}

@@ -42,15 +42,25 @@ from setup.auth_fakes import (
 )
 from typer.testing import CliRunner
 
-from keryx import plugins, status, units
+from keryx import phone, plugins, status, units
 from keryx.cli import app
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path
 from keryx.integrations.gmail import token_path
 from keryx.issues import GhStatus
-from keryx.localmodels import catalog, download, hardware, runtimes, servers, use, voice
+from keryx.localmodels import (
+    catalog,
+    download,
+    hardware,
+    runtimes,
+    servers,
+    speech,
+    use,
+    voice,
+)
 from keryx.localmodels.hardware import Hardware
+from keryx.notify.twilio_out import TwilioNumber
 from keryx.restart.service import ServiceTarget
 from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
 from keryx.setup import google
@@ -74,8 +84,9 @@ MODELS_START = "models start --json"
 #: The four sign-ins the app drives, each its own stream.
 AUTH_LOGINS = {name: f"auth login {name} --json"
                for name in ("claude", "codex", "gmail", "google-workspace")}
+VOICE_DOWNLOAD = "voice download --json"
 #: The command lines the app reads as JSON lines; the pull's is the one every contract has.
-STREAMS = (PULL, VOICE_HERE, MODELS_START, *AUTH_LOGINS.values())
+STREAMS = (PULL, VOICE_HERE, MODELS_START, VOICE_DOWNLOAD, *AUTH_LOGINS.values())
 #: The command lines the app reads as one JSON document.
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
@@ -88,6 +99,8 @@ COMMANDS = {
     "config verify KEY --json",
     "integrations --json", "auth logout google-workspace --json", "auth logout gmail --json",
     "plugins install NAME --json", "plugins remove NAME --json", "plugins set NAME --json",
+    "phone numbers --json", "phone webhooks --json", "phone webhooks --apply --json",
+    "phone tunnel --json",
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
@@ -109,6 +122,25 @@ SERVED = "qwen3-coder-q4"
 VOICE_SERVER = "http://192.168.1.20:8765"
 #: The speech-to-speech the seeded machine has.
 S2S = "/Users/you/.local/bin/speech-to-speech"
+#: The seeded Twilio number, which the faked account has, pointed elsewhere for now.
+TWILIO_NUMBER = "+15550001111"
+
+
+class TwilioAccount:
+    """The faked Twilio account `keryx phone` asks: a name, the number, and its update."""
+
+    def __call__(self, sid: str, token: str) -> "TwilioAccount":
+        return self
+
+    def account_name(self) -> str:
+        return "Ada's account"
+
+    def numbers(self) -> list[TwilioNumber]:
+        return [TwilioNumber("PN1", TWILIO_NUMBER, "https://demo.twilio.com/welcome/voice/",
+                             "https://old.example.com/status", "Office")]
+
+    def set_webhooks(self, number_sid: str, *, voice_url: str, status_url: str) -> None:
+        pass
 
 runner = CliRunner()
 
@@ -405,7 +437,9 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     ConfigStore().set({"ASSISTANT_NAME": "Vega", "LLM_SERVER_MODEL": MODEL.key,
                        "VOICE_BASE_URL": "http://127.0.0.1:8765/v1",
                        "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1",
-                       "LOCAL_AGENT_MODEL": MODEL.key})
+                       "LOCAL_AGENT_MODEL": MODEL.key,
+                       "TWILIO_ACCOUNT_SID": "AC" + "0" * 32, "TWILIO_AUTH_TOKEN": "tok",
+                       "TWILIO_NUMBER": TWILIO_NUMBER, "PUBLIC_HOST": "keryx.example.com"})
     settings = Settings()
     settings.ensure_dirs()
 
@@ -447,6 +481,8 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
         requested_at=now.isoformat(), state="failed", error="launchctl exited 5",
     ))
 
+    # The phone: a Twilio account that answers. The tunnel's hostname answers nothing.
+    monkeypatch.setattr(phone, "rest_admin", TwilioAccount())
     # A plugin on, for the plugin commands to change and turn off.
     plugins.install(settings, "check_billing")
     # The integrations: `gh` signed in, though only issue reports turned on would ask it.
@@ -680,7 +716,9 @@ def test_the_voice_set_ups_below_reach_every_event_the_contract_names():
     stream = contract()["streams"][VOICE_HERE]
 
     assert {ending for _, ending, _, _ in VOICES} == set(stream["terminal"])
-    assert set(stream["events"]) == {*stream["terminal"], "step"}
+    # `progress`, while it downloads the speech models first: a promise the app has yet to
+    # make fails here, once.
+    assert set(stream["events"]) == {*stream["terminal"], "step", "progress"}
 
 
 @pytest.mark.parametrize(("arrange", "ending", "code", "stepped"), VOICES)
@@ -692,6 +730,11 @@ def test_a_voice_set_up_streams_the_events_the_app_reads_and_ends_once(
     monkeypatch.setattr(runtimes, "speech_to_speech", lambda: None)  # so it is installed
     monkeypatch.setattr(voice, "run_detached", scripts)
     monkeypatch.setattr(servers, "wait_for", lambda endpoint, kind, timeout: None)
+    monkeypatch.setattr(runtimes, "speech_to_speech_python", lambda: "/tools/s2s/bin/python")
+    # Its speech models are downloaded first, told as `progress` once the app reads it.
+    downloads = "progress" in stream["events"]
+    monkeypatch.setattr(speech, "models_ready", lambda settings: not downloads)
+    monkeypatch.setattr(speech, "fetch", lambda python, repos, progress: progress(1, 2))
     arrange(monkeypatch, seeded, scripts)
 
     result = runner.invoke(app, VOICE_HERE.split())
@@ -904,3 +947,73 @@ def test_every_way_a_sign_in_ends_streams_one_ending_whatever_the_contract_says(
             assert [e["event"] for e in events if e["event"] in ("done", "error", "cancelled")] \
                 == [ending], (name, events)
             assert events[-1]["event"] == ending and result.exit_code == code, (name, events)
+
+
+# --- the stream: voice download --json ---------------------------------------------------
+
+
+def _download_done(monkeypatch, settings):
+    pass
+
+
+def _download_failed(monkeypatch, settings):
+    monkeypatch.setattr(speech, "fetch",
+                        lambda python, repos, progress: "a/one could not be downloaded")
+
+
+def _download_refused(monkeypatch, settings):
+    ConfigStore().set({"VOICE_SERVER_STT": "whisper-mlx"})
+
+
+def _download_cancelled(monkeypatch, settings):
+    def interrupted(python, repos, progress):
+        raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+    monkeypatch.setattr(speech, "fetch", interrupted)
+
+
+#: Each way `voice download` ends: how to arrange it, its ending, its exit code, and whether
+#: a step was told first.
+DOWNLOADS = [(_download_done, "done", 0, True), (_download_failed, "error", 1, True),
+             (_download_refused, "error", 2, False),
+             (_download_cancelled, "cancelled", 130, True)]
+
+
+def download_stream() -> dict:
+    """The contract's promise for `voice download --json`, once the app has made it."""
+    stream = contract()["streams"].get(VOICE_DOWNLOAD)
+    if stream is None:
+        # The streams' cross-check fails for it, once: a promise the app has yet to make.
+        pytest.skip(f"the contract does not name the {VOICE_DOWNLOAD} stream yet")
+    return stream
+
+
+def test_the_downloads_below_reach_every_event_the_contract_names():
+    stream = download_stream()
+
+    assert {ending for _, ending, _, _ in DOWNLOADS} == set(stream["terminal"])
+    assert set(stream["events"]) == {*stream["terminal"], "step", "progress"}
+
+
+@pytest.mark.parametrize(("arrange", "ending", "code", "stepped"), DOWNLOADS)
+def test_a_speech_model_download_streams_the_events_the_app_reads_and_ends_once(
+    seeded, monkeypatch, arrange, ending, code, stepped
+):
+    stream = download_stream()
+    monkeypatch.setattr(runtimes, "speech_to_speech_python", lambda: "/tools/s2s/bin/python")
+    monkeypatch.setattr(speech, "fetch", lambda python, repos, progress: progress(1, 2))
+    arrange(monkeypatch, seeded)
+
+    result = runner.invoke(app, VOICE_DOWNLOAD.split())
+
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert events, "no events at all"
+    for event in events:
+        assert event.get("event") in stream["events"], event
+        assert not key_problems(event, stream["events"][event["event"]]), event
+    endings = [event["event"] for event in events if event["event"] in stream["terminal"]]
+    assert endings == [ending] and events[-1]["event"] == ending
+    assert (events[0]["event"] == "step") is stepped
+    allowed = stream["exit"][ending]
+    assert result.exit_code == code
+    assert code in (allowed if isinstance(allowed, list) else [allowed])
