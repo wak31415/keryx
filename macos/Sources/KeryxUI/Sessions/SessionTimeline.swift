@@ -168,11 +168,13 @@ struct SessionTimeline: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            if detail?.value?.reportTruncated == true, let path = task.reportPath {
+            // Only a report file in Keryx's data folder, and only revealed, never opened.
+            if detail?.value?.reportTruncated == true,
+               let file = task.reportPath.flatMap({ FileReveal.report($0, paths: model.status.value?.paths) }) {
                 Button("Show Full Report") {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                    NSWorkspace.shared.activateFileViewerSelecting([file])
                 }
-                .help("Only the start of the report is shown here. Opens all of it.")
+                .help("Only the start of the report is shown here. Shows the whole file in the Finder.")
             }
             if let usage = SessionWording.usage(task) {
                 Text(usage)

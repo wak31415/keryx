@@ -60,8 +60,9 @@ struct ThisMacProgress: View {
             let said = RunLog.split(message)
             RunFailureRow(title: VoiceWording.setupFailed,
                           message: VoiceWording.sentence(Wording.named(said.text, titles: Wording.titles(model.config.value)))) {
-                if let log = said.log {
+                if let log = said.log.flatMap({ RunLog.file($0, paths: model.status.value?.paths) }) {
                     Button("Show Log") { RunLog.show(log) }
+                        .help("Shows the log in the Finder")
                 }
                 Button("Dismiss") { model.dismissThisMacSetup() }
                 Button("Try Again") {

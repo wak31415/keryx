@@ -244,9 +244,15 @@ enum RunLog {
         return (text, path.isEmpty ? nil : path)
     }
 
-    /// Opens the log in the app that reads it (Console).
-    static func show(_ path: String) {
-        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    /// The log, when it is one Show Log may reveal: a `.log` file in Keryx's logs folder
+    /// (`FileReveal`), never any path the message happened to name.
+    static func file(_ path: String, paths: Paths?) -> URL? {
+        FileReveal.log(path, paths: paths)
+    }
+
+    /// Selects the log in a Finder window; it is never opened from here.
+    static func show(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
 
