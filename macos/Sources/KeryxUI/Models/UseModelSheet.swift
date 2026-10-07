@@ -77,34 +77,24 @@ package struct UseModelSheet: View {
         llm.map { ServedModel.serves($0, entry.name, models: model.models.value?.models ?? []) } ?? false
     }
 
-    /// The server can be started from here: llama.cpp is installed, and there is a checkout
-    /// to install its service from.
-    private var canStartServer: Bool {
-        llm?.binary != nil && model.location.value?.checkout != nil
-    }
-
     private var chosenDetail: String {
-        Self.detail(serving: serving, llamaInstalled: llm?.binary != nil,
-                    checkout: model.location.value?.checkout != nil,
-                    serverInstalled: llm?.unitInstalled == true, keryxRestart: model.configNeedsRestart)
+        Self.detail(serving: serving, llamaInstalled: llm?.binary != nil, serverRunning: llm?.reachable == true,
+                    keryxRestart: model.configNeedsRestart)
     }
 
     /// What is left once a model is chosen, in one or two sentences: loading it into the
     /// model server — naming the button below that does it — then restarting Keryx itself,
     /// which this sheet does not do.
-    static func detail(serving: Bool, llamaInstalled: Bool, checkout: Bool, serverInstalled: Bool,
-                       keryxRestart: Bool) -> String {
+    static func detail(serving: Bool, llamaInstalled: Bool, serverRunning: Bool, keryxRestart: Bool) -> String {
         let keryx = "restart Keryx from the Overview to start using it"
         guard !serving else {
             return keryxRestart ? "The model server has it loaded. Then \(keryx)." : "It's running and ready."
         }
         let server: String
         if !llamaInstalled {
-            server = "llama.cpp isn't installed yet. Open Setup in Terminal installs it and starts the model server."
-        } else if !checkout {
-            server = "Open Setup in Terminal starts its model server."
+            server = "Start Model Server installs llama.cpp and starts the model server with it."
         } else {
-            server = serverInstalled
+            server = serverRunning
                 ? "Restart Model Server loads it into the model server."
                 : "Start Model Server starts the model server with it."
         }
@@ -130,19 +120,14 @@ package struct UseModelSheet: View {
                 if serving {
                     Button("Done") { dismiss() }
                         .keyboardShortcut(.defaultAction)
-                } else if canStartServer {
-                    Button("Not Now") { dismiss() }
-                        .keyboardShortcut(.cancelAction)
-                    Button(llm?.unitInstalled == true ? "Restart Model Server" : "Start Model Server") {
-                        startServer()
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(working)
                 } else {
                     Button("Not Now") { dismiss() }
                         .keyboardShortcut(.cancelAction)
-                    OpenSetupButton()
-                        .keyboardShortcut(.defaultAction)
+                    Button(llm?.reachable == true ? "Restart Model Server" : "Start Model Server") {
+                        startServer()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(working || model.modelServerRun.isBusy)
                 }
             }
         }
@@ -158,13 +143,10 @@ package struct UseModelSheet: View {
         }
     }
 
+    /// Starts it, and leaves its steps to Local Models' Model Server, scrolled to.
     private func startServer() {
-        working = true
-        failure = nil
-        Task {
-            failure = await model.startModelServer()
-            working = false
-            if failure == nil { dismiss() }
-        }
+        model.runModelServer()
+        model.show(inModels: ModelsAnchor.modelServer)
+        dismiss()
     }
 }

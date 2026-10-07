@@ -17,8 +17,6 @@ public protocol KeryxClient: Sendable {
     /// Cancelling the consumer stops it too, without waiting.
     func pull(model: String) -> PullStream
     func use(model: String, defaultAgent: Bool) async throws -> UseResult
-    /// Runs `CHECKOUT/scripts/install-launchd.sh --llm`, and returns what it printed.
-    func installModelServer() async throws -> String
     func config() async throws -> [ConfigRow]
     /// What `key` may be set to. A live list that could not be read is still an answer
     /// (`live` false, `error` set); a key with no options throws.

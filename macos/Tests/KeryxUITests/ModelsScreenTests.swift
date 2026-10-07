@@ -14,8 +14,11 @@ import KeryxPreview
     @Test func catalogHasEveryModelsState() {
         let ids = Set(ScreenCatalog.entries().map(\.id))
         for id in ["models-populated", "models-downloading", "models-download-failed", "models-use-sheet",
-                   "models-use-sheet-chosen", "models-empty-servers", "models-no-checkout", "models-error",
-                   "models-stopping", "models-stale-server",
+                   "models-use-sheet-chosen", "models-empty-servers", "models-error",
+                   "models-stopping", "models-stale-server", "models-server-down", "models-no-llama",
+                   "models-server-installing", "models-server-loading", "models-server-stopping",
+                   "models-server-failed", "models-server-refused", "models-voice-downloading",
+                   "models-voice-download-failed", "models-voice-ready", "models-recommended-shown", "models-voice-models-shown",
                    "window-models"] {
             #expect(ids.contains(id), "missing \(id)")
         }
@@ -91,17 +94,16 @@ import KeryxPreview
     }
 
     @Test func theChosenSheetNamesTheRestartItsButtonDoes() {
-        #expect(UseModelSheet.detail(serving: false, llamaInstalled: true, checkout: true, serverInstalled: true,
-                                     keryxRestart: true)
+        #expect(UseModelSheet.detail(serving: false, llamaInstalled: true, serverRunning: true, keryxRestart: true)
             == "Restart Model Server loads it into the model server. "
             + "Then restart Keryx from the Overview to start using it.")
-        #expect(UseModelSheet.detail(serving: false, llamaInstalled: true, checkout: true, serverInstalled: false,
-                                     keryxRestart: false) == "Start Model Server starts the model server with it.")
-        #expect(UseModelSheet.detail(serving: true, llamaInstalled: true, checkout: true, serverInstalled: true,
-                                     keryxRestart: true)
+        #expect(UseModelSheet.detail(serving: false, llamaInstalled: true, serverRunning: false, keryxRestart: false)
+            == "Start Model Server starts the model server with it.")
+        #expect(UseModelSheet.detail(serving: true, llamaInstalled: true, serverRunning: true, keryxRestart: true)
             == "The model server has it loaded. Then restart Keryx from the Overview to start using it.")
-        #expect(UseModelSheet.detail(serving: false, llamaInstalled: false, checkout: true, serverInstalled: false,
-                                     keryxRestart: true).hasPrefix("llama.cpp isn't installed yet. Open Setup in Terminal"))
+        // No Terminal: Start Model Server installs llama.cpp itself.
+        #expect(UseModelSheet.detail(serving: false, llamaInstalled: false, serverRunning: false, keryxRestart: false)
+            == "Start Model Server installs llama.cpp and starts the model server with it.")
     }
 
     @Test func servingIsWhatTheServerSaysNotTheSettings() {

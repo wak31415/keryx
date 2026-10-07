@@ -322,34 +322,4 @@ import KeryxPreview
         for try await event in client.pull(model: "m") { events.append(event) }
         #expect(events == [.error("disk full")])
     }
-
-    // MARK: - The model server installer
-
-    @Test func installModelServerRunsTheCheckoutScript() async throws {
-        let fake = FakeRunner { _ in Self.ok(Data("installed\n".utf8)) }
-        let client = CLIClient(location: .fixture, runner: fake)
-        let out = try await client.installModelServer()
-        #expect(out == "installed\n")
-        let request = try #require(fake.requests.last)
-        #expect(request.executable == KeryxLocation.fixture.checkout! + "/scripts/install-launchd.sh")
-        #expect(request.arguments == ["--llm"])
-        #expect(request.environment["KERYX_ACTOR"] == nil)
-
-        fake.responder = { _ in throw RunnerError.timedOut }
-        await #expect(throws: KeryxError.timedOut(command: "install-launchd.sh --llm")) {
-            _ = try await client.installModelServer()
-        }
-    }
-
-    @Test func installModelServerNeedsACheckout() async throws {
-        var location = KeryxLocation.fixture
-        location.checkout = nil
-        let fake = FakeRunner()
-        let client = CLIClient(location: location, runner: fake)
-        await #expect(throws: KeryxError.launch(
-            "Starting the model server from the app needs a Keryx checkout. Run keryx setup in Terminal instead.")) {
-            _ = try await client.installModelServer()
-        }
-        #expect(fake.requests.isEmpty)
-    }
 }

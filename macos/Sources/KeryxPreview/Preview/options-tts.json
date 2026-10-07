@@ -1,0 +1,20 @@
+{
+  "key": "VOICE_SERVER_TTS",
+  "current": "kokoro",
+  "options": [
+    {
+      "value": "kokoro",
+      "label": "kokoro",
+      "detail": null
+    },
+    {
+      "value": "qwen3",
+      "label": "qwen3",
+      "detail": null
+    }
+  ],
+  "source": "builtin",
+  "live": false,
+  "free_form": true,
+  "error": null
+}

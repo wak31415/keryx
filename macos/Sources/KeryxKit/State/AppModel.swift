@@ -19,16 +19,13 @@ public final class AppModel {
     }
 
     /// How long the model waits: between status polls (`nil`: no polling), and before it
-    /// looks again after starting the model server or a restart.
+    /// looks again after a restart.
     public struct Timing: Sendable {
         public var poll: Duration?
-        public var afterModelServer: Duration
         public var afterRestart: Duration
 
-        public init(poll: Duration? = .seconds(30), afterModelServer: Duration = .seconds(2),
-                    afterRestart: Duration = .seconds(3)) {
+        public init(poll: Duration? = .seconds(30), afterRestart: Duration = .seconds(3)) {
             self.poll = poll
-            self.afterModelServer = afterModelServer
             self.afterRestart = afterRestart
         }
 
@@ -72,6 +69,9 @@ public final class AppModel {
     public var taskDetail: [Int: Loadable<TaskDetail>] = [:]
 
     public var selection: SidebarItem = .overview
+    /// What Local Models should scroll to and mark when it next shows: a catalog model's
+    /// name, or one of its sections. Local Models clears it once shown.
+    public var modelsSpotlight: String?
     public var selectedTaskID: Int?
     /// Whether the task list includes the tasks Keryx asked for itself (`--internal`).
     public var includeHousekeeping = false
@@ -82,6 +82,9 @@ public final class AppModel {
     public let downloads: Downloads
     /// Setting up the voice server on this Mac.
     public let voiceSetup: VoiceSetup
+    /// The latest Set Up… on This Mac, while it may still be showing: whether it began by
+    /// starting the model server. `nil` before one.
+    public private(set) var thisMacSetup: ThisMacSetup?
     /// Starting the model server here (`keryx models start`).
     public let modelServerRun: StreamRun<ModelServerStarted>
     /// Downloading the voice's speech models (`keryx voice download`).
@@ -447,15 +450,6 @@ public final class AppModel {
         return nil
     }
 
-    /// Installs (or restarts) the model server, then reads the models again once it has had
-    /// a moment to come up.
-    public func startModelServer() async -> KeryxError? {
-        if let error = await perform({ _ = try await $0.installModelServer() }) { return error }
-        try? await Task.sleep(for: timing.afterModelServer)
-        await refresh(.models)
-        return nil
-    }
-
     /// Downloads `model` (one at a time), and reads the models again when it is done.
     public func download(_ model: String) {
         guard let client else { return }
@@ -579,12 +573,41 @@ public final class AppModel {
     /// Starts the model server here (`keryx models start`), one run at a time, and reads the
     /// models, the units and the plan again once it serves the chosen model.
     public func runModelServer(runtime: String? = nil) {
-        guard let client else { return }
-        modelServerRun.start(reason: "Starting the model server", { client.startModelServer(runtime: runtime) }) {
+        // Started on its own, it is no part of a This Mac setup.
+        if beginModelServer(runtime: runtime, then: nil) { thisMacSetup = nil }
+    }
+
+    /// `runModelServer`, with `then` run once it serves (This Mac's Set Up… goes on to the
+    /// voice); false when a run was already going.
+    private func beginModelServer(runtime: String?, then: (@MainActor () -> Void)?) -> Bool {
+        guard let client else { return false }
+        return modelServerRun.start(reason: "Starting the model server", { client.startModelServer(runtime: runtime) }) {
             [weak self] _ in
             self?.invalidateOptions()
             Task { await self?.refresh(.models, .service, .voice, .config, .setupPlan) }
+            then?()
         }
+    }
+
+    /// Set Up… (or Restart Voice Server) on This Mac: the model server first when its words
+    /// would come from one that isn't answering — `startServer` says so outright, else the
+    /// models as last read do — then the voice. Nothing starts while either is busy.
+    public func setUpThisMac(voice: String? = nil, startServer: Bool? = nil) {
+        guard client != nil, !modelServerRun.isBusy, !voiceSetup.isBusy else { return }
+        let first = startServer ?? (models.value?.modelServerDown ?? false)
+        thisMacSetup = ThisMacSetup(startsServer: first)
+        voiceSetup.dismiss()
+        if first {
+            _ = beginModelServer(runtime: nil) { [weak self] in self?.setUpVoiceHere(voice: voice) }
+        } else {
+            setUpVoiceHere(voice: voice)
+        }
+    }
+
+    /// Forgets a This Mac setup that failed or finished: both of its runs.
+    public func dismissThisMacSetup() {
+        if thisMacSetup?.startsServer == true { modelServerRun.dismiss() }
+        voiceSetup.dismiss()
     }
 
     /// Stops the model server and removes its unit.

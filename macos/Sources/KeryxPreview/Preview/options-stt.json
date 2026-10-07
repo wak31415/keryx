@@ -1,0 +1,20 @@
+{
+  "key": "VOICE_SERVER_STT",
+  "current": "parakeet-tdt",
+  "options": [
+    {
+      "value": "parakeet-tdt",
+      "label": "parakeet-tdt",
+      "detail": null
+    },
+    {
+      "value": "whisper",
+      "label": "whisper",
+      "detail": null
+    }
+  ],
+  "source": "builtin",
+  "live": false,
+  "free_form": true,
+  "error": null
+}

@@ -129,7 +129,7 @@ public struct LoggingRunner: CommandRunner {
 
     /// `prefix`: the leading arguments that run `keryx` rather than name the command
     /// (`run --project … keryx` for uv). A request is read as `keryx` past them only when it
-    /// starts with them: anything else this client runs (the model server's installer) is
+    /// starts with them: anything else run through it (the locator's login shell) is
     /// that program, named by its file.
     public init(_ base: CommandRunner = ProcessRunner(), prefix: [String] = []) {
         self.base = base

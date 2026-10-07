@@ -5,10 +5,14 @@ import SwiftUI
 extension ScreenCatalog {
     /// The Local Models screen: a Mac with a model in use and others to download, a
     /// download under way and one that failed, the Use This Model sheet before and after,
-    /// a Mac with no local agent yet, a Keryx with no checkout, a list that failed to load,
-    /// and the whole window around it.
+    /// a Mac with no local agent yet, the model server stopped, starting (llama.cpp
+    /// downloading, then loading), stopping, failed and refused, the speech models
+    /// downloading, failed and downloaded, the recommended model shown from Voice, a list
+    /// that failed to load, and the whole window around it.
     @MainActor static var modelsEntries: [Entry] {
         let screen = CGSize(width: 720, height: 900)
+        // Tall enough for every section down to the catalog's first rows.
+        let whole = CGSize(width: 720, height: 1340)
         return [
             Entry("models-populated", size: screen) {
                 ModelsView().environment(AppModel.preview())
@@ -42,8 +46,71 @@ extension ScreenCatalog {
                 ModelsView().environment(AppModel.preview(client: PreviewClient(
                     models: .success(PreviewData.modelsEmptyServers))))
             },
-            Entry("models-no-checkout", size: CGSize(width: 720, height: 560)) {
-                ModelsView().environment(AppModel.preview(location: .success(noCheckout)))
+            Entry("models-server-down", size: whole) {
+                ModelsView().environment(AppModel.preview(client: PreviewClient(models: .success(modelServerDown))))
+            },
+            Entry("models-no-llama", size: whole) {
+                ModelsView().environment(AppModel.preview(client: PreviewClient(models: .success(noLlama))))
+            },
+            Entry("models-server-installing", size: whole) {
+                ModelsView().environment(startingServer(.holding([
+                    .step(step: "runtime", message: "Installing llama.cpp build b11399, from its releases"),
+                    .progress(step: "runtime", done: 9_437_184, total: 31_457_280),
+                ])))
+            },
+            Entry("models-server-loading", size: whole) {
+                ModelsView().environment(startingServer(.holding([
+                    .step(step: "runtime", message: "llama.cpp: /opt/homebrew/bin/llama-server"),
+                    .step(step: "unit", message: "Installing the model server's service"),
+                    .step(step: "start", message: "Loading the model into llama.cpp at http://127.0.0.1:8090/v1"),
+                ])))
+            },
+            Entry("models-server-stopping", size: whole) {
+                ModelsView().environment(stoppingServer)
+            },
+            Entry("models-server-failed", size: whole) {
+                ModelsView().environment(startingServer(.events([
+                    .step(step: "runtime", message: "llama.cpp: /opt/homebrew/bin/llama-server"),
+                    .step(step: "unit", message: "Installing the model server's service"),
+                    .step(step: "start", message: "Loading the model into llama.cpp at http://127.0.0.1:8090/v1"),
+                    .error("the model server did not come up: no answer from http://127.0.0.1:8090/v1/models within "
+                        + "600 s; its service was removed, so it does not restart in a loop "
+                        + "(its log: /Users/you/.local/state/keryx/logs/keryx-llm.err.log)"),
+                ])))
+            },
+            Entry("models-server-refused", size: whole) {
+                ModelsView().environment(startingServer(.events(
+                    PreviewData.modelsStartRefusedLines.compactMap(StreamEvent<ModelServerStarted>.parse))))
+            },
+            Entry("models-voice-downloading", size: whole) {
+                ModelsView().environment(downloadingVoice(.holding([
+                    .step(step: "download", message: "Downloading the voice's speech models into the Hugging Face "
+                        + "cache: parakeet-tdt to hear, kokoro to speak"),
+                    .progress(step: "download", done: 1_363_148_800, total: 2_726_297_600),
+                ])))
+            },
+            Entry("models-voice-download-failed", size: whole) {
+                ModelsView().environment(downloadingVoice(.events([
+                    .step(step: "download", message: "Downloading the voice's speech models"),
+                    .error("couldn't download the speech models: the connection to huggingface.co was lost"),
+                ])))
+            },
+            Entry("models-voice-ready", size: whole) {
+                ModelsView().environment(AppModel.preview(client: PreviewClient(voice: .success(PreviewData.voiceHere))))
+            },
+            Entry("models-voice-models-shown", size: screen) {
+                ModelsView().environment({
+                    let model = AppModel.preview()
+                    model.modelsSpotlight = "voice-models"
+                    return model
+                }())
+            },
+            Entry("models-recommended-shown", size: screen) {
+                ModelsView().environment({
+                    let model = AppModel.preview(client: PreviewClient(models: .success(noAgent)))
+                    model.modelsSpotlight = "qwen3-coder-30b-a3b"
+                    return model
+                }())
             },
             Entry("models-error", size: CGSize(width: 720, height: 420)) {
                 ModelsView().environment(AppModel.preview(client: PreviewClient(
@@ -104,15 +171,55 @@ extension ScreenCatalog {
         return model
     }
 
-    /// Keryx installed on its own (`uv tool install`), with no checkout to install the model
-    /// server's service from.
-    private static var noCheckout: KeryxLocation {
-        var location = KeryxLocation.fixture
-        location.checkout = nil
-        location.executable = "/Users/you/.local/bin/keryx"
-        location.prefixArguments = []
-        location.workingDirectory = "/Users/you"
-        return location
+    /// A model chosen for the model server, which is not running and has no service.
+    static var modelServerDown: ModelsReport {
+        var report = PreviewData.models
+        report.servers.llm.reachable = false
+        report.servers.llm.servedModel = nil
+        report.servers.llm.unitInstalled = false
+        return report
+    }
+
+    /// …and llama.cpp not installed either: what Start Model Server installs first.
+    private static var noLlama: ModelsReport {
+        var report = modelServerDown
+        report.servers.llm.binary = nil
+        return report
+    }
+
+    /// No local model chosen yet: what Voice's Show Recommended Model leads to.
+    private static var noAgent: ModelsReport {
+        var report = modelServerDown
+        report.servers.llm.model = nil
+        report.servers.localAgent.model = nil
+        report.servers.localAgent.baseUrl = nil
+        report.servers.localAgent.enabled = false
+        return report
+    }
+
+    /// The model server starting from Local Models, doing `script`.
+    @MainActor private static func startingServer(_ script: PreviewClient.Script<ModelServerStarted>) -> AppModel {
+        let model = AppModel.preview(client: PreviewClient(models: .success(modelServerDown), modelServer: script))
+        model.runModelServer()
+        return model
+    }
+
+    /// A start asked to stop, still stopping.
+    @MainActor private static var stoppingServer: AppModel {
+        let model = startingServer(.slowToStop([
+            .step(step: "runtime", message: "llama.cpp: /opt/homebrew/bin/llama-server"),
+            .step(step: "unit", message: "Installing the model server's service"),
+        ]))
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        model.modelServerRun.cancel()
+        return model
+    }
+
+    /// The speech models downloading, doing `script`.
+    @MainActor private static func downloadingVoice(_ script: PreviewClient.Script<VoiceModelsDownloaded>) -> AppModel {
+        let model = AppModel.preview(client: PreviewClient(voiceDownload: script))
+        model.downloadVoiceModels()
+        return model
     }
 
     /// The whole window, on Local Models.
