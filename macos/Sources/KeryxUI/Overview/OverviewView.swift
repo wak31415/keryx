@@ -242,8 +242,8 @@ private struct ServiceSection: View {
 
 private struct SetupSection: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
     @State private var expanded: Set<String>?
-    @State private var failure: KeryxError?
 
     var body: some View {
         Section("Setup") {
@@ -271,21 +271,13 @@ private struct SetupSection: View {
                 }
             }
         }
-        .alert(failure?.title ?? "", isPresented: Binding(
-            get: { failure != nil }, set: { if !$0 { failure = nil } }
-        )) {
-            Button("OK") {}
-        } message: {
-            Text(failure?.message ?? "")
-        }
     }
 
     @ViewBuilder private func needsAttention(_ doctor: DoctorReport) -> some View {
         let open = doctor.checks.filter { !$0.ok }
         let passed = doctor.checks.filter(\.ok)
         LabeledContent {
-            Button("Open Setup in Terminal") { openSetup() }
-                .disabled(model.location.value == nil)
+            Button("Set Up Keryx…") { openWindow(id: KeryxWindowID.setup) }
         } label: {
             Label {
                 Text(open.count == 1 ? "1 thing needs attention" : "\(open.count) things need attention")
@@ -320,15 +312,6 @@ private struct SetupSection: View {
             var keys = expanded ?? Set(Self.sections(of: model.doctor.value?.checks.filter { !$0.ok } ?? []))
             if isOpen { keys.insert(key) } else { keys.remove(key) }
             expanded = keys
-        }
-    }
-
-    private func openSetup() {
-        guard let location = model.location.value else { return }
-        do {
-            try TerminalLauncher.open(location, arguments: ["setup"])
-        } catch {
-            failure = (error as? KeryxError) ?? .terminal(error.localizedDescription)
         }
     }
 
