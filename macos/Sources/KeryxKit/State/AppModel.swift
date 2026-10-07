@@ -71,6 +71,8 @@ public final class AppModel {
     @ObservationIgnored private let timing: Timing
     /// Run with every poll: removes the Terminal scripts nobody ran (`TerminalLauncher`).
     @ObservationIgnored private let sweep: @Sendable () -> Void
+    /// A sweep is under way (off the main actor); the next poll skips it rather than queue one.
+    @ObservationIgnored private var sweeping = false
     @ObservationIgnored package var started = false
     @ObservationIgnored private var poll: Task<Void, Never>?
     /// Bumped by every locate, so an answer from the Keryx found before is dropped.
@@ -78,7 +80,8 @@ public final class AppModel {
     /// Polls since the poll last started.
     @ObservationIgnored private var pollTicks = 0
 
-    /// `sweep` runs with every status poll; by default it removes the stale scripts
+    /// `sweep` runs with every status poll, on a utility task of its own and never two at
+    /// once; by default it removes the stale scripts
     /// `TerminalLauncher` left in the temporary folder while the app runs.
     public init(locator: Locating, makeClient: @escaping @Sendable (KeryxLocation) -> KeryxClient,
                 preferences: Preferences, timing: Timing = .standard,
@@ -153,11 +156,26 @@ public final class AppModel {
         }
     }
 
-    /// One poll: the stale-script sweep, then what `parts(forPoll:)` says for this tick.
+    /// One poll: the stale-script sweep started, then what `parts(forPoll:)` says for this tick.
     private func pollTick() async {
         pollTicks += 1
-        sweep()
+        startSweep()
         for part in Self.parts(forPoll: pollTicks) { await refresh(part) }
+    }
+
+    /// Runs `sweep` off the main actor (it lists a folder), unless one is still running.
+    private func startSweep() {
+        guard !sweeping else { return }
+        sweeping = true
+        let sweep = sweep
+        Task.detached(priority: .utility) { [weak self] in
+            sweep()
+            await self?.sweepFinished()
+        }
+    }
+
+    private func sweepFinished() {
+        sweeping = false
     }
 
     /// What the `tick`-th poll (from 1) reads: the status, and on every `doctorEvery`-th

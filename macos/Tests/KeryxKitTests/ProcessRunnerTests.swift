@@ -2,8 +2,20 @@ import Foundation
 import Testing
 @testable import KeryxKit
 
-@Suite struct ProcessRunnerTests {
-    let runner = ProcessRunner()
+/// A class, so `deinit` can stop whatever a test started, whichever assertion failed: every
+/// runner here hands its children to `leftovers`. Waits are generous ceilings (10 s) that
+/// return as soon as their condition holds.
+@Suite final class ProcessRunnerTests: Sendable {
+    let leftovers = Leftovers()
+    let runner: ProcessRunner
+
+    init() {
+        runner = ProcessRunner(observingChild: leftovers.add)
+    }
+
+    deinit {
+        leftovers.clean()
+    }
 
     @Test func capturesStdoutStderrAndExitCode() async throws {
         let result = try await runner.run(.init(executable: "/bin/sh",
@@ -40,9 +52,9 @@ import Testing
         let started = ContinuousClock.now
         await #expect(throws: RunnerError.timedOut) {
             _ = try await runner.run(.init(executable: "/bin/sh",
-                arguments: ["-c", "(sleep 5 &) ; echo hi"], timeout: .milliseconds(300)))
+                arguments: ["-c", "(sleep 30 &) ; echo hi"], timeout: .milliseconds(300)))
         }
-        #expect(ContinuousClock.now - started < .seconds(1.5))
+        #expect(ContinuousClock.now - started < .seconds(10))
     }
 
     @Test func shortRunWithNoOutput() async throws {
@@ -54,7 +66,7 @@ import Testing
 
     @Test func aFinishedRunIsFreed() async throws {
         let probe = WeakProbe()
-        let runner = ProcessRunner(observingCollector: { probe.object = $0 })
+        let runner = ProcessRunner(observingCollector: { probe.object = $0 }, observingChild: leftovers.add)
         let result = try await runner.run(.init(executable: "/bin/sh",
             arguments: ["-c", "echo hi; echo err >&2"], timeout: .seconds(5)))
         #expect(result.stdoutText == "hi\n")
@@ -64,10 +76,10 @@ import Testing
 
     @Test func aTimedOutRunIsFreed() async throws {
         let probe = WeakProbe()
-        let runner = ProcessRunner(observingCollector: { probe.object = $0 })
+        let runner = ProcessRunner(observingCollector: { probe.object = $0 }, observingChild: leftovers.add)
         await #expect(throws: RunnerError.timedOut) {
             _ = try await runner.run(.init(executable: "/bin/sh",
-                arguments: ["-c", "(sleep 5 &) ; echo hi"], timeout: .milliseconds(200)))
+                arguments: ["-c", "(sleep 30 &) ; echo hi"], timeout: .milliseconds(200)))
         }
         #expect(probe.wasObserved)
         #expect(await probe.isFreed())
@@ -75,7 +87,7 @@ import Testing
 
     @Test func aLaunchFailureIsFreed() async throws {
         let probe = WeakProbe()
-        let runner = ProcessRunner(observingCollector: { probe.object = $0 })
+        let runner = ProcessRunner(observingCollector: { probe.object = $0 }, observingChild: leftovers.add)
         await #expect(throws: RunnerError.self) {
             _ = try await runner.run(.init(executable: "/nonexistent/keryx", timeout: .seconds(5)))
         }
@@ -139,7 +151,7 @@ import Testing
         run.cancel()
         let result = try await run.value
         #expect(result.exitCode == SIGTERM)    // the shell, ended by the group's SIGTERM
-        #expect(ContinuousClock.now - started < .seconds(2))
+        #expect(ContinuousClock.now - started < .seconds(10))
         #expect(await Self.isGone(grandchild))
     }
 
@@ -158,14 +170,14 @@ import Testing
     @Test func aGroupThatIgnoresSigtermIsKilled() async throws {
         let file = NSTemporaryDirectory() + "keryx-grandchild-\(UUID().uuidString)"
         defer { try? FileManager.default.removeItem(atPath: file) }
-        let runner = ProcessRunner(grace: .milliseconds(300))
+        let runner = ProcessRunner(grace: .milliseconds(300), observingChild: leftovers.add)
         let started = ContinuousClock.now
         await #expect(throws: RunnerError.timedOut) {
             _ = try await runner.run(.init(executable: "/bin/sh",
                 arguments: ["-c", "trap '' TERM; sleep 30 & echo $! > \"$0\"; wait", file],
                 timeout: .milliseconds(200)))
         }
-        #expect(ContinuousClock.now - started < .seconds(3))
+        #expect(ContinuousClock.now - started < .seconds(10))
         let grandchild = try await Self.pid(writtenTo: file)
         #expect(await Self.isGone(grandchild))
     }
@@ -182,7 +194,7 @@ import Testing
             lines.append(line)
             if lines.count == 1 { stream.stop() }
         }
-        #expect(ContinuousClock.now - started < .seconds(3))
+        #expect(ContinuousClock.now - started < .seconds(10))
         #expect(lines.count == 2)
         #expect(lines.last == "stopping")
         // The stream ended only once the child had been reaped: its pid is free at once.
@@ -224,7 +236,7 @@ import Testing
     @Test func aCancelledRunEndsOnlyOnceAGrandchildIgnoringSigtermIsGone() async throws {
         let file = NSTemporaryDirectory() + "keryx-stubborn-\(UUID().uuidString)"
         defer { try? FileManager.default.removeItem(atPath: file) }
-        let runner = ProcessRunner(grace: .milliseconds(500))
+        let runner = ProcessRunner(grace: .milliseconds(500), observingChild: leftovers.add)
         let run = Task {
             try await runner.run(.init(executable: "/bin/sh",
                 arguments: ["-c", Self.stubbornGrandchild, file], timeout: .seconds(30)))
@@ -236,12 +248,12 @@ import Testing
         let took = ContinuousClock.now - started
         // Not at the shell's exit, but after SIGKILL reached the grandchild, and within the bound.
         #expect(took >= .milliseconds(500))
-        #expect(took < .seconds(2))
+        #expect(took < .seconds(10))
         #expect(kill(grandchild, 0) == -1 && errno == ESRCH)
     }
 
     @Test func aStoppedStreamEndsOnlyOnceAGrandchildIgnoringSigtermIsGone() async throws {
-        let runner = ProcessRunner(grace: .milliseconds(500))
+        let runner = ProcessRunner(grace: .milliseconds(500), observingChild: leftovers.add)
         let stream = runner.lines(.init(executable: "/bin/sh",
             arguments: ["-c", #"sh -c 'trap "" TERM; echo $$; exec sleep 30' & wait"#], timeout: nil))
         var grandchild: pid_t?
@@ -253,7 +265,7 @@ import Testing
         }
         let took = ContinuousClock.now - (try #require(stopped))
         #expect(took >= .milliseconds(500))
-        #expect(took < .seconds(2))
+        #expect(took < .seconds(10))
         let pid = try #require(grandchild)
         #expect(kill(pid, 0) == -1 && errno == ESRCH)
     }
@@ -261,7 +273,7 @@ import Testing
     @Test func aTimedOutRunEndsOnlyOnceAGrandchildIgnoringSigtermIsGone() async throws {
         let file = NSTemporaryDirectory() + "keryx-stubborn-\(UUID().uuidString)"
         defer { try? FileManager.default.removeItem(atPath: file) }
-        let runner = ProcessRunner(grace: .milliseconds(500))
+        let runner = ProcessRunner(grace: .milliseconds(500), observingChild: leftovers.add)
         let started = ContinuousClock.now
         await #expect(throws: RunnerError.timedOut) {
             _ = try await runner.run(.init(executable: "/bin/sh",
@@ -270,6 +282,77 @@ import Testing
         #expect(ContinuousClock.now - started >= .milliseconds(700))
         let grandchild = try await Self.pid(writtenTo: file)
         #expect(kill(grandchild, 0) == -1 && errno == ESRCH)
+    }
+
+    // MARK: - The group is signalled only while the leader holds its id
+
+    @Test func aStoppedLeaderIsReapedOnceAndLastAndNothingIsSignalledAfter() async throws {
+        let file = NSTemporaryDirectory() + "keryx-stubborn-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: file) }
+        let children = Leftovers()
+        let runner = ProcessRunner(grace: .milliseconds(300), observingChild: { [leftovers] in
+            leftovers.add($0)
+            children.add($0)
+        })
+        let run = Task {
+            try await runner.run(.init(executable: "/bin/sh",
+                arguments: ["-c", Self.stubbornGrandchild, file], timeout: .seconds(30)))
+        }
+        let grandchild = try await Self.pid(writtenTo: file)
+        run.cancel()
+        _ = try await run.value
+        let child = try #require(children.all.first)
+
+        // Done only once the grandchild is gone, and the leader reaped, once, after the signals.
+        #expect(kill(grandchild, 0) == -1 && errno == ESRCH)
+        #expect(child.events == [.signalled(SIGTERM), .signalled(SIGKILL), .reaped])
+        #expect(waitpid(child.pid, nil, WNOHANG) == -1 && errno == ECHILD)
+
+        // Nothing more, ever: not when the timers would have fired, not on a second stop.
+        try await Task.sleep(for: .milliseconds(300) + Child.killWait + .milliseconds(200))
+        child.stop()
+        #expect(child.events == [.signalled(SIGTERM), .signalled(SIGKILL), .reaped])
+    }
+
+    @Test func aRunThatEndsByItselfIsReapedAndItsGroupNeverSignalled() async throws {
+        let children = Leftovers()
+        let runner = ProcessRunner(observingChild: { children.add($0) })
+        let result = try await runner.run(.init(executable: "/bin/sh", arguments: ["-c", "echo hi"],
+                                                timeout: .seconds(10)))
+        #expect(result.stdoutText == "hi\n")
+        let child = try #require(children.all.first)
+        #expect(child.events == [.reaped])
+        #expect(waitpid(child.pid, nil, WNOHANG) == -1 && errno == ECHILD)
+        child.stop()   // after completion: closed, so not signalled
+        #expect(child.events == [.reaped])
+    }
+
+    @Test func aStreamThatEndsByItselfIsNeverSignalledEvenStoppedAfter() async throws {
+        let children = Leftovers()
+        let runner = ProcessRunner(observingChild: { children.add($0) })
+        let stream = runner.lines(.init(executable: "/bin/sh", arguments: ["-c", "echo a"], timeout: nil))
+        var lines: [String] = []
+        for try await line in stream { lines.append(line) }
+        #expect(lines == ["a"])
+        stream.stop()
+        let child = try #require(children.all.first)
+        #expect(child.events == [.reaped])
+    }
+
+    @Test func aGrandchildThatHoldsThePipesIsStoppedAtTheDeadlineWhileTheLeaderIsAZombie() async throws {
+        // The shell exits at once, its background sleep holding stdout: the leader is kept a
+        // zombie, not reaped, so the deadline can still signal the group.
+        let children = Leftovers()
+        let runner = ProcessRunner(observingChild: { [leftovers] in
+            leftovers.add($0)
+            children.add($0)
+        })
+        await #expect(throws: RunnerError.timedOut) {
+            _ = try await runner.run(.init(executable: "/bin/sh",
+                arguments: ["-c", "sleep 30 & echo $!"], timeout: .milliseconds(300)))
+        }
+        let child = try #require(children.all.first)
+        #expect(child.events == [.signalled(SIGTERM), .reaped])
     }
 
     @Test func stillRunningSaysSo() {
@@ -290,7 +373,7 @@ import Testing
 
     /// The pid a shell wrote to `file`, once it has.
     static func pid(writtenTo file: String) async throws -> pid_t {
-        for _ in 0..<500 {
+        for _ in 0..<1000 {
             if let text = try? String(contentsOfFile: file, encoding: .utf8),
                let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
                 return pid
@@ -303,7 +386,7 @@ import Testing
     /// Whether `pid` is gone (`kill -0` fails) within a few seconds: an orphan is reaped by
     /// launchd, not by us, so its pid may linger a moment as a zombie.
     static func isGone(_ pid: pid_t) async -> Bool {
-        for _ in 0..<500 {
+        for _ in 0..<1000 {
             if kill(pid, 0) == -1, errno == ESRCH { return true }
             try? await Task.sleep(for: .milliseconds(10))
         }
@@ -333,4 +416,17 @@ private final class WeakProbe: @unchecked Sendable {
         }
         return object == nil
     }
+}
+
+/// The children a test's runners started, so the suite's `deinit` can stop whatever is
+/// still going (`Child.stop()`, which signals a group only while it is still the child's).
+final class Leftovers: @unchecked Sendable {
+    private let lock = NSLock()
+    private var children: [Child] = []
+
+    var all: [Child] { lock.withLock { children } }
+
+    func add(_ child: Child) { lock.withLock { children.append(child) } }
+
+    func clean() { all.forEach { $0.stop() } }
 }

@@ -17,17 +17,22 @@ public final class ProcessRunner: CommandRunner, Sendable {
     /// A test hook: handed each `run`'s collector, so a test can hold it weakly and see that
     /// it is freed once the run is over.
     private let observeCollector: (@Sendable (AnyObject) -> Void)?
+    /// A test hook: handed each child as it is spawned, for what was done to it.
+    private let observeChild: (@Sendable (Child) -> Void)?
     /// Between SIGTERM and SIGKILL.
     private let grace: Duration
 
     public init() {
         observeCollector = nil
+        observeChild = nil
         grace = .seconds(3)
     }
 
-    init(grace: Duration = .seconds(3), observingCollector: (@Sendable (AnyObject) -> Void)? = nil) {
+    init(grace: Duration = .seconds(3), observingCollector: (@Sendable (AnyObject) -> Void)? = nil,
+         observingChild: (@Sendable (Child) -> Void)? = nil) {
         self.grace = grace
         observeCollector = observingCollector
+        observeChild = observingChild
     }
 
     public func run(_ request: CommandRequest) async throws -> CommandResult {
@@ -45,6 +50,7 @@ public final class ProcessRunner: CommandRunner, Sendable {
                     return
                 }
 
+                observeChild?(spawned.child)
                 collector.adopt(spawned.child)
                 spawned.child.onExit { [weak collector] status in collector?.exited(status) }
                 spawned.child.onGroupEnd { [weak collector] end in collector?.groupEnded(end) }
@@ -73,6 +79,7 @@ public final class ProcessRunner: CommandRunner, Sendable {
             return LineStream(stream)
         }
         let child = spawned.child
+        observeChild?(child)
         let reader = LineReader(continuation: continuation, child: child)
         if let stdout = spawned.stdout { reader.start(reading: stdout) }
         child.onExit { _ in reader.childExited() }
@@ -93,14 +100,28 @@ public final class ProcessRunner: CommandRunner, Sendable {
 // MARK: - The child
 
 /// One spawned child: its pid (also its process group's id), its exit, and how to stop it.
-/// A thread of its own waits for it (`waitpid`), so it is reaped and its status known
-/// however long it runs; `onExit` handlers run on that thread.
+///
+/// A thread of its own waits for the child to exit (`waitid` with `WNOWAIT`) without
+/// reaping it: an unreaped leader, a zombie, holds its pid and so the group's id, and the
+/// group may only be signalled while that is so — once the leader is reaped the number may
+/// be free, and a signal to it could reach an unrelated group that took it. So the leader is
+/// reaped exactly once, last, and the group is closed (never signalled again) first:
+///
+/// - by its owner's `release()`, when the run or stream is over and nobody stopped it;
+/// - by `stop()` itself, which signals and polls the group (`proc_listpgrppids`, counting
+///   every member but the leader) until the leader has exited and nothing else is left, or
+///   the SIGKILL deadline has passed.
+///
+/// Handlers run on the waiting thread or the polling queue.
 final class Child: @unchecked Sendable {
     enum Output { case pipe, discard }
 
     /// How a stopped child's process group ended: emptied, or still there after SIGKILL and
     /// `killWait` more.
     enum GroupEnd: Sendable, Equatable { case gone, survived }
+
+    /// What was done to the child, in order: for tests.
+    enum Event: Sendable, Equatable { case signalled(Int32), reaped }
 
     /// How long after SIGKILL the group has to be gone before it is reported as surviving.
     static let killWait: Duration = .seconds(1)
@@ -115,6 +136,13 @@ final class Child: @unchecked Sendable {
     private var stopRequested = false
     private var groupEnd: GroupEnd?
     private var groupHandlers: [@Sendable (GroupEnd) -> Void] = []
+    /// The leader has exited (it may still be an unreaped zombie).
+    private var leaderExited = false
+    /// The group will never be signalled again: set before the leader is reaped.
+    private var closed = false
+    /// Someone has taken on reaping the leader: it is reaped exactly once.
+    private var reapClaimed = false
+    private var log: [Event] = []
 
     private init(pid: pid_t, grace: Duration) {
         self.pid = pid
@@ -124,8 +152,11 @@ final class Child: @unchecked Sendable {
     /// True once `stop()` has been called.
     var isStopping: Bool { lock.withLock { stopRequested } }
 
+    /// What was done to the child so far.
+    var events: [Event] { lock.withLock { log } }
+
     /// Calls `handler` with the exit status — the exit code, or the signal that ended it, as
-    /// `Process.terminationStatus` has it — once the child has been reaped; at once if it has.
+    /// `Process.terminationStatus` has it — once the child has exited; at once if it has.
     func onExit(_ handler: @escaping @Sendable (Int32) -> Void) {
         let known: Int32? = lock.withLock {
             if status == nil { handlers.append(handler) }
@@ -144,41 +175,108 @@ final class Child: @unchecked Sendable {
         if let known { handler(known) }
     }
 
-    /// SIGTERM to the whole process group; then, until nothing is left in it (`kill -0`
-    /// answering ESRCH), it is asked again every `pollEvery`. Still there after `grace`:
-    /// SIGKILL, and `killWait` more. The group's end (`gone`, or `survived` past that) goes
-    /// to `onGroupEnd`. Only the first call does anything.
+    /// SIGTERM to the whole process group, then a look every `pollEvery`: done once the
+    /// leader has exited and nothing else is in the group. Still there after `grace`:
+    /// SIGKILL, and `killWait` more before it is reported as `survived`. A child that already
+    /// ended by itself (reaped, the group closed) is not signalled: its group is `gone` as
+    /// far as this child is concerned. Only the first call does anything.
     func stop() {
-        let first = lock.withLock {
-            defer { stopRequested = true }
-            return !stopRequested
+        let signalled: Bool? = lock.withLock {
+            guard !stopRequested else { return nil }
+            stopRequested = true
+            guard !closed else { return false }
+            signal(SIGTERM)
+            return true
         }
-        guard first else { return }
-        let group = pid
-        kill(-group, SIGTERM)
-        Self.awaitGroup(group, until: .now() + grace.timeInterval) { [self] gone in
-            if gone { return groupEnded(.gone) }
-            kill(-group, SIGKILL)
-            Self.awaitGroup(group, until: .now() + Self.killWait.timeInterval) { [self] gone in
-                groupEnded(gone ? .gone : .survived)
+        switch signalled {
+        case nil: return
+        case false?: groupEnded(.gone)
+        case true?: poll(termDeadline: .now() + grace.timeInterval)
+        }
+    }
+
+    /// The thread's part: the leader has exited with `value`. Reaped now only if its group
+    /// was already closed (released before the exit, or a stop that gave up on it).
+    fileprivate func leaderDidExit(_ value: Int32) {
+        let (reapNow, waiting): (Bool, [@Sendable (Int32) -> Void]) = lock.withLock {
+            leaderExited = true
+            status = value
+            defer { handlers = [] }
+            return (closed && claimReap(), handlers)
+        }
+        waiting.forEach { $0(value) }
+        if reapNow { reap() }
+    }
+
+    /// The run or stream is over: the group is closed for good — nothing of it is signalled
+    /// again, whatever it left behind — and the leader reaped (now, or when it exits). Does
+    /// nothing while a stop is under way, which ends the same way by itself.
+    func release() {
+        let reapNow: Bool = lock.withLock {
+            guard !closed, !stopRequested else { return false }
+            closed = true
+            return leaderExited && claimReap()
+        }
+        if reapNow { reap() }
+    }
+
+    /// One look at a stopping group.
+    private func poll(termDeadline: DispatchTime, killDeadline: DispatchTime? = nil) {
+        var killDeadline = killDeadline
+        var end: GroupEnd?
+        let reapNow: Bool = lock.withLock {
+            guard !closed else { return false }
+            let now = DispatchTime.now()
+            if leaderExited && Self.othersInGroup(pid) == 0 {
+                end = .gone
+            } else if let deadline = killDeadline {
+                if now >= deadline { end = .survived }
+            } else if now >= termDeadline {
+                signal(SIGKILL)
+                killDeadline = now + Self.killWait.timeInterval
             }
+            guard end != nil else { return false }
+            closed = true
+            return leaderExited && claimReap()
+        }
+        if reapNow { reap() }
+        if let end { return groupEnded(end) }
+        let next = killDeadline
+        DispatchQueue.global().asyncAfter(deadline: .now() + Self.pollEvery.timeInterval) { [self] in
+            poll(termDeadline: termDeadline, killDeadline: next)
         }
     }
 
-    /// Whether nothing is left in process group `group`.
-    static func groupIsGone(_ group: pid_t) -> Bool {
-        kill(-group, 0) == -1 && errno == ESRCH
+    /// Signals the group. Only under `lock`, and only while it is open — the leader
+    /// unreaped, so its pid and the group id are still ours.
+    private func signal(_ number: Int32) {
+        precondition(!closed, "signalling a closed process group")
+        kill(-pid, number)
+        log.append(.signalled(number))
     }
 
-    /// Calls `then(true)` as soon as `group` is gone, or `then(false)` at `deadline`.
-    private static func awaitGroup(
-        _ group: pid_t, until deadline: DispatchTime, then: @escaping @Sendable (Bool) -> Void
-    ) {
-        if groupIsGone(group) { return then(true) }
-        if DispatchTime.now() >= deadline { return then(false) }
-        DispatchQueue.global().asyncAfter(deadline: .now() + pollEvery.timeInterval) {
-            awaitGroup(group, until: deadline, then: then)
+    /// Under `lock`: true the first time only.
+    private func claimReap() -> Bool {
+        defer { reapClaimed = true }
+        return !reapClaimed
+    }
+
+    /// How many processes other than `leader` are in its group.
+    static func othersInGroup(_ leader: pid_t) -> Int {
+        var members = [pid_t](repeating: 0, count: 256)
+        let count = members.withUnsafeMutableBytes {
+            proc_listpgrppids(leader, $0.baseAddress, Int32($0.count))
         }
+        guard count > 0 else { return 0 }
+        return members.prefix(min(Int(count), members.count)).filter { $0 != 0 && $0 != leader }.count
+    }
+
+    /// Reaps the leader, which has exited. Called once (`claimReap`), after `closed`.
+    private func reap() {
+        var status: Int32 = 0
+        var waited: pid_t
+        repeat { waited = waitpid(pid, &status, 0) } while waited == -1 && errno == EINTR
+        lock.withLock { log.append(.reaped) }
     }
 
     private func groupEnded(_ end: GroupEnd) {
@@ -188,15 +286,6 @@ final class Child: @unchecked Sendable {
             return groupHandlers
         }
         waiting.forEach { $0(end) }
-    }
-
-    private func reaped(_ value: Int32) {
-        let waiting: [@Sendable (Int32) -> Void] = lock.withLock {
-            status = value
-            defer { handlers = [] }
-            return handlers
-        }
-        waiting.forEach { $0(value) }
     }
 
     /// Starts `request` in a new process group: stdout to a pipe; stderr to a pipe or to
@@ -285,10 +374,13 @@ final class Child: @unchecked Sendable {
         let spawnedPID = pid
         let child = Child(pid: spawnedPID, grace: grace)
         let waiter = Thread {
-            var status: Int32 = 0
-            var waited: pid_t
-            repeat { waited = waitpid(spawnedPID, &status, 0) } while waited == -1 && errno == EINTR
-            child.reaped(waited == spawnedPID ? Child.terminationStatus(status) : -1)
+            // Exited, but not reaped (`WNOWAIT`): `Child` decides when.
+            var info = siginfo_t()
+            var result: Int32
+            repeat {
+                result = waitid(P_PID, id_t(spawnedPID), &info, WEXITED | WNOWAIT)
+            } while result == -1 && errno == EINTR
+            child.leaderDidExit(result == 0 ? Child.terminationStatus(info) : -1)
         }
         waiter.name = "dev.keryx.app.wait"
         waiter.stackSize = 64 * 1024
@@ -296,11 +388,10 @@ final class Child: @unchecked Sendable {
         return Spawned(child: child, stdout: out.read, stderr: err?.read, stdin: input?.write)
     }
 
-    /// `waitpid`'s status as `Process.terminationStatus` reports it: the exit code, or the
-    /// number of the signal that ended the child.
-    static func terminationStatus(_ status: Int32) -> Int32 {
-        let signal = status & 0x7f
-        return signal == 0 ? (status >> 8) & 0xff : signal
+    /// An exit as `Process.terminationStatus` reports it: the exit code, or the number of
+    /// the signal that ended the child.
+    static func terminationStatus(_ info: siginfo_t) -> Int32 {
+        info.si_status
     }
 }
 
@@ -525,6 +616,7 @@ private final class RunCollector: @unchecked Sendable {
     private func conclude(_ result: Result<CommandResult, Error>) {
         guard let continuation else { return }
         self.continuation = nil
+        child?.release()
         timers.forEach { $0.cancel() }
         timers = []
         sources.forEach { $0.cancel() }
@@ -638,6 +730,7 @@ private final class LineReader: @unchecked Sendable {
         }
         guard atEnd, exited, !child.isStopping || groupEnd == .gone else { return }
         finished = true
+        child.release()
         continuation.finish()
     }
 }

@@ -16,6 +16,29 @@ public enum TerminalLauncher {
     /// old: it holds no secret, but it does hold paths.
     static let staleAfter: TimeInterval = 10 * 60
 
+    /// The app's own folder for the scripts, `keryx-commands` in NSTemporaryDirectory
+    /// (0700), so the stale-script sweep lists that and nothing else.
+    public static var commandsDirectory: String {
+        (NSTemporaryDirectory() as NSString).appendingPathComponent("keryx-commands")
+    }
+
+    /// `commandsDirectory` (under `base`), made 0700 if it is not there; refused if what is
+    /// there is not a directory of this user's (a symlink, a file).
+    static func preparedCommandsDirectory(in base: String = NSTemporaryDirectory()) throws -> String {
+        let directory = (base as NSString).appendingPathComponent("keryx-commands")
+        let files = FileManager.default
+        if mkdir(directory, 0o700) != 0 && errno != EEXIST {
+            throw KeryxError.launch("Could not make \(directory) for the script for Terminal.")
+        }
+        var info = stat()
+        guard lstat(directory, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid()
+        else {
+            throw KeryxError.launch("\(directory) is not a folder of yours, so no script was written there.")
+        }
+        try? files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory)
+        return directory
+    }
+
     /// The text of a .command file that runs `keryx <arguments>` in the checkout (or `/`,
     /// with none) with the resolved KERYX_HOME / XDG_* / PATH / HOME exported, every value
     /// single-quoted, and each of those the location does not set unset — so Terminal's own
@@ -57,7 +80,7 @@ public enum TerminalLauncher {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    /// Writes it (0700, NSTemporaryDirectory, name keryx-<uuid>.command; the script deletes
+    /// Writes it (0700, in `commandsDirectory`, name keryx-<uuid>.command; the script deletes
     /// itself first) and opens it with NSWorkspace. Throws on write failure. Any script an
     /// earlier call left behind is removed first (`removeStaleScripts`).
     @MainActor public static func open(_ location: KeryxLocation, arguments: [String]) throws {
@@ -75,7 +98,7 @@ public enum TerminalLauncher {
 
     @MainActor private static func open(_ text: String) throws {
         removeStaleScripts()
-        let path = (NSTemporaryDirectory() as NSString)
+        let path = (try preparedCommandsDirectory() as NSString)
             .appendingPathComponent("keryx-\(UUID().uuidString).command")
         let contents = Data(text.utf8)
         guard FileManager.default.createFile(
@@ -89,10 +112,11 @@ public enum TerminalLauncher {
         }
     }
 
-    /// Removes every `keryx-<uuid>.command` in `directory` (NSTemporaryDirectory, which is
-    /// this user's own) last changed more than `staleAfter` before `now`: a script whose
-    /// Terminal never ran it, so never deleted itself. Run at launch and before each open.
-    public static func removeStaleScripts(in directory: String = NSTemporaryDirectory(), now: Date = Date()) {
+    /// Removes every `keryx-<uuid>.command` in `directory` (`commandsDirectory`, the app's
+    /// own) last changed more than `staleAfter` before `now`: a script whose Terminal never
+    /// ran it, so never deleted itself. Run at launch, with each status poll (off the main
+    /// actor), and before each open.
+    public static func removeStaleScripts(in directory: String = commandsDirectory, now: Date = Date()) {
         let files = FileManager.default
         guard let names = try? files.contentsOfDirectory(atPath: directory) else { return }
         for name in names where isScriptName(name) {

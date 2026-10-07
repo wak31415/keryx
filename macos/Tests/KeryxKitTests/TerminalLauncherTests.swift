@@ -97,6 +97,26 @@ import Testing
         #expect(!script.contains("cd '/Users/x'"))
     }
 
+    @Test func scriptsGoInAFolderOfTheAppsOwn() throws {
+        let base = NSTemporaryDirectory() + "keryx-base-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: base) }
+
+        let directory = try TerminalLauncher.preparedCommandsDirectory(in: base)
+        #expect(directory == base + "/keryx-commands")
+        let mode = try FileManager.default.attributesOfItem(atPath: directory)[.posixPermissions] as? Int
+        #expect(mode == 0o700)
+        #expect(try TerminalLauncher.preparedCommandsDirectory(in: base) == directory)   // again: fine
+        #expect(TerminalLauncher.commandsDirectory.hasSuffix("/keryx-commands"))
+
+        // Something else in its place (a symlink to elsewhere) is refused, not written into.
+        let other = NSTemporaryDirectory() + "keryx-base-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: other, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: other) }
+        try FileManager.default.createSymbolicLink(atPath: other + "/keryx-commands", withDestinationPath: base)
+        #expect(throws: KeryxError.self) { try TerminalLauncher.preparedCommandsDirectory(in: other) }
+    }
+
     @Test func staleScriptsAreRemovedAndNothingElse() throws {
         let directory = NSTemporaryDirectory() + "keryx-stale-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
