@@ -880,3 +880,167 @@ def test_options_survives_a_server_that_answers_with_a_json_array(home, monkeypa
     )
     assert realtime.exit_code == 0, realtime.output
     assert json.loads(realtime.stdout)["error"] == "Keryx couldn't read the list (RuntimeError)."
+
+
+# --- config verify -------------------------------------------------------------------------
+
+PLANTED = "sk-planted-0123456789abcdef"
+TWILIO_SID = "AC0123456789abcdef0123456789abcdef"
+
+
+@pytest.fixture
+def credential_checks(monkeypatch):
+    """Every check `config verify` makes, faked: OpenAI and Anthropic refuse anything but
+    `good`, and Twilio knows one account. What each was handed is recorded."""
+    import httpx
+
+    from keryx.config import verify
+    from keryx.notify.twilio_out import TwilioError
+
+    asked: list[tuple[str, str]] = []
+
+    def openai(key):
+        asked.append(("openai", key))
+        return None if key == "good" else "OpenAI does not recognise that key"
+
+    def get(url, **kwargs):
+        key = kwargs["headers"]["x-api-key"]
+        asked.append(("anthropic", key))
+        status = 200 if key == "good" else 401
+        return httpx.Response(status, json={"data": [], "error": f"bad {key}"})
+
+    class Admin:
+        def __init__(self, sid, token):
+            asked.append(("twilio", f"{sid}:{token}"))
+            self.token = token
+
+        def account_name(self):
+            if self.token != "good":
+                raise TwilioError(f"Authenticate {self.token}", status=401)
+            return "Ada's account"
+
+    fake = verify.Checks(openai_key_problem=openai, get=get, twilio=Admin)
+    monkeypatch.setattr(verify, "default_checks", lambda: fake)
+    return asked
+
+
+def store_bytes(home):
+    return [path.read_bytes() if path.exists() else None
+            for path in (home.config_path, home.secrets_path)]
+
+
+@pytest.mark.parametrize("key", ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CODEX_API_KEY"])
+def test_verify_stdin_checks_the_value_given_and_saves_nothing(home, credential_checks, key):
+    run("config", "set", "ASSISTANT_NAME", "Vega")
+    before = store_bytes(home)
+
+    result = run("config", "verify", key, "--stdin", "--json", input="good\n")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"key": key, "ok": True, "problem": None, "detail": None}
+    assert credential_checks[-1][1] == "good"
+    assert store_bytes(home) == before
+
+
+def test_verify_a_twilio_token_with_the_stored_sid(home, credential_checks):
+    run("config", "set", "TWILIO_ACCOUNT_SID", TWILIO_SID)
+    before = store_bytes(home)
+
+    result = run("config", "verify", "TWILIO_AUTH_TOKEN", "--stdin", "--json", input="good\n")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {
+        "key": "TWILIO_AUTH_TOKEN", "ok": True, "problem": None, "detail": "Ada's account",
+    }
+    assert credential_checks == [("twilio", f"{TWILIO_SID}:good")]
+    assert store_bytes(home) == before
+
+
+def test_verify_without_stdin_checks_the_stored_value(home, credential_checks):
+    run("config", "set", "ANTHROPIC_API_KEY", "--stdin", input="good\n")
+
+    result = run("config", "verify", "anthropic_api_key", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["ok"] is True
+    assert credential_checks == [("anthropic", "good")]
+
+
+def test_a_key_that_does_not_work_is_a_result_not_a_failure(home, credential_checks):
+    result = run("config", "verify", "OPENAI_API_KEY", "--stdin", "--json", input=PLANTED)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {
+        "key": "OPENAI_API_KEY", "ok": False,
+        "problem": "OpenAI does not recognise that key.", "detail": None,
+    }
+
+
+def test_nothing_stored_is_a_result_too(home, credential_checks):
+    result = run("config", "verify", "ANTHROPIC_API_KEY", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["problem"] == "There's no ANTHROPIC_API_KEY to check."
+    assert credential_checks == []
+
+
+def test_verify_never_prints_a_key(home, credential_checks):
+    run("config", "set", "TWILIO_ACCOUNT_SID", TWILIO_SID)
+    run("config", "set", "TWILIO_AUTH_TOKEN", "--stdin", input=PLANTED)
+    run("config", "set", "ANTHROPIC_API_KEY", "--stdin", input=PLANTED)
+
+    for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "TWILIO_AUTH_TOKEN"):
+        for flags in (["--json"], []):
+            stdin = ["--stdin"] if key == "OPENAI_API_KEY" else []
+            result = run("config", "verify", key, *stdin, *flags, input=PLANTED)
+            assert result.exit_code == 0, result.output
+            assert PLANTED not in result.output
+
+
+def test_verify_as_text_says_whether_it_worked(home, credential_checks):
+    run("config", "set", "TWILIO_ACCOUNT_SID", TWILIO_SID)
+
+    worked = run("config", "verify", "TWILIO_AUTH_TOKEN", "--stdin", input="good\n")
+    refused = run("config", "verify", "OPENAI_API_KEY", "--stdin", input="nope\n")
+
+    assert worked.exit_code == refused.exit_code == 0
+    assert "TWILIO_AUTH_TOKEN works (Ada's account)" in worked.output
+    assert "OPENAI_API_KEY does not work: OpenAI does not recognise that key." in refused.output
+
+
+@pytest.mark.parametrize("key", ["TWILIO_ACCOUNT_SID", "OPENAI_REALTIME_MODEL", "NO_SUCH_KEY"])
+def test_a_key_that_cannot_be_checked_is_a_wrong_command_line(home, credential_checks, key):
+    result = run("config", "verify", key, "--json")
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert credential_checks == []
+
+
+def test_the_sid_alone_points_at_the_token(home, credential_checks):
+    result = run("config", "verify", "TWILIO_ACCOUNT_SID", "--json")
+
+    assert "TWILIO_AUTH_TOKEN" in result.output
+
+
+def test_verify_writes_nothing_and_so_needs_no_owner(home, credential_checks, monkeypatch):
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+    result = run("config", "verify", "CODEX_API_KEY", "--stdin", "--json", input="good\n")
+
+    assert result.exit_code == 0, result.output
+    assert not home.config_path.exists() and not home.secrets_path.exists()
+
+
+def test_at_a_terminal_verify_asks_for_the_key_hidden(monkeypatch):
+    from types import SimpleNamespace
+
+    from keryx import cli
+
+    asked = []
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(cli.typer, "prompt",
+                        lambda text, hide_input: asked.append((text, hide_input)) or " sk-1 ")
+
+    assert cli._read_secret_line("OPENAI_API_KEY") == "sk-1"
+    assert asked == [("OPENAI_API_KEY", True)]

@@ -44,6 +44,7 @@ from keryx.config import (
     secure_dir,
     secure_file,
 )
+from keryx.config import verify as credentials
 from keryx.config.files import HOME_ENV, XDG_HOMES, claude_config_dir, xdg_home
 from keryx.config.migrate import MigrationError, make_plan, old_target, retire_old_units
 from keryx.config.migrate import Report as MigrationReport
@@ -2133,6 +2134,47 @@ def config_options(
         value = option.value or '""'  # blank is a value too: OPENAI_VOICE's own voice
         detail = f" ({option.detail})" if option.detail else ""
         typer.echo(f"{value}  {option.label}{detail}")
+
+
+@config_app.command("verify")
+def config_verify(
+    key: Annotated[str, typer.Argument(help="The key or credential to check, by name.")],
+    stdin: Annotated[
+        bool,
+        typer.Option("--stdin", help="Check the value on standard input (one line), unsaved."),
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+) -> None:
+    """Check that a key or credential works, and save nothing.
+
+    OPENAI_API_KEY, CODEX_API_KEY (an OpenAI key) and ANTHROPIC_API_KEY are asked for their
+    provider's list of models. TWILIO_AUTH_TOKEN is checked with the saved TWILIO_ACCOUNT_SID,
+    and names the account: save the SID first, since it is not checked on its own. With
+    --stdin the value given is checked and not saved (`keryx config set KEY --stdin` saves
+    it); without, the saved one. A key that does not work is still a result (exit 0); a key
+    that cannot be checked exits 2. No key is ever printed.
+    """
+    key = _key_or_exit(key)
+    if not credentials.can_verify(key):
+        hint = "; TWILIO_AUTH_TOKEN checks it with its token" if key == "TWILIO_ACCOUNT_SID" else ""
+        supported = ", ".join(credentials.SUPPORTED)
+        typer.echo(f"{key} can't be checked{hint} (only {supported})", err=True)
+        raise typer.Exit(2)
+    value = _read_secret_line(key) if stdin else None
+    result = credentials.verify(key, value, _load_settings_optional())
+    if as_json:
+        typer.echo(json.dumps(result.as_dict(), indent=2))
+    elif result.ok:
+        typer.echo(f"{key} works" + (f" ({result.detail})" if result.detail else ""))
+    else:
+        typer.echo(f"{key} does not work: {result.problem}")
+
+
+def _read_secret_line(key: str) -> str:
+    """One line of standard input, without its newline (a hidden prompt at a terminal)."""
+    if sys.stdin.isatty():
+        return typer.prompt(key, hide_input=True).strip()
+    return sys.stdin.readline().strip()
 
 
 def _read_secret_input(key: str) -> str:

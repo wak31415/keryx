@@ -36,8 +36,12 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `choices`, and `has_options`; the table keeps the keys, which are what is typed),
   `config options KEY [--json]` (the models or voices a setting can take, read live from
   OpenAI, Anthropic, Codex or a server of the owner's when it can be, else Keryx's own list
-  with `error` saying why — exit 0 either way; `keryx/config/options.py`), `config get
-  KEY… [--shell]` (never a secret), `config set KEY VALUE […]` (a secret only with
+  with `error` saying why — exit 0 either way; `keryx/config/options.py`), `config verify
+  KEY [--stdin] [--json]` (whether OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_API_KEY or
+  TWILIO_AUTH_TOKEN — with the saved SID — works, before it is saved: `--stdin` checks the
+  typed value and saves nothing; a key that does not work is still exit 0, `problem` one
+  sentence of cause and never the key; any other key exits 2; `keryx/config/verify.py`),
+  `config get KEY… [--shell]` (never a secret), `config set KEY VALUE […]` (a secret only with
   `--stdin` or `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every
   directory), `config import-env [PATH]`, `config lock|unlock KEY` (what the running service
   may change)
