@@ -47,19 +47,6 @@ public enum TerminalLauncher {
         script(for: location, argv: [location.executable] + location.prefixArguments + arguments)
     }
 
-    /// The text of a .command file that runs the checkout's `scripts/install-launchd.sh` —
-    /// installing Keryx as a launchd service — the same way, in the checkout. `nil` without a
-    /// checkout, which has no such script.
-    public static func installServiceScript(for location: KeryxLocation) -> String? {
-        guard let checkout = location.checkout else { return nil }
-        return script(for: location, argv: [installServicePath(checkout)])
-    }
-
-    /// Where a checkout keeps the script that installs the service.
-    public static func installServicePath(_ checkout: String) -> String {
-        (checkout as NSString).appendingPathComponent("scripts/install-launchd.sh")
-    }
-
     private static func script(for location: KeryxLocation, argv: [String]) -> String {
         var lines = [
             "#!/bin/sh",
@@ -85,15 +72,6 @@ public enum TerminalLauncher {
     /// earlier call left behind is removed first (`removeStaleScripts`).
     @MainActor public static func open(_ location: KeryxLocation, arguments: [String]) throws {
         try open(script(for: location, arguments: arguments))
-    }
-
-    /// Runs the checkout's `scripts/install-launchd.sh` in Terminal, as `open` runs a
-    /// command. Throws without a checkout.
-    @MainActor public static func openInstallService(_ location: KeryxLocation) throws {
-        guard let text = installServiceScript(for: location) else {
-            throw KeryxError.terminal("Installing the service needs a Keryx checkout. Run keryx setup in Terminal instead.")
-        }
-        try open(text)
     }
 
     @MainActor private static func open(_ text: String) throws {

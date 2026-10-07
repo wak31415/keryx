@@ -127,7 +127,7 @@ package struct UseModelSheet: View {
                         startServer()
                     }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(working || model.modelServerRun.isBusy)
+                    .disabled(working || !model.canStartModelServer)
                 }
             }
         }

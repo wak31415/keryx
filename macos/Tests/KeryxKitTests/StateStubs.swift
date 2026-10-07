@@ -34,6 +34,8 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         var optionsWait: @Sendable () async -> Void = {}
         /// Awaited before `service install|uninstall` answers, to hold one mid-way.
         var serviceWait: @Sendable () async -> Void = {}
+        /// Awaited before `models stop` answers, to hold one mid-way.
+        var stopWait: @Sendable () async -> Void = {}
         var voiceHere: @Sendable (String?) -> VoiceSetupStream = { _ in
             VoiceSetupStream(AsyncThrowingStream { $0.finish() })
         }
@@ -157,7 +159,6 @@ final class StubClient: KeryxClient, @unchecked Sendable {
     func setPin(_ pin: String, replace: Bool) async throws -> PinSetResult {
         try answer("pin set --stdin\(replace ? " --replace" : "")") { $0.pinSet }
     }
-    func verify(key: String) async throws -> VerifyResult { try answer("config verify \(key)") { $0.verify } }
     func verify(key: String, value: String) async throws -> VerifyResult {
         try answer("config verify \(key) --stdin") { $0.verify }
     }
@@ -172,12 +173,15 @@ final class StubClient: KeryxClient, @unchecked Sendable {
     func installService() async throws -> ServiceResult {
         let wait = lock.withLock { replies.serviceWait }
         await wait()
+        // A cancelled run throws, as the runner's does once it has stopped the group.
+        try Task.checkCancellation()
         return try answer("service install") { $0.serviceResult }
     }
-    func uninstallService(llm: Bool, voice: Bool) async throws -> ServiceResult {
+    func uninstallService() async throws -> ServiceResult {
         let wait = lock.withLock { replies.serviceWait }
         await wait()
-        return try answer("service uninstall" + (llm ? " --llm" : "") + (voice ? " --voice" : "")) { $0.serviceResult }
+        try Task.checkCancellation()
+        return try answer("service uninstall") { $0.serviceResult }
     }
     func startModelServer(runtime: String?) -> ModelServerStream {
         let make = lock.withLock {
@@ -186,7 +190,11 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         }
         return make(runtime)
     }
-    func stopModelServer() async throws -> ServiceResult { try answer("models stop") { $0.serviceResult } }
+    func stopModelServer() async throws -> ServiceResult {
+        let wait = lock.withLock { replies.stopWait }
+        await wait()
+        return try answer("models stop") { $0.serviceResult }
+    }
     func downloadVoiceModels() -> VoiceDownloadStream {
         let make = lock.withLock {
             recorded.append("voice download")

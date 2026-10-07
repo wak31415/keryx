@@ -90,14 +90,6 @@ import KeryxPreview
 
     // MARK: - Verifying a key
 
-    @Test func verifyingTheSavedKeySendsNothing() async throws {
-        let (client, fake) = Self.client(try Self.data("fixture:verify-unsaved.json"))
-        let result = try await client.verify(key: "OPENAI_API_KEY")
-        #expect(Self.words(fake.requests.last) == ["config", "verify", "OPENAI_API_KEY", "--json"])
-        #expect(fake.requests.last?.stdin == nil)
-        #expect(!result.ok && result.problem == "There's no OPENAI_API_KEY to check.")
-    }
-
     @Test func aTypedKeyIsVerifiedFromStdinOneLine() async throws {
         let (client, fake) = Self.client(try Self.data("fixture:verify-problem.json"))
         let result = try await client.verify(key: "OPENAI_API_KEY", value: "  sk-very-secret\n")
@@ -122,7 +114,7 @@ import KeryxPreview
     @Test func aKeyThatCannotBeCheckedIsAFailure() async throws {
         let fake = FakeRunner { _ in Self.refused("ASSISTANT_NAME can't be checked", exit: 2) }
         await #expect(throws: KeryxError.self) {
-            _ = try await CLIClient(location: .fixture, runner: fake).verify(key: "ASSISTANT_NAME")
+            _ = try await CLIClient(location: .fixture, runner: fake).verify(key: "ASSISTANT_NAME", value: "Vega")
         }
     }
 
@@ -204,10 +196,8 @@ import KeryxPreview
         #expect(installs.last?.timeout == CLIClient.installerTimeout)
         #expect(installed.ok)
 
-        _ = try await installer.uninstallService(llm: false, voice: false)
+        _ = try await installer.uninstallService()
         #expect(Self.words(installs.last) == ["service", "uninstall", "--json"])
-        _ = try await installer.uninstallService(llm: true, voice: true)
-        #expect(Self.words(installs.last) == ["service", "uninstall", "--llm", "--voice", "--json"])
         _ = try await installer.stopModelServer()
         #expect(Self.words(installs.last) == ["models", "stop", "--json"])
     }

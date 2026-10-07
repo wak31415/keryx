@@ -28,11 +28,9 @@ import KeryxPreview
         #expect(model.setupPlan.value == PreviewData.setupPlanPartway)
         #expect(model.pin.value == PreviewData.pinFile)
         #expect(model.service.value == PreviewData.service)
-        #expect(model.phoneTunnel.value == PreviewData.phoneTunnel)
         #expect(model.integrations.value == PreviewData.integrations)
         #expect(model.plugins.value == PreviewData.plugins)
         #expect(model.tools.value == PreviewData.tools)
-        #expect(model.sshHosts.value == PreviewData.sshHosts)
     }
 
     @Test func refreshAllNeverAsksTwilio() async {
@@ -44,9 +42,21 @@ import KeryxPreview
         let asked = calls(client, after: mark)
         #expect(!asked.contains("phone numbers"))
         #expect(!asked.contains("phone webhooks"))
-        #expect(asked.contains("phone tunnel"))
+        #expect(!asked.contains("phone tunnel"), "it asks PUBLIC_HOST")
+        #expect(!asked.contains("plugins hosts"))
+        #expect(asked.contains("setup plan") && asked.contains("integrations"))
         #expect(model.phoneNumbers.value == nil)
         #expect(model.phoneWebhooks.value == nil)
+        #expect(model.phoneTunnel.value == nil)
+        #expect(model.sshHosts.value == nil)
+    }
+
+    @Test func thePollNeverReadsThePlanNorTheIntegrations() {
+        for tick in 1...(2 * AppModel.doctorEvery) {
+            let parts = AppModel.parts(forPoll: tick)
+            #expect(!parts.contains(.setupPlan) && !parts.contains(.integrations))
+            #expect(!parts.contains { AppModel.Part.onlyWhenShown.contains($0) })
+        }
     }
 
     @Test func thePhoneSectionReadsWhatAllLeavesOut() async {
@@ -72,7 +82,14 @@ import KeryxPreview
         await model.refreshShown()
         #expect(calls(client, after: mark).contains("phone numbers"))
         #expect(calls(client, after: mark).contains("phone webhooks"))
+        #expect(calls(client, after: mark).contains("phone tunnel"))
         #expect(calls(client, after: mark).contains("setup plan"))
+        #expect(!calls(client, after: mark).contains("plugins hosts"))
+        model.selection = .plugins
+        mark = client.calls.count
+        await model.refreshShown()
+        #expect(calls(client, after: mark).contains("plugins hosts"))
+        #expect(!calls(client, after: mark).contains("phone tunnel"))
     }
 
     @Test func aFailedDocumentKeepsItsError() async {
@@ -138,9 +155,8 @@ import KeryxPreview
         defer { model.stop() }
         let mark = client.calls.count
         #expect(await model.verify(key: "OPENAI_API_KEY", value: "sk-x") == .success(PreviewClient.notVerified))
-        _ = await model.verify(key: "OPENAI_API_KEY")
         _ = await model.verifyTwilio(accountSID: "AC1", authToken: "t")
-        #expect(calls(client, after: mark) == ["config verify OPENAI_API_KEY --stdin", "config verify OPENAI_API_KEY",
+        #expect(calls(client, after: mark) == ["config verify OPENAI_API_KEY --stdin",
                                                "config verify TWILIO_AUTH_TOKEN --stdin --pair"])
         #expect(!model.configNeedsRestart)
     }
@@ -165,8 +181,8 @@ import KeryxPreview
         #expect(calls(client, after: mark).first == "service install")
         #expect(calls(client, after: mark).contains("service"))
         mark = client.calls.count
-        _ = await model.uninstallService(llm: true)
-        #expect(calls(client, after: mark).first == "service uninstall --llm")
+        _ = await model.uninstallService()
+        #expect(calls(client, after: mark).first == "service uninstall")
         mark = client.calls.count
         _ = await model.stopModelServer()
         #expect(calls(client, after: mark).first == "models stop")
@@ -193,8 +209,45 @@ import KeryxPreview
         gates[1].open()
         _ = await uninstall.value
         #expect(model.serviceChange == nil)
-        _ = await model.uninstallService(llm: true)
-        #expect(model.serviceChange == nil, "a server's unit is not Keryx's own service")
+    }
+
+    @Test func aSecondServiceChangeIsRefusedWhileOneRuns() async {
+        let gate = OptionsGate()
+        let client = StubClient { $0.serviceWait = { await gate.wait() } }
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        let install = Task { await model.installService() }
+        #expect(await eventually { gate.held == 1 })
+        let mark = client.calls.count
+        // Whichever window asks (the Overview, the Setup Assistant), the model refuses.
+        #expect(await model.installService() == .failure(.refused(AppModel.serviceBusy)))
+        #expect(await model.uninstallService() == .failure(.refused(AppModel.serviceBusy)))
+        #expect(calls(client, after: mark).isEmpty, "nothing more was run")
+        #expect(model.serviceChange == .installing, "the first is still the one under way")
+        gate.open()
+        _ = await install.value
+        #expect(model.serviceChange == nil)
+    }
+
+    @Test func quittingStopsAServiceInstallUnderWay() async {
+        let waiting = CallCounter()
+        let client = StubClient {
+            $0.serviceWait = {
+                _ = waiting.next()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        let install = Task { await model.installService() }
+        #expect(await eventually { waiting.calls == 1 })
+        model.cancelRuns()
+        // The held task is cancelled: the runner would stop the installer's group. The stub's
+        // wait ends on cancellation, and the install ends with it.
+        let answer = await install.value
+        if case .success = answer { Issue.record("a cancelled install reported success") }
+        #expect(model.serviceChange == nil)
+        #expect(!model.isBusy)
     }
 
         @Test func aFailedInstallReadsNothingAgain() async {
@@ -372,4 +425,7 @@ final class CallCounter: @unchecked Sendable {
             return count
         }
     }
+
+    /// How many `next` calls so far.
+    var calls: Int { lock.withLock { count } }
 }

@@ -311,7 +311,7 @@ private struct ModelServerSection: View {
                 Button("Stop Model Server") {
                     if model.voice.value?.kind == .here { confirmingStop = true } else { stop() }
                 }
-                .disabled(stopping || model.voiceSetup.isBusy)
+                .disabled(stopping || model.stoppingModelServer || model.modelServerRun.isBusy || model.voiceSetup.isBusy)
                 .help(model.voiceSetup.isBusy ? "Wait for the voice setup to finish" : "")
             }
             if cannot == nil {
@@ -319,7 +319,7 @@ private struct ModelServerSection: View {
                     failure = nil
                     model.runModelServer()
                 }
-                .disabled(stopping || model.voiceSetup.isBusy)
+                .disabled(stopping || !model.canStartModelServer)
                 .help(model.voiceSetup.isBusy ? "Wait for the voice setup to finish" : "")
             }
         }
@@ -411,7 +411,8 @@ private struct VoiceModelsSection: View {
                 Button("Try Again") { model.downloadVoiceModels() }
             }
         case .finished, nil:
-            downloadRow(ready: here.modelsReady, settingUp: model.voiceSetup.isBusy)
+            // Not beside a voice setup, which fetches them too — nor one waiting on its model server.
+            downloadRow(ready: here.modelsReady, settingUp: !model.canDownloadVoiceModels)
         }
         voiceServerRow(voice)
     }

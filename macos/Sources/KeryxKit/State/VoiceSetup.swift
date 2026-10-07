@@ -98,6 +98,15 @@ public final class VoiceSetup {
         stop?()
     }
 
+    /// A setup that could not start, shown as one that failed with `message` (why), so the
+    /// owner sees it was refused. Nothing while one runs or stops.
+    public func refuse(_ message: String) {
+        guard !isBusy else { return }
+        run = nil
+        lastStep = ""
+        phase = .failed(message)
+    }
+
     /// Forgets a setup that failed or finished.
     public func dismiss() {
         guard !isBusy else { return }

@@ -272,7 +272,6 @@ public struct PreviewClient: KeryxClient {
         return PinSetResult(set: true, replaced: replace, restartNeeded: true)
     }
 
-    public func verify(key: String) async throws -> VerifyResult { try verified(key) }
     public func verify(key: String, value: String) async throws -> VerifyResult { try verified(key) }
     public func verifyTwilio(accountSID: String, authToken: String) async throws -> VerifyResult {
         try verified("TWILIO_AUTH_TOKEN")
@@ -311,11 +310,9 @@ public struct PreviewClient: KeryxClient {
         return ServiceResult(ok: true, message: "installed dev.keryx.agent, dev.keryx.tunnel")
     }
 
-    public func uninstallService(llm: Bool, voice: Bool) async throws -> ServiceResult {
+    public func uninstallService() async throws -> ServiceResult {
         try check()
-        let units = [llm ? "dev.keryx.llm" : nil, voice ? "dev.keryx.voice" : nil].compactMap { $0 }
-        return ServiceResult(ok: true, message: "removed " + (units.isEmpty
-            ? "dev.keryx.agent, dev.keryx.tunnel" : units.joined(separator: ", ")))
+        return ServiceResult(ok: true, message: "removed dev.keryx.agent, dev.keryx.tunnel")
     }
 
     public func startModelServer(runtime: String?) -> ModelServerStream {

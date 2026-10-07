@@ -60,10 +60,9 @@ public protocol KeryxClient: Sendable {
     /// Sets the phone PIN, or with `replace` replaces it. The digits go on the child's stdin,
     /// twice (the CLI compares them), never its argv; the caller has compared them already.
     func setPin(_ pin: String, replace: Bool) async throws -> PinSetResult
-    /// Checks the saved `key` works, saving nothing (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-    /// `CODEX_API_KEY`, `TWILIO_AUTH_TOKEN`). Not working is an answer, not an error.
-    func verify(key: String) async throws -> VerifyResult
-    /// Checks `value` for `key` before it is saved; the value goes on stdin.
+    /// Checks `value` for `key` before it is saved, saving nothing (`OPENAI_API_KEY`,
+    /// `ANTHROPIC_API_KEY`, `CODEX_API_KEY`, `TWILIO_AUTH_TOKEN`); the value goes on stdin.
+    /// Not working is an answer, not an error.
     func verify(key: String, value: String) async throws -> VerifyResult
     /// Checks a Twilio account SID and auth token together, both unsaved, on stdin.
     func verifyTwilio(accountSID: String, authToken: String) async throws -> VerifyResult
@@ -87,8 +86,9 @@ public protocol KeryxClient: Sendable {
     /// Installs Keryx and its tunnel as services (never a model server's unit: those are
     /// `startModelServer`'s and `voiceHere`'s).
     func installService() async throws -> ServiceResult
-    /// Stops and removes Keryx and its tunnel, or with `llm`/`voice` that server's unit.
-    func uninstallService(llm: Bool, voice: Bool) async throws -> ServiceResult
+    /// Stops and removes Keryx and its tunnel (never a model server's unit: that is
+    /// `stopModelServer`'s).
+    func uninstallService() async throws -> ServiceResult
     /// Runs the chosen model's server here (`keryx models start`), step by step: installs
     /// llama.cpp when missing, its unit, waits for it, checks what it serves. Stops as
     /// `pull` does. `runtime`: `llama` (the default) or `ollama`.

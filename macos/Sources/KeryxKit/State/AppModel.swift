@@ -17,10 +17,20 @@ public final class AppModel {
 
         static let documents: [Part] = allCases.filter { $0 != .all }
 
-        /// What `.all` leaves out: the reads that ask Twilio (the account's numbers, and
-        /// where the number's webhooks point). The Phone section reads them when it shows
-        /// (`refreshPhone`), so a refresh elsewhere never reaches outside this Mac for them.
-        public static let onlyWhenShown: Set<Part> = [.phoneNumbers, .phoneWebhooks]
+        /// What `.all` leaves out, each read by the screen that shows it: the reads that ask
+        /// Twilio (the account's numbers, where the number's webhooks point) and the tunnel,
+        /// which asks `PUBLIC_HOST` — the Phone section's (`refreshPhone`) — and the ssh hosts,
+        /// Plugins'. So a refresh elsewhere never reaches outside this Mac for them.
+        public static let onlyWhenShown: Set<Part> = [.phoneNumbers, .phoneWebhooks, .phoneTunnel, .sshHosts]
+
+        /// What `onlyWhenShown` reads, while `item` shows: the section's own.
+        static func shown(with item: SidebarItem) -> [Part] {
+            switch item {
+            case .phone: [.phoneNumbers, .phoneWebhooks, .phoneTunnel]
+            case .plugins: [.sshHosts]
+            default: []
+            }
+        }
 
         /// What `.all` reloads: every document but `onlyWhenShown`.
         static let everyday: [Part] = documents.filter { !onlyWhenShown.contains($0) }
@@ -98,6 +108,11 @@ public final class AppModel {
     /// Keryx's own service is being installed or uninstalled (`installService`,
     /// `uninstallService()`), which quitting asks about.
     public private(set) var serviceChange: ServiceChange?
+    /// The install or uninstall under way, held so quitting can stop it (`cancelRuns`):
+    /// cancelled, its runner stops the installer's whole process group.
+    @ObservationIgnored private var serviceTask: Task<Result<ServiceResult, KeryxError>, Never>?
+    /// The model server is being stopped (`stopModelServer`): nothing starts it meanwhile.
+    public private(set) var stoppingModelServer = false
 
     /// What is being done to Keryx's own service.
     public enum ServiceChange: Sendable, Equatable {
@@ -111,8 +126,9 @@ public final class AppModel {
     /// starting the model server. `nil` before one.
     public private(set) var thisMacSetup: ThisMacSetup?
     /// The This Mac setup whose model server, once it serves, goes on to the voice; cleared
-    /// when it is stopped, so a `done` that beats the stop starts nothing.
-    @ObservationIgnored private var chain: UUID?
+    /// when it is stopped, so a `done` that beats the stop starts nothing. Observed: while
+    /// it is set, the speech models may not be downloaded (`canDownloadVoiceModels`).
+    private var chain: UUID?
     /// Starting the model server here (`keryx models start`).
     public let modelServerRun: StreamRun<ModelServerStarted>
     /// Downloading the voice's speech models (`keryx voice download`).
@@ -300,10 +316,10 @@ public final class AppModel {
         await refresh(parts)
     }
 
-    /// What Refresh (the toolbar's, and ⌘R) reads: `.all`, and while the Phone section
-    /// shows, the Twilio reads `.all` leaves out too.
+    /// What Refresh (the toolbar's, and ⌘R) reads: `.all`, and what `.all` leaves out that
+    /// the section showing reads (the Phone's Twilio and tunnel reads, Plugins' ssh hosts).
     public func refreshShown() async {
-        await refresh(selection == .phone ? Part.everyday + Part.onlyWhenShown : Part.everyday)
+        await refresh(Part.everyday + Part.shown(with: selection))
     }
 
     /// Reads what `key` may be set to. A list already read is kept unless `force` (a menu
@@ -538,6 +554,12 @@ public final class AppModel {
     /// the way in is `setUpThisMac`, which starts the model server first when it must.
     func setUpVoiceHere(voice: String? = nil) {
         guard let client else { return }
+        // The setup fetches the speech models too: never beside a download of them. Reached
+        // from a model server that has just come up, so said rather than silently dropped.
+        guard !voiceDownloadRun.isBusy else {
+            voiceSetup.refuse(Self.speechModelsDownloading)
+            return
+        }
         voiceSetup.start(voice: voice, client: client) { [weak self] in
             self?.configNeedsRestart = true
             self?.invalidateOptions()
@@ -580,11 +602,6 @@ public final class AppModel {
         return answer
     }
 
-    /// Whether the saved `key` works; nothing is saved.
-    public func verify(key: String) async -> Result<VerifyResult, KeryxError> {
-        await answer { try await $0.verify(key: key) }
-    }
-
     /// Whether `value` works for `key`, before it is saved; it reaches the CLI on stdin.
     public func verify(key: String, value: String) async -> Result<VerifyResult, KeryxError> {
         await answer { try await $0.verify(key: key, value: value) }
@@ -613,28 +630,51 @@ public final class AppModel {
     // MARK: - Service
 
     /// Installs Keryx and its tunnel as services, then reads the units and the status again.
+    /// Refused while an install or uninstall is already under way, from whichever window.
     public func installService() async -> Result<ServiceResult, KeryxError> {
-        serviceChange = .installing
-        defer { serviceChange = nil }
-        let answer = await answer { try await $0.installService() }
-        if case .success = answer { await refresh(.service, .status, .setupPlan) }
+        await changeService(.installing, reread: [.service, .status, .setupPlan]) {
+            try await $0.installService()
+        }
+    }
+
+    /// Removes Keryx and its tunnel; refused as `installService` is.
+    public func uninstallService() async -> Result<ServiceResult, KeryxError> {
+        await changeService(.uninstalling, reread: [.service, .status, .models, .voice, .setupPlan]) {
+            try await $0.uninstallService()
+        }
+    }
+
+    /// One service change at a time, run in `serviceTask` so quitting can stop it.
+    private func changeService(_ change: ServiceChange, reread: [Part],
+                               _ action: @escaping @MainActor (KeryxClient) async throws -> ServiceResult) async
+        -> Result<ServiceResult, KeryxError> {
+        guard serviceChange == nil else { return .failure(.refused(Self.serviceBusy)) }
+        serviceChange = change
+        let task = Task { await self.answer(action) }
+        serviceTask = task
+        let answer = await task.value
+        serviceTask = nil
+        serviceChange = nil
+        if case .success = answer { await refresh(reread) }
         return answer
     }
 
-    /// Removes Keryx and its tunnel, or with `llm`/`voice` that server's unit.
-    public func uninstallService(llm: Bool = false, voice: Bool = false) async -> Result<ServiceResult, KeryxError> {
-        if !llm, !voice { serviceChange = .uninstalling }
-        defer { if !llm, !voice { serviceChange = nil } }
-        let answer = await answer { try await $0.uninstallService(llm: llm, voice: voice) }
-        if case .success = answer { await refresh(.service, .status, .models, .voice, .setupPlan) }
-        return answer
+    /// The model server may be started now: no start is under way, no stop, and no voice
+    /// setup that runs on it.
+    public var canStartModelServer: Bool {
+        client != nil && !modelServerRun.isBusy && !voiceSetup.isBusy && !stoppingModelServer
     }
 
     /// Starts the model server here (`keryx models start`), one run at a time, and reads the
-    /// models, the units and the plan again once it serves the chosen model.
-    public func runModelServer(runtime: String? = nil) {
+    /// models, the units and the plan again once it serves the chosen model. False, starting
+    /// nothing, unless `canStartModelServer`.
+    @discardableResult
+    public func runModelServer(runtime: String? = nil) -> Bool {
+        guard canStartModelServer else { return false }
         // Started on its own, it is no part of a This Mac setup.
-        if beginModelServer(runtime: runtime, then: nil) { thisMacSetup = nil }
+        guard beginModelServer(runtime: runtime, then: nil) else { return false }
+        thisMacSetup = nil
+        return true
     }
 
     /// `runModelServer`, with `then` run once it serves (This Mac's Set Up… goes on to the
@@ -664,7 +704,7 @@ public final class AppModel {
     /// Ollama's copy of the model. Nothing starts while either is busy, nor while the
     /// speech models download (the setup would fetch them too).
     public func setUpThisMac(voice: String? = nil, startServer: Bool? = nil, runtime: String? = nil) {
-        guard client != nil, !modelServerRun.isBusy, !voiceSetup.isBusy, !voiceDownloadRun.isBusy else { return }
+        guard canStartModelServer, !voiceDownloadRun.isBusy else { return }
         let first = startServer ?? (models.value?.modelServerDown ?? false)
         thisMacSetup = ThisMacSetup(startsServer: first, runtime: first ? runtime : nil)
         voiceSetup.dismiss()
@@ -694,19 +734,32 @@ public final class AppModel {
         voiceSetup.dismiss()
     }
 
-    /// Stops the model server and removes its unit.
+    /// Stops the model server and removes its unit. Refused while it is starting or
+    /// already stopping, and while the voice is being set up on it.
     public func stopModelServer() async -> Result<ServiceResult, KeryxError> {
+        if stoppingModelServer { return .failure(.refused(Self.modelServerStopping)) }
+        if modelServerRun.isBusy || voiceSetup.isBusy { return .failure(.refused(Self.modelServerInUse)) }
+        stoppingModelServer = true
+        defer { stoppingModelServer = false }
         let answer = await answer { try await $0.stopModelServer() }
         if case .success = answer { await refresh(.models, .service, .voice) }
         return answer
     }
 
+    /// The speech models may be downloaded now: no download is going, and no voice setup —
+    /// which fetches them too — is running or waiting for its model server.
+    public var canDownloadVoiceModels: Bool {
+        client != nil && !voiceDownloadRun.isBusy && !voiceSetup.isBusy && chain == nil
+    }
+
     /// Downloads the voice's speech models ahead of its first start, one run at a time,
-    /// and reads the voice again once they are in.
-    public func downloadVoiceModels() {
-        guard let client else { return }
-        voiceDownloadRun.start(reason: "Downloading the voice's speech models", { client.downloadVoiceModels() }) {
-            [weak self] _ in
+    /// and reads the voice again once they are in. False, starting nothing, unless
+    /// `canDownloadVoiceModels`.
+    @discardableResult
+    public func downloadVoiceModels() -> Bool {
+        guard canDownloadVoiceModels, let client else { return false }
+        return voiceDownloadRun.start(reason: "Downloading the voice's speech models",
+                                      { client.downloadVoiceModels() }) { [weak self] _ in
             Task { await self?.refresh(.voice) }
         }
     }
@@ -768,22 +821,30 @@ public final class AppModel {
     // MARK: - Work under way
 
     /// Something long-running is going or still stopping: a download, a voice setup, a
-    /// model server start, a speech model download, a sign-in, Keryx's service being
+    /// model server start or stop, a speech model download, a sign-in, Keryx's service being
     /// installed or uninstalled.
     public var isBusy: Bool {
         downloads.isBusy || voiceSetup.isBusy || modelServerRun.isBusy || voiceDownloadRun.isBusy
-            || signInRun.isBusy || serviceChange != nil
+            || signInRun.isBusy || serviceChange != nil || stoppingModelServer
     }
 
-    /// Asks the streams this model holds beside the downloads and the voice setup to stop
-    /// (the model server start, the speech model download, a sign-in).
+    /// Asks what this model runs beside the downloads and the voice setup to stop (the model
+    /// server start, the speech model download, a sign-in, a service install or uninstall).
     public func cancelRuns() {
         // Nothing a stopped run would have gone on to starts.
         chain = nil
         modelServerRun.cancel()
         voiceDownloadRun.cancel()
         signInRun.cancel()
+        serviceTask?.cancel()
     }
+
+    static let serviceBusy = "Keryx's service is already being installed or uninstalled. Wait for that to finish."
+    static let modelServerStopping = "The model server is already stopping."
+    static let modelServerInUse =
+        "The model server can't be stopped while it is starting or while the voice is being set up on it."
+    static let speechModelsDownloading =
+        "The speech models are still downloading. Set it up again once they're in."
 
     private func writeSetting(_ write: (KeryxClient) async throws -> Void) async -> KeryxError? {
         if let error = await perform(write) { return error }

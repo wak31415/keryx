@@ -182,7 +182,7 @@ struct SetupStepPage: View {
     private func disabled(_ action: SetupAction) -> Bool {
         switch action.effect {
         case .installService: busy
-        case .startModelServer: model.modelServerRun.isBusy
+        case .startModelServer: !model.canStartModelServer
         case .mark: busy
         default: false
         }

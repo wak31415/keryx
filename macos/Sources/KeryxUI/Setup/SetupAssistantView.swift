@@ -149,8 +149,9 @@ public struct SetupAssistantView: View {
 
     // MARK: - Actions
 
-    /// Something is under way that another button must not start beside.
-    private var busy: Bool { installing || marking }
+    /// Something is under way that another button must not start beside: here, or Keryx's
+    /// service being installed or uninstalled from any window.
+    private var busy: Bool { installing || marking || model.serviceChange != nil }
 
     private func perform(_ action: SetupAction) {
         switch action.effect {

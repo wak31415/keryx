@@ -184,10 +184,6 @@ public struct CLIClient: KeryxClient {
         return try await decode(arguments, stdin: Data("\(pin)\n\(pin)\n".utf8))
     }
 
-    public func verify(key: String) async throws -> VerifyResult {
-        try await decode(["config", "verify", key, "--json"])
-    }
-
     public func verify(key: String, value: String) async throws -> VerifyResult {
         try await decode(["config", "verify", key, "--stdin", "--json"],
                          stdin: Data((try Self.oneLine(value, "\(key)") + "\n").utf8))
@@ -228,12 +224,8 @@ public struct CLIClient: KeryxClient {
         try await decode(["service", "install", "--json"], timeout: Self.installerTimeout)
     }
 
-    public func uninstallService(llm: Bool, voice: Bool) async throws -> ServiceResult {
-        var arguments = ["service", "uninstall"]
-        if llm { arguments.append("--llm") }
-        if voice { arguments.append("--voice") }
-        arguments.append("--json")
-        return try await decode(arguments, timeout: Self.installerTimeout)
+    public func uninstallService() async throws -> ServiceResult {
+        try await decode(["service", "uninstall", "--json"], timeout: Self.installerTimeout)
     }
 
     /// Ends normally only after `done`, `error` or `cancelled`, as `pull` does; no timeout,
