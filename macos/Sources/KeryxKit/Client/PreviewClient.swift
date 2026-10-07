@@ -13,6 +13,9 @@ public struct PreviewClient: KeryxClient {
         case holding(done: Int64, total: Int64)
         /// Yields these events, then finishes.
         case events([PullEvent])
+        /// Yields one progress event, and stops only long after it is asked to: a download
+        /// caught stopping.
+        case slowToStop(done: Int64, total: Int64)
     }
 
     let statusReply: Result<StatusReport, KeryxError>
@@ -76,6 +79,11 @@ public struct PreviewClient: KeryxClient {
             finishes = false
         case let .events(given):
             events = given
+        case let .slowToStop(done, total):
+            let (stream, continuation) = AsyncThrowingStream<PullEvent, Error>.makeStream()
+            continuation.yield(.progress(done: done, total: total))
+            // The continuation is kept (and never finished), so the stream stays open.
+            return PullStream(stream, stop: { _ = continuation })
         }
         let (stream, continuation) = AsyncThrowingStream<PullEvent, Error>.makeStream()
         for event in events { continuation.yield(event) }

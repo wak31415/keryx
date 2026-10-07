@@ -124,10 +124,11 @@ private struct LocalAgentSection: View {
                             Text(llm.reachable ? "Running at \(Address.of(llm.url, port: llm.port))" : "Not running")
                                 .textSelection(.enabled)
                         }
-                        if let serving = llm.model, llm.reachable, serving != name {
-                            Text("Serving \(title(of: serving)) — restart it to load this one")
-                                .font(.caption)
+                        if let served = ServedModel.stale(llm, configured: name, models: report.models) {
+                            Text("Serving \(title(of: served)) — restart the model server to load \(title(of: name))")
+                                .font(.callout)
                                 .foregroundStyle(.orange)
+                                .multilineTextAlignment(.trailing)
                         }
                     }
                 }
@@ -198,8 +199,8 @@ private struct LocalAgentSection: View {
     }
 
     static func usedFor(_ agent: LocalAgent) -> String {
-        if agent.default { return "Every task (the default)" }
-        return agent.enabled ? "Tasks you name it for" : "Nothing yet — it isn't turned on"
+        if agent.default { return "Every task, unless you name another agent" }
+        return agent.enabled ? "Only when you ask for it by name" : "Nothing yet — it isn't turned on"
     }
 }
 
@@ -219,6 +220,7 @@ private struct CatalogSection: View {
                     entry: entry,
                     action: ModelRow.action(for: entry, phase: downloads.active[entry.name],
                                             inUse: report.servers.localAgent.model == entry.name),
+                    available: report.hardware.modelMemoryGb,
                     busy: downloads.isBusy,
                     download: { model.download(entry.name) },
                     cancel: { downloads.cancel(entry.name) },
@@ -226,12 +228,25 @@ private struct CatalogSection: View {
             }
         } header: {
             Text("Models")
-        } footer: {
-            Text("Each size is the download; “needs” is the memory it takes while it runs.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+/// What the model server is serving, against what the local agent is set to use.
+enum ServedModel {
+    /// Whether the running server is serving `name` — by the name it was given, or by the
+    /// catalog title an older server reported.
+    static func serves(_ llm: LLMServer, _ name: String, models: [CatalogModel]) -> Bool {
+        guard llm.reachable, let served = llm.servedModel else { return false }
+        return served == name || served == models.first { $0.name == name }?.title
+    }
+
+    /// The model the running server says it serves, when that is not `configured` — the
+    /// restart that loads `configured` is still to come. `nil` when it is, or when the
+    /// server is not running or did not say.
+    static func stale(_ llm: LLMServer, configured: String, models: [CatalogModel]) -> String? {
+        guard llm.reachable, let served = llm.servedModel, !serves(llm, configured, models: models) else { return nil }
+        return served
     }
 }
 
@@ -305,7 +320,7 @@ struct OpenSetupButton: View {
             do {
                 try TerminalLauncher.open(location, arguments: ["setup"])
             } catch {
-                failure = (error as? KeryxError) ?? .launch(error.localizedDescription)
+                failure = (error as? KeryxError) ?? .terminal(error.localizedDescription)
             }
         }
         .disabled(model.location.value == nil)

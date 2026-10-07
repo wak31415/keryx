@@ -14,6 +14,7 @@ import Testing
         let ids = Set(ScreenCatalog.entries().map(\.id))
         for id in ["models-populated", "models-downloading", "models-download-failed", "models-use-sheet",
                    "models-use-sheet-chosen", "models-empty-servers", "models-no-checkout", "models-error",
+                   "models-stopping", "models-stale-server",
                    "window-models"] {
             #expect(ids.contains(id), "missing \(id)")
         }
@@ -60,7 +61,10 @@ import Testing
 
     @Test func sizesSayDownloadAndMemory() {
         let coder = entry("qwen3-coder-30b-a3b")
-        #expect(ModelRow.sizes(coder) == "\(Formatting.gigabytes(18.6)) · needs 25 GB")
+        #expect(ModelRow.sizes(coder) == "\(Formatting.gigabytes(18.6)) download · 25 GB memory")
+        let big = entry("gpt-oss-120b")
+        #expect(ModelRow.tooBig(big, available: 27) == "Too big: this Mac has 27 GB for models.")
+        #expect(ModelRow.tooBig(big, available: nil) == "Too big for the memory this Mac has for models.")
     }
 
     @Test func serverAddressesComeFromTheirURL() {
@@ -85,15 +89,31 @@ import Testing
         #expect(model.downloads.active.isEmpty)
     }
 
-    @Test func theChosenSheetSaysWhatIsLeftOnce() {
+    @Test func theChosenSheetNamesTheRestartItsButtonDoes() {
         #expect(UseModelSheet.detail(serving: false, llamaInstalled: true, checkout: true, serverInstalled: true,
                                      keryxRestart: true)
-            == "Restart the model server to load it, then restart Keryx to start using it.")
+            == "Restart Model Server loads it into the model server. "
+            + "Then restart Keryx from the Overview to start using it.")
         #expect(UseModelSheet.detail(serving: false, llamaInstalled: true, checkout: true, serverInstalled: false,
-                                     keryxRestart: false) == "Start the model server to load it.")
+                                     keryxRestart: false) == "Start Model Server starts the model server with it.")
         #expect(UseModelSheet.detail(serving: true, llamaInstalled: true, checkout: true, serverInstalled: true,
-                                     keryxRestart: true) == "Restart Keryx to start using it.")
+                                     keryxRestart: true)
+            == "The model server has it loaded. Then restart Keryx from the Overview to start using it.")
         #expect(UseModelSheet.detail(serving: false, llamaInstalled: false, checkout: true, serverInstalled: false,
-                                     keryxRestart: true).hasSuffix("Then restart Keryx to start using it."))
+                                     keryxRestart: true).hasPrefix("llama.cpp isn't installed yet. Open Setup in Terminal"))
+    }
+
+    @Test func servingIsWhatTheServerSaysNotTheSettings() {
+        var llm = PreviewData.models.servers.llm
+        let models = PreviewData.models.models
+        llm.model = "gpt-oss-20b"            // `keryx models use` changed the setting…
+        llm.servedModel = "qwen3-coder-30b-a3b" // …and the server still runs the old one.
+        #expect(!ServedModel.serves(llm, "gpt-oss-20b", models: models))
+        #expect(ServedModel.stale(llm, configured: "gpt-oss-20b", models: models) == "qwen3-coder-30b-a3b")
+        llm.servedModel = "gpt-oss 20B"
+        #expect(ServedModel.serves(llm, "gpt-oss-20b", models: models), "an alias of the catalog title")
+        llm.reachable = false
+        #expect(!ServedModel.serves(llm, "gpt-oss-20b", models: models))
+        #expect(ServedModel.stale(llm, configured: "gpt-oss-20b", models: models) == nil, "not running: nothing stale")
     }
 }

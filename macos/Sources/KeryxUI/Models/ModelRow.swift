@@ -18,6 +18,8 @@ struct ModelRow: View {
 
     let entry: CatalogModel
     let action: Action
+    /// The memory this Mac has for models, for why one too big does not fit.
+    var available: Double?
     /// Another download is under way: only one runs at a time.
     var busy = false
     var download: () -> Void = {}
@@ -36,11 +38,15 @@ struct ModelRow: View {
                 Text(Wording.capitalised(entry.note))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                // A model too big says what it needs at the trailing edge instead.
-                Text(action == .tooBig ? Formatting.gigabytes(entry.sizeGb) : Self.sizes(entry))
+                Text(Self.sizes(entry))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
+                if action == .tooBig {
+                    Text(Self.tooBig(entry, available: available))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 if case let .failed(message) = action {
                     Text(message)
                         .font(.callout)
@@ -62,10 +68,14 @@ struct ModelRow: View {
     @ViewBuilder private var trailing: some View {
         switch action {
         case .download:
-            Button("Download", action: download)
-                .buttonStyle(.bordered)
-                .disabled(busy)
-                .help(busy ? "One download at a time" : "Download \(Formatting.gigabytes(entry.sizeGb))")
+            // The tooltip is on what holds the button, so it still shows while the button
+            // is greyed out.
+            HStack {
+                Button("Download", action: download)
+                    .buttonStyle(.bordered)
+                    .disabled(busy)
+            }
+            .help(busy ? Self.oneAtATime : "Download \(Formatting.gigabytes(entry.sizeGb))")
         case let .downloading(done, total):
             HStack(spacing: 10) {
                 Text(Self.progress(done: done, total: total))
@@ -75,15 +85,23 @@ struct ModelRow: View {
                 DownloadRing(fraction: total > 0 ? Double(done) / Double(total) : nil, stop: cancel)
             }
         case .cancelling:
-            DownloadRing(fraction: nil, stop: {})
-                .disabled(true)
+            HStack(spacing: 10) {
+                Text("Stopping…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                DownloadRing(fraction: nil, stop: {})
+                    .opacity(0.4)
+                    .disabled(true)
+            }
         case .failed:
             HStack(spacing: 10) {
                 Text("Download failed")
                     .foregroundStyle(.orange)
-                Button("Try Again", action: download)
-                    .disabled(busy)
-                    .help(busy ? "One download at a time" : "Download it again")
+                HStack {
+                    Button("Try Again", action: download)
+                        .disabled(busy)
+                }
+                .help(busy ? Self.oneAtATime : "Download it again")
             }
         case .use:
             Button("Use This Model…", action: use)
@@ -91,10 +109,18 @@ struct ModelRow: View {
             Label("In Use", systemImage: "checkmark")
                 .foregroundStyle(.secondary)
         case .tooBig:
-            Text("Needs \(Formatting.gigabytes(entry.needsGb))")
-                .foregroundStyle(.secondary)
-                .help("Too big for the memory this Mac has for models")
+            // Its reason is said under its name.
+            EmptyView()
         }
+    }
+
+    static let oneAtATime = "One download at a time"
+
+    /// Why a model is not offered, under the memory it needs: "Too big: this Mac has 27 GB
+    /// for models."
+    static func tooBig(_ entry: CatalogModel, available: Double?) -> String {
+        guard let available else { return "Too big for the memory this Mac has for models." }
+        return "Too big: this Mac has \(Formatting.gigabytes(available)) for models."
     }
 
     /// What the row offers, from the catalog, the download (if any) and the local agent.
@@ -110,9 +136,10 @@ struct ModelRow: View {
         return entry.fits ? .download : .tooBig
     }
 
-    /// "18.6 GB · needs 25 GB": the download, and the memory it takes while it runs.
+    /// "18.6 GB download · 25 GB memory": what it downloads, and the memory it takes while
+    /// it runs.
     static func sizes(_ entry: CatalogModel) -> String {
-        "\(Formatting.gigabytes(entry.sizeGb)) · needs \(Formatting.gigabytes(entry.needsGb))"
+        "\(Formatting.gigabytes(entry.sizeGb)) download · \(Formatting.gigabytes(entry.needsGb)) memory"
     }
 
     /// "4.2 of 7.1 GB", in the total's unit; "Starting…" until the size is known.
