@@ -61,6 +61,23 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The Mac app in macos/: a SwiftPM package, built and tested with no Xcode project and no
+  # signing. The runner's developer directory is Xcode, so test.sh adds nothing to
+  # `swift test`; its extra framework path is only for a Mac with just the Command Line Tools.
+  macos-app:
+    name: Mac app builds and tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Build
+        working-directory: macos
+        run: swift build
+
+      - name: Tests
+        working-directory: macos
+        run: scripts/test.sh
+
   build:
     name: wheel builds and installs
     runs-on: ubuntu-latest
