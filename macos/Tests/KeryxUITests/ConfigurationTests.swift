@@ -103,8 +103,9 @@ import KeryxPreview
         let key = row("OPENAI_API_KEY", source: "secrets.toml", secret: true)
         #expect(ConfigWording.secretCaption(key) == "Set · from secrets.toml")
         #expect(ConfigWording.secretCaption(row("ANTHROPIC_API_KEY", secret: true)) == "Not set")
-        #expect(ConfigWording.pinCaption(row("KERYX_PIN", source: "KERYX_HOME/pin", secret: true))
-            == "Set · change it in Keryx Setup")
+        let pin = row("KERYX_PIN", source: "KERYX_HOME/pin", secret: true)
+        #expect(ConfigWording.pinCaption(pin, status: nil) == "Set", "until keryx pin answers")
+        #expect(ConfigWording.pinCaption(pin, status: PreviewData.pinFile) == "Set · in KERYX_HOME/pin")
     }
 
     @Test func theTooltipHasTheKey() {
@@ -135,7 +136,7 @@ import KeryxPreview
         let pin = row("KERYX_PIN", group: "owner", source: "KERYX_HOME/pin",
                       description: "The PIN a caller gives.", secret: true, title: "Phone PIN")
         #expect(ConfigWording.isPIN(pin))
-        #expect(!ConfigWording.offersWrites(pin), "the app has no PIN UI: keryx setup changes it")
+        #expect(!ConfigWording.offersWrites(pin), "no Reset to Default: the PIN sheet is its one write")
         #expect(ConfigWording.offersWrites(row("OPENAI_API_KEY", source: "secrets.toml", secret: true)))
         #expect(!ConfigWording.offersWrites(row("PUBLIC_HOST", source: "environment")))
         #expect(ConfigWording.filter([pin, row("DATA_DIR")], by: "pin").map(\.key) == ["KERYX_PIN"])

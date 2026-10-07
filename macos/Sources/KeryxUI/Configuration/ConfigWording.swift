@@ -141,9 +141,8 @@ enum ConfigWording {
     }
 
     /// The phone PIN: listed by `config list`, but not a setting. It lives in
-    /// `KERYX_HOME/pin`, is written once, and `config set KERYX_PIN` is always refused; the
-    /// one keyboard path that may replace it is `keryx setup` in Terminal. The app has no PIN
-    /// UI, so this row shows only whether one is set.
+    /// `KERYX_HOME/pin`, and `config set KERYX_PIN` is always refused; the row's button opens
+    /// the PIN sheet (`keryx pin set --stdin`), the keyboard path the app is.
     static func isPIN(_ row: ConfigRow) -> Bool {
         row.key == "KERYX_PIN"
     }
@@ -154,9 +153,9 @@ enum ConfigWording {
         !readOnly(row) && !isPIN(row)
     }
 
-    /// Under the PIN's button: whether one is set, and that Keryx Setup is where it changes.
-    static func pinCaption(_ row: ConfigRow) -> String {
-        row.set ? "Set · change it in Keryx Setup" : "Not set · set it in Keryx Setup"
+    /// Under the PIN's button: where the PIN is (`keryx pin`), else the row's own word.
+    static func pinCaption(_ row: ConfigRow, status: PinStatus?) -> String {
+        PinWording.caption(status, fallbackSet: row.set)
     }
 
     /// Under a secret's buttons: whether it is set, and where it is kept. "Set · from

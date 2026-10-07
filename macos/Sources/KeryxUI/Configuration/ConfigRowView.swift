@@ -21,7 +21,6 @@ struct ConfigRowView: View {
     @State private var confirmingRemoval = false
     /// The last text the CLI refused, so a blur does not send it again unchanged.
     @State private var refused: String?
-    @State private var launchFailure: KeryxError?
     @FocusState private var focused: Bool
 
     init(row: ConfigRow, titles: [String: String] = [:], error: KeryxError? = nil) {
@@ -86,13 +85,6 @@ struct ConfigRowView: View {
         .sheet(isPresented: $editingSecret) {
             SecretSheet(key: row.key, title: row.displayTitle, replacing: row.set)
         }
-        .alert(launchFailure?.title ?? "", isPresented: Binding(
-            get: { launchFailure != nil }, set: { if !$0 { launchFailure = nil } }
-        )) {
-            Button("OK") {}
-        } message: {
-            Text(launchFailure?.message ?? "")
-        }
         .confirmationDialog(ConfigWording.removalTitle(row), isPresented: $confirmingRemoval) {
             Button("Remove", role: .destructive) { write { await model.unset(row.key) } }
         } message: {
@@ -105,7 +97,7 @@ struct ConfigRowView: View {
     /// The line under the control: where the value comes from, or for a secret and the PIN
     /// whether one is set.
     private var caption: String? {
-        if ConfigWording.isPIN(row) { return ConfigWording.pinCaption(row) }
+        if ConfigWording.isPIN(row) { return ConfigWording.pinCaption(row, status: model.pin.value) }
         if row.secret { return ConfigWording.secretCaption(row) }
         if ConfigWording.hasMenu(row) {
             let detail = OptionWording.detail(of: ConfigWording.editText(pending ?? row.value),
@@ -175,20 +167,10 @@ struct ConfigRowView: View {
 
     // MARK: - The PIN
 
-    /// The way to change the PIN; nothing here writes it, and its caption says whether one
-    /// is set.
+    /// Set PIN… or Change PIN…, opening the PIN sheet (`keryx pin set`); its caption says
+    /// where the PIN is.
     private var pin: some View {
-        Button("Open Setup in Terminal") { openSetup() }
-            .disabled(model.location.value == nil)
-    }
-
-    private func openSetup() {
-        guard let location = model.location.value else { return }
-        do {
-            try TerminalLauncher.open(location, arguments: ["setup"])
-        } catch {
-            launchFailure = (error as? KeryxError) ?? .terminal(error.localizedDescription)
-        }
+        PinButton(fallbackSet: row.set)
     }
 
     // MARK: - A checklist
