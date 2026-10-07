@@ -25,6 +25,8 @@ public protocol KeryxClient: Sendable {
     /// The value goes on the child's stdin, never its argv or environment.
     func setSecret(key: String, value: String) async throws
     func unset(key: String) async throws
+    /// Removes several settings in one `config unset K1 K2 …`.
+    func unset(keys: [String]) async throws
     func approvals(limit: Int) async throws -> ApprovalsReport
     func setEscalation(enabled: Bool) async throws
     func memory() async throws -> MemoryDocument
@@ -122,4 +124,11 @@ public protocol KeryxClient: Sendable {
     func tools() async throws -> ToolsReport
     /// The ssh hosts `cluster_stats` could ask.
     func sshHosts() async throws -> SshHostsReport
+}
+
+extension KeryxClient {
+    /// One `unset(key:)` after another, for a client with no single command for several.
+    public func unset(keys: [String]) async throws {
+        for key in keys { try await unset(key: key) }
+    }
 }

@@ -126,11 +126,22 @@ public final class ProcessRunner: CommandRunner, Sendable {
 /// through one serial queue, in order, so a line handed over before `close` is written
 /// before the pipe closes; a write blocked on a child that is not reading ends when the
 /// child exits (`EPIPE`, never SIGPIPE). Each line is held only until it is written.
+///
+/// A write is queued under the same lock that checks `closed`, and `close` queues the
+/// close under it too, so the queue's order is the lock's: no write can land behind the
+/// close and reach the descriptor's number after something else has been given it. The
+/// queue's own `open`, which the close clears and every write checks, is the second
+/// guard: a write that somehow arrives after it is dropped and counted (`lateWrites`).
 final class InputWriter: @unchecked Sendable {
     private let fd: Int32
     private let queue = DispatchQueue(label: "dev.keryx.app.process-input")
     private let lock = NSLock()
     private var closed = false
+    /// On `queue` only: the descriptor is still ours.
+    private var open = true
+    /// On `queue` only: writes that arrived after the close, and were dropped. None, by
+    /// construction; for tests.
+    private var dropped = 0
 
     init(fd: Int32) {
         self.fd = fd
@@ -139,33 +150,51 @@ final class InputWriter: @unchecked Sendable {
 
     /// Queues `data` for the pipe: false, and nothing queued, once it is closed.
     func write(_ data: Data) -> Bool {
-        guard lock.withLock({ !closed }) else { return false }
-        queue.async { [fd] in
-            data.withUnsafeBytes { buffer in
-                guard var base = buffer.baseAddress else { return }
-                var left = buffer.count
-                while left > 0 {
-                    let written = Darwin.write(fd, base, left)
-                    if written < 0 {
-                        if errno == EINTR { continue }
-                        return
-                    }
-                    left -= written
-                    base += written
+        lock.withLock {
+            guard !closed else { return false }
+            queue.async { [self] in
+                guard open else {
+                    dropped += 1
+                    return
                 }
+                Self.write(data, to: fd)
             }
+            return true
         }
-        return true
     }
 
     /// Closes the pipe, after whatever was queued before it. Only the first call does.
     func close() {
-        let first: Bool = lock.withLock {
-            defer { closed = true }
-            return !closed
+        lock.withLock {
+            guard !closed else { return }
+            closed = true
+            queue.async { [self] in
+                open = false
+                _ = Darwin.close(fd)
+            }
         }
-        guard first else { return }
-        queue.async { [fd] in _ = Darwin.close(fd) }
+    }
+
+    /// Writes that reached the queue after its close (always 0), once every queued write
+    /// and the close have run. For tests.
+    var lateWrites: Int { queue.sync { dropped } }
+
+    /// All of `data`, unless the pipe fails (`EPIPE` from a child that is gone): then the
+    /// rest is dropped.
+    private static func write(_ data: Data, to fd: Int32) {
+        data.withUnsafeBytes { buffer in
+            guard var base = buffer.baseAddress else { return }
+            var left = buffer.count
+            while left > 0 {
+                let written = Darwin.write(fd, base, left)
+                if written < 0 {
+                    if errno == EINTR { continue }
+                    return
+                }
+                left -= written
+                base += written
+            }
+        }
     }
 }
 

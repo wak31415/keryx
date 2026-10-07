@@ -8,10 +8,13 @@ public enum Quitting {
     }
 
     /// The question for what is under way — a model download, a voice setup, a model
-    /// server start, a speech model download, any of them together; `nil` when none is and
-    /// the app can just quit. `assistant`: the assistant's name ("Lyra").
+    /// server start, a speech model download, a sign-in, any of them together; `nil` when
+    /// none is and the app can just quit. `signingIn`: what a sign-in under way signs in to
+    /// ("Claude"), and `signInDetail` what stopping it does. `assistant`: the assistant's
+    /// name ("Lyra").
     public static func question(downloading: Bool, settingUpVoice: Bool, startingModelServer: Bool = false,
-                                downloadingVoiceModels: Bool = false, assistant: String?) -> Question? {
+                                downloadingVoiceModels: Bool = false, signingIn: String? = nil,
+                                signInDetail: String? = nil, assistant: String?) -> Question? {
         // What is under way, as a clause; what quitting does to it alone; and how it comes
         // back, said beside the others.
         var under: [(clause: String, alone: String, again: String)] = []
@@ -33,6 +36,11 @@ public enum Quitting {
             under.append(("the speech models are downloading",
                           "Download in Local Models picks up where it left off.",
                           "the speech models pick up where they left off"))
+        }
+        if let signingIn {
+            under.append(("a sign-in to \(signingIn) is still going",
+                          signInDetail ?? "The sign-in stops. You can start it again later.",
+                          "the sign-in to \(signingIn) can be started again later"))
         }
         guard let first = under.first else { return nil }
         guard under.count > 1 else {

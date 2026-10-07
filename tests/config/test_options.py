@@ -707,12 +707,23 @@ def test_a_speech_model_already_downloaded_says_so(settings):
     stt = options_for("VOICE_SERVER_STT", settings, found)
     tts = options_for("VOICE_SERVER_TTS", settings, found)
 
-    assert [(o.value, o.detail) for o in stt.options] == [
-        ("parakeet-tdt", None), ("whisper", "downloaded")]
-    assert [(o.value, o.detail) for o in tts.options] == [("kokoro", "downloaded"),
-                                                         ("qwen3", None)]
+    assert [(o.value, o.detail.endswith(" · downloaded")) for o in stt.options] == [
+        ("parakeet-tdt", False), ("whisper", True)]
+    assert [(o.value, o.detail.endswith(" · downloaded")) for o in tts.options] == [
+        ("kokoro", True), ("qwen3", False)]
     assert asked == [("stt", "parakeet-tdt"), ("stt", "whisper"),
                      ("tts", "kokoro"), ("tts", "qwen3")]
+
+
+def test_each_speech_model_is_named_for_a_person_and_says_what_it_is(settings):
+    found = sources(speech_ready=lambda kind, value: False)
+
+    for key in ("VOICE_SERVER_STT", "VOICE_SERVER_TTS"):
+        for option in options_for(key, settings, found).options:
+            assert option.label != option.value and option.label[0].isupper(), option
+            assert option.detail and "downloaded" not in option.detail, option
+    labels = {o.value: o.label for o in options_for("VOICE_SERVER_STT", settings, found).options}
+    assert labels == {"parakeet-tdt": "Parakeet TDT", "whisper": "Distil-Whisper"}
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux"])

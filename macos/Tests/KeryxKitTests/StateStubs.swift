@@ -117,6 +117,7 @@ final class StubClient: KeryxClient, @unchecked Sendable {
     func set(key: String, value: String) async throws { try write("config set \(key) \(value)") }
     func setSecret(key: String, value: String) async throws { try write("config set \(key) --stdin") }
     func unset(key: String) async throws { try write("config unset \(key)") }
+    func unset(keys: [String]) async throws { try write("config unset \(keys.joined(separator: " "))") }
     func approvals(limit: Int) async throws -> ApprovalsReport { try answer("approvals") { $0.approvals } }
     func setEscalation(enabled: Bool) async throws {
         try write("approvals \(enabled ? "--enable" : "--disable")")
@@ -219,6 +220,7 @@ final class ManualRun<Done: StreamDone>: @unchecked Sendable {
 
     var stopRequests: Int { lock.withLock { stops } }
     var sent: [String] { lock.withLock { lines } }
+    var inputOpen: Bool { lock.withLock { takesInput } }
 
     /// Its input closed: `send` is refused from now on.
     func closeInput() { lock.withLock { takesInput = false } }

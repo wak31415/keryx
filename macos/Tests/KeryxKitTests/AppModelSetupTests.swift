@@ -198,6 +198,30 @@ import KeryxPreview
         #expect(await eventually { client.calls.contains("integrations") && client.calls.contains("setup plan") })
         #expect(client.calls.filter { $0.hasPrefix("auth login") } == ["auth login claude"])
         #expect(!model.isBusy)
+        #expect(model.signingIn == .claude, "finished, it still says whose")
+        model.signInRun.dismiss()
+        #expect(model.signingIn == nil)
+    }
+
+    @Test func eachSignInTakesTheInputItReads() async {
+        let runs = [SignInProvider.claude: ManualRun<SignedIn>(), .codex: ManualRun<SignedIn>(),
+                    .gmail: ManualRun<SignedIn>(), .googleWorkspace: ManualRun<SignedIn>()]
+        let client = StubClient { $0.signIn = { provider, _ in runs[provider]!.stream() } }
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        for provider in SignInProvider.allCases {
+            let manual = runs[provider]!
+            #expect(model.signIn(provider))
+            #expect(manual.inputOpen == provider.readsALine, "\(provider)")
+            if provider.readsALine {
+                #expect(model.signInRun.send("line"))
+                #expect(!manual.inputOpen && !model.signInRun.send("again"))
+            }
+            model.signInRun.cancel()
+            manual.finish()
+            await model.signInRun.settled()
+            #expect(model.signingIn == nil, "cancelled, it holds none")
+        }
     }
 
     @Test func aGoogleSignInPassesItsClientFile() async {

@@ -116,10 +116,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A model server started by This Mac's Set Up… is part of setting the voice up.
         let server = model.modelServerRun.isRunning
         let chained = server && model.thisMacSetup?.startsServer == true
+        let signingIn = model.signInRun.isRunning ? model.signingIn : nil
         if let question = Quitting.question(downloading: downloads.isRunning,
                                             settingUpVoice: setup.isRunning || chained,
                                             startingModelServer: server && !chained,
                                             downloadingVoiceModels: model.voiceDownloadRun.isRunning,
+                                            signingIn: signingIn.map(SignInWording.name),
+                                            signInDetail: signingIn.map(SignInWording.quitDetail),
                                             assistant: Wording.assistant(model.status.value)) {
             NSApp.activate()
             let alert = NSAlert()

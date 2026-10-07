@@ -14,7 +14,9 @@ from keryx.issues import SKILL, GhStatus
 
 IDS = ["google", "gmail", "slack", "github", "openai-admin", "anthropic-admin"]
 KEYS = {"id", "title", "description", "connected", "why", "secrets", "settings", "signin",
-        "used_by"}
+        "used_by", "client_saved"}
+#: The cards that share Google's OAuth client, and so say whether it is saved.
+GOOGLE = ("google", "gmail")
 
 
 def gh_never():
@@ -86,6 +88,18 @@ def test_a_secret_set_connects_its_card_and_its_value_is_never_shown(settings):
     assert found["anthropic-admin"]["connected"] is True
     assert found["openai-admin"]["connected"] is False
     assert "shh" not in json.dumps(list(found.values()))
+
+
+def test_the_google_cards_say_whether_the_shared_client_is_saved(settings):
+    before, after = rows(settings), rows(with_client(settings))
+
+    for name in IDS:
+        if name in GOOGLE:
+            assert before[name]["client_saved"] is False
+            assert after[name]["client_saved"] is True
+        else:  # no OAuth client of theirs to save
+            assert before[name]["client_saved"] is None
+            assert after[name]["client_saved"] is None
 
 
 def test_gmail_is_connected_by_its_sign_in(settings):

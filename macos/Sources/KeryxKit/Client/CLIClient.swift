@@ -97,7 +97,13 @@ public struct CLIClient: KeryxClient {
     }
 
     public func unset(key: String) async throws {
-        _ = try await execute(request(["config", "unset", key]))
+        try await unset(keys: [key])
+    }
+
+    /// Every key in one command, after `--` so none is read as an option.
+    public func unset(keys: [String]) async throws {
+        guard !keys.isEmpty else { return }
+        _ = try await execute(request(["config", "unset"] + (keys.contains { $0.hasPrefix("-") } ? ["--"] : []) + keys))
     }
 
     public func setEscalation(enabled: Bool) async throws {
@@ -170,6 +176,8 @@ public struct CLIClient: KeryxClient {
     /// The PIN twice on stdin, one per line, as `pin set --stdin` reads it; never argv. A
     /// refusal (already set, in the environment, two that differ) is the CLI's stderr.
     public func setPin(_ pin: String, replace: Bool) async throws -> PinSetResult {
+        // A break would make the two lines the CLI compares something else.
+        guard !pin.contains(where: \.isNewline) else { throw KeryxError.refused(Self.pinOnOneLine) }
         var arguments = ["pin", "set", "--stdin"]
         if replace { arguments.append("--replace") }
         arguments.append("--json")
@@ -182,11 +190,12 @@ public struct CLIClient: KeryxClient {
 
     public func verify(key: String, value: String) async throws -> VerifyResult {
         try await decode(["config", "verify", key, "--stdin", "--json"],
-                         stdin: Data((Self.oneLine(value) + "\n").utf8))
+                         stdin: Data((try Self.oneLine(value, "\(key)") + "\n").utf8))
     }
 
     public func verifyTwilio(accountSID: String, authToken: String) async throws -> VerifyResult {
-        let lines = Self.oneLine(accountSID) + "\n" + Self.oneLine(authToken) + "\n"
+        let lines = try Self.oneLine(accountSID, "The account SID") + "\n"
+            + Self.oneLine(authToken, "The auth token") + "\n"
         return try await decode(["config", "verify", "TWILIO_AUTH_TOKEN", "--stdin", "--pair", "--json"],
                                 stdin: Data(lines.utf8))
     }
@@ -308,11 +317,19 @@ public struct CLIClient: KeryxClient {
         values.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
     }
 
-    /// `text` trimmed, and never more than its first line: what goes on stdin is one line.
-    static func oneLine(_ text: String) -> String {
+    /// `text` trimmed, when it is one line: what goes on stdin is. Text with a line break
+    /// inside it is refused (`KeryxError.refused`, naming `what`), never cut to its first
+    /// line — that would check something the owner did not type.
+    static func oneLine(_ text: String, _ what: String) throws -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return String(trimmed.prefix { !$0.isNewline })
+        guard !trimmed.contains(where: \.isNewline) else {
+            throw KeryxError.refused("\(what) has a line break in it; paste it again as one line.")
+        }
+        return trimmed
     }
+
+    /// What a PIN with a line break in it says.
+    static let pinOnOneLine = "The PIN is digits on one line; type it again."
 
     /// The checkout's installers start and stop launchd units.
     static let installerTimeout: Duration = .seconds(300)
