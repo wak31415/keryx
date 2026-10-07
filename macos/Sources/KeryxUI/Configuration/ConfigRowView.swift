@@ -2,8 +2,9 @@ import AppKit
 import KeryxKit
 import SwiftUI
 
-/// One setting: its key and description, where its value comes from, and the control its
-/// type wants. A write's error is shown under it, in the CLI's own sentence.
+/// One setting: its title and a line of description, the control its type wants, and where
+/// its value comes from. The whole description and the key are in the tooltip (and Copy
+/// Key); a write's error is shown under the title.
 struct ConfigRowView: View {
     let row: ConfigRow
 
@@ -12,6 +13,8 @@ struct ConfigRowView: View {
     @State private var pending: JSONValue?
     @State private var writing = false
     @State private var error: KeryxError?
+    /// What is wrong with a number field's text, found before it was sent.
+    @State private var invalid: String?
     @State private var editingSecret = false
     @State private var confirmingRemoval = false
     /// The last text the CLI refused, so a blur does not send it again unchanged.
@@ -35,12 +38,8 @@ struct ConfigRowView: View {
                     control
                         .disabled(!ConfigWording.isPIN(row) && (readOnly || writing))
                 }
-                if ConfigWording.isPIN(row) {
-                    Text(ConfigWording.pinNote)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if let source = ConfigWording.source(row.source) {
-                    Text(source)
+                if let caption {
+                    Text(caption)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -48,20 +47,19 @@ struct ConfigRowView: View {
             .help(readOnly ? ConfigWording.environmentHelp(row) : "")
         } label: {
             Text(row.displayTitle)
-            Text(ConfigWording.description(row.description))
-                .lineLimit(2)
-                .help(ConfigWording.plain(row.description))
-            // What the owner types at `keryx config set`.
-            Text(row.key)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-            if let error {
-                Text(ConfigWording.errorText(error.message, for: row))
+            if !row.description.isEmpty {
+                Text(ConfigWording.plain(row.description))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            if let problem {
+                Text(problem)
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
             }
         }
+        // The whole description, and the key the owner types at `keryx config set`.
+        .help(ConfigWording.tooltip(row))
         .contextMenu {
             if ConfigWording.offersWrites(row) {
                 Button("Reset to Default") { reset() }
@@ -73,9 +71,12 @@ struct ConfigRowView: View {
             }
         }
         .onChange(of: row.value) { draft = ConfigWording.editText(row.value) }
-        .onChange(of: draft) { refused = nil }
+        .onChange(of: draft) {
+            refused = nil
+            invalid = nil
+        }
         .sheet(isPresented: $editingSecret) {
-            SecretSheet(key: row.key, title: row.displayTitle, description: row.description, replacing: row.set)
+            SecretSheet(key: row.key, title: row.displayTitle, replacing: row.set)
         }
         .alert(launchFailure?.title ?? "", isPresented: Binding(
             get: { launchFailure != nil }, set: { if !$0 { launchFailure = nil } }
@@ -93,11 +94,27 @@ struct ConfigRowView: View {
 
     private var readOnly: Bool { ConfigWording.readOnly(row) }
 
+    /// The line under the control: where the value comes from, or for a secret and the PIN
+    /// whether one is set.
+    private var caption: String? {
+        if ConfigWording.isPIN(row) { return ConfigWording.pinCaption(row) }
+        if row.secret { return ConfigWording.secretCaption(row) }
+        return ConfigWording.source(row.source)
+    }
+
+    /// The local check's sentence, else the CLI's.
+    private var problem: String? {
+        if let invalid { return invalid }
+        return error.map { ConfigWording.errorText($0, for: row) }
+    }
+
     @ViewBuilder private var control: some View {
         if ConfigWording.isPIN(row) {
             pin
         } else if row.secret {
             secret
+        } else if ConfigWording.isChecklist(row) {
+            checklist
         } else {
             switch row.type {
             case "bool":
@@ -109,7 +126,7 @@ struct ConfigRowView: View {
                     if ConfigWording.editText(row.value).isEmpty {
                         Text("Not set").tag("")
                     }
-                    ForEach(choices, id: \.self) { Text($0).tag($0) }
+                    ForEach(choices, id: \.self) { Text(ConfigWording.choiceTitle($0, for: row)).tag($0) }
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
@@ -128,10 +145,8 @@ struct ConfigRowView: View {
     // MARK: - Secrets
 
     @ViewBuilder private var secret: some View {
-        Text(row.set ? "Set" : "Not set")
-            .foregroundStyle(row.set ? .primary : .secondary)
         if row.set {
-            Button("Remove") { reset() }
+            Button("Remove…") { reset() }
                 .accessibilityLabel("Remove \(row.displayTitle)")
         }
         Button(row.set ? "Change…" : "Set…") { editingSecret = true }
@@ -140,10 +155,9 @@ struct ConfigRowView: View {
 
     // MARK: - The PIN
 
-    /// Whether a PIN is set, and the way to change one; nothing here writes it.
-    @ViewBuilder private var pin: some View {
-        Text(row.set ? "Set" : "Not set")
-            .foregroundStyle(row.set ? .primary : .secondary)
+    /// The way to change the PIN; nothing here writes it, and its caption says whether one
+    /// is set.
+    private var pin: some View {
         Button("Open Setup in Terminal") { openSetup() }
             .disabled(model.location.value == nil)
     }
@@ -153,8 +167,38 @@ struct ConfigRowView: View {
         do {
             try TerminalLauncher.open(location, arguments: ["setup"])
         } catch {
-            launchFailure = (error as? KeryxError) ?? .launch(error.localizedDescription)
+            launchFailure = (error as? KeryxError) ?? .terminal(error.localizedDescription)
         }
+    }
+
+    // MARK: - A checklist
+
+    /// A checkbox per choice (`AGENTS_ENABLED`). The last one checked cannot be unchecked:
+    /// one at least must stay on.
+    private var checklist: some View {
+        let on = checkedChoices
+        return VStack(alignment: .leading, spacing: 4) {
+            ForEach(row.choices ?? [], id: \.self) { choice in
+                Toggle(ConfigWording.choiceTitle(choice, for: row), isOn: Binding {
+                    on.contains(choice)
+                } set: { checked in
+                    let value = ConfigWording.toggling(choice, on: checked, in: on, choices: row.choices ?? [])
+                    pending = .array(value.split(separator: ",").map { .string(String($0)) })
+                    write { await model.set(row, to: value) }
+                })
+                .toggleStyle(.checkbox)
+                .disabled(on == [choice])
+                .help(on == [choice] ? "At least one stays on" : "")
+            }
+        }
+    }
+
+    /// What the checklist has on. `AGENTS_ENABLED` left blank means the default agent alone.
+    private var checkedChoices: [String] {
+        let fallback = ConfigWording.agentKeys.contains(row.key)
+            ? model.config.value?.first { $0.key == "AGENT_BACKEND" }.map { ConfigWording.editText($0.value) }
+            : nil
+        return ConfigWording.checked(pending ?? row.value, fallback: fallback)
     }
 
     // MARK: - Values
@@ -199,11 +243,17 @@ struct ConfigRowView: View {
 
     /// Saves the field's text when it differs from what is stored — once: not while a write
     /// is under way (disabling the field drops its focus, which would commit again), and not
-    /// the text the CLI just refused until it is edited.
+    /// the text the CLI just refused until it is edited. A number that is not one is said so
+    /// here, without asking the CLI.
     private func commit() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard ConfigWording.shouldCommit(text, stored: ConfigWording.editText(row.value),
                                          writing: writing, refused: refused) else { return }
+        if let reason = ConfigWording.invalid(text, type: row.type) {
+            invalid = reason
+            error = nil
+            return
+        }
         write(attempt: text) { await model.set(row, to: text) }
     }
 
@@ -222,6 +272,7 @@ struct ConfigRowView: View {
     private func write(attempt: String? = nil, _ action: @escaping () async -> KeryxError?) {
         guard !writing else { return }
         writing = true
+        invalid = nil
         Task {
             let failure = await action()
             error = failure

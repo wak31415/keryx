@@ -2,8 +2,9 @@ import KeryxKit
 import SwiftUI
 
 extension ScreenCatalog {
-    /// The Configuration screen: every setting, a search, a write the CLI refused, a change
-    /// waiting on a restart, the secret sheet, and the whole window around it.
+    /// The Configuration screen: every setting, the groups below the first screenful opened,
+    /// only the coding agents open (the rest closed), a search, a write the CLI refused, a
+    /// change waiting on a restart, the secret sheet, and the whole window around it.
     @MainActor static var configurationEntries: [Entry] {
         let screen = CGSize(width: 760, height: 900)
         return [
@@ -11,7 +12,11 @@ extension ScreenCatalog {
                 ConfigurationView().environment(AppModel.preview())
             },
             Entry("configuration-lower-groups", size: screen) {
-                ConfigurationView().environment(AppModel.preview(client: PreviewClient(config: .success(lowerGroups))))
+                ConfigurationView(search: "", open: Set(lowerGroups.map(\.group)))
+                    .environment(AppModel.preview(client: PreviewClient(config: .success(lowerGroups))))
+            },
+            Entry("configuration-agents", size: screen) {
+                ConfigurationView(search: "", open: ["agents"]).environment(AppModel.preview())
             },
             Entry("configuration-search", size: CGSize(width: 760, height: 460)) {
                 ConfigurationView(search: "vad").environment(AppModel.preview())
@@ -24,8 +29,8 @@ extension ScreenCatalog {
                 ConfigurationView().environment(needsRestartModel)
             },
             Entry("configuration-secret-sheet", size: CGSize(width: 460, height: 250)) {
-                SecretSheet(key: secretRow.key, title: secretRow.displayTitle, description: secretRow.description,
-                            replacing: true, typed: "preview-dots-only")
+                SecretSheet(key: secretRow.key, title: secretRow.displayTitle, replacing: true,
+                            typed: "preview-dots-only")
                     .environment(AppModel.preview())
             },
             Entry("window-configuration", size: windowSize) {

@@ -6,9 +6,8 @@ import SwiftUI
 /// cleared whenever the sheet goes away, saved or not.
 struct SecretSheet: View {
     let key: String
-    /// The setting's name for a person ("OpenAI API key").
+    /// The setting's name for a person ("OpenAI API key"), which labels the field.
     let title: String
-    let description: String
     /// The secret is already set, so saving replaces it.
     let replacing: Bool
 
@@ -18,39 +17,33 @@ struct SecretSheet: View {
     @State private var saving = false
     @State private var error: KeryxError?
 
-    init(key: String, title: String, description: String, replacing: Bool) {
-        self.init(key: key, title: title, description: description, replacing: replacing, typed: "")
+    init(key: String, title: String, replacing: Bool) {
+        self.init(key: key, title: title, replacing: replacing, typed: "")
     }
 
     /// `typed`: what the field starts holding — the catalog's dots, never a real secret.
-    init(key: String, title: String, description: String, replacing: Bool, typed: String) {
+    init(key: String, title: String, replacing: Bool, typed: String) {
         self.key = key
         self.title = title
-        self.description = description
         self.replacing = replacing
         _value = State(initialValue: typed)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(replacing ? "Change \(title)" : "Set \(title)")
-                    .font(.headline)
-                Text(ConfigWording.description(description))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding([.horizontal, .top], 20)
+            Text(replacing ? "Change \(title)" : "Set \(title)")
+                .font(.headline)
+                .padding([.horizontal, .top], 20)
 
             Form {
                 Section {
-                    SecureField("Value", text: $value, prompt: Text(replacing ? "New value" : "Paste or type it"))
+                    SecureField(title, text: $value, prompt: Text(replacing ? "New value" : "Paste or type it"))
                         .onSubmit(save)
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
                         if let error {
-                            Text(ConfigWording.errorText(error.message, key: key, title: title))
+                            Text(error.reported.map { ConfigWording.errorText($0, key: key, title: title) }
+                                ?? error.message)
                                 .foregroundStyle(.red)
                                 .textSelection(.enabled)
                         }

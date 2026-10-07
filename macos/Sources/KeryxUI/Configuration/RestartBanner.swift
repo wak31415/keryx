@@ -32,7 +32,7 @@ struct RestartBanner: View {
         .confirmationDialog("Restart Keryx?", isPresented: $confirming) {
             Button("Restart") { restart(force: false) }
         } message: {
-            Text("Keryx stops, starts again with your changes, and calls you when it's back.")
+            Text("Keryx restarts with your changes and comes back in a few seconds.")
         }
         .confirmationDialog(liveCallsTitle, isPresented: Binding(
             get: { liveCalls != nil }, set: { if !$0 { liveCalls = nil } }

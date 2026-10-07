@@ -32,7 +32,7 @@ import Testing
 
     @Test func groupsTakeTheCLIsTitleWhenItGivesOne() {
         let groups = ConfigWording.groups([row("LLM_SERVER_PORT", group: "local", groupTitle: "Local and self-hosted models")])
-        #expect(groups.map(\.title) == ["Local and self-hosted models"])
+        #expect(groups.map(\.title) == ["Local and Self-Hosted Models"], "in title case, as a section title is")
     }
 
     @Test func searchMatchesKeyAndDescriptionIgnoringCase() {
@@ -54,11 +54,63 @@ import Testing
 
     @Test func aRefusalNamesTheSettingByItsTitle() {
         let silence = row("VAD_SILENCE_MS", title: "Silence before a turn ends (ms)")
-        #expect(ConfigWording.errorText("VAD_SILENCE_MS Input should be a valid integer", for: silence)
-            == "Silence before a turn ends (ms): input should be a valid integer")
-        #expect(ConfigWording.errorText("the store is locked", for: silence) == "the store is locked")
-        #expect(ConfigWording.errorText("VAD_SILENCE_MS Input should be a valid integer", for: row("VAD_SILENCE_MS"))
-            == "VAD_SILENCE_MS Input should be a valid integer", "no title: the CLI's sentence as written")
+        #expect(ConfigWording.errorText("VAD_SILENCE_MS Input should be at most 10000", for: silence)
+            == "Silence before a turn ends (ms): input should be at most 10000.")
+        #expect(ConfigWording.errorText("the store is locked", for: silence) == "The store is locked.")
+        #expect(ConfigWording.errorText("VAD_SILENCE_MS Input should be at most 10000", for: row("VAD_SILENCE_MS"))
+            == "VAD_SILENCE_MS Input should be at most 10000.", "no title: the CLI's sentence as written")
+    }
+
+    @Test func validationSaysWhatToDo() {
+        let silence = row("VAD_SILENCE_MS", type: "int", title: "Silence before a turn ends (ms)")
+        #expect(ConfigWording.errorText("VAD_SILENCE_MS Input should be a valid integer, unable to parse", for: silence)
+            == "Enter a whole number.")
+        #expect(ConfigWording.errorText("VAD_THRESHOLD Input should be a valid number", for: silence) == "Enter a number.")
+        #expect(ConfigWording.invalid("12oo", type: "int") == "Enter a whole number.")
+        #expect(ConfigWording.invalid("1.5", type: "int") == "Enter a whole number.")
+        #expect(ConfigWording.invalid("1200", type: "int") == nil)
+        #expect(ConfigWording.invalid("0.5", type: "float") == nil)
+        #expect(ConfigWording.invalid("half", type: "float") == "Enter a number.")
+        #expect(ConfigWording.invalid("anything", type: "string") == nil)
+        let refusal = KeryxError.failed(command: "keryx config set", exitCode: 1,
+                                        message: "VAD_SILENCE_MS Input should be a valid integer")
+        #expect(ConfigWording.errorText(refusal, for: silence) == "Enter a whole number.")
+    }
+
+    @Test func choicesReadAsWords() {
+        let agents = row("AGENTS_ENABLED", group: "agents", type: "list")
+        #expect(["claude", "codex", "local"].map { ConfigWording.choiceTitle($0, for: agents) }
+            == ["Claude", "Codex", "Local model"])
+        let noise = row("NOISE_REDUCTION", type: "choice")
+        #expect(ConfigWording.choiceTitle("near_field", for: noise) == "Near field")
+        #expect(ConfigWording.choiceTitle("anthropic-messages", for: noise) == "Anthropic messages")
+        #expect(ConfigWording.choiceTitle("24h", for: noise) == "24h")
+    }
+
+    @Test func aChecklistKeepsOneOnAndTheChoicesOrder() {
+        var agents = row("AGENTS_ENABLED", group: "agents", type: "list", value: .array([]))
+        agents.choices = ["claude", "codex", "local"]
+        #expect(ConfigWording.isChecklist(agents))
+        #expect(!ConfigWording.isChecklist(row("ALLOWED_CALLERS", type: "list")))
+        #expect(ConfigWording.checked(.array([]), fallback: "claude") == ["claude"], "blank is the default alone")
+        #expect(ConfigWording.checked(.array([.string("local")]), fallback: "claude") == ["local"])
+        #expect(ConfigWording.toggling("claude", on: true, in: ["local"], choices: agents.choices!) == "claude,local")
+        #expect(ConfigWording.toggling("local", on: false, in: ["claude", "local"], choices: agents.choices!) == "claude")
+    }
+
+    @Test func secretsAndThePINSayWhetherTheyAreSet() {
+        let key = row("OPENAI_API_KEY", source: "secrets.toml", secret: true)
+        #expect(ConfigWording.secretCaption(key) == "Set · from secrets.toml")
+        #expect(ConfigWording.secretCaption(row("ANTHROPIC_API_KEY", secret: true)) == "Not set")
+        #expect(ConfigWording.pinCaption(row("KERYX_PIN", source: "KERYX_HOME/pin", secret: true))
+            == "Set · change it in Keryx Setup")
+    }
+
+    @Test func theFirstGroupsOpenAndTheTooltipHasTheKey() {
+        #expect(ConfigWording.openGroups == ["voice", "agents", "local", "owner"])
+        let mode = row("VAD_MODE", description: "How `semantic` decides")
+        #expect(ConfigWording.tooltip(mode) == "How semantic decides\n\nVAD_MODE")
+        #expect(Wording.titleCase("Owner, callers and PIN") == "Owner, Callers and PIN")
     }
 
     @Test func aFieldIsSentOnceAndARefusalIsNotResentUnchanged() {
@@ -129,6 +181,7 @@ import Testing
         let ids = Set(ScreenCatalog.entries().map(\.id))
         for id in ["configuration", "configuration-search", "configuration-write-error",
                    "configuration-needs-restart", "configuration-secret-sheet", "configuration-lower-groups",
+                   "configuration-agents",
                    "window-configuration"] {
             #expect(ids.contains(id), "missing \(id)")
         }

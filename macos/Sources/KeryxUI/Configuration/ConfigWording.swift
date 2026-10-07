@@ -9,8 +9,9 @@ enum ConfigWording {
         let rows: [ConfigRow]
 
         var id: String { group }
-        /// The CLI's title for the group, from its first row, else this build's own.
-        var title: String { rows.first?.displayGroupTitle ?? ConfigWording.title(ofGroup: group) }
+        /// The CLI's title for the group, from its first row, else this build's own — in
+        /// title case, as a section's title is.
+        var title: String { Wording.titleCase(rows.first?.displayGroupTitle ?? ConfigWording.title(ofGroup: group)) }
     }
 
     /// A group's title when the CLI does not name it (an older CLI).
@@ -62,17 +63,81 @@ enum ConfigWording {
         "\(row.displayTitle) is set in the environment as \(row.key), which wins over the store"
     }
 
-    /// The CLI's sentence for a refused write, with the setting it opens on ("VAD_SILENCE_MS
-    /// Input should be…") named by its title instead: "Silence before a turn ends (ms): input
-    /// should be…". Any other sentence is shown as the CLI wrote it.
+    /// What to show for a refused write: Keryx's own sentence, with the two validation
+    /// failures it words for a programmer ("Input should be a valid integer…") said as what
+    /// to do, and the setting it opens on ("VAD_SILENCE_MS Input should be…") named by its
+    /// title instead. Any other sentence is shown as the CLI wrote it, as a sentence.
+    static func errorText(_ error: KeryxError, for row: ConfigRow) -> String {
+        guard let reported = error.reported else { return error.message }
+        return errorText(reported, key: row.key, title: row.displayTitle)
+    }
+
     static func errorText(_ message: String, for row: ConfigRow) -> String {
         errorText(message, key: row.key, title: row.displayTitle)
     }
 
     static func errorText(_ message: String, key: String, title: String) -> String {
-        guard title != key, message.hasPrefix(key + " ") else { return message }
+        if message.localizedCaseInsensitiveContains("valid integer") { return wholeNumber }
+        if message.localizedCaseInsensitiveContains("valid number") { return number }
+        guard title != key, message.hasPrefix(key + " ") else { return Wording.sentence(message) }
         let rest = message.dropFirst(key.count + 1)
-        return "\(title): " + rest.prefix(1).lowercased() + rest.dropFirst()
+        return Wording.sentence("\(title): " + rest.prefix(1).lowercased() + rest.dropFirst())
+    }
+
+    static let wholeNumber = "Enter a whole number."
+    static let number = "Enter a number."
+
+    /// Why `text` cannot be a value of a number setting, checked before it is sent; `nil`
+    /// when it can (or the setting is not a number).
+    static func invalid(_ text: String, type: String) -> String? {
+        let text = text.trimmingCharacters(in: .whitespaces)
+        switch type {
+        case "int": return Int(text) == nil ? wholeNumber : nil
+        case "float": return Double(text) == nil ? number : nil
+        default: return nil
+        }
+    }
+
+    // MARK: - Sections
+
+    /// The groups open when the screen first appears: what an owner tunes most. The rest
+    /// start closed, and a search opens every group it matches in.
+    static let openGroups: Set<String> = ["voice", "agents", "local", "owner"]
+
+    // MARK: - Choices
+
+    /// The settings whose choices are the coding agents, shown by their names.
+    static let agentKeys: Set<String> = ["AGENT_BACKEND", "AGENTS_ENABLED"]
+
+    /// A choice as a person reads it: an agent by its name ("Claude", "Local model"), any
+    /// other with a capital first letter and its underscores and hyphens as spaces
+    /// ("near_field" → "Near field").
+    static func choiceTitle(_ choice: String, for row: ConfigRow) -> String {
+        if agentKeys.contains(row.key) { return Wording.agent(choice) }
+        let spaced = choice.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ")
+        return Wording.capitalised(spaced)
+    }
+
+    /// A list setting with a fixed set of choices (`AGENTS_ENABLED`): a checkbox per choice.
+    static func isChecklist(_ row: ConfigRow) -> Bool {
+        row.type == "list" && !(row.choices ?? []).isEmpty
+    }
+
+    /// The choices a checklist row has on: its list, else — blank — `fallback` (the default
+    /// agent, for `AGENTS_ENABLED`, which blank means alone).
+    static func checked(_ value: JSONValue?, fallback: String?) -> [String] {
+        let listed: [String] = if case let .array(items)? = value { items.map(\.displayText) } else { [] }
+        if listed.isEmpty, let fallback, !fallback.isEmpty { return [fallback] }
+        return listed
+    }
+
+    /// The comma-separated value with `choice` turned on or off, in the choices' order. A
+    /// choice already listed that is not among them stays, after them.
+    static func toggling(_ choice: String, on: Bool, in checked: [String], choices: [String]) -> String {
+        var set = Set(checked)
+        if on { set.insert(choice) } else { set.remove(choice) }
+        let ordered = choices.filter(set.contains) + checked.filter { !choices.contains($0) && set.contains($0) }
+        return ordered.joined(separator: ",")
     }
 
     /// The phone PIN: listed by `config list`, but not a setting. It lives in
@@ -89,7 +154,17 @@ enum ConfigWording {
         !readOnly(row) && !isPIN(row)
     }
 
-    static let pinNote = "Change it with Keryx Setup in Terminal"
+    /// Under the PIN's button: whether one is set, and that Keryx Setup is where it changes.
+    static func pinCaption(_ row: ConfigRow) -> String {
+        row.set ? "Set · change it in Keryx Setup" : "Not set · set it in Keryx Setup"
+    }
+
+    /// Under a secret's buttons: whether it is set, and where it is kept. "Set · from
+    /// secrets.toml".
+    static func secretCaption(_ row: ConfigRow) -> String {
+        guard row.set else { return "Not set" }
+        return ["Set", source(row.source)].compactMap { $0 }.joined(separator: " · ")
+    }
 
     /// Whether a field's text should be sent: it differs from what is stored, no write is
     /// under way, and it is not the text the CLI last refused (unchanged since).
@@ -121,13 +196,13 @@ enum ConfigWording {
         }
     }
 
-    /// A description with its `code` spans set in the system's code style.
-    static func description(_ text: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    /// A row's tooltip: its whole description, then the key `keryx config set` takes.
+    static func tooltip(_ row: ConfigRow) -> String {
+        let description = plain(row.description)
+        return description.isEmpty ? row.key : description + "\n\n" + row.key
     }
 
-    /// A description as plain text, for a tooltip.
+    /// A description as plain text: on one line under the title, and whole in its tooltip.
     static func plain(_ text: String) -> String {
         text.replacingOccurrences(of: "`", with: "")
     }
