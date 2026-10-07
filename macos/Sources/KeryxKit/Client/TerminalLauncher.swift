@@ -1,0 +1,57 @@
+import AppKit
+import Foundation
+
+/// Runs a TTY-only `keryx` command (`setup`, `migrate`, `auth login`) in Terminal: a
+/// `.command` file that sets up what the service would see and `exec`s the command, opened
+/// with `NSWorkspace`. No AppleScript — no Automation prompt, and nothing interpolated into
+/// script text that is not single-quoted. No secret is ever written into it: only the
+/// variables that say where Keryx's files are, and where to find programs.
+public enum TerminalLauncher {
+    static let exported = [
+        "KERYX_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME",
+        "PATH", "HOME",
+    ]
+
+    /// The text of a .command file that runs `keryx <arguments>` in the checkout with the
+    /// resolved KERYX_HOME / XDG_* / PATH / HOME exported, every value single-quoted.
+    public static func script(for location: KeryxLocation, arguments: [String]) -> String {
+        var lines = [
+            "#!/bin/sh",
+            // Delete the file first: it has done its job once the shell has read it.
+            #"rm -f -- "$0""#,
+            // The owner at a terminal, never the service.
+            "unset KERYX_ACTOR JARVIS_ACTOR",
+        ]
+        for name in exported {
+            if let value = location.environment[name] {
+                lines.append("export \(name)=\(quote(value))")
+            }
+        }
+        lines.append("cd \(quote(location.workingDirectory)) || exit 1")
+        let argv = [location.executable] + location.prefixArguments + arguments
+        lines.append("exec " + argv.map(quote).joined(separator: " "))
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Writes it (0700, NSTemporaryDirectory, name keryx-<uuid>.command; the script deletes
+    /// itself first) and opens it with NSWorkspace. Throws on write failure.
+    @MainActor public static func open(_ location: KeryxLocation, arguments: [String]) throws {
+        let path = (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("keryx-\(UUID().uuidString).command")
+        let contents = Data(script(for: location, arguments: arguments).utf8)
+        guard FileManager.default.createFile(
+            atPath: path, contents: contents, attributes: [.posixPermissions: 0o700])
+        else {
+            throw KeryxError.launch("Could not write the script for Terminal to \(path).")
+        }
+        guard NSWorkspace.shared.open(URL(fileURLWithPath: path)) else {
+            try? FileManager.default.removeItem(atPath: path)
+            throw KeryxError.launch("Terminal could not be opened.")
+        }
+    }
+
+    /// POSIX single quotes: `it's` becomes `'it'"'"'s'`.
+    public static func quote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: #"'"'"'"#) + "'"
+    }
+}
