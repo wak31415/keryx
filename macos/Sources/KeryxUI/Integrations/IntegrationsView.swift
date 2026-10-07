@@ -1,13 +1,158 @@
 import KeryxKit
 import SwiftUI
 
-/// The Integrations section. A placeholder until its screen lands (Task UD): it reads from
-/// `AppModel` only what the sidebar needs, so replacing this file is the whole change.
+/// The Integrations section: the accounts Keryx connects to — Google for agents, Gmail,
+/// Slack, GitHub and the two admin keys — one card each, connected or not, with what
+/// connects it (a secret, a sign-in, a setting) and what disconnects it.
+///
+/// Connecting a secret is the secret sheet; a Google sign-in is the sign-in sheet;
+/// GitHub's issue reports are a setting, turned on after a question since they publish,
+/// beside `gh`, which is signed in by hand. Disconnect asks first, then unsets the card's
+/// settings and, for the two Google sign-ins, removes their stored tokens.
 public struct IntegrationsView: View {
-    public init() {}
+    @Environment(AppModel.self) private var model
+    @State private var sheet: IntegrationSheet?
+    @State private var asking: Asking?
+    /// Cards with a change under way, by id.
+    @State private var working: Set<String> = []
+    /// What went wrong on each card, by id, said under it.
+    @State private var failures: [String: String]
+
+    public init() {
+        self.init(failures: [:])
+    }
+
+    /// `failures`: what each card says went wrong when the screen appears (the catalog's).
+    package init(failures: [String: String]) {
+        _failures = State(initialValue: failures)
+    }
 
     public var body: some View {
-        ContentUnavailableView("Integrations", systemImage: "link",
-                               description: Text("The accounts Keryx connects to, and the sign-ins behind them."))
+        StateView(model.integrations, section: "Integrations",
+                  retry: { Task { await model.refresh(.integrations) } }) { report in
+            Form {
+                ForEach(report.integrations) { integration in
+                    IntegrationCard(
+                        integration: integration,
+                        working: working.contains(integration.id),
+                        failure: failures[integration.id],
+                        connect: { connect(integration) },
+                        change: { secret in sheet = .secret(secret) },
+                        disconnect: { ask(.disconnect(integration)) })
+                }
+            }
+            .formStyle(.grouped)
+        }
+        .task {
+            await model.refresh(.integrations, .plugins)
+            // What GitHub's card and Disconnect read.
+            if model.config.value == nil { await model.refresh(.config) }
+        }
+        .sheet(item: $sheet, onDismiss: reread) { sheet in
+            switch sheet {
+            case let .secret(secret):
+                SecretSheet(key: secret.key, title: secret.title, replacing: secret.set)
+            case let .signIn(provider):
+                SignInSheet(kind: provider)
+            }
+        }
+        .confirmationDialog(asking?.question.title ?? "", isPresented: Binding(
+            get: { asking != nil }, set: { if !$0 { asking = nil } }
+        ), presenting: asking) { asking in
+            Button(asking.question.button, role: asking.destructive ? .destructive : nil) { answer(asking) }
+            Button("Cancel", role: .cancel) {}
+        } message: { asking in
+            Text(asking.question.message)
+        }
+    }
+
+    // MARK: - Actions
+
+    private func connect(_ integration: Integration) {
+        switch IntegrationsWording.connect(integration) {
+        case let .secret(secret): sheet = .secret(secret)
+        case let .signIn(provider): sheet = .signIn(provider)
+        case .issueReports: ask(.issueReports(integration))
+        case nil: break
+        }
+    }
+
+    private func ask(_ what: Asking.What) {
+        asking = Asking(what: what, plugins: model.plugins.value, config: model.config.value)
+    }
+
+    private func answer(_ asking: Asking) {
+        switch asking.what {
+        case let .disconnect(integration):
+            change(integration) { await disconnect(integration) }
+        case let .issueReports(integration):
+            change(integration) { await model.set(key: IntegrationsWording.issueReportsKey, to: "true")?.message }
+        }
+    }
+
+    /// Runs `work` for the card, with its spinner up; what it returns is the card's failure.
+    private func change(_ integration: Integration, _ work: @escaping @MainActor () async -> String?) {
+        let id = integration.id
+        working.insert(id)
+        failures[id] = nil
+        Task {
+            failures[id] = await work()
+            await model.refresh(.integrations, .plugins, .tools, .setupPlan)
+            working.remove(id)
+        }
+    }
+
+    /// The card's settings unset, then its sign-in removed; the first failure stops it.
+    private func disconnect(_ integration: Integration) async -> String? {
+        let plan = IntegrationsWording.disconnect(integration)
+        for key in plan.unset {
+            if let error = await model.unset(key) { return error.message }
+        }
+        if let provider = plan.signOut, case let .failure(error) = await model.signOut(provider) {
+            return error.message
+        }
+        return nil
+    }
+
+    /// A secret saved or a sign-in finished: the cards, and the plugins that read them.
+    private func reread() {
+        Task { await model.refresh(.integrations, .plugins, .tools, .setupPlan) }
+    }
+}
+
+/// The sheet a card opens.
+enum IntegrationSheet: Identifiable, Equatable {
+    case secret(IntegrationSecret)
+    case signIn(SignInProvider)
+
+    var id: String {
+        switch self {
+        case let .secret(secret): "secret-\(secret.key)"
+        case let .signIn(provider): "signin-\(provider.rawValue)"
+        }
+    }
+}
+
+/// A question before a change, with the card it is about.
+private struct Asking {
+    enum What {
+        case disconnect(Integration)
+        case issueReports(Integration)
+    }
+
+    let what: What
+    let question: IntegrationQuestion
+    let destructive: Bool
+
+    init(what: What, plugins: PluginsReport?, config: [ConfigRow]?) {
+        self.what = what
+        switch what {
+        case let .disconnect(integration):
+            question = IntegrationsWording.disconnectQuestion(integration, plugins: plugins)
+            destructive = true
+        case .issueReports:
+            question = IntegrationsWording.issueReportsQuestion(repo: IntegrationsWording.issueRepo(config))
+            destructive = false
+        }
     }
 }
