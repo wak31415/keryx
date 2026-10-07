@@ -243,7 +243,7 @@ import KeryxPreview
             .notFound(LocateFailure(lookedAt: ["a."])), .migrationRequired("x"), .liveCalls(1),
             .failed(command: "keryx status", exitCode: 1, message: ""),
             .decoding(command: "keryx status", detail: "d"), .timedOut(command: "keryx status"),
-            .launch("l"), .terminal("t"),
+            .launch("l"), .terminal("t"), .refused("r"),
         ]
         for error in errors {
             #expect(!error.title.isEmpty)
@@ -260,6 +260,7 @@ import KeryxPreview
             .failed(command: "keryx status", exitCode: 3, message: ""),
             .decoding(command: "keryx status", detail: "d"), .timedOut(command: "keryx status"),
             .launch("no such file"), .terminal("Terminal could not be opened"),
+            .refused(TrustedLink.refusal),
         ]
         for error in errors {
             #expect(error.message.hasSuffix("."), "\(error.message)")

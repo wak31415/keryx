@@ -47,6 +47,10 @@ public enum SignInProvider: String, Sendable, CaseIterable, Identifiable {
 
     /// The two that `keryx auth logout` can sign out of.
     public var canSignOut: Bool { self == .gmail || self == .googleWorkspace }
+
+    /// It reads one line on stdin while it runs: Claude's code, Gmail's landing address.
+    /// Codex's and Google for agents' read none.
+    public var readsALine: Bool { self == .claude || self == .gmail }
 }
 
 /// `keryx auth logout gmail|google-workspace --json`. `signedIn` is always false: a sign-in

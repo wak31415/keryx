@@ -453,6 +453,64 @@ import Testing
         #expect(kill(child, 0) == -1 && errno == ESRCH)
     }
 
+    @Test func aChildThatClosedItsStdinIsSentToSafely() async throws {
+        // It closes its stdin, says so, then waits: writing to it is EPIPE, never SIGPIPE.
+        let stream = runner.interactiveLines(.init(executable: "/bin/sh", arguments: ["-c", """
+            exec 0<&-
+            echo closed
+            read -t 1 nothing 2>/dev/null
+            sleep 0.3
+            echo still here
+            """], timeout: nil))
+        var lines: [String] = []
+        for try await line in stream {
+            lines.append(line)
+            if line == "closed" {
+                // Queued; the write fails in the pipe, and the app goes on.
+                for _ in 0..<50 { stream.send(String(repeating: "x", count: 4096)) }
+            }
+        }
+        #expect(lines == ["closed", "still here"])
+    }
+
+    @Test func sendsRacingACloseNeverLandBehindIt() async throws {
+        // Many writers and several closers at once: nothing is queued behind the close, so
+        // no write can reach the descriptor's number once something else has it.
+        for _ in 0..<50 {
+            var fds: [Int32] = [-1, -1]
+            #expect(pipe(&fds) == 0)
+            let reader = fds[0]
+            _ = fcntl(reader, F_SETFL, O_NONBLOCK)
+            let writer = InputWriter(fd: fds[1])
+            await withTaskGroup(of: Void.self) { group in
+                for index in 0..<16 {
+                    group.addTask {
+                        for line in 0..<20 { _ = writer.write(Data("\(index)-\(line)\n".utf8)) }
+                    }
+                }
+                for _ in 0..<3 { group.addTask { writer.close() } }
+            }
+            #expect(writer.lateWrites == 0)
+            #expect(!writer.write(Data("after\n".utf8)))
+            // Its number may be reused now: a pipe that takes it hears nothing from us.
+            var reused: [Int32] = [-1, -1]
+            #expect(pipe(&reused) == 0)
+            _ = fcntl(reused[0], F_SETFL, O_NONBLOCK)
+            #expect(writer.lateWrites == 0)
+            var byte: UInt8 = 0
+            #expect(Darwin.read(reused[0], &byte, 1) == -1 && errno == EAGAIN)
+            // What was written before the close arrived whole, line by line.
+            var bytes = [UInt8](repeating: 0, count: 65_536)
+            let count = Darwin.read(reader, &bytes, bytes.count)
+            if count > 0 {
+                let text = String(decoding: bytes[0..<count], as: UTF8.self)
+                #expect(text.hasSuffix("\n"))
+                #expect(text.split(separator: "\n").allSatisfy { $0.contains("-") })
+            }
+            for fd in [reader, reused[0], reused[1]] { close(fd) }
+        }
+    }
+
     @Test func aPlainStreamTakesNoInput() async throws {
         let stream = runner.lines(.init(executable: "/bin/sh", arguments: ["-c", "echo a"], timeout: nil))
         #expect(!stream.acceptsInput)

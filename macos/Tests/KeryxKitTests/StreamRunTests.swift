@@ -60,7 +60,8 @@ import KeryxPreview
     @Test func aSignInOpensAPageAsksForACodeAndTakesOneLine() async {
         let run = makeRun()
         let manual = ManualRun<SignedIn>()
-        run.start(reason: "Signing in", { manual.stream() })
+        run.start(reason: "Signing in", takes: .oneLine, { manual.stream() })
+        #expect(manual.inputOpen, "a run that reads a line keeps its stdin open until then")
         manual.send(.open(url: "https://claude.com/cai/oauth/authorize", code: nil))
         #expect(await eventually { run.activity?.link == .init(url: "https://claude.com/cai/oauth/authorize") })
         manual.send(.code)
@@ -69,7 +70,9 @@ import KeryxPreview
         #expect(run.activity?.wantsCode == true)
         #expect(run.send("c#s"))
         #expect(run.activity?.wantsCode == false)
-        #expect(manual.sent.last == "c#s")
+        #expect(manual.sent == ["c#s"])
+        #expect(!manual.inputOpen, "one line read, its stdin closed")
+        #expect(!run.send("again"), "a second line is refused, not left in a pipe")
         manual.send(.done(SignedIn(name: "claude", message: "Signed in.", stored: "CLAUDE_CODE_OAUTH_TOKEN")))
         manual.finish()
         await run.settled()
@@ -84,6 +87,16 @@ import KeryxPreview
         manual.send(.open(url: "https://auth.openai.com/codex/device", code: "K7QF-2MXRA"))
         #expect(await eventually { run.activity?.link?.code == "K7QF-2MXRA" })
         #expect(run.activity?.wantsCode == false)
+        manual.finish()
+        await run.settled()
+    }
+
+    @Test func aRunThatReadsNothingHasItsInputClosedAtOnce() async {
+        let run = makeRun()
+        let manual = ManualRun<SignedIn>()
+        run.start(reason: "Signing in", { manual.stream() })
+        #expect(!manual.inputOpen)
+        #expect(!run.send("x"))
         manual.finish()
         await run.settled()
     }
@@ -201,7 +214,7 @@ import KeryxPreview
         let client = PreviewClient(signIn: .answering([.open(url: "https://x.example", code: nil), .code],
                                                       then: [.done(SignedIn(name: "claude", message: "In."))]))
         let run = makeRun()
-        run.start(reason: "x", { client.signIn(.claude, clientFile: nil) })
+        run.start(reason: "x", takes: .oneLine, { client.signIn(.claude, clientFile: nil) })
         #expect(await eventually { run.activity?.wantsCode == true })
         #expect(run.send("c#s"))
         await run.settled()

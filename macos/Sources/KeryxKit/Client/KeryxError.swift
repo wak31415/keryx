@@ -17,6 +17,9 @@ public enum KeryxError: Error, Equatable, Sendable {
     case launch(String)
     /// Terminal could not be handed a command to run.
     case terminal(String)
+    /// The app would not do it, and ran nothing: what it was given cannot be used (a line
+    /// break in a key, an address it will not open). The sentence says why.
+    case refused(String)
 
     /// Short, in title case, for an alert or a `ContentUnavailableView`.
     public var title: String {
@@ -29,6 +32,7 @@ public enum KeryxError: Error, Equatable, Sendable {
         case .timedOut: "Keryx Didn't Respond"
         case .launch: "Keryx Couldn't Start"
         case .terminal: "Couldn't Open Terminal"
+        case .refused: "Can't Do That"
         }
     }
 
@@ -63,7 +67,7 @@ public enum KeryxError: Error, Equatable, Sendable {
             return "This app couldn't read what \(command) printed. Update the app and Keryx to the same version."
         case let .timedOut(command):
             return "\(command) took too long and was stopped. Try again in a moment."
-        case let .launch(message), let .terminal(message):
+        case let .launch(message), let .terminal(message), let .refused(message):
             return Self.sentence(message)
         }
     }

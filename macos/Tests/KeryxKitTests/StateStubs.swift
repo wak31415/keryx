@@ -223,6 +223,7 @@ final class ManualRun<Done: StreamDone>: @unchecked Sendable {
 
     var stopRequests: Int { lock.withLock { stops } }
     var sent: [String] { lock.withLock { lines } }
+    var inputOpen: Bool { lock.withLock { takesInput } }
 
     /// Its input closed: `send` is refused from now on.
     func closeInput() { lock.withLock { takesInput = false } }
