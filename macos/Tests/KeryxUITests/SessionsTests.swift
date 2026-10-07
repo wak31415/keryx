@@ -49,7 +49,8 @@ import Testing
     @Test func headerBylineSaysWhereItWasAsked() {
         let task = tasks[2]
         let byline = SessionWording.headerByline(task, now: task.startedAt!.addingTimeInterval(7200), locale: us)
-        #expect(byline == "Claude (claude-opus-5-5) · keryx · started 2 hours ago · via phone")
+        #expect(byline == "Claude · keryx · started 2 hours ago · via phone")
+        #expect(SessionWording.modelHelp(task) == "Claude ran on claude-opus-5-5")
         #expect(SessionWording.channel("local") == "on this Mac")
         #expect(SessionWording.channel(nil) == nil)
     }
@@ -103,6 +104,37 @@ import Testing
             .paragraph("Done."),
             .paragraph("After"),
         ])
+    }
+
+    @Test func onlyWebLinksOpen() {
+        #expect(SessionWording.opensLink(URL(string: "https://example.com/a")!))
+        #expect(SessionWording.opensLink(URL(string: "HTTP://example.com")!))
+        #expect(!SessionWording.opensLink(URL(string: "file:///etc/passwd")!))
+        #expect(!SessionWording.opensLink(URL(string: "x-apple.systempreferences:com.apple")!))
+        #expect(!SessionWording.opensLink(URL(string: "javascript:alert(1)")!))
+    }
+
+    @Test func stepsAreTimedToTheMinute() {
+        #expect(SessionWording.stepTime("08:30:59") == "08:30")
+        #expect(SessionWording.stepTime("8:30") == "8:30")
+        #expect(SessionWording.stepTime("yesterday") == "yesterday")
+    }
+
+    @Test func theListIsInDays() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        func at(_ hoursAgo: Double, _ id: Int) -> TaskItem {
+            var task = tasks[0]
+            task.id = id
+            task.createdAt = now.addingTimeInterval(-hoursAgo * 3600)
+            return task
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        // 1_800_000_000 is 08:00 UTC.
+        let days = SessionWording.days([at(1, 3), at(20, 2), at(60, 1)], now: now, calendar: calendar)
+        #expect(days.map(\.title) == ["Today", "Yesterday", "Earlier"])
+        #expect(days.map { $0.sessions.map(\.id) } == [[3], [2], [1]])
+        #expect(SessionWording.days([at(60, 1)], now: now, calendar: calendar).map(\.title) == ["Earlier"])
     }
 
     // MARK: - The catalog

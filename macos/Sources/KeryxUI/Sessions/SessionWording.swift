@@ -63,6 +63,21 @@ enum SessionWording {
         return text
     }
 
+    /// The list's sections, newest first: "Today", "Yesterday" and "Earlier", each only when
+    /// it holds a session, the sessions in the order given.
+    static func days(_ tasks: [TaskItem], now: Date = .now,
+                     calendar: Calendar = .current) -> [(title: String, sessions: [TaskItem])] {
+        let titles = ["Today", "Yesterday", "Earlier"]
+        var sections: [[TaskItem]] = [[], [], []]
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: now) ?? now
+        for task in tasks {
+            let index = calendar.isDate(task.createdAt, inSameDayAs: now) ? 0
+                : calendar.isDate(task.createdAt, inSameDayAs: yesterday) ? 1 : 2
+            sections[index].append(task)
+        }
+        return zip(titles, sections).filter { !$0.1.isEmpty }.map { (title: $0.0, sessions: $0.1) }
+    }
+
     /// "Claude · keryx · 2 hours ago", under a session in the list.
     static func rowByline(_ task: TaskItem, now: Date = .now, locale: Locale = .autoupdatingCurrent) -> String {
         var parts = [Wording.agent(task.agent)]
@@ -73,11 +88,10 @@ enum SessionWording {
 
     // MARK: - The timeline
 
-    /// "Claude (claude-opus-5-5) · keryx · started 2 hours ago · via phone", under the
-    /// session's title; the model is left out when the CLI names none.
+    /// "Claude · keryx · started 2 hours ago · via phone", under the session's title. The
+    /// model is the agent's tooltip (`modelHelp`).
     static func headerByline(_ task: TaskItem, now: Date = .now, locale: Locale = .autoupdatingCurrent) -> String {
         var parts = [Wording.agent(task.agent)]
-        if let model = task.model, !model.isEmpty { parts[0] += " (\(model))" }
         if let project = task.project, !project.isEmpty { parts.append(project) }
         if let started = task.startedAt {
             parts.append("started \(Formatting.relative(started, now: now, locale: locale))")
@@ -86,6 +100,13 @@ enum SessionWording {
         }
         if let channel = channel(task.originChannel) { parts.append(channel) }
         return parts.joined(separator: " · ")
+    }
+
+    /// "Claude ran on claude-opus-5-5", for the byline's tooltip; `nil` when the CLI names no
+    /// model.
+    static func modelHelp(_ task: TaskItem) -> String? {
+        guard let model = task.model, !model.isEmpty else { return nil }
+        return "\(Wording.agent(task.agent)) ran on \(model)"
     }
 
     /// Where the owner asked: "via phone", "on this Mac".
@@ -148,6 +169,19 @@ enum SessionWording {
     /// A token count to two significant figures: "48K", "6.1K", "980".
     static func tokens(_ count: Int, locale: Locale = .autoupdatingCurrent) -> String {
         count.formatted(.number.notation(.compactName).precision(.significantDigits(1...2)).locale(locale))
+    }
+
+    /// Whether a link in a report or a step may open: the web's two schemes, nothing else.
+    static func opensLink(_ url: URL) -> Bool {
+        ["http", "https"].contains(url.scheme?.lowercased() ?? "")
+    }
+
+    /// A step's time as the log wrote it ("08:30:59"), to the minute: "08:30". Anything
+    /// else is shown as it is.
+    static func stepTime(_ time: String) -> String {
+        let parts = time.split(separator: ":")
+        guard parts.count == 3, parts.allSatisfy({ $0.count == 2 && $0.allSatisfy(\.isNumber) }) else { return time }
+        return parts.prefix(2).joined(separator: ":")
     }
 
     /// A moment in the session: the time alone today, else the day and the time.

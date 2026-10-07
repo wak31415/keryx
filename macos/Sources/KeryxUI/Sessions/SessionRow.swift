@@ -16,8 +16,9 @@ struct SessionRow: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
+                // Semibold only while the result is still to be told, as Mail shows unread.
                 Text(Wording.capitalised(task.description))
-                    .font(.headline)
+                    .fontWeight(unread ? .semibold : .regular)
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)

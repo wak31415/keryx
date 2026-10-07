@@ -34,6 +34,11 @@ struct SessionTimeline: View {
             }
             // Opens at the newest, and follows new steps; a short session stays at the top.
             .onAppear { scrollToBottom(proxy) }
+            // A link in a report or a step opens only on the web: never a file, an app's
+            // own scheme, or anything else a session could have written.
+            .environment(\.openURL, OpenURLAction { url in
+                SessionWording.opensLink(url) ? .systemAction : .discarded
+            })
             .onChange(of: detail?.value?.log.count) { scrollToBottom(proxy) }
             .onChange(of: task.status) { scrollToBottom(proxy) }
         }
@@ -57,6 +62,7 @@ struct SessionTimeline: View {
             Text(SessionWording.headerByline(task))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
+                .help(SessionWording.modelHelp(task) ?? "")
             StatusLabel(task: task)
         }
     }
@@ -66,7 +72,7 @@ struct SessionTimeline: View {
     @ViewBuilder private var log: some View {
         if let value = detail?.value {
             if value.logTruncated {
-                Text("Earlier steps aren't shown")
+                Text("Only the most recent steps are kept")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
@@ -158,14 +164,10 @@ struct SessionTimeline: View {
                 }
             }
             if detail?.value?.reportTruncated == true, let path = task.reportPath {
-                HStack(spacing: 10) {
-                    Text("Report truncated")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Button("Open Full Report") {
-                        NSWorkspace.shared.open(URL(fileURLWithPath: path))
-                    }
+                Button("Show Full Report") {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: path))
                 }
+                .help("Only the start of the report is shown here. Opens all of it.")
             }
             if let usage = SessionWording.usage(task) {
                 Text(usage)
@@ -185,22 +187,31 @@ struct SessionTimeline: View {
 
 // MARK: - Pieces
 
-/// The session's status in its colour: "Done in 15 minutes".
+/// The session's status: "Done in 15 minutes", in secondary text beside its glyph — a small
+/// spinner while it runs. Only the glyph carries a colour.
 private struct StatusLabel: View {
     let task: TaskItem
 
     var body: some View {
-        Label(SessionWording.statusTitle(task), systemImage: SessionWording.symbol(task.status))
-            .foregroundStyle(colour)
-            .font(.callout)
+        Label {
+            Text(SessionWording.statusTitle(task))
+                .foregroundStyle(.secondary)
+        } icon: {
+            if task.status == .running {
+                ProgressView().controlSize(.mini)
+            } else {
+                Image(systemName: SessionWording.symbol(task.status))
+                    .foregroundStyle(colour)
+            }
+        }
+        .font(.callout)
     }
 
     private var colour: AnyShapeStyle {
         switch task.status {
         case .done: AnyShapeStyle(.green)
         case .failed: AnyShapeStyle(.red)
-        case .running: AnyShapeStyle(.tint)
-        case .queued, .cancelled: AnyShapeStyle(.secondary)
+        case .running, .queued, .cancelled: AnyShapeStyle(.secondary)
         }
     }
 }
@@ -244,19 +255,26 @@ private struct StepsBox: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 if folds && !expanded {
-                    Button("Show All \(entries.count) Steps") { expanded = true }
-                        .buttonStyle(.link)
-                        .font(.callout)
+                    // Where the earlier steps open: above the ones shown.
+                    Button {
+                        expanded = true
+                    } label: {
+                        Label(hidden == 1 ? "Show 1 Earlier Step" : "Show \(hidden) Earlier Steps",
+                              systemImage: "chevron.up")
+                    }
+                    .buttonStyle(.link)
+                    .font(.callout)
                 }
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
                     ForEach(shown) { entry in
                         GridRow {
                             // A log written without times leaves out the column.
                             if timed {
-                                Text(entry.time ?? "")
+                                Text(entry.time.map(SessionWording.stepTime) ?? "")
                                     .font(.callout)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
+                                    .help(entry.time ?? "")
                             }
                             Text(Wording.capitalised(entry.text))
                                 .font(.callout)
@@ -276,6 +294,7 @@ private struct StepsBox: View {
     }
 
     private var folds: Bool { entries.count > SessionWording.foldAbove }
+    private var hidden: Int { entries.count - SessionWording.foldedCount }
     private var timed: Bool { entries.contains { $0.time != nil } }
 
     private var shown: [SessionLogEntry] {
