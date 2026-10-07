@@ -234,6 +234,45 @@ def test_a_twilio_token_that_does_not_work_is_one_sentence(settings, error, prob
     assert result == Verified("TWILIO_AUTH_TOKEN", False, problem, None)
 
 
+def test_a_pair_checks_the_sid_given_not_the_one_saved(settings):
+    fake = Recorder(admin=FakeAdmin("Ada's other account"))
+    other = "AC" + "f" * 32
+    stored = settings.model_copy(update={"twilio_account_sid": SID})
+
+    result = verify.verify("TWILIO_AUTH_TOKEN", KEY, stored, fake.checks(), account_sid=other)
+
+    assert result == Verified("TWILIO_AUTH_TOKEN", True, None, "Ada's other account")
+    assert fake.twilio_pairs == [(other, KEY)]
+
+
+def test_a_pair_with_no_sid_asks_nobody(settings):
+    fake = Recorder()
+    stored = settings.model_copy(update={"twilio_account_sid": SID})
+
+    result = verify.verify("TWILIO_AUTH_TOKEN", KEY, stored, fake.checks(), account_sid="")
+
+    assert result == Verified(
+        "TWILIO_AUTH_TOKEN", False, "There's no TWILIO_ACCOUNT_SID to check the token with.",
+        None,
+    )
+    assert fake.twilio_pairs == []
+
+
+def test_a_pair_that_twilio_refuses_is_one_sentence(settings):
+    fake = Recorder(admin=FakeAdmin(error=TwilioError(KEY, status=401)))
+
+    result = verify.verify("TWILIO_AUTH_TOKEN", KEY, settings, fake.checks(), account_sid=SID)
+
+    assert result == Verified(
+        "TWILIO_AUTH_TOKEN", False, "Twilio didn't accept the account SID and auth token.", None
+    )
+
+
+def test_only_the_twilio_token_is_checked_as_a_pair(settings):
+    with pytest.raises(verify.Unsupported):
+        verify.verify("OPENAI_API_KEY", KEY, settings, Recorder().checks(), account_sid=SID)
+
+
 def test_an_unexpected_failure_is_a_cause_never_its_text(settings):
     def openai(key):
         raise RuntimeError(f"boom {key}")

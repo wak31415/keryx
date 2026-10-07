@@ -245,7 +245,8 @@ class FakeAccountClient:
                     raise RuntimeError("HTTP 401 for +15550001111")
                 return [
                     SimpleNamespace(
-                        sid="PN1", phone_number="+15550001111", voice_url="", status_callback=None
+                        sid="PN1", phone_number="+15550001111", voice_url="",
+                        status_callback=None, friendly_name="Office",
                     )
                 ]
 
@@ -266,7 +267,7 @@ def test_the_admin_reads_the_account_and_its_numbers():
     admin = RestTwilioAdmin("AC1", "tok", client=FakeAccountClient())
 
     assert admin.account_name() == "Ada's account"
-    assert admin.numbers() == [TwilioNumber("PN1", "+15550001111", None, None)]
+    assert admin.numbers() == [TwilioNumber("PN1", "+15550001111", None, None, "Office")]
 
 
 def test_the_admin_sets_both_webhooks_as_post():

@@ -10,8 +10,10 @@ makes, reached through `Checks`, which the tests replace wholesale:
 - `ANTHROPIC_API_KEY`: Anthropic's list of models, the way `config options` reads it — one
   `GET` that follows no redirect.
 - `TWILIO_AUTH_TOKEN`: the account the saved `TWILIO_ACCOUNT_SID` names, read with the token
-  (the admin client the phone section and `doctor` use); its friendly name is the `detail`.
-  The SID is not checked on its own: it means nothing without its token.
+  (`keryx.phone`'s admin client, which `keryx phone` uses); its friendly name is the
+  `detail`. The SID is not checked on its own: it means nothing without its token — but
+  the two can be checked together, both unsaved (`--pair`: the app's phone screen edits
+  both at once, when the owner switches accounts).
 
 A key that does not work is a result, not a failure. `problem` is one sentence of cause and
 nothing else — a status code or an exception's type at most, never a key, a body or an
@@ -25,7 +27,7 @@ from typing import Any
 from keryx.config.options import (
     ANTHROPIC_MODELS_URL,
     ANTHROPIC_VERSION,
-    TIMEOUT_S,
+    TIMEOUT_S,  # noqa: F401 -- every check's, Twilio's included (`keryx.phone`)
     Unavailable,
     _get_json,
     http_get,
@@ -39,8 +41,6 @@ SUPPORTED = {
     "CODEX_API_KEY": "codex_api_key",
     "TWILIO_AUTH_TOKEN": "twilio_auth_token",
 }
-#: Twilio's answers that mean the SID and the token do not go together.
-TWILIO_REFUSED = (401, 403, 404)
 
 
 class Unsupported(ValueError):
@@ -73,14 +73,10 @@ class Checks:
 
 
 def _twilio_admin(sid: str, token: str) -> Any:
-    """The phone section's admin client, with a timeout: the owner is waiting on it."""
-    from twilio.http.http_client import TwilioHttpClient
-    from twilio.rest import Client
+    """The phone's admin client, with a timeout: the owner is waiting on it."""
+    from keryx import phone
 
-    from keryx.notify.twilio_out import RestTwilioAdmin
-
-    client = Client(sid, token, http_client=TwilioHttpClient(timeout=TIMEOUT_S))
-    return RestTwilioAdmin(sid, token, client=client)
+    return phone.rest_admin(sid, token)
 
 
 def default_checks() -> Checks:
@@ -114,39 +110,46 @@ def _anthropic(key: str, checks: Checks) -> str | None:
     return None
 
 
-def _twilio(token: str, settings: Settings, checks: Checks) -> tuple[str | None, str | None]:
-    """(problem, the account's name) for `token` with the saved account SID."""
-    from keryx.notify.twilio_out import TwilioError
+def _twilio(token: str, sid: str, checks: Checks) -> tuple[str | None, str | None]:
+    """(problem, the account's name) for `token` with the account SID `sid`."""
+    from keryx.phone import twilio_problem
 
-    sid = settings.twilio_account_sid
-    if not sid:
-        return "There's no TWILIO_ACCOUNT_SID saved to check the token with.", None
     try:
         return None, checks.twilio(sid, token).account_name()
-    except TwilioError as error:
-        if error.status in TWILIO_REFUSED:
-            return "Twilio didn't accept the account SID and auth token.", None
-        if error.status is not None:
-            return f"Twilio answered with HTTP {error.status}.", None
-        return f"Keryx couldn't reach Twilio ({error.cause or type(error).__name__}).", None
+    except Exception as error:  # by its cause only: its text may quote the token
+        return twilio_problem(error), None
 
 
 def verify(
-    key: str, value: str | None, settings: Settings, checks: Checks | None = None
+    key: str,
+    value: str | None,
+    settings: Settings,
+    checks: Checks | None = None,
+    *,
+    account_sid: str | None = None,
 ) -> Verified:
-    """Whether `key` works: `value` when given, else the one saved. Never saves either."""
-    if key not in SUPPORTED:
+    """Whether `key` works: `value` when given, else the one saved. Never saves either.
+
+    `account_sid`, for `TWILIO_AUTH_TOKEN` alone, is the SID to check the token with in
+    place of the saved one: the pair, both unsaved.
+    """
+    if key not in SUPPORTED or (account_sid is not None and key != "TWILIO_AUTH_TOKEN"):
         raise Unsupported(key)
     secret = value if value is not None else getattr(settings, SUPPORTED[key])
     if not secret:
         return Verified(key, False, f"There's no {key} to check.", None)
+    sid = settings.twilio_account_sid if account_sid is None else account_sid
+    if key == "TWILIO_AUTH_TOKEN" and not sid:
+        saved = " saved" if account_sid is None else ""
+        problem = f"There's no TWILIO_ACCOUNT_SID{saved} to check the token with."
+        return Verified(key, False, problem, None)
     checks = checks or default_checks()
     detail = None
     try:
         if key == "ANTHROPIC_API_KEY":
             problem = _anthropic(secret, checks)
         elif key == "TWILIO_AUTH_TOKEN":
-            problem, detail = _twilio(secret, settings, checks)
+            problem, detail = _twilio(secret, sid or "", checks)
         else:
             problem = _openai(secret, checks)
     except Exception as exc:  # by its type only: its text may quote the key

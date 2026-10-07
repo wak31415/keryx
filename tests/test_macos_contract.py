@@ -33,7 +33,7 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from keryx import plugins, status, units
+from keryx import phone, plugins, status, units
 from keryx.cli import app
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
@@ -50,6 +50,7 @@ from keryx.localmodels import (
     voice,
 )
 from keryx.localmodels.hardware import Hardware
+from keryx.notify.twilio_out import TwilioNumber
 from keryx.restart.service import ServiceTarget
 from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
 from keryx.tasks.models import Task, TaskKind, TaskStatus, task_log_path
@@ -84,6 +85,8 @@ COMMANDS = {
     "config verify KEY --json",
     "integrations --json", "auth logout google-workspace --json", "auth logout gmail --json",
     "plugins install NAME --json", "plugins remove NAME --json", "plugins set NAME --json",
+    "phone numbers --json", "phone webhooks --json", "phone webhooks --apply --json",
+    "phone tunnel --json",
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
@@ -105,6 +108,25 @@ SERVED = "qwen3-coder-q4"
 VOICE_SERVER = "http://192.168.1.20:8765"
 #: The speech-to-speech the seeded machine has.
 S2S = "/Users/you/.local/bin/speech-to-speech"
+#: The seeded Twilio number, which the faked account has, pointed elsewhere for now.
+TWILIO_NUMBER = "+15550001111"
+
+
+class TwilioAccount:
+    """The faked Twilio account `keryx phone` asks: a name, the number, and its update."""
+
+    def __call__(self, sid: str, token: str) -> "TwilioAccount":
+        return self
+
+    def account_name(self) -> str:
+        return "Ada's account"
+
+    def numbers(self) -> list[TwilioNumber]:
+        return [TwilioNumber("PN1", TWILIO_NUMBER, "https://demo.twilio.com/welcome/voice/",
+                             "https://old.example.com/status", "Office")]
+
+    def set_webhooks(self, number_sid: str, *, voice_url: str, status_url: str) -> None:
+        pass
 
 runner = CliRunner()
 
@@ -401,7 +423,9 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     ConfigStore().set({"ASSISTANT_NAME": "Vega", "LLM_SERVER_MODEL": MODEL.key,
                        "VOICE_BASE_URL": "http://127.0.0.1:8765/v1",
                        "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1",
-                       "LOCAL_AGENT_MODEL": MODEL.key})
+                       "LOCAL_AGENT_MODEL": MODEL.key,
+                       "TWILIO_ACCOUNT_SID": "AC" + "0" * 32, "TWILIO_AUTH_TOKEN": "tok",
+                       "TWILIO_NUMBER": TWILIO_NUMBER, "PUBLIC_HOST": "keryx.example.com"})
     settings = Settings()
     settings.ensure_dirs()
 
@@ -443,6 +467,8 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
         requested_at=now.isoformat(), state="failed", error="launchctl exited 5",
     ))
 
+    # The phone: a Twilio account that answers. The tunnel's hostname answers nothing.
+    monkeypatch.setattr(phone, "rest_admin", TwilioAccount())
     # A plugin on, for the plugin commands to change and turn off.
     plugins.install(settings, "check_billing")
     # The integrations: `gh` signed in, though only issue reports turned on would ask it.

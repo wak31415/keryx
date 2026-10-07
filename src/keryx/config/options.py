@@ -2,9 +2,10 @@
 
 The Mac app fills a dropdown from this the moment it is opened, so the list is read live
 where there is something to ask — OpenAI's and Anthropic's model lists, Codex's own, a
-server of the owner's — and built in where there is not. Each source is one small function
-here; whatever reaches outside the process (the HTTP getter, Codex, the hardware and the
-disk) comes in through `Sources`, which the tests replace wholesale.
+server of the owner's, the Twilio account's numbers — and built in where there is not.
+Each source is one small function here; whatever reaches outside the process (the HTTP
+getter, Codex, Twilio, the hardware and the disk) comes in through `Sources`, which the
+tests replace wholesale.
 
 A list that cannot be read is never a failure of the command: it falls back to the values
 Keryx knows, `live` false and `error` one sentence saying why, and only why (the app says
@@ -56,7 +57,7 @@ NOT_CHAT = (
     "moderation",
 )
 
-Source = Literal["openai", "anthropic", "codex", "server", "catalog", "builtin"]
+Source = Literal["openai", "anthropic", "codex", "server", "twilio", "catalog", "builtin"]
 
 
 class Unavailable(Exception):
@@ -117,6 +118,8 @@ class Sources:
     #: `(kind, value)` → whether `VOICE_SERVER_STT` ("stt") or `_TTS` ("tts") at `value`
     #: has its speech models in the Hugging Face cache (`localmodels.speech.ready`).
     speech_ready: Callable[[str, str], bool] = lambda kind, value: False
+    #: `(account_sid, auth_token)` → a `TwilioAdmin` (`keryx.phone.rest_admin`).
+    twilio: Callable[[str, str], Any] = lambda sid, token: _rest_twilio(sid, token)
 
 
 @dataclass(frozen=True)
@@ -181,6 +184,12 @@ def sdk_codex_models(env: dict[str, str], timeout: float) -> list[CodexModel]:
     if failure:
         raise Unavailable(f"Codex couldn't list its models ({type(failure[0]).__name__}).")
     return result
+
+
+def _rest_twilio(sid: str, token: str) -> Any:
+    from keryx import phone
+
+    return phone.rest_admin(sid, token)
 
 
 def default_sources(settings: Settings) -> Sources:
@@ -485,6 +494,26 @@ def _speech(kind: str, values: tuple[str, ...]) -> Callable[[Settings, Sources],
     return found
 
 
+def twilio_numbers(settings: Settings, sources: Sources) -> Found:
+    """The Twilio account's own numbers, as `keryx phone numbers` lists them."""
+    from keryx import phone
+
+    def read() -> list[Option]:
+        try:
+            _, numbers = phone.account_numbers(settings, sources.twilio)
+        except phone.Refused as why:
+            raise Unavailable(f"{str(why).removesuffix('.')}, so Keryx can't ask Twilio.") from None
+        except phone.Failed as why:
+            raise Unavailable(str(why)) from None
+        if not numbers:
+            raise Unavailable("That Twilio account has no phone numbers.")
+        return [
+            Option(n.phone_number, n.phone_number, n.friendly_name or None) for n in numbers
+        ]
+
+    return _live("twilio", read, [])
+
+
 PROVIDERS: dict[str, Callable[[Settings, Sources], Found]] = {
     "OPENAI_REALTIME_MODEL": realtime_models,
     "OPENAI_TRANSCRIPTION_MODEL": transcription_models,
@@ -497,6 +526,7 @@ PROVIDERS: dict[str, Callable[[Settings, Sources], Found]] = {
     "VOICE_SERVER_VOICE": kokoro_voices,
     "VOICE_SERVER_STT": _speech("stt", VOICE_SERVER_STT),
     "VOICE_SERVER_TTS": _speech("tts", VOICE_SERVER_TTS),
+    "TWILIO_NUMBER": twilio_numbers,
 }
 OPTION_KEYS = frozenset(PROVIDERS)
 #: The one setting whose value must be on the list: a voice the key may not use makes

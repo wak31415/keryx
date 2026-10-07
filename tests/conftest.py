@@ -187,6 +187,23 @@ def _no_twilio_from_doctor(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_twilio(monkeypatch):
+    """No test reaches Twilio, whatever a patch missed: `keryx phone`, `config options
+    TWILIO_NUMBER` and `config verify` build real clients unless handed a fake admin.
+
+    Twilio's HTTP client is where a request leaves the process, so it refuses here; the
+    tests of the real admin answer in its place. The admin turns the refusal into a
+    `TwilioError`, so a missed patch reads as Twilio unreachable (AssertionError).
+    """
+    from twilio.http.http_client import TwilioHttpClient
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a test tried to reach Twilio")
+
+    monkeypatch.setattr(TwilioHttpClient, "request", refuse)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_http(monkeypatch):
     """No test reaches the network through httpx, whatever a patch missed.
 

@@ -23,7 +23,7 @@ import typer
 import uvicorn
 from pydantic import ValidationError
 
-from keryx import plugins, units
+from keryx import phone, plugins, units
 from keryx.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from keryx.approvals.audit_log import (
     entry_json,
@@ -80,7 +80,7 @@ from keryx.localmodels import (
     voice,
 )
 from keryx.logging_util import mask_number
-from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
+from keryx.notify.twilio_out import TwilioAdmin
 from keryx.plugins import ssh_hosts
 from keryx.realtime import make_provider
 from keryx.restart.health import health_probe, wait_until_serving
@@ -160,6 +160,12 @@ pin_app = typer.Typer(
     help="The phone PIN: whether one is set, and setting or replacing it (the owner's alone)."
 )
 app.add_typer(pin_app, name="pin")
+phone_app = typer.Typer(
+    help="The phone: your Twilio numbers, where the number points, pointing it here, and the "
+    "tunnel.",
+    no_args_is_help=True,
+)
+app.add_typer(phone_app, name="phone")
 log = logging.getLogger("keryx.cli")
 
 
@@ -1901,7 +1907,7 @@ def _twilio_admin(settings: Settings) -> TwilioAdmin | None:
     """A Twilio client for doctor's webhook check, when there is anything to check."""
     if not (settings.twilio_account_sid and settings.twilio_auth_token and settings.public_host):
         return None
-    return RestTwilioAdmin(settings.twilio_account_sid, settings.twilio_auth_token)
+    return phone.rest_admin(settings.twilio_account_sid, settings.twilio_auth_token)
 
 
 def _doctor_checks(
@@ -2290,16 +2296,24 @@ def config_verify(
         bool,
         typer.Option("--stdin", help="Check the value on standard input (one line), unsaved."),
     ] = False,
+    pair: Annotated[
+        bool,
+        typer.Option(
+            "--pair",
+            help="TWILIO_AUTH_TOKEN with --stdin: two lines, the account SID then the token, "
+            "checked together, neither saved.",
+        ),
+    ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
 ) -> None:
     """Check that a key or credential works, and save nothing.
 
     OPENAI_API_KEY, CODEX_API_KEY (an OpenAI key) and ANTHROPIC_API_KEY are asked for their
     provider's list of models. TWILIO_AUTH_TOKEN is checked with the saved TWILIO_ACCOUNT_SID,
-    and names the account: save the SID first, since it is not checked on its own. With
-    --stdin the value given is checked and not saved (`keryx config set KEY --stdin` saves
-    it); without, the saved one. A key that does not work is still a result (exit 0); a key
-    that cannot be checked exits 2. No key is ever printed.
+    and names the account: save the SID first, since it is not checked on its own — or give
+    both with --stdin --pair. With --stdin the value given is checked and not saved (`keryx
+    config set KEY --stdin` saves it); without, the saved one. A key that does not work is
+    still a result (exit 0); a key that cannot be checked exits 2. No key is ever printed.
     """
     key = _key_or_exit(key)
     if not credentials.can_verify(key):
@@ -2307,8 +2321,15 @@ def config_verify(
         supported = ", ".join(credentials.SUPPORTED)
         typer.echo(f"{key} can't be checked{hint} (only {supported})", err=True)
         raise typer.Exit(2)
-    value = _read_secret_line(key) if stdin else None
-    result = credentials.verify(key, value, _load_settings_optional())
+    if pair and not (stdin and key == "TWILIO_AUTH_TOKEN"):
+        typer.echo("--pair is TWILIO_AUTH_TOKEN with --stdin: the SID, then the token", err=True)
+        raise typer.Exit(2)
+    sid = None
+    if pair:
+        sid, value = _read_twilio_pair()
+    else:
+        value = _read_secret_line(key) if stdin else None
+    result = credentials.verify(key, value, _load_settings_optional(), account_sid=sid)
     if as_json:
         typer.echo(json.dumps(result.as_dict(), indent=2))
     elif result.ok:
@@ -2322,6 +2343,14 @@ def _read_secret_line(key: str) -> str:
     if sys.stdin.isatty():
         return typer.prompt(key, hide_input=True).strip()
     return sys.stdin.readline().strip()
+
+
+def _read_twilio_pair() -> tuple[str, str]:
+    """The account SID and the auth token, one line each (the token hidden at a terminal)."""
+    if sys.stdin.isatty():
+        sid = typer.prompt("TWILIO_ACCOUNT_SID").strip()
+        return sid, typer.prompt("TWILIO_AUTH_TOKEN", hide_input=True).strip()
+    return sys.stdin.readline().strip(), sys.stdin.readline().strip()
 
 
 def _read_secret_input(key: str) -> str:
@@ -2735,6 +2764,100 @@ def auth_logout(
         typer.echo(json.dumps({"name": name, "signed_in": False, "message": message}, indent=2))
     else:
         typer.echo(message)
+
+
+# --- the phone ---------------------------------------------------------------
+
+
+@phone_app.command("numbers")
+def phone_numbers(
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+) -> None:
+    """Your Twilio account's numbers, and which of them rings Keryx here. Only reads; a
+    report, so a refusal from Twilio is said and still exits 0."""
+    report = phone.numbers_report(_configure_readonly())
+    if as_json:
+        typer.echo(json.dumps(report, indent=2))
+        return
+    if report["error"]:
+        typer.echo(report["error"])
+        return
+    typer.echo(f"Twilio account: {report['account']}")
+    for number in report["numbers"]:
+        name = f"  {number['friendly_name']}" if number["friendly_name"] else ""
+        here = "  (points here)" if number["points_here"] else ""
+        typer.echo(f"{number['number']}{name}{here}")
+
+
+@phone_app.command("webhooks")
+def phone_webhooks(
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply",
+            help="Point TWILIO_NUMBER at this machine (the owner's alone; the one write "
+            "Keryx makes to Twilio).",
+        ),
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+) -> None:
+    """Where TWILIO_NUMBER's calls go now, and where they should: https://PUBLIC_HOST.
+
+    With --apply, both webhooks are pointed here — show the owner both addresses first, as
+    `keryx setup` does: exit 1 when Twilio refuses, 2 when there is nothing to apply yet.
+    """
+    if apply:
+        _owner_only("point the phone number at this machine")
+    settings = _configure_readonly()
+    if apply:
+        try:
+            done = phone.apply_webhooks(settings)
+        except phone.Refused as why:
+            typer.echo(str(why), err=True)
+            raise typer.Exit(2) from None
+        except phone.Failed as why:
+            typer.echo(str(why), err=True)
+            raise typer.Exit(1) from None
+        if as_json:
+            typer.echo(json.dumps(done))
+            return
+        voice, _ = phone.webhook_urls(settings.public_host or "")
+        typer.echo(f"{done['number']} now rings Keryx at {voice}")
+        return
+    report = phone.webhooks_report(settings)
+    if as_json:
+        typer.echo(json.dumps(report, indent=2))
+        return
+    if report["error"]:
+        typer.echo(report["error"])
+    current = report["current"] or {}
+    for label, field in (("Incoming call", "voice_url"), ("Call status", "status_url")):
+        now = current.get(field) or "-"
+        typer.echo(f"{label:<14} now {now}, wanted {report['expected'][field] or '-'}")
+    if report["matches"]:
+        typer.echo(f"{report['number']} already rings Keryx here")
+    elif report["current"] is not None and report["expected"]["voice_url"]:
+        typer.echo("`keryx phone webhooks --apply` points it here")
+
+
+@phone_app.command("tunnel")
+def phone_tunnel(
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+) -> None:
+    """The tunnel that puts this machine in front of Twilio: its program, its service, and
+    whether Keryx answers at https://PUBLIC_HOST/health. Only reads."""
+    report = phone.tunnel_report(_configure_readonly())
+    if as_json:
+        typer.echo(json.dumps(report, indent=2))
+        return
+    typer.echo(f"tunnel: {report['binary'] or 'no tunnel on PATH (ngrok or cloudflared)'}")
+    typer.echo(f"its service: {'installed' if report['unit_installed'] else 'not installed'}")
+    host = report["public_host"]
+    if host is None:
+        typer.echo("PUBLIC_HOST: not set")
+    else:
+        answers = "answers as Keryx" if report["reachable"] else "does not answer as Keryx"
+        typer.echo(f"PUBLIC_HOST: {host} {answers}")
 
 
 @app.command("integrations")

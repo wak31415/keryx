@@ -35,16 +35,30 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   it is `advanced`, its `type` — `keryx/config/types.py` — and a choice's
   `choices`, and `has_options`; the table keeps the keys, which are what is typed),
   `config options KEY [--json]` (the models or voices a setting can take, read live from
-  OpenAI, Anthropic, Codex or a server of the owner's when it can be, else Keryx's own list
-  with `error` saying why — exit 0 either way; `keryx/config/options.py`), `config verify
-  KEY [--stdin] [--json]` (whether OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_API_KEY or
-  TWILIO_AUTH_TOKEN — with the saved SID — works, before it is saved: `--stdin` checks the
-  typed value and saves nothing; a key that does not work is still exit 0, `problem` one
-  sentence of cause and never the key; any other key exits 2; `keryx/config/verify.py`),
+  OpenAI, Anthropic, Codex, a server of the owner's or the Twilio account when it can be,
+  else Keryx's own list with `error` saying why — exit 0 either way;
+  `keryx/config/options.py`), `config verify KEY [--stdin] [--pair] [--json]` (whether
+  OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_API_KEY or TWILIO_AUTH_TOKEN — with the saved SID,
+  or with `--stdin --pair` the SID and token on two lines, neither saved — works, before it
+  is saved: `--stdin` checks the typed value and saves nothing; a key that does not work is
+  still exit 0, `problem` one sentence of cause and never the key; any other key exits 2;
+  `keryx/config/verify.py`),
   `config get KEY… [--shell]` (never a secret), `config set KEY VALUE […]` (a secret only with
   `--stdin` or `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every
   directory), `config import-env [PATH]`, `config lock|unlock KEY` (what the running service
   may change)
+- The phone without a terminal (the Mac app's phone steps; `keryx/phone.py`, which the
+  wizard's phone section shares): `uv run keryx phone numbers [--json]` (the Twilio
+  account's numbers, each with where its calls go and `points_here`; a report, so Twilio's
+  refusal is its `error` and still exit 0 — `config options TWILIO_NUMBER` lists the same),
+  `phone webhooks [--json]` (where `TWILIO_NUMBER` points against where it should, and
+  `matches`), `phone webhooks --apply [--json]` (the owner's alone: points both webhooks at
+  `PUBLIC_HOST` — the one write to Twilio, which the app confirms first, showing both
+  addresses; exit 1 when Twilio refuses, 2 when something it needs is not saved),
+  `phone tunnel [--json]` (ngrok or cloudflared on PATH, as `doctor` finds them, its unit,
+  and `reachable`: whether Keryx answers at `https://PUBLIC_HOST/health` within 3 s, null
+  with no hostname). The numbers are the owner's own, shown to the owner, and never logged
+  but as `mask_number`
 - Move a Jarvis install to Keryx — its XDG directories (`~/.config/jarvis`, …), or an older
   `~/.jarvis` and a checkout `.env`: `uv run keryx migrate [--dry-run] [--yes]` (stops the
   service, moves, retires `jarvis.service` for `keryx.service`, re-renders the unit and the
@@ -578,7 +592,8 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   commands that write what the service may not — `config import-env`, `auth login|logout`,
   `memory seed`, `setup`, `setup mark`, `pin set`, `config lock|unlock`, `migrate`,
   `plugins install|remove|set`, `models use`, `voice use` (before any install, handshake or
-  save), `voice download`, `models start|stop`, `service install|uninstall` — refuse
+  save), `voice download`, `models start|stop`, `service install|uninstall`, `phone
+  webhooks --apply` (before Twilio is asked anything) — refuse
   outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
@@ -594,7 +609,8 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
 (`[setup] walked`) so an optional section left for later is not asked about on every run.
 It never assumes what the machine lacks: an agent that is signed in is not asked how to pay.
 The one write it makes outside the machine — the Twilio webhooks — comes after showing both
-addresses and a yes. `keryx setup plan` is the same decision for the Mac app
+addresses and a yes, through `keryx/phone.py`, which `keryx phone webhooks --apply` calls
+after the Mac app has shown the same two addresses and had the same yes. `keryx setup plan` is the same decision for the Mac app
 (`setup/plan.py` over `wizard.section_statuses`), so the two cannot drift: decide a section's
 status in the wizard, and the plan follows. `walked` there only ever settles an optional step,
 or `pin` (the owner's "let the first call set it"); a required step is done by its checks,
