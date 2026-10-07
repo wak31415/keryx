@@ -81,10 +81,20 @@ public final class StreamRun<Done: StreamDone> {
     /// What the first step says until the CLI has said anything.
     public nonisolated static var starting: String { "Starting…" }
 
+    /// How much of its stdin a command reads while it runs.
+    public enum Input: Sendable {
+        /// None: closed as the run starts (`models start`, Codex's and Google's sign-ins).
+        case none
+        /// One line, then it is closed (Claude's code, Gmail's landing address), so a
+        /// second `send` is refused rather than left waiting in a pipe nobody reads.
+        case oneLine
+    }
+
     public private(set) var phase: Phase?
     @ObservationIgnored private var run: UUID?
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var stream: StoppableStream<StreamEvent<Done>>?
+    @ObservationIgnored private var input: Input = .none
     @ObservationIgnored private var stopping = false
     @ObservationIgnored private let beginActivity: @MainActor (String) -> @MainActor () -> Void
 
@@ -119,17 +129,20 @@ public final class StreamRun<Done: StreamDone> {
     }
 
     /// Starts the stream `make` opens, unless a run is already going or still stopping;
-    /// true when it started. `reason` is what the Mac is told it is kept awake for.
+    /// true when it started. `reason` is what the Mac is told it is kept awake for;
+    /// `takes`, how much of its stdin the command reads (none, by default: closed at once).
     /// `onFinish` runs once it has worked, with what its `done` said.
     @discardableResult
-    public func start(reason: String, _ make: () -> StoppableStream<StreamEvent<Done>>,
+    public func start(reason: String, takes: Input = .none, _ make: () -> StoppableStream<StreamEvent<Done>>,
                       onFinish: @escaping @MainActor (Done) -> Void = { _ in }) -> Bool {
         guard !isBusy else { return false }
         let run = UUID()
         self.run = run
         stopping = false
+        input = takes
         phase = .running(Activity())
         let stream = make()
+        if takes == .none { stream.closeInput() }
         self.stream = stream
         let endActivity = beginActivity(reason)
         task = Task { [weak self] in
@@ -162,11 +175,13 @@ public final class StreamRun<Done: StreamDone> {
     }
 
     /// Hands one line to the CLI's stdin — a sign-in's code, or the address the browser
-    /// landed on. False when nothing is running, the stream takes no input (or no more),
-    /// or `line` holds a line break. The line is not kept.
+    /// landed on — and, for a run that takes one line, closes it after. False when nothing
+    /// is running, the stream takes no input (or no more), or `line` holds a line break.
+    /// The line is not kept.
     @discardableResult
     public func send(_ line: String) -> Bool {
         guard isRunning, let stream, stream.send(line) else { return false }
+        if input == .oneLine { stream.closeInput() }
         if case var .running(activity) = phase, activity.wantsCode {
             activity.wantsCode = false
             phase = .running(activity)

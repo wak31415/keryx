@@ -126,10 +126,33 @@ import KeryxPreview
         }
     }
 
-    @Test func oneLineIsTheFirstLineTrimmed() {
-        #expect(CLIClient.oneLine("  a b \n") == "a b")
-        #expect(CLIClient.oneLine("first\nsecond") == "first")
-        #expect(CLIClient.oneLine("\n\n") == "")
+    @Test func oneLineIsTrimmedAndTwoAreRefusedNeverCut() throws {
+        #expect(try CLIClient.oneLine("  a b \n", "The key") == "a b")
+        #expect(try CLIClient.oneLine("\n\n", "The key") == "")
+        #expect(throws: KeryxError.refused("The key has a line break in it; paste it again as one line.")) {
+            try CLIClient.oneLine("first\nsecond", "The key")
+        }
+    }
+
+    @Test func aKeyOrPairWithALineBreakRunsNothing() async throws {
+        let (client, fake) = Self.client(try Self.data("fixture:verify-problem.json"))
+        await #expect(throws: KeryxError.refused(
+            "OPENAI_API_KEY has a line break in it; paste it again as one line.")) {
+            _ = try await client.verify(key: "OPENAI_API_KEY", value: "sk-one\nsk-two")
+        }
+        await #expect(throws: KeryxError.refused(
+            "The auth token has a line break in it; paste it again as one line.")) {
+            _ = try await client.verifyTwilio(accountSID: "AC1", authToken: "a\r\nb")
+        }
+        #expect(fake.requests.isEmpty)
+    }
+
+    @Test func aPinWithALineBreakRunsNothing() async throws {
+        let (client, fake) = Self.client(try Self.data("fixture:pin-set.json"))
+        await #expect(throws: KeryxError.refused(CLIClient.pinOnOneLine)) {
+            _ = try await client.setPin("4829\n15", replace: false)
+        }
+        #expect(fake.requests.isEmpty)
     }
 
     // MARK: - The phone

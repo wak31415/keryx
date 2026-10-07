@@ -331,15 +331,17 @@ remember:
   runs each command in the checkout, else in `/` as launchd does (never `HOME`, where an
   unrelated `.env` would make the CLI refuse). `KERYX_APP_ENVIRONMENT=inherit` in the app's
   own environment, for sandbox and development runs only, replaces the login shell with that
-  environment and skips the launchd plist. It has no PIN control (the PIN row shows
-  whether one is set and opens `keryx setup` in Terminal) and cannot approve anything (it
-  can pause the approval calls). A secret goes to `config set KEY --stdin` and nowhere
-  else. Its command log is an allowlist (`CommandLog`): the subcommand, its verb and its
+  environment and skips the launchd plist. It sets the PIN only through `keryx pin set
+  --stdin [--replace]`, with the CLI's own safeguards: the owner's alone, digits typed twice
+  and compared, never shown or logged, a TTY refused, replacing only when asked; it cannot
+  approve anything (it can pause the approval calls). A secret goes on stdin and nowhere
+  else (`config set|verify KEY --stdin`, `pin set --stdin`, a sign-in's code). Its command log is an allowlist (`CommandLog`): the subcommand, its verb and its
   flags from fixed lists, every other word `…`, then the exit code and the duration;
   stdin, the environment and the output never. The snapshots photograph only the app's own
   windows, by window id. `tests/test_macos_contract.py` holds the JSON contract — the keys
   the Swift decoders require from each command, with their JSON types, and the events,
-  ending and exit codes of the `models pull --json` and `voice use here --json` streams — so
+  ending and exit codes of its streams (`models pull`, `voice use here`, `voice download`,
+  `models start` and the four `auth login NAME`, each `--json`) — so
   renaming a field fails pytest, not the app at runtime.
 
 `logging_util.mask_number` is the only shape a phone number may take in a log line.
