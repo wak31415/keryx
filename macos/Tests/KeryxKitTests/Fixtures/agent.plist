@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.keryx.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/x/.local/bin/uv</string>
+        <string>run</string>
+        <string>--project</string>
+        <string>/Users/x/code/keryx</string>
+        <string>keryx</string>
+        <string>serve</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/x/code/keryx</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/x</string>
+        <key>KERYX_HOME</key>
+        <string>/Users/x/.config/keryx</string>
+        <key>XDG_CONFIG_HOME</key>
+        <string>/Users/x/.config</string>
+        <key>XDG_DATA_HOME</key>
+        <string>/Users/x/.local/share</string>
+        <key>XDG_STATE_HOME</key>
+        <string>/Users/x/.local/state</string>
+        <key>XDG_CACHE_HOME</key>
+        <string>/Users/x/.cache</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>

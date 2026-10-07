@@ -1,0 +1,259 @@
+import Foundation
+
+/// Runs the `keryx` CLI where `location` says, as the owner at a terminal: argv is
+/// `prefixArguments + subcommand`, the environment is sanitised (no actor variables), and
+/// the working directory is the checkout. A secret only ever travels on stdin. Nothing here
+/// logs an argument, the environment, stdin or output.
+public struct CLIClient: KeryxClient {
+    static let migrationMarker = "keryx cannot do that yet:"
+    static let restartReason = "from the Mac app"
+
+    private let location: KeryxLocation
+    private let runner: CommandRunner
+
+    public init(location: KeryxLocation, runner: CommandRunner = ProcessRunner()) {
+        self.location = location
+        self.runner = runner
+    }
+
+    // MARK: - Reads
+
+    public func status() async throws -> StatusReport {
+        try await decode(["status", "--json"])
+    }
+
+    public func doctor() async throws -> DoctorReport {
+        // Exit 1 is doctor saying something is not ok, with the report still on stdout.
+        try await decode(["doctor", "--json"], acceptedExitCodes: [0, 1], timeout: .seconds(60))
+    }
+
+    public func tasks(includeInternal: Bool, limit: Int) async throws -> [TaskItem] {
+        var arguments = ["tasks", "list", "--json", "--status", "all", "--limit", String(limit)]
+        if includeInternal { arguments.append("--internal") }
+        let list: TaskList = try await decode(arguments)
+        return list.tasks
+    }
+
+    public func task(id: Int) async throws -> TaskDetail {
+        try await decode(["tasks", "show", String(id), "--json"])
+    }
+
+    public func usage(days: Int) async throws -> UsageReport {
+        try await decode(["tasks", "usage", "--json", "--days", String(days)])
+    }
+
+    public func models() async throws -> ModelsReport {
+        try await decode(["models", "list", "--json"])
+    }
+
+    public func config() async throws -> [ConfigRow] {
+        try await decode(["config", "list", "--json"])
+    }
+
+    public func approvals(limit: Int) async throws -> ApprovalsReport {
+        try await decode(["approvals", "--json", "--limit", String(limit)])
+    }
+
+    public func memory() async throws -> MemoryDocument {
+        try await decode(["memory", "--json"])
+    }
+
+    // MARK: - Models
+
+    /// Ends normally only after a terminal event (done, adopted, error, cancelled). A stream
+    /// that stops short of one (the CLI crashed, was killed, or printed nothing) throws,
+    /// because "it ended" is not "it finished".
+    public func pull(model: String) -> AsyncThrowingStream<PullEvent, Error> {
+        let lines = runner.lines(request(["models", "pull", model, "--json"], timeout: nil))
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var concluded = false
+                    for try await line in lines {
+                        guard let event = PullEvent.parse(line) else { continue }
+                        if case .progress = event {} else { concluded = true }
+                        continuation.yield(event)
+                    }
+                    if concluded {
+                        continuation.finish()
+                    } else {
+                        continuation.finish(throwing: KeryxError.failed(
+                            command: "keryx models pull", exitCode: -1,
+                            message: "The download stopped without saying whether it finished."))
+                    }
+                } catch {
+                    continuation.finish(throwing: Self.map(error, command: "keryx models pull"))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    public func use(model: String, defaultAgent: Bool) async throws -> UseResult {
+        var arguments = ["models", "use", model]
+        if defaultAgent { arguments.append("--default-agent") }
+        arguments.append("--json")
+        return try await decode(arguments)
+    }
+
+    public func installModelServer() async throws -> String {
+        guard let checkout = location.checkout else {
+            throw KeryxError.launch(
+                "This needs a Keryx checkout (scripts/install-launchd.sh); run `keryx setup` instead")
+        }
+        let request = CommandRequest(
+            executable: checkout + "/scripts/install-launchd.sh", arguments: ["--llm"],
+            environment: Sanitise.environment(location.environment),
+            workingDirectory: checkout, timeout: .seconds(300))
+        let result = try await execute(request, command: "install-launchd.sh --llm")
+        return result.stdoutText
+    }
+
+    // MARK: - Writes
+
+    public func set(key: String, value: String) async throws {
+        // A value that starts with "-" would be read as an option without the "--".
+        let pair = value.hasPrefix("-") ? ["--", key, value] : [key, value]
+        _ = try await execute(request(["config", "set"] + pair))
+    }
+
+    public func setSecret(key: String, value: String) async throws {
+        _ = try await execute(request(["config", "set", key, "--stdin"], stdin: Data(value.utf8)))
+    }
+
+    public func unset(key: String) async throws {
+        _ = try await execute(request(["config", "unset", key]))
+    }
+
+    public func setEscalation(enabled: Bool) async throws {
+        _ = try await execute(request(["approvals", enabled ? "--enable" : "--disable"]))
+    }
+
+    public func restart(force: Bool) async throws {
+        var arguments = ["restart", "--reason", Self.restartReason]
+        if force { arguments.append("--force") }
+        let result = try await run(request(arguments, timeout: .seconds(60)))
+        if result.exitCode == 1, let count = Self.liveSessions(in: result.stdoutText) {
+            throw KeryxError.liveCalls(count)
+        }
+        try check(result, command: Self.name(arguments))
+    }
+
+    // MARK: - Running
+
+    private func request(
+        _ subcommand: [String], stdin: Data? = nil, timeout: Duration? = .seconds(30)
+    ) -> CommandRequest {
+        CommandRequest(
+            executable: location.executable,
+            arguments: location.prefixArguments + subcommand,
+            environment: Sanitise.environment(location.environment),
+            workingDirectory: location.workingDirectory,
+            stdin: stdin,
+            timeout: timeout)
+    }
+
+    private func decode<T: Decodable>(
+        _ subcommand: [String], acceptedExitCodes: Set<Int32> = [0], timeout: Duration = .seconds(30)
+    ) async throws -> T {
+        let command = Self.name(subcommand)
+        let result = try await run(request(subcommand, timeout: timeout), command: command)
+        if !acceptedExitCodes.contains(result.exitCode) {
+            try check(result, command: command) // throws: every exit but 0 is a failure
+        }
+        do {
+            return try JSON.decoder.decode(T.self, from: result.stdout)
+        } catch {
+            // An accepted non-zero exit with nothing readable is the failure it looks like.
+            if result.exitCode != 0 { throw Self.failure(result, command: command) }
+            throw KeryxError.decoding(command: command, detail: Self.describe(error))
+        }
+    }
+
+    private func execute(_ request: CommandRequest, command: String? = nil) async throws -> CommandResult {
+        let command = command ?? name(of: request)
+        let result = try await run(request, command: command)
+        try check(result, command: command)
+        return result
+    }
+
+    /// The runner, with its own errors turned into `KeryxError`s.
+    private func run(_ request: CommandRequest, command: String? = nil) async throws -> CommandResult {
+        let command = command ?? name(of: request)
+        do {
+            return try await runner.run(request)
+        } catch {
+            throw Self.map(error, command: command)
+        }
+    }
+
+    private func name(of request: CommandRequest) -> String {
+        Self.name(Array(request.arguments.dropFirst(location.prefixArguments.count)))
+    }
+
+    private func check(_ result: CommandResult, command: String) throws {
+        guard result.exitCode != 0 else { return }
+        if result.exitCode == 2, let sentence = Self.migrationSentence(in: result.stderrText) {
+            throw KeryxError.migrationRequired(sentence)
+        }
+        throw Self.failure(result, command: command)
+    }
+
+    // MARK: - Mapping
+
+    static func map(_ error: Error, command: String) -> Error {
+        switch error {
+        case RunnerError.timedOut: KeryxError.timedOut(command: command)
+        case let RunnerError.launchFailed(message): KeryxError.launch(message)
+        default: error
+        }
+    }
+
+    static func failure(_ result: CommandResult, command: String) -> KeryxError {
+        let stderr = result.stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = stderr.isEmpty
+            ? result.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines) : stderr
+        return .failed(command: command, exitCode: result.exitCode, message: message)
+    }
+
+    /// `keryx` and up to two subcommand words — never an option, a key's value or an id
+    /// past them, so nothing sensitive reaches an error message by way of the name.
+    static func name(_ subcommand: [String]) -> String {
+        (["keryx"] + subcommand.prefix { !$0.hasPrefix("-") }.prefix(2)).joined(separator: " ")
+    }
+
+    static func migrationSentence(in stderr: String) -> String? {
+        for line in stderr.split(whereSeparator: \.isNewline) {
+            if let range = line.range(of: migrationMarker) {
+                return line[range.upperBound...].trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return nil
+    }
+
+    static func liveSessions(in stdout: String) -> Int? {
+        guard let regex = try? Regex(#"(\d+) live session"#),
+              let match = stdout.firstMatch(of: regex),
+              let digits = match.output[1].substring
+        else { return nil }
+        return Int(digits)
+    }
+
+    static func describe(_ error: Error) -> String {
+        switch error {
+        case let DecodingError.keyNotFound(key, context):
+            "no \(key.stringValue) at \(path(context))"
+        case let DecodingError.typeMismatch(_, context), let DecodingError.valueNotFound(_, context):
+            "\(context.debugDescription) at \(path(context))"
+        case let DecodingError.dataCorrupted(context):
+            context.debugDescription
+        default:
+            String(describing: error)
+        }
+    }
+
+    private static func path(_ context: DecodingError.Context) -> String {
+        let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+        return path.isEmpty ? "the top level" : path
+    }
+}

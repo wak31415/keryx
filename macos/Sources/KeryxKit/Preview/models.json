@@ -1,0 +1,135 @@
+{
+  "hardware": {
+    "accelerator": "metal",
+    "gpu": "Apple silicon",
+    "vram_gb": 0.0,
+    "ram_gb": 36.0,
+    "model_memory_gb": 27.0
+  },
+  "models_dir": "/Users/you/.cache/keryx/models",
+  "models": [
+    {
+      "name": "gpt-oss-120b",
+      "title": "gpt-oss 120B",
+      "note": "OpenAI's open-weight model; for a workstation card or a large Mac",
+      "size_gb": 63.4,
+      "needs_gb": 70,
+      "fits": false,
+      "downloaded": false,
+      "recommended": false,
+      "tested": false
+    },
+    {
+      "name": "qwen3.6-35b-a3b",
+      "title": "Qwen3.6 35B-A3B",
+      "note": "newest of the mixture-of-experts Qwens: fast for its size",
+      "size_gb": 22.1,
+      "needs_gb": 28,
+      "fits": false,
+      "downloaded": false,
+      "recommended": false,
+      "tested": false
+    },
+    {
+      "name": "qwen3-coder-30b-a3b",
+      "title": "Qwen3-Coder 30B-A3B",
+      "note": "made for agentic coding; fast",
+      "size_gb": 18.6,
+      "needs_gb": 25,
+      "fits": true,
+      "downloaded": true,
+      "recommended": false,
+      "tested": true
+    },
+    {
+      "name": "qwen3.8-27b",
+      "title": "Qwen3.8 27B",
+      "note": "dense: slower than the A3B models, steadier on long tasks",
+      "size_gb": 16.5,
+      "needs_gb": 24,
+      "fits": true,
+      "downloaded": false,
+      "recommended": false,
+      "tested": false
+    },
+    {
+      "name": "gpt-oss-20b",
+      "title": "gpt-oss 20B",
+      "note": "OpenAI's smaller open-weight model; good on a 16 GB card",
+      "size_gb": 12.1,
+      "needs_gb": 16,
+      "fits": true,
+      "downloaded": true,
+      "recommended": false,
+      "tested": false
+    },
+    {
+      "name": "gemma-4-12b",
+      "title": "Gemma 4 12B",
+      "note": "Google's; for a 12 GB card",
+      "size_gb": 7.1,
+      "needs_gb": 11,
+      "fits": true,
+      "downloaded": false,
+      "recommended": true,
+      "tested": false
+    },
+    {
+      "name": "qwen3.5-9b",
+      "title": "Qwen3.5 9B",
+      "note": "small tasks only; for an 8–10 GB card",
+      "size_gb": 5.7,
+      "needs_gb": 9,
+      "fits": true,
+      "downloaded": false,
+      "recommended": false,
+      "tested": false
+    },
+    {
+      "name": "qwen3.5-4b",
+      "title": "Qwen3.5 4B",
+      "note": "the smallest that calls tools at all; expect mistakes",
+      "size_gb": 2.7,
+      "needs_gb": 6,
+      "fits": true,
+      "downloaded": false,
+      "recommended": false,
+      "tested": false
+    }
+  ],
+  "voices": [
+    {"name": "af_heart", "sounds": "warm, American, female"},
+    {"name": "af_bella", "sounds": "bright, American, female"},
+    {"name": "af_nicole", "sounds": "soft, American, female"},
+    {"name": "am_michael", "sounds": "calm, American, male"},
+    {"name": "am_fenrir", "sounds": "deep, American, male"},
+    {"name": "bf_emma", "sounds": "clear, British, female"},
+    {"name": "bf_isabella", "sounds": "warm, British, female"},
+    {"name": "bm_george", "sounds": "measured, British, male"},
+    {"name": "bm_fable", "sounds": "lively, British, male"},
+    {"name": "bm_lewis", "sounds": "low, British, male"}
+  ],
+  "servers": {
+    "llm": {
+      "model": "qwen3-coder-30b-a3b",
+      "port": 8090,
+      "url": "http://127.0.0.1:8090/v1",
+      "binary": "/opt/homebrew/bin/llama-server",
+      "unit_installed": true,
+      "reachable": true
+    },
+    "voice": {
+      "url": null,
+      "port": 8765,
+      "unit_installed": false,
+      "reachable": false
+    },
+    "local_agent": {
+      "base_url": "http://127.0.0.1:8090/v1",
+      "model": "qwen3-coder-30b-a3b",
+      "api": "anthropic-messages",
+      "enabled": true,
+      "default": false
+    }
+  }
+}

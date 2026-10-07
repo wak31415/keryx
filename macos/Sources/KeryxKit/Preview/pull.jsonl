@@ -1,0 +1,4 @@
+{"event": "progress", "done": 1048576, "total": 18500000000}
+{"event": "progress", "done": 2097152, "total": 18500000000}
+{"event": "progress", "done": 4194304, "total": 18500000000}
+{"event": "done", "path": "/Users/you/.cache/keryx/models/qwen3-coder-30b-a3b.gguf"}

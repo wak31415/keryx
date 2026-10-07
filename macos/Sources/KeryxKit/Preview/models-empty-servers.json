@@ -1,0 +1,61 @@
+{
+  "hardware": {
+    "accelerator": "cpu",
+    "gpu": null,
+    "vram_gb": 0.0,
+    "ram_gb": 16.0,
+    "model_memory_gb": 12.0
+  },
+  "models_dir": "/Users/you/.cache/keryx/models",
+  "models": [
+    {
+      "name": "gpt-oss-120b",
+      "title": "gpt-oss 120B",
+      "note": "OpenAI's open-weight model; for a workstation card or a large Mac",
+      "size_gb": 63.4,
+      "needs_gb": 70,
+      "fits": false,
+      "downloaded": false,
+      "recommended": false,
+      "tested": false
+    },
+    {
+      "name": "qwen3.5-4b",
+      "title": "Qwen3.5 4B",
+      "note": "the smallest that calls tools at all; expect mistakes",
+      "size_gb": 2.7,
+      "needs_gb": 6,
+      "fits": true,
+      "downloaded": false,
+      "recommended": true,
+      "tested": false
+    }
+  ],
+  "voices": [
+    {"name": "af_heart", "sounds": "warm, American, female"},
+    {"name": "am_michael", "sounds": "calm, American, male"}
+  ],
+  "servers": {
+    "llm": {
+      "model": null,
+      "port": 8090,
+      "url": null,
+      "binary": null,
+      "unit_installed": false,
+      "reachable": false
+    },
+    "voice": {
+      "url": null,
+      "port": 8765,
+      "unit_installed": false,
+      "reachable": false
+    },
+    "local_agent": {
+      "base_url": null,
+      "model": null,
+      "api": "anthropic-messages",
+      "enabled": false,
+      "default": false
+    }
+  }
+}

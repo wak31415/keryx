@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "storage": {
+    "ok": false,
+    "error": "an older Jarvis install is still at ~/.jarvis; run `keryx migrate`",
+    "migration_required": true
+  },
+  "service": {"ok": true, "error": null, "manager": "launchd", "unit": "dev.keryx.agent", "installed": true, "active": false},
+  "health": {"ok": true, "error": null, "reachable": false, "live_sessions": null},
+  "version": {"ok": true, "error": null, "running": null, "checkout": "v0.1.0-5-gabc1234"},
+  "restart": {"ok": true, "error": null, "state": null, "requested_at": null, "failure": null},
+  "assistant": {"ok": true, "error": null, "name": "Lyra"},
+  "agents": {"ok": true, "error": null, "default": "claude", "enabled": ["claude"]},
+  "tasks": {"ok": false, "error": "needs keryx migrate", "running": 0, "queued": 0, "unreported": 0},
+  "approvals": {"ok": true, "error": null, "escalation_enabled": true},
+  "paths": {
+    "ok": true, "error": null,
+    "config": "/Users/you/.config/keryx",
+    "data": "/Users/you/.local/share/keryx",
+    "state": "/Users/you/.local/state/keryx",
+    "cache": "/Users/you/.cache/keryx",
+    "logs": "/Users/you/.local/state/keryx/logs",
+    "memory": "/Users/you/.local/share/keryx/memory.md"
+  }
+}

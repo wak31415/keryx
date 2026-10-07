@@ -1,0 +1,49 @@
+{
+  "since": "2026-09-07T03:23:19.620297+00:00",
+  "projects": [
+    {
+      "label": "keryx",
+      "project": "keryx",
+      "internal": false,
+      "tasks": 14,
+      "measured": 14,
+      "priced": 12,
+      "input_tokens": 912044,
+      "output_tokens": 118320,
+      "cost_usd": 37.42
+    },
+    {
+      "label": "keryx-macos",
+      "project": "keryx-macos",
+      "internal": false,
+      "tasks": 5,
+      "measured": 5,
+      "priced": 5,
+      "input_tokens": 204811,
+      "output_tokens": 31902,
+      "cost_usd": 9.15
+    },
+    {
+      "label": "(no project)",
+      "project": null,
+      "internal": false,
+      "tasks": 3,
+      "measured": 2,
+      "priced": 1,
+      "input_tokens": 40210,
+      "output_tokens": 6033,
+      "cost_usd": 1.2
+    },
+    {
+      "label": "(housekeeping)",
+      "project": null,
+      "internal": true,
+      "tasks": 9,
+      "measured": 0,
+      "priced": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null
+    }
+  ]
+}
