@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import KeryxKit
 import KeryxPreview
@@ -67,6 +68,31 @@ import KeryxPreview
         var unasked = PreviewData.phoneWebhooks
         unasked.current = nil
         #expect(PhoneWording.webhooks(unasked).text.hasPrefix("Couldn't ask Twilio"))
+    }
+
+    @Test func pointHereActsOnlyOnTheSheetsOwnSuccessfulRead() {
+        let report = PreviewData.phoneWebhooks
+        #expect(PhoneWording.canPointHere(fresh: report, asking: false, readFailed: false, applying: false))
+        // Before this sheet's read has answered: what the Phone section showed is not enough.
+        #expect(!PhoneWording.canPointHere(fresh: nil, asking: true, readFailed: false, applying: false))
+        #expect(!PhoneWording.canPointHere(fresh: report, asking: true, readFailed: false, applying: false))
+        // The read failed: whatever is shown may be stale.
+        #expect(!PhoneWording.canPointHere(fresh: nil, asking: false, readFailed: true, applying: false))
+        #expect(!PhoneWording.canPointHere(fresh: report, asking: false, readFailed: true, applying: false))
+        #expect(!PhoneWording.canPointHere(fresh: report, asking: false, readFailed: false, applying: true))
+        #expect(!PhoneWording.canPointHere(fresh: PreviewData.phoneWebhooksMatching, asking: false,
+                                           readFailed: false, applying: false))
+    }
+
+    @Test func pointHereIsAClickNeverReturn() throws {
+        // The one write to Twilio is not the sheet's default action.
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/KeryxUI/Phone/PointHereSheet.swift"), encoding: .utf8)
+        let button = try #require(source.range(of: #"Button("Point Here""#))
+        let rest = source[button.upperBound...]
+        let end = rest.range(of: "\n            }")?.lowerBound ?? rest.endIndex
+        #expect(!rest[..<end].contains("keyboardShortcut"))
     }
 
     @Test func pointHereIsOfferedOnlyWhenThereIsSomethingToPoint() {

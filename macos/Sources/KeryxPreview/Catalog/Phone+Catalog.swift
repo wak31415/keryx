@@ -44,17 +44,18 @@ extension ScreenCatalog {
                     .environment(AppModel.preview(client: phoneClient()))
             },
             Entry("phone-point-here-sheet", size: CGSize(width: 560, height: 418)) {
-                PointHereSheet(report: PreviewData.phoneWebhooks)
+                PointHereSheet(report: PreviewData.phoneWebhooks, fresh: PreviewData.phoneWebhooks)
                     .environment(AppModel.preview(client: phoneClient()))
             },
             Entry("phone-point-here-failed", size: CGSize(width: 560, height: 490)) {
                 PointHereSheet(report: PreviewData.phoneWebhooks, error: .failed(
                     command: "keryx phone webhooks", exitCode: 1,
-                    message: "The webhooks were not changed. Twilio didn't accept the account SID and auth token."))
+                    message: "The webhooks were not changed. Twilio didn't accept the account SID and auth token."),
+                    fresh: PreviewData.phoneWebhooks)
                     .environment(AppModel.preview(client: phoneClient()))
             },
             Entry("phone-point-here-unasked", size: CGSize(width: 560, height: 418)) {
-                PointHereSheet(report: unasked)
+                PointHereSheet(report: unasked, fresh: unasked)
                     .environment(AppModel.preview(client: phoneClient(webhooks: unasked)))
             },
                         Entry("window-phone", size: windowSize) {

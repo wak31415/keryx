@@ -619,6 +619,17 @@ public final class AppModel {
         await refresh(.phoneNumbers, .phoneWebhooks, .phoneTunnel)
     }
 
+    /// Asks Twilio where `TWILIO_NUMBER`'s webhooks point, for the question before changing
+    /// them: this answer itself, so the question shows only what was read for it — never a
+    /// report from before, nor one a slower read lands later. The Phone section's copy is
+    /// brought up to date with it.
+    public func freshPhoneWebhooks() async -> Result<PhoneWebhooks, KeryxError> {
+        let current = generation
+        let answer = await answer { try await $0.phoneWebhooks() }
+        if case let .success(report) = answer, current == generation { phoneWebhooks.succeed(report) }
+        return answer
+    }
+
     /// Points `TWILIO_NUMBER` here — only after the owner has seen both addresses and said
     /// yes — then reads the phone documents and the plan again.
     public func applyPhoneWebhooks() async -> Result<WebhooksApplied, KeryxError> {

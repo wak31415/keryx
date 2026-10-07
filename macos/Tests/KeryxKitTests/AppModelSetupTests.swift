@@ -161,6 +161,18 @@ import KeryxPreview
         #expect(!model.configNeedsRestart)
     }
 
+    @Test func theQuestionsReadIsItsOwnAnswer() async {
+        let client = StubClient()
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        #expect(await model.freshPhoneWebhooks() == .success(PreviewData.phoneWebhooks))
+        #expect(model.phoneWebhooks.value == PreviewData.phoneWebhooks, "the Phone section is brought up to date")
+        let failing = StubClient { $0.phoneWebhooks = .failure(.timedOut(command: "keryx phone webhooks")) }
+        let other = await makeModel(client: failing)
+        defer { other.stop() }
+        #expect(await other.freshPhoneWebhooks() == .failure(.timedOut(command: "keryx phone webhooks")))
+    }
+
     @Test func applyingTheWebhooksReadsThePhoneAndThePlanAgain() async {
         let client = StubClient()
         let model = await makeModel(client: client)

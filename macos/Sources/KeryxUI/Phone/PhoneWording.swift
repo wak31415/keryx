@@ -141,6 +141,14 @@ enum PhoneWording {
             && report.expected.voiceUrl != nil && report.expected.statusUrl != nil && !report.matches
     }
 
+    /// Point Here may be clicked: Twilio answered the read this question made (`fresh`), that
+    /// read is not still going nor failed, and nothing is being applied — so the yes covers
+    /// exactly the addresses shown.
+    static func canPointHere(fresh: PhoneWebhooks?, asking: Bool, readFailed: Bool, applying: Bool) -> Bool {
+        guard let fresh, !asking, !readFailed, !applying else { return false }
+        return canApply(fresh)
+    }
+
     /// One webhook, now and as it should be.
     struct Hook: Equatable, Identifiable {
         let title: String
