@@ -312,7 +312,7 @@ struct ReportText: View {
     }
 
     /// The report split at blank lines: a line of `#`s is a heading, a fenced block is code,
-    /// and a list's `-` or `*` marks become bullets.
+    /// a rule (`---`, `* * *`) only separates, and a list's `-` or `*` marks become bullets.
     static func blocks(_ markdown: String) -> [Block] {
         var blocks: [Block] = []
         var lines: [String] = []
@@ -339,7 +339,7 @@ struct ReportText: View {
             }
             if inCode {
                 lines.append(raw)
-            } else if line.isEmpty {
+            } else if line.isEmpty || isRule(line) {
                 flush()
             } else if line.hasPrefix("#") {
                 flush()
@@ -356,5 +356,12 @@ struct ReportText: View {
             flush()
         }
         return blocks
+    }
+
+    /// Three or more of one of `-`, `*` or `_`, and nothing else but spaces: Markdown's rule.
+    private static func isRule(_ line: String) -> Bool {
+        let marks = line.filter { $0 != " " }
+        guard marks.count >= 3, let first = marks.first, "-*_".contains(first) else { return false }
+        return marks.allSatisfy { $0 == first }
     }
 }
