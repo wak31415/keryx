@@ -26,6 +26,12 @@ from pydantic import ValidationError
 
 from keryx import plugins
 from keryx.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
+from keryx.approvals.audit_log import (
+    entry_json,
+    escalation_counts,
+    escalation_enabled,
+    read_entries,
+)
 from keryx.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from keryx.config import (
     GROUPS,
@@ -1917,6 +1923,9 @@ def approvals(
     enable: Annotated[
         bool, typer.Option("--enable", help="Undo --disable.")
     ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print it as one JSON document.")
+    ] = False,
 ) -> None:
     """What the approval bridge has done, and the kill switch that stops it.
 
@@ -1930,6 +1939,9 @@ def approvals(
     if disable and enable:
         typer.echo("pick one of --disable and --enable")
         raise typer.Exit(code=2)
+    if as_json and (disable or enable):
+        typer.echo("pick one of --json and --disable/--enable")
+        raise typer.Exit(code=2)
     if disable:
         secure_dir(state_dir)
         switch.touch()
@@ -1941,10 +1953,25 @@ def approvals(
         typer.echo("approval escalation is on")
         return
 
-    typer.echo(f"escalation: {"OFF (kill switch)" if switch.exists() else "on"}, "
-               f"after {settings.approval_escalate_seconds:g}s, "
-               f"at most {settings.approval_max_per_hour}/hour")
-    entries = _audit_entries(state_dir / AUDIT_NAME)
+    entries = read_entries(state_dir / AUDIT_NAME)
+    if as_json:
+        cancelled, late = escalation_counts(entries)
+        typer.echo(json.dumps({
+            "escalation_enabled": escalation_enabled(settings.state_dir),
+            "escalate_after_s": settings.approval_escalate_seconds,
+            "max_per_hour": settings.approval_max_per_hour,
+            "cancelled_before_call": cancelled,
+            "answered_after_call": late,
+            "entries": [entry_json(e) for e in entries[-max(limit, 1):]],
+        }, indent=2))
+        return
+
+    typer.echo(
+        f"escalation: {"OFF (kill switch)" if not escalation_enabled(settings.state_dir)
+                       else "on"}, "
+        f"after {settings.approval_escalate_seconds:g}s, "
+        f"at most {settings.approval_max_per_hour}/hour"
+    )
     summary = _escalation_summary(entries)
     if summary:
         typer.echo(summary)
@@ -1952,37 +1979,13 @@ def approvals(
         typer.echo(line)
 
 
-def _audit_entries(path: Path) -> list[dict]:
-    """Every readable line of the audit log; a corrupt one is skipped, never fatal."""
-    try:
-        raw = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
-    entries = []
-    for line in raw:
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(entry, dict):
-            entries.append(entry)
-    return entries
-
-
 def _escalation_summary(entries: list[dict]) -> str | None:
-    """Whether settling a request stopped its call, over every line that records it.
-
-    The `escalation` field is what shows a prompt answered at the keyboard costing no
-    call (`cancelled`), apart from one they were rung about first (issue #56).
+    """The table's summary line: whether settling a request stopped its call, over every
+    line that records it. `None` while nothing has recorded one yet.
     """
-    settled = [e for e in entries if e.get("event") == "settled" and e.get("escalation")]
-    if not settled:
+    if not any(e.get("event") == "settled" and e.get("escalation") for e in entries):
         return None
-    cancelled = sum(e["escalation"] == "cancelled" for e in settled)
-    late = sum(
-        e["escalation"] != "cancelled" and e.get("outcome") == "resolved_elsewhere"
-        for e in settled
-    )
+    cancelled, late = escalation_counts(entries)
     return (
         f"{cancelled} answered before the call was due (no call), "
         f"{late} answered elsewhere after they were told"
@@ -1993,10 +1996,12 @@ def _audit_lines(entries: list[dict], limit: int) -> list[str]:
     """The tail of the audit log as table rows, or one line saying there is none."""
     rows = [APPROVALS_HEADER]
     for entry in entries[-max(limit, 1):]:
-        when = str(entry.get("ts", ""))[:16].replace("T", " ")
-        what = entry.get("summary") or entry.get("reason") or entry.get("answer") or ""
+        row = entry_json(entry)
+        when = row["ts"][:16].replace("T", " ")
+        request_id = "" if row["request_id"] is None else str(row["request_id"])
         rows.append(
-            f"{when:<17} {str(entry.get("event", "")):<20} "
-            f"{str(entry.get("request_id", "")):>3}  {_shorten(str(what), MAX_DESCRIPTION_CHARS)}"
+            f"{when:<17} {row["event"]:<20} "
+            f"{request_id:>3}  "
+            f"{_shorten(str(row["what"]), MAX_DESCRIPTION_CHARS)}"
         )
     return rows if len(rows) > 1 else [APPROVALS_EMPTY]

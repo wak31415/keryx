@@ -1226,6 +1226,92 @@ def test_approvals_refuses_both_switches_at_once(settings_stub):
     assert result.exit_code == 2
 
 
+# --- approvals --json -------------------------------------------------------
+
+
+def test_approvals_json_reports_the_switch_and_the_limits(settings_stub):
+    switch = settings_stub.state_dir / STATE_DIR_NAME / KILL_SWITCH_NAME
+    switch.parent.mkdir(parents=True)
+    switch.touch()
+
+    result = runner.invoke(app, ["approvals", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["escalation_enabled"] is False
+    assert data["escalate_after_s"] == 300.0
+    assert data["max_per_hour"] == 4
+    assert data["entries"] == []
+
+
+def test_approvals_json_skips_a_corrupt_log_line(settings_stub):
+    path = settings_stub.state_dir / STATE_DIR_NAME / AUDIT_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('not json\n{"ts": "2026-09-02T14:05:00Z", "event": "raised"}\n')
+
+    result = runner.invoke(app, ["approvals", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert [e["event"] for e in data["entries"]] == ["raised"]
+
+
+def test_approvals_json_limit_returns_the_last_two_oldest_first(settings_stub):
+    _audit(settings_stub, *[
+        {"ts": f"2026-09-02T14:{index:02d}:00Z", "event": "raised", "request_id": index}
+        for index in range(10)
+    ])
+
+    result = runner.invoke(app, ["approvals", "--json", "--limit", "2"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert [e["request_id"] for e in data["entries"]] == [8, 9]
+
+
+def test_approvals_json_counts_cover_every_entry_not_just_the_shown_tail(settings_stub):
+    _audit(
+        settings_stub,
+        {"event": "settled", "outcome": "resolved_elsewhere", "escalation": "cancelled"},
+        {"event": "settled", "outcome": "resolved_elsewhere", "escalation": "call"},
+        {"ts": "2026-09-02T14:05:00Z", "event": "raised", "request_id": 9},
+    )
+
+    result = runner.invoke(app, ["approvals", "--json", "--limit", "1"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["cancelled_before_call"] == 1
+    assert data["answered_after_call"] == 1
+    assert len(data["entries"]) == 1
+
+
+def test_approvals_json_entry_shape(settings_stub):
+    _audit(
+        settings_stub,
+        {"ts": "2026-09-02T14:05:00Z", "event": "raised", "request_id": 7,
+         "summary": "Claude is asking to run pytest"},
+    )
+
+    result = runner.invoke(app, ["approvals", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["entries"] == [{
+        "ts": "2026-09-02T14:05:00Z",
+        "event": "raised",
+        "request_id": 7,
+        "what": "Claude is asking to run pytest",
+    }]
+
+
+@pytest.mark.parametrize("switch", ["--disable", "--enable"])
+def test_approvals_json_is_refused_with_the_kill_switches(settings_stub, switch):
+    result = runner.invoke(app, ["approvals", "--json", switch])
+
+    assert result.exit_code == 2
+
+
 # --- forget ----------------------------------------------------------------
 
 
