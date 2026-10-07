@@ -23,6 +23,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from keryx.agents.registry import instructions_file, skill_dirs
 from keryx.config import OWNER_FALLBACK, PIN_FROM_ENV, PIN_FROM_FILE, Settings, pin_file
@@ -163,6 +164,43 @@ def seed(settings: Settings, facts: list[str], *, force: bool, echo: Echo) -> st
 
 # --- the wizard section ------------------------------------------------------------------
 
+#: What the section says before it asks anything: the one warning about where it goes.
+PRIVACY_NOTE = (
+    "What you say here is sent to the realtime provider at the top of every call. "
+    "Nothing you would not send there."
+)
+USES_PROMPT = "What will you mostly use {assistant} for?"
+OTHER_PROMPT = "Anything else you will use it for? (optional)"
+FACTS_NOTE = (
+    "A few things {assistant} should know about you, one per line — what you do, what keeps "
+    "coming up, how you like to be answered. A blank line finishes."
+)
+NOTHING_TO_WRITE = "Nothing to write down; the first call will introduce itself instead."
+TOO_LONG = "That comes to {chars} characters, and a call reads {limit}."
+
+
+def use_choices() -> list[Choice]:
+    """What "What will you mostly use {assistant} for?" offers, said to the owner."""
+    return [Choice(key, label.replace("their ", "your ")) for key, label in USES.items()]
+
+
+def compose_facts(assistant: str, uses: list[str], other: str, lines: list[str]) -> list[str]:
+    """The standing facts the section's answers come to: what it is mostly for, then each
+    line said about the owner. Nothing said is no facts at all."""
+    facts = []
+    if uses or other:
+        named = [USES[key] for key in uses] + ([other] if other else [])
+        facts.append(f"Mostly uses {assistant} for {', '.join(named)}.")
+    return facts + [line for line in lines if line]
+
+
+def length_problem(settings: Settings, facts: list[str]) -> str | None:
+    """Why `facts` will not fit in what a call reads, in a sentence; None when they do."""
+    text = compose_memory(settings.owner_label, facts, assistant=settings.assistant_name)
+    if len(text) > MAX_MEMORY_CHARS:
+        return TOO_LONG.format(chars=len(text), limit=MAX_MEMORY_CHARS)
+    return None
+
 
 def run_section(ctx: SetupContext) -> None:
     """What the assistant should know about its owner from the first call, as a first memory."""
@@ -173,32 +211,21 @@ def run_section(ctx: SetupContext) -> None:
         ui.success(f"{assistant} already remembers {len(existing)} characters about you")
         if not ui.confirm("Replace that memory with a new one?", default=False):
             return
-    ui.note(
-        "What you say here is sent to the realtime provider at the top of every call. "
-        "Nothing you would not send there."
-    )
-    uses = ui.checkbox(
-        f"What will you mostly use {assistant} for?",
-        [Choice(key, label.replace("their ", "your ")) for key, label in USES.items()],
-    )
-    other = ui.text("Anything else you will use it for? (optional)")
-    facts = []
-    if uses or other:
-        named = [USES[key] for key in uses] + ([other] if other else [])
-        facts.append(f"Mostly uses {assistant} for {', '.join(named)}.")
-    ui.note(
-        f"A few things {assistant} should know about you, one per line — what you do, what keeps "
-        "coming up, how you like to be answered. A blank line finishes."
-    )
+    ui.note(PRIVACY_NOTE)
+    uses = ui.checkbox(USES_PROMPT.format(assistant=assistant), use_choices())
+    other = ui.text(OTHER_PROMPT)
+    ui.note(FACTS_NOTE.format(assistant=assistant))
+    lines = []
     while line := ui.text("fact"):
-        facts.append(line)
+        lines.append(line)
+    facts = compose_facts(assistant, uses, other, lines)
     if not facts:
-        ui.note("Nothing to write down; the first call will introduce itself instead.")
+        ui.note(NOTHING_TO_WRITE)
+        return
+    if problem := length_problem(settings, facts):
+        ui.error(problem)
         return
     text = compose_memory(settings.owner_label, facts, assistant=assistant)
-    if len(text) > MAX_MEMORY_CHARS:
-        ui.error(f"That comes to {len(text)} characters, and a call reads {MAX_MEMORY_CHARS}.")
-        return
     ui.panel(str(memory_path(settings.data_dir)), text)
     if not ui.confirm("Write it?", default=True):
         return
@@ -210,6 +237,133 @@ def run_section(ctx: SetupContext) -> None:
         force=True,
     ):
         ui.success("memory written (readable by you alone)")
+
+
+# --- the section, for the Mac app -----------------------------------------------------------
+
+#: The section's id in `[setup] walked` and `keryx setup plan`.
+SECTION = "profile"
+#: What became of the answers (`apply_answers`): written; a memory already there and not to
+#: be replaced; nothing said to write down; or a problem with an answer, and nothing written.
+WRITTEN, KEPT, UNCHANGED, REFUSED = "written", "kept", "unchanged", "refused"
+#: The answers' ids, in the order the wizard asks.
+ANSWER_IDS = ("replace", "uses", "other", "facts")
+
+
+def questions(settings: Settings) -> dict[str, Any]:
+    """The "About you" section as data, for `keryx setup profile --json`: each question the
+    wizard asks, in its order — the first only while a memory is there to be replaced."""
+    assistant = settings.assistant_name
+    existing = read_memory(settings.data_dir)
+    asked = []
+    if existing:
+        asked.append(_question(
+            "replace", "confirm", "Replace the memory",
+            f"{assistant} already remembers {len(existing)} characters about you. "
+            "Replace that memory with a new one?",
+            optional=False, input="boolean", default=False,
+        ))
+    asked += [
+        _question(
+            "uses", "fact", "What it is for", USES_PROMPT.format(assistant=assistant),
+            input="choices", default=[],
+            choices=[{"value": choice.value, "label": choice.label} for choice in use_choices()],
+        ),
+        _question("other", "fact", "Anything else", OTHER_PROMPT.removesuffix(" (optional)"),
+                  input="text", default=""),
+        _question(
+            "facts", "fact", "About you",
+            FACTS_NOTE.format(assistant=assistant).removesuffix(" A blank line finishes."),
+            input="lines", default=[],
+        ),
+    ]
+    return {
+        "section": SECTION,
+        "title": "About you",
+        "assistant": assistant,
+        "note": PRIVACY_NOTE,
+        "memory": {"exists": bool(existing), "chars": len(existing),
+                   "max_chars": MAX_MEMORY_CHARS},
+        "questions": asked,
+    }
+
+
+def _question(
+    id: str, kind: str, title: str, prompt: str, *, input: str, optional: bool = True,
+    default: Any = None, choices: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    # None of these is a setting, and none is read back from the memory: `current` is null.
+    return {"id": id, "kind": kind, "key": None, "title": title, "prompt": prompt,
+            "current": None, "optional": optional, "input": input, "choices": choices,
+            "default": default}
+
+
+def apply_answers(
+    settings: Settings, answers: dict[str, Any], *, write: bool = True
+) -> dict[str, Any]:
+    """The section run on `answers` (`{id: value}`), as the wizard runs it on what is typed:
+    a memory there is kept unless `replace` is true, nothing said writes nothing, a memory
+    longer than a call reads is refused, and anything else becomes the first memory.
+
+    `write=False` is the wizard's "Write it?" panel: the document it would write, unwritten.
+    Each answer that is not one is a problem, and then nothing is written at all.
+    """
+    problems = _answer_problems(answers)
+    replace = answers.get("replace") is True
+    facts: list[str] = []
+    status = REFUSED
+    if not problems:
+        if read_memory(settings.data_dir) and not replace:
+            status = KEPT
+        else:
+            facts = compose_facts(
+                settings.assistant_name, [key for key in USES if key in answers.get("uses", [])],
+                str(answers.get("other") or "").strip(),
+                [str(line).strip() for line in answers.get("facts") or []],
+            )
+            if not facts:
+                status = UNCHANGED
+            elif problem := length_problem(settings, facts):
+                problems.append({"id": "facts", "message": problem})
+            else:
+                status = WRITTEN
+    text = (compose_memory(settings.owner_label, facts, assistant=settings.assistant_name)
+            if status == WRITTEN else None)
+    if write and status == WRITTEN:
+        seed_memory(settings.data_dir, owner=settings.owner_label,
+                    assistant=settings.assistant_name, facts=facts, force=True)
+    return {
+        "status": status,
+        "written": write and status == WRITTEN,
+        "text": text,
+        "chars": len(text or ""),
+        "max_chars": MAX_MEMORY_CHARS,
+        "problems": problems,
+    }
+
+
+def _answer_problems(answers: dict[str, Any]) -> list[dict[str, str]]:
+    """Each answer that is not one, as `{id, message}`: a sentence for the owner."""
+    problems = []
+    for key, value in answers.items():
+        if key not in ANSWER_IDS:
+            message = "That is not one of the questions."
+        elif key == "replace" and not isinstance(value, bool):
+            message = "Say yes or no."
+        elif key == "uses" and not (
+            isinstance(value, list) and all(item in USES for item in value)
+        ):
+            message = "Choose from the uses offered."
+        elif key == "other" and not isinstance(value, str):
+            message = "Say it in words."
+        elif key == "facts" and not (
+            isinstance(value, list) and all(isinstance(item, str) for item in value)
+        ):
+            message = "Give each thing as a line of its own."
+        else:
+            continue
+        problems.append({"id": str(key), "message": message})
+    return problems
 
 
 # --- what a call carries ------------------------------------------------------------------

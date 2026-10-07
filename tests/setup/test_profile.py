@@ -3,12 +3,17 @@ and the report both end with — what every call will carry."""
 
 import json
 import stat
+import sys
 
 import pytest
+import typer
 from typer.testing import CliRunner
+from wording import for_the_app
 
+from keryx import cli
 from keryx.cli import app
 from keryx.config import Settings, write_enrolled_pin
+from keryx.config.store import ConfigStore
 from keryx.continuity.memory import MAX_MEMORY_CHARS, memory_path, read_memory, seed_memory
 from keryx.projects import MAX_BRIEFS_CHARS
 from keryx.setup import profile
@@ -242,3 +247,171 @@ def test_nothing_said_writes_nothing_and_says_the_first_call_will_introduce_itse
 
     assert not memory_path(ctx.settings.data_dir).exists()
     assert any("introduce itself" in line for line in ctx.ui.lines("note"))
+
+
+# --- the section, for the Mac app: keryx setup profile ------------------------------------
+
+
+def profile_json(*args: str, answers=None):
+    stdin = None if answers is None else json.dumps(answers)
+    result = runner.invoke(app, ["setup", "profile", *args, "--json"], input=stdin)
+    return result, (json.loads(result.stdout) if result.stdout.strip() else None)
+
+
+def test_the_questions_are_the_wizards_in_its_order(home):
+    result, document = profile_json()
+
+    assert result.exit_code == 0, result.output
+    assert [question["id"] for question in document["questions"]] == ["uses", "other", "facts"]
+    uses = document["questions"][0]
+    assert uses["prompt"] == "What will you mostly use Lyra for?"
+    assert [choice["value"] for choice in uses["choices"]] == list(profile.USES)
+    assert uses["choices"][1]["label"] == "coding tasks in your repositories"
+    assert document["note"] == profile.PRIVACY_NOTE
+    assert document["memory"] == {"exists": False, "chars": 0, "max_chars": MAX_MEMORY_CHARS}
+    assert all(question["key"] is None and question["current"] is None
+               for question in document["questions"])
+
+
+def test_a_memory_there_is_asked_about_first(home):
+    seed_memory(home.data_dir, owner="Ada", assistant="Lyra", facts=["Old."])
+
+    _, document = profile_json()
+
+    first = document["questions"][0]
+    assert first["id"] == "replace" and first["input"] == "boolean"
+    assert first["default"] is False and not first["optional"]
+    assert document["memory"]["exists"] is True
+
+
+def test_every_question_is_worded_for_the_app():
+    settings = Settings(_env_file=None, openai_api_key="test")
+    document = profile.questions(settings)
+    for question in document["questions"]:
+        assert for_the_app(question["prompt"]) and for_the_app(question["title"])
+    assert for_the_app(document["note"])
+
+
+def test_applied_answers_write_what_the_wizard_writes(home):
+    result, outcome = profile_json("--apply", answers={
+        "uses": ["coding", "email"], "other": "reading papers",
+        "facts": ["Works nights.", "", "Likes it short."],
+    })
+
+    assert result.exit_code == 0, result.output
+    assert outcome["status"] == "written" and outcome["written"] and outcome["walked"]
+    text = memory_text(home)
+    assert outcome["text"] == text and outcome["chars"] == len(text)
+    assert ("Mostly uses Lyra for email triage, coding tasks in their repositories, "
+            "reading papers.") in text
+    assert "- Works nights." in text and "- Likes it short." in text
+    assert stat.S_IMODE(memory_path(home.data_dir).stat().st_mode) == 0o600
+    assert "profile" in ConfigStore().walked_sections()
+
+
+def test_a_preview_shows_the_document_and_writes_nothing(home):
+    result, outcome = profile_json("--preview", answers={"facts": ["Works nights."]})
+
+    assert result.exit_code == 0
+    assert outcome["status"] == "written" and not outcome["written"] and not outcome["walked"]
+    assert "- Works nights." in outcome["text"]
+    assert not memory_path(home.data_dir).exists()
+    assert "profile" not in ConfigStore().walked_sections()
+
+
+def test_a_memory_there_is_kept_unless_the_answers_replace_it(home):
+    seed_memory(home.data_dir, owner="Ada", assistant="Lyra", facts=["Old."])
+
+    _, kept = profile_json("--apply", answers={"facts": ["New."]})
+    assert kept["status"] == "kept" and not kept["written"] and kept["walked"]
+    assert "- Old." in memory_text(home)
+
+    _, replaced = profile_json("--apply", answers={"replace": True, "facts": ["New."]})
+    assert replaced["status"] == "written"
+    assert "- New." in memory_text(home) and "- Old." not in memory_text(home)
+
+
+def test_nothing_said_writes_nothing_and_is_walked(home):
+    result, outcome = profile_json("--apply", answers={"uses": [], "other": "", "facts": []})
+
+    assert result.exit_code == 0
+    assert outcome["status"] == "unchanged" and outcome["text"] is None
+    assert not memory_path(home.data_dir).exists()
+    assert outcome["walked"]
+
+
+def test_a_memory_too_long_is_a_problem_and_nothing_is_written(home):
+    result, outcome = profile_json("--apply", answers={"facts": ["x" * MAX_MEMORY_CHARS]})
+
+    assert result.exit_code == 1
+    assert outcome["status"] == "refused" and not outcome["walked"]
+    [problem] = outcome["problems"]
+    assert problem["id"] == "facts" and "a call reads" in problem["message"]
+    assert not memory_path(home.data_dir).exists()
+
+
+@pytest.mark.parametrize(
+    ("answers", "question"),
+    [({"uses": ["gardening"]}, "uses"), ({"uses": "email"}, "uses"),
+     ({"replace": "yes"}, "replace"), ({"other": 3}, "other"),
+     ({"facts": "Works nights."}, "facts"), ({"facts": [1]}, "facts"),
+     ({"shoe_size": 9}, "shoe_size")],
+)
+def test_an_answer_that_is_not_one_is_named_and_nothing_is_written(home, answers, question):
+    result, outcome = profile_json("--apply", answers={**answers, "other": "x"}
+                                   if question != "other" else answers)
+
+    assert result.exit_code == 1
+    assert [problem["id"] for problem in outcome["problems"]] == [question]
+    assert not memory_path(home.data_dir).exists()
+
+
+@pytest.mark.parametrize("stdin", ["", "[1, 2]", "{not json"])
+def test_answers_that_are_not_one_json_object_are_a_wrong_command_line(home, stdin):
+    result = runner.invoke(app, ["setup", "profile", "--apply", "--json"], input=stdin)
+
+    assert result.exit_code == 2 and not result.stdout.strip()
+    assert "one JSON object on stdin" in result.stderr
+
+
+def test_answers_are_never_typed_into_a_terminal(home, monkeypatch):
+    class Terminal:
+        def isatty(self):
+            return True
+
+        def read(self, *args):
+            raise AssertionError("answers were read from a terminal")
+
+    monkeypatch.setattr(sys, "stdin", Terminal())
+
+    with pytest.raises(typer.Exit) as refused:
+        cli.setup_profile(apply=True, preview=False, as_json=True)
+
+    assert refused.value.exit_code == 2
+    assert not memory_path(home.data_dir).exists()
+
+
+def test_apply_and_preview_together_are_a_wrong_command_line(home):
+    result = runner.invoke(app, ["setup", "profile", "--apply", "--preview"], input="{}")
+
+    assert result.exit_code == 2
+
+
+def test_the_service_may_not_write_the_memory(home, monkeypatch):
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+    result, _ = profile_json("--apply", answers={"facts": ["Hi."]})
+
+    assert result.exit_code == 1 and "only the owner" in result.stderr
+    assert not memory_path(home.data_dir).exists()
+
+
+def test_without_json_it_is_said_in_lines(home):
+    asked = runner.invoke(app, ["setup", "profile"])
+    applied = runner.invoke(app, ["setup", "profile", "--apply"],
+                            input=json.dumps({"facts": ["Hi."], "uses": ["x"]}))
+    written = runner.invoke(app, ["setup", "profile", "--apply"], input='{"facts": ["Hi."]}')
+
+    assert "uses: What will you mostly use Lyra for?" in asked.output
+    assert applied.exit_code == 1 and "uses: Choose from the uses offered." in applied.stderr
+    assert written.exit_code == 0 and "- Hi." in written.stdout

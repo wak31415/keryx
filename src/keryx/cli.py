@@ -2222,6 +2222,70 @@ def setup_mark(
     typer.echo(json.dumps(marked) if as_json else f"{marked['id']}: walked")
 
 
+#: What the Mac app's answers come as: one JSON object on stdin, never typed at a terminal.
+ANSWERS_ON_STDIN = "the answers are one JSON object on stdin, piped in, not typed here"
+
+
+def _read_answers() -> dict[str, Any]:
+    """The one JSON object on stdin, or exit 2 saying what is wrong with it."""
+    if sys.stdin.isatty():
+        typer.echo(ANSWERS_ON_STDIN, err=True)
+        raise typer.Exit(2)
+    try:
+        answers = json.loads(sys.stdin.read() or "null")
+    except json.JSONDecodeError as error:
+        typer.echo(f"{ANSWERS_ON_STDIN}: {error}", err=True)
+        raise typer.Exit(2) from None
+    if not isinstance(answers, dict):
+        typer.echo(ANSWERS_ON_STDIN, err=True)
+        raise typer.Exit(2)
+    return answers
+
+
+@setup_app.command("profile")
+def setup_profile(
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Write the answers read on stdin, as the wizard does.")
+    ] = False,
+    preview: Annotated[
+        bool, typer.Option("--preview", help="Show what the answers on stdin would write.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """The "About you" questions `keryx setup` asks, as data, and their answers applied.
+
+    With --apply (or --preview) the answers are one JSON object on stdin, `{id: value}`.
+    Exit 0 when they were applied (written, kept, or nothing to write); 1 when one is not an
+    answer, and nothing was written; 2 when stdin is not one JSON object.
+    """
+    if apply and preview:
+        typer.echo("pick one of --apply and --preview", err=True)
+        raise typer.Exit(2)
+    if apply:
+        _owner_only("write the memory")
+    settings = _configure_readonly()
+    if not (apply or preview):
+        document = profile.questions(settings)
+        if as_json:
+            typer.echo(json.dumps(document, indent=2))
+            return
+        for question in document["questions"]:
+            typer.echo(f"{question['id']}: {question['prompt']}")
+        return
+    outcome = profile.apply_answers(settings, _read_answers(), write=apply)
+    walked = apply and outcome["status"] != profile.REFUSED
+    if walked:
+        ConfigStore().mark_walked(profile.SECTION)
+    if as_json:
+        typer.echo(json.dumps({**outcome, "walked": walked}, indent=2))
+    else:
+        for problem in outcome["problems"]:
+            typer.echo(f"{problem['id']}: {problem['message']}", err=True)
+        typer.echo(outcome["text"] or outcome["status"])
+    if apply and outcome["status"] == profile.REFUSED:
+        raise typer.Exit(1)
+
+
 def _interactive() -> bool:
     """A person at a terminal: both ends of it."""
     return sys.stdin.isatty() and sys.stdout.isatty()

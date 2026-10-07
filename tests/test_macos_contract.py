@@ -102,10 +102,24 @@ COMMANDS = {
     "plugins install NAME --json", "plugins remove NAME --json", "plugins set NAME --json",
     "phone numbers --json", "phone webhooks --json", "phone webhooks --apply --json",
     "phone tunnel --json", "plugins list --json", "tools --json", "plugins hosts --json",
+    "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
+}
+#: The command lines and streams the CLI prints that the app has yet to name. Each is
+#: checked once the contract names it; until then the cross-checks let it be missing, and
+#: nothing more — a contract that names what the CLI does not print still fails them.
+AWAITING = {
+    "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
 STDIN = {"pin set --json": "482915\n482915\n", "config verify KEY --json": "sk-typed\n"}
+#: What a command line reads on stdin as it is, with no flag added: the answers, as one
+#: JSON object.
+PIPED = {
+    "setup profile --preview --json": json.dumps({"uses": ["coding"], "facts": ["Nights."]}),
+    "setup profile --apply --json": json.dumps({"replace": True, "uses": ["coding"],
+                                                "facts": ["Works nights."]}),
+}
 #: A placeholder that stands for something else in one command line: the key to check, the
 #: plugin (the seed's, installed), and for `plugins set` its setting too.
 WORDS_FOR = {
@@ -530,11 +544,21 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
 
 
 def test_the_contract_names_every_command_the_app_reads_as_json():
-    assert set(contract()["commands"]) == COMMANDS
+    named = set(contract()["commands"])
+
+    assert named <= COMMANDS, f"not printed by the CLI: {sorted(named - COMMANDS)}"
+    assert COMMANDS - AWAITING <= named, f"not in the contract: {sorted(COMMANDS - named)}"
 
 
 def test_the_contract_names_every_stream_the_app_reads_as_json_lines():
-    assert set(contract()["streams"]) == set(STREAMS)
+    named, streams = set(contract()["streams"]), set(STREAMS)
+
+    assert named <= streams, f"not streamed by the CLI: {sorted(named - streams)}"
+    assert streams - AWAITING <= named, f"not in the contract: {sorted(streams - named)}"
+
+
+def test_what_awaits_the_contract_is_something_the_cli_prints():
+    assert set(AWAITING) <= COMMANDS | set(STREAMS)
 
 
 @pytest.mark.parametrize("command", sorted(COMMANDS))
@@ -542,7 +566,7 @@ def test_every_key_the_app_needs_is_printed_with_its_type(command, seeded):
     if command not in contract()["commands"]:
         # The cross-check above fails for it, once: a promise the app has yet to make.
         pytest.skip(f"the contract does not name {command} yet")
-    result = runner.invoke(app, argv(command), input=STDIN.get(command))
+    result = runner.invoke(app, argv(command), input=STDIN.get(command, PIPED.get(command)))
 
     assert result.exit_code in ((0, 1) if command == "doctor --json" else (0,)), result.output
     document = json.loads(result.stdout)
@@ -554,6 +578,15 @@ def test_every_key_the_app_needs_is_printed_with_its_type(command, seeded):
         for problem in key_problems(node, keys)
     ]
     assert not problems, f"{command}: {problems}"
+
+
+@pytest.mark.parametrize("command", sorted(AWAITING & COMMANDS))
+def test_a_command_the_contract_awaits_already_prints_one_document(command, seeded):
+    """Until the app names it, the command is still run here, so it is ready when it does."""
+    result = runner.invoke(app, argv(command), input=STDIN.get(command, PIPED.get(command)))
+
+    assert result.exit_code == 0, result.output
+    assert isinstance(json.loads(result.stdout), dict | list)
 
 
 def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
