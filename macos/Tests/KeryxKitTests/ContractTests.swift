@@ -117,9 +117,7 @@ import KeryxPreview
     /// Keys the contract promises (and the CLI test holds the CLI to) that this build does
     /// not decode yet: the Configuration tabs, which Task UA's `ConfigRow` reads. Once a key
     /// is decoded the test says to drop it here.
-    static let notYetDecoded: [String: [String: Set<String>]] = [
-        "config list --json": ["[]": ["tab", "tab_title", "tab_order", "advanced"]],
-    ]
+    static let notYetDecoded: [String: [String: Set<String>]] = [:]
 
     /// Paths the app decodes whose keys the contract gives in prose, not by path, because
     /// the CLI test cannot step into them: a list that is often empty, an object that is
