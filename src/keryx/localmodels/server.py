@@ -6,20 +6,34 @@ missing (`install_llama` — Homebrew's on a Mac that has it, else its pinned re
 the `--llm` unit installed (`serve_here`, through the checkout's installer, as the voice's
 unit is), and the wait for it to load the model. Ollama is the other runtime: the model is
 pulled into it (`pull_into_ollama`) and the local agent pointed at it (`ollama_values`).
+
+`start` is the whole of `keryx models start`, and exists because of a setup that stopped
+halfway: a model chosen and downloaded, llama.cpp never installed and no server ever
+started, so the voice server built on it crash-looped. It refuses (2) until a model is
+chosen and downloaded, installs what is missing, starts the server, and ends by checking
+that the server names the chosen model. A server that does not come up, or serves another
+model, has its unit removed before the error is told: no unit is left restarting in a loop.
 """
 
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
 
+import httpx
+
+from keryx import endpoints
 from keryx.config import Settings
-from keryx.endpoints import Endpoint
-from keryx.localmodels import voice
+from keryx.endpoints import Endpoint, Probe
+from keryx.localmodels import catalog, download, hardware, runtimes, servers, use, voice
 from keryx.localmodels.catalog import ModelEntry
 from keryx.localmodels.hardware import Hardware
+from keryx.localmodels.runtimes import LLAMA_CPP_BUILD
 from keryx.localmodels.servers import HOST
 from keryx.localmodels.use import messages_harness
+from keryx.localmodels.voice import FAILED, OK, REFUSED
 
 #: How long a model server may take to load.
 LLM_START_S = 600.0
@@ -27,6 +41,14 @@ OLLAMA_URL = "http://127.0.0.1:11434"
 BREW_INSTALL = ("brew", "install", "llama.cpp")
 #: The model server's own log, which the unit writes.
 LOG_NAME = "keryx-llm.err.log"
+LLAMA, OLLAMA = "llama", "ollama"
+RUNTIMES = (LLAMA, OLLAMA)
+#: The steps of `start`, in order, as the JSON lines name them.
+STEPS = ("runtime", "unit", "start", "check")
+#: What `start` says, first, while there is no model it could serve.
+NOT_READY = "choose and download a model first"
+#: Said of a unit `start` removed rather than leave it restarting a server that fails.
+REMOVED = "its service was removed, so it does not restart in a loop"
 
 
 class InstallError(RuntimeError):
@@ -39,6 +61,28 @@ class Report(Protocol):
     def step(self, step: str, message: str) -> AbstractContextManager[None]: ...
 
     def error(self, message: str, *, log: Path | None = None) -> None: ...
+
+
+class StartReport(Report, Protocol):
+    """…and, for `start`, a download's progress and the server it ended with."""
+
+    def progress(self, done: int, total: int | None) -> None: ...
+
+    def done(self, url: str, served_model: str) -> None: ...
+
+
+class Probes(Protocol):
+    """What `start` asks of the machine: `machine()`, or a test's fakes."""
+
+    llama_server: Callable[[Path], str | None]
+    ollama: Callable[[], str | None]
+    which: Callable[[str], str | None]
+    hardware: Callable[[], Hardware]
+    download_llama_cpp: Callable[[Path, Hardware, Callable[[int, int | None], None]], str]
+    run_script: Callable[[Sequence[str]], int]
+    wait_for_server: Callable[[Endpoint, str, float], str | None]
+    served: Callable[[str], tuple[bool, str | None]]
+    models: Callable[[Endpoint], Probe]
 
 
 # --- llama.cpp -----------------------------------------------------------------------------
@@ -102,9 +146,25 @@ def serve_here(
     with report.step("start", f"Loading the model into llama.cpp at {here.base_url}"):
         problem = wait_for_server(here, "models", LLM_START_S)
     if problem is not None:
-        report.error(f"the model server did not come up: {problem}", log=log_path(settings))
+        removed = remove_unit(run_script, root=root, platform=platform)
+        report.error(f"the model server did not come up: {problem}; {removed}",
+                     log=log_path(settings))
         return False
     return True
+
+
+def remove_unit(
+    run_script: Callable[[Sequence[str]], int], *, root: Path, platform: str | None = None
+) -> str:
+    """Remove the model server's unit; what became of it, in a clause."""
+    script, problem = voice.installer("--llm", root=root, platform=platform)
+    if script is None:
+        return f"its service could not be removed: {problem}"
+    code = run_script([str(script), "--llm", "--uninstall"])
+    if code != 0:
+        return f"its service could not be removed: {script.name} --llm --uninstall exited " \
+               f"with {code}"
+    return REMOVED
 
 
 # --- Ollama --------------------------------------------------------------------------------
@@ -123,3 +183,178 @@ def ollama_values(entry: ModelEntry) -> dict[str, Any]:
     """The settings that make Ollama's copy of `entry` the local agent's model."""
     return {"LOCAL_AGENT_BASE_URL": f"{OLLAMA_URL}/v1", "LOCAL_AGENT_MODEL": entry.ollama,
             "LLM_SERVER_MODEL": None, **messages_harness()}
+
+
+# --- keryx models start --------------------------------------------------------------------
+
+
+def start(
+    settings: Settings,
+    probes: Probes,
+    report: StartReport,
+    *,
+    save: Callable[[dict[str, Any]], bool],
+    root: Path,
+    runtime: str = LLAMA,
+    platform: str | None = None,
+) -> int:
+    """Serve `LLM_SERVER_MODEL` on this machine and check that it is what is served; the
+    exit code. 2 for what refuses it before anything is tried — no model chosen and
+    downloaded, no installer for the unit — 1 for what stopped it, 0 once the server
+    names the chosen model. `save` (Ollama's only) stores values and says why it could not.
+    """
+    platform = platform or voice.PLATFORM
+    if runtime == OLLAMA:
+        return _start_ollama(settings, probes, report, save=save)
+    if problem := _not_ready(settings):
+        report.error(f"{NOT_READY}: {problem}")
+        return REFUSED
+    alias = servers.llm_model(settings)[0]
+    script, problem = voice.installer("--llm", root=root, platform=platform)
+    if script is None:
+        report.error(problem or "no installer")
+        return REFUSED
+    if not _have_llama(settings, probes, report, platform=platform):
+        return FAILED
+    if not serve_here(settings, report, run_script=probes.run_script,
+                      wait_for_server=probes.wait_for_server, root=root, platform=platform):
+        return FAILED
+    here = endpoint(settings)
+    with report.step("check", f"Asking the model server which model it serves, {alias}"):
+        _up, served = probes.served(here.base_url)
+    if served != alias:
+        removed = remove_unit(probes.run_script, root=root, platform=platform)
+        report.error(f"the model server at {here.base_url} serves {served or 'no model it names'}"
+                     f", not {alias}; {removed}", log=log_path(settings))
+        return FAILED
+    report.done(here.base_url, served)
+    return OK
+
+
+def _not_ready(settings: Settings) -> str | None:
+    """Why `LLM_SERVER_MODEL` cannot be served yet, or None: unchosen, or not on disk whole."""
+    entry = catalog.by_key(settings.llm_server_model or "")
+    if entry is not None and not download.is_downloaded(settings.cache_dir, entry):
+        return f"{entry.key} is not downloaded (keryx models pull {entry.key})"
+    try:
+        servers.llm_model(settings)
+    except servers.ServerConfigError as error:
+        return str(error)
+    return None
+
+
+def _have_llama(settings: Settings, probes: Probes, report: StartReport, *, platform: str
+                ) -> bool:
+    """llama.cpp's `llama-server` here, installed when it was missing; False once told."""
+    found = probes.llama_server(settings.cache_dir)
+    if found is None:
+        brew = uses_brew(platform=platform, which=probes.which)
+        how = "with Homebrew" if brew else f"build {LLAMA_CPP_BUILD}, from its releases"
+        with report.step("runtime", f"Installing llama.cpp {how}"):
+            try:
+                install_llama(settings.cache_dir, probes.hardware(), brew=brew,
+                              run_script=probes.run_script,
+                              install=lambda cache, machine: probes.download_llama_cpp(
+                                  cache, machine, report.progress))
+            except InstallError as error:
+                report.error(str(error))
+                return False
+        found = probes.llama_server(settings.cache_dir)
+        if found is None:
+            report.error("llama.cpp was installed, but its llama-server cannot be found: "
+                         "not on PATH, nor in CACHE_DIR/llama.cpp")
+            return False
+    with report.step("runtime", f"llama.cpp: {found}"):
+        pass
+    return True
+
+
+def _start_ollama(settings: Settings, probes: Probes, report: StartReport, *,
+                  save: Callable[[dict[str, Any]], bool]) -> int:
+    """Ollama's own copy of the chosen catalog model, made the local agent's once listed."""
+    entry = catalog.by_key(settings.llm_server_model or "")
+    if entry is None:
+        report.error(f"{NOT_READY}: Ollama runs a model from Keryx's list (keryx models "
+                     "list), and LLM_SERVER_MODEL names none")
+        return REFUSED
+    with report.step("runtime", "Looking for Ollama"):
+        found = probes.ollama()
+    if found is None:
+        report.error("Ollama is not installed: install it from ollama.com, or run the model "
+                     "with llama.cpp (--runtime llama)")
+        return FAILED
+    with report.step("start", f"Pulling {entry.title} into Ollama ({entry.size_gb} GB)"):
+        problem = pull_into_ollama(entry, probes.run_script)
+    if problem is not None:
+        report.error(problem)
+        return FAILED
+    here = Endpoint.parse(f"{OLLAMA_URL}/v1")
+    with report.step("check", f"Asking Ollama for {entry.ollama}"):
+        listed = probes.models(here)
+    if entry.ollama not in listed.models:
+        why = listed.problem or f"it lists {', '.join(listed.models) or 'nothing'}"
+        report.error(f"Ollama does not list {entry.ollama}: {why}")
+        return FAILED
+    if not save(ollama_values(entry)):
+        return FAILED
+    report.done(here.base_url, entry.ollama)
+    return OK
+
+
+# --- the command line ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Machine:
+    """This machine, as `Probes`."""
+
+    llama_server: Callable[[Path], str | None]
+    ollama: Callable[[], str | None]
+    which: Callable[[str], str | None]
+    hardware: Callable[[], Hardware]
+    download_llama_cpp: Callable[[Path, Hardware, Callable[[int, int | None], None]], str]
+    run_script: Callable[[Sequence[str]], int]
+    wait_for_server: Callable[[Endpoint, str, float], str | None]
+    served: Callable[[str], tuple[bool, str | None]]
+    models: Callable[[Endpoint], Probe]
+
+
+def machine() -> Machine:
+    """The real machine, each probe looked up now, through its module. A server here is
+    never asked through a proxy, which would carry even a loopback request off the machine."""
+    install = runtimes.install_llama_cpp
+    return Machine(
+        llama_server=runtimes.llama_server, ollama=runtimes.ollama, which=runtimes.which,
+        hardware=hardware.detect,
+        download_llama_cpp=lambda cache, machine, progress: install(
+            cache, machine, get=partial(runtimes.fetch, progress=progress)),
+        run_script=voice.run_detached, wait_for_server=servers.wait_for, served=use.probe,
+        models=partial(endpoints.probe, get=partial(httpx.get, trust_env=False)),
+    )
+
+
+class TextSteps(voice.TextSteps):
+    """For a terminal: each step a line, what stopped it on stderr, and where it ended."""
+
+    def progress(self, done: int, total: int | None) -> None:
+        pass  # llama.cpp's archive is a few tens of megabytes: the step's line says it
+
+    def done(self, url: str, served_model: str) -> None:  # type: ignore[override]
+        self._echo(f"the model server is running at {url}, serving {served_model}; "
+                   "`keryx restart` to have Keryx take it up")
+
+
+class JsonSteps(voice.JsonSteps):
+    """For the Mac app: a `step` before each step's slow work, `progress` while llama.cpp
+    downloads (`total` null when the server does not say), then exactly one of `done`
+    (`url`, `served_model`), `error`, `cancelled`."""
+
+    def __init__(self, write: Callable[[str], None]) -> None:
+        super().__init__(write)
+        self._current = STEPS[0]
+
+    def progress(self, done: int, total: int | None) -> None:
+        self._progressed(done, total, step=self._current)
+
+    def done(self, url: str, served_model: str) -> None:  # type: ignore[override]
+        self._end({"event": "done", "url": url, "served_model": served_model})

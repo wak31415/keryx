@@ -92,13 +92,22 @@ def llama_cpp_assets(
     return [f"llama-{build}-bin-ubuntu-{arch}.tar.gz"]
 
 
-def fetch(url: str, dest: Path) -> None:
-    """One file, over https, to `dest`."""
+def fetch(
+    url: str, dest: Path, *, progress: Callable[[int, int | None], None] | None = None
+) -> None:
+    """One file, over https, to `dest`; `progress` told the bytes so far and the size, or
+    None when the server does not say it."""
     with httpx.stream("GET", url, follow_redirects=True, timeout=60.0) as response:
         response.raise_for_status()
+        length = response.headers.get("content-length")
+        total = int(length) if length and length.isdigit() else None
+        done = 0
         with dest.open("wb") as out:
             for chunk in response.iter_bytes(1024 * 1024):
                 out.write(chunk)
+                done += len(chunk)
+                if progress is not None:
+                    progress(done, total)
 
 
 def install_llama_cpp(

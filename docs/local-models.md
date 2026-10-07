@@ -40,7 +40,7 @@ From the command line:
 uv run keryx models list            # what fits this machine, the recommended one marked, the voices
 uv run keryx models pull qwen3-coder-30b-a3b
 uv run keryx models use qwen3-coder-30b-a3b   # --default-agent to have it do unnamed work too
-scripts/install-systemd.sh --llm     # install-launchd.sh on a Mac
+uv run keryx models start            # llama.cpp if missing, the model server's unit, a check
 uv run keryx restart                 # Keryx reads the new settings when it starts
 uv run keryx auth status --smoke     # one real task on each enabled agent
 
@@ -59,6 +59,14 @@ it or `--clear-key` forgets it. Either way Keryx takes the new voice up when it 
 `keryx models use` saves exactly what `keryx setup` would for the same model — the model
 server's model and port (a free one, the first time), the local agent's address and model,
 and `local` among `AGENTS_ENABLED` — and refuses a model that is not downloaded yet.
+`keryx models start` then does what the wizard does next, through the same code: it installs
+llama.cpp when the machine has none (with Homebrew on a Mac that has it, else its pinned
+release build), installs the model server's unit, waits for the model to load, and checks
+that the server names the chosen model. A server that does not come up, or answers with
+another model, has its unit removed rather than left restarting; its log is
+`keryx-llm.err.log`. `--runtime ollama` pulls Ollama's own copy of the chosen model and points
+the local agent at it instead. `keryx models stop` removes the unit, and `keryx service`
+shows Keryx's, its tunnel's and both servers' units, installed and running.
 
 For a program driving these: `keryx models list --json` adds `servers` (the model server,
 the voice server and the local agent: whether each unit is installed, and whether a server
@@ -67,7 +75,15 @@ prints JSON lines: `{"event": "progress", "done": …, "total": …}`, then exac
 `done` (with its `path`), `adopted` (`path` and `from`), `error` (`message`) or `cancelled` —
 a refusal before the download included. A SIGTERM or SIGINT cancels it with exit 130, and
 the partial download stays, so the next pull resumes it. `keryx models use NAME --json`
-prints `{"saved": …, "llama_server": …, "restart_needed": true}`.
+prints `{"saved": …, "llama_server": …, "restart_needed": true}`. `keryx models start --json`
+prints `{"event": "step", "step": …, "message": …}` before each of `runtime`, `unit`, `start`
+and `check`, `{"event": "progress", "step": "runtime", "done": …, "total": …}` while
+llama.cpp downloads (`total` null when the server does not say), then exactly one of `done`
+(`url`, `served_model`), `error` (`message`) or `cancelled`: exit 0, 1, 2 for a refusal
+before anything is tried (no model chosen and downloaded, no checkout), 130 for a SIGTERM.
+`keryx service --json` is `{"manager", "units": {"agent", "tunnel", "llm", "voice"}}`, each
+`{"installed", "active"}`; `keryx service install|uninstall [--llm] [--voice] --json` and
+`keryx models stop --json` print `{"ok": true, "message": …}`.
 
 `keryx voice --json` is `mode` (`openai`, `here` or `server`), `base_url`, `realtime_model`,
 `voice`, `assistant`, `openai_key_set`, `here` (speech-to-speech on this machine: `installed`,

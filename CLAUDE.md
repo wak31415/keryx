@@ -78,6 +78,11 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Background service: `scripts/install-systemd.sh [--uninstall]` on Linux,
   `scripts/install-launchd.sh [--uninstall]` on macOS; `--llm` / `--voice` install the local
   model servers' units instead (`keryx models serve llm|voice`)
+- The same without a terminal (the Mac app): `uv run keryx service [--json]` (`manager`, and
+  each of `agent`, `tunnel`, `llm`, `voice` installed and active — asked, never changed;
+  `keryx/units.py`), `service install|uninstall [--llm] [--voice] [--json]` (runs the
+  checkout's installer with those flags: `{"ok", "message"}`; exit 1 with the script's last
+  error line, 2 with no checkout or service manager)
 - Models on this machine: `uv run keryx models list [--json]` (the catalog against this
   machine's GPU and memory, the recommended one marked, and the local voices; `--json` adds
   `servers`, the model and voice servers' units and whether they answer, asked on loopback
@@ -87,8 +92,15 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   exactly one of `done`, `adopted`, `error`, `cancelled` on every path, a refusal included;
   a SIGTERM cancels, exit 130, and keeps the `.part`), `models use NAME [--default-agent]
   [--json]` (a downloaded model as the local agent's: saves what the wizard would, through
-  the same `localmodels/use.py`; a restart picks it up), `models serve llm|voice` (what the
-  units run: it reads the settings and becomes the server)
+  the same `localmodels/use.py`; a restart picks it up), `models start [--runtime
+  llama|ollama] [--json]` (the chosen, downloaded model served here: llama.cpp installed
+  when it is missing, the `--llm` unit, the wait for it, and a check that the server names
+  that model — through the wizard's own `localmodels/server.py`; a server that does not come
+  up, or serves another model, has its unit removed first; `--json` is JSON lines — `step`
+  (`runtime`, `unit`, `start`, `check`), `progress` while llama.cpp downloads, then exactly
+  one of `done` (`url`, `served_model`), `error`, `cancelled`; exit 2 until a model is chosen
+  and downloaded), `models stop [--json]` (removes the model server's unit), `models serve
+  llm|voice` (what the units run: it reads the settings and becomes the server)
 - The voice on a call: `uv run keryx voice [--json]` (where it is — `mode` openai, here or
   server — and the voice server on this machine: installed, its unit, whether it answers on
   loopback, the local model its words come from; `needs` says `local_agent_model` while there
@@ -508,7 +520,8 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
   commands that write what the service may not — `config import-env`, `auth login`,
   `memory seed`, `setup`, `config lock|unlock`, `migrate`, `plugins install|remove`,
-  `models use`, `voice use` (before any install, handshake or save) — refuse outright under
+  `models use`, `voice use` (before any install, handshake or save), `models start|stop`,
+  `service install|uninstall` — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and

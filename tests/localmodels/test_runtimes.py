@@ -1,6 +1,7 @@
 import io
 import tarfile
 
+import httpx
 import pytest
 
 from keryx.localmodels import runtimes
@@ -101,3 +102,22 @@ def test_the_voice_server_installs_with_what_its_first_start_needs():
     assert f"speech-to-speech=={runtimes.S2S_VERSION}" in linux
     assert "--managed-python" in linux and runtimes.SPACY_MODEL in linux
     assert "kokoro>=0.9.2" in linux and "kokoro>=0.9.2" not in mac
+
+
+@pytest.mark.parametrize(("length", "total"), [("6", 6), (None, None)])
+def test_a_fetch_tells_its_progress_with_the_size_when_it_is_given(
+    tmp_path, monkeypatch, length, total
+):
+    def serve(self, request):
+        headers = {"content-length": length} if length else {}
+        return httpx.Response(200, headers=headers, content=iter([b"abc", b"def"]),
+                              request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", serve)
+    told: list[tuple] = []
+
+    runtimes.fetch("https://example.invalid/a.tar.gz", tmp_path / "a", progress=lambda *a:
+                   told.append(a))
+
+    assert (tmp_path / "a").read_bytes() == b"abcdef"
+    assert told[-1] == (6, total)
