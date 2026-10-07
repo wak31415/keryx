@@ -210,6 +210,7 @@ class Notifier:
             text,
             needs=TrustLevel.NONE,
             skip=holding_the_line,
+            task_id=task.id,
         )
         if announced.heard:
             try:

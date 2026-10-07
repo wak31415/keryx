@@ -27,6 +27,8 @@ from keryx.realtime.base import (
     Transcript,
 )
 from keryx.session import (
+    ANNOUNCE_INSTRUCTIONS,
+    ANNOUNCE_REPORT_INSTRUCTIONS,
     OPENING_MESSAGE,
     RECONNECT_MESSAGE,
     SILENCE_MESSAGE,
@@ -750,9 +752,36 @@ async def test_announce_injects_a_system_message(make_session, phone, provider):
         assert await session.announce("Task 3 finished.") is True
 
     text, respond, instructions = provider.injected[-1]
-    assert text == "[system] Task 3 finished."
+    assert text == f"[system] Task 3 finished.\n{ANNOUNCE_INSTRUCTIONS}"
     assert respond is True
-    assert instructions is not None
+    assert "mark_reported" not in text  # not a task's result: nothing to stamp
+
+
+async def test_announce_keeps_the_voice_prompt_for_its_turn(make_session, phone, provider):
+    """#82: a response's own `instructions` replace the session's in the Realtime API, so
+    an announcement made with them answered without the voice prompt — the one place that
+    says to call mark_reported on a result from a "[system]" note."""
+    session = make_session(phone, provider)
+
+    async with running(session):
+        assert await session.announce("Task 3 finished.", task_id=3) is True
+
+    _, _, instructions = provider.injected[-1]
+    assert instructions is None
+
+
+async def test_a_task_announced_into_a_call_asks_for_its_stamp(make_session, phone, provider):
+    """#82: told only in the system prompt, the model stamped no mid-call result at all,
+    and the owner heard each one again at the top of the next call."""
+    session = make_session(phone, provider)
+
+    async with running(session):
+        assert await session.announce("Task 3 finished: done.", task_id=3) is True
+
+    text, _, _ = provider.injected[-1]
+    assert text.startswith("[system] Task 3 finished: done.\n")
+    assert ANNOUNCE_REPORT_INSTRUCTIONS.format(task_id=3) in text
+    assert "task_ids [3]" in text
 
 
 async def test_announce_is_false_before_and_after_the_session(make_session, phone, provider):

@@ -54,6 +54,7 @@ async def announce_to_live_sessions(
     *,
     needs: TrustLevel = TrustLevel.FULL,
     skip: Any = None,
+    task_id: int | None = None,
 ) -> Announced:
     """Speak `text` into every live session that is trusted enough for it. Never raises.
 
@@ -71,6 +72,9 @@ async def announce_to_live_sessions(
     whose tool result is about to say the same thing, and hearing it twice in one breath
     is worse than not hearing it here.
 
+    `task_id` says the text is that finished task's result, so a session that may stamp it
+    asks the model to (`VoiceSession.announce`).
+
     An exception part-way through stops the loop rather than skipping to the next session,
     which is what the three copies of this did and is the safer of the two: whatever broke
     the first `announce` is likely to break the rest, and the caller's fallback is a text.
@@ -82,7 +86,7 @@ async def announce_to_live_sessions(
             if skip is not None and skip(session):
                 heard = delivered = True
                 continue
-            spoken = await session.announce(text, needs=needs)
+            spoken = await session.announce(text, needs=needs, task_id=task_id)
             heard = heard or spoken
             delivered = delivered or (spoken and _counts_as_delivery(session))
     except Exception:
