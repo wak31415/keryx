@@ -831,6 +831,11 @@ tests replay `tests/agents/fixtures/codex_app_*.jsonl`, recorded from the bundle
 app-server, into the SDK's own typed models. Heavy imports (an agent's SDK) are guarded
 inside functions, not imported at module scope, so the suite runs without them.
 
+A directory's `conftest.py` must hold however a command line orders the files: pytest 9.1
+gives its fixtures to the first collector made for that directory only, so `tests/plugins/a.py
+tests/b.py tests/plugins/c.py` handed `c.py` the root `settings`. `tests/repeated_directories.py`
+(turned on in `tests/conftest.py`) registers them on every later one; keep it until pytest does.
+
 ## Working agreements
 
 - Only `config/store.py` writes the configuration, and a secret is never on argv, in a log

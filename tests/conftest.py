@@ -3,11 +3,18 @@
 import dataclasses
 
 import pytest
+import repeated_directories
 
 from keryx.config import Settings
 from keryx.config.files import LEGACY_HOME_ENV
 from keryx.config.permissions import ACTOR_ENVS
 from keryx.config.settings import env_var_names
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """A directory's conftest fixtures hold however the files are ordered on the command
+    line (pytest 9.1 gives them to the first collector of a directory only)."""
+    repeated_directories.register(config)
 
 
 def _settings_env_var_names() -> set[str]:
