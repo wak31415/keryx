@@ -105,8 +105,10 @@ enum SetupWording {
             guard !failed else { return nil }
             let title = context.row(key)?.displayTitle ?? FixAction.humanised(key)
             return "No \(title) yet."
-        case .setting:
-            return nil
+        case let .setting(key):
+            // Only a setting that is empty: one that is set may be wrong in ways it can't say.
+            guard !failed, let row = context.row(key), !row.set else { return nil }
+            return "Nothing in “\(row.displayTitle)” yet."
         case let .plugin(name):
             guard !failed else { return nil }
             return "\(context.pluginTitle(name) ?? "The plugin") is off."
