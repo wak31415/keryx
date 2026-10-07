@@ -384,7 +384,8 @@
         "secrets": "array",
         "settings": "array",
         "signin": "string|null",
-        "used_by": "array"
+        "used_by": "array",
+        "client_saved": "boolean|null"
       }
     },
     "models stop --json": {

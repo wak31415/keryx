@@ -12,7 +12,8 @@
         "USER_GOOGLE_EMAIL"
       ],
       "signin": "google-workspace",
-      "used_by": []
+      "used_by": [],
+      "client_saved": false
     },
     {
       "id": "gmail",
@@ -25,7 +26,8 @@
       "signin": "gmail",
       "used_by": [
         "check_email"
-      ]
+      ],
+      "client_saved": false
     },
     {
       "id": "slack",
@@ -44,7 +46,8 @@
       "signin": null,
       "used_by": [
         "send_to_slack"
-      ]
+      ],
+      "client_saved": null
     },
     {
       "id": "github",
@@ -58,7 +61,8 @@
         "ISSUE_REPO"
       ],
       "signin": "gh",
-      "used_by": []
+      "used_by": [],
+      "client_saved": null
     },
     {
       "id": "openai-admin",
@@ -77,7 +81,8 @@
       "signin": null,
       "used_by": [
         "check_billing"
-      ]
+      ],
+      "client_saved": null
     },
     {
       "id": "anthropic-admin",
@@ -96,7 +101,8 @@
       "signin": null,
       "used_by": [
         "check_billing"
-      ]
+      ],
+      "client_saved": null
     }
   ]
 }

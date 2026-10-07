@@ -25,6 +25,9 @@ public struct Integration: Codable, Sendable, Equatable, Identifiable {
     public var signin: String?
     /// The plugins that read it.
     public var usedBy: [String]
+    /// For the two Google cards, whether the OAuth client they share is saved; `nil` for
+    /// the others, and from a CLI older than the field.
+    public var clientSaved: Bool?
 
     /// The sign-in that connects it, when the app can run one.
     public var signInProvider: SignInProvider? { signin.flatMap(SignInProvider.init(rawValue:)) }
