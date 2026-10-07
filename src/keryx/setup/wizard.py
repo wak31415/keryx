@@ -16,7 +16,7 @@ before in the same section, to the last one a section before it asked, or to the
 Tab skips forward past everything already answered.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from importlib import resources
 
@@ -76,10 +76,15 @@ def statuses(ctx: SetupContext, checks: list[Check]) -> dict[str, str]:
 
 
 def section_statuses(
-    settings: Settings, store: ConfigStore, checks: list[Check]
+    settings: Settings,
+    store: ConfigStore,
+    checks: list[Check],
+    *,
+    walked: Iterable[str] | None = None,
 ) -> dict[str, str]:
-    """`statuses` without a terminal: what `keryx setup plan` reads as well."""
-    walked = store.walked_sections()
+    """`statuses` without a terminal: what `keryx setup plan` reads as well. `walked` is
+    `[setup] walked`, read from `store` when not handed in."""
+    walked = list(store.walked_sections() if walked is None else walked)
     found: dict[str, str] = {}
     for section in SECTIONS:
         key = section.key

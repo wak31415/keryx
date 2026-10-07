@@ -51,9 +51,10 @@ def signed_in(monkeypatch):
 def plan_of(make_ctx):
     """The plan for the scratch machine as it is now, as `keryx setup plan` builds it."""
 
-    def make(*, active: bool = True, extra: list[Check] | None = None) -> dict:
+    def make(*, active: bool = True, extra: list[Check] | None = None,
+             first: list[Check] | None = None) -> dict:
         ctx = make_ctx([])
-        checks = run_doctor_checks(ctx.settings, store=ctx.store) + (extra or [])
+        checks = (first or []) + run_doctor_checks(ctx.settings, store=ctx.store) + (extra or [])
         return build_plan(ctx.settings, ctx.store, checks, service_active=lambda _: active)
 
     return make
@@ -223,16 +224,72 @@ def test_soft_checks_of_another_agent_or_web_search_do_not_hold_a_step(plan_of, 
 
 
 def test_a_local_voice_waits_for_the_local_models(plan_of, signed_in):
-    ConfigStore().set({"VOICE_BASE_URL": "http://192.168.1.20:8765/v1"})  # unencrypted
+    ConfigStore().set({"VOICE_BASE_URL": "http://192.168.1.20:8765/v1"})
+    down = Check("voice server", False, "could not reach 192.168.1.20", section="local")
 
-    found = steps(plan_of())
+    found = steps(plan_of(extra=[down]))
 
     assert found["voice"]["blocked_by"] == ["local"]
     assert found["local"]["required"] is True
     assert (found["local"]["state"], found["voice"]["state"]) == (FAILED, BLOCKED)
     assert found["voice"]["why"] == "Waits for Local models."
     assert found["service"]["why"] == "Waits for Voice and Phone."  # a chain waits too
-    assert plan_of()["ready"] is False
+
+
+@pytest.mark.parametrize("url", ["http://192.168.1.20:8765/v1", "https://voice.example.com/v1"])
+def test_a_warning_about_the_voice_server_holds_nothing_back(plan_of, set_up, url):
+    """Unencrypted on the LAN, or public with no key: doctor warns, and calls still work."""
+    ConfigStore().set({"VOICE_BASE_URL": url})
+
+    plan = plan_of()
+    found = steps(plan)
+
+    assert any(c["state"] == "failed" for c in found["local"]["checks"])  # still said
+    assert (found["local"]["state"], found["voice"]["state"]) == (DONE, DONE)
+    assert plan["ready"] is True
+
+
+def test_a_non_default_local_agent_that_is_down_holds_nothing_back(plan_of, set_up):
+    ConfigStore().set({"VOICE_BASE_URL": "http://127.0.0.1:9000/v1",
+                       "AGENTS_ENABLED": "claude,local",
+                       "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1"})
+    down = Check("local agent server", False, "no answer", severity="soft", section="local")
+
+    plan = plan_of(extra=[down])
+
+    assert steps(plan)["voice"]["state"] == DONE
+    assert plan["ready"] is True
+
+
+def test_a_hard_failure_no_step_owns_is_the_services_and_not_ready(plan_of, set_up):
+    broken = Check("data dir writable", False, "/data: read-only file system",
+                   section="security")
+
+    plan = plan_of(extra=[broken])
+
+    service = steps(plan)["service"]
+    assert plan["ready"] is False
+    assert (service["state"], service["why"]) == (
+        FAILED, "Data folder writable: /data: read-only file system."
+    )
+    assert service["checks"][-1]["title"] == "Data folder writable"
+
+
+def test_no_hard_failure_coexists_with_ready(plan_of, set_up):
+    for section in ("security", "google", "plugins", "settings", "elsewhere"):
+        broken = Check("something", False, "broken", section=section)
+        assert plan_of(extra=[broken])["ready"] is False, section
+
+
+def test_why_names_the_check_that_holds_the_step_back(plan_of, signed_out):
+    """Not a soft one the step's state passed over: here the default agent, not Codex."""
+    other = Check("Codex agent", False, "Codex CLI not found", severity="soft",
+                  section="agents")
+
+    agents = steps(plan_of(first=[other]))["agents"]
+
+    assert agents["state"] == NEEDED
+    assert agents["why"].startswith("Claude Code agent (default): ")
 
 
 def test_a_required_local_step_is_not_done_by_walking_it(plan_of, signed_in):
@@ -302,10 +359,41 @@ def test_mark_records_the_step_as_walked():
     assert "google" in ConfigStore().walked_sections()
 
 
-def test_marking_the_migration_marks_the_wizards_import():
-    mark_step(ConfigStore(), "migrate")
+@pytest.mark.parametrize("step", ["migrate", "voice", "agents", "owner", "phone", "service"])
+def test_mark_refuses_a_required_step(step):
+    with pytest.raises(ValueError, match="is required; finish it in the app"):
+        mark_step(ConfigStore(), step)
 
-    assert ConfigStore().walked_sections() == ["import"]
+    assert ConfigStore().walked_sections() == []
+
+
+def test_the_pin_is_the_one_required_step_that_may_be_marked(plan_of, signed_out):
+    assert mark_step(ConfigStore(), "pin") == {"id": "pin", "walked": True}
+    assert steps(plan_of())["pin"]["state"] == DONE
+
+
+def test_an_unreadable_walked_list_is_an_empty_one(make_ctx, signed_out):
+    ctx = make_ctx([])
+    ctx.store.mark_walked("google")
+    settings = ctx.settings  # read while the file still parsed
+    ctx.store.config_path.write_text("this = = is not toml\n")
+
+    plan = build_plan(settings, ctx.store, run_doctor_checks(settings, store=ctx.store),
+                      service_active=lambda _: True)
+
+    assert not any(step["walked"] for step in plan["steps"]) and plan["ready"] is False
+
+
+def test_a_plan_without_settings_fails_every_step_with_why():
+    plan = setup_plan.failed_plan("PORT Input should be a valid integer")
+
+    assert plan["schema"] == 1 and plan["ready"] is False
+    assert [step["id"] for step in plan["steps"]] == [*REQUIRED, *OPTIONALS]
+    for step in plan["steps"]:
+        assert step["state"] == FAILED
+        assert step["why"] == "Settings: PORT Input should be a valid integer."
+        assert step["checks"] == [{"title": "Settings", "state": "failed",
+                                   "detail": "PORT Input should be a valid integer"}]
 
 
 def test_mark_refuses_a_step_that_is_not_one():

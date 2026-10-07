@@ -460,11 +460,47 @@ def test_setup_plan_shows_a_pending_migration_as_its_first_step(home, tmp_path):
     assert json.loads(result.stdout)["steps"][0]["id"] == "migrate"
 
 
-def test_setup_plan_says_why_there_are_no_settings_to_plan_from(home):
+def test_setup_plan_answers_without_settings_to_plan_from(home):
     result = run("setup", "plan", "--json", env={"PORT": "not-a-port"})
 
+    assert result.exit_code == 0, result.output
+    plan = json.loads(result.stdout)
+    assert plan["schema"] == 1 and plan["ready"] is False
+    assert plan["steps"][0]["state"] == "failed"
+    assert plan["steps"][0]["why"].startswith("Settings: PORT ")
+    assert "not-a-port" not in result.stdout
+
+
+def test_setup_plan_answers_with_a_config_that_does_not_parse(home):
+    home.home.mkdir(parents=True, exist_ok=True)
+    home.config_path.write_text("this = = is not toml\n")
+
+    result = run("setup", "plan", "--json")
+
+    assert result.exit_code == 0, result.output
+    plan = json.loads(result.stdout)
+    assert plan["ready"] is False
+    service = next(step for step in plan["steps"] if step["id"] == "service")
+    assert service["state"] == "failed" and "Settings file" in service["why"]
+
+
+def test_setup_mark_says_when_the_config_does_not_parse(home):
+    home.home.mkdir(parents=True, exist_ok=True)
+    home.config_path.write_text("this = = is not toml\n")
+
+    result = run("setup", "mark", "google")
+
     assert result.exit_code == 1
-    assert "PORT" in result.output and not result.stdout.startswith("{")
+    assert isinstance(result.exception, SystemExit)
+    assert "config.toml" in result.output
+
+
+def test_setup_mark_refuses_a_required_step(home):
+    result = run("setup", "mark", "owner", "--json")
+
+    assert result.exit_code == 2
+    assert "Owner is required; finish it in the app" in result.output
+    assert home.walked_sections() == []
 
 
 def test_setup_plan_asks_the_checks_doctor_asks(home, monkeypatch):

@@ -533,7 +533,10 @@ The one write it makes outside the machine — the Twilio webhooks — comes aft
 addresses and a yes. `keryx setup plan` is the same decision for the Mac app
 (`setup/plan.py` over `wizard.section_statuses`), so the two cannot drift: decide a section's
 status in the wizard, and the plan follows. `walked` there only ever settles an optional step,
-or `pin` (the owner's "let the first call set it"); a required step is done by its checks.
+or `pin` (the owner's "let the first call set it"); a required step is done by its checks,
+and `setup mark` refuses one. A soft warning never holds a step or `ready` back, a hard
+failure no step owns is the service's (no hard failure beside `ready: true`), and the plan
+always answers — exit 0, a document — whatever the settings.
 
 ## Storage follows XDG
 
