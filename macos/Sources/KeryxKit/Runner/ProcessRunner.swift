@@ -6,7 +6,17 @@ import Foundation
 /// Foundation/Dispatch may invoke from another thread — is wrapped in `Box`, whose own
 /// `Sendable` conformance is asserted once, here, rather than claimed for `Process` itself.
 public final class ProcessRunner: CommandRunner, Sendable {
-    public init() {}
+    /// A test hook: handed each `run`'s collector, so a test can hold it weakly and see that
+    /// it is freed once the run is over.
+    private let observeCollector: (@Sendable (AnyObject) -> Void)?
+
+    public init() {
+        observeCollector = nil
+    }
+
+    init(observingCollector: @escaping @Sendable (AnyObject) -> Void) {
+        observeCollector = observingCollector
+    }
 
     public func run(_ request: CommandRequest) async throws -> CommandResult {
         let process = Process()
@@ -29,8 +39,9 @@ public final class ProcessRunner: CommandRunner, Sendable {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CommandResult, Error>) in
                 let collector = RunCollector(process: processBox, continuation: continuation)
-                process.terminationHandler = { finished in
-                    collector.exited(finished.terminationStatus)
+                observeCollector?(collector)
+                process.terminationHandler = { [weak collector] finished in
+                    collector?.exited(finished.terminationStatus)
                 }
 
                 do {
@@ -141,12 +152,18 @@ private final class Box<T>: @unchecked Sendable {
 /// open long after the child has exited, and a reader blocked until EOF would wait for it.
 /// So the streams are read by dispatch read sources rather than blocking reads, and on
 /// expiry the child is terminated, each source cancelled (its cancel handler, which runs
-/// after its last event, closes the handle), and `.timedOut` thrown. The continuation is
-/// resumed exactly once: whichever of finish, expiry or launch failure takes it first.
+/// after its last event, closes the handle), and `.timedOut` thrown.
+///
+/// Lifetime: the collector holds itself (`running`) from creation until it concludes, and
+/// nothing else holds it strongly — the termination handler, the deadline and the sources'
+/// handlers all capture it weakly. Every terminal path (finish, expiry, launch failure) goes
+/// through `conclude`, which resumes the continuation exactly once and drops the
+/// self-reference, the deadline and the sources, so a run never outlives its result.
 private final class RunCollector: @unchecked Sendable {
     private let queue = DispatchQueue(label: "dev.keryx.app.process-runner")
     private let process: Box<Process>
     private var continuation: CheckedContinuation<CommandResult, Error>?
+    private var running: RunCollector?
     private var sources: [DispatchSourceRead] = []
     private var output = [Data(), Data()]
     /// Streams not yet at EOF. Two from the start, so an exit reported before `start`
@@ -160,25 +177,35 @@ private final class RunCollector: @unchecked Sendable {
     init(process: Box<Process>, continuation: CheckedContinuation<CommandResult, Error>) {
         self.process = process
         self.continuation = continuation
+        running = self
     }
 
-    /// `handles[0]` is stdout and `handles[1]` stderr.
+    /// `handles[0]` is stdout and `handles[1]` stderr. Each handle is closed with
+    /// `FileHandle.close()`, never a raw `close(2)`, so its own deinit does not close the
+    /// descriptor a second time (by then possibly another file's).
     func start(reading handles: [FileHandle]) {
         queue.sync {
             for (index, handle) in handles.enumerated() {
                 let box = Box(handle)
                 let descriptor = handle.fileDescriptor
                 let source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: queue)
-                source.setEventHandler { [self] in
+                source.setEventHandler { [weak self, weak source] in
+                    guard let self else {
+                        source?.cancel()
+                        return
+                    }
                     let count = Darwin.read(descriptor, &buffer, Self.chunk)
                     if count > 0 {
                         output[index].append(contentsOf: buffer[0..<count])
                     } else if count == 0 || (errno != EINTR && errno != EAGAIN) {
-                        sources[index].cancel()
+                        source?.cancel()
                     }
                 }
-                source.setCancelHandler { [self] in
+                source.setCancelHandler { [weak self] in
+                    // Closed whether or not the run is still waiting: the handle is the
+                    // source's to close, once its last event has run.
                     try? box.value.close()
+                    guard let self else { return }
                     open -= 1
                     finishIfDone()
                 }
@@ -189,13 +216,18 @@ private final class RunCollector: @unchecked Sendable {
     }
 
     func arm(_ timeout: Duration) {
-        let item = DispatchWorkItem { [self] in expire() }
-        queue.sync { deadline = item }
-        queue.asyncAfter(deadline: .now() + timeout.timeInterval, execute: item)
+        let item = DispatchWorkItem { [weak self] in self?.expire() }
+        queue.sync {
+            // Already concluded (a run quicker than this call): nothing to arm.
+            guard continuation != nil else { return }
+            deadline = item
+            queue.asyncAfter(deadline: .now() + timeout.timeInterval, execute: item)
+        }
     }
 
     func exited(_ code: Int32) {
-        queue.async { [self] in
+        queue.async { [weak self] in
+            guard let self else { return }
             exitCode = code
             finishIfDone()
         }
@@ -203,7 +235,7 @@ private final class RunCollector: @unchecked Sendable {
 
     func launchFailed(_ message: String) {
         queue.sync {
-            take()?.resume(throwing: RunnerError.launchFailed(message))
+            conclude(.failure(RunnerError.launchFailed(message)))
         }
     }
 
@@ -211,24 +243,28 @@ private final class RunCollector: @unchecked Sendable {
 
     private func finishIfDone() {
         guard continuation != nil, let exitCode, open == 0 else { return }
-        deadline?.cancel()
-        let result = CommandResult(exitCode: exitCode, stdout: output[0], stderr: output[1])
-        take()?.resume(returning: result)
-        sources = []
+        conclude(.success(CommandResult(exitCode: exitCode, stdout: output[0], stderr: output[1])))
     }
 
     private func expire() {
-        guard let continuation = take() else { return }
+        guard continuation != nil else { return }
         if process.value.isRunning {
             process.value.terminate()
         }
-        sources.forEach { $0.cancel() }
-        continuation.resume(throwing: RunnerError.timedOut)
+        conclude(.failure(RunnerError.timedOut))
     }
 
-    private func take() -> CheckedContinuation<CommandResult, Error>? {
-        defer { continuation = nil }
-        return continuation
+    /// The one way out. Cancelling a source that has already finished does nothing; one
+    /// still open is cancelled, and its cancel handler closes its handle.
+    private func conclude(_ result: Result<CommandResult, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        deadline?.cancel()
+        deadline = nil
+        sources.forEach { $0.cancel() }
+        sources = []
+        running = nil
+        continuation.resume(with: result)
     }
 }
 

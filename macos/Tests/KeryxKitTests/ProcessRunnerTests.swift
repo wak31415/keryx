@@ -45,6 +45,44 @@ import Testing
         #expect(ContinuousClock.now - started < .seconds(1.5))
     }
 
+    @Test func shortRunWithNoOutput() async throws {
+        let result = try await runner.run(.init(executable: "/usr/bin/true", timeout: .seconds(5)))
+        #expect(result.exitCode == 0)
+        #expect(result.stdout.isEmpty)
+        #expect(result.stderr.isEmpty)
+    }
+
+    @Test func aFinishedRunIsFreed() async throws {
+        let probe = WeakProbe()
+        let runner = ProcessRunner(observingCollector: { probe.object = $0 })
+        let result = try await runner.run(.init(executable: "/bin/sh",
+            arguments: ["-c", "echo hi; echo err >&2"], timeout: .seconds(5)))
+        #expect(result.stdoutText == "hi\n")
+        #expect(probe.wasObserved)
+        #expect(await probe.isFreed())
+    }
+
+    @Test func aTimedOutRunIsFreed() async throws {
+        let probe = WeakProbe()
+        let runner = ProcessRunner(observingCollector: { probe.object = $0 })
+        await #expect(throws: RunnerError.timedOut) {
+            _ = try await runner.run(.init(executable: "/bin/sh",
+                arguments: ["-c", "(sleep 5 &) ; echo hi"], timeout: .milliseconds(200)))
+        }
+        #expect(probe.wasObserved)
+        #expect(await probe.isFreed())
+    }
+
+    @Test func aLaunchFailureIsFreed() async throws {
+        let probe = WeakProbe()
+        let runner = ProcessRunner(observingCollector: { probe.object = $0 })
+        await #expect(throws: RunnerError.self) {
+            _ = try await runner.run(.init(executable: "/nonexistent/keryx", timeout: .seconds(5)))
+        }
+        #expect(probe.wasObserved)
+        #expect(await probe.isFreed())
+    }
+
     @Test func missingExecutableIsLaunchFailed() async {
         await #expect(throws: RunnerError.self) {
             _ = try await runner.run(.init(executable: "/nonexistent/keryx"))
@@ -75,5 +113,29 @@ import Testing
             arguments: ["-c", "while true; do echo x; sleep 0.05; done"], timeout: nil)) {} }
         try await Task.sleep(for: .milliseconds(200)); task.cancel()
         _ = await task.result   // must return promptly, not hang
+    }
+}
+
+/// Holds the collector of one run weakly. The last strong reference may be dropped by a block
+/// still finishing on the collector's queue just after the continuation resumes, so
+/// `isFreed` gives it up to a second rather than asserting at one instant.
+private final class WeakProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private weak var _object: AnyObject?
+    private var observed = false
+
+    var object: AnyObject? {
+        get { lock.lock(); defer { lock.unlock() }; return _object }
+        set { lock.lock(); _object = newValue; observed = true; lock.unlock() }
+    }
+
+    var wasObserved: Bool { lock.lock(); defer { lock.unlock() }; return observed }
+
+    func isFreed() async -> Bool {
+        for _ in 0..<100 {
+            if object == nil { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return object == nil
     }
 }
