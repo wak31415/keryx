@@ -71,6 +71,22 @@ import Testing
         #expect(lines.lastIndex { $0.hasPrefix("unset ") }! < lines.firstIndex { $0.hasPrefix("exec ") }!)
     }
 
+    @Test func theInstallScriptRunsTheCheckoutsInstallerTheSameWay() throws {
+        let script = try #require(TerminalLauncher.installServiceScript(for: Self.location))
+        let lines = script.split(separator: "\n").map(String.init)
+        #expect(lines[1] == #"rm -f -- "$0""#)
+        #expect(lines.contains("unset KERYX_ACTOR JARVIS_ACTOR"))
+        #expect(lines.contains("export KERYX_HOME='/Users/x/.config/keryx'"))
+        #expect(lines.contains("unset XDG_CONFIG_HOME"))
+        #expect(lines.contains("cd '/Users/x/my keryx' || exit 1"))
+        #expect(lines.last == "exec '/Users/x/my keryx/scripts/install-launchd.sh'")
+        #expect(!script.contains("sk-should-never-appear"))
+
+        var bare = Self.location
+        bare.checkout = nil
+        #expect(TerminalLauncher.installServiceScript(for: bare) == nil, "no checkout, no installer")
+    }
+
     @Test func withNoCheckoutTheScriptRunsFromTheRoot() {
         var location = Self.location
         location.checkout = nil

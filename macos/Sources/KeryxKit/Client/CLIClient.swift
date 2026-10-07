@@ -103,7 +103,7 @@ public struct CLIClient: KeryxClient {
     public func installModelServer() async throws -> String {
         guard let checkout = location.checkout else {
             throw KeryxError.launch(
-                "This needs a Keryx checkout (scripts/install-launchd.sh); run `keryx setup` instead")
+                "Starting the model server from the app needs a Keryx checkout. Run keryx setup in Terminal instead.")
         }
         let request = CommandRequest(
             executable: checkout + "/scripts/install-launchd.sh", arguments: ["--llm"],

@@ -40,7 +40,7 @@ public enum MenuState: Equatable, Sendable {
         switch self {
         case .locating: "Looking for Keryx…"
         case .notFound: "Keryx isn't on this Mac"
-        case .needsMigration: "Keryx needs `keryx migrate`"
+        case .needsMigration: "Keryx needs to move its files"
         case .stopped: "Keryx is stopped"
         case .notInstalled: "Keryx isn't installed as a service"
         case .idle, .working: "Keryx is running"

@@ -70,7 +70,7 @@ import Testing
         Case(name: "found, status not loaded yet", location: found, status: nil, expected: .locating),
         Case(name: "found, status failed", location: found, status: nil,
              statusError: .timedOut(command: "keryx status"),
-             expected: .attention("Keryx Did Not Answer")),
+             expected: .attention("Keryx Didn't Respond")),
     ]
 
     @Test(arguments: cases)
@@ -84,7 +84,7 @@ import Testing
         #expect(MenuState.working(2).headline == "Keryx is running")
         #expect(MenuState.stopped.headline == "Keryx is stopped")
         #expect(MenuState.notInstalled.headline == "Keryx isn't installed as a service")
-        #expect(MenuState.needsMigration.headline == "Keryx needs `keryx migrate`")
+        #expect(MenuState.needsMigration.headline == "Keryx needs to move its files")
         #expect(MenuState.notFound.headline == "Keryx isn't on this Mac")
         #expect(MenuState.locating.headline == "Looking for Keryx…")
         #expect(MenuState.attention("Last restart failed").headline == "Last restart failed")

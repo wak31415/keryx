@@ -155,7 +155,7 @@ import Testing
         #expect(model.taskDetail[42]?.value == PreviewData.taskDetail)
         client.update { $0.task = .failure(.failed(command: "keryx tasks show", exitCode: 1, message: "no task 7")) }
         await model.loadTask(7)
-        #expect(model.taskDetail[7]?.error?.message == "no task 7")
+        #expect(model.taskDetail[7]?.error?.reported == "no task 7")
         #expect(model.taskDetail[42]?.value == PreviewData.taskDetail)
     }
 

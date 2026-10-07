@@ -241,7 +241,7 @@ import Testing
             .notFound(LocateFailure(lookedAt: ["a."])), .migrationRequired("x"), .liveCalls(1),
             .failed(command: "keryx status", exitCode: 1, message: ""),
             .decoding(command: "keryx status", detail: "d"), .timedOut(command: "keryx status"),
-            .launch("l"),
+            .launch("l"), .terminal("t"),
         ]
         for error in errors {
             #expect(!error.title.isEmpty)
@@ -249,6 +249,27 @@ import Testing
         }
         #expect(KeryxError.liveCalls(1).message.contains("1 call"))
         #expect(KeryxError.liveCalls(2).message.contains("2 calls"))
+    }
+
+    @Test func errorsSayWhatHappenedInSentences() {
+        let errors: [KeryxError] = [
+            .notFound(LocateFailure(lookedAt: ["no folder chosen"])), .migrationRequired("run keryx migrate"),
+            .liveCalls(2), .failed(command: "keryx status", exitCode: 1, message: "database is locked"),
+            .failed(command: "keryx status", exitCode: 3, message: ""),
+            .decoding(command: "keryx status", detail: "d"), .timedOut(command: "keryx status"),
+            .launch("no such file"), .terminal("Terminal could not be opened"),
+        ]
+        for error in errors {
+            #expect(error.message.hasSuffix("."), "\(error.message)")
+            #expect(!error.title.hasSuffix("."), "\(error.title)")
+        }
+        #expect(KeryxError.launch("no such file").message == "No such file.")
+        let refused = KeryxError.failed(command: "keryx tasks list", exitCode: 1, message: "database is locked")
+        #expect(refused.message == "Keryx reported: “database is locked”.")
+        #expect(refused.reported == "database is locked")
+        #expect(refused.title(loading: "Sessions") == "Couldn't Load Sessions")
+        #expect(KeryxError.timedOut(command: "keryx status").title(loading: "Sessions") == "Keryx Didn't Respond")
+        #expect(KeryxError.timedOut(command: "keryx status").reported == nil)
     }
 
     // MARK: - Pull
@@ -324,7 +345,7 @@ import Testing
         let fake = FakeRunner()
         let client = CLIClient(location: location, runner: fake)
         await #expect(throws: KeryxError.launch(
-            "This needs a Keryx checkout (scripts/install-launchd.sh); run `keryx setup` instead")) {
+            "Starting the model server from the app needs a Keryx checkout. Run keryx setup in Terminal instead.")) {
             _ = try await client.installModelServer()
         }
         #expect(fake.requests.isEmpty)

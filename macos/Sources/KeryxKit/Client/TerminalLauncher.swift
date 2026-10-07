@@ -21,6 +21,23 @@ public enum TerminalLauncher {
     /// single-quoted, and each of those the location does not set unset — so Terminal's own
     /// value (its shell's `KERYX_HOME`, say) cannot stand in for one the service never had.
     public static func script(for location: KeryxLocation, arguments: [String]) -> String {
+        script(for: location, argv: [location.executable] + location.prefixArguments + arguments)
+    }
+
+    /// The text of a .command file that runs the checkout's `scripts/install-launchd.sh` —
+    /// installing Keryx as a launchd service — the same way, in the checkout. `nil` without a
+    /// checkout, which has no such script.
+    public static func installServiceScript(for location: KeryxLocation) -> String? {
+        guard let checkout = location.checkout else { return nil }
+        return script(for: location, argv: [installServicePath(checkout)])
+    }
+
+    /// Where a checkout keeps the script that installs the service.
+    public static func installServicePath(_ checkout: String) -> String {
+        (checkout as NSString).appendingPathComponent("scripts/install-launchd.sh")
+    }
+
+    private static func script(for location: KeryxLocation, argv: [String]) -> String {
         var lines = [
             "#!/bin/sh",
             // Delete the file first: it has done its job once the shell has read it.
@@ -36,7 +53,6 @@ public enum TerminalLauncher {
             }
         }
         lines.append("cd \(quote(location.runDirectory)) || exit 1")
-        let argv = [location.executable] + location.prefixArguments + arguments
         lines.append("exec " + argv.map(quote).joined(separator: " "))
         return lines.joined(separator: "\n") + "\n"
     }
@@ -45,18 +61,31 @@ public enum TerminalLauncher {
     /// itself first) and opens it with NSWorkspace. Throws on write failure. Any script an
     /// earlier call left behind is removed first (`removeStaleScripts`).
     @MainActor public static func open(_ location: KeryxLocation, arguments: [String]) throws {
+        try open(script(for: location, arguments: arguments))
+    }
+
+    /// Runs the checkout's `scripts/install-launchd.sh` in Terminal, as `open` runs a
+    /// command. Throws without a checkout.
+    @MainActor public static func openInstallService(_ location: KeryxLocation) throws {
+        guard let text = installServiceScript(for: location) else {
+            throw KeryxError.terminal("Installing the service needs a Keryx checkout. Run keryx setup in Terminal instead.")
+        }
+        try open(text)
+    }
+
+    @MainActor private static func open(_ text: String) throws {
         removeStaleScripts()
         let path = (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("keryx-\(UUID().uuidString).command")
-        let contents = Data(script(for: location, arguments: arguments).utf8)
+        let contents = Data(text.utf8)
         guard FileManager.default.createFile(
             atPath: path, contents: contents, attributes: [.posixPermissions: 0o700])
         else {
-            throw KeryxError.launch("Could not write the script for Terminal to \(path).")
+            throw KeryxError.terminal("Couldn't write the script for Terminal to \(path).")
         }
         guard NSWorkspace.shared.open(URL(fileURLWithPath: path)) else {
             try? FileManager.default.removeItem(atPath: path)
-            throw KeryxError.launch("Terminal could not be opened.")
+            throw KeryxError.terminal("Terminal couldn't be opened. Run the command in Terminal yourself.")
         }
     }
 
