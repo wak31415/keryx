@@ -35,7 +35,6 @@ from keryx.config.files import (
     secure_file,
     write_private,
 )
-from keryx.config.options import has_options
 from keryx.config.pin import PIN_PATTERN, PIN_RULE, pin_file, read_enrolled_pin, write_enrolled_pin
 from keryx.config.settings import (
     GOOGLE_CLIENT_FILE,
@@ -231,6 +230,10 @@ class ConfigStore:
 
     def describe(self, settings: Settings) -> list[dict[str, Any]]:
         """Every setting as `keryx config list` shows it. A secret's value is never here."""
+        # Here, not at the top: the options reach the network, and this module is the
+        # configuration's only writer, which should not carry httpx to every command.
+        from keryx.config.options import has_options
+
         overrides = self.overrides()
         dumped = settings.model_dump(mode="json")
         rows = []

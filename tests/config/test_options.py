@@ -7,6 +7,7 @@ Nothing here reaches the network or starts a `codex` process.
 
 import dataclasses
 import sys
+import threading
 import types
 
 import httpx
@@ -225,6 +226,37 @@ def test_a_list_with_none_of_the_family_falls_back(keyed):
     assert not found.live and found.error == "OpenAI listed no model of this kind"
 
 
+def test_an_unexpected_failure_in_a_source_is_a_reason_not_a_crash(keyed):
+    get = FakeGet(raises=RuntimeError(f"something odd {KEY}"))
+
+    found = options_for("OPENAI_REALTIME_MODEL", keyed, sources(get=get))
+
+    assert (found.source, found.live) == ("builtin", False)
+    assert found.error == "the list could not be read (RuntimeError)"
+    assert values(found) == ["gpt-realtime-2.1"]
+
+
+def test_a_provider_that_fails_outside_its_read_still_answers(settings):
+    def broken():
+        raise OSError("sysctl went away")
+
+    found = options_for("LLM_SERVER_MODEL", settings, sources(hardware=broken))
+
+    assert (found.source, found.live, found.options) == ("builtin", False, [])
+    assert found.error == "the list could not be read (OSError)"
+
+
+def test_a_server_answering_with_a_json_array_is_not_a_model_list(settings):
+    local = settings.model_copy(update={
+        "local_agent_base_url": "http://gpu-box:11434", "local_agent_model": "qwen3",
+    })
+
+    found = options_for("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(body=["x"])))
+
+    assert found.error == "gpu-box did not answer with a model list"
+    assert values(found) == ["qwen3"]
+
+
 def test_without_an_openai_key_nothing_is_asked(settings):
     unkeyed = settings.model_copy(update={"openai_api_key": None})
 
@@ -398,7 +430,8 @@ def test_codex_models_are_what_codex_lists(settings):
     assert values(found) == ["", "gpt-6-astra", "gpt-6-luna"]
     assert found.options[0] == Option("", "Codex's default", None)
     assert found.options[1] == Option("gpt-6-astra", "GPT-6-Astra", "Frontier intelligence.")
-    assert (found.source, found.live, found.error, found.current) == ("codex", True, None, None)
+    # Unset is Codex choosing, which is the "" option: the app selects it.
+    assert (found.source, found.live, found.error, found.current) == ("codex", True, None, "")
     ((env, timeout),) = asked
     # The stored login: every credential variable blanked, the owner's CODEX_HOME untouched.
     assert env == {"OPENAI_API_KEY": "", "CODEX_API_KEY": "", "CODEX_ACCESS_TOKEN": ""}
@@ -466,28 +499,28 @@ def test_codex_listing_nothing_falls_back(settings):
 
 
 class FakeCodex:
-    """`openai_codex.Codex` as far as the lister uses it."""
+    """`openai_codex.Codex` as far as the lister uses it. "hang" blocks in `models()` until
+    the client is closed, the way an app-server that never answers does."""
 
     made: list = []
+    instances: list = []
     behaviour = "list"
 
     def __init__(self, config):
         FakeCodex.made.append(config)
         if FakeCodex.behaviour == "fail":
             raise RuntimeError(f"app-server said {KEY}")
-        self.closed = False
+        self.closes = 0
+        self.released = threading.Event()
+        FakeCodex.instances.append(self)
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.closed = True
+    def close(self):
+        self.closes += 1
+        self.released.set()
 
     def models(self):
         if FakeCodex.behaviour == "hang":
-            import time
-
-            time.sleep(1)
+            self.released.wait(5)
         model = types.SimpleNamespace(
             id="gpt-6-astra", display_name="GPT-6-Astra", description="Frontier.", hidden=False
         )
@@ -504,6 +537,7 @@ def fake_sdk(monkeypatch):
     module.CodexConfig = lambda **kwargs: kwargs
     monkeypatch.setitem(sys.modules, "openai_codex", module)
     FakeCodex.made = []
+    FakeCodex.instances = []
     FakeCodex.behaviour = "list"
     return FakeCodex
 
@@ -515,6 +549,7 @@ def test_the_sdk_lister_runs_codex_with_the_env_and_skips_hidden_models(fake_sdk
     (config,) = fake_sdk.made
     assert config["env"] == {"CODEX_API_KEY": ""}
     assert config["client_name"] == "keryx"
+    assert [codex.closes for codex in fake_sdk.instances] == [1]
 
 
 def test_the_sdk_lister_says_why_without_the_error_text(fake_sdk):
@@ -534,6 +569,9 @@ def test_the_sdk_lister_gives_up_at_the_timeout(fake_sdk):
         options.sdk_codex_models({}, 0.05)
 
     assert str(raised.value) == "Codex did not list its models within 0.05 seconds"
+    # The app-server it started is not left behind: the caller closes it.
+    (codex,) = fake_sdk.instances
+    assert codex.closes >= 1
 
 
 def test_the_sdk_lister_without_the_sdk_says_how_to_install_it(monkeypatch):
@@ -558,6 +596,15 @@ def test_the_local_agent_server_is_asked_for_its_models(settings):
 
     assert (found.source, found.live, values(found)) == ("server", True, ["qwen3", "gemma"])
     assert get.calls[0][0] == "http://gpu-box:11434/v1/models"
+
+
+def test_an_unset_key_whose_blank_is_an_option_is_current_as_blank(settings):
+    codex = options_for("CODEX_MODEL", settings, sources(codex_models=lambda env, t: CODEX_LIST))
+    voice = options_for("OPENAI_VOICE", settings, sources())
+
+    assert settings.codex_model is None and settings.openai_voice == ""
+    assert codex.current == "" and voice.current == ""
+    assert codex.as_dict()["current"] == "" and values(codex).count("") == 1
 
 
 def test_no_local_agent_server_offers_only_the_current(settings):

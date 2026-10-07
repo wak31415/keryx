@@ -720,3 +720,32 @@ def test_list_json_says_which_settings_have_options(home):
 
     assert {row["key"] for row in rows if row["has_options"]} == set(OPTION_KEYS)
     assert all(isinstance(row["has_options"], bool) for row in rows)
+
+
+def test_options_survives_a_server_that_answers_with_a_json_array(home, monkeypatch):
+    """Any supported key exits 0 with the JSON document, whatever the source said."""
+    import httpx
+
+    from keryx.config import options
+    from keryx.localmodels.hardware import Hardware
+
+    def get(url, **kwargs):
+        if "gpu-box" in url:
+            return httpx.Response(200, json=["x"])
+        raise RuntimeError("an odd failure")
+
+    monkeypatch.setattr(options, "default_sources", lambda settings: options.Sources(
+        get=get, codex_models=lambda env, timeout: [],
+        hardware=lambda: Hardware("metal", "Apple silicon", 0.0, 32.0),
+        downloaded=lambda entry: False,
+    ))
+    run("config", "set", "LOCAL_AGENT_BASE_URL", "http://gpu-box:11434")
+    run("config", "set", "OPENAI_API_KEY", "--stdin", input="sk-live-openai")
+
+    local = run("config", "options", "LOCAL_AGENT_MODEL", "--json")
+    realtime = run("config", "options", "OPENAI_REALTIME_MODEL", "--json")
+
+    assert local.exit_code == 0, local.output
+    assert json.loads(local.stdout)["error"] == "gpu-box did not answer with a model list"
+    assert realtime.exit_code == 0, realtime.output
+    assert json.loads(realtime.stdout)["error"] == "the list could not be read (RuntimeError)"

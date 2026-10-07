@@ -17,6 +17,7 @@ this machine's disk and hardware, is not live and needs no error. The value set 
 always among the options, with the detail "current", so the dropdown can show it.
 """
 
+import contextlib
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -132,8 +133,9 @@ def sdk_codex_models(env: dict[str, str], timeout: float) -> list[CodexModel]:
 
     It answers from its own catalog in under a second, signed in or not (measured
     2026-10-07), so it is cheap enough to ask each time a dropdown opens. The thread is a
-    daemon so a hung app-server cannot hold the command past `timeout`; the app-server
-    exits when its stdin closes with this process.
+    daemon so a hung app-server cannot hold the command past `timeout`, and the client it
+    started is published as soon as it exists, so on a timeout the caller closes it — which
+    terminates the `codex app-server` child, and kills it two seconds later.
     """
     try:
         from openai_codex import Codex, CodexConfig
@@ -143,12 +145,17 @@ def sdk_codex_models(env: dict[str, str], timeout: float) -> list[CodexModel]:
         ) from None
     result: list[CodexModel] = []
     failure: list[BaseException] = []
+    started: list[Any] = []
 
     def ask() -> None:
         try:
             config = CodexConfig(env=env, cwd="/", client_name="keryx", client_title="Keryx")
-            with Codex(config) as codex:
+            codex = Codex(config)
+            started.append(codex)
+            try:
                 listed = codex.models()
+            finally:
+                codex.close()
             result.extend(
                 CodexModel(m.id, m.display_name, m.description)
                 for m in listed.data
@@ -161,6 +168,9 @@ def sdk_codex_models(env: dict[str, str], timeout: float) -> list[CodexModel]:
     worker.start()
     worker.join(timeout)
     if worker.is_alive():
+        for codex in started:
+            with contextlib.suppress(Exception):
+                codex.close()
         raise Unavailable(f"Codex did not list its models within {timeout:g} seconds")
     if failure:
         raise Unavailable(f"Codex did not list its models ({type(failure[0]).__name__})")
@@ -219,6 +229,12 @@ def _live(source: Source, read: Callable[[], list[Option]], fallback: list[Optio
         return Found(read(), source, True)
     except Unavailable as why:
         return Found(fallback, "builtin", False, str(why))
+    except Exception as exc:  # by its type only: its text may quote a key or a body
+        return Found(fallback, "builtin", False, _unreadable(exc))
+
+
+def _unreadable(exc: Exception) -> str:
+    return f"the list could not be read ({type(exc).__name__})"
 
 
 def _default(field: str) -> str:
@@ -452,13 +468,19 @@ def has_options(key: str) -> bool:
 def options_for(key: str, settings: Settings, sources: Sources | None = None) -> Options:
     """The options for `KEY` (its environment name). `KeyError` for a key without any."""
     provide = PROVIDERS[key]
-    found = provide(settings, sources or default_sources(settings))
+    try:
+        found = provide(settings, sources or default_sources(settings))
+    except Exception as exc:  # the last line under "exit 0 for every supported key"
+        found = Found([], "builtin", False, _unreadable(exc))
     name = field_for(key)
     assert name is not None
     raw = getattr(settings, name)
     current = None if raw is None else str(raw)
     listed = list(found.options)
-    if current and current not in {option.value for option in listed}:
+    values = {option.value for option in listed}
+    if not current and "" in values:
+        current = ""  # unset is the blank option — Codex's default, the assistant's voice
+    elif current and current not in values:
         listed.append(Option(current, current, "current"))
     return Options(
         key, current, listed, found.source, found.live, key not in CLOSED, found.error

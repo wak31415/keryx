@@ -164,8 +164,16 @@ def test_probe_reads_ollamas_own_shape_too():
         (_Response(401), "does not accept that key"),
         (_Response(503), "HTTP 503"),
         (_Response(200, ValueError("not json")), "did not answer with a model list"),
+        (_Response(200, ["x"]), "did not answer with a model list"),
+        (_Response(200, "x"), "did not answer with a model list"),
     ],
 )
 def test_probe_failures_are_sentences(response, says):
     result = probe(Endpoint.parse("http://box"), get=_getter(response))
     assert not result.ok and says in (result.problem or "")
+
+
+def test_probe_reads_a_list_that_is_not_a_list_as_none():
+    body = {"data": 5, "models": "x"}
+    result = probe(Endpoint.parse("http://box"), get=_getter(_Response(200, body)))
+    assert result.ok and result.models == ()

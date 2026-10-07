@@ -184,11 +184,19 @@ def probe(endpoint: Endpoint, *, get: Callable[..., Any] = httpx.get) -> Probe:
     try:
         body = response.json()
     except ValueError:
+        body = None
+    if not isinstance(body, dict):  # a server may answer anything at all, `[]` included
         return Probe(False, problem=f"{endpoint.host} did not answer with a model list")
-    ids = [item.get("id") for item in body.get("data") or [] if isinstance(item, dict)]
+    ids = [item.get("id") for item in _listed(body, "data") if isinstance(item, dict)]
     ids += [
         item.get("model") or item.get("name")
-        for item in body.get("models") or []
+        for item in _listed(body, "models")
         if isinstance(item, dict)
     ]
     return Probe(True, tuple(dict.fromkeys(str(name) for name in ids if name)))
+
+
+def _listed(body: dict[str, Any], key: str) -> list[Any]:
+    """`body[key]` when it is a list; nothing when it is missing or anything else."""
+    value = body.get(key)
+    return value if isinstance(value, list) else []
