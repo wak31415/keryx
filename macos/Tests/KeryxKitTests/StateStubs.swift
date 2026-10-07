@@ -115,10 +115,6 @@ final class StubClient: KeryxClient, @unchecked Sendable {
     func use(model: String, defaultAgent: Bool) async throws -> UseResult {
         try answer("models use \(model)\(defaultAgent ? " --default-agent" : "")") { $0.use }
     }
-    func installModelServer() async throws -> String {
-        try write("install-launchd.sh --llm")
-        return "installed"
-    }
     func config() async throws -> [ConfigRow] { try answer("config list") { $0.config } }
     func set(key: String, value: String) async throws { try write("config set \(key) \(value)") }
     func setSecret(key: String, value: String) async throws { try write("config set \(key) --stdin") }

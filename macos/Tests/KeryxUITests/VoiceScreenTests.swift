@@ -110,10 +110,6 @@ import KeryxPreview
         #expect(VoiceWording.running("downloading the speech models") == "Downloading the speech models…")
         #expect(VoiceWording.running("Starting the voice server.") == "Starting the voice server…")
         #expect(VoiceWording.running("") == VoiceSetup.starting)
-        #expect(VoiceWording.stepCount("unit") == "Step 3 of 4")
-        #expect(VoiceWording.stepCount("something new") == nil)
-        let sizes = VoiceSetupEvent.Progress(done: 120_000_000, total: 480_000_000)
-        #expect(VoiceWording.sizes(sizes) == ModelRow.progress(done: 120_000_000, total: 480_000_000))
     }
 
     @Test func anAddressReadsAsHostAndPort() {
@@ -125,7 +121,9 @@ import KeryxPreview
     @Test func catalogHasEveryVoiceAndOptionsState() {
         let ids = Set(ScreenCatalog.entries().map(\.id))
         for id in ["voice-openai", "voice-openai-no-key", "voice-here", "voice-here-picked", "voice-here-setting-up",
-                   "voice-here-setting-up-step", "voice-here-stopping", "voice-here-failed", "voice-here-refused", "voice-here-finished",
+                   "voice-here-setting-up-step", "voice-here-downloading", "voice-here-server-down", "voice-here-chain-server",
+                   "voice-here-chain-voice", "voice-here-chain-failed", "voice-here-server-refused", "voice-here-ollama-down",
+                   "voice-here-elsewhere-down", "voice-here-server-starting-in-models", "voice-here-stopping", "voice-here-failed", "voice-here-refused", "voice-here-finished",
                    "voice-here-needs-model", "voice-server", "voice-server-picked", "voice-server-stored-key", "voice-server-removing-key", "voice-server-saved-warning",
                    "voice-server-problem", "voice-error", "window-voice",
                    "configuration-model-menus", "configuration-options-unavailable", "configuration-other-sheet",

@@ -250,11 +250,6 @@ public struct PreviewClient: KeryxClient {
         return try JSON.decoder.decode(UseResult.self, from: data)
     }
 
-    public func installModelServer() async throws -> String {
-        try check()
-        return "Installed dev.keryx.llm and started it."
-    }
-
     public func set(key: String, value: String) async throws { try check() }
     public func setSecret(key: String, value: String) async throws { try check() }
     public func unset(key: String) async throws { try check() }

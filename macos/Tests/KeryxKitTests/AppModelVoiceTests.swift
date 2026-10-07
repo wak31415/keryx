@@ -269,6 +269,7 @@ extension AppModelTests {
         #expect(Set(model.options.keys) == Set(keys))
         #expect(model.options["OPENAI_VOICE"]?.value == PreviewData.options["OPENAI_VOICE"])
         #expect(model.options["CODEX_MODEL"]?.value == PreviewData.options["CODEX_MODEL"])
-        #expect(model.options["VOICE_SERVER_STT"]?.value == PreviewData.builtinOptions("VOICE_SERVER_STT"))
+        #expect(model.options["VOICE_SERVER_STT"]?.value == PreviewData.options["VOICE_SERVER_STT"])
+        #expect(model.options["OPENAI_WEB_SEARCH_MODEL"]?.value == PreviewData.builtinOptions("OPENAI_WEB_SEARCH_MODEL"))
     }
 }

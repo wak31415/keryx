@@ -1,0 +1,20 @@
+{
+  "key": "VOICE_SERVER_STT",
+  "current": "parakeet-tdt",
+  "options": [
+    {
+      "value": "parakeet-tdt",
+      "label": "Parakeet TDT",
+      "detail": "NVIDIA's fast recogniser, in 25 European languages"
+    },
+    {
+      "value": "whisper",
+      "label": "Distil-Whisper",
+      "detail": "A smaller, faster Whisper; English only"
+    }
+  ],
+  "source": "builtin",
+  "live": false,
+  "free_form": true,
+  "error": null
+}

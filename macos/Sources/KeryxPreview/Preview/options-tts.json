@@ -1,0 +1,20 @@
+{
+  "key": "VOICE_SERVER_TTS",
+  "current": "kokoro",
+  "options": [
+    {
+      "value": "kokoro",
+      "label": "Kokoro",
+      "detail": "Small and quick, with natural voices"
+    },
+    {
+      "value": "qwen3",
+      "label": "Qwen3 TTS",
+      "detail": "Larger and more expressive; slower to answer"
+    }
+  ],
+  "source": "builtin",
+  "live": false,
+  "free_form": true,
+  "error": null
+}

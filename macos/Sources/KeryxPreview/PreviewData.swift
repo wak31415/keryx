@@ -124,14 +124,14 @@ public enum PreviewData {
     }
 
     /// The `config options` documents there are fixtures for, by file, one per key. The
-    /// voice, Claude, Codex, catalog and Kokoro lists are captured from a sandbox (the
+    /// voice, Claude, Codex, catalog, Kokoro and speech model lists are captured from a sandbox (the
     /// catalog's "fits" edited to match `models.json`'s Mac); the live OpenAI and
     /// model-server lists, which a sandbox with no key and no server cannot give, are
     /// written by hand.
     public static let optionsFixtures = [
         "options-realtime.json", "options-transcription.json", "options-voice.json",
         "options-subagent.json", "options-codex.json", "options-local-agent.json", "options-llm-server.json",
-        "options-kokoro.json",
+        "options-kokoro.json", "options-stt.json", "options-tts.json",
     ]
 
     /// The Realtime models with no OpenAI key to ask with: the built-in list and why,

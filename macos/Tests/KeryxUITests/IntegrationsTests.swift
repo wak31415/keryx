@@ -240,19 +240,23 @@ import KeryxPreview
     // MARK: - Quitting
 
     @Test func quittingDuringASignInAsksFirst() {
-        #expect(Quitting.adding(signIn: nil, to: nil) == nil)
-        let alone = Quitting.adding(signIn: "Claude", detail: SignInWording.quitDetail(.claude), to: nil)
+        func ask(_ name: String?, _ detail: String? = nil, downloading: Bool = false) -> Quitting.Question? {
+            Quitting.question(downloading: downloading, settingUpVoice: false, signingIn: name, signInDetail: detail,
+                              assistant: "Lyra")
+        }
+        #expect(ask(nil) == nil)
+        let alone = ask("Claude", SignInWording.quitDetail(.claude))
         #expect(alone?.message == "A sign-in to Claude is still going. Quit anyway?")
         #expect(alone?.detail == "The sign-in stops, and nothing is saved. You can start it again later.")
         // Google for agents is turned on as its sign-in starts: something is kept.
         let workspace = SignInWording.quitDetail(.googleWorkspace)
         #expect(!workspace.contains("nothing is saved"))
         #expect(workspace.contains("stays turned on"))
-        #expect(Quitting.adding(signIn: "Google for agents", detail: workspace, to: nil)?.detail == workspace)
-        let download = Quitting.question(downloading: true, settingUpVoice: false, assistant: "Lyra")
-        let both = Quitting.adding(signIn: "Gmail", to: download)
-        #expect(both?.message == download?.message)
-        #expect(both?.detail.hasSuffix(" The sign-in to Gmail stops too.") == true)
-        #expect(Quitting.adding(signIn: nil, to: download) == download)
+        #expect(ask("Google for agents", workspace)?.detail == workspace)
+        // With something else under way, one question names both.
+        let both = ask("Gmail", downloading: true)
+        #expect(both?.message == "A model is downloading and a sign-in to Gmail is still going. Quit anyway?")
+        #expect(both?.detail == "Both stop. The download picks up where it left off, and the sign-in to Gmail "
+            + "can be started again later.")
     }
 }

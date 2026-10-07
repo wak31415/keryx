@@ -8,50 +8,71 @@ public enum Quitting {
         public let detail: String
     }
 
-    /// The question for a download under way, a voice setup under way, Keryx's service
-    /// being installed or uninstalled, or several; `nil` when none is and the app can just
-    /// quit. `assistant`: the assistant's name ("Lyra").
-    public static func question(downloading: Bool, settingUpVoice: Bool, assistant: String?,
+    /// The question for what is under way — a model download, a voice setup, a model
+    /// server start, a speech model download, a sign-in, Keryx's service being installed or
+    /// uninstalled, any of them together; `nil` when none is and the app can just quit.
+    /// `signingIn`: what a sign-in under way signs in to ("Claude"), and `signInDetail` what
+    /// stopping it does. `assistant`: the assistant's name ("Lyra").
+    public static func question(downloading: Bool, settingUpVoice: Bool, startingModelServer: Bool = false,
+                                downloadingVoiceModels: Bool = false, signingIn: String? = nil,
+                                signInDetail: String? = nil, assistant: String?,
                                 changingService: AppModel.ServiceChange? = nil) -> Question? {
-        let base = question(downloading: downloading, settingUpVoice: settingUpVoice, assistant: assistant)
-        guard let changingService else { return base }
-        let (doing, button) = switch changingService {
-        case .installing: ("Keryx's service is being installed", "Install…")
-        case .uninstalling: ("Keryx's service is being uninstalled", "Uninstall…")
+        // What is under way, as a clause; what quitting does to it alone; and how it comes
+        // back, said beside the others.
+        var under: [(clause: String, alone: String, again: String)] = []
+        if downloading {
+            under.append(("a model is downloading", "It will pick up where it left off next time.",
+                          "the download picks up where it left off"))
         }
-        let stops = "It may stop part way; \(button) in the Overview runs it again."
-        guard let base else { return Question(message: "\(doing). Quit anyway?", detail: stops) }
-        return Question(message: base.message, detail: "\(base.detail) \(doing) as well. \(stops)")
+        if settingUpVoice {
+            under.append(("\(possessive(assistant, opening: false)) voice is being set up",
+                          "The setup stops. Set Up… in Voice starts it again.",
+                          "Set Up… in Voice starts the setup again"))
+        }
+        if startingModelServer {
+            under.append(("the model server is starting",
+                          "It stops, and its service is removed. Start Model Server in Local Models starts it again.",
+                          "Start Model Server in Local Models starts the model server again"))
+        }
+        if downloadingVoiceModels {
+            under.append(("the speech models are downloading",
+                          "Download in Local Models picks up where it left off.",
+                          "the speech models pick up where they left off"))
+        }
+        if let signingIn {
+            under.append(("a sign-in to \(signingIn) is still going",
+                          signInDetail ?? "The sign-in stops. You can start it again later.",
+                          "the sign-in to \(signingIn) can be started again later"))
+        }
+        if let changingService {
+            // An installer stopped part way may leave the service half done.
+            let (doing, verb, button) = switch changingService {
+            case .installing: ("Keryx's service is being installed", "install", "Install…")
+            case .uninstalling: ("Keryx's service is being uninstalled", "uninstall", "Uninstall…")
+            }
+            under.append((doing, "It may stop part way; \(button) in the Overview runs it again.",
+                          "the service's \(verb) may stop part way (\(button) in the Overview runs it again)"))
+        }
+        guard let first = under.first else { return nil }
+        guard under.count > 1 else {
+            return Question(message: sentence(first.clause) + ". Quit anyway?", detail: first.alone)
+        }
+        let doing = list(under.map(\.clause), comma: false)
+        let again = list(under.map(\.again), comma: true)
+        return Question(message: sentence(doing) + ". Quit anyway?",
+                        detail: (under.count == 2 ? "Both stop. " : "They all stop. ") + sentence(again) + ".")
     }
 
-    private static func question(downloading: Bool, settingUpVoice: Bool, assistant: String?) -> Question? {
-        let voice = "\(possessive(assistant, opening: true)) voice is being set up"
-        switch (downloading, settingUpVoice) {
-        case (false, false):
-            return nil
-        case (true, false):
-            return Question(message: "A model is downloading. Quit anyway?",
-                            detail: "It will pick up where it left off next time.")
-        case (false, true):
-            return Question(message: "\(voice). Quit anyway?",
-                            detail: "The setup stops. Set Up… in Voice starts it again.")
-        case (true, true):
-            return Question(message: "A model is downloading and \(possessive(assistant, opening: false)) voice is being set up. Quit anyway?",
-                            detail: "Both stop. The download picks up where it left off, and Set Up… in Voice "
-                                + "starts the setup again.")
-        }
+    /// "a and b", "a, b and c"; with `comma`, a comma before the "and" too, for clauses
+    /// long enough to want one.
+    private static func list(_ parts: [String], comma: Bool) -> String {
+        guard let last = parts.last, parts.count > 1 else { return parts.first ?? "" }
+        return parts.dropLast().joined(separator: ", ") + (comma ? ", and " : " and ") + last
     }
 
-    /// `question` with a sign-in under way added (`signingIn`: what it signs in to,
-    /// "Claude"; `detail`: what stopping it loses): asked on its own when nothing else would
-    /// ask, else said in the detail.
-    public static func adding(signIn signingIn: String?, detail: String? = nil, to question: Question?) -> Question? {
-        guard let signingIn else { return question }
-        guard let question else {
-            return Question(message: "A sign-in to \(signingIn) is still going. Quit anyway?",
-                            detail: detail ?? "The sign-in stops. You can start it again later.")
-        }
-        return Question(message: question.message, detail: question.detail + " The sign-in to \(signingIn) stops too.")
+    /// The first letter raised.
+    private static func sentence(_ text: String) -> String {
+        text.prefix(1).uppercased() + text.dropFirst()
     }
 
     /// "Lyra's", or "the assistant's" before a name is known ("The" opening a sentence).

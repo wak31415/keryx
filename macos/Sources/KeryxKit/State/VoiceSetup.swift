@@ -27,6 +27,9 @@ public final class VoiceSetup {
     public nonisolated static let starting = "Starting…"
 
     public private(set) var phase: Phase?
+    /// The step the latest setup reached, kept once it has ended — so a failure can be
+    /// shown at the step it stopped on. Empty until its first step.
+    public private(set) var lastStep = ""
     @ObservationIgnored private var run: UUID?
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var stop: (@Sendable () -> Void)?
@@ -54,6 +57,7 @@ public final class VoiceSetup {
         let run = UUID()
         self.run = run
         stopping = false
+        lastStep = ""
         phase = .running(step: "", message: Self.starting, progress: nil)
         let stream = client.voiceHere(voice: voice)
         stop = { stream.stop() }
@@ -147,6 +151,7 @@ public final class VoiceSetup {
     private func update(_ run: UUID, to phase: Phase?) {
         guard self.run == run else { return }
         if case .running = phase, stopping { return }
+        if case let .running(step, _, _) = phase { lastStep = step }
         self.phase = phase
     }
 }

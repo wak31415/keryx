@@ -5,12 +5,10 @@ import KeryxPreview
 
 @MainActor
 @Suite struct AppModelTests {
-    /// Short enough that nothing waits on a real 30 s, 2 s or 3 s.
-    static let fast = AppModel.Timing(poll: .milliseconds(5), afterModelServer: .milliseconds(1),
-                                      afterRestart: .milliseconds(1))
+    /// Short enough that nothing waits on a real 30 s or 3 s.
+    static let fast = AppModel.Timing(poll: .milliseconds(5), afterRestart: .milliseconds(1))
     /// No poll at all.
-    static let noPoll = AppModel.Timing(poll: nil, afterModelServer: .milliseconds(1),
-                                        afterRestart: .milliseconds(1))
+    static let noPoll = AppModel.Timing(poll: nil, afterRestart: .milliseconds(1))
 
     func makeModel(
         locator: StubLocator = StubLocator(), client: StubClient = StubClient(),
@@ -269,15 +267,6 @@ import KeryxPreview
         #expect(client.calls.contains("approvals --disable"))
         #expect(client.calls.suffix(2).sorted() == ["approvals", "status"])
         #expect(!model.configNeedsRestart)
-    }
-
-    @Test func startModelServerRefreshesModels() async {
-        let client = StubClient()
-        let model = makeModel(client: client)
-        await model.start()
-        defer { model.stop() }
-        #expect(await model.startModelServer() == nil)
-        #expect(Array(client.calls.suffix(2)) == ["install-launchd.sh --llm", "models list"])
     }
 
     @Test func aDownloadThatFinishesRefreshesModels() async {
