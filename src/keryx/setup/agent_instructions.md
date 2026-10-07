@@ -33,9 +33,9 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
 5. **Models of their own, if they want them.** `keryx models list --json` shows this
    machine's GPU and memory and which downloadable models fit, one marked recommended;
    `keryx models pull NAME` downloads it (or links a copy already on disk). Then
-   `keryx config set LLM_SERVER_MODEL NAME LOCAL_AGENT_BASE_URL http://127.0.0.1:8090
-   LOCAL_AGENT_MODEL NAME` and `scripts/install-systemd.sh --llm` (`install-launchd.sh` on a
-   Mac) runs it; `keryx config set AGENTS_ENABLED claude,local` offers it. A local voice is
+   `keryx models use NAME` saves what `keryx setup` would (the model server and the local
+   agent, offered as `local`; `--default-agent` if they want it doing unnamed work too), and
+   `scripts/install-systemd.sh --llm` (`install-launchd.sh` on a Mac) runs it. A local voice is
    `--voice` the same way, with `VOICE_BASE_URL` set only once `keryx doctor` says the voice
    server opens a Realtime session. A server elsewhere is just its address in
    `LOCAL_AGENT_BASE_URL` or `VOICE_BASE_URL`, its key by `--stdin`.

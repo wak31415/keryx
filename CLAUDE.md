@@ -71,10 +71,15 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `scripts/install-launchd.sh [--uninstall]` on macOS; `--llm` / `--voice` install the local
   model servers' units instead (`keryx models serve llm|voice`)
 - Models on this machine: `uv run keryx models list [--json]` (the catalog against this
-  machine's GPU and memory, the recommended one marked, and the local voices), `models pull
-  NAME` (resumable, checksummed, into `CACHE_DIR/models`; a copy in the Hugging Face cache is
-  linked instead), `models serve llm|voice` (what the units run: it reads the settings and
-  becomes the server)
+  machine's GPU and memory, the recommended one marked, and the local voices; `--json` adds
+  `servers`, the model and voice servers' units and whether they answer, asked on loopback
+  only), `models pull NAME [--json]` (resumable, checksummed, into `CACHE_DIR/models`; a copy
+  in the Hugging Face cache is linked instead; `--json` is JSON lines — `progress`, then
+  exactly one of `done`, `adopted`, `error`, `cancelled` on every path, a refusal included;
+  a SIGTERM cancels, exit 130, and keeps the `.part`), `models use NAME [--default-agent]
+  [--json]` (a downloaded model as the local agent's: saves what the wizard would, through
+  the same `localmodels/use.py`; a restart picks it up), `models serve llm|voice` (what the
+  units run: it reads the settings and becomes the server)
 
 ## Layout
 
@@ -161,10 +166,12 @@ remember:
 - **localmodels** — `localmodels/` is the model on this machine: `hardware` (the GPU, the
   memory, the disk), `catalog` (the models offered, with verified files and checksums, what
   fits, the recommendation, the Kokoro voices), `download`, `runtimes` (finding or installing
-  llama.cpp and speech-to-speech, both pinned) and `servers` (each server's command line from
-  the settings, `free_port`, `wait_for`). `setup/local_models.py` is the wizard's section and
-  `keryx models` the command line; every install, download and network read in the wizard
-  goes through `Probes`.
+  llama.cpp and speech-to-speech, both pinned), `servers` (each server's command line from
+  the settings, `free_port`, `wait_for`), `pull` (`keryx models pull`'s steps, told as a
+  progress bar or as JSON lines) and `use` (the settings that make a model the local agent's —
+  `llama_values`, `enable_local`, which the wizard and `keryx models use` both save — and the
+  servers' status). `setup/local_models.py` is the wizard's section and `keryx models` the
+  command line; every install, download and network read in the wizard goes through `Probes`.
 - **continuity** — `continuity/` is what survives the end of a call: `briefing`, `memory`
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
   `retention`, which prunes exactly those artefacts.

@@ -39,12 +39,24 @@ From the command line:
 ```bash
 uv run keryx models list            # what fits this machine, the recommended one marked, the voices
 uv run keryx models pull qwen3-coder-30b-a3b
-uv run keryx config set LLM_SERVER_MODEL qwen3-coder-30b-a3b \
-    LOCAL_AGENT_BASE_URL http://127.0.0.1:8090 LOCAL_AGENT_MODEL qwen3-coder-30b-a3b \
-    AGENTS_ENABLED claude,local
+uv run keryx models use qwen3-coder-30b-a3b   # --default-agent to have it do unnamed work too
 scripts/install-systemd.sh --llm     # install-launchd.sh on a Mac
+uv run keryx restart                 # Keryx reads the new settings when it starts
 uv run keryx auth status --smoke     # one real task on each enabled agent
 ```
+
+`keryx models use` saves exactly what `keryx setup` would for the same model — the model
+server's model and port (a free one, the first time), the local agent's address and model,
+and `local` among `AGENTS_ENABLED` — and refuses a model that is not downloaded yet.
+
+For a program driving these: `keryx models list --json` adds `servers` (the model server,
+the voice server and the local agent: whether each unit is installed, and whether a server
+on this machine answers — a server elsewhere is never asked). `keryx models pull NAME --json`
+prints JSON lines: `{"event": "progress", "done": …, "total": …}`, then exactly one of
+`done` (with its `path`), `adopted` (`path` and `from`), `error` (`message`) or `cancelled` —
+a refusal before the download included. A SIGTERM or SIGINT cancels it with exit 130, and
+the partial download stays, so the next pull resumes it. `keryx models use NAME --json`
+prints `{"saved": …, "llama_server": …, "restart_needed": true}`.
 
 ## What an address is
 

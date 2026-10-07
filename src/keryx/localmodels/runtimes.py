@@ -43,9 +43,11 @@ def llama_cpp_dir(cache_dir: Path) -> Path:
     return cache_dir / "llama.cpp" / LLAMA_CPP_BUILD
 
 
-def llama_server(cache_dir: Path) -> str | None:
-    """`llama-server`: the one on PATH, else the build Keryx installed."""
-    found = which("llama-server")
+def llama_server(
+    cache_dir: Path, *, lookup: Callable[[str], str | None] | None = None
+) -> str | None:
+    """`llama-server`: the one on PATH (`lookup` finds it), else the build Keryx installed."""
+    found = (lookup or which)("llama-server")
     if found:
         return found
     installed = llama_cpp_dir(cache_dir)

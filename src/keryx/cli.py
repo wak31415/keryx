@@ -13,13 +13,12 @@ import signal
 import subprocess
 import sys
 import textwrap
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
 
-import rich.progress
 import typer
 import uvicorn
 from pydantic import ValidationError
@@ -63,7 +62,7 @@ from keryx.doctor import (
     run_doctor_checks,
 )
 from keryx.events import EventBus
-from keryx.localmodels import catalog, download, hardware, servers
+from keryx.localmodels import catalog, download, hardware, pull, runtimes, servers, use
 from keryx.logging_util import mask_number
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
@@ -275,7 +274,9 @@ def _load_settings_optional() -> Settings:
     return _load_settings_reporting()[0]
 
 
-def _configure_readonly(*, quiet: bool = True, migrated: bool = True) -> Settings:
+def _configure_readonly(
+    *, quiet: bool = True, migrated: bool = True, refuse: Callable[[str], None] | None = None
+) -> Settings:
     """`_configure` for the read-only commands (no `OPENAI_API_KEY` required).
 
     `quiet` because these print an answer, and `LOG_LEVEL` is the service's setting: the
@@ -287,10 +288,24 @@ def _configure_readonly(*, quiet: bool = True, migrated: bool = True) -> Setting
     one — and `keryx tasks list` would create a new `tasks.db` for the migration to trip
     over. The restart watchdog, which must report whatever it finds, passes False, and so
     does `setup`, whose wizard says it in its own words.
+
+    `refuse` is told each way this stops — the refusal above, or settings that will not
+    load — in place of stderr, before the same exit code: `models pull --json`, whose reader
+    has only stdout. Without it, settings that will not load raise, as they always have.
     """
-    settings = _load_settings_optional()
+    try:
+        settings = _load_settings_optional()
+    except (ConfigFileError, ValidationError) as error:
+        if refuse is None:
+            raise
+        refuse(_config_summary(error) if isinstance(error, ValidationError) else str(error))
+        raise typer.Exit(1) from None
     if migrated and (refusal := settings.storage_refusal()):
-        typer.echo(f"keryx cannot do that yet: {refusal}", err=True)
+        message = f"keryx cannot do that yet: {refusal}"
+        if refuse is None:
+            typer.echo(message, err=True)
+        else:
+            refuse(message)
         raise typer.Exit(2)
     settings.ensure_dirs()
     level = logging.getLevelNamesMapping().get(settings.log_level.upper(), logging.INFO)
@@ -1055,6 +1070,8 @@ def models_list(
             "models_dir": str(download.models_dir(settings.cache_dir)),
             "models": rows,
             "voices": [{"name": name, "sounds": sounds} for name, sounds in catalog.VOICES],
+            "servers": use.server_status(settings, installed=use.unit_installed,
+                                         reachable=use.reachable, which=runtimes.which),
         }, indent=2))
         return
     typer.echo(f"# {machine.describe()}; models in {download.models_dir(settings.cache_dir)}")
@@ -1075,38 +1092,57 @@ def models_list(
 @models_app.command("pull")
 def models_pull(
     name: Annotated[str, typer.Argument(help="A name from `keryx models list`.")],
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Print it as JSON lines: progress, then how it ended."),
+    ] = False,
 ) -> None:
     """Download one model into CACHE_DIR/models, picking up a download that was cut off."""
+    if not as_json:
+        raise typer.Exit(pull.pull(_configure_readonly(), name, pull.TextReport(typer.echo)))
+    events = pull.JsonLines(typer.echo)
+    with pull.terminate_as_interrupt():
+        code = events.guard(
+            lambda: pull.pull(_configure_readonly(refuse=events.error), name, events)
+        )
+    raise typer.Exit(code)
+
+
+@models_app.command("use")
+def models_use(
+    name: Annotated[str, typer.Argument(help="A downloaded model, from `keryx models list`.")],
+    default_agent: Annotated[
+        bool,
+        typer.Option("--default-agent",
+                     help="Also make the local agent the one that runs what nobody named."),
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Make a downloaded model the local agent's, served here by llama.cpp.
+
+    It saves what `keryx setup` would; the model server and Keryx pick it up when restarted.
+    """
     settings = _configure_readonly()
     entry = catalog.by_key(name)
     if entry is None:
         typer.echo(f"there is no model called {name} (`keryx models list`)", err=True)
         raise typer.Exit(2)
-    dest = download.model_path(settings.cache_dir, entry)
-    if not download.is_downloaded(settings.cache_dir, entry) and (
-        found := download.already_on_disk(entry)
-    ):
-        adopted = download.adopt(settings.cache_dir, entry, found)
-        typer.echo(f"{adopted} (already in {found.parent})")
-        return
-    need = download.remaining_bytes(settings.cache_dir, entry) + download.DISK_MARGIN_BYTES
-    free = hardware.free_bytes(dest.parent)
-    if need > download.DISK_MARGIN_BYTES and free < need:
-        typer.echo(f"{entry.title} needs {need / 1e9:.1f} GB free on {dest.parent} and there "
-                   f"is {free / 1e9:.1f} GB", err=True)
+    if not download.is_downloaded(settings.cache_dir, entry):
+        typer.echo(f"download it first: keryx models pull {name}", err=True)
         raise typer.Exit(1)
-    download.ensure_model_dir(settings.cache_dir, entry)
-    with rich.progress.Progress(
-        *rich.progress.Progress.get_default_columns(), rich.progress.DownloadColumn()
-    ) as bar:
-        task = bar.add_task(entry.title, total=entry.size)
-        try:
-            download.download(entry.url, dest, size=entry.size, sha256=entry.sha256,
-                              progress=lambda done: bar.update(task, completed=done))
-        except download.DownloadError as error:
-            typer.echo(str(error), err=True)
-            raise typer.Exit(1) from None
-    typer.echo(f"{dest}")
+    values = use.llama_values(settings, entry.key, entry.key, free_port=servers.free_port)
+    values |= use.enable_local(settings, default=default_agent)
+    if not as_json:
+        _store_values(values)
+        installer = INSTALLERS["launchd" if sys.platform == "darwin" else "systemd"]
+        typer.echo(f"next: {installer} --llm to run the model server, then `keryx restart`")
+        return
+    saved = _store_values(values, echo=False)
+    typer.echo(json.dumps({
+        "saved": saved,
+        "llama_server": runtimes.llama_server(settings.cache_dir),
+        "restart_needed": True,
+    }, indent=2))
 
 
 @models_app.command("serve")
@@ -1609,7 +1645,9 @@ def config_set(
     _store_values(values)
 
 
-def _store_values(values: dict[str, Any]) -> None:
+def _store_values(values: dict[str, Any], *, echo: bool = True) -> dict[str, Any]:
+    """Save `values` as whoever is running this; what was stored. A refusal is said on
+    stderr and exits 1. `echo` says, line by line, where each one went."""
     store = ConfigStore()
     settings = _load_settings_optional()
     actor = current_actor()
@@ -1618,6 +1656,8 @@ def _store_values(values: dict[str, Any]) -> None:
     except ConfigError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
+    if not echo:
+        return stored
     for key, value in stored.items():
         name = field_for(key)
         where = "secrets.toml" if name is not None and is_secret(name) else "config.toml"
@@ -1626,6 +1666,7 @@ def _store_values(values: dict[str, Any]) -> None:
             typer.echo(f"note: {key} is also set in the environment, which wins")
     if actor == SERVICE:
         typer.echo("set; takes effect after a restart")
+    return stored
 
 
 @config_app.command("unset")

@@ -41,6 +41,7 @@ from keryx.localmodels.download import (
 from keryx.localmodels.hardware import Hardware
 from keryx.localmodels.runtimes import LLAMA_CPP_BUILD, s2s_install_argv, which
 from keryx.localmodels.servers import HOST
+from keryx.localmodels.use import enable_local, llama_values, messages_harness
 from keryx.setup.agents import passed_smoke
 from keryx.setup.context import SetupContext
 from keryx.setup.sections import repo_root
@@ -133,21 +134,16 @@ def _agent_here(ctx: SetupContext, machine: Hardware, *, reserve_gb: float) -> N
             ui.error("ollama pull did not finish")
             return
         values = {"LOCAL_AGENT_BASE_URL": f"{OLLAMA_URL}/v1", "LOCAL_AGENT_MODEL": entry.ollama,
-                  "LLM_SERVER_MODEL": None}
+                  "LLM_SERVER_MODEL": None, **messages_harness()}
     else:
         if entry is not None and not _have_model(ctx, entry):
             return
-        port = settings.llm_server_port
-        if not settings.llm_server_model:  # not already ours: make sure nothing else is there
-            port = ctx.probes.free_port(port)
-        alias = entry.key if entry is not None else own.rsplit("/", 1)[-1].removesuffix(".gguf")
-        values = {
-            "LLM_SERVER_MODEL": entry.key if entry is not None else own,
-            "LLM_SERVER_PORT": port,
-            "LOCAL_AGENT_BASE_URL": f"http://{HOST}:{port}/v1",
-            "LOCAL_AGENT_MODEL": alias,
-        }
-    values |= {"LOCAL_AGENT_API_KEY": None, "LOCAL_AGENT_API": "anthropic-messages"}
+        if entry is not None:
+            model = alias = entry.key
+        else:
+            assert own is not None
+            model, alias = own, own.rsplit("/", 1)[-1].removesuffix(".gguf")
+        values = llama_values(settings, model, alias, free_port=ctx.probes.free_port)
     if not ctx.save(values):
         return
     if runtime == "llama":
@@ -304,13 +300,10 @@ def _agent_elsewhere(ctx: SetupContext) -> None:
 def _use_local(ctx: SetupContext) -> None:
     """Enable the local agent, ask whether it is the default, and run one real task on it."""
     ui, settings = ctx.ui, ctx.settings
-    enabled = list(dict.fromkeys([*settings.enabled_agents, "local"]))
-    backend = settings.agent_backend
-    if backend != "local" and ui.confirm(
+    default = settings.agent_backend == "local" or ui.confirm(
         "Should the local model do the work when you do not name an agent?", default=False
-    ):
-        backend = "local"
-    if not ctx.save({"AGENTS_ENABLED": ",".join(enabled), "AGENT_BACKEND": backend}):
+    )
+    if not ctx.save(enable_local(settings, default=default)):
         return
     label = BACKENDS["local"].label
     with ui.spinner(f"Running one real task on the {label.lower()}…"):
