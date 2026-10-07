@@ -26,6 +26,9 @@ settings: a removed or renamed setting or command is a major bump.
 ### Changed
 
 - `OPENAI_API_KEY` is needed only for OpenAI's voice (and OpenAI's search, if you pick it).
+- A result Keryx announces during a call is marked as told once the announcement starts
+  playing, even if you interrupt it, so it does not come back at the top of your next call
+  ([#82](https://github.com/wak31415/keryx/issues/82)).
 
 ## [0.1.0] - 2026-09-30
 

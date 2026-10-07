@@ -13,7 +13,7 @@ if you want them, and anything else is [a tool of your own](#your-own-tools).
 | `get_task_result` | the spoken summary a finished task produced |
 | `send_followup` | add something to a task already in flight |
 | `cancel_task` | stop one |
-| `mark_reported` | record that a result has now been *said out loud* — the only thing that stops it riding the next call's digest |
+| `mark_reported` | record that a result has now been *said out loud*, which stops it riding the next call's digest (a result Keryx announced mid-call is also stamped once it starts playing) |
 | `recall` | search past call transcripts and past task summaries |
 | `list_projects` | the project names that can be dispatched into |
 | `request_callback` | call back when a task lands |

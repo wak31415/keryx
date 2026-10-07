@@ -15,6 +15,7 @@ decides whether that is worth a log line, a fallback, or nothing at all.
 """
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -54,6 +55,7 @@ async def announce_to_live_sessions(
     *,
     needs: TrustLevel = TrustLevel.FULL,
     skip: Any = None,
+    on_heard: Callable[[], Awaitable[object]] | None = None,
 ) -> Announced:
     """Speak `text` into every live session that is trusted enough for it. Never raises.
 
@@ -74,6 +76,9 @@ async def announce_to_live_sessions(
     An exception part-way through stops the loop rather than skipping to the next session,
     which is what the three copies of this did and is the safer of the two: whatever broke
     the first `announce` is likely to break the rest, and the caller's fallback is a text.
+
+    `on_heard` goes to each session that speaks it, which runs it once the owner has
+    started to hear it (`VoiceSession.announce`); it may run more than once.
     """
     heard = False
     delivered = False
@@ -82,7 +87,8 @@ async def announce_to_live_sessions(
             if skip is not None and skip(session):
                 heard = delivered = True
                 continue
-            spoken = await session.announce(text, needs=needs)
+            extra = {} if on_heard is None else {"on_heard": on_heard}
+            spoken = await session.announce(text, needs=needs, **extra)
             heard = heard or spoken
             delivered = delivered or (spoken and _counts_as_delivery(session))
     except Exception:

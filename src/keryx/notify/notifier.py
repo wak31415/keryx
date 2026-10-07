@@ -26,6 +26,7 @@ call-back, and nothing here may ever raise into the event bus.
 
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from keryx.config import Settings
@@ -190,6 +191,7 @@ class Notifier:
             text,
             needs=TrustLevel.NONE,
             skip=holding_the_line,
+            on_heard=lambda: self._heard(task),
         )
         if announced.heard:
             try:
@@ -197,6 +199,17 @@ class Notifier:
             except Exception:
                 log.exception("could not record that task %s was announced", task.id)
         return announced.delivered
+
+    async def _heard(self, task: Task) -> None:
+        """The announcement began playing to them: they have been told, interrupted or not.
+
+        The voice model's `mark_reported` is the other way a result is stamped, and the
+        only one for a result it says unprompted; here Keryx put the words in its mouth, and
+        a model that forgets the bookkeeping call must not make them hear it all again.
+        """
+        stamped = await self._store.mark_reported([task.id], when=datetime.now(UTC))
+        if stamped:
+            log.info("task %s was heard as it was announced; marked reported", task.id)
 
     # --- (2) the text ------------------------------------------------------
 

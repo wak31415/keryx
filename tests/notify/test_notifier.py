@@ -177,6 +177,27 @@ async def harness(harnesses) -> Harness:
 # --- (1) announcing into live sessions -------------------------------------
 
 
+async def test_a_result_is_marked_reported_once_its_announcement_starts_playing(harness):
+    session = harness.session(channel="phone")
+    task = await harness.task(origin_channel="phone", origin_caller=CALLER)
+
+    await harness.finished(task, "the tests pass now")
+    assert (await harness.row(task)).reported_at is None  # put in, not yet heard
+
+    await session.play()
+
+    assert (await harness.row(task)).reported_at is not None
+
+
+async def test_a_result_never_heard_is_not_marked_reported(harness):
+    harness.session(channel="phone")
+    task = await harness.task(origin_channel="phone", origin_caller=CALLER)
+
+    await harness.finished(task, "the tests pass now")
+
+    assert (await harness.row(task)).reported_at is None
+
+
 async def test_a_live_phone_session_hears_the_result_and_nothing_else_goes_out(harness):
     session = harness.session(channel="phone")
     task = await harness.task(origin_channel="phone", origin_caller=CALLER)

@@ -268,6 +268,9 @@ class VoiceSession:
         self._current_item_id: str | None = None
         self._item_first_ts_ms: float | None = None
         self._item_bytes_sent = 0
+        #: Announcements waiting to be heard: the item that was playing when each was put
+        #: in, and what to run once a later one starts playing (`announce(on_heard=…)`).
+        self._heard_waiting: list[tuple[str | None, Callable[[], Awaitable[object]]]] = []
         #: When the session opened, until its first audio: see `_on_audio_delta`.
         self._opened_at: float | None = None
         self._last_audio_ts_ms: int | None = None
@@ -416,7 +419,13 @@ class VoiceSession:
             await self._stop_tasks([*pumps, finish], report=True)
             await self._teardown()
 
-    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
+    async def announce(
+        self,
+        text: str,
+        *,
+        needs: TrustLevel = TrustLevel.FULL,
+        on_heard: Callable[[], Awaitable[object]] | None = None,
+    ) -> bool:
         """Speak an out-of-band message. False when this call has not earned it.
 
         `needs` is what the announcement itself requires, because they are not alike. A
@@ -428,6 +437,11 @@ class VoiceSession:
         The False matters as much as the True: it is what stops a call counting as having
         told them, so the call-back or the text that would otherwise be skipped still goes
         out (`keryx.notify.deliver`).
+
+        `on_heard` runs once the reply to it starts playing on a call that proves the owner
+        is the one listening (`_heard_by_the_owner`) — started, not finished: an interruption
+        means they heard it begin. A reply that was already playing when this came in is
+        not it; the next one is.
         """
         if not self.is_live or self.trust < needs:
             return False
@@ -435,12 +449,16 @@ class VoiceSession:
             # Only news gets this far, and the owner has said a stranger may not hear it.
             return False
         log.info("session %s announcing: %s", self.session_id, text)
-        return await self._safe_call(
+        playing = self._current_item_id
+        spoken = await self._safe_call(
             self._provider.inject_message,
             f"[system] {text}",
             respond=True,
             response_instructions=ANNOUNCE_INSTRUCTIONS,
         )
+        if spoken and on_heard is not None:
+            self._heard_waiting.append((playing, on_heard))
+        return spoken
 
     def request_end(self, reason: str = "user") -> None:
         """Ask for the session to end once the response that is speaking has finished."""
@@ -891,6 +909,29 @@ class VoiceSession:
             self._opened_at = None
         self._item_bytes_sent += len(event.audio)
         await self._safe_call(self._transport.send_audio, event.audio)
+        if self._heard_waiting:
+            await self._announcements_heard(event.item_id)
+
+    async def _announcements_heard(self, item_id: str) -> None:
+        """Run `on_heard` for each announcement whose reply this audio is."""
+        waiting, self._heard_waiting = self._heard_waiting, []
+        for playing, on_heard in waiting:
+            if item_id == playing:
+                self._heard_waiting.append((playing, on_heard))  # still the reply before it
+                continue
+            if not self._heard_by_the_owner():
+                continue  # it played, to someone not proved to be them: it stays unheard
+            try:
+                await on_heard()
+            except Exception:
+                log.exception("session %s: could not record an announcement as heard",
+                              self.session_id)
+
+    def _heard_by_the_owner(self) -> bool:
+        """A phone call that has proved at least possession: the bar `keryx.notify.deliver`
+        sets for a call counting as having told them. The microphone does not count — they
+        may have walked away from it."""
+        return self.channel == "phone" and self.trust >= TrustLevel.POSSESSION
 
     async def _on_speech_started(self) -> None:
         """The caller started talking: on the phone that is a barge-in."""

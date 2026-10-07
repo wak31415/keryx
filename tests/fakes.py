@@ -223,11 +223,23 @@ class FakeVoiceSession:
         self.trust = trust
         self.error = error
         self.announced: list[str] = []
+        #: What each accepted announcement asked to run once it is heard (`play()` runs it).
+        self.on_heard: list = []
 
-    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
+    async def announce(
+        self, text: str, *, needs: TrustLevel = TrustLevel.FULL, on_heard=None
+    ) -> bool:
         if self.error is not None:
             raise self.error
         if not self.accepts or self.trust < needs:
             return False
         self.announced.append(text)
+        if on_heard is not None:
+            self.on_heard.append(on_heard)
         return True
+
+    async def play(self) -> None:
+        """The announcements' replies start playing: what the real session does on audio."""
+        heard, self.on_heard = self.on_heard, []
+        for on_heard in heard:
+            await on_heard()

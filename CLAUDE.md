@@ -377,10 +377,16 @@ Keryx knows at the top of a call is assembled every time by
   Until `reported_at` is stamped, the task rides at the top of the next call — from the
   greeting, PIN or no PIN, along with the rest of the standing briefing
   (`reads_before_pin`; see "Trust has three levels" — a machine with no PIN at all is
-  handed none of it). Exactly one
-  thing stamps it: the voice model's `mark_reported` tool, after it has spoken the result.
-  Do not stamp it from a delivery path — hearing something twice is recoverable, never
-  hearing it is not.
+  handed none of it). Two things stamp it. The voice model's `mark_reported` tool, after
+  it has spoken the result; and, for a result Keryx announced into a live call, the
+  announcement's reply *starting* to play there (`VoiceSession.announce(on_heard=…)`,
+  `Notifier._heard`) — interrupted or not, because being cut off means they heard it begin,
+  and a voice model that forgets the bookkeeping call (every local one tried, 2026-10-06)
+  must not make them hear it all again. That second path is held to the bar a delivery is:
+  a phone call at `POSSESSION` or better, never the microphone, never a reply that was
+  already playing when the announcement went in. Do not stamp it from any other delivery
+  path — not a text, not a call-back that was dialled, not the digest being in the prompt:
+  hearing something twice is recoverable, never hearing it is not.
 - **The memory.** `keryx/continuity/memory.py` owns `data_dir/memory.md` outright — the
   file API *and* the writer. It subscribes to `SessionEnded` and, for an authorized call only,
   dispatches a subagent (`prompts/memory_update.md`) that folds the call into the file; the

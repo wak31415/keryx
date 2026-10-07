@@ -36,6 +36,7 @@ from keryx.session import (
 )
 from keryx.tools import ToolContext, ToolRegistry
 from keryx.transports.base import AudioIn, Dtmf, Hangup
+from keryx.trust import TrustLevel
 
 # audio/pcmu is 8 kHz 8-bit -> 8 bytes per millisecond.
 PCMU_BYTES_PER_MS = 8
@@ -773,6 +774,82 @@ async def test_announce_is_false_when_the_provider_send_fails(make_session, phon
         provider.send_error = RuntimeError("socket gone")
         assert await session.announce("Task 3 finished.") is False
         provider.send_error = None
+
+
+async def test_an_announcement_is_heard_when_its_reply_starts_playing(make_session, phone,
+                                                                      provider):
+    session = make_session(phone, provider)
+    heard: list[str] = []
+
+    async def mark() -> None:
+        heard.append("task 3")
+
+    async with running(session):
+        provider.feed(AudioDelta(item_id="item_1", audio=b"\xff" * 16))  # already speaking
+        await eventually(lambda: phone.sent)
+        assert await session.announce("Task 3 finished.", on_heard=mark) is True
+        provider.feed(AudioDelta(item_id="item_1", audio=b"\xff" * 16))  # the same reply
+        await asyncio.sleep(0.02)
+        assert heard == []
+        provider.feed(AudioDelta(item_id="item_2", audio=b"\xff" * 16))  # the announcement's
+        await eventually(lambda: heard == ["task 3"])
+        # Interrupted: it was still heard.
+        provider.feed(SpeechStarted(item_id="item_4", audio_start_ms=100))
+        provider.feed(AudioDelta(item_id="item_3", audio=b"\xff" * 16))
+        await asyncio.sleep(0.02)
+
+    assert heard == ["task 3"]  # once
+
+
+async def test_an_announcement_heard_before_anything_is_proved_is_not_marked(
+    make_session, phone, provider, tmp_path
+):
+    # With a PIN on file, news is read to a caller who has not given it (`reads_before_pin`).
+    settings = make_settings(tmp_path, pin="12345678")
+    session = make_session(phone, provider, authorized=False, settings=settings)
+    heard: list[str] = []
+
+    async def mark() -> None:
+        heard.append("task 3")
+
+    async with running(session):
+        assert await session.announce("Task 3 finished.", needs=TrustLevel.NONE,
+                                      on_heard=mark) is True
+        provider.feed(AudioDelta(item_id="item_1", audio=b"\xff" * 16))
+        await eventually(lambda: phone.sent)
+        await asyncio.sleep(0.02)
+
+    assert heard == []
+
+
+async def test_an_announcement_at_the_microphone_is_not_marked(make_session, local, provider):
+    session = make_session(local, provider)
+    heard: list[str] = []
+
+    async def mark() -> None:
+        heard.append("task 3")
+
+    async with running(session):
+        assert await session.announce("Task 3 finished.", on_heard=mark) is True
+        provider.feed(AudioDelta(item_id="item_1", audio=b"\xff" * 16))
+        await asyncio.sleep(0.05)
+
+    assert heard == []
+
+
+async def test_a_failure_to_mark_an_announcement_heard_does_not_end_the_call(
+    make_session, phone, provider
+):
+    session = make_session(phone, provider)
+
+    async def broken() -> None:
+        raise RuntimeError("database is locked")
+
+    async with running(session):
+        assert await session.announce("Task 3 finished.", on_heard=broken) is True
+        provider.feed(AudioDelta(item_id="item_1", audio=b"\xff" * 16))
+        await eventually(lambda: phone.sent)
+        assert session.is_live
 
 
 # --- reconnects and errors -------------------------------------------------
