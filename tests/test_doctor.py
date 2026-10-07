@@ -1286,9 +1286,11 @@ def test_a_plugin_that_is_off_or_half_set_up_is_turned_on_from_the_app(healthy):
     assert checks["send_to_slack"].fix == "plugin:send_to_slack"
 
 
-def test_issue_reports_without_gh_point_at_the_github_card(healthy, monkeypatch):
+def test_issue_reports_without_gh_have_nothing_the_app_can_do(healthy, monkeypatch):
+    """The GitHub card turns reports on; it neither installs gh nor signs it in."""
     for status in (GhStatus(False), GhStatus(True, False)):
-        assert _reporting(healthy, monkeypatch, status).fix == "integration:github"
+        check = _reporting(healthy, monkeypatch, status)
+        assert (check.ok, check.fix) == (False, None) and check.hint
 
 
 def test_the_agents_fixes(healthy, monkeypatch):

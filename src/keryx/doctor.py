@@ -1261,7 +1261,6 @@ def _issues_check(settings: Settings) -> Check:
     if not settings.issue_reporting:
         return Check(name, True, "off", severity="soft", section="issues",
                      hint="`keryx setup` turns them on")
-    github = fixes.integration("github")
     checkout = settings.checkout
     if checkout is None or not (checkout / SKILL).is_file():
         return Check(
@@ -1276,12 +1275,13 @@ def _issues_check(settings: Settings) -> Check:
         )
     status = gh_status()
     if not status.installed:
+        # No fix: the app's GitHub card turns reports on, and installing gh is no setting.
         return Check(name, False, "the GitHub command-line tool, gh, is not installed, so "
                      "reports are not filed", severity="soft", section="issues", unset=True,
-                     hint=GH_INSTALL_URL, fix=github)
+                     hint=GH_INSTALL_URL)
     if not status.signed_in:
         return Check(name, False, "gh is not signed in to GitHub", severity="soft",
-                     section="issues", unset=True, hint="`gh auth login`", fix=github)
+                     section="issues", unset=True, hint="`gh auth login`")
     # The repository last: its name may end in "keryx", which is no command.
     detail = (f"filed as {status.account} on " if status.account else "filed on ") + (
         settings.issue_repo
