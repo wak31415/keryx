@@ -210,6 +210,39 @@ import Testing
         #expect(request.timeout == nil)
     }
 
+    static let unfinished = KeryxError.failed(
+        command: "keryx models pull", exitCode: -1,
+        message: "The download stopped without saying whether it finished.")
+
+    @Test func pullEndingWithOnlyProgressThrows() async throws {
+        let fake = FakeRunner()
+        fake.lineResponder = { _ in [#"{"event": "progress", "done": 1, "total": 4}"#] }
+        let client = CLIClient(location: .fixture, runner: fake)
+        var events: [PullEvent] = []
+        await #expect(throws: Self.unfinished) {
+            for try await event in client.pull(model: "m") { events.append(event) }
+        }
+        #expect(events == [.progress(done: 1, total: 4)])
+    }
+
+    @Test func pullEndingWithNothingThrows() async throws {
+        let fake = FakeRunner()
+        fake.lineResponder = { _ in [] }
+        let client = CLIClient(location: .fixture, runner: fake)
+        await #expect(throws: Self.unfinished) {
+            for try await _ in client.pull(model: "m") {}
+        }
+    }
+
+    @Test func pullEndingWithAnErrorEventFinishesNormally() async throws {
+        let fake = FakeRunner()
+        fake.lineResponder = { _ in [#"{"event": "error", "message": "disk full"}"#] }
+        let client = CLIClient(location: .fixture, runner: fake)
+        var events: [PullEvent] = []
+        for try await event in client.pull(model: "m") { events.append(event) }
+        #expect(events == [.error("disk full")])
+    }
+
     // MARK: - The model server installer
 
     @Test func installModelServerRunsTheCheckoutScript() async throws {

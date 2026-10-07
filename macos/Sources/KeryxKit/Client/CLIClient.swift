@@ -60,15 +60,27 @@ public struct CLIClient: KeryxClient {
 
     // MARK: - Models
 
+    /// Ends normally only after a terminal event (done, adopted, error, cancelled). A stream
+    /// that stops short of one (the CLI crashed, was killed, or printed nothing) throws,
+    /// because "it ended" is not "it finished".
     public func pull(model: String) -> AsyncThrowingStream<PullEvent, Error> {
         let lines = runner.lines(request(["models", "pull", model, "--json"], timeout: nil))
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    var concluded = false
                     for try await line in lines {
-                        if let event = PullEvent.parse(line) { continuation.yield(event) }
+                        guard let event = PullEvent.parse(line) else { continue }
+                        if case .progress = event {} else { concluded = true }
+                        continuation.yield(event)
                     }
-                    continuation.finish()
+                    if concluded {
+                        continuation.finish()
+                    } else {
+                        continuation.finish(throwing: KeryxError.failed(
+                            command: "keryx models pull", exitCode: -1,
+                            message: "The download stopped without saying whether it finished."))
+                    }
                 } catch {
                     continuation.finish(throwing: Self.map(error, command: "keryx models pull"))
                 }

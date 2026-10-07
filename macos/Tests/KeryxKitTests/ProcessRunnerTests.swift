@@ -34,6 +34,17 @@ import Testing
         }
     }
 
+    @Test func timeoutHoldsWhileAGrandchildKeepsThePipesOpen() async throws {
+        // The child exits at once; the backgrounded grandchild keeps stdout and stderr
+        // open for 5 s. The deadline must still bound the wait.
+        let started = ContinuousClock.now
+        await #expect(throws: RunnerError.timedOut) {
+            _ = try await runner.run(.init(executable: "/bin/sh",
+                arguments: ["-c", "(sleep 5 &) ; echo hi"], timeout: .milliseconds(300)))
+        }
+        #expect(ContinuousClock.now - started < .seconds(1.5))
+    }
+
     @Test func missingExecutableIsLaunchFailed() async {
         await #expect(throws: RunnerError.self) {
             _ = try await runner.run(.init(executable: "/nonexistent/keryx"))

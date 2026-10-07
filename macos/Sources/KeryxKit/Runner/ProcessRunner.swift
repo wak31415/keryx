@@ -28,65 +28,28 @@ public final class ProcessRunner: CommandRunner, Sendable {
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CommandResult, Error>) in
-                let state = RunState()
-                let group = DispatchGroup()
-                let stdoutResult = Box(Data())
-                let stderrResult = Box(Data())
-                let stdoutHandle = Box(stdoutPipe.fileHandleForReading)
-                let stderrHandle = Box(stderrPipe.fileHandleForReading)
-
-                group.enter()
-                DispatchQueue.global().async {
-                    stdoutResult.value = stdoutHandle.value.readDataToEndOfFile()
-                    group.leave()
-                }
-                group.enter()
-                DispatchQueue.global().async {
-                    stderrResult.value = stderrHandle.value.readDataToEndOfFile()
-                    group.leave()
-                }
-
+                let collector = RunCollector(process: processBox, continuation: continuation)
                 process.terminationHandler = { finished in
-                    state.timeoutWorkItem?.cancel()
-                    let exitCode = finished.terminationStatus
-                    group.notify(queue: .global()) {
-                        guard state.markResumed() else { return }
-                        if state.timedOut {
-                            continuation.resume(throwing: RunnerError.timedOut)
-                        } else {
-                            continuation.resume(returning: CommandResult(
-                                exitCode: exitCode,
-                                stdout: stdoutResult.value,
-                                stderr: stderrResult.value
-                            ))
-                        }
-                    }
+                    collector.exited(finished.terminationStatus)
                 }
 
                 do {
                     try process.run()
                 } catch {
-                    guard state.markResumed() else { return }
-                    continuation.resume(throwing: RunnerError.launchFailed(error.localizedDescription))
+                    collector.launchFailed(error.localizedDescription)
                     return
+                }
+
+                collector.start(reading: [stdoutPipe.fileHandleForReading,
+                                          stderrPipe.fileHandleForReading])
+                if let timeout = request.timeout {
+                    collector.arm(timeout)
                 }
 
                 if let stdin = request.stdin, let stdinPipe {
                     stdinPipe.fileHandleForWriting.write(stdin)
                 }
                 try? stdinPipe?.fileHandleForWriting.close()
-
-                if let timeout = request.timeout {
-                    let workItem = DispatchWorkItem {
-                        if processBox.value.isRunning {
-                            state.timedOut = true
-                            processBox.value.terminate()
-                        }
-                    }
-                    state.timeoutWorkItem = workItem
-                    DispatchQueue.global().asyncAfter(
-                        deadline: .now() + timeout.timeInterval, execute: workItem)
-                }
             }
         } onCancel: {
             if processBox.value.isRunning {
@@ -172,32 +135,100 @@ private final class Box<T>: @unchecked Sendable {
     init(_ value: T) { self.value = value }
 }
 
-/// The run/timeout/resume bookkeeping shared between the termination handler, the launch
-/// failure path and the timeout work item, guarded by a single lock.
-private final class RunState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var resumed = false
-    private var _timedOut = false
-    private var _timeoutWorkItem: DispatchWorkItem?
+/// One `run`: the two output streams, the exit, and the deadline, all confined to one serial
+/// queue. The deadline bounds the whole wait, not only the child's life: a grandchild the
+/// child left in the background (`cmd &` in a shell's rc files) can hold stdout or stderr
+/// open long after the child has exited, and a reader blocked until EOF would wait for it.
+/// So the streams are read by dispatch read sources rather than blocking reads, and on
+/// expiry the child is terminated, each source cancelled (its cancel handler, which runs
+/// after its last event, closes the handle), and `.timedOut` thrown. The continuation is
+/// resumed exactly once: whichever of finish, expiry or launch failure takes it first.
+private final class RunCollector: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "dev.keryx.app.process-runner")
+    private let process: Box<Process>
+    private var continuation: CheckedContinuation<CommandResult, Error>?
+    private var sources: [DispatchSourceRead] = []
+    private var output = [Data(), Data()]
+    /// Streams not yet at EOF. Two from the start, so an exit reported before `start`
+    /// cannot finish the run with nothing read.
+    private var open = 2
+    private var exitCode: Int32?
+    private var deadline: DispatchWorkItem?
+    private static let chunk = 65_536
+    private var buffer = [UInt8](repeating: 0, count: RunCollector.chunk)
 
-    var timedOut: Bool {
-        get { lock.lock(); defer { lock.unlock() }; return _timedOut }
-        set { lock.lock(); _timedOut = newValue; lock.unlock() }
+    init(process: Box<Process>, continuation: CheckedContinuation<CommandResult, Error>) {
+        self.process = process
+        self.continuation = continuation
     }
 
-    var timeoutWorkItem: DispatchWorkItem? {
-        get { lock.lock(); defer { lock.unlock() }; return _timeoutWorkItem }
-        set { lock.lock(); _timeoutWorkItem = newValue; lock.unlock() }
+    /// `handles[0]` is stdout and `handles[1]` stderr.
+    func start(reading handles: [FileHandle]) {
+        queue.sync {
+            for (index, handle) in handles.enumerated() {
+                let box = Box(handle)
+                let descriptor = handle.fileDescriptor
+                let source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: queue)
+                source.setEventHandler { [self] in
+                    let count = Darwin.read(descriptor, &buffer, Self.chunk)
+                    if count > 0 {
+                        output[index].append(contentsOf: buffer[0..<count])
+                    } else if count == 0 || (errno != EINTR && errno != EAGAIN) {
+                        sources[index].cancel()
+                    }
+                }
+                source.setCancelHandler { [self] in
+                    try? box.value.close()
+                    open -= 1
+                    finishIfDone()
+                }
+                sources.append(source)
+                source.resume()
+            }
+        }
     }
 
-    /// Returns `true` the first time it is called, `false` on every call after — the guard
-    /// that lets exactly one of {termination, launch failure} resume the continuation.
-    func markResumed() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        if resumed { return false }
-        resumed = true
-        return true
+    func arm(_ timeout: Duration) {
+        let item = DispatchWorkItem { [self] in expire() }
+        queue.sync { deadline = item }
+        queue.asyncAfter(deadline: .now() + timeout.timeInterval, execute: item)
+    }
+
+    func exited(_ code: Int32) {
+        queue.async { [self] in
+            exitCode = code
+            finishIfDone()
+        }
+    }
+
+    func launchFailed(_ message: String) {
+        queue.sync {
+            take()?.resume(throwing: RunnerError.launchFailed(message))
+        }
+    }
+
+    // MARK: On `queue`
+
+    private func finishIfDone() {
+        guard continuation != nil, let exitCode, open == 0 else { return }
+        deadline?.cancel()
+        let result = CommandResult(exitCode: exitCode, stdout: output[0], stderr: output[1])
+        take()?.resume(returning: result)
+        sources = []
+    }
+
+    private func expire() {
+        guard let continuation = take() else { return }
+        if process.value.isRunning {
+            process.value.terminate()
+        }
+        sources.forEach { $0.cancel() }
+        continuation.resume(throwing: RunnerError.timedOut)
+    }
+
+    private func take() -> CheckedContinuation<CommandResult, Error>? {
+        defer { continuation = nil }
+        return continuation
     }
 }
 
