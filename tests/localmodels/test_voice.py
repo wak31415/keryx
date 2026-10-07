@@ -156,7 +156,10 @@ def test_here_installs_saves_installs_the_unit_starts_and_only_then_is_the_voice
     assert unit == ([str(root / "scripts" / "install-systemd.sh"), "--voice"],)
     start = next(i for i, line in enumerate(log.lines) if line[:2] == ("step", "start"))
     assert log.lines[start + 1][0] == "wait"
-    assert log.of("wait") == [("realtime", "http://127.0.0.1:8765/v1", voice.VOICE_START_S)]
+    # Its models are in the cache: the start loads them, and downloads nothing.
+    assert log.of("wait") == [("realtime", "http://127.0.0.1:8765/v1",
+                               voice.VOICE_READY_START_S)]
+    assert voice.VOICE_READY_START_S == 180.0
     assert saved == [
         {"VOICE_SERVER_VOICE": "af_heart", "VOICE_SERVER_PORT": 8765},
         {"VOICE_BASE_URL": "http://127.0.0.1:8765/v1", "VOICE_API_KEY": None},
@@ -236,8 +239,11 @@ def test_a_machine_with_neither_launchd_nor_systemd_is_refused(settings, root):
     assert code == voice.REFUSED and saved == [] and log.of("script") == []
     assert log.of("error") == [("Keryx runs its servers under launchd or systemd, and "
                                 "freebsd14 has neither", None)]
-    assert voice.install_unit("--llm", FakeMachine(log).run_script, root=root,
-                              platform="freebsd14").startswith("Keryx runs its servers")
+    told = Log()
+    assert voice.install_unit_step("--llm", "Installing", FakeMachine(told).run_script,
+                                   Recorder(told), root=root, platform="freebsd14") is False
+    assert told.of("error")[0][0].startswith("Keryx runs its servers")
+    assert told.of("script") == []
 
 
 @pytest.mark.parametrize(("name", "problem"), [
@@ -259,6 +265,47 @@ def test_a_unit_that_will_not_install_is_said_and_no_voice_is_saved(settings, ro
     assert log.of("error") == [("install-launchd.sh --voice exited with 3", None)]
     assert log.of("script")[0][0][0].endswith("install-launchd.sh")
     assert [values for values in saved if "VOICE_BASE_URL" in values] == []
+    # Its installer writes the plist before loading it: what it left is removed, and said.
+    script = str(root / "scripts" / "install-launchd.sh")
+    assert log.of("script")[-1] == ([script, "--voice", "--uninstall"],)
+    assert len(log.of("warn")) == 1 and "could not be removed" in log.of("warn")[0][0]
+    assert log.kinds().index("warn") < log.kinds().index("error")
+
+
+def test_a_unit_install_that_times_out_is_removed(settings, root):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s")
+    machine.run_script = lambda argv: (log.lines.append(("script", list(argv)))
+                                       or (0 if argv[-1] == "--uninstall" else voice.TIMED_OUT))
+
+    code, _saved = run_here(settings.model_copy(update=WORDS), machine, log, root,
+                            platform="darwin")
+
+    assert code == 1
+    assert log.of("error")[0][0] == "install-launchd.sh --voice did not finish within 120 s"
+    assert log.of("warn") == [(voice.REMOVED,)]
+    assert log.of("script")[-1][0][-1] == "--uninstall"
+
+
+def test_a_cancel_while_the_unit_installs_removes_it(settings, root):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s")
+    script = str(root / "scripts" / "install-launchd.sh")
+
+    def run(argv):
+        log.lines.append(("script", list(argv)))
+        if argv[-1] == "--voice":
+            raise KeyboardInterrupt
+        return 0
+
+    machine.run_script = run
+
+    with pytest.raises(KeyboardInterrupt):
+        run_here(settings.model_copy(update=WORDS), machine, log, root, platform="darwin")
+
+    assert [argv for (argv,) in log.of("script")] == [
+        [script, "--voice"], [script, "--voice", "--uninstall"]]
+    assert log.of("error") == [] and log.of("wait") == []
 
 
 def test_a_server_that_never_answers_points_at_its_log(settings, root):
@@ -413,6 +460,7 @@ def test_here_downloads_the_speech_models_before_it_configures_anything(settings
         "install", "download", "configure", "unit", "start"]
     assert log.of("progress") == [(0, 100), (100, 100)]
     assert "voices/bm_george.safetensors" in machine.repos[1].needs
+    assert log.of("wait")[0][-1] == voice.VOICE_READY_START_S  # just fetched: loaded, quickly
     assert log.kinds().index("fetch") < log.kinds().index("save")
     assert len(log.of("script")) == 2  # the install and the unit
 
@@ -465,6 +513,89 @@ def test_here_with_a_speech_model_keryx_cannot_name_leaves_it_to_the_first_start
     assert code == 0 and log.of("fetch") == []
     [(warning,)] = log.of("warn")
     assert "--stt whisper-mlx" in warning
+    # Its first start downloads them: it is given the long wait.
+    assert log.of("wait")[0][-1] == voice.VOICE_START_S == 1200.0
+
+
+def test_models_ready_is_asked_of_the_voice_chosen_not_the_one_before(settings, root):
+    """A Kokoro voice is a file of its own: the models ready for af_heart are not ready for
+    a newly chosen bm_george whose file is missing."""
+    from keryx.localmodels import speech
+
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s")
+    asked: list[str] = []
+
+    def models_ready(chosen):
+        asked.append(chosen.voice_server_voice)
+        return chosen.voice_server_voice == "af_heart"
+
+    machine.models_ready = models_ready
+
+    run_here(settings.model_copy(update=WORDS), machine, log, root, chosen="bm_george",
+             platform="darwin")
+
+    assert asked == ["bm_george"] and log.of("fetch")
+    assert "voices/bm_george.safetensors" in machine.repos[1].needs
+    # And the real check says so, with only that voice's file missing.
+    [kokoro] = speech.tts_repos("kokoro", "bm_george", platform="darwin")
+    assert "voices/bm_george.safetensors" in kokoro.needs
+
+
+def test_an_installer_that_times_out_is_killed_with_everything_it_started(
+    tmp_path, monkeypatch
+):
+    """A timed-out install leaves no launchctl or uv running behind it."""
+    import os
+    import sys
+    import time
+
+    monkeypatch.setattr(voice, "INSTALL_TIMEOUT_S", 0.5)
+    pidfile = tmp_path / "child.pid"
+    script = tmp_path / "install-launchd.sh"
+    script.write_text(f"#!/bin/sh\n{sys.executable} -c 'import time; time.sleep(60)' &\n"
+                      f"echo $! > {pidfile}\nwait\n")
+    script.chmod(0o755)
+
+    assert voice.run_detached([str(script), "--voice"]) == voice.TIMED_OUT
+
+    child = int(pidfile.read_text())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("the installer's own child outlived it")
+
+
+def test_an_installer_cancelled_is_stopped_with_everything_it_started(tmp_path, monkeypatch):
+    import subprocess
+
+    killed: list = []
+    monkeypatch.setattr("os.killpg", lambda pgid, sig: killed.append((pgid, sig)))
+
+    class Child:
+        pid = 4242
+        waited = 0
+
+        def wait(self, timeout=None):
+            self.waited += 1
+            if self.waited == 1:
+                raise KeyboardInterrupt
+            return -9
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: Child())
+
+    with pytest.raises(KeyboardInterrupt):
+        voice.run_detached(["/repo/scripts/install-launchd.sh", "--voice"])
+
+    assert killed and killed[0][0] == 4242
 
 
 # --- the speech models --------------------------------------------------------------------
@@ -786,15 +917,29 @@ def test_only_a_units_installer_is_timed_never_a_download(monkeypatch):
     """uv installing speech-to-speech, brew or ollama pulling take as long as they take."""
     import subprocess
 
-    timeouts: dict = {}
+    asked: dict = {}
 
-    def run(argv, **kwargs):
-        timeouts[argv[0]] = kwargs.get("timeout")
-        return subprocess.CompletedProcess(argv, 0)
+    class Child:
+        pid = 1
+        returncode = 0
 
-    monkeypatch.setattr(subprocess, "run", run)
+        def __init__(self, argv, **kwargs):
+            asked[argv[0]] = kwargs.get("start_new_session", False)
+
+        def wait(self, timeout=None):
+            asked[f"{self.argv0} timeout"] = timeout
+            return 0
+
+    def popen(argv, **kwargs):
+        child = Child(argv, **kwargs)
+        child.argv0 = argv[0]
+        return child
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
 
     voice.run_detached(["/repo/scripts/install-systemd.sh", "--voice", "--uninstall"])
     voice.run_detached(["uv", "tool", "install", "speech-to-speech"])
 
-    assert timeouts == {"/repo/scripts/install-systemd.sh": voice.INSTALL_TIMEOUT_S, "uv": None}
+    assert asked == {"/repo/scripts/install-systemd.sh": True,
+                     "/repo/scripts/install-systemd.sh timeout": voice.INSTALL_TIMEOUT_S,
+                     "uv": False, "uv timeout": None}

@@ -109,32 +109,34 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   (`runtime`, `unit`, `start`, `check`), `progress` while llama.cpp downloads, then exactly
   one of `done` (`url`, `served_model`), `error`, `cancelled`; exit 2 until a model is chosen
   and downloaded), `models stop [--json]` (removes the model server's unit), `models serve
-  llm|voice` (what the units run: it reads the settings and becomes the server)
+  llm|voice` (what the units run: it reads the settings and becomes the server; the voice
+  server first waits, up to `LLM_START_S`, for the model server its words come from, so the
+  two loading together at login is no crash loop)
 - The voice on a call: `uv run keryx voice [--json]` (where it is — `mode` openai, here or
   server — and the voice server on this machine: installed, its unit, whether it answers on
   loopback, the local model its words come from, its `stt` and `tts` and whether their
-  models are downloaded, `models_ready`; `needs` says `local_agent_model` while there
-  is none; a server elsewhere is asked only while it is the voice, never with its key in the
+  models are downloaded, `models_ready`; `needs` says `local_agent_model` while there is
+  none; a server elsewhere is asked only while it is the voice, never with its key in the
   output), `voice download [--json]` (the speech models `VOICE_SERVER_STT`, `_TTS` and
   `_VOICE` need, fetched into the Hugging Face cache by speech-to-speech's own Python, which
-  is installed first when missing — `localmodels/speech.py`; `--json` is JSON lines — a `step`
-  (`install`, `download`), `progress` in bytes, then exactly one of `done` (`stt`, `tts`),
-  `error`, `cancelled`; exit 2 for a speech model Keryx cannot name; `config options
+  is installed first when missing — `localmodels/speech.py`; `--json` is JSON lines — a
+  `step` (`install`, `download`), `progress` in bytes, then exactly one of `done` (`stt`,
+  `tts`), `error`, `cancelled`; exit 2 for a speech model Keryx cannot name; `config options
   VOICE_SERVER_STT|TTS` offers only the ones it can name — never whisper-mlx, though one set
-  before is kept — and marks the downloaded ones), `voice use openai [--json]`, `voice use server URL [--key-stdin | --clear-key]
-  [--keep-anyway] [--json]` (saved only once it opens a Realtime session, unless kept anyway;
-  exit 1 with the `problem` and nothing saved; the stored key is kept and asked with unless
-  `--key-stdin` replaces it — shown as `(set)` — or `--clear-key` forgets it), `voice use here
-  [--voice NAME] [--json]` (what the wizard does, through the same `localmodels/voice.py`:
-  install speech-to-speech, download its speech models when they are not in the cache —
-  `voice download`'s own step, `progress` and all, and a download that stops installs no
-  unit — then its unit, wait for it, then save it; refused while the local
-  model server its words come from does not answer, and a server that does not come up, or
-  whose start is cancelled, has its unit removed first — no unit is left crash-looping;
-  `--json` is JSON lines — a `step` before each slow one (`install`, `download`,
-  `configure`, `unit`, `start`), `progress` while it downloads, then exactly one of `done`,
-  `error`, `cancelled`; exit 2 for a refusal before anything is tried, 1 for what stopped
-  it, 130 for a SIGTERM)
+  before is kept — and marks the downloaded ones), `voice use openai [--json]`, `voice use
+  server URL [--key-stdin | --clear-key] [--keep-anyway] [--json]` (saved only once it opens
+  a Realtime session, unless kept anyway; exit 1 with the `problem` and nothing saved; the
+  stored key is kept and asked with unless `--key-stdin` replaces it — shown as `(set)` — or
+  `--clear-key` forgets it), `voice use here [--voice NAME] [--json]` (what the wizard does,
+  through the same `localmodels/voice.py`: install speech-to-speech, download its speech
+  models when they are not in the cache — `voice download`'s own step, `progress` and all,
+  and a download that stops installs no unit — then its unit, wait for it, then save it;
+  refused while the local model server its words come from does not answer, and a server
+  that does not come up, or whose start is cancelled, has its unit removed first — as does
+  a unit install that fails, times out or is cancelled — so no unit is left crash-looping; `--json` is JSON lines — a `step` before each slow one (`install`,
+  `download`, `configure`, `unit`, `start`), `progress` while it downloads, then exactly one
+  of `done`, `error`, `cancelled`; exit 2 for a refusal before anything is tried, 1 for what
+  stopped it, 130 for a SIGTERM)
 - The Mac app (`macos/`): `macos/scripts/test.sh` (the Swift tests; it adds the Command Line
   Tools' Testing framework path only when they are the developer directory),
   `macos/scripts/build-app.sh [--install]` (`macos/build/Keryx.app`, signed ad hoc;

@@ -116,6 +116,28 @@ def test_extra_flags_that_cannot_be_split_name_nothing():
     assert ids(speech.turn_repos("--no_smart_turn '")) == ["pipecat-ai/smart-turn-v3"]
 
 
+@pytest.mark.parametrize(("args", "platform", "stt", "tts"), [
+    # The handlers choose MLX only on "mps", which "auto" is on a Mac alone.
+    ("--parakeet_tdt_device cpu", MAC, "nvidia/parakeet-tdt-0.6b-v3",
+     "mlx-community/Kokoro-82M-bf16"),
+    ("--kokoro_device cuda", MAC, "mlx-community/parakeet-tdt-0.6b-v3", "hexgrad/Kokoro-82M"),
+    # `--device` overrides every handler's (s2s_pipeline.prepare_all_args).
+    ("--kokoro_device mps --device cpu", MAC, "nvidia/parakeet-tdt-0.6b-v3",
+     "hexgrad/Kokoro-82M"),
+    ("--device=mps", LINUX, "mlx-community/parakeet-tdt-0.6b-v3",
+     "mlx-community/Kokoro-82M-bf16"),
+])
+def test_a_device_in_the_extra_flags_chooses_the_repository(args, platform, stt, tts):
+    assert ids(speech.stt_repos("parakeet-tdt", platform=platform, args=args)) == [stt]
+    assert ids(speech.tts_repos("kokoro", "af_heart", platform=platform, args=args)) == [tts]
+
+
+def test_qwen3_is_chosen_by_platform_whatever_the_device():
+    found = speech.tts_repos("qwen3", "af_heart", platform=MAC, args="--device cpu")
+
+    assert ids(found) == ["mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit"]
+
+
 def test_kokoro_elsewhere_takes_no_model_name():
     """kokoro's KPipeline is built with a language and nothing else."""
     found = speech.tts_repos("kokoro", "af_heart", platform=LINUX,
@@ -379,9 +401,12 @@ def test_fetch_cancelled_stops_the_download(fake_hub):
 
 def test_fetch_that_dies_without_a_word_says_how(tmp_path):
     script = tmp_path / "python"
-    script.write_text("#!/bin/sh\necho 'not json'\necho '[1]'\nexit 3\n")
+    script.write_text("#!/bin/sh\necho 'not json'\necho '[1]'\n"
+                      "echo '{\"progress\": 5}'\necho '{\"progress\": [1, 2, 3]}'\n"
+                      "echo '{\"progress\": [\"a\", null]}'\nexit 3\n")
     script.chmod(0o755)
 
-    problem = speech.fetch(str(script), [Repo("a/one")], lambda done, total: None)
+    seen: list = []
+    problem = speech.fetch(str(script), [Repo("a/one")], lambda *told: seen.append(told))
 
-    assert problem == "the download stopped (exit 3)"
+    assert problem == "the download stopped (exit 3)" and seen == []

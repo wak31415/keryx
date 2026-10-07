@@ -26,7 +26,9 @@ so it ends exactly once on every path). Every install, port, disk and network qu
 asked through `Probes`: the wizard's own, or `machine()` for the command line.
 """
 
+import os
 import re
+import signal
 import subprocess
 import sys
 from collections.abc import Callable, Iterator, Sequence
@@ -46,7 +48,12 @@ from keryx.localmodels.pull import EventLines
 from keryx.localmodels.servers import HOST
 
 OPENAI, HERE, SERVER = "openai", "here", "server"
-#: How long the voice server may take its first start, which downloads its speech models.
+#: How long the voice server may take to start once its speech models are in the cache —
+#: `here` downloads them first — loading them and warming up: as long as a model server
+#: may take to load a small model.
+VOICE_READY_START_S = 180.0
+#: …and when they are not: a speech model Keryx cannot name, kept from before, whose first
+#: start downloads it.
 VOICE_START_S = 1200.0
 #: How long a voice server elsewhere may take to say it is there, for `keryx voice`: a
 #: Realtime handshake is too slow for a poll, so its model list is asked instead.
@@ -65,6 +72,8 @@ INSTALLERS = frozenset({"install-launchd.sh", "install-systemd.sh"})
 INSTALL_TIMEOUT_S = 120.0
 #: The exit code said for an installer stopped at its deadline, as `timeout(1)` says it.
 TIMED_OUT = 124
+#: How long a killed installer is given to be reaped.
+STOP_S = 5.0
 #: The exit codes of a set-up: a refusal is one nothing was tried for.
 OK, FAILED, REFUSED = 0, 1, 2
 #: The platform whose service manager installs the units, unless a caller says another.
@@ -115,6 +124,12 @@ class Steps(Protocol):
     def step(self, step: str, message: str) -> AbstractContextManager[None]: ...
 
     def warn(self, message: str) -> None: ...
+
+
+class Told(Steps, Protocol):
+    """…and what stopped it."""
+
+    def error(self, message: str, *, log: Path | None = None) -> None: ...
 
 
 class Report(Steps, Protocol):
@@ -310,12 +325,15 @@ def here(
     if not have_speech_to_speech(settings, probes, report):
         return FAILED
     voice = choose_voice()
-    if not probes.models_ready(settings):
-        chosen = settings.model_copy(update={"voice_server_voice": voice})
+    # A Kokoro voice is a file of its own: the models are asked of the voice just chosen.
+    chosen = settings.model_copy(update={"voice_server_voice": voice})
+    start_s = VOICE_READY_START_S
+    if not probes.models_ready(chosen):
         try:
             repos = speech.needed(chosen, platform=platform)
         except speech.UnknownModels as error:  # kept from before: its first start fetches it
             report.warn(str(error))
+            start_s = VOICE_START_S
         else:
             if not fetch_models(chosen, probes, report, repos):
                 return FAILED
@@ -328,16 +346,14 @@ def here(
             port = probes.free_port(port)
         if not save({"VOICE_SERVER_VOICE": voice, "VOICE_SERVER_PORT": port}):
             return FAILED
-    with report.step("unit", "Installing the voice server's service"):
-        code = probes.run_script([str(script), "--voice"])
-    if code != 0:
-        report.error(exited(f"{script.name} --voice", code))
+    if not install_unit_step("--voice", "Installing the voice server's service",
+                             probes.run_script, report, root=root, platform=platform):
         return FAILED
     endpoint = Endpoint.parse(f"http://{HOST}:{port}")
     with report.step("start", "Starting the voice server and waiting for it to answer — a "
                               "first start loads its speech models, which takes a minute"), \
             removed_if_stopped("--voice", probes.run_script, root=root, platform=platform):
-        problem = probes.wait_for_server(endpoint, "realtime", VOICE_START_S)
+        problem = probes.wait_for_server(endpoint, "realtime", start_s)
     if problem is not None:
         removed = remove_unit("--voice", probes.run_script, root=root, platform=platform)
         report.error(f"the voice server did not come up: {problem}; {removed}",
@@ -435,16 +451,27 @@ def installer(
     return script, None
 
 
-def install_unit(
-    flag: str, run_script: Callable[[Sequence[str]], int], *, root: Path,
-    platform: str | None = None,
-) -> str | None:
-    """Run the installer for the `flag` unit; None, or what went wrong in a sentence."""
-    script, problem = installer(flag, root=root, platform=platform)
+def install_unit_step(
+    flag: str, message: str, run_script: Callable[[Sequence[str]], int], report: Told, *,
+    root: Path, platform: str | None = None,
+) -> bool:
+    """Install the `flag` unit as step `unit`; False once the report has been told why not.
+
+    An installer writes the unit before it loads it, so one that fails, times out or is
+    cancelled can leave a unit the service manager loads at the next login: it is removed
+    — said as a warning, before the error — and a Cancel then goes on."""
+    with report.step("unit", message), \
+            removed_if_stopped(flag, run_script, root=root, platform=platform):
+        script, problem = installer(flag, root=root, platform=platform)
+        code = run_script([str(script), flag]) if script is not None else 0
     if script is None:
-        return problem
-    code = run_script([str(script), flag])
-    return None if code == 0 else exited(f"{script.name} {flag}", code)
+        report.error(problem or "no installer")
+        return False
+    if code != 0:
+        report.warn(remove_unit(flag, run_script, root=root, platform=platform))
+        report.error(exited(f"{script.name} {flag}", code))
+        return False
+    return True
 
 
 def remove_unit(
@@ -499,19 +526,42 @@ def voice_name_problem(name: str) -> str | None:
 def run_detached(argv: Sequence[str]) -> int:
     """Run an installer for the command line: nothing read from its stdin, and its output on
     stderr (descriptor 2), so stdout stays the JSON lines' alone. One of Keryx's own unit
-    installers is stopped at `INSTALL_TIMEOUT_S` (`TIMED_OUT`, and a line on stderr saying
-    so); anything else — a download — is given as long as it takes."""
+    installers runs in a session of its own and is stopped at `INSTALL_TIMEOUT_S`
+    (`TIMED_OUT`, and a line on stderr saying so) — it and everything it started, so no
+    `launchctl` or `uv` is left running; anything else — a download — is given as long as it
+    takes. A Cancel stops what it ran, then goes on."""
     name = Path(argv[0]).name if argv else ""
-    timeout = INSTALL_TIMEOUT_S if name in INSTALLERS else None
+    timed = name in INSTALLERS
     try:
-        return subprocess.run(list(argv), stdin=subprocess.DEVNULL, stdout=2, check=False,
-                              timeout=timeout).returncode
+        child = subprocess.Popen(list(argv), stdin=subprocess.DEVNULL, stdout=2,
+                                 start_new_session=timed)
+    except OSError:
+        return 127
+    try:
+        return child.wait(timeout=INSTALL_TIMEOUT_S if timed else None)
     except subprocess.TimeoutExpired:
+        _stop(child, group=True)
         print(f"{name} did not finish within {INSTALL_TIMEOUT_S:g} s", file=sys.stderr,
               flush=True)
         return TIMED_OUT
-    except OSError:
-        return 127
+    except BaseException:
+        _stop(child, group=timed)
+        raise
+
+
+def _stop(child: subprocess.Popen, *, group: bool) -> None:
+    """Kill `child` — with its whole process group when it leads one — and reap it."""
+    try:
+        if group:
+            os.killpg(child.pid, signal.SIGKILL)
+        else:
+            child.kill()
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        child.wait(STOP_S)
+    except subprocess.TimeoutExpired:  # pragma: no cover - a kill always lands
+        pass
 
 
 def _realtime_problem(endpoint: Endpoint) -> str | None:

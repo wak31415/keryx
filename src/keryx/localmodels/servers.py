@@ -12,6 +12,7 @@ address (`LOCAL_AGENT_BASE_URL`, `VOICE_BASE_URL`), behind Tailscale or a key.
 import os
 import shlex
 import socket
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -34,6 +35,10 @@ DEFAULT_CONTEXT = 65536
 
 #: How often `wait_for` asks a server that is still starting.
 POLL_S = 3.0
+#: How long the voice server waits for its words before it starts: as long as the model
+#: server may take to load (`server.LLM_START_S`), asking every `WORDS_POLL_S`.
+WORDS_WAIT_S = 600.0
+WORDS_POLL_S = 2.0
 
 
 class ServerConfigError(RuntimeError):
@@ -95,8 +100,15 @@ def serve(
     settings: Settings,
     *,
     execvpe: Callable[[str, list[str], dict[str, str]], NoReturn] = os.execvpe,
+    words_up: Callable[[Endpoint], bool] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
 ) -> NoReturn:
-    """Become the `kind` server ("llm" or "voice"); `ServerConfigError` when it cannot."""
+    """Become the `kind` server ("llm" or "voice"); `ServerConfigError` when it cannot.
+
+    The voice server first waits for its words (`wait_for_words`): at login its unit and the
+    model server's load together, and speech-to-speech would crash on its first request for
+    words, again and again under KeepAlive, until llama.cpp had loaded its model."""
     if kind == "llm":
         binary = runtimes.llama_server(settings.cache_dir)
         if binary is None:
@@ -109,9 +121,39 @@ def serve(
                 "speech-to-speech is not installed — `keryx setup` installs it"
             )
         argv, env = voice_argv(settings, binary)
+        words = settings.local_agent_endpoint
+        assert words is not None  # voice_argv refuses without one
+        if words_up is None:
+            from keryx.localmodels.voice import words_up  # it imports this module
+        wait_for_words(words, up=words_up, sleep=sleep, clock=clock)
     else:
         raise ServerConfigError(f"there is no {kind} server: llm or voice")
     execvpe(argv[0], argv, {**os.environ, **env})
+
+
+def wait_for_words(
+    words: Endpoint,
+    *,
+    up: Callable[[Endpoint], bool],
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Return once the server the voice server takes its words from answers, asking every
+    `WORDS_POLL_S` for up to `WORDS_WAIT_S`; `ServerConfigError` when it never does. Said
+    once on stderr, the voice server's log, while it waits."""
+    deadline = clock() + WORDS_WAIT_S
+    said = False
+    while not up(words):
+        if clock() >= deadline:
+            raise ServerConfigError(
+                f"waiting for the local model server at {words.base_url}: it did not answer "
+                f"within {WORDS_WAIT_S:g} s — `keryx models start` starts it"
+            )
+        if not said:
+            print(f"waiting for the local model server at {words.base_url} before starting "
+                  "the voice server", file=sys.stderr, flush=True)
+            said = True
+        sleep(WORDS_POLL_S)
 
 
 def free_port(preferred: int, *, tries: int = 100) -> int:

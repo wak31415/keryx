@@ -139,6 +139,32 @@ def test_a_unit_that_will_not_install_is_said_and_not_waited_for(tmp_path):
     assert ok is False
     assert log.of("error") == [("install-systemd.sh --llm exited with 3", None)]
     assert not log.of("wait")
+    # Its installer writes the unit before loading it: what it left is removed, and said.
+    script = str(root / "scripts" / "install-systemd.sh")
+    assert log.of("script")[-1] == ([script, "--llm", "--uninstall"],)
+    assert log.of("warn") == [("its service could not be removed: install-systemd.sh --llm "
+                               "--uninstall exited with 3",)]
+    assert log.kinds().index("warn") < log.kinds().index("error")
+
+
+@pytest.mark.parametrize("removal", [0, KeyboardInterrupt()])
+def test_a_cancel_while_the_unit_installs_removes_it(tmp_path, removal):
+    log, root = Recorder(), checkout(tmp_path / "checkout")
+    script = str(root / "scripts" / "install-launchd.sh")
+
+    def run(argv) -> int:
+        log.lines.append(("script", list(argv)))
+        if argv[-1] == "--llm":
+            raise KeyboardInterrupt
+        return 0
+
+    with pytest.raises(KeyboardInterrupt):
+        server.serve_here(Settings(), log, run_script=run, wait_for_server=log.wait(),
+                          root=root, platform="darwin")
+
+    assert [argv for (argv,) in log.of("script")] == [
+        [script, "--llm"], [script, "--llm", "--uninstall"]]
+    assert not log.of("error") and not log.of("wait")
 
 
 def test_no_installer_here_is_said(tmp_path):

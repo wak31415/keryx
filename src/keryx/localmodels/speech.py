@@ -28,7 +28,11 @@ which `MLX_FILES` copies. Where the library that loads a model is not part of th
 (nano-parakeet, kokoro, faster-qwen3-tts), its files cannot be read off its source, so the
 whole repository is fetched. Any other `--stt` or `--tts` — whisper-mlx is Lightning Whisper
 MLX, an extra Keryx does not install, with repositories of its own — is one Keryx cannot name,
-and says so rather than guess. A model named in `VOICE_SERVER_ARGS` is the one fetched.
+and says so rather than guess. A model named in `VOICE_SERVER_ARGS` is the one fetched, and a
+device named there decides as it decides for the handlers: parakeet-tdt and kokoro take MLX
+on "mps", which their default "auto" is on a Mac alone, and `--device` overrides each
+handler's own (`--parakeet_tdt_device`, `--kokoro_device`; `prepare_all_args` in
+`s2s_pipeline.py`). Qwen3's backend follows the platform, whatever the device.
 
 A repository counts as downloaded when the files the server reads are all in the cache's
 snapshot of it: every file of its tree listing (`trees/<commit>.json`, which
@@ -107,6 +111,13 @@ def _flag(args: str, name: str) -> str | None:
     return found
 
 
+def _mlx(args: str, flag: str, *, mac: bool) -> bool:
+    """Whether a handler with a `--<flag>` device loads its model through MLX: on "mps",
+    `--device` overriding its own, and "auto" being "mps" on a Mac alone."""
+    device = _flag(args, "device") or _flag(args, flag) or "auto"
+    return device == "mps" or (device == "auto" and mac)
+
+
 def _is_path(name: str) -> bool:
     return name.startswith((".", "/", "~"))
 
@@ -120,9 +131,10 @@ def stt_repos(value: str, *, platform: str | None = None, args: str = "") -> lis
     """What `--stt value` fetches, or None for one Keryx cannot name."""
     mac = (platform or PLATFORM) == "darwin"
     if value == "parakeet-tdt":
-        default = "mlx-community/parakeet-tdt-0.6b-v3" if mac else "nvidia/parakeet-tdt-0.6b-v3"
+        mlx = _mlx(args, "parakeet_tdt_device", mac=mac)
+        default = "mlx-community/parakeet-tdt-0.6b-v3" if mlx else "nvidia/parakeet-tdt-0.6b-v3"
         name = _flag(args, "parakeet_tdt_model_name") or default
-        return _hub(name, MLX_FILES if mac else None)
+        return _hub(name, MLX_FILES if mlx else None)
     if value == "whisper":
         name = _flag(args, "stt_model_name") or "distil-whisper/distil-large-v3"
         return _hub(name, TRANSFORMERS_FILES)
@@ -135,7 +147,7 @@ def tts_repos(
     """What `--tts value` fetches to speak in `voice`, or None for one Keryx cannot name."""
     mac = (platform or PLATFORM) == "darwin"
     if value == "kokoro":
-        if not mac:
+        if not _mlx(args, "kokoro_device", mac=mac):
             return [Repo("hexgrad/Kokoro-82M")]
         voices = tuple(dict.fromkeys([voice, *KOKORO_PRELOADED]))
         name = _flag(args, "kokoro_model_name") or "mlx-community/Kokoro-82M-bf16"
@@ -275,8 +287,10 @@ def fetch(
             if not isinstance(event, dict):
                 continue
             if "progress" in event:
-                done, total = event["progress"]
-                progress(done, total)
+                told = event["progress"]
+                if (isinstance(told, list) and len(told) == 2 and isinstance(told[0], int)
+                        and (told[1] is None or isinstance(told[1], int))):
+                    progress(told[0], told[1])
             elif "error" in event:
                 said = str(event["error"])
         code = child.wait()

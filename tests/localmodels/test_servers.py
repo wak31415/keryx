@@ -125,9 +125,75 @@ def test_serve_the_voice_passes_its_key_in_the_environment(settings, monkeypatch
     monkeypatch.setattr(runtimes, "speech_to_speech", lambda: "/bin/s2s")
     became: list = []
 
-    serve("voice", settings, execvpe=lambda path, argv, env: became.append(env))
+    serve("voice", settings, execvpe=lambda path, argv, env: became.append(env),
+          words_up=lambda endpoint: True)
 
     assert became[0]["OPENAI_API_KEY"] == "keryx-local"
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.slept: list[float] = []
+
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+def test_the_voice_server_waits_for_its_words_before_it_starts(settings, monkeypatch, capsys):
+    """At login the voice and model servers load together: the voice server waits for the
+    words rather than crash on them until llama.cpp has loaded."""
+    settings.local_agent_base_url = "http://127.0.0.1:8090/v1"
+    settings.local_agent_model = "m"
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: "/bin/s2s")
+    answers = iter([False, False, True])
+    asked: list[str] = []
+    clock, became = Clock(), []
+
+    serve("voice", settings, execvpe=lambda path, argv, env: became.append(argv),
+          words_up=lambda endpoint: asked.append(endpoint.base_url) or next(answers),
+          sleep=clock.sleep, clock=lambda: clock.now)
+
+    assert asked == ["http://127.0.0.1:8090/v1"] * 3
+    assert clock.slept == [servers.WORDS_POLL_S] * 2 == [2.0, 2.0]
+    assert became and became[0][0] == "/bin/s2s"
+    assert "waiting for the local model server at http://127.0.0.1:8090/v1" in \
+        capsys.readouterr().err
+
+
+def test_a_voice_server_whose_words_never_answer_does_not_start(settings, monkeypatch):
+    settings.local_agent_base_url = "http://127.0.0.1:8090/v1"
+    settings.local_agent_model = "m"
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: "/bin/s2s")
+    clock, became = Clock(), []
+
+    with pytest.raises(ServerConfigError,
+                       match="waiting for the local model server at http://127.0.0.1:8090/v1"):
+        serve("voice", settings, execvpe=lambda *args: became.append(args),
+              words_up=lambda endpoint: False, sleep=clock.sleep, clock=lambda: clock.now)
+
+    assert became == [] and clock.now >= servers.WORDS_WAIT_S
+
+
+def test_the_voice_server_waits_as_long_as_the_model_server_may_load():
+    from keryx.localmodels import server
+
+    assert servers.WORDS_WAIT_S == server.LLM_START_S
+
+
+def test_the_voice_server_asks_for_its_words_as_voice_use_here_does(settings, monkeypatch):
+    from keryx.localmodels import voice
+
+    settings.local_agent_base_url = "http://127.0.0.1:8090/v1"
+    settings.local_agent_model = "m"
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: "/bin/s2s")
+    monkeypatch.setattr(voice, "words_up", lambda endpoint: True)
+    became: list = []
+
+    serve("voice", settings, execvpe=lambda path, argv, env: became.append(argv))
+
+    assert became
 
 
 @pytest.mark.parametrize(

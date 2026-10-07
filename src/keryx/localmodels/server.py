@@ -56,9 +56,11 @@ class InstallError(RuntimeError):
 
 
 class Report(Protocol):
-    """How the steps are told: each before its slow work, and what stopped them."""
+    """How the steps are told: each before its slow work, warnings, and what stopped them."""
 
     def step(self, step: str, message: str) -> AbstractContextManager[None]: ...
+
+    def warn(self, message: str) -> None: ...
 
     def error(self, message: str, *, log: Path | None = None) -> None: ...
 
@@ -69,8 +71,6 @@ class StartReport(Report, Protocol):
     def progress(self, done: int, total: int | None) -> None: ...
 
     def done(self, url: str, served_model: str) -> None: ...
-
-    def warn(self, message: str) -> None: ...
 
 
 class Probes(Protocol):
@@ -140,10 +140,8 @@ def serve_here(
 ) -> bool:
     """Install the model server's unit from the checkout at `root` and wait for it to load
     `LLM_SERVER_MODEL`; False once the report has been told why it did not."""
-    with report.step("unit", "Installing the model server's service"):
-        problem = voice.install_unit("--llm", run_script, root=root, platform=platform)
-    if problem is not None:
-        report.error(problem)
+    if not voice.install_unit_step("--llm", "Installing the model server's service", run_script,
+                                   report, root=root, platform=platform):
         return False
     here = endpoint(settings)
     with report.step("start", f"Loading the model into llama.cpp at {here.base_url}"), \
