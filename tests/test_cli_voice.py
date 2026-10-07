@@ -379,17 +379,41 @@ def test_use_here_in_words_is_cancelled_by_ctrl_c(machine, monkeypatch):
     assert result.exit_code == 130 and "picks up where this stopped" in result.stderr
 
 
-def test_use_here_as_the_service_is_refused_and_saves_no_voice(machine, monkeypatch):
-    """A subagent of the running service cannot point the voice anywhere."""
-    ConfigStore().set(WORDS)
-    machine.s2s = "/bin/s2s"
+@pytest.mark.parametrize("command", [
+    ["voice", "use", "openai"], ["voice", "use", "openai", "--json"],
+    ["voice", "use", "server", "https://voice.example.com"],
+    ["voice", "use", "server", "https://voice.example.com", "--json"],
+    ["voice", "use", "here"],
+])
+def test_voice_use_is_refused_to_the_service_before_anything(machine, monkeypatch, command):
+    """A subagent of the running service cannot point the voice anywhere, nor send the
+    stored key to an address it names, nor start an install to find that out."""
+    ConfigStore().set({**WORDS, "VOICE_BASE_URL": "http://gpu-box:8765/v1",
+                       "VOICE_API_KEY": "vk-stored"})
+    before = ConfigStore().stored()
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+    result = runner.invoke(app, command)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "only the owner may" in result.stderr
+    assert machine.realtimes == [] and machine.scripts == []
+    assert ConfigStore().stored() == before and ConfigStore()._secrets() == {
+        "VOICE_API_KEY": "vk-stored"}
+
+
+def test_use_here_json_is_refused_to_the_service_with_one_error_event(machine, monkeypatch):
+    ConfigStore().set(WORDS)  # speech-to-speech is not installed: nothing may start installing
+    before = ConfigStore().stored()
     monkeypatch.setenv("KERYX_ACTOR", "service")
 
     result = runner.invoke(app, ["voice", "use", "here", "--json"])
 
-    assert result.exit_code == 1
-    assert events_of(result)[-1]["event"] == "error"
-    assert "VOICE_BASE_URL" not in ConfigStore().stored()
+    assert result.exit_code == 1 and result.stderr == ""
+    [event] = events_of(result)
+    assert event["event"] == "error" and event["message"].startswith("only the owner may")
+    assert machine.scripts == [] and ConfigStore().stored() == before
 
 
 def test_use_here_is_cancelled_by_a_terminate(machine, monkeypatch):
@@ -421,7 +445,7 @@ def _no_checkout(monkeypatch, machine, tmp_path):
 
 def _unsupported(monkeypatch, machine, tmp_path):
     ConfigStore().set(WORDS)
-    monkeypatch.setattr(voice.sys, "platform", "freebsd14")
+    monkeypatch.setattr(voice, "PLATFORM", "freebsd14")
 
 
 def _bad_voice(monkeypatch, machine, tmp_path):
@@ -460,6 +484,11 @@ def _migration(monkeypatch, machine, tmp_path):
     (old / "memory.md").write_text("# Memory\n")
 
 
+def _service(monkeypatch, machine, tmp_path):
+    ConfigStore().set(WORDS)
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+
 def _cancelled(monkeypatch, machine, tmp_path):
     ConfigStore().set(WORDS)
 
@@ -490,6 +519,7 @@ def _unexpected(monkeypatch, machine, tmp_path):
      (_never_up, "error", 1, "did not come up"),
      (_migration, "error", 2, "keryx cannot do that yet"),
      (_cancelled, "cancelled", 130, None),
+     (_service, "error", 1, "only the owner may"),
      (_unexpected, "error", 1, "uv is not executable")],
 )
 def test_use_here_json_ends_with_exactly_one_ending(
@@ -507,5 +537,6 @@ def test_use_here_json_ends_with_exactly_one_ending(
         assert message in events[-1]["message"]
     assert result.exit_code == code
     assert result.stderr == ""
-    if code == 2:  # a refusal: nothing was tried
+    if code == 2 or ending == "error" and "only the owner" in events[-1]["message"]:
+        # a refusal: nothing was tried
         assert machine.scripts == [] and "VOICE_SERVER_VOICE" not in ConfigStore().stored()

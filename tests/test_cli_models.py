@@ -465,12 +465,16 @@ def test_use_without_a_llama_server_says_so(models_settings, downloaded, monkeyp
 
 
 def test_use_is_refused_to_the_service(models_settings, downloaded, monkeypatch):
-    """The addresses are protected: a subagent cannot point the local agent anywhere."""
+    """The addresses are protected: a subagent cannot point the local agent anywhere, and
+    is refused before anything is looked at."""
     monkeypatch.setenv("KERYX_ACTOR", "service")
+    asked: list[int] = []
+    monkeypatch.setattr(servers, "free_port", lambda preferred: asked.append(preferred) or 1)
 
-    result = runner.invoke(app, ["models", "use", CODER.key, "--json"])
+    for command in (["models", "use", CODER.key, "--json"], ["models", "use", CODER.key]):
+        result = runner.invoke(app, command)
 
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert "LOCAL_AGENT" in result.stderr or "LLM_SERVER" in result.stderr
-    assert ConfigStore().stored() == {}
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "only the owner may" in result.stderr
+    assert asked == [] and ConfigStore().stored() == {}

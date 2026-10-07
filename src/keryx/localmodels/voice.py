@@ -44,6 +44,8 @@ NEEDS_WORDS = "local_agent_model"
 NO_WORDS = "set up a local model first: keryx models use NAME"
 #: The exit codes of a set-up: a refusal is one nothing was tried for.
 OK, FAILED, REFUSED = 0, 1, 2
+#: The platform whose service manager installs the units, unless a caller says another.
+PLATFORM = sys.platform
 #: A Kokoro voice's name: `af_heart`, `bm_george`, `zf_xiaoxiao`.
 VOICE_NAME = re.compile(r"[a-z]{2}_[a-z0-9]+")
 #: The steps of `here`, in order, as the JSON lines name them.
@@ -137,14 +139,16 @@ def server_reachable(endpoint: Endpoint, *, get: Callable[..., httpx.Response] |
                      ) -> bool:
     """Whether a voice server elsewhere answers `GET {base}/models` with its key, within
     `SERVER_REACH_S`: any answer short of a server error, since a Realtime server need not
-    list models."""
+    list models — but not a proxy's 407, which is the proxy answering. One on loopback (an
+    ssh tunnel) is never asked through a proxy."""
     try:
         response = (get or httpx.get)(
-            endpoint.url("models"), headers=endpoint.headers(), timeout=SERVER_REACH_S
+            endpoint.url("models"), headers=endpoint.headers(), timeout=SERVER_REACH_S,
+            trust_env=not endpoint.is_loopback,
         )
     except httpx.HTTPError:
         return False
-    return response.status_code < 500
+    return response.status_code < 500 and response.status_code != 407
 
 
 def current_voice(settings: Settings, store: ConfigStore) -> str:
@@ -270,7 +274,7 @@ def installer(
 ) -> tuple[Path | None, str | None]:
     """`scripts/install-launchd.sh` (a Mac) or `install-systemd.sh` (Linux) in the checkout
     at `root`, which installs the `flag` unit; or None, and why there is none here."""
-    platform = platform or sys.platform
+    platform = platform or PLATFORM
     if platform == "darwin":
         name = "install-launchd.sh"
     elif platform.startswith("linux"):

@@ -364,8 +364,8 @@ def _voice_here(ctx: SetupContext) -> None:
         ], default=voice.current_voice(ctx.settings, ctx.store))
 
     voice.here(ctx.settings, ctx.probes, _Told(ctx), choose_voice=choose_voice, save=ctx.save,
-               root=repo_root(), no_words="The voice server takes its words from a local "
-               "model, and there is none: choose one for the agent first.")
+               root=repo_root(), platform=sys.platform, no_words="The voice server takes its "
+               "words from a local model, and there is none: choose one for the agent first.")
 
 
 def _voice_elsewhere(ctx: SetupContext) -> None:
@@ -399,7 +399,8 @@ def _voice_to_openai(ctx: SetupContext) -> None:
 
 
 def _install_units(ctx: SetupContext, flag: str) -> bool:
-    problem = voice.install_unit(flag, ctx.probes.run_script, root=repo_root())
+    problem = voice.install_unit(flag, ctx.probes.run_script, root=repo_root(),
+                                 platform=sys.platform)
     if problem is not None:
         ctx.ui.error(problem)
     return problem is None

@@ -1140,6 +1140,7 @@ def models_use(
 
     It saves what `keryx setup` would; the model server and Keryx pick it up when restarted.
     """
+    _owner_only("choose the local agent's model")
     settings = _configure_readonly()
     entry = catalog.by_key(name)
     if entry is None:
@@ -1208,6 +1209,10 @@ def voice_command(
     typer.echo(f"its words: {here['words_model'] or voice.NO_WORDS}")
 
 
+#: What `voice use` is, refused to the service: `VOICE_BASE_URL` is protected.
+CHOOSE_THE_VOICE = "choose the voice"
+
+
 def _shown(saved: dict[str, Any]) -> dict[str, Any]:
     """What was saved, a secret's value as "(set)": never the value itself."""
     def secret(key: str) -> bool:
@@ -1223,6 +1228,7 @@ def voice_use_openai(
     as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
 ) -> None:
     """Make OpenAI's Realtime API the voice again (it needs OPENAI_API_KEY)."""
+    _owner_only(CHOOSE_THE_VOICE)
     settings = _configure_readonly()
     if as_json:
         saved = _store_values(voice.to_openai(), echo=False)
@@ -1254,6 +1260,7 @@ def voice_use_server(
     with, unless --key-stdin replaces it or --clear-key forgets it; it is never on the
     command line.
     """
+    _owner_only(CHOOSE_THE_VOICE)  # before the handshake, which carries the stored key
     settings = _configure_readonly()
     if key_stdin and clear_key:
         typer.echo("--key-stdin replaces the key and --clear-key forgets it: one of them",
@@ -1310,6 +1317,7 @@ def voice_use_here(
     come from the local agent's model, so that comes first (`keryx models use NAME`).
     """
     if not as_json:
+        _owner_only(CHOOSE_THE_VOICE)
         try:
             code = _voice_here(_configure_readonly(), name, voice.TextSteps(typer.echo))
         except KeyboardInterrupt:
@@ -1318,10 +1326,16 @@ def voice_use_here(
             code = pull.CANCELLED
         raise typer.Exit(code)
     events = voice.JsonSteps(typer.echo)
+
+    def run() -> int:
+        # Refused before any install, and as an event: the app reads stdout alone.
+        if refusal := _owner_refusal(CHOOSE_THE_VOICE):
+            events.error(refusal)
+            return 1
+        return _voice_here(_configure_readonly(refuse=events.error), name, events)
+
     with pull.terminate_as_interrupt():
-        code = events.guard(
-            lambda: _voice_here(_configure_readonly(refuse=events.error), name, events)
-        )
+        code = events.guard(run)
     raise typer.Exit(code)
 
 
@@ -2080,14 +2094,21 @@ def _echo_migration(report: MigrationReport) -> None:
         typer.echo("\nthe service did not start: `keryx doctor`, and its logs, say why")
 
 
+def _owner_refusal(verb: str) -> str | None:
+    """Why this command is refused inside anything `keryx serve` started; None outside."""
+    if current_actor() != SERVICE:
+        return None
+    return f"only the owner may {verb}, at their own terminal"
+
+
 def _owner_only(verb: str) -> None:
     """Refuse inside anything `keryx serve` started: this command is the owner's alone.
 
     Each of these writes what the running service may not — protected settings, the PIN,
     the memory whole — so the service-actor rule would mean nothing if they skipped it.
     """
-    if current_actor() == SERVICE:
-        typer.echo(f"only the owner may {verb}, at their own terminal", err=True)
+    if refusal := _owner_refusal(verb):
+        typer.echo(refusal, err=True)
         raise typer.Exit(1)
 
 

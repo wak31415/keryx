@@ -408,9 +408,15 @@ def test_a_server_that_answers_anything_short_of_a_server_error_is_reachable():
     endpoint = Endpoint.parse("http://gpu:8765", api_key="vk")
     assert voice.server_reachable(endpoint, get=answering(404)) is True
     assert voice.server_reachable(endpoint, get=answering(503)) is False
+    assert voice.server_reachable(endpoint, get=answering(407)) is False  # a proxy, not it
     assert calls[0]["url"] == "http://gpu:8765/v1/models"
     assert calls[0]["headers"] == {"Authorization": "Bearer vk"}
     assert calls[0]["timeout"] == voice.SERVER_REACH_S == 2.0
+    assert calls[0]["trust_env"] is True  # a server elsewhere may be reached through one
+
+    tunnel = Endpoint.parse("http://127.0.0.1:18765")  # an ssh tunnel: never via a proxy
+    assert voice.server_reachable(tunnel, get=answering(200)) is True
+    assert calls[-1]["trust_env"] is False
 
     def refused(url, **kwargs):
         raise httpx.ConnectError("refused")

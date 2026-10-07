@@ -505,7 +505,8 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
   commands that write what the service may not — `config import-env`, `auth login`,
-  `memory seed`, `setup`, `config lock|unlock`, `migrate`, `plugins install|remove` — refuse outright under
+  `memory seed`, `setup`, `config lock|unlock`, `migrate`, `plugins install|remove`,
+  `models use`, `voice use` (before any install, handshake or save) — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
