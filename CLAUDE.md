@@ -51,8 +51,14 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   approval hook, starts it again; `serve` refuses to start until it has run)
 - Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
-  the browser landed on), `uv run keryx auth status [--json] [--smoke]`, `uv run keryx auth
-  logout gmail|google-workspace [--json]` (the owner's alone: removes the tokens that one
+  the browser landed on); with `--json`, each is one JSON-lines stream for the Mac app
+  (`keryx/setup/auth_stream.py`): `open` (`url`, and Codex's `code`), Claude's `code` (the
+  one line it then reads on stdin, as gmail reads the address), then one ending. Claude's
+  drives `claude setup-token` behind a pty (`setup/terminal.py`) and stores the token it
+  prints as `CLAUDE_CODE_OAUTH_TOKEN`; that screen carries the token, so it is never echoed,
+  logged or quoted in an error — only fixed sentences, and a CLI whose screen no longer
+  parses says "use an API key instead". `uv run keryx auth status [--json] [--smoke]`, `uv
+  run keryx auth logout gmail|google-workspace [--json]` (the owner's alone: removes the tokens that one
   sign-in stored — never the OAuth client file, never the other sign-in)
 - The accounts Keryx connects to, as the Mac app's Integrations section shows them: `uv run
   keryx integrations [--json]` (google, gmail, slack, github, openai-admin, anthropic-admin:
@@ -233,7 +239,8 @@ remember:
 - **setup** — `setup/` is `keryx setup` and `keryx auth`: `wizard` (section order, what is
   left, the closing summary), one module per large section (`agents`, `phone`, `google`,
   `issues`, `plugins`, `profile`, `project_context`) and `sections` for the small ones,
-  `context` (the `SetupContext` every section gets, and `Probes` — everything that reaches
+  `auth_stream` (`auth login --json`) and `terminal` (the pty it drives Claude's sign-in
+  behind), `context` (the `SetupContext` every section gets, and `Probes` — everything that reaches
   the network, a login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
   rich/questionary one, one question to a screen), `rewind` (Esc goes back a question and
   Tab skips to the first unanswered one, both by running the section again from a record

@@ -10,6 +10,9 @@ left, never the OAuth client (configuration both share) and never the other's.
 Gmail is the one in two steps: without `--callback-url` it prints a consent link, and with
 it, it finishes. That is so a coding agent can relay the link to the person and the address
 they land on back, and so it works on a machine with no browser at all.
+
+`keryx auth login NAME --json` is the same four for the Mac app, as streams
+(`keryx.setup.auth_stream`), built on `agent_cli` and `use_client_file` here.
 """
 
 import asyncio
@@ -145,13 +148,8 @@ def login(
         _agent_login(name, settings, options=options, echo=echo, run_login=run_login)
         return
     if options.client_file is not None:
-        try:
-            path = google.install_client_file(settings, options.client_file)
-        except google.GoogleSetupError as exc:
-            raise AuthError(str(exc)) from None
-        store.set({"GOOGLE_CLIENT_SECRETS_FILE": str(path)}, actor=OWNER)
-        settings = settings.model_copy(update={"google_client_secrets_file": path})
-        echo(f"Google client saved to {path}")
+        settings = use_client_file(settings, store, options.client_file)
+        echo(f"Google client saved to {settings.google_client_secrets_file}")
     try:
         if name == "gmail":
             _gmail(settings, store, options=options, echo=echo, post=post)
@@ -164,6 +162,29 @@ def login(
         raise AuthError(str(exc)) from None
 
 
+def use_client_file(settings: Settings, store: ConfigStore, source: Path) -> Settings:
+    """The downloaded Google OAuth client at `source` installed and saved; the settings that
+    now use it. Refused, as an `AuthError`, when it is not a client file."""
+    try:
+        path = google.install_client_file(settings, source)
+    except google.GoogleSetupError as exc:
+        raise AuthError(str(exc)) from None
+    store.set({"GOOGLE_CLIENT_SECRETS_FILE": str(path)}, actor=OWNER)
+    return settings.model_copy(update={"google_client_secrets_file": path})
+
+
+def agent_cli(name: str) -> str:
+    """The agent `name`'s own CLI, the one its runner uses; an `AuthError` saying how to
+    install it when it or its SDK is missing."""
+    spec = BACKENDS[name]
+    if not registry.installed(name):
+        raise AuthError(f"{spec.label} is not installed: {install_command(name)}")
+    cli = spec.find_cli()
+    if cli is None:
+        raise AuthError(f"the {name} CLI is missing: {spec.install_hint}")
+    return cli
+
+
 def _agent_login(
     name: str,
     settings: Settings,
@@ -172,13 +193,7 @@ def _agent_login(
     echo: Echo,
     run_login: Callable[[Sequence[str]], int],
 ) -> None:
-    spec = BACKENDS[name]
-    if not registry.installed(name):
-        raise AuthError(f"{spec.label} is not installed: {install_command(name)}")
-    cli = spec.find_cli()
-    if cli is None:
-        raise AuthError(f"the {name} CLI is missing: {spec.install_hint}")
-    argv = agents.login_argv(name, cli, headless=options.headless)
+    argv = agents.login_argv(name, agent_cli(name), headless=options.headless)
     echo(f"running `{' '.join([name, *argv[1:]])}` — finish the sign-in it asks for.")
     code = run_login(argv)
     if code != 0:

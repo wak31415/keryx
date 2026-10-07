@@ -31,6 +31,15 @@ from pathlib import Path
 
 import httpx
 import pytest
+from setup.test_auth_stream import (
+    CONSENT,
+    DEVICE_AUTH,
+    SIGN_IN,
+    TOKEN_SHOWN,
+    TYPED,
+    Clock,
+    FakeChild,
+)
 from typer.testing import CliRunner
 
 from keryx import plugins, status, units
@@ -38,11 +47,13 @@ from keryx.cli import app
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path
+from keryx.integrations.gmail import token_path
 from keryx.issues import GhStatus
 from keryx.localmodels import catalog, download, hardware, runtimes, servers, use, voice
 from keryx.localmodels.hardware import Hardware
 from keryx.restart.service import ServiceTarget
 from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
+from keryx.setup import google
 from keryx.tasks.models import Task, TaskKind, TaskStatus, task_log_path
 from keryx.tasks.store import TaskStore
 
@@ -60,8 +71,11 @@ NULLABLE = "|null"
 PULL = "models pull --json"
 VOICE_HERE = "voice use here --json"
 MODELS_START = "models start --json"
+#: The four sign-ins the app drives, each its own stream.
+AUTH_LOGINS = {name: f"auth login {name} --json"
+               for name in ("claude", "codex", "gmail", "google-workspace")}
 #: The command lines the app reads as JSON lines; the pull's is the one every contract has.
-STREAMS = (PULL, VOICE_HERE, MODELS_START)
+STREAMS = (PULL, VOICE_HERE, MODELS_START, *AUTH_LOGINS.values())
 #: The command lines the app reads as one JSON document.
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
@@ -763,3 +777,130 @@ def test_a_model_server_start_streams_the_events_the_app_reads_and_ends_once(
     allowed = stream["exit"][ending]
     assert result.exit_code == code
     assert code in (allowed if isinstance(allowed, list) else [allowed])
+
+
+# --- the streams: auth login NAME --json -------------------------------------------------
+
+
+def _child(monkeypatch, script, *, code=0):
+    """The agent's CLI, scripted, in place of a real one behind a terminal."""
+    from keryx.setup import auth_stream
+
+    monkeypatch.setattr(auth_stream, "PtyChild",
+                        lambda argv, env: FakeChild(script, Clock(), code=code))
+
+
+def _google_client(settings) -> list[str]:
+    client = settings.data_dir / "client.json"
+    client.write_text('{"installed": {"client_id": "cid", "client_secret": "cs"}}')
+    return ["--client-file", str(client)]
+
+
+def _signed_in(settings):
+    return lambda settings, redirected_to, *, post=None: token_path(settings)
+
+
+def _consented(settings, *, echo, timeout_s):
+    echo(f"Open {CONSENT} to authorize")
+    return True
+
+
+def _interrupted(*args, **kwargs):
+    raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+
+def _refused(*args, **kwargs):
+    raise google.GoogleSetupError("no new credentials appeared")
+
+
+#: Each way a sign-in ends, per name: how to arrange it (returning extra argv and stdin), its
+#: ending, and its exit code.
+SIGN_INS = {
+    "claude": [
+        (lambda mp, s: _child(mp, [*SIGN_IN, TYPED, *TOKEN_SHOWN]) or ([], "c#s\n"), "done", 0),
+        (lambda mp, s: _child(mp, ["error: unknown command\r\n"], code=1) or ([], ""),
+         "error", 1),
+        (lambda mp, s: _child(mp, [*SIGN_IN[:5], KeyboardInterrupt()]) or ([], ""),
+         "cancelled", 130),
+    ],
+    "codex": [
+        (lambda mp, s: _child(mp, [DEVICE_AUTH]) or ([], ""), "done", 0),
+        (lambda mp, s: _child(mp, ["Usage: codex login\r\n"], code=2) or ([], ""), "error", 1),
+        (lambda mp, s: _child(mp, [DEVICE_AUTH, KeyboardInterrupt()]) or ([], ""),
+         "cancelled", 130),
+    ],
+    "gmail": [
+        (lambda mp, s: mp.setattr(google, "finish_signin", _signed_in(s))
+         or (_google_client(s), "http://localhost:1/?code=c\n"), "done", 0),
+        (lambda mp, s: (_google_client(s), ""), "error", 1),
+        (lambda mp, s: mp.setattr(google, "finish_signin", _interrupted)
+         or (_google_client(s), "http://localhost:1/?code=c\n"), "cancelled", 130),
+    ],
+    "google-workspace": [
+        (lambda mp, s: mp.setattr(google, "run_google_setup", _consented)
+         or (_google_client(s), ""), "done", 0),
+        (lambda mp, s: mp.setattr(google, "run_google_setup", _refused)
+         or (_google_client(s), ""), "error", 1),
+        (lambda mp, s: mp.setattr(google, "run_google_setup", _interrupted)
+         or (_google_client(s), ""), "cancelled", 130),
+    ],
+}
+#: The events each sign-in has besides its endings.
+SIGN_IN_EVENTS = {"claude": {"open", "code"}, "codex": {"open"}, "gmail": {"open"},
+                  "google-workspace": {"open"}}
+
+
+def sign_in_stream(name: str) -> dict:
+    """The contract's promise for `auth login NAME --json`, once the app has made it."""
+    stream = contract()["streams"].get(AUTH_LOGINS[name])
+    if stream is None:
+        # The streams' cross-check fails for it, once: a promise the app has yet to make.
+        pytest.skip(f"the contract does not name the {AUTH_LOGINS[name]} stream yet")
+    return stream
+
+
+@pytest.mark.parametrize("name", sorted(SIGN_INS))
+def test_the_sign_ins_below_reach_every_event_the_contract_names(name):
+    stream = sign_in_stream(name)
+
+    assert {ending for _, ending, _ in SIGN_INS[name]} == set(stream["terminal"])
+    assert set(stream["events"]) == {*stream["terminal"], *SIGN_IN_EVENTS[name]}
+
+
+@pytest.mark.parametrize(
+    ("name", "arrange", "ending", "code"),
+    [(name, *way) for name, ways in sorted(SIGN_INS.items()) for way in ways],
+)
+def test_a_sign_in_streams_the_events_the_app_reads_and_ends_once(
+    seeded, monkeypatch, every_agent_installed, name, arrange, ending, code
+):
+    stream = sign_in_stream(name)
+    extra, stdin = arrange(monkeypatch, seeded)
+
+    result = runner.invoke(app, [*AUTH_LOGINS[name].split(), *extra], input=stdin)
+
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert events, "no events at all"
+    for event in events:
+        assert event.get("event") in stream["events"], event
+        assert not key_problems(event, stream["events"][event["event"]]), event
+    endings = [event["event"] for event in events if event["event"] in stream["terminal"]]
+    assert endings == [ending] and events[-1]["event"] == ending
+    allowed = stream["exit"][ending]
+    assert result.exit_code == code
+    assert code in (allowed if isinstance(allowed, list) else [allowed])
+
+
+def test_every_way_a_sign_in_ends_streams_one_ending_whatever_the_contract_says(
+    seeded, monkeypatch, every_agent_installed
+):
+    """Until the app names these streams, the rule every stream keeps is still checked."""
+    for name, ways in SIGN_INS.items():
+        for arrange, ending, code in ways:
+            with monkeypatch.context() as patch:
+                extra, stdin = arrange(patch, seeded)
+                result = runner.invoke(app, [*AUTH_LOGINS[name].split(), *extra], input=stdin)
+            events = [json.loads(line) for line in result.stdout.splitlines()]
+            assert [e["event"] for e in events if e["event"] in ("done", "error", "cancelled")] \
+                == [ending], (name, events)
+            assert events[-1]["event"] == ending and result.exit_code == code, (name, events)
