@@ -42,6 +42,10 @@ TWILIO_REFUSED = (401, 403, 404)
 NOT_ON_ACCOUNT = "TWILIO_NUMBER isn't one of this Twilio account's numbers."
 NO_NUMBER = "There's no TWILIO_NUMBER saved."
 NO_HOST = "There's no PUBLIC_HOST saved, so there's nowhere to point it."
+#: Where to get cloudflared, as a page the app can open: it never shows `brew install`.
+CLOUDFLARED_DOWNLOADS = (
+    "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
+)
 BAD_HOST = "PUBLIC_HOST isn't a bare hostname: just the name, no https:// and no path."
 #: A bare public hostname: labels and a top-level domain, nothing else — no scheme, port,
 #: path, credentials, fragment or control character, any of which would point a webhook
@@ -277,7 +281,8 @@ def tunnel_report(
 ) -> dict[str, Any]:
     """`keryx phone tunnel --json`: the tunnel binary on `PATH` (as `doctor` finds it), its
     unit, the hostname, and whether Keryx answers there — null with no hostname to ask, and
-    false, with `error` saying why, for one that is not a bare hostname."""
+    false, with `error` saying why, for one that is not a bare hostname. `install_url` is
+    cloudflared's download page while there is no tunnel program, else null."""
     from keryx import units
 
     find = which or shutil.which
@@ -299,4 +304,5 @@ def tunnel_report(
         "unit_installed": bool(tunnel.get("installed")),
         "reachable": reachable,
         "error": bad,
+        "install_url": CLOUDFLARED_DOWNLOADS if binary is None else None,
     }

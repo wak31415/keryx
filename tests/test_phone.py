@@ -351,8 +351,21 @@ def test_no_tunnel_and_no_hostname_asks_nothing(settings):
     report = phone.tunnel_report(settings, which=which(), get=get, unit_status=units_with(False))
 
     assert report == {"kind": None, "binary": None, "public_host": None,
-                      "unit_installed": False, "reachable": None, "error": None}
+                      "unit_installed": False, "reachable": None, "error": None,
+                      "install_url": phone.CLOUDFLARED_DOWNLOADS}
     assert get.calls == []
+
+
+def test_where_to_get_the_tunnel_is_said_only_while_there_is_none(settings):
+    """A link the app opens, not a command it would have to show: cloudflared's own page."""
+    assert phone.CLOUDFLARED_DOWNLOADS == (
+        "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/"
+        "downloads/"
+    )
+    found = phone.tunnel_report(settings, which=which("cloudflared"), get=FakeGet(),
+                                unit_status=units_with(True))
+
+    assert "install_url" in found and found["install_url"] is None
 
 
 @pytest.mark.parametrize(

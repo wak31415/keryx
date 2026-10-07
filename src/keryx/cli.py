@@ -2915,6 +2915,8 @@ def phone_tunnel(
         typer.echo(json.dumps(report, indent=2))
         return
     typer.echo(f"tunnel: {report['binary'] or 'no tunnel on PATH (ngrok or cloudflared)'}")
+    if report["install_url"]:
+        typer.echo(f"get cloudflared from {report['install_url']} (or `brew install cloudflared`)")
     typer.echo(f"its service: {'installed' if report['unit_installed'] else 'not installed'}")
     host = report["public_host"]
     if report["error"]:

@@ -241,7 +241,7 @@ def test_tunnel_json(account, monkeypatch):
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {
         "kind": "ngrok", "binary": "/opt/homebrew/bin/ngrok", "public_host": HOST,
-        "unit_installed": True, "reachable": True, "error": None,
+        "unit_installed": True, "reachable": True, "error": None, "install_url": None,
     }
     assert asked == [f"https://{HOST}/health"]
 
@@ -256,6 +256,7 @@ def test_tunnel_as_text(account, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "no tunnel on PATH" in result.output
+    assert phone.CLOUDFLARED_DOWNLOADS in result.output
     assert f"{HOST} does not answer as Keryx" in result.output
 
 
