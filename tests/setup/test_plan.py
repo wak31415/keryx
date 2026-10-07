@@ -2,9 +2,9 @@
 doctor checks and wizard statuses `keryx setup` reads — so the two cannot drift."""
 
 import dataclasses
-import re
 
 import pytest
+from wording import for_the_app
 
 from keryx.agents.registry import BACKENDS
 from keryx.config import write_enrolled_pin
@@ -486,16 +486,6 @@ def test_the_service_is_asked_from_outside_whether_it_runs(monkeypatch, make_ctx
 
     monkeypatch.setattr("keryx.restart.service.resolve_target", lambda settings, **_: None)
     assert setup_plan._service_active(make_ctx([]).settings) is False
-
-
-#: What the app must never show: a command, a slash command, a traceback — and a path,
-#: `A_PATH`. Written out here rather than read from `doctor.SHELL_TEXT`.
-SHELL_TEXT = ("keryx ", "scripts/", "uv ", "`", "brew ", "/login", "Traceback")
-A_PATH = re.compile(r"(?:^|[\s(\[\"'])~?/(?!/)\S")
-
-
-def for_the_app(text: str) -> bool:
-    return not any(word in text for word in SHELL_TEXT) and not A_PATH.search(text)
 
 
 #: Details with a command, a path or a traceback in them, as a check made before doctor

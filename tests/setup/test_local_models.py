@@ -3,6 +3,7 @@
 from keryx.agents.base import RunResult
 from keryx.config.store import ConfigStore
 from keryx.endpoints import Probe
+from keryx.localmodels import voice
 from keryx.localmodels.catalog import VOICES, by_key
 from keryx.localmodels.download import DownloadError, model_path
 from keryx.localmodels.hardware import Hardware
@@ -389,7 +390,8 @@ def test_a_failed_brew_install_or_unit_install_is_said(make_ctx, world, monkeypa
     ctx = make_ctx([("model run", "here"), ("voice on a call", "openai"),
                     ("Which model?", "qwen3.5-4b")])
     local_models.run_section(ctx)
-    assert ctx.ui.lines("error") == ["install-systemd.sh --llm exited with 3"]
+    assert ctx.ui.lines("error") == ["The model server's service could not be installed."]
+    assert "install-systemd.sh --llm exited with 3" in ctx.ui.lines("note")
 
 
 def test_no_installer_beside_the_code_is_said(make_ctx, world, monkeypatch, tmp_path):
@@ -399,7 +401,8 @@ def test_no_installer_beside_the_code_is_said(make_ctx, world, monkeypatch, tmp_
 
     local_models.run_section(ctx)
 
-    assert "is not here" in ctx.ui.lines("error")[0]
+    assert ctx.ui.lines("error")[0] == voice.NO_CHECKOUT
+    assert any("is not here" in line for line in ctx.ui.lines("note"))
 
 
 def test_the_gguf_question_wants_a_gguf_that_is_there(tmp_path):
@@ -446,12 +449,14 @@ def test_the_voice_unit_that_will_not_install_saves_no_voice(make_ctx, world):
 
     local_models.run_section(ctx)
 
-    assert ctx.ui.lines("error") == ["the install did not finish"]
+    assert ctx.ui.lines("error") == ["speech-to-speech could not be installed."]
+    assert "uv tool install exited with 1" in ctx.ui.lines("note")
 
     world.s2s = "/bin/s2s"
     ctx = make_ctx([("model run", "keep"), ("voice on a call", "here"), ("Which voice?", DEFAULT)])
     local_models.run_section(ctx)
-    assert ctx.ui.lines("error")[0].endswith("--voice exited with 1")
+    assert ctx.ui.lines("error")[0] == "The voice server's service could not be installed."
+    assert any(line.endswith("--voice exited with 1") for line in ctx.ui.lines("note"))
     assert ctx.refresh().voice_server_voice == "bf_emma"  # the one chosen before is offered
     assert ctx.refresh().voice_base_url is None
 

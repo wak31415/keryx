@@ -86,7 +86,8 @@ def test_anything_unexpected_is_told_as_an_error():
         raise PermissionError("no writing there")
 
     assert events.guard(broken) == 1
-    assert lines(written) == [{"event": "error", "message": "no writing there"}]
+    assert lines(written) == [{"event": "error", "message": pull.UNEXPECTED,
+                               "detail": "PermissionError: no writing there"}]
 
 
 def test_what_is_raised_after_the_ending_was_told_goes_on_unchanged():
@@ -139,7 +140,8 @@ def test_an_interrupt_after_an_error_is_still_a_failure():
         raise KeyboardInterrupt
 
     assert events.guard(failed_then_interrupted) == 1
-    assert lines(written) == [{"event": "error", "message": "did not arrive whole"}]
+    assert lines(written) == [{"event": "error", "message": "did not arrive whole",
+                               "detail": None}]
 
 
 @pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])

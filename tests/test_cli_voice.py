@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
+from wording import for_the_app
 
 from keryx.cli import app
 from keryx.config.store import ConfigStore
@@ -53,6 +54,11 @@ class Machine:
         self.scripts.append(list(argv))
         return self.script_code
 
+
+
+def told(event: dict) -> str:
+    """An error event's sentence and its detail: everything it says, wherever it says it."""
+    return f"{event['message']} {event.get('detail') or ''}"
 
 def checkout(root) -> None:
     """The installers beside the code (`keryx.cli.repo_root`, the suite's own directory)."""
@@ -409,8 +415,9 @@ def test_use_here_with_no_checkout_says_to_run_it_from_a_clone(machine, monkeypa
     result = runner.invoke(app, ["voice", "use", "here", "--json"])
 
     assert result.exit_code == 2
-    assert events_of(result) == [{"event": "error", "message": "scripts/install-launchd.sh is "
-                                  "not here: run it with --voice from a clone of Keryx"}]
+    assert events_of(result) == [{"event": "error", "message": voice.NO_CHECKOUT,
+                                  "detail": "scripts/install-launchd.sh is not here: run it "
+                                  "with --voice from a clone of Keryx"}]
 
 
 def test_use_here_that_does_not_come_up_says_where_its_log_is(machine):
@@ -421,8 +428,9 @@ def test_use_here_that_does_not_come_up_says_where_its_log_is(machine):
     result = runner.invoke(app, ["voice", "use", "here", "--json"])
 
     assert result.exit_code == plain.exit_code == 1
-    message = events_of(result)[-1]["message"]
-    assert "no Realtime socket" in message and "keryx-voice.err.log" in message
+    event = events_of(result)[-1]
+    assert event["message"] == "The voice server did not come up, so its service was removed."
+    assert "no Realtime socket" in event["detail"] and "keryx-voice.err.log" in event["detail"]
     assert "keryx-voice.err.log" in plain.stderr
     assert "VOICE_BASE_URL" not in ConfigStore().stored()
 
@@ -435,7 +443,7 @@ def test_use_here_whose_server_never_answers_removes_its_unit_first(machine):
 
     assert result.exit_code == 1
     assert [argv[1:] for argv in machine.scripts] == [["--voice"], ["--voice", "--uninstall"]]
-    assert voice.REMOVED in events_of(result)[-1]["message"]
+    assert voice.REMOVED in events_of(result)[-1]["detail"]
 
 
 def test_use_here_cancelled_while_its_server_starts_removes_its_unit_then_says_so(machine):
@@ -462,7 +470,8 @@ def test_use_here_refuses_while_the_local_model_server_does_not_answer(machine, 
 
     assert result.exit_code == 2
     if as_json:
-        assert events_of(result) == [{"event": "error", "message": voice.NO_WORDS_SERVER}]
+        assert events_of(result) == [{"event": "error", "message": voice.NO_WORDS_SERVER,
+                                      "detail": None}]
     else:
         assert result.stderr.strip() == voice.NO_WORDS_SERVER
     assert machine.scripts == [] and ConfigStore().stored() == WORDS
@@ -472,7 +481,8 @@ def test_use_here_in_words_refuses_without_a_local_model(machine):
     result = runner.invoke(app, ["voice", "use", "here"])
 
     assert result.exit_code == 2
-    assert result.stderr.strip() == voice.NO_WORDS and machine.scripts == []
+    assert result.stderr.splitlines() == [voice.NO_WORDS, voice.NO_WORDS_HINT]
+    assert machine.scripts == []
 
 
 def test_use_here_in_words_is_cancelled_by_ctrl_c(machine, monkeypatch):
@@ -621,14 +631,37 @@ def _unexpected(monkeypatch, machine, tmp_path):
     monkeypatch.setattr(voice, "run_detached", broken)
 
 
+def _unparsable(monkeypatch, machine, tmp_path):
+    from keryx.config.settings import ConfigFileError
+
+    def refuse(**overrides):
+        raise ConfigFileError(f"{tmp_path}/config.toml does not parse (line 1)")
+
+    monkeypatch.setattr("keryx.cli.load_settings", refuse)
+
+
+def _save_refused(monkeypatch, machine, tmp_path):
+    from keryx.config.store import ConfigError
+
+    ConfigStore().set(WORDS)
+    machine.s2s = "/bin/s2s"
+
+    def refuse(self, values, **kwargs):
+        raise ConfigError("VOICE_SERVER_PORT must be a port")
+
+    monkeypatch.setattr(ConfigStore, "set", refuse)
+
+
 @pytest.mark.parametrize(
     ("arrange", "ending", "code", "message"),
     [(_done, "done", 0, None), (_no_words, "error", 2, voice.NO_WORDS),
+     (_unparsable, "error", 1, "does not parse"),
+     (_save_refused, "error", 1, "VOICE_SERVER_PORT must be a port"),
      (_no_words_server, "error", 2, "The local model server isn't running"),
      (_no_checkout, "error", 2, "from a clone of Keryx"),
      (_unsupported, "error", 2, "launchd or systemd"),
      (_bad_voice, "error", 2, "is not a Kokoro voice's name"),
-     (_install_failed, "error", 1, "the install did not finish"),
+     (_install_failed, "error", 1, "speech-to-speech could not be installed"),
      (_too_little_disk, "error", 1, "needs about 5 GB free"),
      (_unit_failed, "error", 1, "--voice exited with 4"),
      (_never_up, "error", 1, "did not come up"),
@@ -649,7 +682,9 @@ def test_use_here_json_ends_with_exactly_one_ending(
     assert events[-1]["event"] == ending
     assert all(e["event"] in ("step", "progress") for e in events[:-1])
     if message is not None:
-        assert message in events[-1]["message"]
+        assert message in told(events[-1])
+    if ending == "error":  # a sentence for a person; what a tool said is the detail
+        assert "detail" in events[-1] and for_the_app(events[-1]["message"]), events[-1]
     assert result.exit_code == code
     assert result.stderr == ""
     if code == 2 or ending == "error" and "only the owner" in events[-1]["message"]:
@@ -747,7 +782,7 @@ def _dl_unexpected(monkeypatch, machine):
 @pytest.mark.parametrize(
     ("arrange", "ending", "code", "message"),
     [(_dl_done, "done", 0, None), (_dl_unknown, "error", 2, "--stt whisper-mlx"),
-     (_dl_install_failed, "error", 1, "the install did not finish"),
+     (_dl_install_failed, "error", 1, "speech-to-speech could not be installed"),
      (_dl_no_python, "error", 1, "its own Python"),
      (_dl_failed, "error", 1, "could not be downloaded"),
      (_dl_cancelled, "cancelled", 130, None),
@@ -766,7 +801,9 @@ def test_download_json_ends_with_exactly_one_ending(machine, monkeypatch, arrang
     assert events[-1]["event"] == ending
     assert all(e["event"] in ("step", "progress") for e in events[:-1])
     if message is not None:
-        assert message in events[-1]["message"]
+        assert message in told(events[-1])
+    if ending == "error":  # a sentence for a person; what a tool said is the detail
+        assert "detail" in events[-1] and for_the_app(events[-1]["message"]), events[-1]
     assert result.exit_code == code
     assert result.stderr == ""
     if code == 2:  # a refusal: nothing was tried

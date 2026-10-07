@@ -46,7 +46,7 @@ RUNTIMES = (LLAMA, OLLAMA)
 #: The steps of `start`, in order, as the JSON lines name them.
 STEPS = ("runtime", "unit", "start", "check")
 #: What `start` says, first, while there is no model it could serve.
-NOT_READY = "choose and download a model first"
+NOT_READY = "Choose and download a model first."
 #: Said of a unit `start` removed rather than leave it restarting a server that fails.
 REMOVED = voice.REMOVED
 
@@ -62,7 +62,8 @@ class Report(Protocol):
 
     def warn(self, message: str) -> None: ...
 
-    def error(self, message: str, *, log: Path | None = None) -> None: ...
+    def error(self, message: str, *, log: Path | None = None,
+              detail: str | None = None) -> None: ...
 
 
 class StartReport(Report, Protocol):
@@ -150,8 +151,8 @@ def serve_here(
             problem = wait_for_server(here, "models", LLM_START_S)
     if problem is not None:
         removed = remove_unit(run_script, root=root, platform=platform)
-        report.error(f"the model server did not come up: {problem}; {removed}",
-                     log=log_path(settings))
+        report.error(voice.did_not_come_up("The model server", removed),
+                     detail=f"{problem}; {removed}", log=log_path(settings))
         return False
     return True
 
@@ -223,15 +224,16 @@ def start(
         return _start_ollama(settings, probes, report, save=save, root=root, platform=platform)
     if not settings.llm_server_model and on_ollama(settings):
         report.error(f"Ollama serves {settings.local_agent_model}; there is no llama.cpp "
-                     "server to start (`keryx models use NAME` moves the model back to it)")
+                     "server to start.",
+                     detail="`keryx models use NAME` moves the model back to llama.cpp")
         return REFUSED
     if problem := _not_ready(settings):
-        report.error(f"{NOT_READY}: {problem}")
+        report.error(NOT_READY, detail=problem)
         return REFUSED
     alias = servers.llm_model(settings)[0]
     script, problem = voice.installer("--llm", root=root, platform=platform)
     if script is None:
-        report.error(problem or "no installer")
+        voice.no_installer(report, problem)
         return REFUSED
     if not _have_llama(settings, probes, report, platform=platform):
         return FAILED
@@ -246,8 +248,10 @@ def start(
             _up, served = probes.served(here.base_url)
     if served != alias:
         removed = remove_unit(probes.run_script, root=root, platform=platform)
-        report.error(f"the model server at {here.base_url} serves {served or 'no model it names'}"
-                     f", not {alias}; {removed}", log=log_path(settings))
+        gone = "so its service was removed" if removed == REMOVED else (
+            "and its service could not be removed")
+        report.error(f"The model server serves {served or 'no model it names'}, not {alias}, "
+                     f"{gone}.", detail=f"{here.base_url}; {removed}", log=log_path(settings))
         return FAILED
     report.done(here.base_url, served)
     return OK
@@ -279,12 +283,12 @@ def _have_llama(settings: Settings, probes: Probes, report: StartReport, *, plat
                               install=lambda cache, machine: probes.download_llama_cpp(
                                   cache, machine, report.progress))
             except InstallError as error:
-                report.error(str(error))
+                report.error("llama.cpp could not be installed.", detail=str(error))
                 return False
         found = probes.llama_server(settings.cache_dir)
         if found is None:
-            report.error("llama.cpp was installed, but its llama-server cannot be found: "
-                         "not on PATH, nor in CACHE_DIR/llama.cpp")
+            report.error("llama.cpp was installed, but its llama-server cannot be found.",
+                         detail="not on PATH, nor in CACHE_DIR/llama.cpp")
             return False
     with report.step("runtime", f"llama.cpp: {found}"):
         pass
@@ -297,26 +301,26 @@ def _start_ollama(settings: Settings, probes: Probes, report: StartReport, *,
     or, once Ollama serves it, the one it serves — and the llama.cpp server's unit removed."""
     entry = _ollama_entry(settings)
     if entry is None:
-        report.error(f"{NOT_READY}: Ollama runs a model from Keryx's list (keryx models "
-                     "list), and LLM_SERVER_MODEL names none")
+        report.error(f"{NOT_READY} Ollama runs a model from Keryx's list.",
+                     detail="LLM_SERVER_MODEL names none; `keryx models list` shows them")
         return REFUSED
     with report.step("runtime", "Looking for Ollama"):
         found = probes.ollama()
     if found is None:
-        report.error("Ollama is not installed: install it from ollama.com, or run the model "
-                     "with llama.cpp (--runtime llama)")
+        report.error("Ollama is not installed.", detail="install it from ollama.com, or run "
+                     "the model with llama.cpp (--runtime llama)")
         return FAILED
     with report.step("start", f"Pulling {entry.title} into Ollama ({entry.size_gb} GB)"):
         problem = pull_into_ollama(entry, probes.run_script)
     if problem is not None:
-        report.error(problem)
+        report.error(f"Ollama could not pull {entry.title}.", detail=problem)
         return FAILED
     here = Endpoint.parse(f"{OLLAMA_URL}/v1")
     with report.step("check", f"Asking Ollama for {entry.ollama}"):
         listed = probes.models(here)
     if entry.ollama not in listed.models:
         why = listed.problem or f"it lists {', '.join(listed.models) or 'nothing'}"
-        report.error(f"Ollama does not list {entry.ollama}: {why}")
+        report.error(f"Ollama does not list {entry.ollama}.", detail=why)
         return FAILED
     if not save(ollama_values(entry)):
         return FAILED

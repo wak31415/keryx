@@ -33,12 +33,15 @@ PROGRESS_EVERY_S = 0.25
 SUCCEEDED = frozenset({"done", "adopted"})
 #: What Cancel sends, held off while the ending is written.
 CANCEL_SIGNALS = frozenset({signal.SIGTERM, signal.SIGINT})
+#: An `error` event's `message` when what stopped the work is nothing written for a person:
+#: the exception itself is the event's `detail`.
+UNEXPECTED = "Something unexpected stopped it."
 
 
 class Report(Protocol):
     """How a pull is told: its progress, and how it ended."""
 
-    def error(self, message: str) -> None: ...
+    def error(self, message: str, *, detail: str | None = None) -> None: ...
 
     def adopted(self, path: Path, found: Path) -> None: ...
 
@@ -56,7 +59,7 @@ def pull(settings: Settings, name: str, report: Report) -> int:
     """
     entry = catalog.by_key(name)
     if entry is None:
-        report.error(f"there is no model called {name} (`keryx models list`)")
+        report.error(f"There is no model called {name}.", detail="`keryx models list` names them")
         return 2
     dest = download.model_path(settings.cache_dir, entry)
     if not download.is_downloaded(settings.cache_dir, entry) and (
@@ -67,8 +70,8 @@ def pull(settings: Settings, name: str, report: Report) -> int:
     need = download.remaining_bytes(settings.cache_dir, entry) + download.DISK_MARGIN_BYTES
     free = hardware.free_bytes(dest.parent)
     if need > download.DISK_MARGIN_BYTES and free < need:
-        report.error(f"{entry.title} needs {need / 1e9:.1f} GB free on {dest.parent} and there "
-                     f"is {free / 1e9:.1f} GB")
+        report.error(f"{entry.title} needs {need / 1e9:.1f} GB free, and there is "
+                     f"{free / 1e9:.1f} GB.", detail=f"on {dest.parent}")
         return 1
     download.ensure_model_dir(settings.cache_dir, entry)
     try:
@@ -88,8 +91,10 @@ class TextReport:
     def __init__(self, echo: Callable[..., None]) -> None:
         self._echo = echo
 
-    def error(self, message: str) -> None:
+    def error(self, message: str, *, detail: str | None = None) -> None:
         self._echo(message, err=True)
+        if detail:
+            self._echo(detail, err=True)
 
     def adopted(self, path: Path, found: Path) -> None:
         self._echo(f"{path} (already in {found.parent})")
@@ -152,8 +157,11 @@ class EventLines:
         finally:
             signal.pthread_sigmask(signal.SIG_SETMASK, held)
 
-    def error(self, message: str) -> None:
-        self._end({"event": "error", "message": message})
+    def error(self, message: str, *, detail: str | None = None) -> None:
+        """The `error` ending: `message` one sentence for a person, and `detail` — always
+        there, null when there is nothing more — what a tool said, a path, a log: what the
+        person might pass on, never what the app leads with."""
+        self._end({"event": "error", "message": message, "detail": detail})
 
     def cancelled(self) -> None:
         self._end({"event": "cancelled"})
@@ -178,7 +186,9 @@ class EventLines:
             if self.ended:
                 raise
             with suppress(KeyboardInterrupt):
-                self.error(str(exc) or type(exc).__name__)
+                said = str(exc)
+                self.error(UNEXPECTED, detail=f"{type(exc).__name__}: {said}" if said
+                           else type(exc).__name__)
             return 1
 
 

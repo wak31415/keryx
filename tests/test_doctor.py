@@ -2,11 +2,11 @@
 
 import dataclasses
 import importlib.util
-import re
 import sys
 from pathlib import Path
 
 import pytest
+from wording import for_the_app
 
 from keryx import fixes, plugins
 from keryx.agents.registry import BACKENDS
@@ -28,17 +28,6 @@ from keryx.integrations.gmail import token_path
 from keryx.issues import GhStatus
 from keryx.logging_util import mask_number
 from keryx.notify.twilio_out import TwilioError
-
-#: What the Mac app must never show in a check's `detail`: a command, a slash command, a
-#: traceback — written out here rather than read from `doctor.SHELL_TEXT`, so a word taken
-#: off that list does not quietly pass.
-NOT_FOR_THE_APP = ("`", "keryx ", "brew ", "/login", "Traceback")
-#: A path on this machine: a word that starts at the root or at home.
-A_PATH = re.compile(r"(?:^|[\s(\[\"'])~?/(?!/)\S")
-
-
-def for_the_app(text: str) -> bool:
-    return not any(word in text for word in NOT_FOR_THE_APP) and not A_PATH.search(text)
 
 
 @pytest.fixture(autouse=True)

@@ -8,10 +8,11 @@ import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
+from keryx import cli
 from keryx.cli import app
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
-from keryx.localmodels import catalog, download, hardware, servers, use
+from keryx.localmodels import catalog, download, hardware, pull, servers, use
 from keryx.localmodels.hardware import Hardware
 
 runner = CliRunner()
@@ -192,7 +193,8 @@ def test_pull_json_refuses_with_an_error_event(models_settings, monkeypatch):
     unknown = runner.invoke(app, ["models", "pull", "nope", "--json"])
     assert unknown.exit_code == 2
     assert events_of(unknown) == [
-        {"event": "error", "message": "there is no model called nope (`keryx models list`)"}
+        {"event": "error", "message": "There is no model called nope.",
+         "detail": "`keryx models list` names them"}
     ]
 
     monkeypatch.setattr(download, "already_on_disk", lambda entry: None)
@@ -201,6 +203,7 @@ def test_pull_json_refuses_with_an_error_event(models_settings, monkeypatch):
     assert full.exit_code == 1
     [event] = events_of(full)
     assert event["event"] == "error" and "needs 19.6 GB free" in event["message"]
+    assert event["detail"].startswith("on /")  # where, which the app does not lead with
 
     monkeypatch.setattr(hardware, "free_bytes", lambda path: 10**12)
 
@@ -210,7 +213,8 @@ def test_pull_json_refuses_with_an_error_event(models_settings, monkeypatch):
     monkeypatch.setattr(download, "download", broken)
     bad = runner.invoke(app, ["models", "pull", CODER.key, "--json"])
     assert bad.exit_code == 1
-    assert events_of(bad)[-1] == {"event": "error", "message": "did not arrive whole"}
+    assert events_of(bad)[-1] == {"event": "error", "message": "did not arrive whole",
+                                  "detail": None}
 
 
 def test_pull_json_cancelled_keeps_the_part(models_settings, monkeypatch):
@@ -281,7 +285,8 @@ def test_pull_json_tells_the_migration_refusal_on_stdout(old_jarvis_dir):
     assert result.exit_code == plain.exit_code == 2
     sentence = plain.stderr.strip()
     assert sentence.startswith("keryx cannot do that yet:") and "keryx migrate" in sentence
-    assert result.stdout.splitlines() == [json.dumps({"event": "error", "message": sentence})]
+    assert result.stdout.splitlines() == [json.dumps(
+        {"event": "error", "message": cli.MIGRATE_FIRST, "detail": sentence})]
     assert result.stderr == ""
 
 
@@ -319,7 +324,8 @@ def test_pull_json_tells_anything_unexpected_as_an_error(models_settings, monkey
     result = runner.invoke(app, ["models", "pull", CODER.key, "--json"])
 
     assert result.exit_code == 1
-    assert events_of(result) == [{"event": "error", "message": "the cache is not writable"}]
+    assert events_of(result) == [{"event": "error", "message": pull.UNEXPECTED,
+                                  "detail": "PermissionError: the cache is not writable"}]
 
 
 def _done(monkeypatch, tmp_path):

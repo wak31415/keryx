@@ -69,7 +69,8 @@ def test_the_service_is_refused_as_one_event(child, monkeypatch):
 
     assert result.exit_code == 1
     assert events(result) == [{"event": "error",
-                               "message": "only the owner may sign in, at their own terminal"}]
+                               "message": "only the owner may sign in, at their own terminal",
+                               "detail": None}]
     assert "child" not in made
 
 
@@ -95,4 +96,5 @@ def test_an_unexpected_failure_is_still_one_ending(child, monkeypatch):
     result = runner.invoke(app, ["auth", "login", "codex", "--json"])
 
     assert result.exit_code == 1
-    assert events(result) == [{"event": "error", "message": "boom"}]
+    assert events(result) == [{"event": "error", "message": "Something unexpected stopped it.",
+                               "detail": "RuntimeError: boom"}]

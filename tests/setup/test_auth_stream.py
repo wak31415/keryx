@@ -140,7 +140,7 @@ def test_a_line_that_is_not_a_code_is_never_typed(settings, agents, clock, line)
     run = Run(child)
 
     assert run("claude", settings, lines=FakeLines(line), clock=clock) == 2
-    assert ending(run) == {"event": "error", "message": auth_stream.NOT_A_CODE}
+    assert ending(run) == {"event": "error", "message": auth_stream.NOT_A_CODE, "detail": None}
     assert child.typed == [] and child.stopped
     assert "rm -rf" not in run.text
 
@@ -155,7 +155,7 @@ def test_a_terminal_that_closes_as_the_code_is_typed_has_changed(settings, agent
     run = Run(child)
 
     assert run("claude", settings, lines=FakeLines("c#s"), clock=clock) == 1
-    assert ending(run) == {"event": "error", "message": CLAUDE_CHANGED}
+    assert ending(run) == {"event": "error", "message": CLAUDE_CHANGED, "detail": None}
 
 
 def test_a_token_wrapped_over_two_lines_is_not_stored_cut_short(settings, agents, clock):
@@ -205,7 +205,7 @@ def test_a_link_that_is_not_claudes_own_is_never_opened(settings, agents, clock,
     run = Run(child)
 
     assert run("claude", settings, clock=clock) == 1
-    assert ending(run) == {"event": "error", "message": CLAUDE_CHANGED}
+    assert ending(run) == {"event": "error", "message": CLAUDE_CHANGED, "detail": None}
     assert [line["event"] for line in run.lines] == ["error"]
 
 
@@ -253,7 +253,7 @@ def test_a_changed_sign_in_says_so_and_shows_nothing_of_the_screen(
     code = run("claude", settings, clock=clock)
 
     assert code == 1
-    assert ending(run) == {"event": "error", "message": CLAUDE_CHANGED}
+    assert ending(run) == {"event": "error", "message": CLAUDE_CHANGED, "detail": None}
     assert CANARY not in run.text and "claude.example.net" not in run.text
     assert child.stopped
     assert clock.now >= auth_stream.START_TIMEOUT_S
@@ -285,7 +285,7 @@ def test_a_code_claude_refuses_says_so(settings, agents, clock):
     run = Run(child)
 
     assert run("claude", settings, lines=FakeLines("wrong#code"), clock=clock) == 1
-    assert ending(run) == {"event": "error", "message": CODE_REFUSED}
+    assert ending(run) == {"event": "error", "message": CODE_REFUSED, "detail": None}
     assert "Invalid authorization" not in run.text
 
 
@@ -303,7 +303,7 @@ def test_an_owner_who_never_answers_times_out(settings, agents, clock):
     run = Run(child)
 
     assert run("claude", settings, lines=FakeLines(waiting=True), clock=clock) == 1
-    assert ending(run) == {"event": "error", "message": TIMED_OUT}
+    assert ending(run) == {"event": "error", "message": TIMED_OUT, "detail": None}
     assert clock.now >= auth_stream.LOGIN_TIMEOUT_S
     assert child.stopped
 
@@ -400,7 +400,7 @@ def test_a_device_link_that_is_not_openais_own_is_never_opened(settings, agents,
     run = Run(FakeChild([DEVICE_AUTH.replace(DEVICE_URL, url)], clock, code=0))
 
     assert run("codex", settings, clock=clock) == 1
-    assert ending(run) == {"event": "error", "message": CODEX_CHANGED}
+    assert ending(run) == {"event": "error", "message": CODEX_CHANGED, "detail": None}
     assert [line["event"] for line in run.lines] == ["error"]
 
 
@@ -423,7 +423,7 @@ def test_a_codex_sign_in_that_does_not_finish_says_which_way(
     run = Run(FakeChild(script, clock, code=code))
 
     assert run("codex", settings, clock=clock) == 1
-    assert ending(run) == {"event": "error", "message": message}
+    assert ending(run) == {"event": "error", "message": message, "detail": None}
     assert "expired" not in run.text and "Usage" not in run.text
 
 
@@ -509,7 +509,7 @@ def test_gmail_without_a_client_says_how_to_get_one(settings):
     run = Run()
 
     assert run("gmail", settings) == 1
-    assert ending(run) == {"event": "error", "message": google.NO_CLIENT}
+    assert ending(run) == {"event": "error", "message": google.NO_CLIENT, "detail": None}
 
 
 def test_a_client_file_that_is_not_one_is_refused(settings, tmp_path):
@@ -555,7 +555,8 @@ def test_google_workspace_that_fails_says_why(settings, client_file):
     run = Run()
 
     assert run("google-workspace", settings, client_file=client_file, workspace=workspace) == 1
-    assert ending(run) == {"event": "error", "message": "no new credentials appeared"}
+    assert ending(run) == {"event": "error", "message": "no new credentials appeared",
+                           "detail": None}
 
 
 def test_the_real_workspace_flow_is_the_default(settings):
@@ -614,4 +615,4 @@ def test_a_codex_terminal_that_fails_under_it_has_changed(settings, agents, cloc
     run = Run(FakeChild([DEVICE_AUTH[:90], OSError(5, "Input/output error")], clock))
 
     assert run("codex", settings, clock=clock) == 1
-    assert ending(run) == {"event": "error", "message": CODEX_CHANGED}
+    assert ending(run) == {"event": "error", "message": CODEX_CHANGED, "detail": None}

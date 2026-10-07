@@ -355,8 +355,11 @@ class _Told:
     def warn(self, message: str) -> None:
         self._ctx.ui.warn(message)
 
-    def error(self, message: str, *, log: Path | None = None) -> None:
+    def error(self, message: str, *, log: Path | None = None,
+              detail: str | None = None) -> None:
         self._ctx.ui.error(message)
+        if detail:
+            self._ctx.ui.note(detail)
         if log is not None:
             self._ctx.ui.note(f"Its log: {log}")
 

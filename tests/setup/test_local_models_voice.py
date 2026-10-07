@@ -37,7 +37,8 @@ def test_a_voice_server_that_does_not_come_up_has_its_unit_removed(make_ctx, wor
     local_models.run_section(ctx)
 
     assert [argv[1:] for argv in scripts(world)] == [["--voice"], ["--voice", "--uninstall"]]
-    assert voice.REMOVED in ctx.ui.lines("error")[0]
+    assert ctx.ui.lines("error")[0].endswith("so its service was removed.")
+    assert any(voice.REMOVED in line for line in ctx.ui.lines("note"))
 
 
 def test_the_units_are_asked_of_the_fake_world_never_the_service_manager(make_ctx, world):
@@ -71,4 +72,5 @@ def test_a_download_that_stops_installs_no_voice_unit(make_ctx, world):
 
     local_models.run_section(ctx)
 
-    assert ctx.ui.lines("error") == [world.fetched] and scripts(world) == []
+    assert ctx.ui.lines("error") == ["The voice's speech models could not be downloaded."]
+    assert world.fetched in ctx.ui.lines("note") and scripts(world) == []

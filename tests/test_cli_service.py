@@ -7,13 +7,14 @@ import signal
 
 import pytest
 from typer.testing import CliRunner
+from wording import for_the_app
 
 from keryx import units
 from keryx.cli import app
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
 from keryx.endpoints import Probe
-from keryx.localmodels import catalog, download, runtimes, servers, use, voice
+from keryx.localmodels import catalog, download, runtimes, server, servers, use, voice
 
 runner = CliRunner()
 CODER = catalog.by_key("qwen3-coder-30b-a3b")
@@ -21,6 +22,11 @@ OLLAMA_MODEL = catalog.by_key("gpt-oss-20b")
 TERMINAL = {"done", "error", "cancelled"}
 URL = "http://127.0.0.1:8090/v1"
 
+
+
+def told(event: dict) -> str:
+    """An error event's sentence and its detail: everything it says, wherever it says it."""
+    return f"{event['message']} {event.get('detail') or ''}"
 
 def events_of(result) -> list[dict]:
     return [json.loads(line) for line in result.stdout.splitlines()]
@@ -274,7 +280,7 @@ def test_start_in_words(machine):
 
 def test_start_in_words_refused_and_cancelled(machine, monkeypatch):
     refused = runner.invoke(app, ["models", "start"])
-    assert refused.exit_code == 2 and "choose and download a model first" in refused.stderr
+    assert refused.exit_code == 2 and server.NOT_READY in refused.stderr
 
     chosen()
 
@@ -374,8 +380,8 @@ def _unexpected(monkeypatch, machine, tmp_path):
 @pytest.mark.parametrize(
     ("arrange", "ending", "code", "message"),
     [(_done, "done", 0, None),
-     (_not_chosen, "error", 2, "choose and download a model first"),
-     (_not_downloaded, "error", 2, "choose and download a model first"),
+     (_not_chosen, "error", 2, "Choose and download a model first."),
+     (_not_downloaded, "error", 2, "Choose and download a model first."),
      (_no_checkout, "error", 2, "from a clone of Keryx"),
      (_never_up, "error", 1, "did not come up"),
      (_another_model, "error", 1, "serves someone-elses"),
@@ -397,7 +403,9 @@ def test_start_json_ends_with_exactly_one_ending(
     assert events[-1]["event"] == ending
     assert all(e["event"] in ("step", "progress") for e in events[:-1])
     if message is not None:
-        assert message in events[-1]["message"]
+        assert message in told(events[-1])
+    if ending == "error":  # a sentence for a person; what a tool said is the detail
+        assert "detail" in events[-1] and for_the_app(events[-1]["message"]), events[-1]
     assert result.exit_code == code
     assert result.stderr == ""
     if code == 2 or ending == "error" and "only the owner" in events[-1]["message"]:
@@ -414,4 +422,4 @@ def test_a_server_that_never_comes_up_leaves_no_unit_behind(machine, tmp_path):
     assert machine.scripts == [[installer(tmp_path), "--llm"],
                                [installer(tmp_path), "--llm", "--uninstall"]]
     assert "its service was removed" in events_of(result)[-1]["message"]
-    assert "keryx-llm.err.log" in events_of(result)[-1]["message"]
+    assert "keryx-llm.err.log" in events_of(result)[-1]["detail"]

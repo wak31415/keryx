@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from wording import for_the_app
 
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
@@ -99,8 +100,11 @@ class Recorder:
     def warn(self, message: str) -> None:
         self.log.lines.append(("warn", message))
 
-    def error(self, message: str, *, log: Path | None = None) -> None:
-        self.log.lines.append(("error", message, log))
+    def error(self, message: str, *, log: Path | None = None,
+              detail: str | None = None) -> None:
+        # Every way `here` and `download` stop is a sentence the app can show as it is.
+        assert for_the_app(message), message
+        self.log.lines.append(("error", message, detail, log))
 
     def done(self, *ended: str) -> None:
         self.log.lines.append(("done", *ended))
@@ -184,8 +188,10 @@ def test_here_wants_a_local_model_for_its_words(settings, root):
     code, saved = run_here(settings, FakeMachine(log), log, root)
 
     assert code == voice.REFUSED == 2
-    assert log.lines == [("error", voice.NO_WORDS, None)] and saved == []
-    assert voice.NO_WORDS == "set up a local model first: keryx models use NAME"
+    assert log.lines == [("error", voice.NO_WORDS, voice.NO_WORDS_HINT, None)] and saved == []
+    assert voice.NO_WORDS == ("Set up a local model first: the voice server takes its words "
+                              "from it.")
+    assert voice.NO_WORDS_HINT == "`keryx models use NAME` sets one up"
 
 
 def test_here_says_no_words_in_the_callers_own_sentence(settings, root):
@@ -193,7 +199,7 @@ def test_here_says_no_words_in_the_callers_own_sentence(settings, root):
 
     run_here(settings, FakeMachine(log), log, root, no_words="choose one first")
 
-    assert log.of("error") == [("choose one first", None)]
+    assert log.of("error") == [("choose one first", voice.NO_WORDS_HINT, None)]
 
 
 def test_here_with_too_little_disk_installs_nothing(settings, root):
@@ -203,7 +209,7 @@ def test_here_with_too_little_disk_installs_nothing(settings, root):
                            log, root)
 
     assert code == 1 and saved == [] and log.of("script") == []
-    [(message, _log)] = log.of("error")
+    [(message, _detail, _log)] = log.of("error")
     assert "needs about 5 GB free" in message and "there is 1.0 GB" in message
 
 
@@ -214,7 +220,8 @@ def test_an_install_that_fails_saves_nothing(settings, root):
                            log, root)
 
     assert code == 1 and saved == []
-    assert log.of("error") == [("the install did not finish", None)]
+    assert log.of("error") == [("speech-to-speech could not be installed.",
+                                "uv tool install exited with 1", None)]
 
 
 def test_no_installer_beside_the_code_refuses_before_anything_is_installed(settings, tmp_path):
@@ -224,9 +231,10 @@ def test_no_installer_beside_the_code_refuses_before_anything_is_installed(setti
                            tmp_path / "not-a-checkout")
 
     assert code == voice.REFUSED
-    [(message, _log)] = log.of("error")
-    assert message.startswith("scripts/install-systemd.sh is not here")
-    assert "from a clone of Keryx" in message
+    [(message, detail, _log)] = log.of("error")
+    assert message == voice.NO_CHECKOUT
+    assert detail.startswith("scripts/install-systemd.sh is not here")
+    assert "from a clone of Keryx" in detail
     assert saved == [] and log.of("script") == [] and log.of("step") == []
 
 
@@ -238,7 +246,7 @@ def test_a_machine_with_neither_launchd_nor_systemd_is_refused(settings, root):
 
     assert code == voice.REFUSED and saved == [] and log.of("script") == []
     assert log.of("error") == [("Keryx runs its servers under launchd or systemd, and "
-                                "freebsd14 has neither", None)]
+                                "freebsd14 has neither", None, None)]
     told = Log()
     assert voice.install_unit_step("--llm", "Installing", FakeMachine(told).run_script,
                                    Recorder(told), root=root, platform="freebsd14") is False
@@ -262,7 +270,8 @@ def test_a_unit_that_will_not_install_is_said_and_no_voice_is_saved(settings, ro
                            platform="darwin")
 
     assert code == 1
-    assert log.of("error") == [("install-launchd.sh --voice exited with 3", None)]
+    assert log.of("error") == [("The voice server's service could not be installed.",
+                                "install-launchd.sh --voice exited with 3", None)]
     assert log.of("script")[0][0][0].endswith("install-launchd.sh")
     assert [values for values in saved if "VOICE_BASE_URL" in values] == []
     # Its installer writes the plist before loading it: what it left is removed, and said.
@@ -282,7 +291,7 @@ def test_a_unit_install_that_times_out_is_removed(settings, root):
                             platform="darwin")
 
     assert code == 1
-    assert log.of("error")[0][0] == "install-launchd.sh --voice did not finish within 120 s"
+    assert log.of("error")[0][1] == "install-launchd.sh --voice did not finish within 120 s"
     assert log.of("warn") == [(voice.REMOVED,)]
     assert log.of("script")[-1][0][-1] == "--uninstall"
 
@@ -383,7 +392,8 @@ def test_a_server_that_never_answers_points_at_its_log(settings, root):
                            FakeMachine(log, s2s="/bin/s2s", server_problem=problem), log, root)
 
     assert code == 1
-    assert log.of("error") == [(f"the voice server did not come up: {problem}; {voice.REMOVED}",
+    assert log.of("error") == [("The voice server did not come up, so its service was removed.",
+                                f"{problem}; {voice.REMOVED}",
                                 settings.state_dir / "logs" / "keryx-voice.err.log")]
     assert [values for values in saved if "VOICE_BASE_URL" in values] == []
     assert log.of("done") == []
@@ -413,9 +423,10 @@ def test_a_unit_that_cannot_be_removed_says_so(settings, root):
 
     run_here(settings.model_copy(update=WORDS), machine, log, root, platform="darwin")
 
-    [(message, _log)] = log.of("error")
-    assert message.endswith("its service could not be removed: install-launchd.sh --voice "
-                            "--uninstall exited with 4")
+    [(message, detail, _log)] = log.of("error")
+    assert message == "The voice server did not come up, and its service could not be removed."
+    assert detail.endswith("its service could not be removed: install-launchd.sh --voice "
+                           "--uninstall exited with 4")
 
 
 @pytest.mark.parametrize("removal", [0, 4, OSError("gone")])
@@ -453,7 +464,7 @@ def test_here_refuses_while_its_words_server_does_not_answer(settings, root):
     assert code == voice.REFUSED
     assert voice.NO_WORDS_SERVER == "The local model server isn't running: start it first."
     assert log.lines == [("words", "http://127.0.0.1:8090/v1"),
-                         ("error", voice.NO_WORDS_SERVER, None)]
+                         ("error", voice.NO_WORDS_SERVER, None, None)]
     assert saved == []
 
 
@@ -553,7 +564,8 @@ def test_here_whose_download_stops_installs_no_unit_and_saves_nothing(settings, 
         assert log.of("error") == []  # the cancel is the caller's to tell
     else:
         code, _saved = run_here(settings.model_copy(update=WORDS), machine, log, root)
-        assert code == 1 and log.of("error") == [(fetched, None)]
+        assert code == 1 and log.of("error") == [
+            ("The voice's speech models could not be downloaded.", fetched, None)]
     assert log.of("script") == [] and log.of("save") == [] and log.of("done") == []
 
 
@@ -707,13 +719,13 @@ def test_download_of_models_keryx_cannot_name_is_refused_before_anything(setting
                         FakeMachine(log), log)
 
     assert code == voice.REFUSED
-    [(message, _log)] = log.of("error")
+    [(message, _detail, _log)] = log.of("error")
     assert "--stt whisper-mlx" in message
     assert log.of("script") == [] and log.of("step") == [] and log.of("fetch") == []
 
 
 @pytest.mark.parametrize(("arrange", "said"), [
-    ({"script_code": 1}, "the install did not finish"),
+    ({"script_code": 1}, "speech-to-speech could not be installed"),
     ({"free": 10**9}, "needs about 5 GB free"),
 ])
 def test_download_whose_install_fails_fetches_nothing(settings, arrange, said):
@@ -744,7 +756,8 @@ def test_download_that_stops_says_why_and_is_not_done(settings):
     code = run_download(settings, machine, log)
 
     assert code == 1 and log.of("done") == []
-    assert log.of("error") == [("a/one could not be downloaded: OSError: disk full", None)]
+    assert log.of("error") == [("The voice's speech models could not be downloaded.",
+                                "a/one could not be downloaded: OSError: disk full", None)]
 
 
 def test_the_machine_downloads_through_speech_to_speechs_own_python(monkeypatch):

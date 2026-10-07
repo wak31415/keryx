@@ -5,6 +5,7 @@ import contextlib
 from pathlib import Path
 
 import pytest
+from wording import for_the_app
 
 from keryx.config import Settings
 from keryx.endpoints import Endpoint
@@ -36,8 +37,11 @@ class Recorder:
     def warn(self, message: str) -> None:
         self.lines.append(("warn", message))
 
-    def error(self, message: str, *, log: Path | None = None) -> None:
-        self.lines.append(("error", message, log))
+    def error(self, message: str, *, log: Path | None = None,
+              detail: str | None = None) -> None:
+        # Every way `start` stops is a sentence the app can show as it is.
+        assert for_the_app(message), message
+        self.lines.append(("error", message, detail, log))
 
     def script(self, code: int = 0):
         def run(argv) -> int:
@@ -137,7 +141,8 @@ def test_a_unit_that_will_not_install_is_said_and_not_waited_for(tmp_path):
                            root=root, platform="linux")
 
     assert ok is False
-    assert log.of("error") == [("install-systemd.sh --llm exited with 3", None)]
+    assert log.of("error") == [("The model server's service could not be installed.",
+                                "install-systemd.sh --llm exited with 3", None)]
     assert not log.of("wait")
     # Its installer writes the unit before loading it: what it left is removed, and said.
     script = str(root / "scripts" / "install-systemd.sh")
@@ -217,7 +222,8 @@ def test_no_installer_here_is_said(tmp_path):
     ok = server.serve_here(Settings(), log, run_script=log.script(), wait_for_server=log.wait(),
                            root=tmp_path, platform="darwin")
 
-    assert ok is False and "is not here" in log.of("error")[0][0]
+    assert ok is False and log.of("error")[0][0] == voice.NO_CHECKOUT
+    assert "is not here" in log.of("error")[0][1]
     assert not log.of("script")
 
 
@@ -230,9 +236,9 @@ def test_a_server_that_does_not_come_up_points_at_its_log(tmp_path):
                            root=root, platform="darwin")
 
     assert ok is False
-    [(message, where)] = log.of("error")
-    assert message.startswith(
-        "the model server did not come up: could not reach 127.0.0.1 (ConnectError)")
+    [(message, detail, where)] = log.of("error")
+    assert message == "The model server did not come up, so its service was removed."
+    assert detail.startswith("could not reach 127.0.0.1 (ConnectError)")
     assert where == settings.state_dir / "logs" / "keryx-llm.err.log"
 
 
@@ -372,9 +378,9 @@ def test_no_model_chosen_or_downloaded_is_refused_before_anything(model, tmp_pat
     code = start(Settings(llm_server_model=model), Machine(log), log, tmp_path)
 
     assert code == 2
-    [(kind, message, where)] = log.lines
-    assert (kind, where) == ("error", None)
-    assert message.startswith("choose and download a model first")
+    [(kind, message, detail, where)] = log.lines
+    assert (kind, message, where) == ("error", server.NOT_READY, None)
+    assert detail  # which: not chosen, not downloaded, or no file there
 
 
 def test_no_installer_is_refused_before_anything(chosen, tmp_path):
@@ -415,7 +421,8 @@ def test_an_install_that_fails_stops_before_the_unit(chosen, tmp_path):
                  tmp_path)
 
     assert code == 1
-    assert endings(log) == [("error", "brew install llama.cpp did not finish", None)]
+    assert endings(log) == [("error", "llama.cpp could not be installed.",
+                             "brew install llama.cpp did not finish", None)]
     assert [argv for (argv,) in log.of("script")] == [["brew", "install", "llama.cpp"]]
 
 
@@ -438,9 +445,9 @@ def test_a_server_that_does_not_come_up_removes_its_unit_first(chosen, tmp_path)
     assert [argv for (argv,) in log.of("script")] == [
         [script, "--llm"], [script, "--llm", "--uninstall"]]
     assert log.kinds()[-1] == "error" and log.kinds()[-2] == "script"
-    [(_, message, where)] = endings(log)
-    assert "did not come up: could not reach 127.0.0.1" in message
-    assert "its service was removed" in message
+    [(_, message, detail, where)] = endings(log)
+    assert message == "The model server did not come up, so its service was removed."
+    assert detail.startswith("could not reach 127.0.0.1") and server.REMOVED in detail
     assert where == chosen.state_dir / "logs" / "keryx-llm.err.log"
 
 
@@ -451,8 +458,10 @@ def test_a_server_serving_another_model_is_not_ours(chosen, tmp_path):
 
     assert code == 1
     assert log.of("script")[-1][0][-1] == "--uninstall"
-    [(_, message, _log)] = endings(log)
-    assert "serves someone-elses, not qwen3-coder-30b-a3b" in message
+    [(_, message, detail, _log)] = endings(log)
+    assert message == ("The model server serves someone-elses, not qwen3-coder-30b-a3b, so its "
+                       "service was removed.")
+    assert detail.startswith("http://127.0.0.1:8090/v1; ")
 
 
 def test_a_unit_that_cannot_be_removed_says_so(chosen, tmp_path):
@@ -467,8 +476,9 @@ def test_a_unit_that_cannot_be_removed_says_so(chosen, tmp_path):
     machine.run_script = run
 
     assert start(chosen, machine, log, tmp_path) == 1
+    assert endings(log)[0][1].endswith("and its service could not be removed.")
     assert "could not be removed: install-launchd.sh --llm --uninstall exited with 4" in \
-        endings(log)[0][1]
+        endings(log)[0][2]
 
 
 # --- --runtime ollama ----------------------------------------------------------------------
@@ -489,10 +499,10 @@ def test_ollama_pulls_checks_and_only_then_saves(tmp_path):
 
 @pytest.mark.parametrize(
     ("model", "ollama", "codes", "listed", "code", "says"),
-    [("/own.gguf", "/o", {}, (), 2, "choose and download a model first"),
-     (ENTRY.key, None, {}, (), 1, "Ollama is not installed"),
-     (ENTRY.key, "/o", {"ollama": 1}, (), 1, "ollama pull did not finish"),
-     (ENTRY.key, "/o", {}, ("other",), 1, f"Ollama does not list {ENTRY.ollama}")],
+    [("/own.gguf", "/o", {}, (), 2, "Choose and download a model first."),
+     (ENTRY.key, None, {}, (), 1, "Ollama is not installed."),
+     (ENTRY.key, "/o", {"ollama": 1}, (), 1, f"Ollama could not pull {ENTRY.title}."),
+     (ENTRY.key, "/o", {}, ("other",), 1, f"Ollama does not list {ENTRY.ollama}.")],
 )
 def test_ollama_that_cannot_serve_it_saves_nothing(tmp_path, model, ollama, codes, listed,
                                                     code, says):
@@ -635,6 +645,7 @@ def test_llama_while_ollama_serves_the_model_says_so(tmp_path):
     code = start(Settings(**ON_OLLAMA), Machine(log), log, tmp_path)
 
     assert code == 2
-    [(kind, message, _)] = log.lines
-    assert kind == "error" and message.startswith(
-        f"Ollama serves {ENTRY.ollama}; there is no llama.cpp server to start")
+    [(kind, message, detail, _)] = log.lines
+    assert kind == "error" and message == (
+        f"Ollama serves {ENTRY.ollama}; there is no llama.cpp server to start.")
+    assert "keryx models use NAME" in detail

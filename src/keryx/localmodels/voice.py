@@ -61,7 +61,11 @@ VOICE_START_S = 1200.0
 SERVER_REACH_S = 2.0
 #: What `needs` says while there is no local model for the voice server's words.
 NEEDS_WORDS = "local_agent_model"
-NO_WORDS = "set up a local model first: keryx models use NAME"
+NO_WORDS = "Set up a local model first: the voice server takes its words from it."
+#: …and what a terminal runs for it.
+NO_WORDS_HINT = "`keryx models use NAME` sets one up"
+#: What an installer missing from this copy of Keryx is, said to a person.
+NO_CHECKOUT = "Keryx's service installer is not in this copy of Keryx."
 #: What `here` says, refusing, while the server its words come from does not answer.
 NO_WORDS_SERVER = "The local model server isn't running: start it first."
 #: Said of a unit removed rather than left restarting a server that did not come up.
@@ -132,7 +136,8 @@ class Steps(Protocol):
 class Told(Steps, Protocol):
     """…and what stopped it."""
 
-    def error(self, message: str, *, log: Path | None = None) -> None: ...
+    def error(self, message: str, *, log: Path | None = None,
+              detail: str | None = None) -> None: ...
 
 
 class Report(Steps, Protocol):
@@ -141,7 +146,8 @@ class Report(Steps, Protocol):
 
     def progress(self, done: int, total: int | None) -> None: ...
 
-    def error(self, message: str, *, log: Path | None = None) -> None: ...
+    def error(self, message: str, *, log: Path | None = None,
+              detail: str | None = None) -> None: ...
 
     def done(self, base_url: str) -> None: ...
 
@@ -151,7 +157,8 @@ class DownloadReport(Steps, Protocol):
 
     def progress(self, done: int, total: int | None) -> None: ...
 
-    def error(self, message: str, *, log: Path | None = None) -> None: ...
+    def error(self, message: str, *, log: Path | None = None,
+              detail: str | None = None) -> None: ...
 
     def done(self, stt: str, tts: str) -> None: ...
 
@@ -316,14 +323,14 @@ def here(
     up, or whose start was cancelled, is not, and a download that stopped installs none.
     """
     if words_model(settings) is None:
-        report.error(no_words)
+        report.error(no_words, detail=NO_WORDS_HINT)
         return REFUSED
     if not probes.words_up(settings.local_agent_endpoint):
         report.error(NO_WORDS_SERVER)
         return REFUSED
     script, problem = installer("--voice", root=root, platform=platform)
     if script is None:
-        report.error(problem or "no installer")
+        no_installer(report, problem)
         return REFUSED
     if not have_speech_to_speech(settings, probes, report):
         return FAILED
@@ -362,7 +369,7 @@ def here(
             problem = probes.wait_for_server(endpoint, "realtime", start_s)
     if problem is not None:
         removed = remove_unit("--voice", probes.run_script, root=root, platform=platform)
-        report.error(f"the voice server did not come up: {problem}; {removed}",
+        report.error(did_not_come_up("The voice server", removed), detail=f"{problem}; {removed}",
                      log=settings.state_dir / "logs" / "keryx-voice.err.log")
         return FAILED
     if not save({"VOICE_BASE_URL": endpoint.base_url, "VOICE_API_KEY": None}):
@@ -383,11 +390,13 @@ def have_speech_to_speech(
         report.error(f"The voice server needs about {VOICE_SERVER_DOWNLOAD_GB + 2:.0f} GB "
                      f"free for itself and its speech models; there is {free / 1e9:.1f} GB.")
         return False
+    argv = runtimes.s2s_install_argv()
     with report.step("install", "Installing speech-to-speech, Hugging Face's voice "
                                 "pipeline, with uv"):
-        code = probes.run_script(runtimes.s2s_install_argv())
+        code = probes.run_script(argv)
     if code != 0:
-        report.error("the install did not finish")
+        report.error("speech-to-speech could not be installed.",
+                     detail=exited(" ".join(argv[:3]), code))
         return False
     return True
 
@@ -424,15 +433,15 @@ def fetch_models(
     stt, tts = settings.voice_server_stt, settings.voice_server_tts
     python = probes.speech_python()
     if python is None:
-        report.error("speech-to-speech is installed, but its own Python cannot be found beside "
-                     "it: reinstall it with `keryx voice download` after `uv tool uninstall "
+        report.error("speech-to-speech is installed, but its own Python cannot be found.",
+                     detail="reinstall it with `keryx voice download` after `uv tool uninstall "
                      "speech-to-speech`")
         return False
     with report.step("download", f"Downloading the voice's speech models into the Hugging "
                                  f"Face cache: {stt} to hear, {tts} to speak"):
         problem = probes.fetch_speech(python, repos, report.progress)
     if problem is not None:
-        report.error(problem)
+        report.error("The voice's speech models could not be downloaded.", detail=problem)
         return False
     return True
 
@@ -471,13 +480,34 @@ def install_unit_step(
         script, problem = installer(flag, root=root, platform=platform)
         code = run_script([str(script), flag]) if script is not None else 0
     if script is None:
-        report.error(problem or "no installer")
+        no_installer(report, problem)
         return False
     if code != 0:
         report.warn(remove_unit(flag, run_script, root=root, platform=platform))
-        report.error(exited(f"{script.name} {flag}", code))
+        report.error(f"{SERVERS.get(flag, 'The server')}'s service could not be installed.",
+                     detail=exited(f"{script.name} {flag}", code))
         return False
     return True
+
+
+#: What each unit's server is called in a sentence.
+SERVERS = {"--llm": "The model server", "--voice": "The voice server"}
+
+
+def no_installer(report: Told, problem: str | None) -> None:
+    """Tell `report` there is no installer here: a checkout without it in a sentence of its
+    own, with where it was looked for as the detail; a platform with neither manager as is."""
+    if problem is None or problem.startswith("scripts/"):
+        report.error(NO_CHECKOUT, detail=problem)
+    else:
+        report.error(problem)
+
+
+def did_not_come_up(server: str, removed: str) -> str:
+    """`server` did not come up, and whether its unit went with it, in a sentence."""
+    if removed == REMOVED:
+        return f"{server} did not come up, so its service was removed."
+    return f"{server} did not come up, and its service could not be removed."
 
 
 def remove_unit(
@@ -531,12 +561,16 @@ def exited(command: str, code: int) -> str:
     return f"{command} exited with {code}"
 
 
+#: Where a terminal finds the Kokoro voices' names.
+VOICE_NAMES_HINT = "`keryx models list` shows them"
+
+
 def voice_name_problem(name: str) -> str | None:
     """Why `name` cannot be a Kokoro voice (`af_heart`: a language and sex, then a name);
     None for one that can, listed or not."""
     if VOICE_NAME.fullmatch(name):
         return None
-    return f"{name!r} is not a Kokoro voice's name, like af_heart: `keryx models list` shows them"
+    return f"{name!r} is not a Kokoro voice's name, like af_heart."
 
 
 # --- the command line ----------------------------------------------------------------------
@@ -652,8 +686,11 @@ class TextSteps:
     def warn(self, message: str) -> None:
         self._echo(f"warning: {message}", err=True)
 
-    def error(self, message: str, *, log: Path | None = None) -> None:
+    def error(self, message: str, *, log: Path | None = None,
+              detail: str | None = None) -> None:
         self._echo(message, err=True)
+        if detail:
+            self._echo(detail, err=True)
         if log is not None:
             self._echo(f"its log: {log}", err=True)
 
@@ -682,8 +719,11 @@ class JsonSteps(EventLines):
         """The speech models' bytes while they download (`total` null when not known)."""
         self._progressed(done, total, step=self._current)
 
-    def error(self, message: str, *, log: Path | None = None) -> None:
-        super().error(message if log is None else f"{message} (its log: {log})")
+    def error(self, message: str, *, log: Path | None = None,
+              detail: str | None = None) -> None:
+        """`message` for a person; what a tool said, and the log, are the `detail`."""
+        parts = [part for part in (detail, f"its log: {log}" if log else None) if part]
+        super().error(message, detail="; ".join(parts) or None)
 
     def done(self, base_url: str) -> None:
         self._end({"event": "done", "base_url": base_url})

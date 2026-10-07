@@ -322,8 +322,14 @@ def _load_settings_optional() -> Settings:
     return _load_settings_reporting()[0]
 
 
+#: What a stream says, for a person, when its settings file will not parse, or the files
+#: from before the rename are still to be moved; the terminal's sentence is the `detail`.
+SETTINGS_UNREADABLE = "Keryx's settings file could not be read."
+MIGRATE_FIRST = "Keryx cannot do that until its files from before are moved: migrate first."
+
+
 def _configure_readonly(
-    *, quiet: bool = True, migrated: bool = True, refuse: Callable[[str], None] | None = None
+    *, quiet: bool = True, migrated: bool = True, refuse: Callable[..., None] | None = None
 ) -> Settings:
     """`_configure` for the read-only commands (no `OPENAI_API_KEY` required).
 
@@ -338,22 +344,27 @@ def _configure_readonly(
     does `setup`, whose wizard says it in its own words.
 
     `refuse` is told each way this stops — the refusal above, or settings that will not
-    load — in place of stderr, before the same exit code: `models pull --json`, whose reader
-    has only stdout. Without it, settings that will not load raise, as they always have.
+    load — in place of stderr, before the same exit code: a JSON-lines stream (`models pull
+    --json`), whose reader has only stdout. It is told as `EventLines.error` takes it: a
+    sentence for a person, and what a terminal reads as the `detail`. Without it, settings
+    that will not load raise, as they always have.
     """
     try:
         settings = _load_settings_optional()
     except (ConfigFileError, ValidationError) as error:
         if refuse is None:
             raise
-        refuse(_config_summary(error) if isinstance(error, ValidationError) else str(error))
+        if isinstance(error, ValidationError):
+            refuse(_config_summary(error))
+        else:
+            refuse(SETTINGS_UNREADABLE, detail=str(error))
         raise typer.Exit(1) from None
     if migrated and (refusal := settings.storage_refusal()):
         message = f"keryx cannot do that yet: {refusal}"
         if refuse is None:
             typer.echo(message, err=True)
         else:
-            refuse(message)
+            refuse(MIGRATE_FIRST, detail=message)
         raise typer.Exit(2)
     settings.ensure_dirs()
     level = logging.getLevelNamesMapping().get(settings.log_level.upper(), logging.INFO)
@@ -1310,7 +1321,7 @@ def voice_command(
     typer.echo(f"speech-to-speech here: {here['program'] or 'not installed'}; voice "
                f"{here['voice']} on port {here['port']}; unit installed: "
                f"{yes[here['unit_installed']]}; answers: {yes[here['reachable']]}")
-    typer.echo(f"its words: {here['words_model'] or voice.NO_WORDS}")
+    typer.echo(f"its words: {here['words_model'] or f'{voice.NO_WORDS} {voice.NO_WORDS_HINT}'}")
     typer.echo(f"its speech: {here['stt']} to hear, {here['tts']} to speak; downloaded: "
                f"{yes[here['models_ready']]}" + ("" if here["models_ready"] else
                                                   " (keryx voice download)"))
@@ -1448,7 +1459,7 @@ def voice_use_here(
 
 def _voice_here(settings: Settings, name: str | None, report: voice.Report) -> int:
     if name is not None and (problem := voice.voice_name_problem(name)):
-        report.error(problem)
+        report.error(problem, detail=voice.VOICE_NAMES_HINT)
         return voice.REFUSED
     store = ConfigStore()
     return voice.here(settings, voice.machine(), report, save=_saver(store, settings, report),
@@ -1505,8 +1516,8 @@ def _saver(
     def save(values: dict[str, Any]) -> bool:
         try:
             store.set(values, actor=current_actor(), settings=settings)
-        except ConfigError as error:
-            report.error(str(error))
+        except ConfigError as error:  # its own sentence names keys and rules: the detail
+            report.error("Keryx could not save the settings this needs.", detail=str(error))
             return False
         return True
 

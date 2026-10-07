@@ -159,7 +159,10 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   only, and `served_model`, the model the running server names — `model` is the setting),
   `models pull NAME [--json]` (resumable, checksummed, into `CACHE_DIR/models`; a copy in
   the Hugging Face cache is linked instead; `--json` is JSON lines — `progress`, then
-  exactly one of `done`, `adopted`, `error`, `cancelled` on every path, a refusal included;
+  exactly one of `done`, `adopted`, `error`, `cancelled` on every path, a refusal included —
+  on this stream and every other JSON-lines one, `error` is `message`, one sentence for a
+  person and never a tool's output, and `detail`, always there: null, or what the tool said,
+  a path, the log (`EventLines.error`);
   a SIGTERM cancels, exit 130, and keeps the `.part`), `models use NAME [--default-agent]
   [--json]` (a downloaded model as the local agent's: saves what the wizard would, through
   the same `localmodels/use.py`; a restart picks it up), `models start [--runtime
