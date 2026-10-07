@@ -3,8 +3,8 @@ import SwiftUI
 
 /// A setting's options as a pop-up menu: what `keryx config options` lists, each by its
 /// label; the value chosen now, even when the list lacks it; and Other… for a value of one's
-/// own, when the list allows one or could not be read. The list is read the first time the
-/// menu is shown (`AppModel.loadOptions`), with a spinner beside it until it is.
+/// own, when the list allows one or could not be read. The list is read each time the menu
+/// appears (`AppModel.loadOptions`), with a spinner beside it until there is one.
 ///
 /// It writes nothing itself: `choose` is handed the value picked or typed — empty for an
 /// option that means the setting unset, which `AppModel.choose` unsets.
@@ -40,7 +40,11 @@ struct OptionMenu: View {
             .labelsHidden()
             .fixedSize()
         }
-        .task { await model.loadOptions(key) }
+        // Read again each time the menu appears (a provider's list changes), and said to
+        // the model while shown, so a change elsewhere reloads it.
+        .task { await model.loadOptions(key, force: true) }
+        .onAppear { model.optionsMenu(key, shown: true) }
+        .onDisappear { model.optionsMenu(key, shown: false) }
         .sheet(isPresented: $typing) {
             OtherValueSheet(title: title, current: current, choose: choose)
         }
@@ -227,10 +231,19 @@ enum OptionWording {
     static func note(_ loadable: Loadable<ConfigOptions>?, titles: [String: String] = [:]) -> String? {
         if let list = loadable?.value {
             guard !list.live, let error = list.error, !error.isEmpty else { return nil }
-            return "Showing the built-in list — \(Wording.named(error, titles: titles))"
+            return "Showing the built-in list — \(continuing(Wording.named(error, titles: titles)))"
         }
         guard let error = loadable?.error else { return nil }
         return "Couldn't list the choices — \(error.reported ?? error.message)"
+    }
+
+    /// A sentence carried on after a dash: its first letter lowered ("There's no…" →
+    /// "there's no…"), unless the first word is a name that keeps its case ("OpenAI").
+    static func continuing(_ sentence: String) -> String {
+        let first = sentence.prefix { !$0.isWhitespace }
+        guard let head = first.first, head.isUppercase,
+              first.dropFirst().allSatisfy({ !$0.isUppercase }) else { return sentence }
+        return head.lowercased() + sentence.dropFirst()
     }
 
     /// What the list says about `value` ("warm, American, female", "Lyra's voice"), when it

@@ -46,8 +46,10 @@ public enum PreviewData {
     public static var voiceNeedsModel: VoiceStatus { decode("voice-needs-model.json") }
 
     /// `voice-here.jsonl` as its individual lines.
-    public static var voiceHereLines: [String] {
-        String(decoding: data("voice-here.jsonl"), as: UTF8.self)
+    public static var voiceHereLines: [String] { lines("voice-here.jsonl") }
+
+    private static func lines(_ name: String) -> [String] {
+        String(decoding: data(name), as: UTF8.self)
             .split(separator: "\n", omittingEmptySubsequences: true)
             .map(String.init)
     }

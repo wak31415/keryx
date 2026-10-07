@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import KeryxKit
@@ -51,6 +52,10 @@ import KeryxPreview
         #expect(OptionWording.note(nil) == nil)
         #expect(OptionWording.note(Loadable(value: PreviewData.realtimeFallback), titles: Wording.titles(PreviewData.config))
             == "Showing the built-in list — “OpenAI API key” is not set, so OpenAI cannot be asked")
+        let naming = Self.list([], live: false, error: "LOCAL_AGENT_BASE_URL isn't set.")
+        #expect(OptionWording.note(Loadable(value: naming), titles: Wording.titles(PreviewData.config))
+            == "Showing the built-in list — “Local agent server URL” isn't set.")
+        #expect(OptionWording.continuing("OpenAI didn't answer.") == "OpenAI didn't answer.")
     }
 
     @Test func aDetailIsShownWhenItSaysSomethingTheLabelDoesNot() {
@@ -121,11 +126,60 @@ import KeryxPreview
         let ids = Set(ScreenCatalog.entries().map(\.id))
         for id in ["voice-openai", "voice-openai-no-key", "voice-here", "voice-here-picked", "voice-here-setting-up",
                    "voice-here-setting-up-step", "voice-here-stopping", "voice-here-failed", "voice-here-finished",
-                   "voice-here-needs-model", "voice-server", "voice-server-picked", "voice-server-saved-warning",
+                   "voice-here-needs-model", "voice-server", "voice-server-picked", "voice-server-stored-key", "voice-server-removing-key", "voice-server-saved-warning",
                    "voice-server-problem", "voice-error", "window-voice",
                    "configuration-model-menus", "configuration-options-unavailable", "configuration-other-sheet",
                    "models-agent-menu-fallback"] {
             #expect(ids.contains(id), "missing \(id)")
         }
+    }
+}
+
+/// The server key's choices, refusals said by title, quitting, and pop-up menus.
+@MainActor @Suite struct VoiceFixRoundTests {
+    @Test func theServerKeyIsTypedClearedOrKept() {
+        #expect(VoiceWording.serverKey(typed: "vk", clearing: false) == .typed("vk"))
+        #expect(VoiceWording.serverKey(typed: "vk", clearing: true) == .typed("vk"), "a typed key wins over removal")
+        #expect(VoiceWording.serverKey(typed: "  ", clearing: false) == .stored)
+        #expect(VoiceWording.serverKey(typed: nil, clearing: true) == .clear)
+        #expect(VoiceWording.serverKey(typed: nil, clearing: false) == .stored)
+        #expect(VoiceWording.serverKeyState(typed: false, clearing: false, stored: true) == "Uses the stored key")
+        #expect(VoiceWording.serverKeyState(typed: false, clearing: false, stored: false) == "Not set")
+        #expect(VoiceWording.serverKeyState(typed: false, clearing: true, stored: true) == "Removed with Check & Use")
+        #expect(VoiceWording.serverKeyState(typed: true, clearing: false, stored: true) == "Sent with Check & Use")
+    }
+
+    @Test func aRefusalNamesSettingsByTheirTitles() {
+        let refusal = KeryxError.failed(command: "keryx voice use", exitCode: 2, message: "VOICE_BASE_URL must start with http")
+        #expect(VoiceWording.errorText(refusal, titles: Wording.titles(PreviewData.config))
+            == "“Voice server URL” must start with http.")
+        #expect(VoiceWording.errorText(.timedOut(command: "keryx voice use"), titles: [:])
+            == KeryxError.timedOut(command: "keryx voice use").message)
+    }
+
+    @Test func quittingAsksAboutWhatIsStillRunning() {
+        #expect(Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra") == nil)
+        #expect(Quitting.question(downloading: true, settingUpVoice: false, assistant: "Lyra")?.message
+            == "A model is downloading. Quit anyway?")
+        #expect(Quitting.question(downloading: false, settingUpVoice: true, assistant: "Lyra")?.message
+            == "Lyra's voice is being set up. Quit anyway?")
+        #expect(Quitting.question(downloading: false, settingUpVoice: true, assistant: nil)?.message
+            == "The assistant's voice is being set up. Quit anyway?")
+        #expect(Quitting.question(downloading: true, settingUpVoice: true, assistant: "Lyra")?.message
+            == "A model is downloading and Lyra's voice is being set up. Quit anyway?")
+    }
+
+    @Test func aPopUpButtonsMenuIsNotTheMenuBarMenu() {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 200, height: 100), styleMask: [],
+                              backing: .buffered, defer: true)
+        let holder = NSView()
+        let popUp = NSPopUpButton(frame: .zero, pullsDown: false)
+        popUp.addItems(withTitles: ["Heart", "Emma"])
+        holder.addSubview(popUp)
+        window.contentView = holder
+        #expect(MenuTracking.isPopUpMenu(popUp.menu!, in: [window]))
+        #expect(!MenuTracking.isPopUpMenu(NSMenu(title: "Keryx"), in: [window]))
+        #expect(!MenuTracking.isPopUpMenu(popUp.menu!, in: []))
     }
 }

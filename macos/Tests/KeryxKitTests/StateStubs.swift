@@ -30,6 +30,8 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         }
         var voiceOpenAI: Result<VoiceUseResult, KeryxError> = .success(VoiceUseResult(saved: [:], restartNeeded: true))
         var voiceServer: Result<VoiceServerResult, KeryxError> = .success(PreviewClient.serverSaved)
+        /// Awaited before each `config options` answer: a test's way to hold them.
+        var optionsWait: @Sendable () async -> Void = {}
         var voiceHere: @Sendable (String?) -> VoiceSetupStream = { _ in
             VoiceSetupStream(AsyncThrowingStream { $0.finish() })
         }
@@ -97,12 +99,15 @@ final class StubClient: KeryxClient, @unchecked Sendable {
     func memory() async throws -> MemoryDocument { try answer("memory") { $0.memory } }
     func restart(force: Bool) async throws { try write("restart\(force ? " --force" : "")") }
     func options(key: String) async throws -> ConfigOptions {
-        try answer("config options \(key)") { $0.options(key) }
+        let wait = lock.withLock { replies.optionsWait }
+        await wait()
+        return try answer("config options \(key)") { $0.options(key) }
     }
     func voice() async throws -> VoiceStatus { try answer("voice") { $0.voice } }
     func useVoiceOpenAI() async throws -> VoiceUseResult { try answer("voice use openai") { $0.voiceOpenAI } }
-    func useVoiceServer(url: String, key: String?, keepAnyway: Bool) async throws -> VoiceServerResult {
-        let flags = (key == nil ? "" : " --key-stdin") + (keepAnyway ? " --keep-anyway" : "")
+    func useVoiceServer(url: String, key: ServerKey, keepAnyway: Bool) async throws -> VoiceServerResult {
+        let flags = (key.toSend == nil ? "" : " --key-stdin") + (key == .clear ? " --clear-key" : "")
+            + (keepAnyway ? " --keep-anyway" : "")
         return try answer("voice use server \(url)\(flags)") { $0.voiceServer }
     }
     func voiceHere(voice: String?) -> VoiceSetupStream {
@@ -188,6 +193,39 @@ final class ManualSetup: @unchecked Sendable {
 
     func send(_ event: VoiceSetupEvent) { lock.withLock { continuation }?.yield(event) }
     func finish(throwing error: Error? = nil) { lock.withLock { continuation }?.finish(throwing: error) }
+}
+
+/// Holds `config options` answers until opened, counting how many wait at once. Opened, it
+/// lets every held answer go and holds none after, so no test can leave one waiting.
+final class OptionsGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    private var isOpen = false
+    private var most = 0
+
+    var held: Int { lock.withLock { waiting.count } }
+    var mostAtOnce: Int { lock.withLock { most } }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let pass = lock.withLock {
+                if isOpen { return true }
+                waiting.append(continuation)
+                most = max(most, waiting.count)
+                return false
+            }
+            if pass { continuation.resume() }
+        }
+    }
+
+    func open() {
+        let all = lock.withLock {
+            isOpen = true
+            defer { waiting = [] }
+            return waiting
+        }
+        for continuation in all { continuation.resume() }
+    }
 }
 
 /// Waits for something the model does in the background (the status poll, a download's

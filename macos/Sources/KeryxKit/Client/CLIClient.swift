@@ -138,10 +138,13 @@ public struct CLIClient: KeryxClient {
     }
 
     /// Exit 1 with a `problem` is the handshake failing, and is decoded; exit 2 (a refusal)
-    /// and anything unreadable are failures.
-    public func useVoiceServer(url: String, key: String?, keepAnyway: Bool) async throws -> VoiceServerResult {
+    /// and anything unreadable are failures. `--key-stdin` only with a key that is not
+    /// blank, and never with `--clear-key`: the CLI refuses both.
+    public func useVoiceServer(url: String, key: ServerKey, keepAnyway: Bool) async throws -> VoiceServerResult {
         var flags: [String] = []
-        if key != nil { flags.append("--key-stdin") }
+        let sent = key.toSend
+        if sent != nil { flags.append("--key-stdin") }
+        if key == .clear { flags.append("--clear-key") }
         if keepAnyway { flags.append("--keep-anyway") }
         flags.append("--json")
         // An address that starts with "-" would be read as an option without the "--".
@@ -149,7 +152,7 @@ public struct CLIClient: KeryxClient {
             ? ["voice", "use", "server"] + flags + ["--", url]
             : ["voice", "use", "server", url] + flags
         return try await decode(arguments, acceptedExitCodes: [0, 1], timeout: .seconds(60),
-                                stdin: key.map { Data($0.utf8) })
+                                stdin: sent.map { Data($0.utf8) })
     }
 
     /// Ends normally only after `done`, `error` or `cancelled`, as `pull` does. The first

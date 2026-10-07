@@ -51,6 +51,26 @@ import KeryxKit
         return ".!?…".contains(last) ? capitalised : capitalised + "."
     }
 
+    /// A refusal or failure, as a sentence with the settings it names said by their titles.
+    static func errorText(_ error: KeryxError, titles: [String: String]) -> String {
+        guard let reported = error.reported else { return error.message }
+        return sentence(Wording.named(reported, titles: titles))
+    }
+
+    /// What the server section does with the key: send the one typed (when it is not
+    /// blank), remove the stored one, or keep it. Never both a key and its removal.
+    static func serverKey(typed: String?, clearing: Bool) -> ServerKey {
+        if let typed, !typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .typed(typed) }
+        return clearing ? .clear : .stored
+    }
+
+    /// The key row's state, beside its buttons.
+    static func serverKeyState(typed: Bool, clearing: Bool, stored: Bool) -> String {
+        if typed { return "Sent with Check & Use" }
+        if clearing { return "Removed with Check & Use" }
+        return stored ? "Uses the stored key" : "Not set"
+    }
+
     /// A server's address as "host:port"; the address itself when it is not a URL.
     static func address(_ url: String) -> String {
         guard let parts = URLComponents(string: url), let host = parts.host else { return url }

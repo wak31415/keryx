@@ -48,7 +48,7 @@ public final class AppModel {
     public package(set) var approvals: Loadable<ApprovalsReport> = .idle
     public package(set) var memory: Loadable<MemoryDocument> = .idle
     public package(set) var voice: Loadable<VoiceStatus> = .idle
-    /// What each setting with options may be set to, by key, read once each (`loadOptions`).
+    /// What each setting with options may be set to, by key (`loadOptions`).
     public package(set) var options: [String: Loadable<ConfigOptions>] = [:]
     public var taskDetail: [Int: Loadable<TaskDetail>] = [:]
 
@@ -80,6 +80,11 @@ public final class AppModel {
     @ObservationIgnored private var sweeping = false
     @ObservationIgnored package var started = false
     @ObservationIgnored private var poll: Task<Void, Never>?
+    /// How many menus show each key's options now, so a change reloads just those.
+    @ObservationIgnored private var optionsShown: [String: Int] = [:]
+    /// `config options` runs under way: at most `optionsAtOnce` (a slow provider each).
+    @ObservationIgnored private var optionLoads = 0
+    nonisolated static let optionsAtOnce = 3
     /// Bumped by every locate, so an answer from the Keryx found before is dropped.
     @ObservationIgnored private var generation = 0
     /// Polls since the poll last started.
@@ -126,6 +131,7 @@ public final class AppModel {
         for part in Part.documents { reset(part) }
         taskDetail = [:]
         options = [:]
+        optionsShown = [:]
         configNeedsRestart = false
         if !started {
             started = true
@@ -216,16 +222,21 @@ public final class AppModel {
         }
     }
 
-    /// Reads what `key` may be set to — once: a list already read, or being read, is not
-    /// asked for again unless `force`. A list the CLI could not read live is a value (with
-    /// its `error`), not a failure.
+    /// Reads what `key` may be set to. A list already read is kept unless `force` (a menu
+    /// appearing forces it, so a list is as fresh as the menu showing it); one being read
+    /// is never asked for twice. At most `optionsAtOnce` are read at a time, the rest wait
+    /// their turn. A list the CLI could not read live is a value (with its `error`), not a
+    /// failure.
     public func loadOptions(_ key: String, force: Bool = false) async {
         guard let client else { return }
         let current = generation
         let known = options[key]
-        if !force, known?.value != nil || known?.isLoading == true { return }
+        if known?.isLoading == true || (!force && known?.value != nil) { return }
         options[key, default: .idle].begin()
         do {
+            while optionLoads >= Self.optionsAtOnce { try await Task.sleep(for: .milliseconds(20)) }
+            optionLoads += 1
+            defer { optionLoads -= 1 }
             let list = try await client.options(key: key)
             guard current == generation else { return }
             options[key, default: .idle].succeed(list)
@@ -234,6 +245,24 @@ public final class AppModel {
             settle(error) { options[key, default: .idle].fail($0) } stopped: {
                 options[key, default: .idle].isLoading = false
             }
+        }
+    }
+
+    /// A menu of `key`'s options appeared (`true`) or went (`false`).
+    public func optionsMenu(_ key: String, shown: Bool) {
+        let count = (optionsShown[key] ?? 0) + (shown ? 1 : -1)
+        optionsShown[key] = count > 0 ? count : nil
+    }
+
+    /// Something the lists depend on changed (a key, a voice, a model): every list a menu
+    /// shows now is read again, and the rest forgotten, to be read when next shown.
+    func invalidateOptions() {
+        let shown = Set(optionsShown.keys)
+        for key in options.keys where !shown.contains(key) && options[key]?.isLoading != true {
+            options[key] = nil
+        }
+        for key in shown {
+            Task { await loadOptions(key, force: true) }
         }
     }
 
@@ -321,9 +350,12 @@ public final class AppModel {
         value.isEmpty ? await unset(key) : await set(key: key, to: value)
     }
 
-    /// Sets a secret; the value reaches the CLI on its stdin.
+    /// Sets a secret; the value reaches the CLI on its stdin. A key can open a live list,
+    /// so the lists are read again.
     public func setSecret(_ key: String, value: String) async -> KeryxError? {
-        await writeSetting { try await $0.setSecret(key: key, value: value) }
+        if let error = await writeSetting({ try await $0.setSecret(key: key, value: value) }) { return error }
+        invalidateOptions()
+        return nil
     }
 
     /// Removes a setting from the store, so its default (or the environment) applies.
@@ -355,6 +387,7 @@ public final class AppModel {
             restartNeeded = try await $0.use(model: model, defaultAgent: defaultAgent).restartNeeded
         }) { return error }
         if restartNeeded { configNeedsRestart = true }
+        invalidateOptions()
         await refresh([.models, .config])
         return nil
     }
@@ -372,6 +405,7 @@ public final class AppModel {
     public func download(_ model: String) {
         guard let client else { return }
         downloads.start(model, client: client) { [weak self] in
+            self?.invalidateOptions()
             Task { await self?.refresh(.models) }
         }
     }
@@ -385,14 +419,16 @@ public final class AppModel {
             return error
         }
         if restartNeeded { configNeedsRestart = true }
+        invalidateOptions()
         await refresh([.voice, .config])
         return nil
     }
 
     /// Speaks through the voice server at `url` from the next restart. The answer says
     /// whether it was saved, and if not why (`problem`); a handshake that failed is an
-    /// answer, not an error. `key`, when given, reaches the CLI on its stdin.
-    public func useVoiceServer(url: String, key: String?, keepAnyway: Bool) async -> Result<VoiceServerResult, KeryxError> {
+    /// answer, not an error. A typed key reaches the CLI on its stdin; `.clear` removes the
+    /// stored one.
+    public func useVoiceServer(url: String, key: ServerKey, keepAnyway: Bool) async -> Result<VoiceServerResult, KeryxError> {
         var answer: VoiceServerResult?
         if let error = await perform({
             answer = try await $0.useVoiceServer(url: url, key: key, keepAnyway: keepAnyway)
@@ -400,6 +436,7 @@ public final class AppModel {
         guard let answer else { return .failure(.launch("Keryx said nothing.")) }
         if answer.saved != nil {
             if answer.restartNeeded { configNeedsRestart = true }
+            invalidateOptions()
             await refresh([.voice, .config])
         }
         return .success(answer)
@@ -411,6 +448,7 @@ public final class AppModel {
         guard let client else { return }
         voiceSetup.start(voice: voice, client: client) { [weak self] in
             self?.configNeedsRestart = true
+            self?.invalidateOptions()
             Task { await self?.refresh([.voice, .config, .models]) }
         }
     }

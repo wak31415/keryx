@@ -104,7 +104,7 @@ public struct PreviewClient: KeryxClient {
         return VoiceUseResult(saved: ["VOICE_BASE_URL": .null], restartNeeded: true)
     }
 
-    public func useVoiceServer(url: String, key: String?, keepAnyway: Bool) async throws -> VoiceServerResult {
+    public func useVoiceServer(url: String, key: ServerKey, keepAnyway: Bool) async throws -> VoiceServerResult {
         try check()
         var answer = try serverReply.get()
         if keepAnyway, answer.saved == nil {

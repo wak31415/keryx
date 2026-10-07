@@ -112,7 +112,7 @@ private struct OpenAISection: View {
             }
             PrimaryRow(
                 inUse: voice.kind == .openai, inUseTitle: "In Use", working: saving ? "Saving…" : nil,
-                failure: failure?.message
+                failure: failure.map { VoiceWording.errorText($0, titles: Wording.titles(model.config.value)) }
             ) {
                 Button(VoiceWording.primary(.openai), action: use)
                     .disabled(saving || !voice.openaiKeySet)
@@ -201,15 +201,23 @@ private struct HereSection: View {
                 }
             }
             if let phase = setup.phase {
-                SetupProgress(phase: phase, cancel: { setup.cancel() }, dismiss: { setup.dismiss() })
+                SetupProgress(phase: phase, titles: Wording.titles(model.config.value),
+                              cancel: { setup.cancel() }, dismiss: { setup.dismiss() })
             }
-            PrimaryRow(inUse: false, inUseTitle: "", working: nil, failure: nil) {
-                Button(inUse ? "Restart Voice Server" : "Set Up…") {
-                    if inUse { start() } else { confirming = true }
+            // While a setup runs, its own row is the one to act on.
+            if !setup.isBusy {
+                PrimaryRow(inUse: false, inUseTitle: "", working: nil, failure: nil) {
+                    Button(inUse ? "Restart Voice Server" : "Set Up…") {
+                        if inUse { start() } else { confirming = true }
+                    }
+                    .disabled(voice.needsLocalModel)
+                    .help(voice.needsLocalModel ? VoiceWording.needsModelTitle : "")
                 }
-                .disabled(setup.isBusy || voice.needsLocalModel)
-                .help(voice.needsLocalModel ? VoiceWording.needsModelTitle : "")
             }
+        }
+        // The voice picked stays picked until the setup that applies it has worked.
+        .onChange(of: setup.phase) { _, phase in
+            if case .finished = phase { kokoro = nil }
         }
         .confirmationDialog(VoiceWording.setUpQuestion, isPresented: $confirming) {
             Button("Set Up") { start() }
@@ -221,13 +229,13 @@ private struct HereSection: View {
     private func start() {
         let changed = kokoro.flatMap { $0 == voice.here.voice ? nil : $0 }
         model.setUpVoiceHere(voice: changed)
-        kokoro = nil
     }
 }
 
 /// A setup under way, stopping, failed or done: its step, a bar, and Cancel.
 private struct SetupProgress: View {
     let phase: VoiceSetup.Phase
+    let titles: [String: String]
     let cancel: () -> Void
     let dismiss: () -> Void
 
@@ -278,7 +286,7 @@ private struct SetupProgress: View {
             } label: {
                 Label {
                     Text("Setup didn't finish")
-                    Text(VoiceWording.sentence(message))
+                    Text(VoiceWording.sentence(Wording.named(message, titles: titles)))
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
                 } icon: {
@@ -302,11 +310,14 @@ package struct ServerSection: View {
     package struct Start {
         var address: String?
         var keyTyped: Bool
+        var clearing: Bool
         var answer: VoiceServerResult?
 
-        package init(address: String? = nil, keyTyped: Bool = false, answer: VoiceServerResult? = nil) {
+        package init(address: String? = nil, keyTyped: Bool = false, clearing: Bool = false,
+                     answer: VoiceServerResult? = nil) {
             self.address = address
             self.keyTyped = keyTyped
+            self.clearing = clearing
             self.answer = answer
         }
     }
@@ -317,6 +328,8 @@ package struct ServerSection: View {
     @State private var address: String
     /// The key typed in the sheet, until Check & Use sends it on stdin. Never shown.
     @State private var key: String?
+    /// Remove Key was chosen: Check & Use removes the stored key.
+    @State private var clearing = false
     @State private var editingKey = false
     @State private var checking = false
     /// The last answer: what was saved, the handshake's problem, the warnings.
@@ -329,6 +342,7 @@ package struct ServerSection: View {
         _address = State(initialValue: start.address ?? current ?? "")
         _key = State(initialValue: start.keyTyped ? "preview-key" : nil)
         _answer = State(initialValue: start.answer)
+        _clearing = State(initialValue: start.clearing)
     }
 
     package var body: some View {
@@ -348,8 +362,15 @@ package struct ServerSection: View {
             }
             LabeledContent {
                 HStack(spacing: 8) {
-                    Text(keyState)
+                    Text(VoiceWording.serverKeyState(typed: key != nil, clearing: clearing, stored: keySet))
                         .foregroundStyle(.secondary)
+                    if clearing {
+                        Button("Keep Key") { clearing = false }
+                            .disabled(checking)
+                    } else if keySet, key == nil {
+                        Button("Remove Key") { clearing = true }
+                            .disabled(checking)
+                    }
                     Button("Key…") { editingKey = true }
                         .disabled(checking)
                         .accessibilityLabel("Set the Voice Server's API Key")
@@ -369,7 +390,18 @@ package struct ServerSection: View {
             if let answer {
                 ForEach(answer.warnings, id: \.self) { warning in
                     Label {
-                        Text(VoiceWording.sentence(warning))
+                        Text(VoiceWording.sentence(Wording.named(warning, titles: Wording.titles(model.config.value))))
+                            .foregroundStyle(.orange)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                    .font(.callout)
+                }
+                // Kept anyway: saved, and what the handshake said is still worth knowing.
+                if let problem = answer.problem, answer.saved != nil {
+                    Label {
+                        Text("Saved without an answer: " + VoiceWording.sentence(
+                            Wording.named(problem, titles: Wording.titles(model.config.value))))
                             .foregroundStyle(.orange)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -383,7 +415,7 @@ package struct ServerSection: View {
                     } label: {
                         Label {
                             Text("The server didn't answer the handshake")
-                            Text(VoiceWording.sentence(problem))
+                            Text(VoiceWording.sentence(Wording.named(problem, titles: Wording.titles(model.config.value))))
                                 .foregroundStyle(.red)
                                 .textSelection(.enabled)
                         } icon: {
@@ -394,7 +426,8 @@ package struct ServerSection: View {
             }
             PrimaryRow(
                 inUse: answer?.saved == nil && voice.kind == .server && trimmed == (voice.baseUrl ?? ""),
-                inUseTitle: "In Use", working: checking ? "Checking…" : nil, failure: failure?.message,
+                inUseTitle: "In Use", working: checking ? "Checking…" : nil,
+                failure: failure.map { VoiceWording.errorText($0, titles: Wording.titles(model.config.value)) },
                 saved: answer?.saved != nil ? "Saved" : nil
             ) {
                 Button(VoiceWording.primary(.server)) { check(keepAnyway: false) }
@@ -404,7 +437,12 @@ package struct ServerSection: View {
         .onChange(of: address) { answer = nil }
         .sheet(isPresented: $editingKey) {
             SecretSheet(key: "VOICE_API_KEY", title: "Voice server API key", replacing: keySet, typed: "",
-                        footnote: VoiceWording.keyFootnote, keep: { key = $0 })
+                        footnote: VoiceWording.keyFootnote, keep: { typed in
+                            // Blank is no key: the stored one (if any) stays.
+                            let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+                            key = trimmed.isEmpty ? nil : trimmed
+                            if key != nil { clearing = false }
+                        })
         }
     }
 
@@ -412,10 +450,6 @@ package struct ServerSection: View {
         model.config.value?.first { $0.key == "VOICE_API_KEY" }?.set ?? false
     }
 
-    private var keyState: String {
-        if key != nil { return "Sent with Check & Use" }
-        return keySet ? "Set" : "Not set"
-    }
 
     private func check(keepAnyway: Bool) {
         let url = address.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -423,11 +457,15 @@ package struct ServerSection: View {
         checking = true
         failure = nil
         Task {
-            switch await model.useVoiceServer(url: url, key: key, keepAnyway: keepAnyway) {
+            let choice = VoiceWording.serverKey(typed: key, clearing: clearing)
+            switch await model.useVoiceServer(url: url, key: choice, keepAnyway: keepAnyway) {
             case let .success(result):
                 answer = result
-                // Sent: it is in secrets.toml now, and need not be held here.
-                if result.saved != nil { key = nil }
+                // Sent (or removed): secrets.toml has it now, and nothing need be held here.
+                if result.saved != nil {
+                    key = nil
+                    clearing = false
+                }
             case let .failure(error):
                 failure = error
             }

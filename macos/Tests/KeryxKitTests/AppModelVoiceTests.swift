@@ -73,6 +73,91 @@ extension AppModelTests {
         #expect(model.configNeedsRestart)
     }
 
+    @Test func aForcedReadReadsAgainButNeverTwiceAtOnce() async {
+        let gate = OptionsGate()
+        let client = StubClient { $0.optionsWait = { await gate.wait() } }
+        let model = makeModel(client: client)
+        await model.start()
+        defer { model.stop() }
+        let first = Task { await model.loadOptions("OPENAI_VOICE", force: true) }
+        #expect(await eventually { gate.held == 1 })
+        // In flight: a second ask, forced or not, adds nothing.
+        await model.loadOptions("OPENAI_VOICE", force: true)
+        await model.loadOptions("OPENAI_VOICE")
+        gate.open()
+        await first.value
+        #expect(client.calls.filter { $0 == "config options OPENAI_VOICE" }.count == 1)
+        await model.loadOptions("OPENAI_VOICE", force: true)
+        #expect(client.calls.filter { $0 == "config options OPENAI_VOICE" }.count == 2)
+    }
+
+    @Test func atMostThreeListsAreReadAtOnce() async {
+        let gate = OptionsGate()
+        let client = StubClient { $0.optionsWait = { await gate.wait() } }
+        let model = makeModel(client: client)
+        await model.start()
+        defer { model.stop() }
+        let keys = PreviewData.config.filter(\.hasOptions).map(\.key)
+        let loads = keys.map { key in Task { await model.loadOptions(key) } }
+        #expect(await eventually { gate.held == AppModel.optionsAtOnce })
+        try? await Task.sleep(for: .milliseconds(60))
+        #expect(gate.held == AppModel.optionsAtOnce, "the rest wait their turn")
+        // Every one is loading meanwhile, so none is asked for twice.
+        #expect(keys.allSatisfy { model.options[$0]?.isLoading == true })
+        gate.open()
+        for load in loads { await load.value }
+        #expect(gate.mostAtOnce <= AppModel.optionsAtOnce)
+        #expect(keys.allSatisfy { model.options[$0]?.value != nil })
+    }
+
+    @Test func aChangeReadsTheShownListsAgainAndForgetsTheRest() async {
+        let client = StubClient()
+        let model = makeModel(client: client)
+        await model.start()
+        defer { model.stop() }
+        await model.loadOptions("OPENAI_REALTIME_MODEL")
+        await model.loadOptions("CODEX_MODEL")
+        model.optionsMenu("OPENAI_REALTIME_MODEL", shown: true)
+        #expect(await model.setSecret("OPENAI_API_KEY", value: "sk-secret") == nil)
+        #expect(model.options["CODEX_MODEL"] == nil, "not shown: read when next shown")
+        #expect(await eventually {
+            client.calls.filter { $0 == "config options OPENAI_REALTIME_MODEL" }.count == 2
+        })
+        model.optionsMenu("OPENAI_REALTIME_MODEL", shown: false)
+        _ = await model.useVoiceOpenAI()
+        #expect(model.options.isEmpty)
+    }
+
+    @Test func everyChangeTheListsDependOnForgetsThem() async {
+        let client = StubClient {
+            $0.voiceHere = { _ in
+                VoiceSetupStream(AsyncThrowingStream { $0.yield(.done(baseURL: "http://127.0.0.1:8765/v1")); $0.finish() })
+            }
+            $0.pull = { _ in PullStream(AsyncThrowingStream { $0.yield(.done(path: "/m.gguf")); $0.finish() }) }
+        }
+        let model = makeModel(client: client)
+        await model.start()
+        defer { model.stop() }
+        let changes: [(String, () async -> Void)] = [
+            ("useVoiceServer", { _ = await model.useVoiceServer(url: "http://s/v1", key: .stored, keepAnyway: false) }),
+            ("use", { _ = await model.use(model: "gpt-oss-20b", defaultAgent: false) }),
+            ("setUpVoiceHere", {
+                model.setUpVoiceHere()
+                _ = await eventually { model.voiceSetup.phase != nil && !model.voiceSetup.isBusy }
+            }),
+            ("download", {
+                model.download("gemma-4-12b")
+                _ = await eventually { model.downloads.active["gemma-4-12b"] == .finished }
+            }),
+        ]
+        for (name, change) in changes {
+            await model.loadOptions("CODEX_MODEL")
+            #expect(model.options["CODEX_MODEL"] != nil)
+            await change()
+            #expect(model.options["CODEX_MODEL"] == nil, "\(name) left the list")
+        }
+    }
+
     @Test func relocatingForgetsTheOptions() async {
         let model = makeModel()
         await model.start()
@@ -113,7 +198,7 @@ extension AppModelTests {
         let model = makeModel(client: client)
         await model.start()
         defer { model.stop() }
-        let answer = try await model.useVoiceServer(url: "http://studio.local:8000/v1", key: "vk", keepAnyway: false).get()
+        let answer = try await model.useVoiceServer(url: "http://studio.local:8000/v1", key: .typed("vk"), keepAnyway: false).get()
         #expect(answer.warnings.count == 1)
         #expect(client.calls.contains("voice use server http://studio.local:8000/v1 --key-stdin"))
         #expect(client.calls.suffix(2).sorted() == ["config list", "voice"])
@@ -125,7 +210,7 @@ extension AppModelTests {
         let model = makeModel(client: client)
         await model.start()
         defer { model.stop() }
-        let answer = try await model.useVoiceServer(url: "http://studio.local:8000/v1", key: nil, keepAnyway: false).get()
+        let answer = try await model.useVoiceServer(url: "http://studio.local:8000/v1", key: .stored, keepAnyway: false).get()
         #expect(answer.problem != nil)
         #expect(client.calls.last == "voice use server http://studio.local:8000/v1")
         #expect(!model.configNeedsRestart)
@@ -137,7 +222,7 @@ extension AppModelTests {
         let model = makeModel(client: client)
         await model.start()
         defer { model.stop() }
-        let answer = await model.useVoiceServer(url: "x", key: nil, keepAnyway: true)
+        let answer = await model.useVoiceServer(url: "x", key: .stored, keepAnyway: true)
         #expect(answer == .failure(refusal))
         #expect(!model.configNeedsRestart)
     }

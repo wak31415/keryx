@@ -50,6 +50,12 @@ extension ScreenCatalog {
             Entry("voice-server-picked", size: screen) {
                 VoiceView(mode: .server).environment(AppModel.preview())
             },
+            Entry("voice-server-stored-key", size: screen) {
+                VoiceView().environment(storedKey)
+            },
+            Entry("voice-server-removing-key", size: screen) {
+                VoiceView(mode: .server, server: .init(clearing: true)).environment(storedKey)
+            },
             Entry("voice-server-saved-warning", size: screen) {
                 VoiceView(mode: .server, server: .init(address: "http://studio.local:8000/v1",
                                                        answer: PreviewClient.serverSaved))
@@ -84,9 +90,9 @@ extension ScreenCatalog {
         return lists
     }
 
+    /// uv reports no sizes, so an install step's bar is indeterminate.
     private static let downloading = VoiceSetupEvent.step(
-        step: "install", message: "Downloading the speech models",
-        progress: .init(done: 212_000_000, total: 480_000_000))
+        step: "install", message: "Installing the voice server", progress: nil)
 
     private static let unit = VoiceSetupEvent.step(
         step: "unit", message: "Installing the voice server's service", progress: nil)
@@ -104,6 +110,19 @@ extension ScreenCatalog {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
         model.voiceSetup.cancel()
         return model
+    }
+
+    /// A server in use with its API key stored.
+    @MainActor private static var storedKey: AppModel {
+        let rows = PreviewData.config.map { row in
+            var row = row
+            if row.key == "VOICE_API_KEY" {
+                row.set = true
+                row.source = "secrets.toml"
+            }
+            return row
+        }
+        return AppModel.preview(client: PreviewClient(config: .success(rows), voice: .success(PreviewData.voiceServer)))
     }
 
     @MainActor private static var needsRestart: AppModel {

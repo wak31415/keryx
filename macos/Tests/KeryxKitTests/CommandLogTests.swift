@@ -70,6 +70,11 @@ import KeryxPreview
                    logs: "keryx voice use server --json …", hiding: ["-weird"])
     }
 
+    @Test func clearingTheServerKeyIsLogged() {
+        Self.check(["voice", "use", "server", "http://studio.local:8000/v1", "--clear-key", "--json"],
+                   logs: "keryx voice use server … --clear-key --json", hiding: ["studio"])
+    }
+
     @Test func voiceUseHereLogsTheFlagButNotTheVoice() {
         Self.check(["voice", "use", "here", "--voice", "bf_emma", "--json"],
                    logs: "keryx voice use here --voice … --json", hiding: ["bf_emma", "emma"])

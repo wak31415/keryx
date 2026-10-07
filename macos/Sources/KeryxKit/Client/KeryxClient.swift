@@ -40,8 +40,9 @@ public protocol KeryxClient: Sendable {
     func useVoiceOpenAI() async throws -> VoiceUseResult
     /// Speaks through the voice server at `url` from the next restart, once it has answered
     /// a handshake — or, with `keepAnyway`, even if it did not. A failed handshake is an
-    /// answer (`problem` set, nothing saved), not an error. `key` goes on the child's stdin.
-    func useVoiceServer(url: String, key: String?, keepAnyway: Bool) async throws -> VoiceServerResult
+    /// answer (`problem` set, nothing saved), not an error. A typed key goes on the child's
+    /// stdin; `.clear` removes the stored one.
+    func useVoiceServer(url: String, key: ServerKey, keepAnyway: Bool) async throws -> VoiceServerResult
     /// Installs, configures and starts the voice server on this Mac, step by step; stops
     /// as `pull` does. `voice`: the Kokoro voice to speak in, else the one set.
     func voiceHere(voice: String?) -> VoiceSetupStream

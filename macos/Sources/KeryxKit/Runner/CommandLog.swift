@@ -25,7 +25,8 @@ public enum CommandLog {
 
     static let flags: Set<String> = [
         "--json", "--stdin", "--force", "--internal", "--limit", "--days", "--status",
-        "--default-agent", "--disable", "--enable", "--llm", "--key-stdin", "--keep-anyway", "--voice",
+        "--default-agent", "--disable", "--enable", "--llm", "--key-stdin", "--clear-key", "--keep-anyway",
+        "--voice",
     ]
 
     static let elided = "…"

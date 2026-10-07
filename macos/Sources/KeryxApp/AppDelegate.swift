@@ -1,9 +1,10 @@
 import AppKit
 import KeryxKit
+import KeryxUI
 
 /// Owns the app's one `AppModel` and the moments AppKit tells only a delegate about: launch
 /// (the menu needs Keryx found whether or not the window ever opens), a menu opening, and
-/// quitting while a model downloads.
+/// quitting while a model downloads or the voice is being set up.
 /// The app's windows, for its activation policy.
 enum AppWindow: String { case main, settings }
 
@@ -108,21 +109,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard model.downloads.isRunning else { return .terminateNow }
-        NSApp.activate()
-        let alert = NSAlert()
-        alert.messageText = "A model is downloading. Quit anyway?"
-        alert.informativeText = "It will pick up where it left off next time."
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
-        // Stop the download's child rather than leave it running without us, and wait for
-        // it to go (SIGKILL follows SIGTERM within seconds); the part already downloaded
-        // stays for next time.
-        if let current = model.downloads.current { model.downloads.cancel(current.name) }
+        let downloads = model.downloads
+        let setup = model.voiceSetup
+        guard downloads.isBusy || setup.isBusy else { return .terminateNow }
+        // Only what is still running asks; what is already stopping is just waited for.
+        if let question = Quitting.question(downloading: downloads.isRunning, settingUpVoice: setup.isRunning,
+                                            assistant: Wording.assistant(model.status.value)) {
+            NSApp.activate()
+            let alert = NSAlert()
+            alert.messageText = question.message
+            alert.informativeText = question.detail
+            alert.addButton(withTitle: "Quit")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        }
+        // Stop each child rather than leave it running without us, and wait for it to go
+        // (SIGKILL follows SIGTERM within seconds); a download's part stays for next time.
+        if let current = downloads.current, downloads.isRunning { downloads.cancel(current.name) }
+        setup.cancel()
         Task {
-            let deadline = ContinuousClock.now + .seconds(5)
-            while model.downloads.isBusy, ContinuousClock.now < deadline {
+            let deadline = ContinuousClock.now + .seconds(8)
+            while downloads.isBusy || setup.isBusy, ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .milliseconds(100))
             }
             NSApp.reply(toApplicationShouldTerminate: true)
@@ -130,10 +137,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
-    /// Opening the menu bar menu (or any menu that is not the main menu's) reads the
-    /// sessions and the models again, so the menu lists them as they are now.
+    /// Opening the menu bar menu (or any menu that is not the main menu's, nor a pop-up
+    /// button's in a window) reads the sessions and the models again, so the menu lists
+    /// them as they are now.
     @objc private func menuDidBeginTracking(_ notification: Notification) {
-        guard let menu = notification.object as? NSMenu, menu !== NSApp.mainMenu, menu.supermenu == nil else { return }
+        guard let menu = notification.object as? NSMenu, menu !== NSApp.mainMenu, menu.supermenu == nil,
+              !MenuTracking.isPopUpMenu(menu, in: NSApp.windows) else { return }
         let now = ContinuousClock.now
         if let last = lastMenuRefresh, now - last < Self.menuRefreshInterval { return }
         lastMenuRefresh = now

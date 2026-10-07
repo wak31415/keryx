@@ -58,6 +58,25 @@ public struct ElsewhereVoice: Codable, Sendable, Equatable {
     public var reachable: Bool?
 }
 
+/// What `voice use server` does with the voice server's API key (`VOICE_API_KEY`). One of
+/// the three, so `--key-stdin` and `--clear-key`, which the CLI refuses together, never are.
+public enum ServerKey: Sendable, Equatable {
+    /// Keep the key stored, if there is one: no flag.
+    case stored
+    /// Use this key, sent on stdin (`--key-stdin`). Blank, it is `stored`: the CLI refuses
+    /// an empty stdin.
+    case typed(String)
+    /// Remove the stored key (`--clear-key`).
+    case clear
+
+    /// The key to send on stdin, trimmed; `nil` when there is none to send.
+    public var toSend: String? {
+        guard case let .typed(key) = self else { return nil }
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 /// `keryx voice use openai --json`.
 public struct VoiceUseResult: Codable, Sendable, Equatable {
     /// What was written, each secret as "(set)" or null — never the value.

@@ -67,7 +67,7 @@ import KeryxPreview
     @Test func useServerSendsTheKeyOnStdinOnly() async throws {
         let fake = FakeRunner { _ in Self.ok(try Self.fixture("voice-use-server.json")) }
         let client = CLIClient(location: .fixture, runner: fake)
-        let result = try await client.useVoiceServer(url: "http://studio.local:8000/v1", key: "vk-very-secret",
+        let result = try await client.useVoiceServer(url: "http://studio.local:8000/v1", key: .typed("vk-very-secret"),
                                                      keepAnyway: false)
         let request = try #require(fake.requests.last)
         #expect(Self.words(request) == ["voice", "use", "server", "http://studio.local:8000/v1", "--key-stdin", "--json"])
@@ -77,23 +77,51 @@ import KeryxPreview
         #expect(result.saved?["VOICE_API_KEY"] == .string("(set)"))
         #expect(result.warnings.count == 1)
 
-        _ = try await client.useVoiceServer(url: "http://studio.local:8000/v1", key: nil, keepAnyway: true)
+        _ = try await client.useVoiceServer(url: "http://studio.local:8000/v1", key: .stored, keepAnyway: true)
         let second = try #require(fake.requests.last)
         #expect(Self.words(second) == ["voice", "use", "server", "http://studio.local:8000/v1", "--keep-anyway", "--json"])
         #expect(second.stdin == nil)
     }
 
+    @Test func aBlankKeyIsNoKeyAndTheStoredOneIsKept() async throws {
+        let fake = FakeRunner { _ in Self.ok(try Self.fixture("voice-use-server.json")) }
+        let client = CLIClient(location: .fixture, runner: fake)
+        for key in [ServerKey.typed(""), .typed("  \n"), .stored] {
+            _ = try await client.useVoiceServer(url: "http://studio.local:8000/v1", key: key, keepAnyway: false)
+            let request = try #require(fake.requests.last)
+            // The CLI refuses --key-stdin with an empty stdin.
+            #expect(Self.words(request) == ["voice", "use", "server", "http://studio.local:8000/v1", "--json"])
+            #expect(request.stdin == nil)
+        }
+        _ = try await client.useVoiceServer(url: "http://studio.local:8000/v1", key: .typed("  vk-padded \n"),
+                                            keepAnyway: false)
+        #expect(fake.requests.last?.stdin == Data("vk-padded".utf8), "trimmed")
+    }
+
+    @Test func clearingTheKeyNeverSendsOne() async throws {
+        let fake = FakeRunner { _ in Self.ok(try Self.fixture("voice-use-server.json")) }
+        _ = try await CLIClient(location: .fixture, runner: fake)
+            .useVoiceServer(url: "http://studio.local:8000/v1", key: .clear, keepAnyway: true)
+        let request = try #require(fake.requests.last)
+        // --clear-key with --key-stdin is refused: the one never comes with the other.
+        #expect(Self.words(request) == ["voice", "use", "server", "http://studio.local:8000/v1",
+                                        "--clear-key", "--keep-anyway", "--json"])
+        #expect(!request.arguments.contains("--key-stdin"))
+        #expect(request.stdin == nil)
+        #expect(ServerKey.clear.toSend == nil && ServerKey.stored.toSend == nil)
+    }
+
     @Test func anAddressLikeAnOptionComesAfterTheSeparator() async throws {
         let fake = FakeRunner { _ in Self.ok(try Self.fixture("voice-use-server.json")) }
         _ = try await CLIClient(location: .fixture, runner: fake)
-            .useVoiceServer(url: "-weird", key: nil, keepAnyway: false)
+            .useVoiceServer(url: "-weird", key: .stored, keepAnyway: false)
         #expect(Self.words(fake.requests.last) == ["voice", "use", "server", "--json", "--", "-weird"])
     }
 
     @Test func aFailedHandshakeIsAnAnswerNotAnError() async throws {
         let fake = FakeRunner { _ in Self.ok(try Self.fixture("voice-use-server-problem.json"), exit: 1) }
         let result = try await CLIClient(location: .fixture, runner: fake)
-            .useVoiceServer(url: "http://studio.local:8000/v1", key: nil, keepAnyway: false)
+            .useVoiceServer(url: "http://studio.local:8000/v1", key: .stored, keepAnyway: false)
         #expect(result.saved == nil)
         #expect(result.problem?.contains("handshake") == true)
         #expect(!result.restartNeeded)
@@ -103,7 +131,7 @@ import KeryxPreview
         let fake = FakeRunner { _ in .init(exitCode: 2, stdout: Data(), stderr: Data("not a URL".utf8)) }
         await #expect(throws: KeryxError.failed(command: "keryx voice use", exitCode: 2, message: "not a URL")) {
             _ = try await CLIClient(location: .fixture, runner: fake)
-                .useVoiceServer(url: "nonsense", key: nil, keepAnyway: false)
+                .useVoiceServer(url: "nonsense", key: .stored, keepAnyway: false)
         }
     }
 
