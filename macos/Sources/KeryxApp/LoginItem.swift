@@ -1,3 +1,4 @@
+import KeryxUI
 import ServiceManagement
 
 /// Whether Keryx opens at login: the app itself registered as a login item.
@@ -18,6 +19,20 @@ enum LoginItem {
         case .requiresApproval: .needsApproval
         default: .off
         }
+    }
+
+    /// The Settings window's handle on it.
+    static var control: LoginItemControl {
+        LoginItemControl(
+            state: {
+                switch state {
+                case .on: .on
+                case .off: .off
+                case .needsApproval: .needsApproval
+                }
+            },
+            set: { try set($0) },
+            openSystemSettings: { openSystemSettings() })
     }
 
     static func set(_ on: Bool) throws {

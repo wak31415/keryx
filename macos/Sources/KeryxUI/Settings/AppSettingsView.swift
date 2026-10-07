@@ -1,52 +1,78 @@
 import AppKit
 import KeryxKit
-import KeryxUI
 import SwiftUI
+
+/// Whether the app opens at login, and the way to change it: the app's `SMAppService`
+/// registration, handed in so this screen can be drawn without one.
+public struct LoginItemControl {
+    public enum State: Equatable, Sendable {
+        case on, off
+        /// Registered, but the owner has yet to allow it in System Settings.
+        case needsApproval
+    }
+
+    public var state: () -> State
+    public var set: (Bool) throws -> Void
+    public var openSystemSettings: () -> Void
+
+    public init(state: @escaping () -> State, set: @escaping (Bool) throws -> Void,
+                openSystemSettings: @escaping () -> Void) {
+        self.state = state
+        self.set = set
+        self.openSystemSettings = openSystemSettings
+    }
+}
 
 /// The app's own settings (Keryx's settings are its Configuration screen): which Keryx it
 /// talks to, and whether it opens at login.
-struct AppSettingsView: View {
+public struct AppSettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.preferences) private var preferences
+    private let loginItem: LoginItemControl
     /// `Preferences` is not observable, so the chosen folder is mirrored here.
     @State private var folder: String?
-    @State private var login: LoginItem.State = .off
+    @State private var login: LoginItemControl.State = .off
     @State private var loginError: String?
 
-    var body: some View {
+    public init(loginItem: LoginItemControl) {
+        self.loginItem = loginItem
+    }
+
+    public var body: some View {
         Form {
             Section("Keryx") {
-                LabeledContent("Location") { location }
-                Picker("Use", selection: folderChoice) {
-                    Text("Automatic").tag(FolderChoice.automatic)
+                Picker("Find Keryx", selection: folderChoice) {
+                    Text("Automatically").tag(FolderChoice.automatic)
                     if let folder {
                         Text(Self.tilde(folder)).tag(FolderChoice.chosen)
                     }
                     Divider()
                     Text("Choose Folder…").tag(FolderChoice.choose)
                 }
+                LabeledContent("Location") { location }
             }
-            Section("General") {
+            Section {
                 Toggle("Open at Login", isOn: loginBinding)
                 if login == .needsApproval {
-                    HStack {
+                    LabeledContent {
+                        Button("Open Login Items…") { loginItem.openSystemSettings() }
+                    } label: {
+                        Text("Waiting for your approval")
                         Text("Allow Keryx in System Settings to open it at login.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Open Login Items…") { LoginItem.openSystemSettings() }
-                            .controlSize(.small)
                     }
                 }
                 if let loginError {
                     Text(loginError)
-                        .font(.caption)
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
                 }
+            } header: {
+                Text("General")
+            } footer: {
                 Text("Keryx must be in Applications. After rebuilding the app, turn this off and on again.")
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .formStyle(.grouped)
@@ -54,7 +80,7 @@ struct AppSettingsView: View {
         .fixedSize(horizontal: false, vertical: true)
         .onAppear {
             folder = preferences.keryxFolder
-            login = LoginItem.state
+            login = loginItem.state()
         }
     }
 
@@ -141,12 +167,12 @@ struct AppSettingsView: View {
             login != .off
         } set: { on in
             do {
-                try LoginItem.set(on)
+                try loginItem.set(on)
                 loginError = nil
             } catch {
                 loginError = error.localizedDescription
             }
-            login = LoginItem.state
+            login = loginItem.state()
         }
     }
 }

@@ -33,7 +33,7 @@ struct KeryxApp: App {
         .menuBarExtraStyle(.menu)
 
         Settings {
-            AppSettingsView()
+            AppSettingsView(loginItem: LoginItem.control)
                 .environment(delegate.model)
                 .environment(\.preferences, delegate.preferences)
                 .onAppear { delegate.windowDidAppear(.settings) }
