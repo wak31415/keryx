@@ -158,3 +158,38 @@ def test_a_second_cancel_while_stopping_still_kills():
     with pytest.raises(KeyboardInterrupt):
         child.stop()
     assert child.wait(5) == -signal.SIGKILL
+
+
+def test_a_cancel_that_cuts_the_kill_short_is_followed_by_another_kill():
+    child = PtyChild([sys.executable, "-c", STUBBORN], None, stop_after=0.2)
+    time.sleep(0.2)  # long enough for the handler to be set
+    real_signal, cut = child._signal, []
+
+    def interrupted(signum):
+        if signum == signal.SIGKILL and not cut:
+            cut.append(signum)
+            raise KeyboardInterrupt  # Cancel, again, before the first SIGKILL went out
+        real_signal(signum)
+
+    child._signal = interrupted
+
+    with pytest.raises(KeyboardInterrupt):
+        child.stop()
+    assert child.wait(5) == -signal.SIGKILL
+
+
+def test_a_group_seen_empty_is_never_signalled_again(monkeypatch):
+    child = PtyChild([sys.executable, "-c", "pass"], None, stop_after=0.2)
+    assert child.wait(5) == 0  # reaped: its pid could now be anyone's
+    sent, real_killpg = [], os.killpg
+
+    def killpg(pgid, signum):
+        sent.append(signum)
+        real_killpg(pgid, signum)
+
+    monkeypatch.setattr(terminal.os, "killpg", killpg)
+
+    child.stop()
+
+    # Asked once whether the group is still there, and told nothing after the answer.
+    assert sent == [0]

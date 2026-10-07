@@ -39,7 +39,6 @@ import base64
 import hashlib
 import json
 import logging
-import os
 import queue
 import secrets
 import subprocess
@@ -56,6 +55,7 @@ import httpx
 from keryx.agents.base import google_mcp_server_config
 from keryx.config import GOOGLE_CLIENT_FILE, Settings, parse_google_client, write_private
 from keryx.integrations.gmail import SCOPE, TOKEN_URL, HttpGmail, token_path
+from keryx.setup.child_env import login_env
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from keryx.setup.context import SetupContext
@@ -146,7 +146,8 @@ def run_google_setup(
         argv,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        env={**os.environ, **config["env"]},
+        # Its own client, and none of Keryx's other secrets (`child_env`).
+        env={**login_env(), **config["env"]},
         text=True,
         bufsize=1,
     )

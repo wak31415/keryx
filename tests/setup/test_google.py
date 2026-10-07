@@ -14,6 +14,7 @@ from keryx.setup.google import (
     GoogleSetupError,
     run_google_setup,
 )
+from setup.auth_fakes import assert_holds_no_secret
 
 
 @pytest.fixture
@@ -178,6 +179,16 @@ def test_the_server_is_started_with_the_workspace_mcp_command_and_env(settings):
     assert env["GOOGLE_OAUTH_CLIENT_SECRET"] == "client-secret"
     assert env["GOOGLE_MCP_CREDENTIALS_DIR"] == str(settings.data_dir / "google")
     assert env["PATH"]  # the ambient environment is kept, not replaced
+
+
+def test_the_server_is_lent_no_secret_but_the_client_it_is_handed(settings, ambient):
+    calls: list[dict] = []
+
+    run_google_setup(settings, popen=make_popen(scripted_process(), calls))
+
+    env = calls[0]["env"]
+    assert env["GOOGLE_OAUTH_CLIENT_SECRET"] == "client-secret"
+    assert_holds_no_secret(env)
 
 
 def test_the_handshake_is_initialize_then_initialized_then_the_probe_tool(settings):

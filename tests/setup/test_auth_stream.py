@@ -45,6 +45,7 @@ from setup.auth_fakes import (
     Clock,
     FakeChild,
     FakeLines,
+    assert_holds_no_secret,
     ink,
     link,
 )
@@ -95,33 +96,6 @@ def ending(run: Run) -> dict:
 
 
 # --- claude -------------------------------------------------------------------------------
-
-
-#: Every secret Keryx's own environment may hold, by the name it travels under.
-AMBIENT = {
-    "OPENAI_API_KEY": "sk-proj-ambient", "CODEX_API_KEY": "sk-codex-ambient",
-    "CODEX_ACCESS_TOKEN": "codex-access-ambient", "ANTHROPIC_API_KEY": "sk-ant-api-ambient",
-    "ANTHROPIC_AUTH_TOKEN": "ant-auth-ambient", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-ambient",
-    "KERYX_PIN": "48291573", "JARVIS_PIN": "73829154", "TWILIO_AUTH_TOKEN": "twilio-ambient",
-    "SLACK_BOT_TOKEN": "xoxb-ambient", "OPENAI_ADMIN_KEY": "sk-admin-ambient",
-    "VOICE_API_KEY": "voice-ambient", "GOOGLE_OAUTH_CLIENT_SECRET": "gocspx-ambient",
-}
-
-
-@pytest.fixture
-def ambient(monkeypatch):
-    """Keryx's environment holding every secret it can, as a service's might."""
-    for name, value in AMBIENT.items():
-        monkeypatch.setenv(name, value)
-    monkeypatch.setenv("KERYX_HARMLESS", "kept")
-
-
-def assert_holds_no_secret(env: dict[str, str]) -> None:
-    assert not set(AMBIENT.values()) & set(env.values()), env
-    # Codex reads these three from its environment: blank, so nothing inherited is lent.
-    assert {env[name] for name in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")} \
-        == {""}
-    assert env["KERYX_HARMLESS"] == "kept"
 
 
 def test_claude_opens_the_link_asks_for_the_code_and_stores_the_token(

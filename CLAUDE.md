@@ -63,7 +63,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   sentences, and a screen that no longer parses says "use an API key instead". A link is
   opened only when it is https on exactly the vendor's host (no user info, no port, nothing
   a browser reads differently), and every login child runs with no secret of Keryx's in its
-  environment (`_login_env`)
+  environment, whatever the case of its name (`setup/child_env.py`, the workspace-mcp
+  server's too)
 - The accounts Keryx connects to, as the Mac app's Integrations section shows them: `uv run
   keryx integrations [--json]` (google, gmail, slack, github, openai-admin, anthropic-admin:
   connected or not, `why` in the app's words, the secrets — set or not — and settings each
@@ -243,8 +244,8 @@ remember:
 - **setup** — `setup/` is `keryx setup` and `keryx auth`: `wizard` (section order, what is
   left, the closing summary), one module per large section (`agents`, `phone`, `google`,
   `issues`, `plugins`, `profile`, `project_context`) and `sections` for the small ones,
-  `auth_stream` (`auth login --json`) and `terminal` (the pty it drives Claude's sign-in
-  behind), `context` (the `SetupContext` every section gets, and `Probes` — everything that reaches
+  `auth_stream` (`auth login --json`), `terminal` (the pty it drives Claude's sign-in
+  behind) and `child_env` (every login child's environment, scrubbed of Keryx's secrets), `context` (the `SetupContext` every section gets, and `Probes` — everything that reaches
   the network, a login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
   rich/questionary one, one question to a screen), `rewind` (Esc goes back a question and
   Tab skips to the first unanswered one, both by running the section again from a record

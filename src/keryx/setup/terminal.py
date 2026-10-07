@@ -20,7 +20,6 @@ import subprocess
 import termios
 import time
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import suppress
 from typing import Protocol
 
 #: The terminal's size: wide enough for a sign-in link on one line, tall enough for Ink's
@@ -30,9 +29,6 @@ COLUMNS, ROWS = 500, 50
 SUBMIT_PAUSE_S = 0.3
 #: How long a child gets to go after SIGTERM before SIGKILL.
 STOP_AFTER_S = 2.0
-
-#: What Cancel sends: held off while the last of a child is killed.
-_CANCEL_SIGNALS = frozenset({signal.SIGTERM, signal.SIGINT})
 
 #: OSC (`ESC ]`, to BEL or ST): a title or a hyperlink's target, never on screen.
 _OSC = r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
@@ -86,6 +82,7 @@ class PtyChild:
             os.close(slave)
         self._master: int | None = master
         self._stopped = False
+        self._group_gone = False
 
     def read(self, timeout: float) -> bytes | None:
         if self._master is None:
@@ -118,26 +115,38 @@ class PtyChild:
     def stop(self) -> None:
         """SIGTERM to the whole session, `stop_after` seconds' grace, then SIGKILL to whatever
         is left of it — sent even when the child itself has already exited (its group id is
-        still its pid, and what it started may live on), and even when a second Cancel
-        lands during the grace."""
+        still its pid, and what it started may live on), and sent again on the way out, so a
+        second Cancel that cuts the first SIGKILL short still ends in one."""
         if self._stopped:
             return
         self._stopped = True
         try:
-            self._signal(signal.SIGTERM)
-            self.wait(self._stop_after)
-        finally:
-            held = signal.pthread_sigmask(signal.SIG_BLOCK, _CANCEL_SIGNALS)
             try:
+                self._signal(signal.SIGTERM)
+                self.wait(self._stop_after)
+            finally:
                 self._signal(signal.SIGKILL)
                 self._process.wait()
-                self._close()
-            finally:
-                signal.pthread_sigmask(signal.SIG_SETMASK, held)
+        finally:
+            self._signal(signal.SIGKILL)  # costs nothing when the first one went out
+            self._close()
 
     def _signal(self, signum: int) -> None:
-        with suppress(ProcessLookupError, PermissionError):
-            os.killpg(self._process.pid, signum)
+        """`signum` to the child's process group, unless that group has been seen gone.
+
+        Once the child is reaped its pid is free, and so, when nothing it started lives on,
+        is its group id: so the group is asked about first (signal 0), and a group found
+        empty — or not ours — is never signalled again, rather than signal a recycled one.
+        """
+        if self._group_gone:
+            return
+        group = self._process.pid
+        try:
+            if self._process.returncode is not None:
+                os.killpg(group, 0)
+            os.killpg(group, signum)
+        except (ProcessLookupError, PermissionError):
+            self._group_gone = True
 
     def _close(self) -> None:
         if self._master is not None:

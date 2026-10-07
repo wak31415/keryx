@@ -8,6 +8,7 @@ from keryx.config import PLACEHOLDER_KEY, Settings
 from keryx.config.store import ConfigStore
 from keryx.setup.context import SetupContext
 
+from .auth_fakes import AMBIENT
 from .fakes import FakeWorld, ScriptedPrompter
 
 
@@ -47,3 +48,11 @@ def make_ctx(machine, world):
         )
 
     return make
+
+
+@pytest.fixture
+def ambient(monkeypatch):
+    """Keryx's environment holding every secret it can, in any case, as a service's might."""
+    for name, value in AMBIENT.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("KERYX_HARMLESS", "kept")

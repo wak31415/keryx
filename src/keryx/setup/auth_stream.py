@@ -27,7 +27,8 @@ there), `code` asks it for the one line Keryx then reads from stdin. The termina
   code is a request to OpenAI — then waits, and exits 0 once the browser has finished.
   Its link must be exactly `https://auth.openai.com/codex/device`.
 
-Every login child gets `_login_env`: Keryx's environment with no secret of Keryx's in it.
+Every login child gets `child_env.login_env`: Keryx's environment with no secret of
+Keryx's in it, whatever the case of the variable's name.
 - **gmail** is the two-step sign-in as one stream: the consent link, then the address the
   browser landed on, as one line on stdin.
 - **google-workspace** is `run_google_setup`, whose consent link is passed on as `open`
@@ -47,14 +48,13 @@ from typing import IO, Any, Protocol
 from urllib.parse import parse_qs, urlparse
 
 from keryx.agents.auth import redact
-from keryx.agents.codex import CREDENTIAL_VARIABLES
 from keryx.config import Settings
 from keryx.config.permissions import OWNER
-from keryx.config.settings import env_var_names
 from keryx.config.store import ConfigError, ConfigStore
 from keryx.localmodels.pull import EventLines
 from keryx.setup import agents, google
 from keryx.setup.auth import LOGINS, AuthError, agent_cli, use_client_file
+from keryx.setup.child_env import login_env
 from keryx.setup.terminal import STOP_AFTER_S, Child, PtyChild, visible
 
 #: Where the Claude token goes: the headless subscription tier (`agents/auth.py`).
@@ -99,8 +99,6 @@ CODEX_DEVICE_HOST, CODEX_DEVICE_PATH = "auth.openai.com", "/codex/device"
 _URL_CHARS = re.compile(r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
 #: A sign-in code as Claude shows it (`code#state`): nothing a terminal would act on.
 _CODE = re.compile(r"[A-Za-z0-9#_.\-]+")
-#: Not a setting, but a credential all the same: never in a login child's environment.
-_ALSO_SECRET = ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR")
 
 #: A link on a raw screen, whole: it ends at a BEL (an OSC 8 target), an escape or a space.
 _LINK = re.compile(r"https://[^\s\x07\x1b]+(?=[\s\x07\x1b])")
@@ -222,18 +220,6 @@ def stream(
     return 0
 
 
-def _login_env(**extra: str) -> dict[str, str]:
-    """Keryx's environment for a login child, with no secret of Keryx's in it: every secret
-    setting's variable (the PIN under both its names, Twilio's, Slack's, the admin keys, the
-    voice key) and the Anthropic ones gone, and Codex's three credential variables blank —
-    as `agents/codex.py` blanks them for every other Codex child — so nothing is lent."""
-    secret = {name for field, info in Settings.model_fields.items() if not info.repr
-              for name in env_var_names(field)}
-    secret |= {*env_var_names("pin"), *_ALSO_SECRET}
-    env = {key: value for key, value in os.environ.items() if key not in secret}
-    return {**env, **dict.fromkeys(CREDENTIAL_VARIABLES, ""), **extra}
-
-
 def _https_url(url: str, hosts: frozenset[str] | set[str]) -> str | None:
     """`url`'s path and query when it is https on exactly one of `hosts` — no user info, no
     port, no character a browser would read differently — else None."""
@@ -257,7 +243,7 @@ def _claude(cli: str, settings: Settings, store: ConfigStore, events: LoginEvent
             lines: Lines, spawn: Spawn, clock: Callable[[], float]) -> None:
     argv = agents.login_argv("claude", cli, headless=True)
     # The app opens the link: the CLI's own browser is pointed at nothing, so one tab opens.
-    env = _login_env(BROWSER=shutil.which("true") or "true",
+    env = login_env(BROWSER=shutil.which("true") or "true",
                      TERM=os.environ.get("TERM") or "xterm-256color")
     try:
         child = spawn(argv, env)
@@ -372,7 +358,7 @@ def _setup_token(child: Child, events: LoginEvents, lines: Lines,
 def _codex(cli: str, events: LoginEvents, spawn: Spawn, clock: Callable[[], float]) -> None:
     argv = agents.login_argv("codex", cli, headless=True)
     try:
-        child = spawn(argv, _login_env())
+        child = spawn(argv, login_env())
     except OSError as error:
         raise SignInFailed(f"Codex's sign-in could not start ({error.strerror}).") from None
     try:

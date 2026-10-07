@@ -126,3 +126,28 @@ class FakeLines:
 
 #: The consent link workspace-mcp prints for Google for agents.
 CONSENT = "https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=cid&state=s"
+
+
+#: Every secret Keryx's own environment may hold, by the name it travels under.
+AMBIENT = {
+    "OPENAI_API_KEY": "sk-proj-ambient", "CODEX_API_KEY": "sk-codex-ambient",
+    "CODEX_ACCESS_TOKEN": "codex-access-ambient", "ANTHROPIC_API_KEY": "sk-ant-api-ambient",
+    "ANTHROPIC_AUTH_TOKEN": "ant-auth-ambient", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-ambient",
+    "KERYX_PIN": "48291573", "JARVIS_PIN": "73829154", "TWILIO_AUTH_TOKEN": "twilio-ambient",
+    "SLACK_BOT_TOKEN": "xoxb-ambient", "OPENAI_ADMIN_KEY": "sk-admin-ambient",
+    "VOICE_API_KEY": "voice-ambient", "GOOGLE_OAUTH_CLIENT_SECRET": "gocspx-ambient",
+    # Settings reads a variable whatever its case, so a child must not be lent one either.
+    "keryx_pin": "59302684", "twilio_auth_token": "twilio-lower", "Slack_Bot_Token": "xoxb-mixed",
+    "openai_api_key": "sk-proj-lower", "Codex_Access_Token": "codex-mixed",
+}
+
+
+def assert_holds_no_secret(env: dict[str, str]) -> None:
+    secrets = set(AMBIENT.values())
+    leaked = sorted(name for name, value in env.items() if value in secrets)
+    assert not leaked, leaked  # the names alone: the environment itself is not printed
+    # Codex reads these three from its environment: blank, so nothing inherited is lent.
+    assert {env[name] for name in ("OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN")} \
+        == {""}
+    assert not {"openai_api_key", "Codex_Access_Token"} & env.keys()
+    assert env["KERYX_HARMLESS"] == "kept"
