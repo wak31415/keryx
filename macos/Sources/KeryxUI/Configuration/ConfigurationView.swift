@@ -26,6 +26,7 @@ public struct ConfigurationView: View {
     public var body: some View {
         StateView(model.config, section: "Configuration", retry: { Task { await model.refresh(.config) } }) { rows in
             let groups = ConfigWording.groups(ConfigWording.filter(rows, by: search))
+            let titles = Wording.titles(rows)
             if groups.isEmpty, !rows.isEmpty {
                 ContentUnavailableView.search(text: search)
             } else {
@@ -36,7 +37,7 @@ public struct ConfigurationView: View {
                     ForEach(groups) { group in
                         Section(group.title, isExpanded: expanded(group.group)) {
                             ForEach(group.rows) { row in
-                                ConfigRowView(row: row, error: initialErrors[row.key])
+                                ConfigRowView(row: row, titles: titles, error: initialErrors[row.key])
                             }
                         }
                     }

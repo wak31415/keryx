@@ -202,6 +202,12 @@ enum ConfigWording {
         return description.isEmpty ? row.key : description + "\n\n" + row.key
     }
 
+    /// A description as it reads under its title: plain, with the settings it names said by
+    /// their titles (“Voice server URL”). The tooltip keeps the description as written.
+    static func described(_ text: String, titles: [String: String]) -> String {
+        Wording.named(plain(text), titles: titles)
+    }
+
     /// A description as plain text: on one line under the title, and whole in its tooltip.
     static func plain(_ text: String) -> String {
         text.replacingOccurrences(of: "`", with: "")

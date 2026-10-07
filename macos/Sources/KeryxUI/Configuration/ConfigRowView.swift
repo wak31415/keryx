@@ -7,6 +7,8 @@ import SwiftUI
 /// Key); a write's error is shown under the title.
 struct ConfigRowView: View {
     let row: ConfigRow
+    /// Every setting's title by key, to say the settings a description names.
+    var titles: [String: String] = [:]
 
     @Environment(AppModel.self) private var model
     @State private var draft: String
@@ -22,8 +24,9 @@ struct ConfigRowView: View {
     @State private var launchFailure: KeryxError?
     @FocusState private var focused: Bool
 
-    init(row: ConfigRow, error: KeryxError? = nil) {
+    init(row: ConfigRow, titles: [String: String] = [:], error: KeryxError? = nil) {
         self.row = row
+        self.titles = titles
         _draft = State(initialValue: ConfigWording.editText(row.value))
         _error = State(initialValue: error)
     }
@@ -48,7 +51,7 @@ struct ConfigRowView: View {
         } label: {
             Text(row.displayTitle)
             if !row.description.isEmpty {
-                Text(ConfigWording.plain(row.description))
+                Text(ConfigWording.described(row.description, titles: titles))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }

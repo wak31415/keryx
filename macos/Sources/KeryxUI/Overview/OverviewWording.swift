@@ -58,31 +58,7 @@ enum OverviewWording {
                 text = ""
             }
         }
-        text = named(text, titles: titles)
+        text = Wording.named(text, titles: titles)
         return (path, Wording.capitalised(text))
-    }
-
-    /// `text` with every setting key in `titles` replaced by its title.
-    static func named(_ text: String, titles: [String: String]) -> String {
-        guard !titles.isEmpty else { return text }
-        var result = ""
-        var rest = Substring(text)
-        while let match = rest.range(of: #"\b[A-Z][A-Z0-9]*(_[A-Z0-9]+)+\b"#, options: .regularExpression) {
-            result += rest[..<match.lowerBound]
-            let key = String(rest[match])
-            result += titles[key] ?? key
-            rest = rest[match.upperBound...]
-        }
-        return result + rest
-    }
-
-    /// Each setting's title by its key, from Configuration's rows (an older CLI's rows have
-    /// none, and their keys stay).
-    static func titles(_ rows: [ConfigRow]?) -> [String: String] {
-        var titles: [String: String] = [:]
-        for row in rows ?? [] {
-            if let title = row.title, !title.isEmpty { titles[row.key] = title }
-        }
-        return titles
     }
 }

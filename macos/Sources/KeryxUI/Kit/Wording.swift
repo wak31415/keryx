@@ -35,9 +35,44 @@ public enum Wording {
         }
     }
 
-    /// The first letter of a sentence the CLI wrote in lower case, raised.
+    /// The first letter of a sentence the CLI wrote in lower case, raised — unless the
+    /// sentence opens on a program's name, which is spelt as it is typed: a word with `-`,
+    /// `_` or `.` in it (`llama-server`, `install-launchd.sh`), or one of `programs`.
     public static func capitalised(_ text: String) -> String {
-        text.prefix(1).uppercased() + text.dropFirst()
+        let first = text.prefix { !$0.isWhitespace && $0 != ":" && $0 != "," }
+        if first.contains(where: { "-_.".contains($0) }) || programs.contains(String(first)) { return text }
+        return text.prefix(1).uppercased() + text.dropFirst()
+    }
+
+    /// Programs a sentence may open on, whose names are lower case wherever they appear.
+    static let programs: Set<String> = [
+        "brew", "cloudflared", "gh", "git", "keryx", "launchctl", "ngrok", "ollama", "pip", "python3", "uv",
+    ]
+
+    /// `text` with every setting key in `titles` (`ALLOWED_CALLERS`) replaced by its title in
+    /// quotation marks (“Your phone numbers”), so a sentence written about the key reads
+    /// right whatever the title's shape. Keys `titles` does not name stay as they are.
+    public static func named(_ text: String, titles: [String: String]) -> String {
+        guard !titles.isEmpty else { return text }
+        var result = ""
+        var rest = Substring(text)
+        while let match = rest.range(of: #"\b[A-Z][A-Z0-9]*(_[A-Z0-9]+)+\b"#, options: .regularExpression) {
+            result += rest[..<match.lowerBound]
+            let key = String(rest[match])
+            result += titles[key].map { "“\($0)”" } ?? key
+            rest = rest[match.upperBound...]
+        }
+        return result + rest
+    }
+
+    /// Each setting's title by its key, from Configuration's rows (an older CLI's rows have
+    /// none, and their keys stay).
+    public static func titles(_ rows: [ConfigRow]?) -> [String: String] {
+        var titles: [String: String] = [:]
+        for row in rows ?? [] {
+            if let title = row.title, !title.isEmpty { titles[row.key] = title }
+        }
+        return titles
     }
 
     /// A heading in title case, as the CLI's sentence-case group titles become section

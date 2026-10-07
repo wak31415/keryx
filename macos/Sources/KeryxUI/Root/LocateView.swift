@@ -11,8 +11,16 @@ public struct LocateView: View {
     @Environment(\.preferences) private var preferences
     @Environment(\.openURL) private var openURL
     @State private var choosing = false
+    /// Whether Details starts open (the catalog's opened state).
+    private let detailsOpen: Bool
 
-    public init() {}
+    public init() {
+        detailsOpen = false
+    }
+
+    package init(detailsOpen: Bool) {
+        self.detailsOpen = detailsOpen
+    }
 
     public var body: some View {
         ContentUnavailableView {
@@ -34,7 +42,7 @@ public struct LocateView: View {
                 }
                 .fixedSize()
                 if !lookedAt.isEmpty {
-                    OnboardingDetails(lines: lookedAt)
+                    OnboardingDetails(lines: lookedAt, open: detailsOpen)
                 }
             }
         }
@@ -55,24 +63,53 @@ public struct LocateView: View {
 }
 
 /// "Details", closed: what an onboarding screen found, for the owner who wants to know why.
+/// The control is centred under the buttons; only what it opens is set to a reading width.
 struct OnboardingDetails: View {
     let lines: [String]
-    @State private var open = false
+    @State private var open: Bool
+
+    init(lines: [String], open: Bool = false) {
+        self.lines = lines
+        _open = State(initialValue: open)
+    }
 
     var body: some View {
-        DisclosureGroup("Details", isExpanded: $open) {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(lines, id: \.self) { line in
-                    Text(Wording.sentence(line.replacingOccurrences(of: "`", with: "")))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        VStack(spacing: 8) {
+            Button {
+                withAnimation(.snappy) { open.toggle() }
+            } label: {
+                Label("Details", systemImage: "chevron.right")
+                    .labelStyle(DisclosureLabelStyle(open: open))
             }
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 4)
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .accessibilityValue(open ? "Expanded" : "Collapsed")
+            if open {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(lines, id: \.self) { line in
+                        Text(Wording.sentence(line.replacingOccurrences(of: "`", with: "")))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .textSelection(.enabled)
+                .frame(width: 440, alignment: .leading)
+            }
         }
-        .frame(width: 440)
+    }
+}
+
+/// A disclosure's chevron before its title, turned down while it is open.
+private struct DisclosureLabelStyle: LabelStyle {
+    let open: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.icon
+                .font(.caption.weight(.semibold))
+                .rotationEffect(.degrees(open ? 90 : 0))
+            configuration.title
+        }
     }
 }

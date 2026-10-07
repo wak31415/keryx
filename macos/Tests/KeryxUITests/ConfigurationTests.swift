@@ -174,6 +174,16 @@ import KeryxPreview
         #expect(ConfigWording.editText(.null) == "")
     }
 
+    @Test func aDescriptionSaysTheSettingsItNamesByTheirTitles() {
+        let rows = [row("AGENT_BACKEND", title: "Default agent"),
+                    row("AGENTS_ENABLED", description: "Blank is `AGENT_BACKEND` alone.", title: "Enabled agents")]
+        let titles = Wording.titles(rows)
+        #expect(ConfigWording.described(rows[1].description, titles: titles) == "Blank is “Default agent” alone.")
+        #expect(ConfigWording.tooltip(rows[1]) == "Blank is AGENT_BACKEND alone.\n\nAGENTS_ENABLED",
+                "the tooltip keeps the description as written")
+        #expect(ConfigWording.described("Its own `CODEX_HOME`.", titles: titles) == "Its own CODEX_HOME.")
+    }
+
     @Test func descriptionsDropTheirBackticksForTooltips() {
         #expect(ConfigWording.plain("Unless `VOICE_BASE_URL` names one") == "Unless VOICE_BASE_URL names one")
     }

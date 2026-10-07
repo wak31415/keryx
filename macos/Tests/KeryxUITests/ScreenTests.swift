@@ -19,6 +19,27 @@ import KeryxPreview
         #expect(Wording.shortStatus(.locating) == nil)
     }
 
+    @Test func aProgramsNameKeepsItsCase() {
+        #expect(Wording.capitalised("llama-server is not installed") == "llama-server is not installed")
+        #expect(Wording.capitalised("install-launchd.sh failed") == "install-launchd.sh failed")
+        #expect(Wording.capitalised("cloudflared is not on PATH") == "cloudflared is not on PATH")
+        #expect(Wording.capitalised("uv: not found") == "uv: not found")
+        #expect(Wording.capitalised("could not reach 127.0.0.1") == "Could not reach 127.0.0.1")
+        #expect(Wording.capitalised("track down why") == "Track down why")
+    }
+
+    @Test func aKeyBecomesItsTitleInQuotationMarks() {
+        let titles = ["ALLOWED_CALLERS": "Your phone numbers", "VOICE_BASE_URL": "Voice server URL"]
+        #expect(Wording.named("ALLOWED_CALLERS is empty — every call is refused", titles: titles)
+            == "“Your phone numbers” is empty — every call is refused")
+        #expect(Wording.named("unless VOICE_BASE_URL names one; CODEX_HOME is its own", titles: titles)
+            == "unless “Voice server URL” names one; CODEX_HOME is its own", "a key with no row stays")
+        #expect(OverviewWording.detail("`ALLOWED_CALLERS` is empty", titles: titles).text
+            == "“Your phone numbers” is empty")
+        #expect(OverviewWording.detail("llama-server is not installed — `keryx setup` installs it").text
+            == "llama-server is not installed — keryx setup installs it")
+    }
+
     @Test func truncationEndsInAnEllipsis() {
         #expect(Wording.truncated("short", to: 40) == "short")
         let cut = Wording.truncated(String(repeating: "a", count: 50), to: 40)
@@ -97,7 +118,7 @@ import KeryxPreview
         let ids = Set(ScreenCatalog.entries().map(\.id))
         for id in ["overview-running", "overview-needs-setup", "overview-error", "overview-approvals-sheet",
                    "overview-approvals-off",
-                   "window-overview", "onboarding-locate", "onboarding-migration"] {
+                   "window-overview", "onboarding-locate", "onboarding-locate-details", "onboarding-migration"] {
             #expect(ids.contains(id), "missing \(id)")
         }
     }

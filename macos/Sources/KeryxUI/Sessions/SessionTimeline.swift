@@ -151,10 +151,15 @@ struct SessionTimeline: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if task.status == .failed, let error = task.error, !error.isEmpty {
-                Text(Wording.capitalised(error))
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                // The words in the primary colour; the glyph says it failed.
+                Label {
+                    Text(Wording.capitalised(error))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.red)
+                }
             }
             if let report = detail?.value?.report, !report.isEmpty {
                 GroupBox {

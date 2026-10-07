@@ -310,7 +310,7 @@ private struct SetupSection: View {
     }
 
     /// The settings' titles, for doctor's details.
-    private var titles: [String: String] { OverviewWording.titles(model.config.value) }
+    private var titles: [String: String] { Wording.titles(model.config.value) }
 
     /// Whether a disclosure is open. Failing sections start open, the passed checks closed.
     private func binding(_ key: String, default open: Bool) -> Binding<Bool> {
