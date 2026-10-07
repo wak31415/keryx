@@ -123,7 +123,7 @@ def computed_parts(monkeypatch, settings, probes) -> dict[str, dict]:
     real_part = status._part
 
     def spying(name, compute):
-        found[name] = compute()
+        found[name] = compute()  # outside `_part`'s try: a part that raises fails the test
         return real_part(name, lambda: found[name])
 
     monkeypatch.setattr(status, "_part", spying)

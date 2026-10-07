@@ -24,6 +24,7 @@ httpx's own transport, faked, answering on loopback only).
 
 import asyncio
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -47,10 +48,12 @@ CONTRACT = Path(__file__).parents[1] / "macos/Tests/KeryxKitTests/Fixtures/contr
 SAMPLE = Path(__file__).parent / "fixtures/macos_contract_v2_sample.json"
 SCHEMA = 2
 #: Each contract type, as the Python value `json.loads` gives for it. A bool is an int to
-#: Python and never to the decoder, so `type_problem` refuses one as a number.
+#: Python and never to the decoder, so `type_problem` refuses one as a number. `any` is a
+#: key the decoder takes in whatever JSON type it comes (a `JSONValue`): any value but null.
+ANY = "any"
 TYPES: dict[str, tuple[type, ...]] = {
     "string": (str,), "integer": (int,), "number": (int, float), "boolean": (bool,),
-    "array": (list,), "object": (dict,),
+    "array": (list,), "object": (dict,), ANY: (object,),
 }
 NULLABLE = "|null"
 PULL = "models pull --json"
@@ -69,19 +72,37 @@ SERVED = "qwen3-coder-q4"
 runner = CliRunner()
 
 
-def _read(path: Path) -> dict | None:
+def _read(path: Path) -> dict:
+    return json.loads(path.read_text())
+
+
+def load_contract(path: Path) -> tuple[dict | None, str | None]:
+    """The contract at `path` and None, or None and why it cannot be read.
+
+    Schema 2 is the contract. A v1 file — one that parses and has no `schema` at all — is
+    the Swift side's older one, and the sample stands in for it (`(None, None)`). Anything
+    else is a broken contract, never a reason to fall back quietly.
+    """
     try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
+        real = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        return None, f"{path} cannot be read as JSON: {error}"
+    if not isinstance(real, dict):
+        return None, f"{path} is a JSON {type(real).__name__}, not an object"
+    if "schema" not in real:
+        return None, None
+    if real["schema"] != SCHEMA:
+        return None, f"{path} says schema {real['schema']!r}; this test reads schema {SCHEMA}"
+    return real, None
 
 
 def contract() -> dict:
-    """The Swift side's contract once it is schema 2, else the sample."""
-    real = _read(CONTRACT)
-    if isinstance(real, dict) and real.get("schema") == SCHEMA:
-        return real
-    return _read(SAMPLE)
+    """The Swift side's contract once it is schema 2, the sample while it is still v1, and
+    a failure naming the file for anything else."""
+    real, problem = load_contract(CONTRACT)
+    if problem:
+        pytest.fail(problem, pytrace=False)
+    return real if real is not None else _read(SAMPLE)
 
 
 def argv(command: str) -> list[str]:
@@ -95,8 +116,12 @@ def argv(command: str) -> list[str]:
 def type_problem(value: object, expected: str) -> str | None:
     """Why `value` does not meet the contract type `expected`, or None when it does."""
     base, _, nullable = expected.partition("|")
+    if base not in TYPES or nullable not in ("", "null"):
+        return f"has the unknown type {expected!r}"
     if value is None:
         return None if nullable == "null" else "is null"
+    if base == ANY:
+        return None
     wanted = TYPES[base]
     if isinstance(value, bool) and bool not in wanted:
         return f"is a boolean, not {base}"
@@ -202,11 +227,55 @@ def test_the_contract_read_is_schema_2():
     assert shape_problems(contract()) == []
 
 
+def test_a_v1_contract_stands_aside_for_the_sample(tmp_path, monkeypatch):
+    v1 = tmp_path / "contract.json"
+    v1.write_text(json.dumps({"status --json": {"": ["schema"]}}))
+    monkeypatch.setattr(sys.modules[__name__], "CONTRACT", v1)
+
+    assert load_contract(v1) == (None, None)
+    assert contract() == _read(SAMPLE)
+
+
+def test_a_schema_2_contract_is_read_as_it_is(tmp_path, monkeypatch):
+    v2 = tmp_path / "contract.json"
+    v2.write_text(json.dumps(_read(SAMPLE)))
+    monkeypatch.setattr(sys.modules[__name__], "CONTRACT", v2)
+
+    assert contract() == _read(SAMPLE)
+
+
+@pytest.mark.parametrize(
+    ("text", "why"),
+    [("{not json", "cannot be read as JSON"), ("[]", "is a JSON list, not an object"),
+     ('{"schema": 3, "commands": {}}', "says schema 3; this test reads schema 2"),
+     ('{"schema": "2"}', "says schema '2'")],
+)
+def test_a_contract_that_is_neither_v1_nor_v2_fails_naming_the_file(
+    tmp_path, monkeypatch, text, why
+):
+    broken = tmp_path / "contract.json"
+    broken.write_text(text)
+    monkeypatch.setattr(sys.modules[__name__], "CONTRACT", broken)
+
+    with pytest.raises(pytest.fail.Exception, match=f"{broken}.*{why}"):
+        contract()
+
+
+def test_a_missing_contract_fails_naming_the_file(tmp_path, monkeypatch):
+    missing = tmp_path / "contract.json"
+    monkeypatch.setattr(sys.modules[__name__], "CONTRACT", missing)
+
+    with pytest.raises(pytest.fail.Exception, match=f"{missing} cannot be read"):
+        contract()
+
+
 @pytest.mark.parametrize(
     ("doc", "problem"),
     [({"schema": 1}, "not schema 2"),
      ({"schema": 2, "commands": {}}, "no commands"),
      ({"schema": 2, "commands": {"x": {"": {"a": "text"}}}}, "x '': 'a' has no type 'text'"),
+     ({"schema": 2, "commands": {"x": {"": {"a": "any|none"}}}},
+      "x '': 'a' has no type 'any|none'"),
      ({"schema": 2, "commands": {"x": {"": {"a": "string"}}}}, f"no {PULL} stream"),
      ({"schema": 2, "commands": {"x": {"": {"a": "string"}}}, "streams": {PULL: {
          "events": {"done": {}}, "terminal": ["done", "error"], "exit": {"done": 0}}}},
@@ -223,15 +292,22 @@ def test_a_contract_that_is_not_schema_2_says_why(doc, problem):
      (True, "integer", "is a boolean, not integer"), (3, "number", None),
      (2.5, "number", None), (False, "number", "is a boolean, not number"),
      (False, "boolean", None), (0, "boolean", "is int, not boolean"),
-     ([], "array", None), ({}, "object", None), ([], "object", "is list, not object")],
+     ([], "array", None), ({}, "object", None), ([], "object", "is list, not object"),
+     ("a", "any", None), (False, "any", None), (0, "any", None), ([1], "any", None),
+     ({}, "any", None), (None, "any", "is null"), (None, "any|null", None),
+     ("a", "anything", "has the unknown type 'anything'"),
+     (None, "anything|null", "has the unknown type 'anything|null'"),
+     ("a", "string|none", "has the unknown type 'string|none'")],
 )
 def test_a_value_meets_its_type_or_says_why_not(value, expected, problem):
     assert type_problem(value, expected) == problem
 
 
-def test_a_missing_key_and_a_wrong_type_are_both_named():
-    assert key_problems({"id": "1"}, {"id": "integer", "text": "string|null"}) == [
+def test_a_missing_key_a_wrong_type_and_an_unknown_type_are_all_named():
+    keys = {"id": "integer", "text": "string|null", "value": "anything", "request_id": "any"}
+    assert key_problems({"id": "1", "value": 1}, keys) == [
         "'id' is str, not integer", "has no 'text'",
+        "'value' has the unknown type 'anything'", "has no 'request_id'",
     ]
     assert key_problems([], {"id": "integer"}) == ["is list, not an object"]
 
@@ -338,7 +414,7 @@ def test_the_contract_names_every_command_the_app_reads_as_json():
     assert set(contract()["commands"]) == COMMANDS
 
 
-@pytest.mark.parametrize("command", sorted(contract()["commands"]))
+@pytest.mark.parametrize("command", sorted(COMMANDS))
 def test_every_key_the_app_needs_is_printed_with_its_type(command, seeded):
     result = runner.invoke(app, argv(command))
 

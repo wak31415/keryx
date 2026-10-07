@@ -31,11 +31,11 @@
       "": {"saved": "object", "restart_needed": "boolean"}
     },
     "config list --json": {
-      "[]": {"key": "string", "set": "boolean", "choices": "array|null"}
+      "[]": {"key": "string", "set": "boolean", "choices": "array|null", "value": "any|null"}
     },
     "approvals --json": {
       "": {"escalate_after_s": "number", "max_per_hour": "integer"},
-      "entries[]": {"ts": "string", "event": "string", "what": "string"}
+      "entries[]": {"ts": "string", "event": "string", "what": "string", "request_id": "any|null"}
     },
     "memory --json": {
       "": {"path": "string", "exists": "boolean", "text": "string|null"}
