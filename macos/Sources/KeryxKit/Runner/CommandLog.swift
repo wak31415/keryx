@@ -63,6 +63,7 @@ public enum CommandLog {
             switch runner {
             case .launchFailed: "launchFailed"
             case .timedOut: "timedOut"
+            case .stillRunning: "stillRunning"
             }
         case is CancellationError: "cancelled"
         default: String(describing: type(of: error))

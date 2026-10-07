@@ -97,6 +97,9 @@ public final class Downloads {
                 update(model, run: run, to: stopping.contains(run) ? nil : .failed(message))
             case .cancelled:
                 update(model, run: run, to: nil)
+            case let .stillRunning(message):
+                // Something of it outlived SIGKILL: said, never taken for stopped.
+                update(model, run: run, to: .failed(message))
             }
         }
     }
@@ -115,29 +118,37 @@ public final class Downloads {
         for task in Array(tasks.values) { await task.value }
     }
 
-    private enum Outcome { case finished, failed(String), cancelled }
+    private enum Outcome { case finished, failed(String), cancelled, stillRunning(String) }
 
+    /// The download's outcome, once its stream has ended. The terminal event says what it
+    /// was, but the stream's end says it is over: for the CLI, that `keryx models pull` and
+    /// everything it started have exited, so nothing is still writing the file. Until then
+    /// the row stays as it is (running, or cancelling).
     private static func consume(
         _ stream: PullStream,
         progress: @MainActor (Int64, Int64) -> Void
     ) async -> Outcome {
+        var outcome: Outcome?
         do {
             for try await event in stream {
+                guard outcome == nil else { continue }
                 switch event {
                 case let .progress(done, total): progress(done, total)
-                case .done, .adopted: return .finished
-                case let .error(message): return .failed(message)
-                case .cancelled: return .cancelled
+                case .done, .adopted: outcome = .finished
+                case let .error(message): outcome = .failed(message)
+                case .cancelled: outcome = .cancelled
                 }
             }
         } catch is CancellationError {
             return .cancelled
+        } catch let error as RunnerError where error == .stillRunning {
+            return .stillRunning(error.localizedDescription)
         } catch let error as KeryxError {
-            return Task.isCancelled ? .cancelled : .failed(error.message)
+            return Task.isCancelled ? .cancelled : outcome ?? .failed(error.message)
         } catch {
-            return Task.isCancelled ? .cancelled : .failed(error.localizedDescription)
+            return Task.isCancelled ? .cancelled : outcome ?? .failed(error.localizedDescription)
         }
-        return Task.isCancelled ? .cancelled : .failed(stoppedWithoutSaying)
+        return Task.isCancelled ? .cancelled : outcome ?? .failed(stoppedWithoutSaying)
     }
 
     /// Sets (or, with `nil`, removes) `model`'s row — only while `run` is still its download,

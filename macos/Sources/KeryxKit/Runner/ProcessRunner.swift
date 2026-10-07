@@ -9,8 +9,10 @@ import Foundation
 /// see `Child`.
 ///
 /// Stopping (cancellation, a deadline, `LineStream.stop()`) is SIGTERM to the group, then
-/// SIGKILL to whatever of it is still there `grace` later; either way a run or a stream
-/// ends only once the child has been reaped.
+/// SIGKILL to whatever of it is still there `grace` later. A stopped run or stream ends only
+/// once the child has been reaped *and* nothing is left in its group — a grandchild that
+/// ignores SIGTERM keeps it waiting until SIGKILL has done its work — or, if something
+/// outlives even that, with `RunnerError.stillRunning`.
 public final class ProcessRunner: CommandRunner, Sendable {
     /// A test hook: handed each `run`'s collector, so a test can hold it weakly and see that
     /// it is freed once the run is over.
@@ -45,6 +47,7 @@ public final class ProcessRunner: CommandRunner, Sendable {
 
                 collector.adopt(spawned.child)
                 spawned.child.onExit { [weak collector] status in collector?.exited(status) }
+                spawned.child.onGroupEnd { [weak collector] end in collector?.groupEnded(end) }
                 collector.start(reading: [spawned.stdout, spawned.stderr].compactMap { $0 })
                 if let timeout = request.timeout {
                     collector.arm(timeout)
@@ -70,9 +73,10 @@ public final class ProcessRunner: CommandRunner, Sendable {
             return LineStream(stream)
         }
         let child = spawned.child
-        let reader = LineReader(continuation: continuation)
+        let reader = LineReader(continuation: continuation, child: child)
         if let stdout = spawned.stdout { reader.start(reading: stdout) }
         child.onExit { _ in reader.childExited() }
+        child.onGroupEnd { end in reader.groupEnded(end) }
         continuation.onTermination = { termination in
             // The consumer went away (cancelled): stop the child, and stop reading. A stream
             // that finished by itself has nothing left to stop.
@@ -94,12 +98,23 @@ public final class ProcessRunner: CommandRunner, Sendable {
 final class Child: @unchecked Sendable {
     enum Output { case pipe, discard }
 
+    /// How a stopped child's process group ended: emptied, or still there after SIGKILL and
+    /// `killWait` more.
+    enum GroupEnd: Sendable, Equatable { case gone, survived }
+
+    /// How long after SIGKILL the group has to be gone before it is reported as surviving.
+    static let killWait: Duration = .seconds(1)
+    /// How often the group is asked whether anything is left in it.
+    static let pollEvery: Duration = .milliseconds(20)
+
     let pid: pid_t
     private let grace: Duration
     private let lock = NSLock()
     private var status: Int32?
     private var handlers: [@Sendable (Int32) -> Void] = []
     private var stopRequested = false
+    private var groupEnd: GroupEnd?
+    private var groupHandlers: [@Sendable (GroupEnd) -> Void] = []
 
     private init(pid: pid_t, grace: Duration) {
         self.pid = pid
@@ -119,8 +134,20 @@ final class Child: @unchecked Sendable {
         if let known { handler(known) }
     }
 
-    /// SIGTERM to the whole process group, and SIGKILL to whatever of it is left `grace`
-    /// later. Only the first call does anything.
+    /// Calls `handler` once a stopped child's whole process group has ended (see `stop`); at
+    /// once if it has. Never called for a child nobody stopped.
+    func onGroupEnd(_ handler: @escaping @Sendable (GroupEnd) -> Void) {
+        let known: GroupEnd? = lock.withLock {
+            if groupEnd == nil { groupHandlers.append(handler) }
+            return groupEnd
+        }
+        if let known { handler(known) }
+    }
+
+    /// SIGTERM to the whole process group; then, until nothing is left in it (`kill -0`
+    /// answering ESRCH), it is asked again every `pollEvery`. Still there after `grace`:
+    /// SIGKILL, and `killWait` more. The group's end (`gone`, or `survived` past that) goes
+    /// to `onGroupEnd`. Only the first call does anything.
     func stop() {
         let first = lock.withLock {
             defer { stopRequested = true }
@@ -129,10 +156,38 @@ final class Child: @unchecked Sendable {
         guard first else { return }
         let group = pid
         kill(-group, SIGTERM)
-        DispatchQueue.global().asyncAfter(deadline: .now() + grace.timeInterval) {
-            // Anything still in the group: the child, or something it started that stayed.
-            if kill(-group, 0) == 0 { kill(-group, SIGKILL) }
+        Self.awaitGroup(group, until: .now() + grace.timeInterval) { [self] gone in
+            if gone { return groupEnded(.gone) }
+            kill(-group, SIGKILL)
+            Self.awaitGroup(group, until: .now() + Self.killWait.timeInterval) { [self] gone in
+                groupEnded(gone ? .gone : .survived)
+            }
         }
+    }
+
+    /// Whether nothing is left in process group `group`.
+    static func groupIsGone(_ group: pid_t) -> Bool {
+        kill(-group, 0) == -1 && errno == ESRCH
+    }
+
+    /// Calls `then(true)` as soon as `group` is gone, or `then(false)` at `deadline`.
+    private static func awaitGroup(
+        _ group: pid_t, until deadline: DispatchTime, then: @escaping @Sendable (Bool) -> Void
+    ) {
+        if groupIsGone(group) { return then(true) }
+        if DispatchTime.now() >= deadline { return then(false) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + pollEvery.timeInterval) {
+            awaitGroup(group, until: deadline, then: then)
+        }
+    }
+
+    private func groupEnded(_ end: GroupEnd) {
+        let waiting: [@Sendable (GroupEnd) -> Void] = lock.withLock {
+            groupEnd = end
+            defer { groupHandlers = [] }
+            return groupHandlers
+        }
+        waiting.forEach { $0(end) }
     }
 
     private func reaped(_ value: Int32) {
@@ -313,8 +368,9 @@ private final class ChildSlot: @unchecked Sendable {
 /// expiry the child's group is stopped, the run waits for the child to be reaped (SIGKILL
 /// bounds that), and `.timedOut` is thrown.
 ///
-/// A child stopped by cancellation ends the run once it has been reaped, with what it said
-/// by then: its output has `drain` more to reach EOF, not for ever.
+/// A stopped child (cancelled, or past the deadline) ends the run once it has been reaped
+/// and its whole group is gone, with what it said by then — its output has `drain` more to
+/// reach EOF, not for ever — or, when the group outlived SIGKILL, with `.stillRunning`.
 ///
 /// Lifetime: the collector holds itself (`running`) from creation until it concludes, and
 /// nothing else holds it strongly — the exit handler, the timers and the sources' handlers
@@ -337,6 +393,8 @@ private final class RunCollector: @unchecked Sendable {
     private var open = 2
     private var exitCode: Int32?
     private var timedOut = false
+    private var groupEnd: Child.GroupEnd?
+    private var draining = false
     private var timers: [DispatchWorkItem] = []
     private static let chunk = 65_536
     private var buffer = [UInt8](repeating: 0, count: RunCollector.chunk)
@@ -376,7 +434,7 @@ private final class RunCollector: @unchecked Sendable {
                     close(descriptor)
                     guard let self else { return }
                     open -= 1
-                    finishIfDone()
+                    evaluate()
                 }
                 sources.append(source)
                 source.resume()
@@ -396,13 +454,15 @@ private final class RunCollector: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             exitCode = code
-            if timedOut {
-                conclude(.failure(RunnerError.timedOut))
-            } else if child?.isStopping == true, open > 0 {
-                schedule(after: Self.drain) { $0.concludeWithOutput() }
-            } else {
-                finishIfDone()
-            }
+            evaluate()
+        }
+    }
+
+    func groupEnded(_ end: Child.GroupEnd) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            groupEnd = end
+            evaluate()
         }
     }
 
@@ -423,9 +483,26 @@ private final class RunCollector: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + delay.timeInterval, execute: item)
     }
 
-    private func finishIfDone() {
-        guard continuation != nil, exitCode != nil, open == 0 else { return }
-        concludeWithOutput()
+    /// Whether the run is over, and how. A child nobody stopped is done once it has exited
+    /// and its output is at EOF. A stopped one waits for its group to end as well.
+    private func evaluate() {
+        guard continuation != nil else { return }
+        if groupEnd == .survived {
+            return conclude(.failure(RunnerError.stillRunning))
+        }
+        guard exitCode != nil else { return }
+        guard child?.isStopping == true else {
+            if open == 0 { concludeWithOutput() }
+            return
+        }
+        guard groupEnd == .gone else { return }
+        if timedOut { return conclude(.failure(RunnerError.timedOut)) }
+        if open == 0 {
+            concludeWithOutput()
+        } else if !draining {
+            draining = true
+            schedule(after: Self.drain) { $0.concludeWithOutput() }
+        }
     }
 
     private func concludeWithOutput() {
@@ -434,17 +511,13 @@ private final class RunCollector: @unchecked Sendable {
     }
 
     /// Past the deadline: the group is stopped, and the run ends as `.timedOut` once the
-    /// child has been reaped — at once if it already has (a grandchild holding the pipes),
-    /// and in any case a second after SIGKILL would have gone.
+    /// child has been reaped and its group is gone (`evaluate`) — bounded by SIGKILL and
+    /// `Child.killWait`, after which a group still there is `.stillRunning`.
     private func expire() {
         guard continuation != nil else { return }
         timedOut = true
         child?.stop()
-        if exitCode != nil {
-            conclude(.failure(RunnerError.timedOut))
-        } else {
-            schedule(after: grace + .seconds(1)) { $0.conclude(.failure(RunnerError.timedOut)) }
-        }
+        evaluate()
     }
 
     /// The one way out. Cancelling a source that has already finished does nothing; one
@@ -465,22 +538,27 @@ private final class RunCollector: @unchecked Sendable {
 
 /// The stdout of one `lines` child, split into lines on one serial queue. The stream
 /// finishes once stdout is at EOF and the child has been reaped — or, when something the
-/// child left behind holds stdout open, `drain` after it was reaped.
+/// child left behind holds stdout open, `drain` after it was reaped — and, for a child that
+/// was stopped, once its whole group is gone. A group that outlived SIGKILL ends the stream
+/// with `RunnerError.stillRunning`.
 private final class LineReader: @unchecked Sendable {
     static let drain: Duration = .seconds(1)
 
     private let queue = DispatchQueue(label: "dev.keryx.app.process-lines")
     private let continuation: AsyncThrowingStream<String, Error>.Continuation
+    private let child: Child
     private var source: DispatchSourceRead?
     private var pending = Data()
     private var atEnd = false
     private var exited = false
+    private var groupEnd: Child.GroupEnd?
     private var finished = false
     private static let chunk = 65_536
     private var buffer = [UInt8](repeating: 0, count: LineReader.chunk)
 
-    init(continuation: AsyncThrowingStream<String, Error>.Continuation) {
+    init(continuation: AsyncThrowingStream<String, Error>.Continuation, child: Child) {
         self.continuation = continuation
+        self.child = child
     }
 
     /// The source holds the reader (through its handlers) until it is cancelled; its cancel
@@ -524,6 +602,13 @@ private final class LineReader: @unchecked Sendable {
         }
     }
 
+    func groupEnded(_ end: Child.GroupEnd) {
+        queue.async { [self] in
+            groupEnd = end
+            finishIfDone()
+        }
+    }
+
     /// The consumer has gone: stop reading.
     func abandon() {
         queue.async { [self] in source?.cancel() }
@@ -545,7 +630,13 @@ private final class LineReader: @unchecked Sendable {
     }
 
     private func finishIfDone() {
-        guard !finished, atEnd, exited else { return }
+        guard !finished else { return }
+        if groupEnd == .survived {
+            finished = true
+            source?.cancel()
+            return continuation.finish(throwing: RunnerError.stillRunning)
+        }
+        guard atEnd, exited, !child.isStopping || groupEnd == .gone else { return }
         finished = true
         continuation.finish()
     }

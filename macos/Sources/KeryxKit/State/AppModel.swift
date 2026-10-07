@@ -69,6 +69,8 @@ public final class AppModel {
     @ObservationIgnored private let makeClient: @Sendable (KeryxLocation) -> KeryxClient
     @ObservationIgnored private let preferences: Preferences
     @ObservationIgnored private let timing: Timing
+    /// Run with every poll: removes the Terminal scripts nobody ran (`TerminalLauncher`).
+    @ObservationIgnored private let sweep: @Sendable () -> Void
     @ObservationIgnored private var started = false
     @ObservationIgnored private var poll: Task<Void, Never>?
     /// Bumped by every locate, so an answer from the Keryx found before is dropped.
@@ -76,12 +78,16 @@ public final class AppModel {
     /// Polls since the poll last started.
     @ObservationIgnored private var pollTicks = 0
 
+    /// `sweep` runs with every status poll; by default it removes the stale scripts
+    /// `TerminalLauncher` left in the temporary folder while the app runs.
     public init(locator: Locating, makeClient: @escaping @Sendable (KeryxLocation) -> KeryxClient,
-                preferences: Preferences, timing: Timing = .standard) {
+                preferences: Preferences, timing: Timing = .standard,
+                sweep: @escaping @Sendable () -> Void = { TerminalLauncher.removeStaleScripts() }) {
         self.locator = locator
         self.makeClient = makeClient
         self.preferences = preferences
         self.timing = timing
+        self.sweep = sweep
         downloads = Downloads()
     }
 
@@ -147,9 +153,10 @@ public final class AppModel {
         }
     }
 
-    /// One poll: what `parts(forPoll:)` says, for the next tick.
+    /// One poll: the stale-script sweep, then what `parts(forPoll:)` says for this tick.
     private func pollTick() async {
         pollTicks += 1
+        sweep()
         for part in Self.parts(forPoll: pollTicks) { await refresh(part) }
     }
 

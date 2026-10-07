@@ -215,6 +215,67 @@ import Testing
         #expect(await Self.isGone(grandchild))
     }
 
+    /// A grandchild that ignores SIGTERM (as a Python mid-write might, for a moment) and
+    /// holds nothing open; the shell above it exits at SIGTERM at once. It says its pid only
+    /// once the trap is set, so the test cannot stop it before it is stubborn.
+    static let stubbornGrandchild =
+        #"sh -c 'trap "" TERM; echo $$ > "$1"; exec sleep 30' grandchild "$0" & wait"#
+
+    @Test func aCancelledRunEndsOnlyOnceAGrandchildIgnoringSigtermIsGone() async throws {
+        let file = NSTemporaryDirectory() + "keryx-stubborn-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: file) }
+        let runner = ProcessRunner(grace: .milliseconds(500))
+        let run = Task {
+            try await runner.run(.init(executable: "/bin/sh",
+                arguments: ["-c", Self.stubbornGrandchild, file], timeout: .seconds(30)))
+        }
+        let grandchild = try await Self.pid(writtenTo: file)
+        let started = ContinuousClock.now
+        run.cancel()
+        _ = try await run.value
+        let took = ContinuousClock.now - started
+        // Not at the shell's exit, but after SIGKILL reached the grandchild, and within the bound.
+        #expect(took >= .milliseconds(500))
+        #expect(took < .seconds(2))
+        #expect(kill(grandchild, 0) == -1 && errno == ESRCH)
+    }
+
+    @Test func aStoppedStreamEndsOnlyOnceAGrandchildIgnoringSigtermIsGone() async throws {
+        let runner = ProcessRunner(grace: .milliseconds(500))
+        let stream = runner.lines(.init(executable: "/bin/sh",
+            arguments: ["-c", #"sh -c 'trap "" TERM; echo $$; exec sleep 30' & wait"#], timeout: nil))
+        var grandchild: pid_t?
+        var stopped: ContinuousClock.Instant?
+        for try await line in stream {
+            grandchild = pid_t(line)
+            stopped = ContinuousClock.now
+            stream.stop()
+        }
+        let took = ContinuousClock.now - (try #require(stopped))
+        #expect(took >= .milliseconds(500))
+        #expect(took < .seconds(2))
+        let pid = try #require(grandchild)
+        #expect(kill(pid, 0) == -1 && errno == ESRCH)
+    }
+
+    @Test func aTimedOutRunEndsOnlyOnceAGrandchildIgnoringSigtermIsGone() async throws {
+        let file = NSTemporaryDirectory() + "keryx-stubborn-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: file) }
+        let runner = ProcessRunner(grace: .milliseconds(500))
+        let started = ContinuousClock.now
+        await #expect(throws: RunnerError.timedOut) {
+            _ = try await runner.run(.init(executable: "/bin/sh",
+                arguments: ["-c", Self.stubbornGrandchild, file], timeout: .milliseconds(200)))
+        }
+        #expect(ContinuousClock.now - started >= .milliseconds(700))
+        let grandchild = try await Self.pid(writtenTo: file)
+        #expect(kill(grandchild, 0) == -1 && errno == ESRCH)
+    }
+
+    @Test func stillRunningSaysSo() {
+        #expect(RunnerError.stillRunning.localizedDescription.contains("still running"))
+    }
+
     @Test func aMissingWorkingDirectoryIsALaunchFailure() async {
         await #expect(throws: RunnerError.self) {
             _ = try await runner.run(.init(executable: "/bin/pwd", workingDirectory: "/nonexistent/keryx"))

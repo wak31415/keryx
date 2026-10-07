@@ -119,6 +119,7 @@ import Testing
         #expect(CommandLog.errorName(RunnerError.launchFailed("/Users/you/.local/bin/uv: no such file"))
             == "launchFailed")
         #expect(CommandLog.errorName(RunnerError.timedOut) == "timedOut")
+        #expect(CommandLog.errorName(RunnerError.stillRunning) == "stillRunning")
         #expect(CommandLog.errorName(CancellationError()) == "cancelled")
         #expect(CommandLog.errorName(KeryxError.launch("/Users/you/secret path")) == "KeryxError")
     }

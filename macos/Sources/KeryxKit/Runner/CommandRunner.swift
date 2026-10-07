@@ -40,20 +40,34 @@ public struct CommandResult: Sendable, Equatable {
     }
 }
 
-public enum RunnerError: Error, Equatable {
+public enum RunnerError: Error, Equatable, LocalizedError {
     case launchFailed(String)
     case timedOut
+    /// The child was stopped, and something in its process group was still there after
+    /// SIGKILL and the wait that follows it — reported, never taken for stopped.
+    case stillRunning
+
+    public var errorDescription: String? {
+        switch self {
+        case let .launchFailed(message): message
+        case .timedOut: "The command took too long, and was stopped."
+        case .stillRunning:
+            "The command was stopped, but something it started is still running. Check Activity Monitor."
+        }
+    }
 }
 
 public protocol CommandRunner: Sendable {
     /// Runs the child to its end. Cancelled, or past `request.timeout`, the child's whole
-    /// process group is stopped (SIGTERM, then SIGKILL if it is still there a few seconds
-    /// later) and waited for: a cancelled run returns what the child said on the way out, a
-    /// timed-out one throws `RunnerError.timedOut`.
+    /// process group is stopped (SIGTERM, then SIGKILL if any of it is still there a few
+    /// seconds later) and waited for until none of it is left: a cancelled run returns what
+    /// the child said on the way out, a timed-out one throws `RunnerError.timedOut`, and one
+    /// whose group outlived SIGKILL throws `RunnerError.stillRunning`.
     func run(_ request: CommandRequest) async throws -> CommandResult
 
     /// Yields stdout lines as they arrive, and finishes normally once the child has exited
-    /// and been reaped, whatever its exit code was — the caller interprets the terminal JSON
+    /// and been reaped — and, when it was stopped, once its whole group is gone (or throws
+    /// `RunnerError.stillRunning` if some of it outlived SIGKILL) — whatever its exit code was — the caller interprets the terminal JSON
     /// event, not this stream's completion. Only a launch failure throws. `stop()` stops the
     /// child's process group as `run` does on cancellation, and the stream runs on to that
     /// end, so a caller that must know the child is gone keeps reading; cancelling the

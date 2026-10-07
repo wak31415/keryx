@@ -106,6 +106,52 @@ import Testing
         #expect(finished == 1)
     }
 
+    @Test func aCancelledRowStaysCancellingUntilTheStreamEndsNotAtTheEvent() async {
+        let downloads = makeDownloads()
+        let pull = ManualPull()
+        downloads.start("qwen", client: client(pull), onFinish: {})
+        downloads.cancel("qwen")
+        pull.send(.cancelled)
+        // The CLI has said it, but its group may still be going: the stream has not ended.
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(downloads.active["qwen"] == .cancelling)
+        #expect(downloads.isBusy)
+        pull.finish()
+        await downloads.settled()
+        #expect(downloads.active["qwen"] == nil)
+        #expect(!downloads.isBusy)
+    }
+
+    @Test func aFinishedRowWaitsForTheStreamToEndToo() async {
+        let downloads = makeDownloads()
+        let pull = ManualPull()
+        var finished = 0
+        downloads.start("qwen", client: client(pull), onFinish: { finished += 1 })
+        pull.send(.progress(done: 9, total: 10))
+        pull.send(.done(path: "/q.gguf"))
+        pull.send(.progress(done: 10, total: 10))   // after the ending: ignored
+        #expect(await eventually { downloads.active["qwen"] == .running(done: 9, total: 10) })
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(downloads.active["qwen"] == .running(done: 9, total: 10))
+        #expect(finished == 0)
+        pull.finish()
+        await downloads.settled()
+        #expect(downloads.active["qwen"] == .finished)
+        #expect(finished == 1)
+    }
+
+    @Test func aGroupThatOutlivedTheStopIsShownNotHidden() async {
+        let downloads = makeDownloads()
+        let pull = ManualPull()
+        downloads.start("qwen", client: client(pull), onFinish: {})
+        downloads.cancel("qwen")
+        pull.send(.cancelled)
+        pull.finish(throwing: RunnerError.stillRunning)
+        await downloads.settled()
+        #expect(downloads.active["qwen"] == .failed(RunnerError.stillRunning.localizedDescription))
+        #expect(!downloads.isBusy)
+    }
+
     @Test func aCancelledDownloadThatErrsIsStillJustGone() async {
         let downloads = makeDownloads()
         let pull = ManualPull()
