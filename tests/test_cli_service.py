@@ -118,10 +118,9 @@ def test_service_in_words(machine):
 
 @pytest.mark.parametrize(("argv", "flags", "said"), [
     (["service", "install"], [], "installed dev.keryx.agent, dev.keryx.tunnel"),
-    (["service", "install", "--llm"], ["--llm"], "installed dev.keryx.llm"),
     (["service", "uninstall", "--voice"], ["--voice", "--uninstall"], "removed dev.keryx.voice"),
-    (["service", "install", "--llm", "--voice"], ["--llm", "--voice"],
-     "installed dev.keryx.llm, dev.keryx.voice"),
+    (["service", "uninstall", "--llm", "--voice"], ["--llm", "--voice", "--uninstall"],
+     "removed dev.keryx.llm, dev.keryx.voice"),
     (["models", "stop"], ["--llm", "--uninstall"], "removed dev.keryx.llm"),
 ])
 def test_installs_run_the_checkouts_installer(machine, tmp_path, argv, flags, said):
@@ -148,10 +147,38 @@ def test_a_failed_install_exits_1_with_the_scripts_last_error_line(machine):
 def test_no_checkout_is_exit_2(machine, monkeypatch, tmp_path):
     monkeypatch.setattr("keryx.cli.repo_root", lambda: tmp_path / "not-a-checkout")
 
-    result = runner.invoke(app, ["service", "install", "--llm", "--json"])
+    result = runner.invoke(app, ["service", "install", "--json"])
 
     assert result.exit_code == 2 and result.stdout == ""
     assert "from a clone of Keryx" in result.stderr and machine.scripts == []
+
+
+@pytest.mark.parametrize(("flags", "named"), [
+    (["--llm"], ["keryx models start"]),
+    (["--voice"], ["keryx voice use here"]),
+    (["--llm", "--voice"], ["keryx models start", "keryx voice use here"]),
+])
+def test_a_model_servers_unit_is_not_installed_bare(machine, flags, named):
+    """`models start` and `voice use here` own those units: install, start, check, and the
+    unit removed again when the server does not come up. A bare install would leave one
+    restarting for ever."""
+    result = runner.invoke(app, ["service", "install", *flags, "--json"])
+
+    assert result.exit_code == 2 and machine.scripts == []
+    document = json.loads(result.stdout)
+    assert document["ok"] is False and set(document) == {"ok", "message"}
+    assert all(command in document["message"] for command in named)
+
+    words = runner.invoke(app, ["service", "install", *flags])
+    assert words.exit_code == 2 and words.stdout == "" and machine.scripts == []
+    assert all(command in words.stderr for command in named)
+
+
+def test_the_help_points_the_model_servers_elsewhere():
+    result = runner.invoke(app, ["service", "install", "--help"])
+
+    assert result.exit_code == 0
+    assert "keryx models start" in result.stdout and "keryx voice use here" in result.stdout
 
 
 @pytest.mark.parametrize("argv", [["service", "install"], ["service", "uninstall", "--llm"],

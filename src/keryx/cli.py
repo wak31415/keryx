@@ -1542,19 +1542,43 @@ def service_command(
         typer.echo(f"{kind:<7} {name:<22} {state}")
 
 
+#: Who installs each model server's unit, since `service install` does not: the command
+#: that installs it, starts it, checks it answers, and removes it again when it does not.
+MODEL_UNIT_OWNERS = {"--llm": ("keryx models start", "the model server"),
+                     "--voice": ("keryx voice use here", "the voice server")}
+
+
 @service_app.command("install")
 def service_install(
     llm_unit: Annotated[
-        bool, typer.Option("--llm", help="The model server's unit, instead of Keryx's.")
+        bool, typer.Option("--llm", help="Refused: `keryx models start` installs, starts and "
+                                         "checks the model server's unit.")
     ] = False,
     voice_unit: Annotated[
-        bool, typer.Option("--voice", help="The voice server's unit, instead of Keryx's.")
+        bool, typer.Option("--voice", help="Refused: `keryx voice use here` installs, starts "
+                                           "and checks the voice server's unit.")
     ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
 ) -> None:
-    """Install Keryx and its tunnel as services, or the local model servers' (--llm, --voice),
-    through the checkout's installer."""
-    _install_units(llm_unit=llm_unit, voice_unit=voice_unit, as_json=as_json)
+    """Install Keryx and its tunnel as services, through the checkout's installer.
+
+    Not the local model servers' units: `keryx models start` and `keryx voice use here`
+    install those, start them and check they answer, and remove the unit again when they
+    do not — a unit installed bare would restart a server that cannot start, for ever.
+    """
+    flags = [flag for flag, on in (("--llm", llm_unit), ("--voice", voice_unit)) if on]
+    if flags:
+        owners = " and ".join(f"`{MODEL_UNIT_OWNERS[flag][0]}` for {MODEL_UNIT_OWNERS[flag][1]}"
+                              for flag in flags)
+        message = (f"keryx service install {' '.join(flags)} is not offered: use {owners}. "
+                   f"{'Each' if len(flags) > 1 else 'It'} installs the unit, starts the server "
+                   "and checks it answers, and removes the unit again if it does not.")
+        if as_json:
+            typer.echo(json.dumps({"ok": False, "message": message}, indent=2))
+        else:
+            typer.echo(message, err=True)
+        raise typer.Exit(2)
+    _install_units(as_json=as_json)
 
 
 @service_app.command("uninstall")

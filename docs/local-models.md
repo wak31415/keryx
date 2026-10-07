@@ -83,8 +83,12 @@ llama.cpp downloads (`total` null when the server does not say), then exactly on
 (`url`, `served_model`), `error` (`message`) or `cancelled`: exit 0, 1, 2 for a refusal
 before anything is tried (no model chosen and downloaded, no checkout), 130 for a SIGTERM.
 `keryx service --json` is `{"manager", "units": {"agent", "tunnel", "llm", "voice"}}`, each
-`{"installed", "active"}`; `keryx service install|uninstall [--llm] [--voice] --json` and
-`keryx models stop --json` print `{"ok": true, "message": …}`.
+`{"installed", "active"}`; `keryx service install --json`, `keryx service uninstall [--llm]
+[--voice] --json` and `keryx models stop --json` print `{"ok": true, "message": …}`. `keryx
+service install --llm` or `--voice` is refused with exit 2 and `{"ok": false, "message": …}`:
+the model servers' units are installed by `keryx models start` and `keryx voice use here`,
+which start the server, check it answers, and remove the unit again when it does not. From a
+terminal, `scripts/install-launchd.sh --llm` (or `install-systemd.sh`) still installs one bare.
 
 `keryx voice --json` is `mode` (`openai`, `here` or `server`), `base_url`, `realtime_model`,
 `voice`, `assistant`, `openai_key_set`, `here` (speech-to-speech on this machine: `installed`,

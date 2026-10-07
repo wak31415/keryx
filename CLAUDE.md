@@ -138,9 +138,12 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   model servers' units instead (`keryx models serve llm|voice`)
 - The same without a terminal (the Mac app): `uv run keryx service [--json]` (`manager`, and
   each of `agent`, `tunnel`, `llm`, `voice` installed and active — asked, never changed;
-  `keryx/units.py`), `service install|uninstall [--llm] [--voice] [--json]` (runs the
-  checkout's installer with those flags: `{"ok", "message"}`; exit 1 with the script's last
-  error line, 2 with no checkout or service manager)
+  `keryx/units.py`), `service install [--json]` and `service uninstall [--llm] [--voice]
+  [--json]` (runs the checkout's installer with those flags: `{"ok", "message"}`; exit 1 with
+  the script's last error line, 2 with no checkout or service manager). `service install
+  --llm|--voice` is refused, exit 2 (`{"ok": false, "message"}` with `--json`): `models
+  start` and `voice use here` own those units — install, start, check, and the unit removed
+  again when the server does not come up — so none is installed bare to restart for ever
 - Models on this machine: `uv run keryx models list [--json]` (the catalog against this
   machine's GPU and memory, the recommended one marked, and the local voices; `--json` adds
   `servers`, the model and voice servers' units and whether they answer, asked on loopback
