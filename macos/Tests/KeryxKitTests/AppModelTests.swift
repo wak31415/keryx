@@ -184,6 +184,11 @@ import KeryxPreview
         #expect(Array(client.calls.suffix(2)) == ["config set OPENAI_API_KEY --stdin", "config list"])
         #expect(await model.unset("OPENAI_VOICE") == nil)
         #expect(Array(client.calls.suffix(2)) == ["config unset OPENAI_VOICE", "config list"])
+        #expect(await model.unset(keys: ["ISSUE_REPORTING", "ISSUE_REPO"]) == nil)
+        #expect(Array(client.calls.suffix(2)) == ["config unset ISSUE_REPORTING ISSUE_REPO", "config list"])
+        let before = client.calls.count
+        #expect(await model.unset(keys: []) == nil)
+        #expect(client.calls.count == before, "nothing to unset runs nothing")
         #expect(model.configNeedsRestart)
     }
 

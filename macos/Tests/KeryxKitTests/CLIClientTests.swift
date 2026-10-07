@@ -153,6 +153,8 @@ import KeryxPreview
         #expect(rows == PreviewData.config)
         try await client.unset(key: "OPENAI_VOICE")
         #expect(last() == ["config", "unset", "OPENAI_VOICE"])
+        try await client.unset(keys: ["GOOGLE_WORKSPACE_MCP", "USER_GOOGLE_EMAIL"])
+        #expect(last() == ["config", "unset", "GOOGLE_WORKSPACE_MCP", "USER_GOOGLE_EMAIL"], "one command for both")
         _ = try await client.approvals(limit: 20)
         #expect(last() == ["approvals", "--json", "--limit", "20"])
         try await client.setEscalation(enabled: false)

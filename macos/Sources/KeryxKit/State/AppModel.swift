@@ -420,6 +420,12 @@ public final class AppModel {
         await writeSetting { try await $0.unset(key: key) }
     }
 
+    /// Removes several settings from the store in one command (a card's, to disconnect it).
+    public func unset(keys: [String]) async -> KeryxError? {
+        guard !keys.isEmpty else { return nil }
+        return await writeSetting { try await $0.unset(keys: keys) }
+    }
+
     /// Turns the approval calls on or off (the kill switch; no restart needed).
     public func setEscalation(enabled: Bool) async -> KeryxError? {
         if let error = await perform({ try await $0.setEscalation(enabled: enabled) }) { return error }

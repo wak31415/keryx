@@ -110,7 +110,13 @@ public struct CLIClient: KeryxClient {
     }
 
     public func unset(key: String) async throws {
-        _ = try await execute(request(["config", "unset", key]))
+        try await unset(keys: [key])
+    }
+
+    /// Every key in one command, after `--` so none is read as an option.
+    public func unset(keys: [String]) async throws {
+        guard !keys.isEmpty else { return }
+        _ = try await execute(request(["config", "unset"] + (keys.contains { $0.hasPrefix("-") } ? ["--"] : []) + keys))
     }
 
     public func setEscalation(enabled: Bool) async throws {
