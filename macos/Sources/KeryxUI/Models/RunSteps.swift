@@ -42,6 +42,15 @@ enum RunStage: Equatable {
         ("check", "Check the model it serves"),
     ]
 
+    /// `keryx models start --runtime ollama`: `runtime`, `start`, `check`, then `unit` when a
+    /// llama.cpp service is left to remove.
+    static let ollama: Order = [
+        ("runtime", "Find Ollama"),
+        ("start", "Pull the model into Ollama"),
+        ("check", "Check Ollama lists it"),
+        ("unit", "Retire the llama.cpp service"),
+    ]
+
     /// `keryx voice use here`: `install`, `download`, `configure`, `unit`, `start`.
     static let voice: Order = [
         ("install", "Install the voice server"),

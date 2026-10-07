@@ -124,9 +124,15 @@ import KeryxKit
             : (true, "Model server running")
     }
 
-    /// "parakeet-tdt and kokoro", and whether they are on this Mac yet.
-    static func speechModels(_ here: HereVoice) -> (names: String, state: String) {
-        ("\(here.stt) and \(here.tts)", here.modelsReady ? "Downloaded" : "Set Up downloads them")
+    /// "Parakeet TDT and Kokoro" — each by its label in its list (`stt`, `tts`), once read —
+    /// and whether they are on this Mac yet.
+    static func speechModels(_ here: HereVoice, stt: ConfigOptions? = nil, tts: ConfigOptions? = nil)
+        -> (names: String, state: String) {
+        func label(_ value: String, _ list: ConfigOptions?) -> String {
+            list?.options.first { $0.value == value }?.label ?? value
+        }
+        return ("\(label(here.stt, stt)) and \(label(here.tts, tts))",
+                here.modelsReady ? "Downloaded" : "Set Up downloads them")
     }
 
     static let setUpQuestion = "Set up the voice server on this Mac?"
@@ -147,6 +153,18 @@ import KeryxKit
     static let setupFailed = "Setup didn't finish"
     static let serverDownTitle = "The model server isn't running"
     static let serverDownDetail = "The voice takes its words from it. Start it, and the setup carries on."
+    static let ollamaDownTitle = "Ollama isn't serving the model"
+    static let ollamaDownDetail = "The voice takes its words from Ollama's copy of the model. Keryx pulls it into "
+        + "Ollama (which must be running), and the setup carries on."
+
+    /// The words come from a server Keryx does not start, and it isn't answering.
+    static func elsewhereDown(_ address: String) -> String {
+        "The voice takes its words from the model server at \(VoiceWording.address(address)). "
+            + "Start it there, then try again."
+    }
+
+    static let serverStartingElsewhere = "The model server is starting in Local Models"
+    static let speechDownloading = "The speech models are downloading in Local Models"
     static let keyFootnote = "Sent to Keryx on its standard input when you choose Check & Use, and kept in "
         + "secrets.toml, readable only by you."
 }

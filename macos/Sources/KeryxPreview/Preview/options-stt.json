@@ -4,13 +4,13 @@
   "options": [
     {
       "value": "parakeet-tdt",
-      "label": "parakeet-tdt",
-      "detail": null
+      "label": "Parakeet TDT",
+      "detail": "NVIDIA's fast recogniser, in 25 European languages"
     },
     {
       "value": "whisper",
-      "label": "whisper",
-      "detail": null
+      "label": "Distil-Whisper",
+      "detail": "A smaller, faster Whisper; English only"
     }
   ],
   "source": "builtin",

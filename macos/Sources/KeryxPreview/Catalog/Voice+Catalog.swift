@@ -55,6 +55,21 @@ extension ScreenCatalog {
                     .error("brew install llama.cpp did not finish"),
                 ])))
             },
+            Entry("voice-here-ollama-down", size: screen) {
+                VoiceView(mode: .here).environment(refusedWords(base: "http://127.0.0.1:11434/v1"))
+            },
+            Entry("voice-here-elsewhere-down", size: screen) {
+                VoiceView(mode: .here).environment(refusedWords(base: "http://studio.local:8080/v1"))
+            },
+            Entry("voice-here-server-starting-in-models", size: screen) {
+                VoiceView(mode: .here).environment({
+                    let model = AppModel.preview(client: PreviewClient(
+                        models: .success(modelServerDown),
+                        modelServer: .holding([.step(step: "start", message: "Loading the model")])))
+                    model.runModelServer()
+                    return model
+                }())
+            },
             Entry("voice-here-server-refused", size: screen) {
                 VoiceView(mode: .here).environment({
                     let model = AppModel.preview(client: PreviewClient(
@@ -153,6 +168,19 @@ extension ScreenCatalog {
 
     /// Set Up… on This Mac starting the model server first, which does `server`; the voice
     /// setup that follows does `setup`.
+    /// The voice refused because the words' server isn't answering, the local agent's model
+    /// being served at `base` rather than by this Mac's model server.
+    @MainActor private static func refusedWords(base: String) -> AppModel {
+        var report = PreviewData.models
+        report.servers.llm.model = nil
+        report.servers.llm.reachable = false
+        report.servers.localAgent.baseUrl = base
+        let model = AppModel.preview(client: PreviewClient(
+            models: .success(report), setup: .events([.error("The local model server isn't running: start it first.")])))
+        model.setUpThisMac()
+        return model
+    }
+
     /// The models say the model server is down until it has started (the voice's part
     /// reads them again once it has).
     @MainActor private static func chain(server: PreviewClient.Script<ModelServerStarted>,

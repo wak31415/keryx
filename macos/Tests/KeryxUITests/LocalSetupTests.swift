@@ -83,6 +83,7 @@ import KeryxPreview
                                            serverStep: "runtime", setup: nil, setupStep: "")
         #expect(server.ending == .failed("brew install llama.cpp did not finish"))
         #expect(states(server.groups[0].steps) == [.failed, .pending, .pending, .pending])
+        #expect(server.groups.count == 1, "the voice's steps are not to come")
 
         let voice = ThisMacProgress.state(withServer: false, server: nil, serverStep: "",
                                           setup: .failed("no room"), setupStep: "unit")
@@ -98,6 +99,35 @@ import KeryxPreview
         #expect(finished.ending == .finished("http://127.0.0.1:8765/v1"))
     }
 
+    @Test func ollamasStepsAreItsOwn() {
+        let state = ThisMacProgress.state(withServer: true, runtime: "ollama", server: .running(.init(step: "start")),
+                                          serverStep: "start", setup: nil, setupStep: "")
+        #expect(state.groups[0].steps.map(\.title)
+            == ["Find Ollama", "Pull the model into Ollama", "Check Ollama lists it", "Retire the llama.cpp service"])
+        #expect(states(state.groups[0].steps) == [.done, .current, .pending, .pending])
+    }
+
+    @Test func speechModelsAreNamedByTheirLists() {
+        let here = PreviewData.voice.here
+        let named = VoiceWording.speechModels(here, stt: PreviewData.options["VOICE_SERVER_STT"],
+                                              tts: PreviewData.options["VOICE_SERVER_TTS"])
+        #expect(named.names == "Parakeet TDT and Kokoro")
+        #expect(VoiceWording.speechModels(here).names == "parakeet-tdt and kokoro", "before the lists are read")
+    }
+
+    @Test func localModelsAskedForShowsWhatIsLeft() {
+        var report = PreviewData.models
+        #expect(ModelsWording.nextStep(report) == nil, "running and serving: nothing left")
+        report.servers.llm.reachable = false
+        #expect(ModelsWording.nextStep(report) == ModelsAnchor.modelServer)
+        report.servers.llm.model = nil
+        report.servers.localAgent.model = nil
+        report.servers.localAgent.baseUrl = nil
+        #expect(ModelsWording.nextStep(report) == "qwen3-coder-30b-a3b")
+        report.servers.localAgent.baseUrl = "http://127.0.0.1:11434/v1"
+        #expect(ModelsWording.nextStep(report) == nil, "Ollama's: nothing to do here")
+    }
+
     // MARK: - Refusals are guidance
 
     @Test func theRefusalsThatAreAStepToTakeFirstAreKnown() {
@@ -108,6 +138,8 @@ import KeryxPreview
         #expect(ThisMacProgress.refused(.failed("The local model server isn't running: start it first.")))
         #expect(!ThisMacProgress.refused(.failed("no room")))
         #expect(!ThisMacProgress.refused(.running))
+        #expect(VoiceWording.elsewhereDown("http://studio.local:8080/v1")
+            == "The voice takes its words from the model server at studio.local:8080. Start it there, then try again.")
     }
 
     @Test func noLocalModelPointsAtTheRecommendedOne() {

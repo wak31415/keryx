@@ -53,6 +53,23 @@ enum LocalRefusal: Equatable {
         llm.reachable ? "Running at \(Address.of(llm.url, port: llm.port))" : "Not running"
     }
 
+    /// Where Local Models should be shown when asked to without saying where: the
+    /// recommended model while no model is chosen and downloaded, the model server while it
+    /// isn't running; `nil` when nothing is left to do here.
+    static func nextStep(_ report: ModelsReport) -> String? {
+        let recommended = (report.models.first { $0.recommended } ?? ModelsOrder.sorted(report.models).first)?.name
+        switch report.wordsServer {
+        case .noModel:
+            return recommended
+        case .modelServer:
+            let chosen = report.servers.llm.model
+            guard report.models.contains(where: { $0.name == chosen && $0.downloaded }) else { return recommended }
+            return report.modelServerDown ? ModelsAnchor.modelServer : nil
+        case .ollama, .elsewhere:
+            return nil
+        }
+    }
+
     /// Why the model server cannot be started from here, or `nil` when it can: no model
     /// chosen for it, or the local agent's model served by something else (Ollama).
     static func cannotStart(_ servers: Servers) -> String? {

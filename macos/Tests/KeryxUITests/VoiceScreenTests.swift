@@ -122,7 +122,8 @@ import KeryxPreview
         let ids = Set(ScreenCatalog.entries().map(\.id))
         for id in ["voice-openai", "voice-openai-no-key", "voice-here", "voice-here-picked", "voice-here-setting-up",
                    "voice-here-setting-up-step", "voice-here-downloading", "voice-here-server-down", "voice-here-chain-server",
-                   "voice-here-chain-voice", "voice-here-chain-failed", "voice-here-server-refused", "voice-here-stopping", "voice-here-failed", "voice-here-refused", "voice-here-finished",
+                   "voice-here-chain-voice", "voice-here-chain-failed", "voice-here-server-refused", "voice-here-ollama-down",
+                   "voice-here-elsewhere-down", "voice-here-server-starting-in-models", "voice-here-stopping", "voice-here-failed", "voice-here-refused", "voice-here-finished",
                    "voice-here-needs-model", "voice-server", "voice-server-picked", "voice-server-stored-key", "voice-server-removing-key", "voice-server-saved-warning",
                    "voice-server-problem", "voice-error", "window-voice",
                    "configuration-model-menus", "configuration-options-unavailable", "configuration-other-sheet",

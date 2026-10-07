@@ -139,6 +139,84 @@ import KeryxPreview
         #expect(!client.calls.contains { $0.hasPrefix("voice use here") })
     }
 
+    @Test func aCancelThatADoneBeatsStartsNoVoice() async {
+        let server = ManualRun<ModelServerStarted>()
+        let client = StubClient {
+            $0.models = .success(Self.serverDown)
+            $0.modelServer = { _ in server.stream() }
+        }
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        model.setUpThisMac()
+        model.cancelThisMacSetup()
+        #expect(server.stopRequests == 1)
+        // The CLI had already finished: its `done` arrives after the stop was asked for.
+        server.send(.done(ModelServerStarted(url: "u", servedModel: "m")))
+        server.finish()
+        await model.modelServerRun.settled()
+        #expect(model.modelServerRun.result?.servedModel == "m")
+        #expect(!client.calls.contains { $0.hasPrefix("voice use here") })
+        // What the server's start reads again is still read.
+        #expect(await eventually { client.calls.filter { $0 == "models list" }.count >= 2 })
+    }
+
+    @Test func quittingStopsTheChainToo() async {
+        let server = ManualRun<ModelServerStarted>()
+        let client = StubClient {
+            $0.models = .success(Self.serverDown)
+            $0.modelServer = { _ in server.stream() }
+        }
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        model.setUpThisMac()
+        // What quitting does: stop the voice setup, then every run.
+        model.voiceSetup.cancel()
+        model.cancelRuns()
+        server.send(.done(ModelServerStarted(url: "u", servedModel: "m")))
+        server.finish()
+        await model.modelServerRun.settled()
+        #expect(!client.calls.contains { $0.hasPrefix("voice use here") })
+    }
+
+    @Test func noSetupWhileTheSpeechModelsDownload() async {
+        let download = ManualRun<VoiceModelsDownloaded>()
+        let client = StubClient { $0.voiceDownload = { download.stream() } }
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        model.downloadVoiceModels()
+        model.setUpThisMac()
+        #expect(model.thisMacSetup == nil)
+        #expect(!client.calls.contains { $0.hasPrefix("voice use here") })
+        download.finish()
+        await model.voiceDownloadRun.settled()
+    }
+
+    @Test func ollamaStartsWithItsRuntime() async {
+        let server = ManualRun<ModelServerStarted>()
+        let client = StubClient { $0.modelServer = { _ in server.stream() } }
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        model.setUpThisMac(startServer: true, runtime: "ollama")
+        #expect(client.calls.last == "models start --runtime ollama")
+        #expect(model.thisMacSetup == ThisMacSetup(startsServer: true, runtime: "ollama"))
+        server.finish()
+        await model.modelServerRun.settled()
+    }
+
+    @Test func theWordsComeFromTheModelServerOllamaOrElsewhere() {
+        var report = PreviewData.models
+        #expect(report.wordsServer == .modelServer)
+        report.servers.llm.model = nil
+        report.servers.localAgent.baseUrl = "http://127.0.0.1:11434/v1"
+        #expect(report.wordsServer == .ollama)
+        report.servers.localAgent.baseUrl = "http://localhost:11434/v1"
+        #expect(report.wordsServer == .ollama)
+        report.servers.localAgent.baseUrl = "http://studio.local:11434/v1"
+        #expect(report.wordsServer == .elsewhere("http://studio.local:11434/v1"))
+        report.servers.localAgent.baseUrl = nil
+        #expect(report.wordsServer == .noModel)
+    }
+
     @Test func aServerStartedOnItsOwnIsNoPartOfASetup() async {
         let server = ManualRun<ModelServerStarted>()
         let client = StubClient {

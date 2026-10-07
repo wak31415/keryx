@@ -47,16 +47,19 @@ extension ScreenCatalog {
                     models: .success(PreviewData.modelsEmptyServers))))
             },
             Entry("models-server-down", size: whole) {
-                ModelsView().environment(AppModel.preview(client: PreviewClient(models: .success(modelServerDown))))
+                ModelsView().environment(AppModel.preview(client: PreviewClient(models: .success(modelServerDown),
+                                                                                 options: serverDownOptions)))
             },
             Entry("models-no-llama", size: whole) {
-                ModelsView().environment(AppModel.preview(client: PreviewClient(models: .success(noLlama))))
+                ModelsView().environment(AppModel.preview(client: PreviewClient(models: .success(noLlama),
+                                                                                 options: serverDownOptions)))
             },
             Entry("models-server-installing", size: whole) {
+                // No Homebrew: llama.cpp's release build, downloaded with its size known.
                 ModelsView().environment(startingServer(.holding([
                     .step(step: "runtime", message: "Installing llama.cpp build b11399, from its releases"),
                     .progress(step: "runtime", done: 9_437_184, total: 31_457_280),
-                ])))
+                ]), report: noLlama))
             },
             Entry("models-server-loading", size: whole) {
                 ModelsView().environment(startingServer(.holding([
@@ -107,7 +110,8 @@ extension ScreenCatalog {
             },
             Entry("models-recommended-shown", size: screen) {
                 ModelsView().environment({
-                    let model = AppModel.preview(client: PreviewClient(models: .success(noAgent)))
+                    let model = AppModel.preview(client: PreviewClient(models: .success(noAgent),
+                                                                       options: serverDownOptions))
                     model.modelsSpotlight = "qwen3-coder-30b-a3b"
                     return model
                 }())
@@ -180,6 +184,14 @@ extension ScreenCatalog {
         return report
     }
 
+    /// The lists with the model server not answering: the agent's menu holds the
+    /// downloaded models, none of them "serving".
+    private static var serverDownOptions: [String: Result<ConfigOptions, KeryxError>] {
+        var lists = PreviewData.options.mapValues { Result<ConfigOptions, KeryxError>.success($0) }
+        lists["LOCAL_AGENT_MODEL"] = .success(serverDown)
+        return lists
+    }
+
     /// …and llama.cpp not installed either: what Start Model Server installs first.
     private static var noLlama: ModelsReport {
         var report = modelServerDown
@@ -198,8 +210,10 @@ extension ScreenCatalog {
     }
 
     /// The model server starting from Local Models, doing `script`.
-    @MainActor private static func startingServer(_ script: PreviewClient.Script<ModelServerStarted>) -> AppModel {
-        let model = AppModel.preview(client: PreviewClient(models: .success(modelServerDown), modelServer: script))
+    @MainActor private static func startingServer(_ script: PreviewClient.Script<ModelServerStarted>,
+                                                  report: ModelsReport = modelServerDown) -> AppModel {
+        let model = AppModel.preview(client: PreviewClient(models: .success(report), options: serverDownOptions,
+                                                           modelServer: script))
         model.runModelServer()
         return model
     }

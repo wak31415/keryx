@@ -44,6 +44,11 @@ public struct VoiceView: View {
             if model.models.value == nil { await model.refresh(.models) }
             if model.config.value == nil { await model.refresh(.config) }
         }
+        // The Setup Assistant's "Set Up Voice on This Mac" shows This Mac, whose section
+        // asks the question (and says it has been answered).
+        .onChange(of: model.requested, initial: true) { _, requested in
+            if requested == .setUpVoiceHere { picked = .here }
+        }
     }
 }
 
@@ -148,6 +153,8 @@ private struct HereSection: View {
     /// The Kokoro voice picked here, applied by the next setup; `nil`: the one set.
     @State private var kokoro: String?
     @State private var confirming = false
+    /// Restart Voice Server is reading the models before it decides what to start.
+    @State private var reading = false
 
     var body: some View {
         let here = voice.here
@@ -155,6 +162,9 @@ private struct HereSection: View {
         let report = model.models.value
         let inUse = voice.kind == .here
         let showing = ThisMacProgress.showing(model)
+        // The model server starting on its own (Local Models'), not as this setup's part.
+        let serverElsewhere = model.modelServerRun.isBusy && !showing
+        let downloading = model.voiceDownloadRun.isBusy
         let busy = setup.isBusy || model.modelServerRun.isBusy
         Section {
             if voice.needsLocalModel, !showing {
@@ -191,7 +201,8 @@ private struct HereSection: View {
                 Text("The local model that puts the replies together")
             }
             LabeledContent {
-                let speech = VoiceWording.speechModels(here)
+                let speech = VoiceWording.speechModels(here, stt: model.options["VOICE_SERVER_STT"]?.value,
+                                                       tts: model.options["VOICE_SERVER_TTS"]?.value)
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(speech.names)
                         .textSelection(.enabled)
@@ -218,22 +229,26 @@ private struct HereSection: View {
                 }
             }
             if showing {
-                ThisMacProgress { startServer in start(startServer: startServer) }
+                ThisMacProgress { startServer, runtime in start(startServer: startServer, runtime: runtime) }
+            }
+            if serverElsewhere {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(VoiceWording.serverStartingElsewhere).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Show") { model.show(inModels: ModelsAnchor.modelServer) }
+                }
             }
             // While a setup runs, or has failed, its own rows are the ones to act on.
             if !busy, !ThisMacProgress.failed(model) {
-                PrimaryRow(inUse: false, inUseTitle: "", working: nil, failure: nil) {
+                PrimaryRow(inUse: false, inUseTitle: "", working: reading ? "Checking the model server…" : nil,
+                           failure: nil) {
                     Button(inUse ? "Restart Voice Server" : "Set Up…") {
-                        if inUse {
-                            start(startServer: nil)
-                        } else {
-                            confirming = true
-                            // The question says whether the model server starts first: as it is now.
-                            Task { await model.refresh(.models) }
-                        }
+                        if inUse { restart() } else { askToSetUp() }
                     }
-                    .disabled(voice.needsLocalModel)
-                    .help(voice.needsLocalModel ? VoiceWording.needsModelTitle : "")
+                    .disabled(voice.needsLocalModel || downloading || reading)
+                    .help(voice.needsLocalModel ? VoiceWording.needsModelTitle
+                          : downloading ? VoiceWording.speechDownloading : "")
                 }
             }
         } header: {
@@ -251,6 +266,19 @@ private struct HereSection: View {
         // The voice picked stays picked until the setup that applies it has worked.
         .onChange(of: setup.phase) { _, phase in
             if case .finished = phase { kokoro = nil }
+            // A refusal may be over a model server the last read thought was up.
+            if case .failed = phase { Task { await model.refresh(.models) } }
+        }
+        // The speech models' names, as their lists say them.
+        .task {
+            await model.loadOptions("VOICE_SERVER_STT")
+            await model.loadOptions("VOICE_SERVER_TTS")
+        }
+        // The Setup Assistant's "Set Up Voice on This Mac": the same question as Set Up….
+        .onChange(of: model.requested, initial: true) { _, requested in
+            guard requested == .setUpVoiceHere else { return }
+            model.didHandle(.setUpVoiceHere)
+            if !voice.needsLocalModel, !busy, !downloading { askToSetUp() }
         }
         .confirmationDialog(VoiceWording.setUpQuestion, isPresented: $confirming) {
             Button("Set Up") { start(startServer: nil) }
@@ -274,9 +302,27 @@ private struct HereSection: View {
         }
     }
 
-    private func start(startServer: Bool?) {
+    /// Set Up…'s question, with the models read again meanwhile: it says whether the model
+    /// server starts first, as it is now.
+    private func askToSetUp() {
+        confirming = true
+        Task { await model.refresh(.models) }
+    }
+
+    /// Restart Voice Server: the models read again first, so whether the model server
+    /// starts first is decided on what is so now.
+    private func restart() {
+        reading = true
+        Task {
+            await model.refresh(.models)
+            reading = false
+            start(startServer: nil)
+        }
+    }
+
+    private func start(startServer: Bool?, runtime: String? = nil) {
         let changed = kokoro.flatMap { $0 == voice.here.voice ? nil : $0 }
-        model.setUpThisMac(voice: changed, startServer: startServer)
+        model.setUpThisMac(voice: changed, startServer: startServer, runtime: runtime)
     }
 }
 

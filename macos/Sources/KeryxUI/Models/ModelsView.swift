@@ -29,6 +29,13 @@ public struct ModelsView: View {
                     guard let anchor else { return }
                     spotlight(anchor, proxy: proxy)
                 }
+                // The Setup Assistant's "Choose a Model" or "Open Local Models": shown at
+                // what is left to do here.
+                .onChange(of: model.requested, initial: true) { _, requested in
+                    guard requested == .show(.models) else { return }
+                    model.didHandle(.show(.models))
+                    if let anchor = ModelsWording.nextStep(report) { spotlight(anchor, proxy: proxy) }
+                }
             }
         }
         // Read here: the status poll does not read the models, nor the voice's.
@@ -259,7 +266,7 @@ private struct ModelServerSection: View {
                         message: activity?.message,
                         progress: activity?.progress.map { ($0.done, $0.total) },
                         stopping: run.phase == .cancelling)
-            RunCancelRow(stopping: run.phase == .cancelling) { run.cancel() }
+            RunCancelRow(stopping: run.phase == .cancelling) { model.cancelModelServer() }
         case let .failed(message):
             if LocalRefusal.of(message) == .needsModel {
                 RunFailureRow(title: ModelsWording.chooseModelFirst, message: ModelsWording.chooseModelDetail,
@@ -304,7 +311,8 @@ private struct ModelServerSection: View {
                 Button("Stop Model Server") {
                     if model.voice.value?.kind == .here { confirmingStop = true } else { stop() }
                 }
-                .disabled(stopping)
+                .disabled(stopping || model.voiceSetup.isBusy)
+                .help(model.voiceSetup.isBusy ? "Wait for the voice setup to finish" : "")
             }
             if cannot == nil {
                 Button(llm.reachable ? "Restart Model Server" : "Start Model Server") {
@@ -403,7 +411,7 @@ private struct VoiceModelsSection: View {
                 Button("Try Again") { model.downloadVoiceModels() }
             }
         case .finished, nil:
-            downloadRow(ready: here.modelsReady || run.result != nil, settingUp: model.voiceSetup.isBusy)
+            downloadRow(ready: here.modelsReady, settingUp: model.voiceSetup.isBusy)
         }
         voiceServerRow(voice)
     }
