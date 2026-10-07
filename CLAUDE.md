@@ -34,8 +34,9 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `--no-wakeword` is accepted and ignored, for units installed before it left `main`); `scripts/dev.sh` adds the Cloudflare tunnel
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
   the kill switch); install the Claude hook with `scripts/install-claude-hook.sh`
-- Inspect tasks: `uv run keryx tasks list [--status …] [--limit N] [--internal]`,
-  `uv run keryx tasks show <id>` (the `TOLD` column is `NO` until the assistant has said it)
+- Inspect tasks: `uv run keryx tasks list [--status …] [--limit N] [--internal] [--json]`,
+  `uv run keryx tasks show <id> [--json]` (the `TOLD` column is `NO` until the assistant has
+  said it; `--json` on either is the shape the Mac app reads — `keryx/tasks/export.py`)
 - What the tasks spent, per project: `uv run keryx tasks usage [--days N] [--json]` (by the
   project each was dispatched with; the dollars are the agents' own estimates, and the
   voice calls are not tasks)

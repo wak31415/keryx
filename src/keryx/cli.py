@@ -84,6 +84,7 @@ from keryx.setup.context import SetupContext, run_command
 from keryx.setup.sections import repo_root
 from keryx.setup.ui import Aborted
 from keryx.setup.wizard import agent_instructions, run_wizard
+from keryx.tasks.export import task_json, told
 from keryx.tasks.manager import install_default_executor
 from keryx.tasks.models import ProjectUsage, Task, TaskStatus
 from keryx.tasks.store import TaskStore
@@ -713,11 +714,17 @@ def tasks_list(
             help="Also show Keryx's own housekeeping (the per-call memory updates).",
         ),
     ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Machine-readable output.")
+    ] = False,
 ) -> None:
     """List recent tasks, newest first."""
     settings = _configure_readonly()
     wanted = None if status is StatusFilter.ALL else TaskStatus(status.value)
     tasks = asyncio.run(_read_tasks(settings, wanted, limit, include_internal))
+    if as_json:
+        typer.echo(json.dumps({"tasks": [task_json(task) for task in tasks]}, indent=2))
+        return
     if not tasks:
         typer.echo("no tasks" if wanted is None else f"no tasks with status {wanted}")
         return
@@ -736,22 +743,43 @@ def tasks_list(
 
 
 def _reported_flag(task: Task) -> str:
-    """Whether Keryx has told them about this one: only meaningful once it has finished."""
+    """Whether Keryx has told them about this one: only meaningful once it has finished.
+
+    Goes through `told()` so the table and the JSON export can never disagree.
+    """
     if task.internal:
         return "-"
-    if task.status not in {TaskStatus.DONE, TaskStatus.FAILED}:
+    flag = told(task)
+    if flag is None:
         return ""
-    return "yes" if task.reported_at else "NO"
+    return "yes" if flag else "NO"
 
 
 @tasks_app.command("show")
-def tasks_show(task_id: Annotated[int, typer.Argument(help="The task id to show.")]) -> None:
+def tasks_show(
+    task_id: Annotated[int, typer.Argument(help="The task id to show.")],
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Machine-readable output.")
+    ] = False,
+) -> None:
     """Show everything stored about one task, including its report."""
     settings = _configure_readonly()
     task = asyncio.run(_read_task(settings, task_id))
     if task is None:
-        typer.echo(f"no task {task_id}")
+        typer.echo(f"no task {task_id}", err=True)
         raise typer.Exit(1)
+
+    if as_json:
+        report, truncated = (
+            _read_report(Path(task.report_path)) if task.report_path else (None, False)
+        )
+        typer.echo(
+            json.dumps(
+                {"task": task_json(task), "report": report, "report_truncated": truncated},
+                indent=2,
+            )
+        )
+        return
 
     width = max(len(field.name) for field in dataclasses.fields(task))
     for field in dataclasses.fields(task):
@@ -834,16 +862,29 @@ def tasks_usage(
     typer.echo(textwrap.fill(USAGE_FOOTNOTE, width=88))
 
 
-def _echo_report(path: Path) -> None:
-    """Print the task's written report, truncated; a report that is gone is simply skipped."""
+def _read_report(path: Path) -> tuple[str | None, bool]:
+    """`path`'s contents sliced to `MAX_REPORT_CHARS`, and whether that cut anything off.
+
+    `(None, False)` when the report cannot be read (most often: it is gone) — the caller
+    decides how to say that. Shared by `_echo_report` and `tasks show --json`, so the two
+    cannot disagree on where a report gets cut.
+    """
     try:
         body = path.read_text(errors="replace")
-    except OSError as exc:
-        typer.echo(f"(report unreadable: {exc})")
+    except OSError:
+        return None, False
+    return body[:MAX_REPORT_CHARS], len(body) > MAX_REPORT_CHARS
+
+
+def _echo_report(path: Path) -> None:
+    """Print the task's written report, truncated; a report that is gone is simply skipped."""
+    body, truncated = _read_report(path)
+    if body is None:
+        typer.echo("(report unreadable)")
         return
     typer.echo("\n--- report ---")
-    typer.echo(body[:MAX_REPORT_CHARS].rstrip())
-    if len(body) > MAX_REPORT_CHARS:
+    typer.echo(body.rstrip())
+    if truncated:
         typer.echo(f"… (truncated at {MAX_REPORT_CHARS} characters; full report: {path})")
 
 

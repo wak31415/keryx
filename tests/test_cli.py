@@ -446,6 +446,52 @@ def test_tasks_list_rejects_an_unknown_status(settings_stub):
     assert result.exit_code != 0
 
 
+def test_tasks_list_json_prints_every_task(settings_stub):
+    seed_tasks(
+        settings_stub,
+        make_task("summarise the inbox", status=TaskStatus.DONE),
+        make_task("add a README", status=TaskStatus.RUNNING),
+    )
+
+    result = runner.invoke(app, ["tasks", "list", "--json"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert [task["id"] for task in document["tasks"]] == [2, 1]  # newest first, as the table
+    assert document["tasks"][0]["description"] == "add a README"
+    assert document["tasks"][0]["told"] is None  # still running
+    assert document["tasks"][1]["told"] is False  # done, not yet reported
+
+
+def test_tasks_list_json_with_nothing_prints_an_empty_list(settings_stub):
+    result = runner.invoke(app, ["tasks", "list", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {"tasks": []}
+
+
+def test_tasks_list_json_carries_no_phone_number(settings_stub):
+    seed_tasks(
+        settings_stub,
+        make_task(
+            "call back",
+            status=TaskStatus.DONE,
+            origin_caller="+15551234567",
+            callback_requested=True,
+            callback_number="+15551234567",
+            callback_note="ring after 5",
+        ),
+    )
+
+    result = runner.invoke(app, ["tasks", "list", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert "+1555" not in result.output
+    task = json.loads(result.output)["tasks"][0]
+    for hidden in ("origin_caller", "callback_number", "callback_note", "claude_session_id"):
+        assert hidden not in task
+
+
 def test_tasks_show_prints_every_field_and_the_report(settings_stub, tmp_path):
     report = tmp_path / "report.md"
     report.write_text("# Findings\n\nEverything is fine.\n")
@@ -503,6 +549,55 @@ def test_tasks_show_tolerates_a_report_that_is_gone(settings_stub, tmp_path):
 
     assert result.exit_code == 0, result.output
     assert "--- report ---" not in result.output
+
+
+def test_tasks_show_json_includes_the_task_and_the_report(settings_stub, tmp_path):
+    report = tmp_path / "report.md"
+    report.write_text("# Findings\n\nEverything is fine.\n")
+    seed_tasks(
+        settings_stub,
+        make_task("check the logs", status=TaskStatus.DONE, report_path=str(report)),
+    )
+
+    result = runner.invoke(app, ["tasks", "show", "1", "--json"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert document["task"]["id"] == 1
+    assert document["task"]["status"] == "done"
+    assert document["report"] == "# Findings\n\nEverything is fine.\n"
+    assert document["report_truncated"] is False
+
+
+def test_tasks_show_json_includes_the_report_truncated(settings_stub, tmp_path):
+    report = tmp_path / "report.md"
+    report.write_text("y" * (MAX_REPORT_CHARS + 500))
+    seed_tasks(settings_stub, make_task("big one", report_path=str(report)))
+
+    result = runner.invoke(app, ["tasks", "show", "1", "--json"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert document["report_truncated"] is True
+    assert len(document["report"]) == MAX_REPORT_CHARS
+
+
+def test_tasks_show_json_with_no_report_path_has_a_null_report(settings_stub):
+    seed_tasks(settings_stub, make_task("no report yet", status=TaskStatus.RUNNING))
+
+    result = runner.invoke(app, ["tasks", "show", "1", "--json"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert document["report"] is None
+    assert document["report_truncated"] is False
+
+
+def test_tasks_show_json_unknown_id_exits_one(settings_stub):
+    result = runner.invoke(app, ["tasks", "show", "999", "--json"])
+
+    assert result.exit_code == 1
+    assert "no task 999" in result.output
 
 
 def test_tasks_usage_prints_a_row_per_project_and_a_total(settings_stub):
