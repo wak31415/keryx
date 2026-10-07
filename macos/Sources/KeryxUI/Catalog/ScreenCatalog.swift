@@ -25,7 +25,7 @@ public struct ScreenCatalog {
     /// screen's own `Catalog/<Screen>+Catalog.swift`.
     @MainActor public static func entries() -> [Entry] {
         kitEntries + overviewEntries + sessionsEntries + modelsEntries + configurationEntries
-            + onboardingEntries
+            + menuEntries + onboardingEntries
     }
 
     /// A window's size in the catalog: what a full `RootView` is photographed at.
