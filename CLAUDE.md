@@ -84,7 +84,10 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   exits 1); install, remove and set refuse the running service, and each takes `--json`
   (`{name, on, message}`; remove then asks nothing). `plugins list --json` also describes
   each for the Mac app: `title`, `description`, typed `fields`, the integrations it
-  `needs` (any one will do), and `ready` with `why` in the app's words
+  `needs` (any one will do), and `ready` — would it work on a call once turned on, read
+  beside `on` — with `why` in the app's words. `set` can repair a file that does not
+  validate: the change goes over the raw file, and only a result that validates is written
+  (one that does not parse is left for the owner, as the wizard leaves it)
 - The owner's own voice tools: `uv run keryx tools [--json]` (what `DATA_DIR/tools` holds
   and what the next call would refuse; exits 1 while anything is)
 - Start that memory before any call has: `uv run keryx memory seed --file FILE|- [--force]

@@ -149,3 +149,59 @@ def test_a_described_plugin_carries_no_secret(settings):
 )
 def test_a_refusal_becomes_a_sentence_with_no_command(text, sentence):
     assert plugins.app_sentence(text) == sentence
+
+
+def test_an_installed_plugin_refused_with_no_reason_of_its_own_is_not_ready(settings):
+    """A refusal keyed to the tools directory (owned by somebody else) names no file."""
+    plugins.install(settings, "check_billing")
+    status = next(one for one in plugins.status(settings) if one.name == "check_billing")
+    refused = dataclasses.replace(status, on=False, refused=None)
+
+    found = plugins.describe(refused, NOTHING | {"openai-admin": True})
+
+    assert found["ready"] is False and found["why"] == "Keryx can't load it; see Diagnostics."
+
+
+# --- changing the settings in place -------------------------------------------------------
+
+
+def test_a_change_repairs_a_file_that_does_not_validate(settings):
+    path = plugins.config_path(settings, "check_billing")
+    path.write_text('provider = "everyone"\nmonthly_budget = 12\n')
+
+    plugins.write_config(settings, "check_billing", {"provider": "openai"})
+
+    assert plugins.read_config(settings, "check_billing") == plugins.defaults(
+        "check_billing") | {"provider": "openai", "monthly_budget": 12}
+
+
+def test_a_file_that_does_not_parse_is_left_for_the_owner(settings):
+    """Rewriting it would throw away what they were in the middle of typing."""
+    path = plugins.config_path(settings, "check_billing")
+    path.write_text('provider = "openai\n')
+
+    with pytest.raises(plugins.PluginConfigError, match="does not parse"):
+        plugins.write_config(settings, "check_billing", {"monthly_budget": "5"})
+
+    assert path.read_text() == 'provider = "openai\n'
+
+
+def test_a_change_that_leaves_it_invalid_writes_nothing(settings):
+    path = plugins.config_path(settings, "check_billing")
+    path.write_text('provider = "everyone"\n')
+
+    with pytest.raises(plugins.PluginConfigError, match="provider must be one of"):
+        plugins.write_config(settings, "check_billing", {"monthly_budget": "5"})
+
+    assert path.read_text() == 'provider = "everyone"\n'
+
+
+def test_only_an_installed_plugin_is_changed(settings):
+    with pytest.raises(plugins.PluginConfigError, match="check_billing is not installed"):
+        plugins.change(settings, "check_billing", {"monthly_budget": "5"})
+    assert not plugins.config_path(settings, "check_billing").exists()
+
+    plugins.install(settings, "check_billing")
+    plugins.change(settings, "check_billing", {"monthly_budget": "5"})
+
+    assert plugins.read_config(settings, "check_billing")["monthly_budget"] == 5

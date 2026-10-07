@@ -333,12 +333,34 @@ def read_config_file(name: str, path: Path) -> dict[str, Any]:
     return clean(name, data)
 
 
-def read_config(settings: "Settings", name: str) -> dict[str, Any]:
-    """The plugin's settings: its TOML, else the copy set aside when it was turned off."""
+def _settings_file(settings: "Settings", name: str) -> Path:
+    """Its TOML, else the copy set aside when it was turned off."""
     path = config_path(settings, name)
     if not path.exists() and off_path(settings, name).exists():
-        path = off_path(settings, name)
-    return read_config_file(name, path)
+        return off_path(settings, name)
+    return path
+
+
+def read_config(settings: "Settings", name: str) -> dict[str, Any]:
+    """The plugin's settings: its TOML, else the copy set aside when it was turned off."""
+    return read_config_file(name, _settings_file(settings, name))
+
+
+def _change_base(settings: "Settings", name: str) -> dict[str, Any]:
+    """What a change is applied over: the settings when they validate, else what the file
+    says, raw, so a change can repair the value that does not. The result is validated whole
+    when it is written. A file that does not parse is refused, as `read_config` refuses it:
+    rewriting it would throw away whatever the owner was in the middle of typing.
+    """
+    try:
+        return read_config(settings, name)
+    except PluginConfigError:
+        path = _settings_file(settings, name)
+        try:
+            raw = read_toml(path)
+        except tomllib.TOMLDecodeError as error:
+            raise PluginConfigError(f"{path} does not parse ({error})") from None
+        return defaults(name) | raw
 
 
 def install_problem(settings: "Settings", name: str) -> str | None:
@@ -397,11 +419,27 @@ def render_config(name: str, values: Mapping[str, Any]) -> str:
 
 
 def write_config(settings: "Settings", name: str, values: Mapping[str, Any]) -> Path:
-    """Write the plugin's TOML (0600): `values` over what it holds now, comments and all."""
-    current = read_config(settings, name)
+    """Write the plugin's TOML (0600): `values` over what it holds now, comments and all.
+
+    What it holds may not validate (a hand edit): the change is applied over the raw file,
+    so it can repair that, and only a result that validates is written. One that does not
+    parse is left for the owner.
+    """
+    current = _change_base(settings, name)
     path = write_private(config_path(settings, name), render_config(name, current | dict(values)))
     off_path(settings, name).unlink(missing_ok=True)
     return path
+
+
+def change(settings: "Settings", name: str, values: Mapping[str, Any]) -> Path:
+    """`keryx plugins set`: an installed plugin's settings changed in place, nothing
+    reinstalled. A plugin that is not installed is a `PluginConfigError`."""
+    plugin(name)
+    if not tool_path(settings, name).is_file():
+        raise PluginConfigError(
+            f"{name} is not installed, so it has no settings to change: turn it on first"
+        )
+    return write_config(settings, name, values)
 
 
 def tool_source(name: str) -> str:
@@ -532,6 +570,10 @@ FIELD_TYPES: dict[Kind, str] = {
 _COMMAND = re.compile(r"\s*:?\s*`[^`]*`.*$", re.DOTALL)
 
 
+#: Why an installed plugin that is refused with no reason of its own is not ready.
+CANNOT_LOAD = "Keryx can't load it; see Diagnostics."
+
+
 def app_sentence(text: str) -> str:
     """A loader's refusal as the app says it: the cause, without the command that fixes it."""
     cause = _COMMAND.sub("", text).strip().rstrip(":;,.")
@@ -539,7 +581,8 @@ def app_sentence(text: str) -> str:
 
 
 def _readiness(status: Status, connected: Mapping[str, bool]) -> str | None:
-    """Why the plugin would not work on a call now, in the app's words; None when it would."""
+    """Why the plugin would not work on a call once turned on, in the app's words; None
+    when it would. Whether it is on is `Status.on`, which the app reads beside this."""
     from keryx.integrations.accounts import INTEGRATIONS
 
     spec = plugin(status.name)
@@ -551,8 +594,9 @@ def _readiness(status: Status, connected: Mapping[str, bool]) -> str | None:
         return f"Connect {called} in Integrations first."
     if status.values is not None and spec.problem(status.values) is not None:
         return spec.incomplete or app_sentence(spec.problem(status.values) or "")
-    if status.installed and not status.on and status.refused:
-        return app_sentence(status.refused)
+    if status.installed and not status.on:
+        # No reason of its own: the loader refused the directory (somebody else's, say).
+        return app_sentence(status.refused) if status.refused else CANNOT_LOAD
     return None
 
 
@@ -562,6 +606,9 @@ def describe(status: Status, connected: Mapping[str, bool]) -> dict[str, Any]:
     `connected` is whether each account in the plugin's `needs` is
     (`integrations.accounts.connected`). A field's value is never a secret: those are not
     in the file. Settings that do not load show the defaults, and `why` says so.
+
+    `ready` is whether it would work on a call once turned on — its accounts, its settings,
+    and for one already installed, the loader — not whether it is on (`on` says that).
     """
     spec = plugin(status.name)
     values = status.values if status.values is not None else defaults(status.name)

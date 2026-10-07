@@ -1077,11 +1077,16 @@ def tools_command(
 
 # --- plugins ---------------------------------------------------------------
 
+PLUGINS_JSON_HELP = (
+    "Print one JSON document; each plugin also says whether it is `ready` — would work on a "
+    "call once turned on (`on` says whether it is) — and `why` not."
+)
+
 
 @plugins_app.callback(invoke_without_command=True)
 def plugins_command(
     ctx: typer.Context,
-    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+    as_json: Annotated[bool, typer.Option("--json", help=PLUGINS_JSON_HELP)] = False,
 ) -> None:
     """List the plugins: on or off, their two files, and why one is refused."""
     if ctx.invoked_subcommand is None:
@@ -1531,12 +1536,13 @@ def _install_units(
 
 @plugins_app.command("list")
 def plugins_list(
-    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+    as_json: Annotated[bool, typer.Option("--json", help=PLUGINS_JSON_HELP)] = False,
 ) -> None:
     """List the plugins: on or off, their two files, and why one is refused.
 
     `--json` also describes each for the Mac app: its settings as typed fields, the
-    accounts it needs, and whether it would work on a call now (`ready`, and `why` not).
+    accounts it needs, and `ready` — whether it would work on a call once turned on, which
+    the app reads beside `on` — with `why` when it would not.
     """
     settings = _configure_readonly()
     found = plugins.status(settings)
@@ -1763,11 +1769,7 @@ def plugins_set(
         if not (assignments or clusters):
             typer.echo(f"give KEY=VALUE for one of {name}'s settings", err=True)
             raise typer.Exit(2)
-        if not plugins.tool_path(settings, name).is_file():
-            raise plugins.PluginConfigError(
-                f"{name} is not installed, so it has no settings to change: turn it on first"
-            )
-        plugins.write_config(settings, name, _plugin_values(name, assignments, clusters, None))
+        plugins.change(settings, name, _plugin_values(name, assignments, clusters, None))
     except plugins.PluginConfigError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
@@ -2661,10 +2663,6 @@ def auth_status_command(
         raise typer.Exit(1)
 
 
-#: What `auth logout` calls each sign-in it can undo, in a sentence.
-SIGNED_OUT_OF = {"gmail": "Gmail", "google-workspace": "Google for agents"}
-
-
 @auth_app.command("logout")
 def auth_logout(
     name: Annotated[str, typer.Argument(help="gmail or google-workspace.")],
@@ -2675,13 +2673,13 @@ def auth_logout(
     The OAuth client file stays (it is configuration, and the two share it), and so does
     the other sign-in. The settings that turn them on are `keryx config unset`'s.
     """
+    _owner_only("sign out")
     if name not in auth_flow.LOGOUTS:
         typer.echo(f"sign out of one of: {', '.join(auth_flow.LOGOUTS)}", err=True)
         raise typer.Exit(2)
-    _owner_only("sign out")
     settings = _configure_readonly()
     removed = auth_flow.logout(name, settings)
-    title = SIGNED_OUT_OF[name]
+    title = next(one.title for one in accounts.INTEGRATIONS.values() if one.signin == name)
     message = (
         f"Signed out of {title}: its stored sign-in was removed." if removed
         else f"{title} was not signed in; there was nothing to remove."

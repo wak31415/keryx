@@ -116,3 +116,11 @@ def test_logout_of_anything_else_is_refused(settings_stub):
 
     assert result.exit_code == 2
     assert "gmail" in result.stderr and result.stdout == ""
+
+
+def test_the_service_is_refused_before_the_name_is_looked_at(settings_stub, monkeypatch):
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+    result = runner.invoke(app, ["auth", "logout", "claude", "--json"])
+
+    assert result.exit_code == 1 and "only the owner" in result.stderr

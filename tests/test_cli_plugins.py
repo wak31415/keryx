@@ -216,3 +216,16 @@ def test_the_service_may_not_change_a_plugin(settings_stub, monkeypatch, argv):
     assert result.exit_code == 1 and result.stdout == ""
     assert "only the owner" in result.stderr
     assert plugins.config_path(settings_stub, "check_billing").read_text() == before
+
+
+def test_set_repairs_what_the_card_says_is_wrong(settings_stub):
+    install("check_billing")
+    path = plugins.config_path(settings_stub, "check_billing")
+    path.write_text('provider = "everyone"\nmonthly_budget = 12\n')
+
+    result = runner.invoke(app, ["plugins", "set", "check_billing", "provider=openai", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["on"] is True
+    assert stored(settings_stub, "check_billing")["provider"] == "openai"
+    assert stored(settings_stub, "check_billing")["monthly_budget"] == 12
