@@ -203,7 +203,7 @@ def run_doctor_checks(
         _secrets_in_config_check(store),
         _unlocked_check(store),
         _imported_env_check(),
-        _google_check(settings),
+        google_check(settings),
         _memory_check(settings),
         _projects_root_check(settings),
         *plugin_checks(settings),
@@ -867,7 +867,7 @@ def _imported_env_check() -> Check:
 # --- google, and what Keryx knows -----------------------------------------------
 
 
-def _google_check(settings: Settings) -> Check:
+def google_check(settings: Settings) -> Check:
     """Optional, and only about `workspace-mcp` — agents sending mail and using the calendar.
 
     With it off, Gmail and Calendar reach Claude's subagents through the Claude CLI's own

@@ -66,6 +66,7 @@ from keryx.doctor import (
     run_doctor_checks,
 )
 from keryx.events import EventBus
+from keryx.integrations import accounts
 from keryx.localmodels import (
     catalog,
     download,
@@ -2567,6 +2568,56 @@ def auth_status_command(
             typer.echo(f"{name:<{width}}  {state:<8}  {entry['detail']}")
     if any(entry["state"] == "failed" for entry in report.values()):
         raise typer.Exit(1)
+
+
+#: What `auth logout` calls each sign-in it can undo, in a sentence.
+SIGNED_OUT_OF = {"gmail": "Gmail", "google-workspace": "Google for agents"}
+
+
+@auth_app.command("logout")
+def auth_logout(
+    name: Annotated[str, typer.Argument(help="gmail or google-workspace.")],
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+) -> None:
+    """Sign out of Gmail or Google for agents: the tokens that sign-in stored go.
+
+    The OAuth client file stays (it is configuration, and the two share it), and so does
+    the other sign-in. The settings that turn them on are `keryx config unset`'s.
+    """
+    if name not in auth_flow.LOGOUTS:
+        typer.echo(f"sign out of one of: {', '.join(auth_flow.LOGOUTS)}", err=True)
+        raise typer.Exit(2)
+    _owner_only("sign out")
+    settings = _configure_readonly()
+    removed = auth_flow.logout(name, settings)
+    title = SIGNED_OUT_OF[name]
+    message = (
+        f"Signed out of {title}: its stored sign-in was removed." if removed
+        else f"{title} was not signed in; there was nothing to remove."
+    )
+    if as_json:
+        typer.echo(json.dumps({"name": name, "signed_in": False, "message": message}, indent=2))
+    else:
+        typer.echo(message)
+
+
+@app.command("integrations")
+def integrations_command(
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+) -> None:
+    """The accounts Keryx connects to — Google, Gmail, Slack, GitHub, the admin keys — and
+    whether each is connected. Only reads; a secret's value is never shown."""
+    settings = _configure_readonly()
+    found = accounts.integrations(settings)
+    if as_json:
+        typer.echo(json.dumps({"integrations": found}, indent=2))
+        return
+    width = max(len(row["id"]) for row in found)
+    for row in found:
+        state = "connected" if row["connected"] else "not connected"
+        typer.echo(f"{row['id']:<{width}}  {state:<13}  {row['title']}")
+        if row["why"]:
+            typer.echo(f"{'':<{width}}  {row['why']}")
 
 
 # --- approvals -------------------------------------------------------------

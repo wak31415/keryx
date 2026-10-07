@@ -143,3 +143,95 @@ def test_a_gmail_that_will_not_answer_is_a_setup_error(settings, monkeypatch):
 
     with pytest.raises(google.GoogleSetupError, match="would not answer"):
         asyncio.run(google.gmail_address(settings))
+
+
+# --- the two Google sign-ins: their state, and signing out ------------------------------
+
+
+def google_files(settings):
+    """Every Google file a machine signed in to both might hold, and one that is not."""
+    client = settings.config_dir / google.GOOGLE_CLIENT_FILE
+    token = google.token_path(settings)
+    pending = settings.data_dir / google.PENDING_FILE
+    credentials = google.credentials_dir(settings)
+    stored = credentials / "ada@example.com.json"
+    unrelated = settings.data_dir / "memory.md"
+    for path in (client, token, pending, stored, unrelated):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+    return {"client": client, "token": token, "pending": pending, "stored": stored,
+            "unrelated": unrelated, "credentials": credentials}
+
+
+def test_gmail_is_signed_in_when_its_token_is_there(settings):
+    assert auth.status(settings, ConfigStore())["gmail"]["state"] == "missing"
+
+    path = google.token_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}")
+
+    assert auth.sign_in("gmail", settings)["state"] == "ok"
+    assert auth.status(settings, ConfigStore())["gmail"]["state"] == "ok"
+
+
+def test_google_for_agents_is_the_doctor_check_auth_status_reads(settings):
+    on = settings.model_copy(update={"google_workspace_mcp": True})
+
+    assert auth.sign_in("google-workspace", on) == {
+        "state": "failed",
+        "detail": "GOOGLE_WORKSPACE_MCP is on but there is no OAuth client — `keryx setup`",
+    }
+    assert auth.status(on, ConfigStore())["google-workspace"] == auth.sign_in(
+        "google-workspace", on
+    )
+
+
+def test_signing_out_of_gmail_removes_its_token_and_nothing_else(settings):
+    files = google_files(settings)
+
+    removed = auth.logout("gmail", settings)
+
+    assert sorted(removed) == sorted([files["token"], files["pending"]])
+    assert not files["token"].exists() and not files["pending"].exists()
+    for kept in ("client", "stored", "unrelated"):
+        assert files[kept].exists(), kept
+
+
+def test_signing_out_of_google_for_agents_removes_its_credentials_and_nothing_else(settings):
+    files = google_files(settings)
+    (files["credentials"] / "nested").mkdir()
+    (files["credentials"] / "nested" / "cache.json").write_text("{}")
+
+    removed = auth.logout("google-workspace", settings)
+
+    assert files["stored"] in removed
+    assert not files["credentials"].exists()
+    for kept in ("client", "token", "pending", "unrelated"):
+        assert files[kept].exists(), kept
+
+
+def test_a_credentials_directory_that_is_a_link_is_unlinked_never_followed(settings, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "keep.json").write_text("{}")
+    link = google.credentials_dir(settings)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(elsewhere)
+
+    assert auth.logout("google-workspace", settings) == [link]
+    assert not link.exists() and (elsewhere / "keep.json").exists()
+
+
+def test_signing_out_of_what_was_never_signed_in_removes_nothing(settings):
+    assert auth.logout("gmail", settings) == []
+    assert auth.logout("google-workspace", settings) == []
+
+
+def test_only_the_google_sign_ins_can_be_signed_out_of(settings):
+    with pytest.raises(AuthError, match="gmail, google-workspace"):
+        auth.logout("claude", settings)
+
+
+def test_only_the_google_sign_ins_have_a_quick_state(settings):
+    with pytest.raises(AuthError, match="not a Google sign-in"):
+        auth.sign_in("claude", settings)

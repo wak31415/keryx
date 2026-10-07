@@ -51,7 +51,14 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   approval hook, starts it again; `serve` refuses to start until it has run)
 - Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
-  the browser landed on), `uv run keryx auth status [--json] [--smoke]`
+  the browser landed on), `uv run keryx auth status [--json] [--smoke]`, `uv run keryx auth
+  logout gmail|google-workspace [--json]` (the owner's alone: removes the tokens that one
+  sign-in stored — never the OAuth client file, never the other sign-in)
+- The accounts Keryx connects to, as the Mac app's Integrations section shows them: `uv run
+  keryx integrations [--json]` (google, gmail, slack, github, openai-admin, anthropic-admin:
+  connected or not, `why` in the app's words, the secrets — set or not — and settings each
+  card edits, its sign-in, and the plugins that use it; only reads, and asks `gh` only while
+  issue reports are on; `keryx/integrations/accounts.py`)
 - Run the agent: `uv run keryx serve` (`--demo` / `--host` / `--port`; a hidden
   `--no-wakeword` is accepted and ignored, for units installed before it left `main`); `scripts/dev.sh` adds the Cloudflare tunnel
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
@@ -199,7 +206,10 @@ remember:
 - **integrations** — `integrations/` is one module per outside service (`billing`,
   `cluster`, `gmail`, `slack`, `web_search`): the *clients*, each behind one voice tool —
   `web_search` behind a built-in, the rest behind a plugin, which is where the tool is
-  built. Their builders take explicit values, never a plugin's file.
+  built. Their builders take explicit values, never a plugin's file. `accounts` is the one
+  that is not a client: the accounts `keryx integrations` lists, composed from `auth`'s
+  Google entries, the settings and `issues.gh_status`, with `used_by` read from each
+  plugin's `needs`.
 - **config** — `config/` is the settings and where they live: `settings` (every field with
   a `description`, a `title`, a `group`, `advanced` and a default `service_writable`,
   declared with `setting(...)`; the title is the sentence-case name the Mac app shows in
@@ -534,7 +544,7 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   tries is ignored and reported by `doctor`. The service may tune a limit in
   `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
-  commands that write what the service may not — `config import-env`, `auth login`,
+  commands that write what the service may not — `config import-env`, `auth login|logout`,
   `memory seed`, `setup`, `setup mark`, `pin set`, `config lock|unlock`, `migrate`,
   `plugins install|remove`, `models use`, `voice use` (before any install, handshake or
   save), `models start|stop`, `service install|uninstall` — refuse outright under

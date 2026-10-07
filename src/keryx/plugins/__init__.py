@@ -87,6 +87,8 @@ class Plugin:
     retired: Mapping[str, str] = field(default_factory=dict)
     #: What must hold before it can be installed, beyond each key being valid.
     problem: Callable[[dict[str, Any]], str | None] = lambda _values: None
+    #: The accounts it reads (`keryx.integrations.accounts` ids); any one of them will do.
+    needs: tuple[str, ...] = ()
 
     def key(self, name: str) -> Key:
         return next(key for key in self.keys if key.name == name)
@@ -115,6 +117,7 @@ PLUGINS: dict[str, Plugin] = {
             Key("mcp_server", "word", "",
                 "The user-scope MCP server in ~/.claude.json that gives subagents Slack"),
         ),
+        needs=("slack",),
         module="slack",
         retired={"SLACK_CHANNEL_ID": "channel_id", "SLACK_MCP_SERVER": "mcp_server"},
         problem=_slack_problem,
@@ -130,6 +133,7 @@ PLUGINS: dict[str, Plugin] = {
             Key("model", "word", "claude-opus-5-5", "The model that answers"),
             Key("effort", "choice", "low", "How hard it thinks", choices=("low", "medium", "high")),
         ),
+        needs=("gmail",),
         module="email",
         retired={"EMAIL_MODEL": "model", "EMAIL_EFFORT": "effort"},
     ),
@@ -148,6 +152,7 @@ PLUGINS: dict[str, Plugin] = {
             Key("openai_api_key_id", "word", "", "Narrows OpenAI token usage to one key id"),
             Key("anthropic_workspace_id", "word", "", "Narrows Anthropic spend to one workspace"),
         ),
+        needs=("openai-admin", "anthropic-admin"),
         module="billing",
         retired={
             "BILLING_PROVIDER": "provider",

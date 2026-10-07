@@ -38,6 +38,7 @@ from keryx.cli import app
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path
+from keryx.issues import GhStatus
 from keryx.localmodels import catalog, download, hardware, runtimes, servers, use, voice
 from keryx.localmodels.hardware import Hardware
 from keryx.restart.service import ServiceTarget
@@ -71,6 +72,7 @@ COMMANDS = {
     "models stop --json",
     "setup plan --json", "setup mark STEP --json", "pin --json", "pin set --json",
     "config verify KEY --json",
+    "integrations --json", "auth logout google-workspace --json", "auth logout gmail --json",
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
@@ -423,6 +425,9 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
         requested_at=now.isoformat(), state="failed", error="launchctl exited 5",
     ))
 
+    # The integrations: `gh` signed in, though only issue reports turned on would ask it.
+    monkeypatch.setattr("keryx.issues.gh_status",
+                        lambda: GhStatus(installed=True, signed_in=True, account="ada"))
     # The status command's probes: a service installed and running, two calls live.
     monkeypatch.setattr(status, "default_probes", lambda: status.StatusProbes(
         target=lambda settings: ServiceTarget("launchd", "dev.keryx.agent"),
