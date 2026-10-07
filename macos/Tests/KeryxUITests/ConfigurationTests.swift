@@ -79,6 +79,17 @@ import Testing
         #expect(ConfigWording.secretRemovalMessage.contains("paste it in again"))
     }
 
+    @Test func thePINOffersNoWriteAndIsStillFound() {
+        let pin = row("KERYX_PIN", group: "owner", source: "KERYX_HOME/pin",
+                      description: "The PIN a caller gives.", secret: true, title: "Phone PIN")
+        #expect(ConfigWording.isPIN(pin))
+        #expect(!ConfigWording.offersWrites(pin), "the app has no PIN UI: keryx setup changes it")
+        #expect(ConfigWording.offersWrites(row("OPENAI_API_KEY", source: "secrets.toml", secret: true)))
+        #expect(!ConfigWording.offersWrites(row("PUBLIC_HOST", source: "environment")))
+        #expect(ConfigWording.filter([pin, row("DATA_DIR")], by: "pin").map(\.key) == ["KERYX_PIN"])
+        #expect(PreviewData.config.contains { ConfigWording.isPIN($0) && $0.secret && $0.set })
+    }
+
     @Test func theEnvironmentNoteNamesTheSettingByItsTitle() {
         let host = row("PUBLIC_HOST", source: "environment", title: "Public hostname")
         #expect(ConfigWording.environmentHelp(host)

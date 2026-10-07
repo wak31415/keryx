@@ -16,6 +16,7 @@ struct ConfigRowView: View {
     @State private var confirmingRemoval = false
     /// The last text the CLI refused, so a blur does not send it again unchanged.
     @State private var refused: String?
+    @State private var launchFailure: KeryxError?
     @FocusState private var focused: Bool
 
     init(row: ConfigRow, error: KeryxError? = nil) {
@@ -32,9 +33,13 @@ struct ConfigRowView: View {
                         ProgressView().controlSize(.small)
                     }
                     control
-                        .disabled(readOnly || writing)
+                        .disabled(!ConfigWording.isPIN(row) && (readOnly || writing))
                 }
-                if let source = ConfigWording.source(row.source) {
+                if ConfigWording.isPIN(row) {
+                    Text(ConfigWording.pinNote)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let source = ConfigWording.source(row.source) {
                     Text(source)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -58,8 +63,10 @@ struct ConfigRowView: View {
             }
         }
         .contextMenu {
-            Button("Reset to Default") { reset() }
-                .disabled(!row.set || readOnly || writing)
+            if ConfigWording.offersWrites(row) {
+                Button("Reset to Default") { reset() }
+                    .disabled(!row.set || writing)
+            }
             Button("Copy Key") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(row.key, forType: .string)
@@ -69,6 +76,13 @@ struct ConfigRowView: View {
         .onChange(of: draft) { refused = nil }
         .sheet(isPresented: $editingSecret) {
             SecretSheet(key: row.key, title: row.displayTitle, description: row.description, replacing: row.set)
+        }
+        .alert(launchFailure?.title ?? "", isPresented: Binding(
+            get: { launchFailure != nil }, set: { if !$0 { launchFailure = nil } }
+        )) {
+            Button("OK") {}
+        } message: {
+            Text(launchFailure?.message ?? "")
         }
         .confirmationDialog(ConfigWording.removalTitle(row), isPresented: $confirmingRemoval) {
             Button("Remove", role: .destructive) { write { await model.unset(row.key) } }
@@ -80,7 +94,9 @@ struct ConfigRowView: View {
     private var readOnly: Bool { ConfigWording.readOnly(row) }
 
     @ViewBuilder private var control: some View {
-        if row.secret {
+        if ConfigWording.isPIN(row) {
+            pin
+        } else if row.secret {
             secret
         } else {
             switch row.type {
@@ -120,6 +136,25 @@ struct ConfigRowView: View {
         }
         Button(row.set ? "Change…" : "Set…") { editingSecret = true }
             .accessibilityLabel(row.set ? "Change \(row.displayTitle)" : "Set \(row.displayTitle)")
+    }
+
+    // MARK: - The PIN
+
+    /// Whether a PIN is set, and the way to change one; nothing here writes it.
+    @ViewBuilder private var pin: some View {
+        Text(row.set ? "Set" : "Not set")
+            .foregroundStyle(row.set ? .primary : .secondary)
+        Button("Open Setup in Terminal") { openSetup() }
+            .disabled(model.location.value == nil)
+    }
+
+    private func openSetup() {
+        guard let location = model.location.value else { return }
+        do {
+            try TerminalLauncher.open(location, arguments: ["setup"])
+        } catch {
+            launchFailure = (error as? KeryxError) ?? .launch(error.localizedDescription)
+        }
     }
 
     // MARK: - Values

@@ -75,6 +75,22 @@ enum ConfigWording {
         return "\(title): " + rest.prefix(1).lowercased() + rest.dropFirst()
     }
 
+    /// The phone PIN: listed by `config list`, but not a setting. It lives in
+    /// `KERYX_HOME/pin`, is written once, and `config set KERYX_PIN` is always refused; the
+    /// one keyboard path that may replace it is `keryx setup` in Terminal. The app has no PIN
+    /// UI, so this row shows only whether one is set.
+    static func isPIN(_ row: ConfigRow) -> Bool {
+        row.key == "KERYX_PIN"
+    }
+
+    /// Whether the row offers any write at all — a control, Set…/Change…/Remove, or Reset
+    /// to Default. Not the environment's rows, and never the PIN.
+    static func offersWrites(_ row: ConfigRow) -> Bool {
+        !readOnly(row) && !isPIN(row)
+    }
+
+    static let pinNote = "Change it with Keryx Setup in Terminal"
+
     /// Whether a field's text should be sent: it differs from what is stored, no write is
     /// under way, and it is not the text the CLI last refused (unchanged since).
     static func shouldCommit(_ text: String, stored: String, writing: Bool, refused: String?) -> Bool {
