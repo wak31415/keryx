@@ -1533,13 +1533,20 @@ def _install_units(
 def plugins_list(
     as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
 ) -> None:
-    """List the plugins: on or off, their two files, and why one is refused."""
+    """List the plugins: on or off, their two files, and why one is refused.
+
+    `--json` also describes each for the Mac app: its settings as typed fields, the
+    accounts it needs, and whether it would work on a call now (`ready`, and `why` not).
+    """
     settings = _configure_readonly()
     found = plugins.status(settings)
     if as_json:
+        needed = dict.fromkeys(name for spec in plugins.PLUGINS.values() for name in spec.needs)
+        connected = accounts.connected(settings, needed)
         typer.echo(json.dumps({
             "directory": str(settings.custom_tools_dir),
-            "plugins": [status.as_dict() for status in found],
+            "plugins": [status.as_dict() | plugins.describe(status, connected)
+                        for status in found],
         }, indent=2))
         return
     typer.echo(f"# {settings.custom_tools_dir}")
@@ -1606,6 +1613,9 @@ def plugins_install(
         typer.Option("--template", help="Write its settings file and a draft to edit, and "
                      "leave it off until `keryx plugins install NAME`."),
     ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print {name, on, message} and nothing else.")
+    ] = False,
 ) -> None:
     """Turn a plugin on, from its settings file, the values given here, or the old settings.
 
@@ -1615,6 +1625,9 @@ def plugins_install(
     """
     _owner_only("install a plugin")
     settings = _configure_readonly()
+    if as_json and from_settings:
+        typer.echo("--json is for one plugin, and --from-settings may move several", err=True)
+        raise typer.Exit(2)
     try:
         if from_settings:
             names = None if name is None else [plugins.plugin(name).name]
@@ -1631,18 +1644,14 @@ def plugins_install(
             typer.echo("which plugin? (`keryx plugins`)", err=True)
             raise typer.Exit(2)
         spec = plugins.plugin(name)
-        values = plugins.command_line_values(name, assignments or [])
-        if (clusters or guard is not None) and name != "cluster_stats":
-            raise plugins.PluginConfigError("--cluster and --guard are for cluster_stats")
-        if clusters:
-            values["clusters"] = dict(
-                plugins.parse_assignment(text, what="ALIAS=PARTITION") for text in clusters
-            )
-        if guard is not None:
-            values["guard"] = guard
+        values = _plugin_values(name, assignments, clusters, guard)
         if template:
             path = plugins.write_template(settings, name, values)
-            typer.echo(f"edit {path}, then `keryx plugins install {name}`")
+            if as_json:
+                _echo_plugin_json(name, False, f"{spec.title} stays off: its settings file "
+                                  "and a draft are written to finish by hand.")
+            else:
+                typer.echo(f"edit {path}, then `keryx plugins install {name}`")
             return
         if values:
             plugins.write_config(settings, name, values)
@@ -1650,7 +1659,40 @@ def plugins_install(
     except plugins.PluginConfigError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
-    _echo_plugin_states(settings, [name])
+    if not as_json:
+        _echo_plugin_states(settings, [name])
+        return
+    status = _plugin_status(settings, name)
+    if not status.on:
+        typer.echo(f"{name} is installed but refused: {status.refused}", err=True)
+        raise typer.Exit(1)
+    _echo_plugin_json(name, True, f"{spec.title} is on from the next call.")
+
+
+def _plugin_values(
+    name: str, assignments: list[str] | None, clusters: list[str] | None, guard: str | None
+) -> dict[str, Any]:
+    """`--set KEY=VALUE`, `--cluster` and `--guard` for plugin `name`, validated as install
+    validates them; a `PluginConfigError` says what is wrong."""
+    values = plugins.command_line_values(name, assignments or [])
+    if (clusters or guard is not None) and name != "cluster_stats":
+        raise plugins.PluginConfigError("--cluster and --guard are for cluster_stats")
+    if clusters:
+        values["clusters"] = dict(
+            plugins.parse_assignment(text, what="ALIAS=PARTITION") for text in clusters
+        )
+    if guard is not None:
+        values["guard"] = guard
+    return values
+
+
+def _plugin_status(settings: Settings, name: str) -> plugins.Status:
+    """The plugin as the next call would load it."""
+    return next(status for status in plugins.status(settings) if status.name == name)
+
+
+def _echo_plugin_json(name: str, on: bool, message: str) -> None:
+    typer.echo(json.dumps({"name": name, "on": on, "message": message}, indent=2))
 
 
 def _echo_plugin_states(settings: Settings, names: list[str]) -> None:
@@ -1672,22 +1714,71 @@ def _echo_plugin_states(settings: Settings, names: list[str]) -> None:
 def plugins_remove(
     name: Annotated[str, typer.Argument(help="The plugin.")],
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask first.")] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print {name, on, message}; asks nothing first.")
+    ] = False,
 ) -> None:
     """Turn a plugin off. Its settings are set aside, so turning it on again keeps them."""
     _owner_only("remove a plugin")
     settings = _configure_readonly()
     try:
-        plugins.plugin(name)
+        spec = plugins.plugin(name)
     except plugins.PluginConfigError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(1) from None
-    if not yes:
+    if not (yes or as_json):  # the app asks before it runs this
         typer.confirm(f"turn {name} off?", abort=True)
-    if plugins.remove(settings, name):
+    was_on = plugins.remove(settings, name)
+    if as_json:
+        _echo_plugin_json(name, False, f"{spec.title} is off from the next call; its "
+                          "settings are kept." if was_on else f"{spec.title} was not on.")
+    elif was_on:
         typer.echo(f"{name} is off from the next call; its settings are kept in "
                    f"{plugins.off_path(settings, name)}")
     else:
         typer.echo(f"{name} was not on")
+
+
+@plugins_app.command("set")
+def plugins_set(
+    name: Annotated[str, typer.Argument(help="The plugin, which must be installed.")],
+    assignments: Annotated[
+        list[str] | None, typer.Argument(help="KEY=VALUE for one of its settings; several.")
+    ] = None,
+    clusters: Annotated[
+        list[str] | None,
+        typer.Option("--cluster", help="cluster_stats: ALIAS=PARTITION, the whole [clusters] "
+                     "table; repeat for more."),
+    ] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print {name, on, message} and nothing else.")
+    ] = False,
+) -> None:
+    """Change an installed plugin's settings in its file, validated as install validates
+    them. Nothing is reinstalled; a secret is never taken here. From the next call."""
+    _owner_only("change a plugin's settings")
+    settings = _configure_readonly()
+    try:
+        spec = plugins.plugin(name)
+        if not (assignments or clusters):
+            typer.echo(f"give KEY=VALUE for one of {name}'s settings", err=True)
+            raise typer.Exit(2)
+        if not plugins.tool_path(settings, name).is_file():
+            raise plugins.PluginConfigError(
+                f"{name} is not installed, so it has no settings to change: turn it on first"
+            )
+        plugins.write_config(settings, name, _plugin_values(name, assignments, clusters, None))
+    except plugins.PluginConfigError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+    status = _plugin_status(settings, name)
+    if not as_json:
+        typer.echo(f"{name}: settings saved" + (
+            "" if status.on else f"; it does not load: {status.refused}"))
+        return
+    why = None if status.on else plugins.describe(
+        status, accounts.connected(settings, spec.needs))["why"]
+    _echo_plugin_json(name, status.on, "Settings saved." + (f" {why}" if why else ""))
 
 
 @app.command()

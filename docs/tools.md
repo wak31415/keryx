@@ -62,9 +62,10 @@ A plugin is two files in `~/.local/share/keryx/tools/`:
 
 To turn one on: `keryx setup` → Plugins, or `keryx plugins install NAME [--set KEY=VALUE]`.
 `keryx plugins` lists them, and why one that is on is refused (not signed in, a setting
-that does not validate); `keryx plugins remove NAME` turns one off and keeps its settings
-for next time. They are custom tools like your own (below), and `keryx tools` lists them
-too.
+that does not validate); `keryx plugins set NAME KEY=VALUE …` changes the settings of one
+that is installed, checked the way install checks them; `keryx plugins remove NAME` turns
+one off and keeps its settings for next time. The Mac app's Plugins section is these same
+commands. They are custom tools like your own (below), and `keryx tools` lists them too.
 
 `check_billing` and `cluster_stats` answer before the PIN: they cannot change anything and
 read nothing of yours. `send_to_slack` writes as you and `check_email` reads your mail, so

@@ -65,6 +65,8 @@ class Key:
     choices: tuple[str, ...] = ()
     #: For a number: whether 0 is allowed (a budget of 0 is "none"; a timeout of 0 is not).
     positive: bool = False
+    #: What the Mac app calls it, in sentence case.
+    title: str = ""
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,14 @@ class Plugin:
     problem: Callable[[dict[str, Any]], str | None] = lambda _values: None
     #: The accounts it reads (`keryx.integrations.accounts` ids); any one of them will do.
     needs: tuple[str, ...] = ()
+    #: What it lets the assistant do on a call, in one sentence, for the Mac app.
+    description: str = ""
+    #: The app's sentence for when `problem` is not None: the setting it still needs.
+    incomplete: str = ""
+    #: Its tool loads only when what it `needs` is there, wherever that came from: one that
+    #: loads is ready even with none of them connected (Slack's token may be the MCP
+    #: server's).
+    loads_only_when_ready: bool = False
 
     def key(self, name: str) -> Key:
         return next(key for key in self.keys if key.name == name)
@@ -113,11 +123,19 @@ PLUGINS: dict[str, Plugin] = {
         important=("channel_id",),
         secrets=("SLACK_BOT_TOKEN",),
         keys=(
-            Key("channel_id", "word", "", "The DM channel id (in the conversation's details)"),
+            Key("channel_id", "word", "", "The DM channel id (in the conversation's details)",
+                title="DM channel ID"),
             Key("mcp_server", "word", "",
-                "The user-scope MCP server in ~/.claude.json that gives subagents Slack"),
+                "The user-scope MCP server in ~/.claude.json that gives subagents Slack",
+                title="Slack MCP server"),
         ),
         needs=("slack",),
+        description=(
+            "Sends you a written copy on Slack when you ask for one on a call, and posts PIN "
+            "lockouts there too."
+        ),
+        incomplete="Needs the ID of your Slack DM channel.",
+        loads_only_when_ready=True,
         module="slack",
         retired={"SLACK_CHANNEL_ID": "channel_id", "SLACK_MCP_SERVER": "mcp_server"},
         problem=_slack_problem,
@@ -130,10 +148,16 @@ PLUGINS: dict[str, Plugin] = {
         important=(),
         secrets=(),
         keys=(
-            Key("model", "word", "claude-opus-5-5", "The model that answers"),
-            Key("effort", "choice", "low", "How hard it thinks", choices=("low", "medium", "high")),
+            Key("model", "word", "claude-opus-5-5", "The model that answers", title="Model"),
+            Key("effort", "choice", "low", "How hard it thinks", choices=("low", "medium", "high"),
+                title="Effort"),
         ),
         needs=("gmail",),
+        description=(
+            "Answers questions about your email on a call in about five seconds, from a "
+            "read-only look at Gmail."
+        ),
+        loads_only_when_ready=True,
         module="email",
         retired={"EMAIL_MODEL": "model", "EMAIL_EFFORT": "effort"},
     ),
@@ -146,13 +170,20 @@ PLUGINS: dict[str, Plugin] = {
         secrets=("OPENAI_ADMIN_KEY", "ANTHROPIC_ADMIN_KEY"),
         keys=(
             Key("provider", "choice", "auto", "Whose bill it reports by default",
-                choices=("auto", "openai", "anthropic")),
-            Key("monthly_budget", "number", 0, "Your monthly budget in dollars (0 for none)"),
-            Key("openai_project_id", "word", "", "Narrows OpenAI spend to one project"),
-            Key("openai_api_key_id", "word", "", "Narrows OpenAI token usage to one key id"),
-            Key("anthropic_workspace_id", "word", "", "Narrows Anthropic spend to one workspace"),
+                choices=("auto", "openai", "anthropic"), title="Provider"),
+            Key("monthly_budget", "number", 0, "Your monthly budget in dollars (0 for none)",
+                title="Monthly budget (USD)"),
+            Key("openai_project_id", "word", "", "Narrows OpenAI spend to one project",
+                title="OpenAI project ID"),
+            Key("openai_api_key_id", "word", "", "Narrows OpenAI token usage to one key id",
+                title="OpenAI API key ID"),
+            Key("anthropic_workspace_id", "word", "", "Narrows Anthropic spend to one workspace",
+                title="Anthropic workspace ID"),
         ),
         needs=("openai-admin", "anthropic-admin"),
+        description=(
+            "Tells you what you are spending, read from OpenAI's or Anthropic's billing API."
+        ),
         module="billing",
         retired={
             "BILLING_PROVIDER": "provider",
@@ -170,11 +201,18 @@ PLUGINS: dict[str, Plugin] = {
         important=("clusters",),
         secrets=(),
         keys=(
-            Key("clusters", "table", {}, "The hosts it asks, each with its GPU partition"),
-            Key("guard", "path", "", "A guard script of your own (blank: the built-in one)"),
+            Key("clusters", "table", {}, "The hosts it asks, each with its GPU partition",
+                title="Clusters"),
+            Key("guard", "path", "", "A guard script of your own (blank: the built-in one)",
+                title="Guard script"),
             Key("timeout_s", "number", 20.0, "How long a cluster may take to answer",
-                positive=True),
+                positive=True, title="Timeout (seconds)"),
         ),
+        description=(
+            "Tells you what is free on your Slurm cluster and whether your jobs are still "
+            "running, over the ssh login you already have open."
+        ),
+        incomplete="Needs a cluster host.",
         module="cluster",
         retired={
             "CLUSTERS": "clusters",
@@ -432,6 +470,8 @@ class Status:
     #: Why its file is refused, or its settings do not load; None when it loads or is off.
     refused: str | None
     values: dict[str, Any] | None
+    #: Why its settings do not load, installed or not; None when they do.
+    config_error: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -458,10 +498,12 @@ def status(settings: "Settings") -> list[Status]:
     for name in PLUGINS:
         values: dict[str, Any] | None = None
         refused = refusals.get(f"{name}.py")
+        config_error = None
         try:
             values = read_config(settings, name)
         except PluginConfigError as error:
-            refused = refused or str(error)
+            config_error = str(error)
+            refused = refused or config_error
         installed = tool_path(settings, name).is_file()
         found.append(
             Status(
@@ -472,9 +514,76 @@ def status(settings: "Settings") -> list[Status]:
                 config_file=config_path(settings, name),
                 refused=refused if installed else None,
                 values=values,
+                config_error=config_error,
             )
         )
     return found
+
+
+# --- what the Mac app shows --------------------------------------------------------------
+
+#: The type the app edits each kind of key as. A number is a float because every one takes a
+#: fraction (a budget of 12.5); a whole one is still written, and read back, as an integer.
+FIELD_TYPES: dict[Kind, str] = {
+    "word": "string", "path": "string", "choice": "choice", "number": "float", "table": "map",
+}
+#: A command quoted in a sentence, and the colon that introduced it: the remedy, which is a
+#: button in the app.
+_COMMAND = re.compile(r"\s*:?\s*`[^`]*`.*$", re.DOTALL)
+
+
+def app_sentence(text: str) -> str:
+    """A loader's refusal as the app says it: the cause, without the command that fixes it."""
+    cause = _COMMAND.sub("", text).strip().rstrip(":;,.")
+    return cause[:1].upper() + cause[1:] + "."
+
+
+def _readiness(status: Status, connected: Mapping[str, bool]) -> str | None:
+    """Why the plugin would not work on a call now, in the app's words; None when it would."""
+    from keryx.integrations.accounts import INTEGRATIONS
+
+    spec = plugin(status.name)
+    if status.config_error is not None:
+        return f"Its settings file does not load: {status.config_error}."
+    loads = status.on and spec.loads_only_when_ready
+    if spec.needs and not loads and not any(connected.get(name) for name in spec.needs):
+        called = " or ".join(INTEGRATIONS[name].called for name in spec.needs)
+        return f"Connect {called} in Integrations first."
+    if status.values is not None and spec.problem(status.values) is not None:
+        return spec.incomplete or app_sentence(spec.problem(status.values) or "")
+    if status.installed and not status.on and status.refused:
+        return app_sentence(status.refused)
+    return None
+
+
+def describe(status: Status, connected: Mapping[str, bool]) -> dict[str, Any]:
+    """What `keryx plugins list --json` adds to `status.as_dict()` for the Mac app.
+
+    `connected` is whether each account in the plugin's `needs` is
+    (`integrations.accounts.connected`). A field's value is never a secret: those are not
+    in the file. Settings that do not load show the defaults, and `why` says so.
+    """
+    spec = plugin(status.name)
+    values = status.values if status.values is not None else defaults(status.name)
+    why = _readiness(status, connected)
+    return {
+        "title": spec.title,
+        "description": spec.description,
+        "fields": [
+            {
+                "key": key.name,
+                "title": key.title,
+                "type": FIELD_TYPES[key.kind],
+                "choices": list(key.choices) if key.kind == "choice" else None,
+                "important": key.name in spec.important,
+                "value": values.get(key.name, _copy(key.default)),
+            }
+            for key in spec.keys
+        ],
+        "needs": list(spec.needs),
+        "ready": why is None,
+        "why": why,
+    }
 
 
 # --- what they read ----------------------------------------------------------------------

@@ -79,7 +79,12 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
   install [NAME] --from-settings` (moves the settings they replaced), `plugins remove NAME
-  [--yes]`; install and remove refuse the running service
+  [--yes]`, `plugins set NAME KEY=VALUE … [--cluster ALIAS=PARTITION …]` (an installed
+  plugin's file settings, with install's validation, nothing reinstalled; not installed
+  exits 1); install, remove and set refuse the running service, and each takes `--json`
+  (`{name, on, message}`; remove then asks nothing). `plugins list --json` also describes
+  each for the Mac app: `title`, `description`, typed `fields`, the integrations it
+  `needs` (any one will do), and `ready` with `why` in the app's words
 - The owner's own voice tools: `uv run keryx tools [--json]` (what `DATA_DIR/tools` holds
   and what the next call would refuse; exits 1 while anything is)
 - Start that memory before any call has: `uv run keryx memory seed --file FILE|- [--force]
@@ -192,8 +197,10 @@ remember:
 - **plugins** — `plugins/` is the optional voice tools (`send_to_slack`, `check_email`,
   `check_billing`, `cluster_stats`), none registered from the source tree. `PLUGINS` in
   `plugins/__init__.py` is the table everything reads (its `important` keys are what the
-  wizard asks; `retired` the settings each replaced), with the file helpers (`install`,
-  `remove`, `write_config`, `status`, `move_from_settings`). One module per plugin builds its
+  wizard asks; `retired` the settings each replaced; `needs` the integrations it reads), with
+  the file helpers (`install`, `remove`, `write_config`, `status`, `move_from_settings`) and
+  `describe`, the Mac app's view of one (its fields typed by `FIELD_TYPES`, and whether it
+  is ready, with `app_sentence` keeping commands out of `why`). One module per plugin builds its
   tool (`<name>_tool(config_path, fake=…)`), `ssh_hosts` reads `~/.ssh/config`, and
   `templates/` is data — a one-line `.py` and a commented `.toml` per plugin, copied into
   `DATA_DIR/tools`, never imported from there. So a plugin *is* a custom tool: loaded per
@@ -546,7 +553,7 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
   commands that write what the service may not — `config import-env`, `auth login|logout`,
   `memory seed`, `setup`, `setup mark`, `pin set`, `config lock|unlock`, `migrate`,
-  `plugins install|remove`, `models use`, `voice use` (before any install, handshake or
+  `plugins install|remove|set`, `models use`, `voice use` (before any install, handshake or
   save), `models start|stop`, `service install|uninstall` — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
