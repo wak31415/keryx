@@ -585,3 +585,138 @@ def test_doctor_reports_a_config_that_does_not_parse_rather_than_crashing(home):
     check = next(c for c in document["checks"] if c["name"] == "config.toml")
     assert (check["state"], check["severity"]) == ("failed", "hard")
     assert result.exit_code == 1
+
+
+# --- config options ------------------------------------------------------------------------
+
+
+@pytest.fixture
+def option_sources(monkeypatch):
+    """Every source `config options` reads, faked: nothing leaves the process."""
+    import dataclasses
+
+    import httpx
+
+    from keryx.config import options
+    from keryx.localmodels.hardware import Hardware
+
+    asked: list[tuple[str, dict]] = []
+
+    def get(url, **kwargs):
+        asked.append((url, kwargs))
+        if "anthropic" in url:
+            return httpx.Response(401, json={"error": "invalid x-api-key sk-ant-live"})
+        return httpx.Response(200, json={"data": [
+            {"id": "gpt-realtime-2.1"}, {"id": "gpt-realtime-mini"}, {"id": "gpt-6-luna"},
+        ]})
+
+    fake = options.Sources(
+        get=get,
+        codex_models=lambda env, timeout: [
+            options.CodexModel("gpt-6-astra", "GPT-6-Astra", "Frontier.")
+        ],
+        hardware=lambda: Hardware("metal", "Apple silicon", 0.0, 32.0),
+        downloaded=lambda entry: False,
+    )
+    monkeypatch.setattr(options, "default_sources", lambda settings: dataclasses.replace(fake))
+    return asked
+
+
+OPTION_FIELDS = ["key", "current", "options", "source", "live", "free_form", "error"]
+
+
+@pytest.mark.parametrize(
+    ("key", "source", "live"),
+    [
+        ("OPENAI_REALTIME_MODEL", "openai", True),
+        ("SUBAGENT_MODEL", "builtin", False),
+        ("CODEX_MODEL", "codex", True),
+        ("LOCAL_AGENT_MODEL", "builtin", False),
+        ("LLM_SERVER_MODEL", "catalog", False),
+        ("OPENAI_VOICE", "builtin", False),
+    ],
+)
+def test_options_json_has_the_contract_shape(home, option_sources, key, source, live):
+    run("config", "set", "OPENAI_API_KEY", "--stdin", input="sk-live-openai")
+
+    result = run("config", "options", key, "--json")
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert list(document) == OPTION_FIELDS
+    assert (document["key"], document["source"], document["live"]) == (key, source, live)
+    assert isinstance(document["free_form"], bool)
+    assert all(set(option) == {"value", "label", "detail"} for option in document["options"])
+
+
+def test_options_resolves_a_key_the_way_get_does(home, option_sources):
+    run("config", "set", "OPENAI_API_KEY", "--stdin", input="sk-live-openai")
+
+    document = json.loads(run("config", "options", "openai_realtime_model", "--json").stdout)
+
+    assert document["key"] == "OPENAI_REALTIME_MODEL"
+    assert [option["value"] for option in document["options"]] == [
+        "gpt-realtime-mini", "gpt-realtime-2.1"
+    ]
+
+
+def test_options_never_prints_a_key(home, option_sources):
+    run("config", "set", "OPENAI_API_KEY", "--stdin", input="sk-live-openai")
+    run("config", "set", "ANTHROPIC_API_KEY", "--stdin", input="sk-ant-live")
+
+    for key in ("OPENAI_REALTIME_MODEL", "SUBAGENT_MODEL"):
+        for flags in (["--json"], []):
+            result = run("config", "options", key, *flags)
+            assert result.exit_code == 0
+            assert "sk-live-openai" not in result.output
+            assert "sk-ant-live" not in result.output
+    assert any(
+        kwargs["headers"].get("x-api-key") == "sk-ant-live" for _, kwargs in option_sources
+    )
+
+
+def test_options_falls_back_and_still_exits_0(home, option_sources):
+    run("config", "set", "ANTHROPIC_API_KEY", "--stdin", input="sk-ant-live")
+
+    result = run("config", "options", "SUBAGENT_MODEL", "--json")
+
+    assert result.exit_code == 0
+    document = json.loads(result.stdout)
+    assert (document["live"], document["error"]) == (False, "Anthropic did not accept the key")
+    assert document["current"] in [option["value"] for option in document["options"]]
+
+
+def test_options_as_text_is_one_option_a_line_the_error_first(home, option_sources):
+    lines = run("config", "options", "SUBAGENT_MODEL").output.splitlines()
+
+    assert lines[0] == (
+        "Anthropic lists models only to an API key; showing the models Keryx knows"
+    )
+    assert lines[1].split() == ["claude-opus-5-5", "Claude", "Opus", "(opus)"]
+
+
+def test_options_as_text_shows_a_blank_value(home, option_sources):
+    lines = run("config", "options", "OPENAI_VOICE").output.splitlines()
+
+    assert lines[0].startswith('""') and "The assistant's own voice" in lines[0]
+
+
+def test_options_refuses_a_setting_without_a_list(home):
+    result = run("config", "options", "PORT", "--json")
+
+    assert result.exit_code == 2
+    assert "PORT has no list of options" in result.output
+    assert result.stdout == ""
+
+
+def test_options_refuses_a_setting_that_does_not_exist(home):
+    assert run("config", "options", "NOPE").exit_code == 2
+
+
+def test_list_json_says_which_settings_have_options(home):
+    from keryx.config.options import OPTION_KEYS
+
+    rows = json.loads(run("config", "list", "--json").output)
+
+    assert {row["key"] for row in rows if row["has_options"]} == set(OPTION_KEYS)
+    assert all(isinstance(row["has_options"], bool) for row in rows)

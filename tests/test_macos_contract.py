@@ -60,7 +60,7 @@ PULL = "models pull --json"
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
     "tasks usage --json", "models list --json", "models use NAME --json",
-    "config list --json", "approvals --json", "memory --json",
+    "config list --json", "config options KEY --json", "approvals --json", "memory --json",
 }
 #: What the placeholders in a contract command line stand for.
 TASK_ID = 1
@@ -95,7 +95,8 @@ def contract() -> dict:
 
 
 def argv(command: str) -> list[str]:
-    words = {"ID": str(TASK_ID), "NAME": MODEL.key}
+    # The realtime model on the seeded voice server: a list read live, the current appended.
+    words = {"ID": str(TASK_ID), "NAME": MODEL.key, "KEY": "OPENAI_REALTIME_MODEL"}
     return [words.get(word, word) for word in command.split()]
 
 
@@ -431,6 +432,7 @@ def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
     models = json.loads(runner.invoke(app, ["models", "list", "--json"]).stdout)
     tasks = json.loads(runner.invoke(app, ["tasks", "list", "--json"]).stdout)["tasks"]
     report = json.loads(runner.invoke(app, ["status", "--json"]).stdout)
+    options = json.loads(runner.invoke(app, argv("config options KEY --json")).stdout)
 
     assert models["servers"]["llm"]["reachable"] is True
     assert models["servers"]["llm"]["served_model"] == SERVED
@@ -440,6 +442,8 @@ def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
     assert report["restart"]["failure"] == "launchctl exited 5"
     assert report["health"]["live_sessions"] == 2
     assert report["assistant"]["name"] == "Vega"
+    assert (options["live"], options["source"]) == (True, "server")
+    assert {option["detail"] for option in options["options"]} == {None, "current"}
 
 
 # --- the stream: models pull --json ------------------------------------------------------

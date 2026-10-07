@@ -25,10 +25,14 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   its fields present either way)
 - Settings: `uv run keryx config list [--json] [--group G]` (`--json` gives each row its
   `title` and `group_title`, its `type` — `keryx/config/types.py` — and a choice's
-  `choices`; the table keeps the keys, which are what is typed), `config get KEY… [--shell]`
-  (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
-  `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
-  `config import-env [PATH]`, `config lock|unlock KEY` (what the running service may change)
+  `choices`, and `has_options`; the table keeps the keys, which are what is typed),
+  `config options KEY [--json]` (the models or voices a setting can take, read live from
+  OpenAI, Anthropic, Codex or a server of the owner's when it can be, else Keryx's own list
+  with `error` saying why — exit 0 either way; `keryx/config/options.py`), `config get
+  KEY… [--shell]` (never a secret), `config set KEY VALUE […]` (a secret only with
+  `--stdin` or `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every
+  directory), `config import-env [PATH]`, `config lock|unlock KEY` (what the running service
+  may change)
 - Move a Jarvis install to Keryx — its XDG directories (`~/.config/jarvis`, …), or an older
   `~/.jarvis` and a checkout `.env`: `uv run keryx migrate [--dry-run] [--yes]` (stops the
   service, moves, retires `jarvis.service` for `keryx.service`, re-renders the unit and the

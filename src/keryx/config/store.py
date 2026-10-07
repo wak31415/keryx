@@ -35,6 +35,7 @@ from keryx.config.files import (
     secure_file,
     write_private,
 )
+from keryx.config.options import has_options
 from keryx.config.pin import PIN_PATTERN, PIN_RULE, pin_file, read_enrolled_pin, write_enrolled_pin
 from keryx.config.settings import (
     GOOGLE_CLIENT_FILE,
@@ -254,6 +255,7 @@ class ConfigStore:
                     "value": None if secret else dumped[name],
                     "type": kind,
                     "choices": choices,
+                    "has_options": has_options(key),
                 }
             )
         return rows

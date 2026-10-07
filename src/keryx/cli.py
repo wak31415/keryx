@@ -49,6 +49,7 @@ from keryx.config.migrate import MigrationError, make_plan, old_target, retire_o
 from keryx.config.migrate import Report as MigrationReport
 from keryx.config.migrate import Service as MigratingService
 from keryx.config.migrate import run as run_migration
+from keryx.config.options import has_options, options_for
 from keryx.config.permissions import ACTOR_ENVS, SERVICE, current_actor
 from keryx.config.settings import ConfigFileError, tolerate_broken_files
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
@@ -1597,6 +1598,32 @@ def config_get(
             raise typer.Exit(1)
         value = _plain(dumped[name])
         typer.echo(f"{env_var_name(name)}={shlex.quote(value)}" if shell else value)
+
+
+@config_app.command("options")
+def config_options(
+    key: Annotated[str, typer.Argument(help="A setting with a list of values, by name.")],
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
+) -> None:
+    """The values a setting can take, found now: the models a provider lists, the voices.
+
+    A list that cannot be read falls back to the values Keryx knows, and says why; that is
+    still a success. `keryx config list --json` marks the settings that have one.
+    """
+    key = _key_or_exit(key)
+    if not has_options(key):
+        typer.echo(f"{key} has no list of options", err=True)
+        raise typer.Exit(2)
+    found = options_for(key, _load_settings_optional())
+    if as_json:
+        typer.echo(json.dumps(found.as_dict(), indent=2))
+        return
+    if found.error:
+        typer.echo(found.error)
+    for option in found.options:
+        value = option.value or '""'  # blank is a value too: OPENAI_VOICE's own voice
+        detail = f" ({option.detail})" if option.detail else ""
+        typer.echo(f"{value}  {option.label}{detail}")
 
 
 def _read_secret_input(key: str) -> str:
