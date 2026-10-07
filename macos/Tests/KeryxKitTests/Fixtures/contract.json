@@ -21,7 +21,7 @@
     "tasks": ["id", "status", "description", "agent", "created_at", "internal", "needs_restart", "callback_requested"]
   },
   "tasks show ID --json": {
-    "": ["task", "report_truncated"],
+    "": ["task", "report_truncated", "log", "log_truncated", "resumable"],
     "task": ["id", "status", "description", "agent", "created_at", "internal", "needs_restart", "callback_requested"],
     "log": ["kind", "text"]
   },
@@ -43,7 +43,7 @@
     "": ["saved", "restart_needed"]
   },
   "config list --json": {
-    "": ["key", "group", "description", "source", "type", "required", "set", "secret", "service_writable", "protected"]
+    "": ["key", "group", "description", "source", "type", "choices", "required", "set", "secret", "service_writable", "protected"]
   },
   "approvals --json": {
     "": ["escalation_enabled", "escalate_after_s", "max_per_hour", "cancelled_before_call", "answered_after_call", "entries"],
