@@ -22,11 +22,13 @@ error's text, any of which can quote the key back. Nothing here writes anything.
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from keryx.config.options import (
     ANTHROPIC_MODELS_URL,
     ANTHROPIC_VERSION,
+    TIMEOUT_S,
     Unavailable,
     _get_json,
     http_get,
@@ -79,10 +81,12 @@ def _twilio_admin(sid: str, token: str) -> Any:
 
 
 def default_checks() -> Checks:
-    """The real OpenAI, Anthropic and Twilio."""
+    """The real OpenAI, Anthropic and Twilio, each given `TIMEOUT_S`: the owner is waiting
+    on it in the app. (The wizard's own OpenAI probe allows longer at the terminal.)"""
     from keryx.setup.context import openai_key_problem
 
-    return Checks(openai_key_problem=openai_key_problem, get=http_get, twilio=_twilio_admin)
+    return Checks(openai_key_problem=partial(openai_key_problem, timeout=TIMEOUT_S),
+                  get=http_get, twilio=_twilio_admin)
 
 
 def can_verify(key: str) -> bool:

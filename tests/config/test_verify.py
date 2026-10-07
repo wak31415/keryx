@@ -153,6 +153,37 @@ def test_the_read_only_loaders_stand_in_openai_key_is_not_a_key(settings):
     assert fake.openai_keys == []
 
 
+def test_every_real_check_is_bounded_at_the_same_five_seconds(monkeypatch):
+    """The app waits on `config verify` with the owner watching: OpenAI's read included,
+    whose wizard probe allows fifteen at the terminal."""
+    from keryx.setup import context
+
+    asked = []
+
+    def get(url, headers, timeout):
+        asked.append(timeout)
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(context.httpx, "get", get)
+
+    checks = verify.default_checks()
+    checks.openai_key_problem("sk")
+
+    assert asked == [options.TIMEOUT_S] == [5.0]
+    assert checks.get is options.http_get  # Anthropic's, at options.TIMEOUT_S
+
+
+def test_the_wizards_own_openai_probe_keeps_its_fifteen_seconds(monkeypatch):
+    from keryx.setup import context
+
+    asked = []
+    monkeypatch.setattr(context.httpx, "get",
+                        lambda url, headers, timeout: asked.append(timeout) or httpx.Response(200))
+
+    assert context.openai_key_problem("sk") is None
+    assert asked == [context.PROBE_TIMEOUT_S] == [15.0]
+
+
 # --- Anthropic ---------------------------------------------------------------------------
 
 

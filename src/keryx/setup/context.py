@@ -34,11 +34,12 @@ OPENAI_MODELS_URL = "https://api.openai.com/v1/models"
 PROBE_TIMEOUT_S = 15.0
 
 
-def openai_key_problem(key: str) -> str | None:
-    """Why OpenAI will not take `key`, in a sentence; None when it does. One `GET`."""
+def openai_key_problem(key: str, *, timeout: float = PROBE_TIMEOUT_S) -> str | None:
+    """Why OpenAI will not take `key`, in a sentence; None when it does. One `GET`, given
+    `timeout` seconds: the wizard's fifteen, unless the caller (`config verify`) says."""
     try:
         response = httpx.get(
-            OPENAI_MODELS_URL, headers={"Authorization": f"Bearer {key}"}, timeout=PROBE_TIMEOUT_S
+            OPENAI_MODELS_URL, headers={"Authorization": f"Bearer {key}"}, timeout=timeout
         )
     except httpx.HTTPError as exc:
         return f"could not reach OpenAI ({type(exc).__name__})"
