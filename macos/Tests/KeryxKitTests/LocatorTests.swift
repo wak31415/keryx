@@ -230,6 +230,66 @@ import Testing
         #expect(failure.lookedAt.contains { $0.contains("login shell") })
     }
 
+    // MARK: - KERYX_APP_ENVIRONMENT=inherit
+
+    /// A runner that fails the test if anything is run: `inherit` asks no login shell.
+    static func noShell() -> FakeRunner {
+        FakeRunner { request in
+            Issue.record("ran \(request.executable) \(request.arguments)")
+            return .init(exitCode: 1, stdout: Data(), stderr: Data())
+        }
+    }
+
+    @Test func inheritTakesTheAppsOwnEnvironmentForAChosenFolder() async throws {
+        var fs = FakeFileSystem()
+        fs.files["/sb/keryx/pyproject.toml"] = Self.pyproject
+        fs.executables = ["/sb/keryx/.venv/bin/keryx"]
+        let runner = Self.noShell()
+        let locator = KeryxLocator(
+            fileSystem: fs, runner: runner, home: Self.home,
+            environment: ["KERYX_APP_ENVIRONMENT": "inherit", "HOME": "/sb/home", "PATH": "/sb/bin",
+                          "KERYX_HOME": "/sb/home/.config/keryx", "KERYX_ACTOR": "service"])
+
+        let location = try await locator.locate(preference: "/sb/keryx").get()
+        #expect(location.source == .preference)
+        #expect(location.executable == "/sb/keryx/.venv/bin/keryx")
+        #expect(location.environment["KERYX_HOME"] == "/sb/home/.config/keryx")
+        #expect(location.environment["HOME"] == "/sb/home")
+        #expect(location.environment["PATH"] == "/sb/bin")
+        #expect(location.environment["KERYX_ACTOR"] == nil)
+        #expect(runner.requests.isEmpty)
+    }
+
+    @Test func inheritFindsKeryxOnTheAppsOwnPath() async throws {
+        var fs = FakeFileSystem()
+        fs.executables = ["/sb/bin/keryx"]
+        let runner = Self.noShell()
+        let locator = KeryxLocator(
+            fileSystem: fs, runner: runner, home: Self.home,
+            environment: ["KERYX_APP_ENVIRONMENT": "inherit", "PATH": "/nowhere:/sb/bin"])
+
+        let location = try await locator.locate(preference: nil).get()
+        #expect(location.source == .loginShell)
+        #expect(location.executable == "/sb/bin/keryx")
+        #expect(location.environment["PATH"] == "/nowhere:/sb/bin")
+        #expect(location.environment["HOME"] == "/Users/x")
+        #expect(runner.requests.isEmpty)
+    }
+
+    @Test func anyOtherValueStillAsksTheLoginShell() async throws {
+        var fs = FakeFileSystem()
+        fs.files["/Users/x/elsewhere/pyproject.toml"] = Self.pyproject
+        fs.executables = ["/Users/x/elsewhere/.venv/bin/keryx"]
+        let runner = Self.shell(env: ["PATH": "/login/bin", "HOME": "/Users/x"])
+        let locator = KeryxLocator(
+            fileSystem: fs, runner: runner, home: Self.home,
+            environment: ["KERYX_APP_ENVIRONMENT": "yes", "PATH": "/app/bin"])
+
+        let location = try await locator.locate(preference: "/Users/x/elsewhere").get()
+        #expect(location.environment["PATH"] == "/login/bin")
+        #expect(runner.requests.first?.arguments == ["-lic", "env -0"])
+    }
+
     // MARK: - Sanitise
 
     @Test func actorVariablesAreStripped() {

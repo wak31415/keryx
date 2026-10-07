@@ -12,23 +12,36 @@ import Foundation
 ///
 /// A checkout is optional: a `keryx` installed on its own runs with no prefix from `HOME`.
 /// Every step that does not do appends one sentence to `LocateFailure.lookedAt`.
+///
+/// `KERYX_APP_ENVIRONMENT=inherit` in the app's own environment replaces the login shell
+/// with that environment, for both questions it answers (the environment, and where `keryx`
+/// is on `PATH`): only someone who started the binary from a shell can set it, and it is how
+/// a run against a sandbox (`KERYX_HOME` and the XDG homes exported) reaches that sandbox.
 public struct KeryxLocator: Locating {
     static let agentPlist = "Library/LaunchAgents/dev.keryx.agent.plist"
+    static let environmentOverride = "KERYX_APP_ENVIRONMENT"
 
     private let fileSystem: FileSystem
     private let runner: CommandRunner
     private let home: String
+    private let environment: [String: String]
 
+    /// `environment`: the app's own, `ProcessInfo`'s outside tests.
     public init(fileSystem: FileSystem = LocalFileSystem(), runner: CommandRunner = ProcessRunner(),
-                home: String = NSHomeDirectory()) {
+                home: String = NSHomeDirectory(),
+                environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.fileSystem = fileSystem
         self.runner = runner
         self.home = home
+        self.environment = environment
     }
+
+    /// True when the app was started with `KERYX_APP_ENVIRONMENT=inherit`.
+    private var inherits: Bool { environment[Self.environmentOverride] == "inherit" }
 
     public func locate(preference: String?) async -> Result<KeryxLocation, LocateFailure> {
         var lookedAt: [String] = []
-        var shell = LoginShell()
+        var shell = LoginShell(inherited: inherits ? inheritedEnvironment : nil)
 
         if let preference {
             if isKeryxCheckout(preference) {
@@ -134,7 +147,8 @@ public struct KeryxLocator: Locating {
             }
             return bare(path, environment: environment)
         }
-        lookedAt.append("Your login shell (zsh) has no keryx on its PATH.")
+        lookedAt.append(inherits ? "The PATH the app was started with has no keryx."
+                                 : "Your login shell (zsh) has no keryx on its PATH.")
 
         let uvTool = home + "/.local/bin/keryx"
         if fileSystem.isExecutableFile(atPath: uvTool) {
@@ -152,8 +166,14 @@ public struct KeryxLocator: Locating {
     }
 
     /// `command -v keryx` in the login shell: the last line it printed, since an
-    /// interactive profile may print a greeting first.
+    /// interactive profile may print a greeting first. Inheriting, the app's own `PATH`.
     private func commandV() async -> String? {
+        if inherits {
+            return (inheritedEnvironment["PATH"] ?? "")
+                .split(separator: ":")
+                .map { $0 + "/keryx" }
+                .first { $0.hasPrefix("/") && fileSystem.isExecutableFile(atPath: $0) }
+        }
         let request = CommandRequest(
             executable: "/bin/zsh", arguments: ["-lic", "command -v keryx"],
             environment: processEnvironment, workingDirectory: home, stdin: Data(),
@@ -217,7 +237,12 @@ public struct KeryxLocator: Locating {
     // MARK: - Helpers
 
     private var processEnvironment: [String: String] {
-        ProcessInfo.processInfo.environment.merging(["HOME": home]) { _, home in home }
+        environment.merging(["HOME": home]) { _, home in home }
+    }
+
+    /// The app's environment as it was started, `HOME` included; `home` only when it has none.
+    private var inheritedEnvironment: [String: String] {
+        environment.merging(["HOME": home]) { own, _ in own }
     }
 
     private func tilde(_ path: String) -> String {
@@ -229,10 +254,18 @@ public struct KeryxLocator: Locating {
     }
 }
 
-/// The login shell's environment, asked for at most once per `locate`.
+/// The login shell's environment, asked for at most once per `locate` — or, `inherited`,
+/// never asked at all.
 private struct LoginShell {
     private var fetched = false
     private var cached: [String: String]?
+
+    init(inherited: [String: String]?) {
+        if let inherited {
+            fetched = true
+            cached = inherited
+        }
+    }
 
     mutating func environment(runner: CommandRunner, base: [String: String]) async -> [String: String]? {
         if fetched { return cached }
