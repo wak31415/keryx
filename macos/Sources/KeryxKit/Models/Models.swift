@@ -48,7 +48,12 @@ public struct Servers: Codable, Sendable, Equatable {
 }
 
 public struct LLMServer: Codable, Sendable, Equatable {
+    /// The model the settings name (`LLM_SERVER_MODEL`): what the server loads when it
+    /// (re)starts.
     public var model: String?
+    /// The model the running server says it is serving; `nil` when it is not reachable or
+    /// did not say. Differs from `model` after `keryx models use` until a restart.
+    public var servedModel: String?
     public var port: Int
     public var url: String?
     public var binary: String?

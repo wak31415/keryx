@@ -142,6 +142,7 @@
   "servers": {
     "llm": {
       "model": "qwen3-coder-30b-a3b",
+      "served_model": "qwen3-coder-30b-a3b",
       "port": 8090,
       "url": "http://127.0.0.1:8090/v1",
       "binary": "/opt/homebrew/bin/llama-server",

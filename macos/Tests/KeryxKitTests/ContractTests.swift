@@ -1,0 +1,285 @@
+import Foundation
+import Testing
+@testable import KeryxKit
+
+/// `Fixtures/contract.json` is what the app needs from each `keryx … --json` command: every
+/// key every model here decodes, by path, with its JSON type ("|null" where the Swift
+/// property is optional). `tests/test_macos_contract.py` holds the CLI to it; these tests
+/// hold the Swift decoders to it, both ways:
+///
+/// - sufficient: each command's real fixture, cut down to the contract's keys, decodes —
+///   and to exactly what the whole fixture decodes to, so no key the app reads was cut;
+/// - complete: every stored property of every model a command decodes is in the contract,
+///   with the type and nullability its Swift type has, and nothing else is.
+@Suite struct ContractTests {
+    // MARK: - The contract
+
+    struct Contract: Sendable {
+        /// Command line → path → key → type.
+        var commands: [String: [String: [String: String]]]
+        /// `models pull --json`: each event's keys and types, the terminal events, and the
+        /// events the exit codes are given for.
+        var events: [String: [String: String]]
+        var terminal: [String]
+        var exits: Set<String>
+        var cancelledExit: Int?
+    }
+
+    static let contract: Contract = {
+        let url = Bundle.module.url(forResource: "contract", withExtension: "json", subdirectory: "Fixtures")!
+        let object = try! JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+        precondition(object["schema"] as? Int == 2, "contract.json is not schema 2")
+        let commands = object["commands"] as! [String: [String: [String: String]]]
+        let pull = (object["streams"] as! [String: [String: Any]])["models pull --json"]!
+        let exit = pull["exit"] as! [String: Any]
+        return Contract(
+            commands: commands, events: pull["events"] as! [String: [String: String]],
+            terminal: pull["terminal"] as! [String], exits: Set(exit.keys),
+            cancelledExit: exit["cancelled"] as? Int)
+    }()
+
+    /// Each command the app reads as JSON: its real fixtures, and how the app decodes it.
+    struct Command: CustomTestStringConvertible, Sendable {
+        var line: String
+        var fixtures: [String]
+        /// Decodes `full` and `cut`; true when both decode and are equal.
+        var sameDecoded: @Sendable (Data, Data) throws -> Bool
+        /// One decoded document, for its stored properties.
+        var decoded: @Sendable (Data) throws -> Any
+        var testDescription: String { line }
+
+        static func of<T: Decodable & Equatable & Sendable>(_ line: String, _ type: T.Type, _ fixtures: [String]) -> Command {
+            Command(
+                line: line, fixtures: fixtures,
+                sameDecoded: { full, cut in
+                    try JSON.decoder.decode(T.self, from: full) == JSON.decoder.decode(T.self, from: cut)
+                },
+                decoded: { try JSON.decoder.decode(T.self, from: $0) })
+        }
+    }
+
+    static let commands: [Command] = [
+        .of("status --json", StatusReport.self, ["status.json", "status-migration.json"]),
+        .of("doctor --json", DoctorReport.self, ["doctor.json"]),
+        .of("tasks list --json", TaskList.self, ["tasks.json"]),
+        .of("tasks show ID --json", TaskDetail.self, ["task-detail.json"]),
+        .of("tasks usage --json", UsageReport.self, ["usage.json"]),
+        .of("models list --json", ModelsReport.self, ["models.json", "models-empty-servers.json"]),
+        .of("models use NAME --json", UseResult.self, ["fixture:use.json"]),
+        .of("config list --json", [ConfigRow].self, ["config.json"]),
+        .of("approvals --json", ApprovalsReport.self, ["approvals.json"]),
+        .of("memory --json", MemoryDocument.self, ["memory.json"]),
+    ]
+
+    /// A preview document (`Sources/KeryxKit/Preview`), or `fixture:NAME` from this target's.
+    static func data(_ name: String) throws -> Data {
+        guard name.hasPrefix("fixture:") else { return PreviewData.data(name) }
+        let url = try #require(Bundle.module.url(
+            forResource: String(name.dropFirst("fixture:".count)), withExtension: nil, subdirectory: "Fixtures"))
+        return try Data(contentsOf: url)
+    }
+
+    @Test func everyCommandTheAppReadsIsInTheContract() {
+        #expect(Set(Self.contract.commands.keys) == Set(Self.commands.map(\.line)))
+    }
+
+    @Test func everyTypeIsOneTheContractKnows() {
+        let known: Set<String> = ["string", "integer", "number", "boolean", "array", "object", "any"]
+        for (line, paths) in Self.contract.commands {
+            for (path, keys) in paths {
+                for (key, type) in keys {
+                    var parts = type.split(separator: "|").map(String.init)
+                    if parts.last == "null" { parts.removeLast() }
+                    #expect(parts.count == 1 && known.contains(parts[0]), "\(line) \(path).\(key): \(type)")
+                }
+            }
+        }
+    }
+
+    // MARK: - Sufficient
+
+    @Test(arguments: commands)
+    func aFixtureCutToTheContractDecodesTheSame(_ command: Command) throws {
+        let paths = try #require(Self.contract.commands[command.line])
+        for name in command.fixtures {
+            let full = try Self.data(name)
+            let document = try JSONSerialization.jsonObject(with: full, options: .fragmentsAllowed)
+            let cut = try JSONSerialization.data(withJSONObject: Self.cut(document, to: paths, at: ""))
+            let same = try command.sameDecoded(full, cut)
+            #expect(same, "\(name): the app reads a key the contract lacks")
+        }
+    }
+
+    /// `node` with only the contract's keys at each path. An object or array the contract
+    /// has no path for (a setting's value, `saved`, a list of names) is kept whole.
+    static func cut(_ node: Any, to paths: [String: [String: String]], at path: String) -> Any {
+        if let array = node as? [Any] {
+            let element = path + "[]"
+            guard paths[element] != nil else { return array }
+            return array.map { cut($0, to: paths, at: element) }
+        }
+        guard let object = node as? [String: Any], let keys = paths[path] else { return node }
+        var kept: [String: Any] = [:]
+        for (key, value) in object where keys[key] != nil {
+            kept[key] = cut(value, to: paths, at: path.isEmpty ? key : path + "." + key)
+        }
+        return kept
+    }
+
+    // MARK: - Complete
+
+    @Test(arguments: commands)
+    func everyKeyTheAppDecodesIsInTheContractWithItsType(_ command: Command) throws {
+        let paths = try #require(Self.contract.commands[command.line])
+        var swift: [String: [String: SwiftType]] = [:]
+        for name in command.fixtures {
+            let document = try command.decoded(Self.data(name))
+            Self.walk(document, at: "", into: &swift)
+        }
+        #expect(Set(swift.keys) == Set(paths.keys), "paths")
+        for (path, keys) in swift {
+            let listed = paths[path] ?? [:]
+            #expect(Set(keys.keys) == Set(listed.keys), "\(command.line) at \(path.isEmpty ? "the root" : path)")
+            for (key, type) in keys {
+                guard let written = listed[key] else { continue }
+                #expect(type.matches(written), "\(command.line) \(path).\(key): Swift \(type), contract \(written)")
+            }
+        }
+    }
+
+    struct SwiftType: CustomStringConvertible {
+        /// `nil`: any JSON (a `JSONValue`).
+        var json: String?
+        var optional: Bool
+
+        var description: String { (json ?? "any") + (optional ? "|null" : "") }
+
+        func matches(_ written: String) -> Bool {
+            description == written
+        }
+    }
+
+    /// Properties that are not decoded: `SessionLogEntry.id` is its position in the log.
+    static let notDecoded: Set<String> = ["SessionLogEntry.id"]
+
+    /// Records the stored properties of `value` (an object or an array of them) at `path`,
+    /// as snake_case keys with the JSON type each needs, then those of each nested object.
+    static func walk(_ value: Any, at path: String, into found: inout [String: [String: SwiftType]]) {
+        if let array = value as? [Any] {
+            for element in array where Mirror(reflecting: element).displayStyle == .struct {
+                walk(element, at: path + "[]", into: &found)
+            }
+            return
+        }
+        let mirror = Mirror(reflecting: value)
+        guard mirror.displayStyle == .struct else { return }
+        let owner = String(describing: type(of: value))
+        for child in mirror.children {
+            guard let label = child.label, !notDecoded.contains(owner + "." + label) else { continue }
+            let key = snakeCase(label)
+            found[path, default: [:]][key] = swiftType(of: child.value)
+            let nested = path.isEmpty ? key : path + "." + key
+            let unwrapped = unwrapOptional(child.value)
+            if let unwrapped, unwrapped is [Any] {
+                walk(unwrapped, at: nested, into: &found)
+            } else if let unwrapped, Mirror(reflecting: unwrapped).displayStyle == .struct,
+                      !(unwrapped is Date) {
+                walk(unwrapped, at: nested, into: &found)
+            }
+        }
+    }
+
+    static func swiftType(of value: Any) -> SwiftType {
+        if let optional = type(of: value) as? AnyOptional.Type {
+            return SwiftType(json: jsonType(optional.wrapped), optional: true)
+        }
+        return SwiftType(json: jsonType(type(of: value)), optional: false)
+    }
+
+    static func jsonType(_ type: Any.Type) -> String? {
+        switch type {
+        case is String.Type, is Date.Type: "string"
+        case is Int.Type: "integer"
+        case is Double.Type: "number"
+        case is Bool.Type: "boolean"
+        case is JSONValue.Type: nil
+        case is any RawRepresentable<String>.Type: "string"
+        case is AnyArray.Type: "array"
+        case is AnyDictionary.Type: "object"
+        default: "object"
+        }
+    }
+
+    static func unwrapOptional(_ value: Any) -> Any? {
+        let mirror = Mirror(reflecting: value)
+        guard mirror.displayStyle == .optional else { return value }
+        return mirror.children.first?.value
+    }
+
+    static func snakeCase(_ camel: String) -> String {
+        camel.reduce(into: "") { result, character in
+            if character.isUppercase {
+                result += "_" + character.lowercased()
+            } else {
+                result.append(character)
+            }
+        }
+    }
+
+    // MARK: - The pull stream
+
+    @Test func everyPullEventTheContractListsParsesWithItsKeysAndNotWithoutThem() throws {
+        let events = Self.contract.events
+        #expect(Set(events.keys) == ["progress", "done", "adopted", "error", "cancelled"])
+        for (event, keys) in events {
+            var line: [String: Any] = ["event": event]
+            for (key, type) in keys { line[key] = type == "integer" ? 7 : "x" }
+            let parsed = try #require(PullEvent.parse(Self.line(line)), "\(event)")
+            #expect(Self.name(of: parsed) == event)
+            for key in keys.keys {
+                var without = line
+                without.removeValue(forKey: key)
+                #expect(try PullEvent.parse(Self.line(without)) == nil, "\(event) without \(key)")
+            }
+        }
+    }
+
+    @Test func theTerminalEventsAreTheOnesThatEndADownload() {
+        let terminal = Self.contract.terminal
+        // Every event but progress ends a download (`CLIClient.pull`'s `concluded`).
+        #expect(Set(terminal) == Set(Self.contract.events.keys).subtracting(["progress"]))
+        #expect(Self.contract.exits == Set(terminal))
+        #expect(Self.contract.cancelledExit == 130)
+    }
+
+    static func line(_ object: [String: Any]) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+    }
+
+    static func name(of event: PullEvent) -> String {
+        switch event {
+        case .progress: "progress"
+        case .done: "done"
+        case .adopted: "adopted"
+        case .error: "error"
+        case .cancelled: "cancelled"
+        }
+    }
+
+    // MARK: - The served model
+
+    @Test func theModelServerSaysWhatItServes() {
+        #expect(PreviewData.models.servers.llm.servedModel == "qwen3-coder-30b-a3b")
+        #expect(PreviewData.models.servers.llm.servedModel == PreviewData.models.servers.llm.model)
+        #expect(PreviewData.modelsEmptyServers.servers.llm.servedModel == nil)
+    }
+}
+
+/// An `Optional` of any type, nil or not, and what it wraps.
+private protocol AnyOptional { static var wrapped: Any.Type { get } }
+extension Optional: AnyOptional { static var wrapped: Any.Type { Wrapped.self } }
+
+private protocol AnyArray {}
+extension Array: AnyArray {}
+private protocol AnyDictionary {}
+extension Dictionary: AnyDictionary {}

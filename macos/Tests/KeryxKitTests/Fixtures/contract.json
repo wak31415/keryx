@@ -1,55 +1,325 @@
 {
-  "status --json": {
-    "": ["schema", "storage", "service", "health", "version", "restart", "assistant", "agents", "tasks", "approvals", "paths"],
-    "storage": ["ok", "migration_required"],
-    "service": ["ok", "installed", "active"],
-    "health": ["ok", "reachable"],
-    "version": ["ok"],
-    "restart": ["ok"],
-    "assistant": ["ok", "name"],
-    "agents": ["ok", "default", "enabled"],
-    "tasks": ["ok", "running", "queued", "unreported"],
-    "approvals": ["ok", "escalation_enabled"],
-    "paths": ["ok", "config", "data", "state", "cache", "logs", "memory"]
+  "schema": 2,
+  "commands": {
+    "status --json": {
+      "": {
+        "schema": "integer",
+        "storage": "object",
+        "service": "object",
+        "health": "object",
+        "version": "object",
+        "restart": "object",
+        "assistant": "object",
+        "agents": "object",
+        "tasks": "object",
+        "approvals": "object",
+        "paths": "object"
+      },
+      "storage": {
+        "ok": "boolean",
+        "error": "string|null",
+        "migration_required": "boolean"
+      },
+      "service": {
+        "ok": "boolean",
+        "error": "string|null",
+        "manager": "string|null",
+        "unit": "string|null",
+        "installed": "boolean",
+        "active": "boolean"
+      },
+      "health": {
+        "ok": "boolean",
+        "error": "string|null",
+        "reachable": "boolean",
+        "live_sessions": "integer|null"
+      },
+      "version": {
+        "ok": "boolean",
+        "error": "string|null",
+        "running": "string|null",
+        "checkout": "string|null"
+      },
+      "restart": {
+        "ok": "boolean",
+        "error": "string|null",
+        "state": "string|null",
+        "requested_at": "string|null",
+        "failure": "string|null"
+      },
+      "assistant": {
+        "ok": "boolean",
+        "error": "string|null",
+        "name": "string"
+      },
+      "agents": {
+        "ok": "boolean",
+        "error": "string|null",
+        "default": "string",
+        "enabled": "array"
+      },
+      "tasks": {
+        "ok": "boolean",
+        "error": "string|null",
+        "running": "integer",
+        "queued": "integer",
+        "unreported": "integer"
+      },
+      "approvals": {
+        "ok": "boolean",
+        "error": "string|null",
+        "escalation_enabled": "boolean"
+      },
+      "paths": {
+        "ok": "boolean",
+        "error": "string|null",
+        "config": "string",
+        "data": "string",
+        "state": "string",
+        "cache": "string",
+        "logs": "string",
+        "memory": "string"
+      }
+    },
+    "doctor --json": {
+      "": {
+        "ok": "boolean",
+        "checks": "array"
+      },
+      "checks[]": {
+        "name": "string",
+        "detail": "string",
+        "severity": "string",
+        "section": "string",
+        "state": "string",
+        "ok": "boolean",
+        "unset": "boolean",
+        "title": "string|null"
+      }
+    },
+    "tasks list --json": {
+      "": {
+        "tasks": "array"
+      },
+      "tasks[]": {
+        "id": "integer",
+        "status": "string",
+        "description": "string",
+        "project": "string|null",
+        "agent": "string",
+        "model": "string|null",
+        "cwd": "string|null",
+        "created_at": "string",
+        "started_at": "string|null",
+        "finished_at": "string|null",
+        "reported_at": "string|null",
+        "told": "boolean|null",
+        "internal": "boolean",
+        "needs_restart": "boolean",
+        "summary": "string|null",
+        "error": "string|null",
+        "report_path": "string|null",
+        "input_tokens": "integer|null",
+        "output_tokens": "integer|null",
+        "cost_usd": "number|null",
+        "origin_channel": "string|null",
+        "callback_requested": "boolean"
+      }
+    },
+    "tasks show ID --json": {
+      "": {
+        "task": "object",
+        "report": "string|null",
+        "report_truncated": "boolean",
+        "log": "array",
+        "log_truncated": "boolean",
+        "resumable": "boolean"
+      },
+      "task": {
+        "id": "integer",
+        "status": "string",
+        "description": "string",
+        "project": "string|null",
+        "agent": "string",
+        "model": "string|null",
+        "cwd": "string|null",
+        "created_at": "string",
+        "started_at": "string|null",
+        "finished_at": "string|null",
+        "reported_at": "string|null",
+        "told": "boolean|null",
+        "internal": "boolean",
+        "needs_restart": "boolean",
+        "summary": "string|null",
+        "error": "string|null",
+        "report_path": "string|null",
+        "input_tokens": "integer|null",
+        "output_tokens": "integer|null",
+        "cost_usd": "number|null",
+        "origin_channel": "string|null",
+        "callback_requested": "boolean"
+      },
+      "log[]": {
+        "time": "string|null",
+        "kind": "string",
+        "text": "string"
+      }
+    },
+    "tasks usage --json": {
+      "": {
+        "since": "string|null",
+        "projects": "array"
+      },
+      "projects[]": {
+        "label": "string",
+        "tasks": "integer",
+        "priced": "integer",
+        "input_tokens": "integer",
+        "output_tokens": "integer",
+        "cost_usd": "number|null"
+      }
+    },
+    "models list --json": {
+      "": {
+        "hardware": "object",
+        "models_dir": "string",
+        "models": "array",
+        "voices": "array",
+        "servers": "object"
+      },
+      "hardware": {
+        "accelerator": "string",
+        "gpu": "string|null",
+        "vram_gb": "number",
+        "ram_gb": "number",
+        "model_memory_gb": "number"
+      },
+      "models[]": {
+        "name": "string",
+        "title": "string",
+        "note": "string",
+        "size_gb": "number",
+        "needs_gb": "number",
+        "fits": "boolean",
+        "downloaded": "boolean",
+        "recommended": "boolean",
+        "tested": "boolean"
+      },
+      "voices[]": {
+        "name": "string",
+        "sounds": "string"
+      },
+      "servers": {
+        "llm": "object",
+        "voice": "object",
+        "local_agent": "object"
+      },
+      "servers.llm": {
+        "model": "string|null",
+        "served_model": "string|null",
+        "port": "integer",
+        "url": "string|null",
+        "binary": "string|null",
+        "unit_installed": "boolean",
+        "reachable": "boolean"
+      },
+      "servers.voice": {
+        "url": "string|null",
+        "port": "integer",
+        "unit_installed": "boolean",
+        "reachable": "boolean"
+      },
+      "servers.local_agent": {
+        "base_url": "string|null",
+        "model": "string|null",
+        "api": "string",
+        "enabled": "boolean",
+        "default": "boolean"
+      }
+    },
+    "models use NAME --json": {
+      "": {
+        "saved": "object",
+        "llama_server": "string|null",
+        "restart_needed": "boolean"
+      }
+    },
+    "config list --json": {
+      "[]": {
+        "key": "string",
+        "group": "string",
+        "title": "string|null",
+        "group_title": "string|null",
+        "description": "string",
+        "source": "string",
+        "type": "string",
+        "required": "boolean",
+        "set": "boolean",
+        "secret": "boolean",
+        "service_writable": "boolean",
+        "protected": "boolean",
+        "value": "any|null",
+        "choices": "array|null"
+      }
+    },
+    "approvals --json": {
+      "": {
+        "escalation_enabled": "boolean",
+        "escalate_after_s": "number",
+        "max_per_hour": "integer",
+        "cancelled_before_call": "integer",
+        "answered_after_call": "integer",
+        "entries": "array"
+      },
+      "entries[]": {
+        "ts": "string",
+        "event": "string",
+        "what": "string",
+        "request_id": "any|null"
+      }
+    },
+    "memory --json": {
+      "": {
+        "path": "string",
+        "exists": "boolean",
+        "text": "string|null"
+      }
+    }
   },
-  "doctor --json": {
-    "": ["ok", "checks"],
-    "checks": ["name", "detail", "severity", "section", "state", "ok", "unset"]
-  },
-  "tasks list --json": {
-    "": ["tasks"],
-    "tasks": ["id", "status", "description", "agent", "created_at", "internal", "needs_restart", "callback_requested"]
-  },
-  "tasks show ID --json": {
-    "": ["task", "report_truncated", "log", "log_truncated", "resumable"],
-    "task": ["id", "status", "description", "agent", "created_at", "internal", "needs_restart", "callback_requested"],
-    "log": ["kind", "text"]
-  },
-  "tasks usage --json": {
-    "": ["projects"],
-    "projects": ["label", "tasks", "priced", "input_tokens", "output_tokens"]
-  },
-  "models list --json": {
-    "": ["hardware", "models_dir", "models", "voices", "servers"],
-    "hardware": ["accelerator", "vram_gb", "ram_gb", "model_memory_gb"],
-    "models": ["name", "title", "note", "size_gb", "needs_gb", "fits", "downloaded", "recommended", "tested"],
-    "voices": ["name", "sounds"],
-    "servers": ["llm", "voice", "local_agent"],
-    "servers.llm": ["port", "unit_installed", "reachable"],
-    "servers.voice": ["port", "unit_installed", "reachable"],
-    "servers.local_agent": ["api", "enabled", "default"]
-  },
-  "models use NAME --json": {
-    "": ["saved", "restart_needed"]
-  },
-  "config list --json": {
-    "": ["key", "group", "description", "source", "type", "choices", "required", "set", "secret", "service_writable", "protected"]
-  },
-  "approvals --json": {
-    "": ["escalation_enabled", "escalate_after_s", "max_per_hour", "cancelled_before_call", "answered_after_call", "entries"],
-    "entries": ["ts", "event", "what"]
-  },
-  "memory --json": {
-    "": ["path", "exists"]
+  "streams": {
+    "models pull --json": {
+      "events": {
+        "progress": {
+          "done": "integer",
+          "total": "integer"
+        },
+        "done": {
+          "path": "string"
+        },
+        "adopted": {
+          "path": "string",
+          "from": "string"
+        },
+        "error": {
+          "message": "string"
+        },
+        "cancelled": {}
+      },
+      "terminal": [
+        "done",
+        "adopted",
+        "error",
+        "cancelled"
+      ],
+      "exit": {
+        "done": 0,
+        "adopted": 0,
+        "error": [
+          1,
+          2
+        ],
+        "cancelled": 130
+      }
+    }
   }
 }

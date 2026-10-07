@@ -197,14 +197,7 @@ import Testing
         #expect(PullEvent.parse(#"{"no_event_key": true}"#) == nil)
     }
 
-    // MARK: - Contract fixture parses as a sanity check that it stays valid JSON
-
-    @Test func contractFixtureIsWellFormedJSON() throws {
-        let url = Bundle.module.url(forResource: "contract", withExtension: "json", subdirectory: "Fixtures")!
-        let data = try Data(contentsOf: url)
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        #expect(object?["status --json"] != nil)
-    }
+    // The contract fixture is checked, both ways, in ContractTests.
 }
 
 private func isoDate(_ string: String) -> Date {

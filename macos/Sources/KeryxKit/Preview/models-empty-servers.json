@@ -142,6 +142,7 @@
   "servers": {
     "llm": {
       "model": null,
+      "served_model": null,
       "port": 8090,
       "url": null,
       "binary": null,
