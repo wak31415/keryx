@@ -28,13 +28,51 @@ import KeryxPreview
         #expect(model.setupPlan.value == PreviewData.setupPlanPartway)
         #expect(model.pin.value == PreviewData.pinFile)
         #expect(model.service.value == PreviewData.service)
-        #expect(model.phoneNumbers.value == PreviewData.phoneNumbers)
-        #expect(model.phoneWebhooks.value == PreviewData.phoneWebhooks)
         #expect(model.phoneTunnel.value == PreviewData.phoneTunnel)
         #expect(model.integrations.value == PreviewData.integrations)
         #expect(model.plugins.value == PreviewData.plugins)
         #expect(model.tools.value == PreviewData.tools)
         #expect(model.sshHosts.value == PreviewData.sshHosts)
+    }
+
+    @Test func refreshAllNeverAsksTwilio() async {
+        let client = StubClient()
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        let mark = client.calls.count
+        await model.refresh(.all)
+        let asked = calls(client, after: mark)
+        #expect(!asked.contains("phone numbers"))
+        #expect(!asked.contains("phone webhooks"))
+        #expect(asked.contains("phone tunnel"))
+        #expect(model.phoneNumbers.value == nil)
+        #expect(model.phoneWebhooks.value == nil)
+    }
+
+    @Test func thePhoneSectionReadsWhatAllLeavesOut() async {
+        let client = StubClient()
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        let mark = client.calls.count
+        await model.refreshPhone()
+        #expect(Set(calls(client, after: mark)) == ["phone numbers", "phone webhooks", "phone tunnel"])
+        #expect(model.phoneNumbers.value == PreviewData.phoneNumbers)
+        #expect(model.phoneWebhooks.value == PreviewData.phoneWebhooks)
+    }
+
+    @Test func refreshingWhatIsShownAsksTwilioOnlyOnThePhone() async {
+        let client = StubClient()
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        var mark = client.calls.count
+        await model.refreshShown()
+        #expect(!calls(client, after: mark).contains("phone numbers"))
+        model.selection = .phone
+        mark = client.calls.count
+        await model.refreshShown()
+        #expect(calls(client, after: mark).contains("phone numbers"))
+        #expect(calls(client, after: mark).contains("phone webhooks"))
+        #expect(calls(client, after: mark).contains("setup plan"))
     }
 
     @Test func aFailedDocumentKeepsItsError() async {

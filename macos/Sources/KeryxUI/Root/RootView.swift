@@ -22,7 +22,7 @@ public struct RootView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Task { await model.refresh(.all) }
+                    Task { await model.refreshShown() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }

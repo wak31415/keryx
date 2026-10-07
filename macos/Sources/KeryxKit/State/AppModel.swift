@@ -16,6 +16,14 @@ public final class AppModel {
         case all
 
         static let documents: [Part] = allCases.filter { $0 != .all }
+
+        /// What `.all` leaves out: the reads that ask Twilio (the account's numbers, and
+        /// where the number's webhooks point). The Phone section reads them when it shows
+        /// (`refreshPhone`), so a refresh elsewhere never reaches outside this Mac for them.
+        public static let onlyWhenShown: Set<Part> = [.phoneNumbers, .phoneWebhooks]
+
+        /// What `.all` reloads: every document but `onlyWhenShown`.
+        static let everyday: [Part] = documents.filter { !onlyWhenShown.contains($0) }
     }
 
     /// How long the model waits: between status polls (`nil`: no polling), and before it
@@ -56,9 +64,10 @@ public final class AppModel {
     public package(set) var pin: Loadable<PinStatus> = .idle
     /// Keryx's units (`keryx service`).
     public package(set) var service: Loadable<ServiceReport> = .idle
-    /// The Twilio account's numbers. Read only when asked for (`.phoneNumbers`, or `.all`):
-    /// it asks Twilio.
+    /// The Twilio account's numbers. Read only when asked for (`.phoneNumbers`, never by
+    /// `.all`): it asks Twilio.
     public package(set) var phoneNumbers: Loadable<PhoneNumbers> = .idle
+    /// Where `TWILIO_NUMBER`'s webhooks point; asks Twilio too, so `.all` leaves it out.
     public package(set) var phoneWebhooks: Loadable<PhoneWebhooks> = .idle
     public package(set) var phoneTunnel: Loadable<PhoneTunnel> = .idle
     public package(set) var integrations: Loadable<IntegrationsReport> = .idle
@@ -234,7 +243,7 @@ public final class AppModel {
         guard let client else { return }
         let current = generation
         switch part {
-        case .all: await refresh(Part.documents)
+        case .all: await refresh(Part.everyday)
         case .status: await load(\.status, current) { try await client.status() }
         case .doctor: await load(\.doctor, current) { try await client.doctor() }
         case .tasks:
@@ -265,6 +274,12 @@ public final class AppModel {
     /// Reloads each of `parts`, side by side.
     public func refresh(_ parts: Part...) async {
         await refresh(parts)
+    }
+
+    /// What Refresh (the toolbar's, and ⌘R) reads: `.all`, and while the Phone section
+    /// shows, the Twilio reads `.all` leaves out too.
+    public func refreshShown() async {
+        await refresh(selection == .phone ? Part.everyday + Part.onlyWhenShown : Part.everyday)
     }
 
     /// Reads what `key` may be set to. A list already read is kept unless `force` (a menu

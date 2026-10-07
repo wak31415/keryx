@@ -122,13 +122,14 @@ private struct MenuBarLabel: View {
     }
 }
 
-/// View › Refresh (⌘R): reads every document again.
+/// View › Refresh (⌘R): reads every document again (the phone's Twilio reads only while
+/// the Phone section shows).
 private struct RefreshCommand: View {
     let model: AppModel
 
     var body: some View {
         Button("Refresh") {
-            Task { await model.refresh(.all) }
+            Task { await model.refreshShown() }
         }
         .keyboardShortcut("r", modifiers: .command)
         .disabled(model.client == nil)
