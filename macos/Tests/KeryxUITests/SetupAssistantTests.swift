@@ -106,6 +106,7 @@ import KeryxPreview
         let action = SetupGuide.skip(step(fresh, "pin"), context: SetupContext(pin: PreviewData.pinNone))
         #expect(action == SetupAction(title: "Set It on the First Call", effect: .mark("pin")))
         #expect(SetupGuide.skip(step(partway, "pin"), context: SetupContext()) == nil, "set already")
+        #expect(SetupGuide.skip(step(fresh, "pin"), context: SetupContext()) == nil, "the PIN's status not read yet")
         // A PIN in the environment is not the app's to set or defer.
         #expect(SetupGuide.skip(step(fresh, "pin"), context: SetupContext(pin: PreviewData.pinEnvironment)) == nil)
     }

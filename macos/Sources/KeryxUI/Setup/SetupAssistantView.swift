@@ -129,8 +129,10 @@ public struct SetupAssistantView: View {
             Button("Back") { if let previous { page = previous } }
                 .disabled(previous == nil)
             if let step, let skip = SetupGuide.skip(step, context: context) {
+                // Not while the model server starts: skipping `local` under it would walk
+                // away from a run still going.
                 Button(skip.title) { perform(skip) }
-                    .disabled(busy)
+                    .disabled(busy || model.modelServerRun.isBusy)
             }
             if current == .finish {
                 Button("Done") { dismissWindow(id: KeryxWindowID.setup) }

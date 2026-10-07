@@ -146,7 +146,9 @@ enum SetupGuide {
     static func skip(_ step: SetupStep, context: SetupContext) -> SetupAction? {
         guard step.kind != .done else { return nil }
         if step.id == "pin" {
-            guard step.kind == .needed, context.pin?.place != .environment else { return nil }
+            // Only once the PIN's status is read: from the environment it is not the app's
+            // to defer, and the button must not flash before that is known.
+            guard step.kind == .needed, let pin = context.pin, pin.place != .environment else { return nil }
             return SetupAction(title: "Set It on the First Call", effect: .mark("pin"))
         }
         guard !step.required, step.kind == .optional else { return nil }
