@@ -50,9 +50,11 @@ struct ConfigRowView: View {
         } label: {
             Text(row.displayTitle)
             if !row.description.isEmpty {
-                Text(ConfigWording.described(row.description, titles: titles))
-                    .lineLimit(1)
+                Text(ConfigWording.isPIN(row) ? PinWording.rowDescription
+                    : ConfigWording.described(row.description, titles: titles))
+                    .lineLimit(2)
                     .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if ConfigWording.hasMenu(row), let note = OptionWording.note(model.options[row.key], titles: titles) {
                 Text(note)
@@ -61,7 +63,7 @@ struct ConfigRowView: View {
             }
             if let problem {
                 Text(problem)
-                    .foregroundStyle(.red)
+                    .problemStyle()
                     .textSelection(.enabled)
             }
         }
@@ -163,6 +165,16 @@ struct ConfigRowView: View {
     // MARK: - Secrets
 
     @ViewBuilder private var secret: some View {
+        if ConfigWording.managedInIntegrations(row) {
+            // One door for an account's secret: its card, which knows what it connects.
+            Button("Manage in Integrations") { model.selection = .integrations }
+                .buttonStyle(.link)
+        } else {
+            secretButtons
+        }
+    }
+
+    @ViewBuilder private var secretButtons: some View {
         if row.set {
             Button("Remove…") { reset() }
                 .accessibilityLabel("Remove \(row.displayTitle)")

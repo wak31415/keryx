@@ -63,7 +63,16 @@ import KeryxPreview
         #expect(none.text.contains("Lyra reads nothing of yours"))
         #expect(PinWording.banner(status(nil, set: false, open: false), assistant: nil).text.hasPrefix("No call can set one."))
         #expect(PinWording.banner(status("environment", set: false), assistant: "Lyra").tone == .blocked)
-        #expect(PinWording.banner(status("jarvis", set: true), assistant: "Lyra").text.contains("keryx migrate"))
+        #expect(PinWording.banner(status("jarvis", set: true), assistant: "Lyra").text.contains("where Jarvis kept it"))
+        // No setting's name, path or command is ever the banner's sentence: the variable is
+        // for the terminal, under Show Details.
+        let places: [PinStatus] = [status("file", set: true), status("file", set: false), status("environment", set: true),
+                                   status("environment", set: false), status("jarvis", set: true)]
+        for place in places {
+            let banner = PinWording.banner(place, assistant: "Lyra")
+            #expect(AppFacing.isFit(banner.text) && !banner.text.contains("KERYX_"), "\(banner.text)")
+        }
+        #expect(PinWording.banner(status("environment", set: true), assistant: nil).terminal?.contains("KERYX_PIN") == true)
     }
 
     @Test func theLockoutIsSaidAndNeverPromisedToLift() {
@@ -73,13 +82,13 @@ import KeryxPreview
         #expect(line.hasPrefix("Too many wrong PINs: PIN entry on calls is locked until "))
         #expect(line.hasSuffix("A new PIN doesn't lift the lock."))
         #expect(PinWording.lockLine(PreviewData.pinFile) == nil)
-        #expect(PinWording.caption(locked, fallbackSet: true, now: now).hasPrefix("Set · in KERYX_HOME/pin · locked until "))
+        #expect(PinWording.caption(locked, fallbackSet: true, now: now).hasPrefix("Set · locked until "))
     }
 
     @Test func theCaptionFallsBackToTheRowUntilKeryxAnswers() {
         #expect(PinWording.caption(nil, fallbackSet: false) == "Not set")
         #expect(PinWording.caption(PreviewData.pinNone, fallbackSet: true) == "Not set")
-        #expect(PinWording.caption(PreviewData.pinEnvironment, fallbackSet: false) == "Set in the environment")
+        #expect(PinWording.caption(PreviewData.pinEnvironment, fallbackSet: false) == "Set · Overridden by the environment")
         #expect(PinWording.caption(status("file", set: false), fallbackSet: true) == "No usable PIN")
     }
 

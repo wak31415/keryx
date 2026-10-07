@@ -14,10 +14,13 @@ public struct StateView<Value, Content: View>: View {
     public struct Failure: Equatable, Sendable {
         public var title: String
         public var message: String
+        /// What Keryx printed beyond the sentence, under Show Details.
+        public var details: String?
 
-        public init(title: String, message: String) {
+        public init(title: String, message: String, details: String? = nil) {
             self.title = title
             self.message = message
+            self.details = details
         }
     }
 
@@ -46,8 +49,14 @@ public struct StateView<Value, Content: View>: View {
                 Text(failure.message)
                     .textSelection(.enabled)
             } actions: {
-                if let retry {
-                    Button("Try Again", action: retry)
+                VStack(spacing: 12) {
+                    if let retry {
+                        Button("Try Again", action: retry)
+                    }
+                    if let details = failure.details {
+                        DetailsDisclosure(details)
+                            .frame(maxWidth: 440)
+                    }
                 }
             }
         } else {
@@ -66,7 +75,9 @@ extension StateView {
     public init(_ loadable: Loadable<Value>, section: String, retry: (() -> Void)? = nil,
                 @ViewBuilder content: @escaping (Value) -> Content) where Value: Sendable {
         self.init(value: loadable.value, isLoading: loadable.isLoading,
-                  failure: loadable.error.map { Failure(title: $0.title(loading: section), message: $0.message) },
+                  failure: loadable.error.map {
+                      Failure(title: $0.title(loading: section), message: $0.message, details: $0.details)
+                  },
                   retry: retry, content: content)
     }
 }

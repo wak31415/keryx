@@ -171,7 +171,7 @@ struct SettingMenuRow: View {
             }
             if let error {
                 Text(ConfigWording.errorText(error.reported ?? error.message, key: key, title: title))
-                    .foregroundStyle(.red)
+                    .problemStyle()
                     .textSelection(.enabled)
             }
         }

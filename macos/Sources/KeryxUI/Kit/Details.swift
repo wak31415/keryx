@@ -101,3 +101,36 @@ extension View {
         }
     }
 }
+
+/// How bad a problem a sentence says is: its icon's colour (the sentence stays secondary).
+enum ProblemTone {
+    case error, warning
+
+    var symbol: String {
+        switch self {
+        case .error: "exclamationmark.circle.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        }
+    }
+
+    var colour: Color {
+        switch self {
+        case .error: .red
+        case .warning: .orange
+        }
+    }
+}
+
+extension View {
+    /// A sentence about something wrong, legible in either appearance: the words in the
+    /// secondary colour, the colour only in the icon before them.
+    func problemStyle(_ tone: ProblemTone = .error) -> some View {
+        Label {
+            foregroundStyle(.secondary)
+        } icon: {
+            Image(systemName: tone.symbol)
+                .foregroundStyle(tone.colour)
+                .accessibilityLabel(tone == .error ? "Problem" : "Warning")
+        }
+    }
+}

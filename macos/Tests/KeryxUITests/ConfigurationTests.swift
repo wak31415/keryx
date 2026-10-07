@@ -101,11 +101,11 @@ import KeryxPreview
 
     @Test func secretsAndThePINSayWhetherTheyAreSet() {
         let key = row("OPENAI_API_KEY", source: "secrets.toml", secret: true)
-        #expect(ConfigWording.secretCaption(key) == "Set · from secrets.toml")
+        #expect(ConfigWording.secretCaption(key) == "Set")
         #expect(ConfigWording.secretCaption(row("ANTHROPIC_API_KEY", secret: true)) == "Not set")
         let pin = row("KERYX_PIN", source: "KERYX_HOME/pin", secret: true)
         #expect(ConfigWording.pinCaption(pin, status: nil) == "Set", "until keryx pin answers")
-        #expect(ConfigWording.pinCaption(pin, status: PreviewData.pinFile) == "Set · in KERYX_HOME/pin")
+        #expect(ConfigWording.pinCaption(pin, status: PreviewData.pinFile) == "Set")
     }
 
     @Test func theTooltipHasTheKey() {
@@ -174,11 +174,11 @@ import KeryxPreview
 
     @Test func sourcesReadAsWhereTheValueCameFrom() {
         #expect(ConfigWording.source("default") == nil)
-        #expect(ConfigWording.source("config.toml") == "from config.toml")
-        #expect(ConfigWording.source("secrets.toml") == "from secrets.toml")
-        #expect(ConfigWording.source("environment") == "from the environment")
-        #expect(ConfigWording.source("command line") == "from the command line")
-        #expect(ConfigWording.source("KERYX_HOME/pin") == "from KERYX_HOME/pin")
+        #expect(ConfigWording.source("config.toml") == nil)
+        #expect(ConfigWording.source("secrets.toml") == nil)
+        #expect(ConfigWording.source("environment") == "Overridden by the environment")
+        #expect(ConfigWording.source("command line") == "Set on the command line")
+        #expect(ConfigWording.source("KERYX_HOME/pin") == nil)
     }
 
     @Test func onlyTheEnvironmentIsReadOnly() {
@@ -209,6 +209,10 @@ import KeryxPreview
 
     @Test func descriptionsDropTheirBackticksForTooltips() {
         #expect(ConfigWording.plain("Unless `VOICE_BASE_URL` names one") == "Unless VOICE_BASE_URL names one")
+        #expect(ConfigWording.plain("`auto` picks `near_field` for a phone") == "auto picks near field for a phone")
+        #expect(ConfigWording.plain("An OpenAI *admin* key") == "An OpenAI admin key")
+        #expect(ConfigWording.plain("2 * 3 * 4") == "2 * 3 * 4", "not emphasis")
+        #expect(ConfigWording.plain("into `DATA_DIR/report_secret`") == "into DATA_DIR/report secret")
     }
 
     @Test func theScreenIsInTheCatalogInEveryState() {

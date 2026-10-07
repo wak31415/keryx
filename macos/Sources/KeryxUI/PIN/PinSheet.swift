@@ -29,6 +29,11 @@ package struct PinSheet: View {
     @State private var confirmingReplace = false
     /// The save under way: the only other holder of the digits, until it answers.
     @State private var saveTask: Task<Void, Never>?
+    /// The owner said yes, in this sheet, to changing the PIN it found set (after a refusal
+    /// showed one was).
+    @State private var changeAgreed = false
+    @State private var askingChange = false
+    @State private var migrateFailure: KeryxError?
     @FocusState private var focus: Field?
     /// The owner has said yes to replacing a working PIN (`PinFlow`'s question). Without
     /// it, a working PIN is shown, never offered for replacing.
@@ -130,7 +135,7 @@ package struct PinSheet: View {
     /// The fields are offered: the app may write a PIN here, and a working one only after
     /// the owner has said yes to replacing it.
     private func editable(_ status: PinStatus) -> Bool {
-        PinWording.canSet(status) && (replaceConfirmed || !PinWording.asksFirst(status))
+        PinWording.canSet(status) && (replaceConfirmed || changeAgreed || !PinWording.asksFirst(status))
     }
 
     // MARK: - Where the PIN is
@@ -152,6 +157,17 @@ package struct PinSheet: View {
                     .font(.title3)
             }
             .padding(.vertical, 2)
+            if let terminal = banner.terminal {
+                DetailsDisclosure(terminal, heading: "For the Terminal")
+            }
+            if PinWording.kind(status) == .jarvis {
+                LabeledContent {
+                    Button("Migrate…") { migrate() }
+                        .disabled(model.location.value == nil)
+                } label: {
+                    Text("Move Keryx's files from Jarvis")
+                }
+            }
             if let lock = PinWording.lockLine(status) {
                 Label {
                     Text(lock)
@@ -165,7 +181,7 @@ package struct PinSheet: View {
                 Label {
                     Text(failure)
                         .font(.callout)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
@@ -196,7 +212,11 @@ package struct PinSheet: View {
         } footer: {
             Group {
                 if let problem {
-                    Text(problem).foregroundStyle(.red)
+                    Label {
+                        Text(problem).foregroundStyle(.secondary)
+                    } icon: {
+                        Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+                    }
                 } else {
                     Text(PinWording.rule).foregroundStyle(.secondary)
                 }
@@ -227,10 +247,35 @@ package struct PinSheet: View {
                 Button(PinWording.actionTitle(status)) { save(status) }
                     .keyboardShortcut(.defaultAction)
                     .disabled(saving || first.isEmpty || second.isEmpty)
+            } else if let status = model.pin.value, saved == nil, PinWording.canSet(status),
+                      PinWording.asksFirst(status) {
+                // A PIN is set (perhaps found so only now, by a refusal): Change it from here.
+                Button("Done") { close() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Change PIN…") { askingChange = true }
             } else {
                 Button("Done") { close() }
                     .keyboardShortcut(.defaultAction)
             }
+        }
+        .confirmationDialog("Change the Phone PIN?", isPresented: $askingChange) {
+            Button("Change PIN…", role: .destructive) {
+                changeAgreed = true
+                failure = nil
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(PinFlow.replaceWarning)
+        }
+        .errorAlert($migrateFailure)
+    }
+
+    private func migrate() {
+        guard let location = model.location.value else { return }
+        do {
+            try TerminalLauncher.open(location, arguments: ["migrate"])
+        } catch {
+            migrateFailure = (error as? KeryxError) ?? .terminal(error.localizedDescription)
         }
     }
 

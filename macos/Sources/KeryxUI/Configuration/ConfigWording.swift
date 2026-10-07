@@ -42,13 +42,13 @@ enum ConfigWording {
         }
     }
 
-    /// Where a value comes from, when it is not the default: "from config.toml".
+    /// Where a value comes from, said only when it matters: the environment, which wins
+    /// over anything set here. A value from the store is simply the value.
     static func source(_ source: String) -> String? {
         switch source {
-        case "default": nil
-        case "environment": "from the environment"
-        case "command line": "from the command line"
-        default: "from \(source)"
+        case "environment": "Overridden by the environment"
+        case "command line": "Set on the command line"
+        default: nil
         }
     }
 
@@ -168,6 +168,12 @@ enum ConfigWording {
         }
     }
 
+    /// A secret on the Integrations tab (an admin key, Slack's token, Google's client
+    /// secret): set, changed and removed on its account's card in Integrations, not here.
+    static func managedInIntegrations(_ row: ConfigRow) -> Bool {
+        row.secret && row.tab == "integrations"
+    }
+
     /// Twilio's auth token: changed in the account sheet, which checks it with its SID.
     static func isTwilioToken(_ row: ConfigRow) -> Bool {
         row.key == "TWILIO_AUTH_TOKEN"
@@ -184,8 +190,8 @@ enum ConfigWording {
         PinWording.caption(status, fallbackSet: row.set)
     }
 
-    /// Under a secret's buttons: whether it is set, and where it is kept. "Set · from
-    /// secrets.toml".
+    /// Under a secret's buttons: whether it is set — and, only when it is, that the
+    /// environment overrides it. Never where it is kept.
     static func secretCaption(_ row: ConfigRow) -> String {
         guard row.set else { return "Not set" }
         return ["Set", source(row.source)].compactMap { $0 }.joined(separator: " · ")
@@ -233,8 +239,23 @@ enum ConfigWording {
         Wording.named(plain(text), titles: titles)
     }
 
-    /// A description as plain text: on one line under the title, and whole in its tooltip.
+    /// A description as plain text, under the title and whole in its tooltip: no code
+    /// quoting, a value's underscores as spaces (`near_field` → "near field") — a setting's
+    /// key stays, for `Wording.named` to say by its title — and no emphasis (`*admin*`).
     static func plain(_ text: String) -> String {
-        text.replacingOccurrences(of: "`", with: "")
+        var result = ""
+        var rest = Substring(text)
+        while let open = rest.firstIndex(of: "`"),
+              let close = rest[rest.index(after: open)...].firstIndex(of: "`") {
+            result += rest[..<open]
+            // Underscores between lower-case words only: a key in capitals stays whole.
+            let code = String(rest[rest.index(after: open)..<close])
+            result += code.replacingOccurrences(of: #"(?<=[a-z0-9])_(?=[a-z0-9])"#, with: " ",
+                                                options: .regularExpression)
+            rest = rest[rest.index(after: close)...]
+        }
+        result += rest.replacingOccurrences(of: "`", with: "")
+        return result.replacingOccurrences(of: #"(?<![\w*])\*([^*\s][^*]*?)\*(?![\w*])"#, with: "$1",
+                                           options: .regularExpression)
     }
 }

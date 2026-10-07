@@ -48,6 +48,11 @@ package enum PinWording {
         kind(status) == .set
     }
 
+    /// Under the PIN's title in Configuration and Phone, in place of the CLI's description,
+    /// which says where the file is and how a terminal sets it.
+    package static let rowDescription =
+        "6 to 8 digits, asked for before anything is done for a caller. Kept in a file only you can read."
+
     /// The button that opens the sheet.
     package static func buttonTitle(_ status: PinStatus?, fallbackSet: Bool = false) -> String {
         (status?.set ?? fallbackSet) ? "Change PIN…" : "Set PIN…"
@@ -76,6 +81,8 @@ package enum PinWording {
         package let tone: Tone
         package let title: String
         package let text: String
+        /// What a terminal needs to know (the variable's name), for Show Details only.
+        package var terminal: String? = nil
     }
 
     /// `assistant`: the assistant's name ("Lyra"), when the status has said it.
@@ -92,25 +99,27 @@ package enum PinWording {
         case .set:
             return Banner(symbol: "lock.fill", tone: .ok, title: "A PIN Is Set",
                           text: "Callers key it, or say it, before \(name) does anything they ask. "
-                              + "It's kept in KERYX_HOME/pin, readable only by you.")
+                              + "It's kept in a file only you can read.")
         case .unusable:
             return Banner(symbol: "lock.trianglebadge.exclamationmark", tone: .attention,
                           title: "The PIN File Holds No PIN",
-                          text: "KERYX_HOME/pin is there but isn't a PIN, so there is none, and no call can set one. "
+                          text: "The PIN file is there but holds no PIN, so there is none, and no call can set one. "
                               + "A PIN set here takes its place.")
         case .environment(usable: true):
             return Banner(symbol: "lock.fill", tone: .ok, title: "Set in the Environment",
-                          text: "KERYX_PIN is set where Keryx runs, and it wins over a PIN set here. "
-                              + "Change it there, or remove it to set one here.")
+                          text: "The PIN is set in the environment Keryx runs in, and it wins over a PIN set here. "
+                              + "Change it there, or remove it there to set one here.",
+                          terminal: "KERYX_PIN, in the environment of Keryx's service")
         case .environment(usable: false):
             return Banner(symbol: "lock.trianglebadge.exclamationmark", tone: .blocked,
                           title: "The Environment's PIN Doesn't Work",
-                          text: "KERYX_PIN is set where Keryx runs but isn't 6 to 8 digits, so the phone can't use it "
-                              + "and Keryx won't start with it. Fix it there, or remove it to set one here.")
+                          text: "The PIN set in the environment Keryx runs in isn't 6 to 8 digits, so the phone can't "
+                              + "use it and Keryx won't start with it. Fix it there, or remove it there to set one here.",
+                          terminal: "KERYX_PIN, in the environment of Keryx's service")
         case .jarvis:
             return Banner(symbol: "shippingbox", tone: .attention, title: "Still Where Jarvis Kept It",
-                          text: "The PIN is still in ~/.jarvis. Once Keryx's files have moved (keryx migrate), "
-                              + "it can be changed here.")
+                          text: "The PIN is still where Jarvis kept it. Once Keryx's files have moved, it can be "
+                              + "changed here.")
         case .unknown:
             return Banner(symbol: "questionmark.circle", tone: .attention, title: "Kept Somewhere New",
                           text: "Keryx keeps this PIN somewhere this app doesn't know. Update the app to change it here.")
@@ -137,11 +146,11 @@ package enum PinWording {
         guard let status else { return fallbackSet ? "Set" : "Not set" }
         let place: String = switch kind(status) {
         case .none: "Not set"
-        case .set: "Set · in KERYX_HOME/pin"
+        case .set: "Set"
         case .unusable: "No usable PIN"
-        case .environment(usable: true): "Set in the environment"
+        case .environment(usable: true): "Set · Overridden by the environment"
         case .environment(usable: false): "The environment's PIN doesn't work"
-        case .jarvis: "Set · still in ~/.jarvis"
+        case .jarvis: "Set · still where Jarvis kept it"
         case .unknown: status.set ? "Set" : "Not set"
         }
         guard status.locked else { return place }
@@ -212,7 +221,7 @@ package enum PinWording {
 
     /// The question before a PIN is replaced, as `keryx setup` asks it.
     package static let replaceTitle = "Replace the PIN?"
-    package static let replaceMessage = "The PIN in KERYX_HOME/pin is replaced by the one you typed. "
+    package static let replaceMessage = "The PIN you have now is replaced by the one you typed. "
         + "The PIN you use on calls now stops working once Keryx restarts."
 
     // MARK: - What went wrong

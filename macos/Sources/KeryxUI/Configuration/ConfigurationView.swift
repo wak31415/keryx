@@ -122,24 +122,24 @@ public struct ConfigurationView: View {
                 }
             }
             if !tab.advanced.isEmpty {
+                // Every advanced setting under the one Advanced disclosure, its groups as
+                // headings inside it rather than sections of their own beside the tab's.
                 Section {
                     DisclosureGroup(isExpanded: advancedBinding(tab.id)) {
-                        EmptyView()
+                        ForEach(tab.advanced) { group in
+                            if let title = ConfigWording.advancedSectionTitle(group, on: tab) {
+                                Text(title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.top, 6)
+                            }
+                            rows(group.rows, titles: titles)
+                        }
                     } label: {
                         LabeledContent("Advanced") {
                             Text(ConfigWording.advancedCount(tab))
                                 .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                if advancedOpen.contains(tab.id) {
-                    ForEach(tab.advanced) { group in
-                        Section {
-                            rows(group.rows, titles: titles)
-                        } header: {
-                            if let title = ConfigWording.advancedSectionTitle(group, on: tab) {
-                                Text(title)
-                            }
                         }
                     }
                 }

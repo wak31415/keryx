@@ -99,10 +99,11 @@ extension ScreenCatalog {
                     .environment(pinModel(PreviewData.pinNone))
             },
             Entry("pin-sheet-refused", size: CGSize(width: 480, height: 400)) {
-                PinSheet(replaceConfirmed: false, first: "482915", second: "482915",
+                // Refused, and read again: one is set after all, and Change PIN… is offered.
+                PinSheet(replaceConfirmed: false, first: "", second: "",
                          failure: PinWording.failure(.failed(command: "keryx pin set", exitCode: 1,
                                                              message: "A PIN is already set.")).text)
-                    .environment(pinModel(PreviewData.pinNone))
+                    .environment(pinModel(PreviewData.pinFile))
             },
             Entry("pin-sheet-saved", size: CGSize(width: 480, height: 170)) {
                 PinSheet(replaceConfirmed: true, first: "", second: "",
