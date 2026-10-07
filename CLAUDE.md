@@ -199,7 +199,9 @@ remember:
   the settings, `free_port`, `wait_for`), `pull` (`keryx models pull`'s steps, told as a
   progress bar or as JSON lines; its `EventLines` is any stream that ends exactly once), `use`
   (the settings that make a model the local agent's — `llama_values`, `enable_local`, which
-  the wizard and `keryx models use` both save — and the servers' status) and `voice` (the
+  the wizard and `keryx models use` both save — and the servers' status), `server` (the
+  model server's steps — llama.cpp installed when missing, its `--llm` unit, the wait for
+  it, or Ollama's pull — which the wizard and `keryx models start` both run) and `voice` (the
   voice's three places, its status, and the steps that set each up, which the wizard and
   `keryx voice use` both run: the wizard only asks and tells). `setup/local_models.py` is the
   wizard's section and `keryx models` and `keryx voice` the command line; every install,
