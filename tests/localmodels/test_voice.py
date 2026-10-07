@@ -61,6 +61,19 @@ class FakeMachine:
         self.log.lines.append(("words", endpoint.base_url if endpoint else None))
         return self.words
 
+    #: speech-to-speech's own Python, and what fetching the speech models says.
+    python: str | None = "/tools/s2s/bin/python"
+    fetched: str | None = None
+
+    def speech_python(self) -> str | None:
+        return self.python
+
+    def fetch_speech(self, python, repos, progress) -> str | None:
+        self.log.lines.append(("fetch", python, [repo.id for repo in repos]))
+        progress(0, 100)
+        progress(100, 100)
+        return self.fetched
+
     def realtime_problem(self, endpoint: Endpoint):
         self.log.lines.append(("realtime", endpoint.base_url, endpoint.api_key))
         return self.realtime
@@ -81,8 +94,11 @@ class Recorder:
     def error(self, message: str, *, log: Path | None = None) -> None:
         self.log.lines.append(("error", message, log))
 
-    def done(self, base_url: str) -> None:
-        self.log.lines.append(("done", base_url))
+    def done(self, *ended: str) -> None:
+        self.log.lines.append(("done", *ended))
+
+    def progress(self, done: int, total: int | None) -> None:
+        self.log.lines.append(("progress", done, total))
 
 
 @pytest.fixture
@@ -375,6 +391,134 @@ def test_a_port_taken_by_another_is_moved_and_our_own_is_kept(settings, root):
     assert saved[0]["VOICE_SERVER_PORT"] == 18765 and log.of("free_port") == []
 
 
+# --- the speech models --------------------------------------------------------------------
+
+
+def run_download(settings, machine, log, **kwargs):
+    return voice.download(settings, machine, Recorder(log), platform="darwin", **kwargs)
+
+
+def test_download_installs_speech_to_speech_then_fetches_what_the_settings_need(settings):
+    from keryx.localmodels import speech
+
+    log = Log()
+
+    code = run_download(settings, FakeMachine(log), log)
+
+    assert code == 0
+    assert [step for step, _message in log.of("step")] == ["install", "download"]
+    assert log.of("script") == [(s2s_install_argv(),)]
+    assert log.of("fetch") == [("/tools/s2s/bin/python",
+                                [repo.id for repo in speech.needed(settings, platform="darwin")])]
+    assert log.of("progress") == [(0, 100), (100, 100)]
+    assert log.of("done") == [("parakeet-tdt", "kokoro")]
+    # Each step is told before the slow work it names begins.
+    assert log.kinds().index("step") < log.kinds().index("script")
+    assert log.kinds().index("fetch") > [i for i, k in enumerate(log.kinds()) if k == "step"][1]
+
+
+def test_download_with_speech_to_speech_installed_only_fetches(settings):
+    log = Log()
+
+    code = run_download(settings, FakeMachine(log, s2s="/bin/s2s"), log)
+
+    assert code == 0 and log.of("script") == []
+    assert [step for step, _message in log.of("step")] == ["download"]
+
+
+def test_download_of_models_keryx_cannot_name_is_refused_before_anything(settings):
+    log = Log()
+
+    code = run_download(settings.model_copy(update={"voice_server_stt": "whisper-mlx"}),
+                        FakeMachine(log), log)
+
+    assert code == voice.REFUSED
+    [(message, _log)] = log.of("error")
+    assert "--stt whisper-mlx" in message
+    assert log.of("script") == [] and log.of("step") == [] and log.of("fetch") == []
+
+
+@pytest.mark.parametrize(("arrange", "said"), [
+    ({"script_code": 1}, "the install did not finish"),
+    ({"free": 10**9}, "needs about 5 GB free"),
+])
+def test_download_whose_install_fails_fetches_nothing(settings, arrange, said):
+    log = Log()
+
+    code = run_download(settings, FakeMachine(log, **arrange), log)
+
+    assert code == 1 and log.of("fetch") == [] and log.of("done") == []
+    assert said in log.of("error")[0][0]
+
+
+def test_download_without_speech_to_speechs_own_python_says_so(settings):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s")
+    machine.python = None
+
+    code = run_download(settings, machine, log)
+
+    assert code == 1 and log.of("fetch") == []
+    assert "its own Python" in log.of("error")[0][0]
+
+
+def test_download_that_stops_says_why_and_is_not_done(settings):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s")
+    machine.fetched = "a/one could not be downloaded: OSError: disk full"
+
+    code = run_download(settings, machine, log)
+
+    assert code == 1 and log.of("done") == []
+    assert log.of("error") == [("a/one could not be downloaded: OSError: disk full", None)]
+
+
+def test_the_machine_downloads_through_speech_to_speechs_own_python(monkeypatch):
+    from keryx.localmodels import runtimes, speech
+
+    monkeypatch.setattr(runtimes, "speech_to_speech_python", lambda: "/tool/bin/python")
+    monkeypatch.setattr(speech, "fetch", lambda python, repos, progress: f"{python} asked")
+    machine = voice.machine()
+
+    assert machine.speech_python() == "/tool/bin/python"
+    assert machine.fetch_speech("/p", [], lambda done, total: None) == "/p asked"
+
+
+def test_the_download_is_told_as_json_lines_ending_once():
+    lines: list[str] = []
+    events = voice.DownloadJsonSteps(lines.append)
+
+    events.step("install", "Installing")
+    events.progress(5, None)
+    events.step("download", "Downloading")
+    events.progress(50, 100)
+    events.done("parakeet-tdt", "kokoro")
+    events.error("late")
+
+    import json
+
+    told = [json.loads(line) for line in lines]
+    assert told[1] == {"event": "progress", "step": "install", "done": 5, "total": None}
+    assert told[-2] == {"event": "progress", "step": "download", "done": 50, "total": 100}
+    assert told[-1] == {"event": "done", "stt": "parakeet-tdt", "tts": "kokoro"}
+
+
+def test_the_download_is_told_in_lines_on_a_terminal():
+    said: list[tuple] = []
+    steps = voice.DownloadTextSteps(lambda message, err=False: said.append((message, err)))
+
+    steps.progress(0, None)
+    steps.progress(1 * 10**9, 4 * 10**9)
+    steps.progress(int(1.1 * 10**9), 4 * 10**9)  # not a tenth further on: not said
+    steps.progress(4 * 10**9, 4 * 10**9)
+    steps.done("parakeet-tdt", "kokoro")
+
+    assert [message for message, _err in said] == [
+        "1.0 of 4.0 GB", "4.0 of 4.0 GB",
+        "the voice's speech models are downloaded: parakeet-tdt to hear, kokoro to speak",
+    ]
+
+
 # --- the voice the wizard offers first -----------------------------------------------------
 
 
@@ -425,8 +569,10 @@ def test_openai_is_no_voice_server_and_no_key_for_one():
 
 
 class Asked:
-    def __init__(self, *, program=None, unit=False, up=False, server=True) -> None:
+    def __init__(self, *, program=None, unit=False, up=False, server=True,
+                 ready=False) -> None:
         self.program, self.unit, self.up, self.server = program, unit, up, server
+        self.ready = ready
         self.probed: list[str] = []
         self.servers: list[Endpoint] = []
 
@@ -436,6 +582,7 @@ class Asked:
             installed=lambda kind: kind == "voice" and self.unit,
             probe=lambda url: self.probed.append(url) or (self.up, None),
             server_reachable=lambda endpoint: self.servers.append(endpoint) or self.server,
+            models_ready=lambda settings: self.ready,
         )
 
 
@@ -450,7 +597,8 @@ def test_status_on_openai_without_a_local_model_needs_one(settings):
         "assistant": settings.assistant_name, "openai_key_set": True,
         "here": {"installed": False, "program": None, "voice": settings.voice_server_voice,
                  "port": 8765, "unit_installed": False, "reachable": False,
-                 "words_model": None},
+                 "words_model": None, "stt": "parakeet-tdt", "tts": "kokoro",
+                 "models_ready": False},
         "needs": "local_agent_model",
         "server": {"reachable": None},
     }
@@ -458,7 +606,7 @@ def test_status_on_openai_without_a_local_model_needs_one(settings):
 
 
 def test_status_here_is_the_voice_server_on_this_machine(settings):
-    asked = Asked(program="/bin/s2s", unit=True, up=True)
+    asked = Asked(program="/bin/s2s", unit=True, up=True, ready=True)
     here = settings.model_copy(update={**WORDS, "voice_base_url": "http://127.0.0.1:8765/v1",
                                        "voice_server_voice": "bm_george"})
 
@@ -468,7 +616,8 @@ def test_status_here_is_the_voice_server_on_this_machine(settings):
     assert document["base_url"] == "http://127.0.0.1:8765/v1"
     assert document["here"] == {"installed": True, "program": "/bin/s2s", "voice": "bm_george",
                                 "port": 8765, "unit_installed": True, "reachable": True,
-                                "words_model": "qwen3-coder-30b-a3b"}
+                                "words_model": "qwen3-coder-30b-a3b", "stt": "parakeet-tdt",
+                                "tts": "kokoro", "models_ready": True}
     assert document["needs"] is None and document["server"] == {"reachable": None}
     assert asked.probed == ["http://127.0.0.1:8765/v1"]
 

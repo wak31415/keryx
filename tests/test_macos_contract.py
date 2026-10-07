@@ -38,7 +38,16 @@ from keryx.cli import app
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path
-from keryx.localmodels import catalog, download, hardware, runtimes, servers, use, voice
+from keryx.localmodels import (
+    catalog,
+    download,
+    hardware,
+    runtimes,
+    servers,
+    speech,
+    use,
+    voice,
+)
 from keryx.localmodels.hardware import Hardware
 from keryx.restart.service import ServiceTarget
 from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
@@ -59,8 +68,9 @@ NULLABLE = "|null"
 PULL = "models pull --json"
 VOICE_HERE = "voice use here --json"
 MODELS_START = "models start --json"
+VOICE_DOWNLOAD = "voice download --json"
 #: The command lines the app reads as JSON lines; the pull's is the one every contract has.
-STREAMS = (PULL, VOICE_HERE, MODELS_START)
+STREAMS = (PULL, VOICE_HERE, MODELS_START, VOICE_DOWNLOAD)
 #: The command lines the app reads as one JSON document.
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
@@ -732,6 +742,76 @@ def test_a_model_server_start_streams_the_events_the_app_reads_and_ends_once(
     arrange(monkeypatch, seeded, scripts)
 
     result = runner.invoke(app, MODELS_START.split())
+
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert events, "no events at all"
+    for event in events:
+        assert event.get("event") in stream["events"], event
+        assert not key_problems(event, stream["events"][event["event"]]), event
+    endings = [event["event"] for event in events if event["event"] in stream["terminal"]]
+    assert endings == [ending] and events[-1]["event"] == ending
+    assert (events[0]["event"] == "step") is stepped
+    allowed = stream["exit"][ending]
+    assert result.exit_code == code
+    assert code in (allowed if isinstance(allowed, list) else [allowed])
+
+
+# --- the stream: voice download --json ---------------------------------------------------
+
+
+def _download_done(monkeypatch, settings):
+    pass
+
+
+def _download_failed(monkeypatch, settings):
+    monkeypatch.setattr(speech, "fetch",
+                        lambda python, repos, progress: "a/one could not be downloaded")
+
+
+def _download_refused(monkeypatch, settings):
+    ConfigStore().set({"VOICE_SERVER_STT": "whisper-mlx"})
+
+
+def _download_cancelled(monkeypatch, settings):
+    def interrupted(python, repos, progress):
+        raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+    monkeypatch.setattr(speech, "fetch", interrupted)
+
+
+#: Each way `voice download` ends: how to arrange it, its ending, its exit code, and whether
+#: a step was told first.
+DOWNLOADS = [(_download_done, "done", 0, True), (_download_failed, "error", 1, True),
+             (_download_refused, "error", 2, False),
+             (_download_cancelled, "cancelled", 130, True)]
+
+
+def download_stream() -> dict:
+    """The contract's promise for `voice download --json`, once the app has made it."""
+    stream = contract()["streams"].get(VOICE_DOWNLOAD)
+    if stream is None:
+        # The streams' cross-check fails for it, once: a promise the app has yet to make.
+        pytest.skip(f"the contract does not name the {VOICE_DOWNLOAD} stream yet")
+    return stream
+
+
+def test_the_downloads_below_reach_every_event_the_contract_names():
+    stream = download_stream()
+
+    assert {ending for _, ending, _, _ in DOWNLOADS} == set(stream["terminal"])
+    assert set(stream["events"]) == {*stream["terminal"], "step", "progress"}
+
+
+@pytest.mark.parametrize(("arrange", "ending", "code", "stepped"), DOWNLOADS)
+def test_a_speech_model_download_streams_the_events_the_app_reads_and_ends_once(
+    seeded, monkeypatch, arrange, ending, code, stepped
+):
+    stream = download_stream()
+    monkeypatch.setattr(runtimes, "speech_to_speech_python", lambda: "/tools/s2s/bin/python")
+    monkeypatch.setattr(speech, "fetch", lambda python, repos, progress: progress(1, 2))
+    arrange(monkeypatch, seeded)
+
+    result = runner.invoke(app, VOICE_DOWNLOAD.split())
 
     events = [json.loads(line) for line in result.stdout.splitlines()]
     assert events, "no events at all"

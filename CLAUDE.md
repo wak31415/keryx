@@ -112,9 +112,15 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   llm|voice` (what the units run: it reads the settings and becomes the server)
 - The voice on a call: `uv run keryx voice [--json]` (where it is — `mode` openai, here or
   server — and the voice server on this machine: installed, its unit, whether it answers on
-  loopback, the local model its words come from; `needs` says `local_agent_model` while there
+  loopback, the local model its words come from, its `stt` and `tts` and whether their
+  models are downloaded, `models_ready`; `needs` says `local_agent_model` while there
   is none; a server elsewhere is asked only while it is the voice, never with its key in the
-  output), `voice use openai [--json]`, `voice use server URL [--key-stdin | --clear-key]
+  output), `voice download [--json]` (the speech models `VOICE_SERVER_STT`, `_TTS` and
+  `_VOICE` need, fetched into the Hugging Face cache by speech-to-speech's own Python, which
+  is installed first when missing — `localmodels/speech.py`; `--json` is JSON lines — a `step`
+  (`install`, `download`), `progress` in bytes, then exactly one of `done` (`stt`, `tts`),
+  `error`, `cancelled`; exit 2 for a speech model Keryx cannot name; `config options
+  VOICE_SERVER_STT|TTS` marks the downloaded ones), `voice use openai [--json]`, `voice use server URL [--key-stdin | --clear-key]
   [--keep-anyway] [--json]` (saved only once it opens a Realtime session, unless kept anyway;
   exit 1 with the `problem` and nothing saved; the stored key is kept and asked with unless
   `--key-stdin` replaces it — shown as `(set)` — or `--clear-key` forgets it), `voice use here
@@ -230,10 +236,14 @@ remember:
   model server's steps — llama.cpp installed when missing, its `--llm` unit, the wait for
   it, or Ollama's pull — which the wizard and `keryx models start` both run) and `voice` (the
   voice's three places, its status, and the steps that set each up, which the wizard and
-  `keryx voice use` both run: the wizard only asks and tells). `setup/local_models.py` is the
-  wizard's section and `keryx models` and `keryx voice` the command line; every install,
-  download and network read in the wizard goes through `Probes`, and in `keryx voice use`
-  through `voice.machine()`.
+  `keryx voice use` both run: the wizard only asks and tells; and `keryx voice download`'s),
+  `speech` (the Hugging Face repositories speech-to-speech fetches for each `--stt` and
+  `--tts`, read from its own source and never guessed — one it cannot name is said, not
+  fetched — whether they are in the cache, and the fetch) and `speech_fetch` (the script
+  that fetch runs with speech-to-speech's own Python; Keryx never imports it to run it).
+  `setup/local_models.py` is the wizard's section and `keryx models` and `keryx voice` the
+  command line; every install, download and network read in the wizard goes through
+  `Probes`, and in `keryx voice use` and `voice download` through `voice.machine()`.
 - **continuity** — `continuity/` is what survives the end of a call: `briefing`, `memory`
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
   `retention`, which prunes exactly those artefacts.
@@ -536,7 +546,8 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   commands that write what the service may not — `config import-env`, `auth login`,
   `memory seed`, `setup`, `setup mark`, `pin set`, `config lock|unlock`, `migrate`,
   `plugins install|remove`, `models use`, `voice use` (before any install, handshake or
-  save), `models start|stop`, `service install|uninstall` — refuse outright under
+  save), `voice download`, `models start|stop`, `service install|uninstall` — refuse
+  outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and

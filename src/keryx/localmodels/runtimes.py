@@ -71,6 +71,33 @@ def speech_to_speech() -> str | None:
     return str(candidate) if candidate.is_file() else None
 
 
+def speech_to_speech_python(program: str | None = None) -> str | None:
+    """The Python of speech-to-speech's own environment, which has the `huggingface_hub` it
+    reads its models with: beside its command — a uv tool's command is a link into its
+    environment's `bin/` — else the interpreter its first line names. `program` is the
+    command, found as `speech_to_speech` finds it unless a caller says."""
+    program = program or speech_to_speech()
+    if program is None:
+        return None
+    command = Path(program)
+    try:
+        beside = command.resolve().parent / "python"
+    except (OSError, RuntimeError):  # a loop of links
+        return None
+    if beside.is_file():
+        return str(beside)  # the environment's own link, never resolved past it
+    try:
+        with command.open("rb") as script:
+            first = script.readline(1024)
+    except OSError:
+        return None
+    if not first.startswith(b"#!"):
+        return None
+    words = first[2:].decode(errors="replace").split()
+    named = Path(words[0]) if words else None
+    return str(named) if named is not None and named.is_file() else None
+
+
 def llama_cpp_assets(
     hardware: Hardware, *, system: str | None = None, machine: str | None = None
 ) -> list[str]:

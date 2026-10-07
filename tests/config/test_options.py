@@ -697,6 +697,32 @@ def test_the_voice_servers_speech_models_are_built_in(settings):
     assert stt.source == tts.source == "builtin" and stt.free_form and tts.free_form
 
 
+def test_a_speech_model_already_downloaded_says_so(settings):
+    cached = {("stt", "whisper"), ("tts", "kokoro")}
+    asked: list[tuple] = []
+    found = sources(speech_ready=lambda kind, value: asked.append((kind, value))
+                    or (kind, value) in cached)
+
+    stt = options_for("VOICE_SERVER_STT", settings, found)
+    tts = options_for("VOICE_SERVER_TTS", settings, found)
+
+    assert [(o.value, o.detail) for o in stt.options] == [
+        ("parakeet-tdt", None), ("whisper", "downloaded"), ("whisper-mlx", None)]
+    assert [(o.value, o.detail) for o in tts.options] == [("kokoro", "downloaded"),
+                                                         ("qwen3", None)]
+    assert asked == [("stt", "parakeet-tdt"), ("stt", "whisper"), ("stt", "whisper-mlx"),
+                     ("tts", "kokoro"), ("tts", "qwen3")]
+
+
+def test_the_real_sources_ask_the_hugging_face_cache(settings, monkeypatch):
+    from keryx.localmodels import speech
+
+    monkeypatch.setattr(speech, "ready", lambda chosen, kind, value: (chosen, kind, value))
+
+    assert options.default_sources(settings).speech_ready("stt", "whisper") == (
+        settings, "stt", "whisper")
+
+
 def test_the_default_sources_are_the_real_ones(settings):
     real = options.default_sources(settings)
 

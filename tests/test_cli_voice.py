@@ -3,13 +3,14 @@
 import json
 import os
 import signal
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from keryx.cli import app
 from keryx.config.store import ConfigStore
-from keryx.localmodels import runtimes, servers, use, voice
+from keryx.localmodels import runtimes, servers, speech, use, voice
 
 runner = CliRunner()
 WORDS = {"LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1",
@@ -33,6 +34,20 @@ class Machine:
         self.scripts: list[list[str]] = []
         self.realtimes: list = []
         self.servers: list = []
+        #: The speech models: whether they are in the cache, speech-to-speech's own Python,
+        #: and what fetching them says (or raises) and was asked.
+        self.ready = False
+        self.python: str | None = "/tools/s2s/bin/python"
+        self.fetched: object = None
+        self.fetches: list = []
+
+    def fetch(self, python, repos, progress):
+        self.fetches.append((python, [repo.id for repo in repos]))
+        progress(0, 2000)
+        progress(2000, 2000)
+        if isinstance(self.fetched, BaseException):
+            raise self.fetched
+        return self.fetched
 
     def run(self, argv):
         self.scripts.append(list(argv))
@@ -59,6 +74,9 @@ def machine(monkeypatch, tmp_path, every_agent_installed):
                         lambda endpoint: found.servers.append(endpoint) or found.server)
     monkeypatch.setattr(voice, "run_detached", found.run)
     monkeypatch.setattr(servers, "free_port", lambda port: port)
+    monkeypatch.setattr(speech, "models_ready", lambda settings: found.ready)
+    monkeypatch.setattr(runtimes, "speech_to_speech_python", lambda: found.python)
+    monkeypatch.setattr(speech, "fetch", found.fetch)
     def wait_for(endpoint, kind, timeout):
         if isinstance(found.wait_problem, BaseException):
             raise found.wait_problem
@@ -100,7 +118,19 @@ def test_voice_json_here(machine):
     assert document["needs"] is None
     assert document["here"] == {"installed": True, "program": "/bin/s2s", "voice": "bf_emma",
                                 "port": 8765, "unit_installed": True, "reachable": True,
-                                "words_model": "qwen3-coder-30b-a3b"}
+                                "words_model": "qwen3-coder-30b-a3b", "stt": "parakeet-tdt",
+                                "tts": "kokoro", "models_ready": False}
+
+
+def test_voice_json_says_whether_the_speech_models_are_downloaded(machine):
+    ConfigStore().set({"VOICE_SERVER_STT": "whisper", "VOICE_SERVER_TTS": "qwen3"})
+    machine.ready = True
+
+    here = json.loads(runner.invoke(app, ["voice", "--json"]).stdout)["here"]
+
+    assert (here["stt"], here["tts"], here["models_ready"]) == ("whisper", "qwen3", True)
+    plain = runner.invoke(app, ["voice"]).stdout
+    assert "its speech: whisper to hear, qwen3 to speak; downloaded: yes" in plain
 
 
 def test_voice_json_server_says_whether_it_answers_and_never_its_key(machine):
@@ -594,3 +624,119 @@ def test_use_here_json_ends_with_exactly_one_ending(
     if code == 2 or ending == "error" and "only the owner" in events[-1]["message"]:
         # a refusal: nothing was tried
         assert machine.scripts == [] and "VOICE_SERVER_VOICE" not in ConfigStore().stored()
+
+
+# --- keryx voice download ------------------------------------------------------------------
+
+
+def test_download_installs_speech_to_speech_then_streams_the_models_in(machine):
+    result = runner.invoke(app, ["voice", "download", "--json"])
+
+    assert result.exit_code == 0, result.output
+    events = events_of(result)
+    assert [e["step"] for e in events if e["event"] == "step"] == ["install", "download"]
+    assert [(e["done"], e["total"]) for e in events if e["event"] == "progress"] == [
+        (0, 2000), (2000, 2000)]
+    assert all(e["step"] == "download" for e in events if e["event"] == "progress")
+    assert events[-1] == {"event": "done", "stt": "parakeet-tdt", "tts": "kokoro"}
+    assert machine.scripts == [runtimes.s2s_install_argv()]
+    [(python, repos)] = machine.fetches
+    assert python == "/tools/s2s/bin/python"
+    assert repos[-1] == "pipecat-ai/smart-turn-v3"
+
+
+def test_download_in_words(machine):
+    machine.s2s = "/bin/s2s"
+
+    result = runner.invoke(app, ["voice", "download"])
+
+    assert result.exit_code == 0, result.output
+    assert "speech models are downloaded: parakeet-tdt to hear, kokoro to speak" in result.stdout
+    assert machine.scripts == []
+
+
+def test_download_in_words_is_cancelled_by_ctrl_c(machine):
+    machine.s2s, machine.fetched = "/bin/s2s", KeyboardInterrupt()
+
+    result = runner.invoke(app, ["voice", "download"])
+
+    assert result.exit_code == 130 and "picks up where this stopped" in result.stderr
+
+
+@pytest.mark.parametrize("command", [["voice", "download"], ["voice", "download", "--json"]])
+def test_download_is_the_owners_alone(machine, monkeypatch, command):
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+    result = runner.invoke(app, command)
+
+    assert result.exit_code == 1
+    assert machine.scripts == [] and machine.fetches == []
+    said = events_of(result)[-1]["message"] if "--json" in command else result.stderr
+    assert "only the owner may" in said
+
+
+def _dl_done(monkeypatch, machine):
+    pass
+
+
+def _dl_unknown(monkeypatch, machine):
+    ConfigStore().set({"VOICE_SERVER_STT": "whisper-mlx"})
+
+
+def _dl_install_failed(monkeypatch, machine):
+    machine.script_code = 1
+
+
+def _dl_no_python(monkeypatch, machine):
+    machine.s2s, machine.python = "/bin/s2s", None
+
+
+def _dl_failed(monkeypatch, machine):
+    machine.s2s, machine.fetched = "/bin/s2s", "a/one could not be downloaded: OSError: full"
+
+
+def _dl_cancelled(monkeypatch, machine):
+    machine.s2s, machine.fetched = "/bin/s2s", KeyboardInterrupt()
+
+
+def _dl_service(monkeypatch, machine):
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+
+def _dl_migration(monkeypatch, machine):
+    old = Path(os.environ["HOME"]) / ".local" / "share" / "jarvis"
+    old.mkdir(parents=True)
+    (old / "memory.md").write_text("# Memory\n")
+
+
+def _dl_unexpected(monkeypatch, machine):
+    machine.s2s, machine.fetched = "/bin/s2s", PermissionError("python is not executable")
+
+
+@pytest.mark.parametrize(
+    ("arrange", "ending", "code", "message"),
+    [(_dl_done, "done", 0, None), (_dl_unknown, "error", 2, "--stt whisper-mlx"),
+     (_dl_install_failed, "error", 1, "the install did not finish"),
+     (_dl_no_python, "error", 1, "its own Python"),
+     (_dl_failed, "error", 1, "could not be downloaded"),
+     (_dl_cancelled, "cancelled", 130, None),
+     (_dl_service, "error", 1, "only the owner may"),
+     (_dl_migration, "error", 2, "keryx cannot do that yet"),
+     (_dl_unexpected, "error", 1, "python is not executable")],
+)
+def test_download_json_ends_with_exactly_one_ending(machine, monkeypatch, arrange, ending, code,
+                                                    message):
+    arrange(monkeypatch, machine)
+
+    result = runner.invoke(app, ["voice", "download", "--json"])
+
+    events = events_of(result)
+    assert [e["event"] for e in events if e["event"] in TERMINAL] == [ending]
+    assert events[-1]["event"] == ending
+    assert all(e["event"] in ("step", "progress") for e in events[:-1])
+    if message is not None:
+        assert message in events[-1]["message"]
+    assert result.exit_code == code
+    assert result.stderr == ""
+    if code == 2:  # a refusal: nothing was tried
+        assert machine.scripts == [] and machine.fetches == []

@@ -112,6 +112,9 @@ class Sources:
     codex_models: Callable[[dict[str, str], float], list[CodexModel]]
     hardware: Callable[[], Hardware]
     downloaded: Callable[[ModelEntry], bool]
+    #: `(kind, value)` → whether `VOICE_SERVER_STT` ("stt") or `_TTS` ("tts") at `value`
+    #: has its speech models in the Hugging Face cache (`localmodels.speech.ready`).
+    speech_ready: Callable[[str, str], bool] = lambda kind, value: False
 
 
 @dataclass(frozen=True)
@@ -191,8 +194,14 @@ def default_sources(settings: Settings) -> Sources:
 
         return download.is_downloaded(settings.cache_dir, entry)
 
+    def speech_ready(kind: str, value: str) -> bool:
+        from keryx.localmodels import speech
+
+        return speech.ready(settings, kind, value)
+
     return Sources(
-        get=http_get, codex_models=sdk_codex_models, hardware=hardware, downloaded=downloaded
+        get=http_get, codex_models=sdk_codex_models, hardware=hardware, downloaded=downloaded,
+        speech_ready=speech_ready,
     )
 
 
@@ -462,8 +471,16 @@ def kokoro_voices(settings: Settings, sources: Sources) -> Found:
     )
 
 
-def _builtin(values: tuple[str, ...]) -> Callable[[Settings, Sources], Found]:
-    return lambda settings, sources: Found([Option(v, v) for v in values], "builtin", False)
+def _speech(kind: str, values: tuple[str, ...]) -> Callable[[Settings, Sources], Found]:
+    """The voice server's speech models Keryx offers, each marked "downloaded" once its
+    models are in the Hugging Face cache (`keryx voice download` fetches them)."""
+    def found(settings: Settings, sources: Sources) -> Found:
+        return Found([
+            Option(v, v, "downloaded" if sources.speech_ready(kind, v) else None)
+            for v in values
+        ], "builtin", False)
+
+    return found
 
 
 PROVIDERS: dict[str, Callable[[Settings, Sources], Found]] = {
@@ -476,8 +493,8 @@ PROVIDERS: dict[str, Callable[[Settings, Sources], Found]] = {
     "LOCAL_AGENT_MODEL": local_agent_models,
     "LLM_SERVER_MODEL": served_models,
     "VOICE_SERVER_VOICE": kokoro_voices,
-    "VOICE_SERVER_STT": _builtin(VOICE_SERVER_STT),
-    "VOICE_SERVER_TTS": _builtin(VOICE_SERVER_TTS),
+    "VOICE_SERVER_STT": _speech("stt", VOICE_SERVER_STT),
+    "VOICE_SERVER_TTS": _speech("tts", VOICE_SERVER_TTS),
 }
 OPTION_KEYS = frozenset(PROVIDERS)
 #: The one setting whose value must be on the list: a voice the key may not use makes

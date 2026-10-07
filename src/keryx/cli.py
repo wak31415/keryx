@@ -73,6 +73,7 @@ from keryx.localmodels import (
     runtimes,
     server,
     servers,
+    speech,
     use,
     voice,
 )
@@ -1275,7 +1276,8 @@ def voice_command(
     settings = _configure_readonly()
     document = voice.status(settings, program=runtimes.speech_to_speech,
                             installed=use.unit_installed, probe=use.probe,
-                            server_reachable=voice.server_reachable)
+                            server_reachable=voice.server_reachable,
+                            models_ready=speech.models_ready)
     if as_json:
         typer.echo(json.dumps(document, indent=2))
         return
@@ -1294,6 +1296,9 @@ def voice_command(
                f"{here['voice']} on port {here['port']}; unit installed: "
                f"{yes[here['unit_installed']]}; answers: {yes[here['reachable']]}")
     typer.echo(f"its words: {here['words_model'] or voice.NO_WORDS}")
+    typer.echo(f"its speech: {here['stt']} to hear, {here['tts']} to speak; downloaded: "
+               f"{yes[here['models_ready']]}" + ("" if here["models_ready"] else
+                                                  " (keryx voice download)"))
 
 
 #: What `voice use` is, refused to the service: `VOICE_BASE_URL` is protected.
@@ -1434,6 +1439,48 @@ def _voice_here(settings: Settings, name: str | None, report: voice.Report) -> i
     return voice.here(settings, voice.machine(), report, save=_saver(store, settings, report),
                       root=repo_root(),
                       choose_voice=lambda: name or voice.current_voice(settings, store))
+
+
+#: What `voice download` is, refused to the service: it installs, and fills the disk.
+DOWNLOAD_THE_VOICE = "download the voice's speech models"
+
+
+@voice_app.command("download")
+def voice_download(
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Print it as JSON lines: each step, the bytes, then how it "
+                     "ended."),
+    ] = False,
+) -> None:
+    """Download the voice server's speech models into the Hugging Face cache, ahead of its
+    first start.
+
+    The ones VOICE_SERVER_STT, VOICE_SERVER_TTS and VOICE_SERVER_VOICE need, fetched by
+    speech-to-speech's own Python; speech-to-speech is installed first when it is missing.
+    """
+    if not as_json:
+        _owner_only(DOWNLOAD_THE_VOICE)
+        try:
+            code = voice.download(_configure_readonly(), voice.machine(),
+                                  voice.DownloadTextSteps(typer.echo))
+        except KeyboardInterrupt:
+            typer.echo("cancelled: `keryx voice download` again picks up where this stopped",
+                       err=True)
+            code = pull.CANCELLED
+        raise typer.Exit(code)
+    events = voice.DownloadJsonSteps(typer.echo)
+
+    def run() -> int:
+        # Refused before any install, and as an event: the app reads stdout alone.
+        if refusal := _owner_refusal(DOWNLOAD_THE_VOICE):
+            events.error(refusal)
+            return 1
+        return voice.download(_configure_readonly(refuse=events.error), voice.machine(), events)
+
+    with pull.terminate_as_interrupt():
+        code = events.guard(run)
+    raise typer.Exit(code)
 
 
 def _saver(
