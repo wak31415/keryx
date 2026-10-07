@@ -345,9 +345,12 @@ class _Told:
     def step(self, step: str, message: str) -> AbstractContextManager[None]:
         if step == "install":
             self._ctx.ui.note(f"{message}.")
-        elif step in ("start", "check"):
+        elif step in ("download", "start", "check"):
             return self._ctx.ui.spinner(f"{message}…")
         return nullcontext()
+
+    def progress(self, done: int, total: int | None) -> None:
+        pass  # the download's spinner says it is under way
 
     def warn(self, message: str) -> None:
         self._ctx.ui.warn(message)

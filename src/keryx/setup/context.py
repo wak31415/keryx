@@ -24,7 +24,7 @@ from keryx.endpoints import Endpoint, Probe, probe
 from keryx.issues import GhStatus, gh_status
 from keryx.localmodels import download as model_files
 from keryx.localmodels import hardware as machine
-from keryx.localmodels import runtimes, servers, use, voice
+from keryx.localmodels import runtimes, servers, speech, use, voice
 from keryx.localmodels.hardware import Hardware
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.setup.ui import Prompter
@@ -148,6 +148,11 @@ class Probes:
     unit_installed: Callable[[str], bool] = use.unit_installed
     #: Whether the server the voice server takes its words from answers (`voice.words_up`).
     words_up: Callable[[Endpoint | None], bool] = voice.words_up
+    #: The voice server's speech models: speech-to-speech's own Python, the fetch it runs,
+    #: and whether they are all in the Hugging Face cache (`localmodels.speech`).
+    speech_python: Callable[[], str | None] = runtimes.speech_to_speech_python
+    fetch_speech: Callable[..., str | None] = speech.fetch
+    models_ready: Callable[[Settings], bool] = speech.models_ready
 
 
 @dataclass

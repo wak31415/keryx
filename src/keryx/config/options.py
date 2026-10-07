@@ -43,10 +43,12 @@ ANTHROPIC_VERSION = "2023-06-01"
 REALTIME_VOICES = (
     "alloy", "ash", "ballad", "cedar", "coral", "echo", "marin", "sage", "shimmer", "verse",
 )
-#: speech-to-speech's `--stt` and `--tts` handlers that run on this machine: the ones the
-#: settings name, and Whisper on MLX for a Mac. The command takes others, so the field is
-#: free-form; these are the ones worth offering.
-VOICE_SERVER_STT = ("parakeet-tdt", "whisper", "whisper-mlx")
+#: speech-to-speech's `--stt` and `--tts` handlers Keryx can set up: the ones whose models
+#: `keryx voice download` can name and fetch (`localmodels.speech`). The command takes
+#: others, so the field is free-form and a value set before is kept; these are the ones
+#: offered. Not whisper-mlx: Lightning Whisper MLX is an extra Keryx does not install, with
+#: models of its own package's choosing.
+VOICE_SERVER_STT = ("parakeet-tdt", "whisper")
 VOICE_SERVER_TTS = ("kokoro", "qwen3")
 #: What an OpenAI id holds when it is not a chat model the Responses API can search with.
 NOT_CHAT = (

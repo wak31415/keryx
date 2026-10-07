@@ -657,7 +657,9 @@ def test_the_voice_set_ups_below_reach_every_event_the_contract_names():
     stream = contract()["streams"][VOICE_HERE]
 
     assert {ending for _, ending, _, _ in VOICES} == set(stream["terminal"])
-    assert set(stream["events"]) == {*stream["terminal"], "step"}
+    # `progress`, while it downloads the speech models first: a promise the app has yet to
+    # make fails here, once.
+    assert set(stream["events"]) == {*stream["terminal"], "step", "progress"}
 
 
 @pytest.mark.parametrize(("arrange", "ending", "code", "stepped"), VOICES)
@@ -669,6 +671,11 @@ def test_a_voice_set_up_streams_the_events_the_app_reads_and_ends_once(
     monkeypatch.setattr(runtimes, "speech_to_speech", lambda: None)  # so it is installed
     monkeypatch.setattr(voice, "run_detached", scripts)
     monkeypatch.setattr(servers, "wait_for", lambda endpoint, kind, timeout: None)
+    monkeypatch.setattr(runtimes, "speech_to_speech_python", lambda: "/tools/s2s/bin/python")
+    # Its speech models are downloaded first, told as `progress` once the app reads it.
+    downloads = "progress" in stream["events"]
+    monkeypatch.setattr(speech, "models_ready", lambda settings: not downloads)
+    monkeypatch.setattr(speech, "fetch", lambda python, repos, progress: progress(1, 2))
     arrange(monkeypatch, seeded, scripts)
 
     result = runner.invoke(app, VOICE_HERE.split())

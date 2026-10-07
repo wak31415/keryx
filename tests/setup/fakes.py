@@ -201,6 +201,9 @@ class FakeWorld:
     units: set = field(default_factory=set)
     #: Whether the local model server, the voice server's words, answers.
     words: bool = True
+    #: Whether the voice's speech models are in the cache, and what fetching them says.
+    speech_ready: bool = True
+    fetched: str | None = None
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
@@ -272,6 +275,10 @@ class FakeWorld:
             or kind in self.units,
             words_up=lambda endpoint: self.calls.append(
                 ("words", endpoint.base_url if endpoint else None)) or self.words,
+            speech_python=lambda: "/tools/s2s/bin/python",
+            fetch_speech=lambda python, repos, progress: self.calls.append(
+                ("fetch", [repo.id for repo in repos])) or self.fetched,
+            models_ready=lambda settings: self.speech_ready,
         )
 
     def _download(self, url, dest, *, size, sha256, progress):

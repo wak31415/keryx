@@ -335,15 +335,46 @@ def test_use_here_streams_its_steps_then_done(machine):
     assert result.exit_code == 0, result.output
     events = events_of(result)
     assert [e["step"] for e in events if e["event"] == "step"] == [
-        "install", "configure", "unit", "start",
+        "install", "download", "configure", "unit", "start",
     ]
     assert all(e["message"] for e in events if e["event"] == "step")
+    assert [(e["step"], e["done"], e["total"]) for e in events if e["event"] == "progress"] == [
+        ("download", 0, 2000), ("download", 2000, 2000)]
     assert events[-1] == {"event": "done", "base_url": "http://127.0.0.1:8765/v1"}
+    assert machine.fetches[0][0] == "/tools/s2s/bin/python"
     assert machine.scripts[0] == runtimes.s2s_install_argv()
     assert machine.scripts[1][1:] == ["--voice"]
     settings = ConfigStore().stored()
     assert settings["VOICE_SERVER_VOICE"] == "bm_george"
     assert settings["VOICE_BASE_URL"] == "http://127.0.0.1:8765/v1"
+
+
+def test_use_here_with_its_models_downloaded_goes_straight_on(machine):
+    ConfigStore().set(WORDS)
+    machine.s2s, machine.ready = "/bin/s2s", True
+
+    result = runner.invoke(app, ["voice", "use", "here", "--json"])
+
+    assert [e["step"] for e in events_of(result) if e["event"] == "step"] == [
+        "configure", "unit", "start"]
+    assert machine.fetches == []
+
+
+@pytest.mark.parametrize(("fetched", "ending", "code"), [
+    ("a/one could not be downloaded: OSError: full", "error", 1),
+    (KeyboardInterrupt(), "cancelled", 130),
+])
+def test_use_here_whose_download_stops_installs_no_unit(machine, fetched, ending, code):
+    ConfigStore().set(WORDS)
+    machine.s2s, machine.fetched = "/bin/s2s", fetched
+
+    result = runner.invoke(app, ["voice", "use", "here", "--json"])
+
+    events = events_of(result)
+    assert result.exit_code == code
+    assert [e["event"] for e in events if e["event"] in TERMINAL] == [ending]
+    assert events[-1]["event"] == ending
+    assert machine.scripts == [] and ConfigStore().stored() == WORDS
 
 
 def test_use_here_without_a_voice_takes_the_personas_and_warns_of_an_unknown_one(machine):
@@ -616,7 +647,7 @@ def test_use_here_json_ends_with_exactly_one_ending(
     events = events_of(result)
     assert [e["event"] for e in events if e["event"] in TERMINAL] == [ending]
     assert events[-1]["event"] == ending
-    assert all(e["event"] == "step" for e in events[:-1])
+    assert all(e["event"] in ("step", "progress") for e in events[:-1])
     if message is not None:
         assert message in events[-1]["message"]
     assert result.exit_code == code

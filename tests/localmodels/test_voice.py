@@ -32,10 +32,11 @@ class Log:
 
 class FakeMachine:
     def __init__(self, log: Log, *, s2s=None, free=500 * 10**9, script_code=0,
-                 ports=None, server_problem=None, realtime=None, words=True) -> None:
+                 ports=None, server_problem=None, realtime=None, words=True,
+                 ready=True) -> None:
         self.log, self.s2s, self.free, self.script_code = log, s2s, free, script_code
         self.ports, self.server_problem, self.realtime = ports or {}, server_problem, realtime
-        self.words = words
+        self.words, self.ready = words, ready
 
     def speech_to_speech(self):
         return self.s2s
@@ -71,8 +72,15 @@ class FakeMachine:
     def fetch_speech(self, python, repos, progress) -> str | None:
         self.log.lines.append(("fetch", python, [repo.id for repo in repos]))
         progress(0, 100)
+        if isinstance(self.fetched, BaseException):
+            raise self.fetched
         progress(100, 100)
+        self.repos = list(repos)
         return self.fetched
+
+    def models_ready(self, settings) -> bool:
+        self.log.lines.append(("ready", settings.voice_server_stt))
+        return self.ready
 
     def realtime_problem(self, endpoint: Endpoint):
         self.log.lines.append(("realtime", endpoint.base_url, endpoint.api_key))
@@ -389,6 +397,74 @@ def test_a_port_taken_by_another_is_moved_and_our_own_is_kept(settings, root):
     _code, saved = run_here(ours, FakeMachine(log, s2s="/bin/s2s", ports={18765: 18766}),
                             log, root)
     assert saved[0]["VOICE_SERVER_PORT"] == 18765 and log.of("free_port") == []
+
+
+def test_here_downloads_the_speech_models_before_it_configures_anything(settings, root):
+    """The server's first start is never a long silent download: the models come first, as
+    `voice download` fetches them, for the voice chosen."""
+    log = Log()
+    machine = FakeMachine(log, ready=False)
+
+    code, saved = run_here(settings.model_copy(update=WORDS), machine, log, root,
+                           chosen="bm_george", platform="darwin")
+
+    assert code == 0
+    assert [step for step, _message in log.of("step")] == [
+        "install", "download", "configure", "unit", "start"]
+    assert log.of("progress") == [(0, 100), (100, 100)]
+    assert "voices/bm_george.safetensors" in machine.repos[1].needs
+    assert log.kinds().index("fetch") < log.kinds().index("save")
+    assert len(log.of("script")) == 2  # the install and the unit
+
+
+def test_here_with_its_models_downloaded_does_not_download(settings, root):
+    log = Log()
+
+    run_here(settings.model_copy(update=WORDS), FakeMachine(log, s2s="/bin/s2s"), log, root)
+
+    assert log.of("fetch") == [] and log.of("ready") == [("parakeet-tdt",)]
+
+
+@pytest.mark.parametrize("fetched", ["a/one could not be downloaded: OSError: full",
+                                     KeyboardInterrupt()])
+def test_here_whose_download_stops_installs_no_unit_and_saves_nothing(settings, root, fetched):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s", ready=False)
+    machine.fetched = fetched
+
+    if isinstance(fetched, BaseException):
+        with pytest.raises(KeyboardInterrupt):
+            run_here(settings.model_copy(update=WORDS), machine, log, root)
+        assert log.of("error") == []  # the cancel is the caller's to tell
+    else:
+        code, _saved = run_here(settings.model_copy(update=WORDS), machine, log, root)
+        assert code == 1 and log.of("error") == [(fetched, None)]
+    assert log.of("script") == [] and log.of("save") == [] and log.of("done") == []
+
+
+def test_here_without_speech_to_speechs_python_installs_no_unit(settings, root):
+    log = Log()
+    machine = FakeMachine(log, s2s="/bin/s2s", ready=False)
+    machine.python = None
+
+    code, _saved = run_here(settings.model_copy(update=WORDS), machine, log, root)
+
+    assert code == 1 and log.of("script") == [] and log.of("save") == []
+
+
+def test_here_with_a_speech_model_keryx_cannot_name_leaves_it_to_the_first_start(
+    settings, root
+):
+    """An owner's whisper-mlx, kept from before: it is no longer offered, but it is still
+    set up — its models come with its first start, as they always did."""
+    log = Log()
+    chosen = settings.model_copy(update={**WORDS, "voice_server_stt": "whisper-mlx"})
+
+    code, _saved = run_here(chosen, FakeMachine(log, s2s="/bin/s2s", ready=False), log, root)
+
+    assert code == 0 and log.of("fetch") == []
+    [(warning,)] = log.of("warn")
+    assert "--stt whisper-mlx" in warning
 
 
 # --- the speech models --------------------------------------------------------------------

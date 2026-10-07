@@ -399,8 +399,5 @@ class JsonSteps(voice.JsonSteps):
         super().__init__(write)
         self._current = STEPS[0]
 
-    def progress(self, done: int, total: int | None) -> None:
-        self._progressed(done, total, step=self._current)
-
     def done(self, url: str, served_model: str) -> None:  # type: ignore[override]
         self._end({"event": "done", "url": url, "served_model": served_model})

@@ -707,11 +707,33 @@ def test_a_speech_model_already_downloaded_says_so(settings):
     tts = options_for("VOICE_SERVER_TTS", settings, found)
 
     assert [(o.value, o.detail) for o in stt.options] == [
-        ("parakeet-tdt", None), ("whisper", "downloaded"), ("whisper-mlx", None)]
+        ("parakeet-tdt", None), ("whisper", "downloaded")]
     assert [(o.value, o.detail) for o in tts.options] == [("kokoro", "downloaded"),
                                                          ("qwen3", None)]
-    assert asked == [("stt", "parakeet-tdt"), ("stt", "whisper"), ("stt", "whisper-mlx"),
+    assert asked == [("stt", "parakeet-tdt"), ("stt", "whisper"),
                      ("tts", "kokoro"), ("tts", "qwen3")]
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_only_speech_models_keryx_can_set_up_are_offered(platform):
+    """Each one offered has models `keryx voice download` can name and fetch."""
+    from keryx.localmodels import speech
+
+    assert all(speech.stt_repos(v, platform=platform) is not None
+               for v in options.VOICE_SERVER_STT)
+    assert all(speech.tts_repos(v, "af_heart", platform=platform) is not None
+               for v in options.VOICE_SERVER_TTS)
+    assert "whisper-mlx" not in options.VOICE_SERVER_STT
+
+
+def test_a_speech_model_no_longer_offered_is_still_the_current_one(settings):
+    """An owner's whisper-mlx, set before: kept, shown, never offered to anyone else."""
+    chosen = settings.model_copy(update={"voice_server_stt": "whisper-mlx"})
+
+    found = options_for("VOICE_SERVER_STT", chosen, sources())
+
+    assert found.current == "whisper-mlx" and found.free_form
+    assert found.options[-1] == Option("whisper-mlx", "whisper-mlx", "current")
 
 
 def test_the_real_sources_ask_the_hugging_face_cache(settings, monkeypatch):

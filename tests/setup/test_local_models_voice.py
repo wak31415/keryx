@@ -47,3 +47,28 @@ def test_the_units_are_asked_of_the_fake_world_never_the_service_manager(make_ct
 
     assert probes.unit_installed("llm") is True and probes.unit_installed("voice") is False
     assert ("unit_installed", "llm") in world.calls
+
+
+def test_the_voice_downloads_its_speech_models_before_its_unit(make_ctx, world):
+    ConfigStore().set(WORDS)
+    world.s2s, world.speech_ready = "/bin/s2s", False
+    ctx = make_ctx([("model run", "keep"), ("voice on a call", "here"),
+                    ("Which voice?", "af_bella")])
+
+    local_models.run_section(ctx)
+
+    kinds = [call[0] for call in world.calls]
+    assert kinds.index("fetch") < kinds.index("script")
+    assert ctx.refresh().voice_base_url == "http://127.0.0.1:8765/v1"
+
+
+def test_a_download_that_stops_installs_no_voice_unit(make_ctx, world):
+    ConfigStore().set(WORDS)
+    world.s2s, world.speech_ready = "/bin/s2s", False
+    world.fetched = "a/one could not be downloaded: OSError: full"
+    ctx = make_ctx([("model run", "keep"), ("voice on a call", "here"),
+                    ("Which voice?", "af_bella")])
+
+    local_models.run_section(ctx)
+
+    assert ctx.ui.lines("error") == [world.fetched] and scripts(world) == []

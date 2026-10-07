@@ -5,18 +5,21 @@ Three places a call's voice can be, as `mode` names them: OpenAI's Realtime API 
 `VOICE_BASE_URL` blank), speech-to-speech on this machine (`here`, `VOICE_BASE_URL` the
 loopback address of `VOICE_SERVER_PORT`) and a server elsewhere (`server`).
 
-`here` is the long one: install speech-to-speech when it is missing, save its voice and
-port, install its unit, wait for it to answer a Realtime handshake, and only then save it as
-the voice — a `VOICE_BASE_URL` that does not answer is a phone that rings and says nothing.
-It refuses while the local model server, which the voice server takes its words from, does
-not answer: on 2026-10-07 a voice server installed without one crash-looped under launchd's
-KeepAlive on its first request for words. And a server that does not come up, or whose
-start is cancelled, has its unit removed before anything else is said, so no unit is ever
-left restarting in a loop (`removed_if_stopped`, which `keryx models start` shares).
+`here` is the long one: install speech-to-speech when it is missing, download its speech
+models when they are not in the cache (as `download` does, through the same steps), save its
+voice and port, install its unit, wait for it to answer a Realtime handshake, and only then
+save it as the voice — a `VOICE_BASE_URL` that does not answer is a phone that rings and
+says nothing. It refuses while the local model server, which the voice server takes its
+words from, does not answer: on 2026-10-07 a voice server installed without one crash-looped
+under launchd's KeepAlive on its first request for words. And a server that does not come
+up, or whose start is cancelled, has its unit removed before anything else is said, so no
+unit is ever left restarting in a loop (`removed_if_stopped`, which `keryx models start`
+shares).
 
 `download` is `keryx voice download`: speech-to-speech installed as `here` installs it, then
 the speech models its settings choose fetched into the Hugging Face cache by its own Python
 (`speech`), so its first start has nothing left to download.
+
 Each step is told to a `Report` before its slow work starts; the wizard tells it as notes and
 a spinner, `keryx voice use here --json` as JSON lines (`JsonSteps`, on pull's `EventLines`,
 so it ends exactly once on every path). Every install, port, disk and network question is
@@ -69,7 +72,7 @@ PLATFORM = sys.platform
 #: A Kokoro voice's name: `af_heart`, `bm_george`, `zf_xiaoxiao`.
 VOICE_NAME = re.compile(r"[a-z]{2}_[a-z0-9]+")
 #: The steps of `here`, in order, as the JSON lines name them.
-STEPS = ("install", "configure", "unit", "start")
+STEPS = ("install", "download", "configure", "unit", "start")
 #: The steps of `download`, in order.
 DOWNLOAD_STEPS = ("install", "download")
 
@@ -84,6 +87,10 @@ class Probes(Protocol):
     wait_for_server: Callable[[Endpoint, str, float], str | None]
     realtime_problem: Callable[[Endpoint], str | None]
     words_up: Callable[[Endpoint | None], bool]
+    speech_python: Callable[[], str | None]
+    fetch_speech: Callable[[str, list[speech.Repo], Callable[[int, int | None], None]],
+                           str | None]
+    models_ready: Callable[[Settings], bool]
 
 
 class Installs(Protocol):
@@ -111,7 +118,10 @@ class Steps(Protocol):
 
 
 class Report(Steps, Protocol):
-    """…and how a set-up ended: the address it saved, or what stopped it (and its log)."""
+    """…and how a set-up ended: the address it saved, or what stopped it (and its log); the
+    speech models' bytes while they download."""
+
+    def progress(self, done: int, total: int | None) -> None: ...
 
     def error(self, message: str, *, log: Path | None = None) -> None: ...
 
@@ -278,13 +288,14 @@ def here(
 ) -> int:
     """Make speech-to-speech on this machine the voice; the exit code.
 
-    `choose_voice` is asked once speech-to-speech is installed; `save` stores values as
+    `choose_voice` is asked once speech-to-speech is installed, before its speech models
+    download (a Kokoro voice is one of their files); `save` stores values as
     whoever is running this and says why when it cannot (False). `root` is the checkout
     whose `scripts/` installs the unit. 2 for what refuses it before anything is tried —
     no local model for the words, or none answering, no installer for the unit — 1 for
     anything that stopped it, 0 once the server answered and was saved as the voice. A
     half-done install is left for the next run to finish; a unit whose server did not come
-    up, or whose start was cancelled, is not.
+    up, or whose start was cancelled, is not, and a download that stopped installs none.
     """
     if words_model(settings) is None:
         report.error(no_words)
@@ -299,6 +310,15 @@ def here(
     if not have_speech_to_speech(settings, probes, report):
         return FAILED
     voice = choose_voice()
+    if not probes.models_ready(settings):
+        chosen = settings.model_copy(update={"voice_server_voice": voice})
+        try:
+            repos = speech.needed(chosen, platform=platform)
+        except speech.UnknownModels as error:  # kept from before: its first start fetches it
+            report.warn(str(error))
+        else:
+            if not fetch_models(chosen, probes, report, repos):
+                return FAILED
     port = settings.voice_server_port
     with report.step("configure", f"Saving the voice server's voice, {voice}, and its port"):
         if voice not in [name for name, _sounds in catalog.VOICES]:
@@ -314,8 +334,8 @@ def here(
         report.error(exited(f"{script.name} --voice", code))
         return FAILED
     endpoint = Endpoint.parse(f"http://{HOST}:{port}")
-    with report.step("start", "Starting the voice server — its first start downloads its "
-                              "speech models, which takes a few minutes"), \
+    with report.step("start", "Starting the voice server and waiting for it to answer — a "
+                              "first start loads its speech models, which takes a minute"), \
             removed_if_stopped("--voice", probes.run_script, root=root, platform=platform):
         problem = probes.wait_for_server(endpoint, "realtime", VOICE_START_S)
     if problem is not None:
@@ -366,20 +386,33 @@ def download(
         return REFUSED
     if not have_speech_to_speech(settings, probes, report):
         return FAILED
+    if not fetch_models(settings, probes, report, repos):
+        return FAILED
+    report.done(stt, tts)
+    return OK
+
+
+def fetch_models(
+    settings: Settings, probes: DownloadProbes, report: "Report | DownloadReport",
+    repos: list[speech.Repo],
+) -> bool:
+    """`repos` fetched into the Hugging Face cache by speech-to-speech's own Python (step
+    `download`, its bytes told as progress), for `download` and `here` alike; False once the
+    report has been told why they were not."""
+    stt, tts = settings.voice_server_stt, settings.voice_server_tts
     python = probes.speech_python()
     if python is None:
         report.error("speech-to-speech is installed, but its own Python cannot be found beside "
                      "it: reinstall it with `keryx voice download` after `uv tool uninstall "
                      "speech-to-speech`")
-        return FAILED
+        return False
     with report.step("download", f"Downloading the voice's speech models into the Hugging "
                                  f"Face cache: {stt} to hear, {tts} to speak"):
         problem = probes.fetch_speech(python, repos, report.progress)
     if problem is not None:
         report.error(problem)
-        return FAILED
-    report.done(stt, tts)
-    return OK
+        return False
+    return True
 
 
 def installer(
@@ -501,6 +534,7 @@ class Machine:
     speech_python: Callable[[], str | None]
     fetch_speech: Callable[[str, list[speech.Repo], Callable[[int, int | None], None]],
                            str | None]
+    models_ready: Callable[[Settings], bool]
 
 
 def machine() -> Machine:
@@ -510,7 +544,7 @@ def machine() -> Machine:
         run_script=run_detached, free_port=servers.free_port,
         wait_for_server=servers.wait_for, realtime_problem=_realtime_problem,
         words_up=words_up, speech_python=runtimes.speech_to_speech_python,
-        fetch_speech=speech.fetch,
+        fetch_speech=speech.fetch, models_ready=speech.models_ready,
     )
 
 
@@ -529,11 +563,21 @@ class TextSteps:
 
     def __init__(self, echo: Callable[..., None]) -> None:
         self._echo = echo
+        self._said = -1
 
     @contextmanager
     def step(self, step: str, message: str):
         self._echo(f"{message}…")
         yield
+
+    def progress(self, done: int, total: int | None) -> None:
+        """The bytes so far, every tenth of the way."""
+        if not total:
+            return
+        tenth = done * 10 // total
+        if tenth > self._said:
+            self._said = tenth
+            self._echo(f"{done / 1e9:.1f} of {total / 1e9:.1f} GB")
 
     def warn(self, message: str) -> None:
         self._echo(f"warning: {message}", err=True)
@@ -564,6 +608,10 @@ class JsonSteps(EventLines):
     def warn(self, message: str) -> None:
         self._emit({"event": "step", "step": self._current, "message": message})
 
+    def progress(self, done: int, total: int | None) -> None:
+        """The speech models' bytes while they download (`total` null when not known)."""
+        self._progressed(done, total, step=self._current)
+
     def error(self, message: str, *, log: Path | None = None) -> None:
         super().error(message if log is None else f"{message} (its log: {log})")
 
@@ -573,18 +621,6 @@ class JsonSteps(EventLines):
 
 class DownloadTextSteps(TextSteps):
     """For a terminal: each step a line, the bytes every tenth of the way, and the ending."""
-
-    def __init__(self, echo: Callable[..., None]) -> None:
-        super().__init__(echo)
-        self._said = -1
-
-    def progress(self, done: int, total: int | None) -> None:
-        if not total:
-            return
-        tenth = done * 10 // total
-        if tenth > self._said:
-            self._said = tenth
-            self._echo(f"{done / 1e9:.1f} of {total / 1e9:.1f} GB")
 
     def done(self, stt: str, tts: str) -> None:  # type: ignore[override]
         self._echo(f"the voice's speech models are downloaded: {stt} to hear, {tts} to speak")
@@ -598,9 +634,6 @@ class DownloadJsonSteps(JsonSteps):
     def __init__(self, write: Callable[[str], None]) -> None:
         super().__init__(write)
         self._current = DOWNLOAD_STEPS[0]
-
-    def progress(self, done: int, total: int | None) -> None:
-        self._progressed(done, total, step=self._current)
 
     def done(self, stt: str, tts: str) -> None:  # type: ignore[override]
         self._end({"event": "done", "stt": stt, "tts": tts})
