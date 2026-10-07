@@ -4,6 +4,9 @@ import KeryxKit
 /// Owns the app's one `AppModel` and the moments AppKit tells only a delegate about: launch
 /// (the menu needs Keryx found whether or not the window ever opens), a menu opening, and
 /// quitting while a model downloads.
+/// The app's windows, for its activation policy.
+enum AppWindow: String { case main, settings }
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// After a menu opens, the sessions and models are read again — unless they were read
@@ -13,11 +16,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let preferences: Preferences
     let model: AppModel
 
-    /// Launched at login (by `LoginItem`): the window SwiftUI opens at launch closes again,
-    /// and Keryx starts in the menu bar.
-    private var launchedAtLogin = false
     private var windowHasAppeared = false
     private var starting: Task<Void, Never>?
+    /// The app's windows open now (the main one, Settings): while any is, the app is a
+    /// regular one, in the Dock and the app switcher; with none it is only a menu bar item.
+    private var openWindows: Set<AppWindow> = []
+    /// Opens the main window and brings the app forward. Handed over by the menu bar label,
+    /// the one view alive for the app's whole life, as it appears.
+    var openMainWindow: (() -> Void)?
     private var lastMenuRefresh: ContinuousClock.Instant?
 
     override init() {
@@ -34,8 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        launchedAtLogin = Self.isLoginLaunch(NSAppleEventManager.shared().currentAppleEvent)
-        Log.app.info("Launched\(self.launchedAtLogin ? " at login" : "", privacy: .public)")
+        let atLogin = Self.isLoginLaunch(NSAppleEventManager.shared().currentAppleEvent)
+        Log.app.info("Launched\(atLogin ? " at login" : "", privacy: .public)")
         NotificationCenter.default.addObserver(
             self, selector: #selector(menuDidBeginTracking(_:)),
             name: NSMenu.didBeginTrackingNotification, object: nil)
@@ -56,19 +62,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await starting?.value
     }
 
-    /// Whether the window appearing now is the one SwiftUI opened at a login launch, which
-    /// should close again: only ever its first appearance. That comes while the launch's
-    /// open-application event is still current, before `applicationDidFinishLaunching`, so
-    /// the event is read here as well as there.
+    /// Whether the window appearing now is one SwiftUI opened for a login launch, which
+    /// should close again. Only the first appearance, and only while the launch's
+    /// open-application event is still the current one (SwiftUI shows its launch window
+    /// before `applicationDidFinishLaunching`): a window opened later, from the menu or by
+    /// launching Keryx again, is one the owner asked for.
     func windowAppearsAtLoginLaunch() -> Bool {
         defer { windowHasAppeared = true }
-        guard !windowHasAppeared else { return false }
-        return launchedAtLogin || Self.isLoginLaunch(NSAppleEventManager.shared().currentAppleEvent)
+        guard !windowHasAppeared, Self.isLoginLaunch(NSAppleEventManager.shared().currentAppleEvent)
+        else { return false }
+        Log.app.info("Closing the window opened for a login launch")
+        return true
     }
 
     private static func isLoginLaunch(_ event: NSAppleEventDescriptor?) -> Bool {
         guard let event, event.eventID == kAEOpenApplication else { return false }
         return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+    }
+
+    /// Launching Keryx again (from the Finder, Spotlight or `open`) while it runs with no
+    /// window open opens the main window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        Log.app.info("Reopened\(hasVisibleWindows ? " with a window open" : "", privacy: .public)")
+        guard !hasVisibleWindows, let openMainWindow else { return true }
+        openMainWindow()
+        return false
+    }
+
+    func windowDidAppear(_ window: AppWindow) {
+        openWindows.insert(window)
+        Log.app.info("\(window.rawValue, privacy: .public) window opened")
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate()
+    }
+
+    func windowDidDisappear(_ window: AppWindow) {
+        openWindows.remove(window)
+        Log.app.info("\(window.rawValue, privacy: .public) window closed")
+        if openWindows.isEmpty { NSApp.setActivationPolicy(.accessory) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

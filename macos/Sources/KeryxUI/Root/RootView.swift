@@ -27,7 +27,6 @@ public struct RootView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .help("Refresh")
-                .keyboardShortcut("r", modifiers: .command)
             }
         }
         .navigationTitle(onboarding ? "Keryx" : model.selection.title)

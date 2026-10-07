@@ -28,7 +28,7 @@ struct KeryxApp: App {
             MenuBarMenu(delegate: delegate)
                 .environment(delegate.model)
         } label: {
-            MenuBarLabel(model: delegate.model)
+            MenuBarLabel(delegate: delegate)
         }
         .menuBarExtraStyle(.menu)
 
@@ -36,6 +36,8 @@ struct KeryxApp: App {
             AppSettingsView()
                 .environment(delegate.model)
                 .environment(\.preferences, delegate.preferences)
+                .onAppear { delegate.windowDidAppear(.settings) }
+                .onDisappear { delegate.windowDidDisappear(.settings) }
         }
     }
 }
@@ -44,9 +46,8 @@ enum KeryxWindow {
     static let main = "main"
 }
 
-/// The window's content. While it is open the app is a regular one, in the Dock and the
-/// app switcher; when it closes the app goes back to being only a menu bar item. SwiftUI
-/// opens it at launch; at a login launch it closes again at once.
+/// The window's content. SwiftUI opens it at launch; at a login launch it closes again at
+/// once. While it is open (or Settings is) the app is in the Dock.
 private struct MainWindowContent: View {
     let delegate: AppDelegate
     @Environment(\.dismissWindow) private var dismissWindow
@@ -59,11 +60,10 @@ private struct MainWindowContent: View {
                     dismissWindow(id: KeryxWindow.main)
                     return
                 }
-                NSApp.setActivationPolicy(.regular)
-                NSApp.activate()
+                delegate.windowDidAppear(.main)
             }
             .onDisappear {
-                NSApp.setActivationPolicy(.accessory)
+                delegate.windowDidDisappear(.main)
             }
     }
 }
@@ -91,12 +91,21 @@ private struct MenuBarMenu: View {
 }
 
 /// The menu bar image: the mark's bars, with a dot or a slash for what is worth knowing.
+/// Alive as long as the app is, so it is what hands the delegate a way to open the window.
 private struct MenuBarLabel: View {
-    let model: AppModel
+    let delegate: AppDelegate
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Image(nsImage: MenuBarIcon.image(model.menuState.symbol))
-            .accessibilityLabel(model.menuState.headline)
+        let state = delegate.model.menuState
+        Image(nsImage: MenuBarIcon.image(state.symbol))
+            .accessibilityLabel(state.headline)
+            .task {
+                delegate.openMainWindow = {
+                    openWindow(id: KeryxWindow.main)
+                    NSApp.activate()
+                }
+            }
     }
 }
 

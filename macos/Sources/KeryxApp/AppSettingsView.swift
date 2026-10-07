@@ -55,7 +55,6 @@ struct AppSettingsView: View {
         .onAppear {
             folder = preferences.keryxFolder
             login = LoginItem.state
-            NSApp.activate()
         }
     }
 
