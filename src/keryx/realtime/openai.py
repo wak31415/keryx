@@ -669,13 +669,30 @@ def realtime_url(endpoint: Endpoint) -> str:
     return endpoint.ws_url(REALTIME_PATH, model=endpoint.model)
 
 
+#: The most of a server's own words `handshake` repeats.
+ONE_LINE_CHARS = 200
+
+
+def one_line(text: str) -> str:
+    """What a server or an exception said, on one line: a traceback's last line — the
+    exception and its message, never the frames and their paths — or the text with its line
+    breaks closed up, cut to `ONE_LINE_CHARS`."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if any(line.startswith("Traceback (most recent call last)") for line in lines):
+        lines = lines[-1:]
+    said = " ".join(lines)
+    return said if len(said) <= ONE_LINE_CHARS else said[: ONE_LINE_CHARS - 1] + "…"
+
+
 async def handshake(
     endpoint: Endpoint, *, ws_connect: WebSocketFactory | None = None
 ) -> str | None:
     """Why a Realtime session cannot open on `endpoint`, in a sentence; None when it can.
 
     Opens the socket and waits for the `session.created` every Realtime server sends first,
-    then closes: no audio, no response, nothing billed.
+    then closes: no audio, no response, nothing billed. What the server or the socket said
+    is repeated on one line (`one_line`): a voice server of the owner's own can answer with
+    its whole traceback.
     """
     connect = ws_connect or _default_ws_connect
     where = endpoint.host
@@ -684,7 +701,8 @@ async def handshake(
             connect(realtime_url(endpoint), endpoint.headers()), HANDSHAKE_TIMEOUT_S
         )
     except Exception as exc:
-        return f"could not open {where}'s Realtime socket ({type(exc).__name__}: {exc})"
+        return (f"could not open {where}'s Realtime socket "
+                f"({type(exc).__name__}: {one_line(str(exc))})")
     try:
         event = json.loads(await asyncio.wait_for(ws.recv(), HANDSHAKE_TIMEOUT_S))
     except Exception as exc:
@@ -696,7 +714,7 @@ async def handshake(
     if kind == "session.created":
         return None
     if kind == "error":
-        message = (event.get("error") or {}).get("message") or "no reason"
+        message = one_line(str((event.get("error") or {}).get("message") or "")) or "no reason"
         return f"{where} refused the session: {message}"
     return f"{where} opened with {kind or 'something'} rather than session.created"
 

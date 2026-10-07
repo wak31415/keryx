@@ -1132,3 +1132,40 @@ async def test_handshake_says_why_a_session_did_not_open():
         SELF_HOSTED, ws_connect=FakeConnector(fail=True)
     )
     assert unreachable is not None and unreachable.startswith("could not open 127.0.0.1")
+
+
+#: What a speech-to-speech server's error can be: its Python traceback, whole.
+TRACEBACK = (
+    "Traceback (most recent call last):\n"
+    '  File "/Users/you/.local/share/uv/tools/speech-to-speech/lib/python3.12/site-packages/'
+    's2s/server.py", line 88, in session\n'
+    "    pipeline = load(args)\n"
+    "             ^^^^^^^^^^\n"
+    "RuntimeError: MPS backend out of memory\n"
+)
+
+
+async def test_a_servers_traceback_is_said_as_its_last_line():
+    """A voice server of the owner's own can answer with a traceback, which reached the app
+    whole: what is said of it is the exception, on one line, and no path."""
+    async def crashing(url, headers):
+        ws = FakeWS()
+        ws.feed({"type": "error", "error": {"message": TRACEBACK}})
+        return ws
+
+    async def raising(url, headers):
+        raise OSError(TRACEBACK)
+
+    refused = await realtime_openai.handshake(SELF_HOSTED, ws_connect=crashing)
+    unopened = await realtime_openai.handshake(SELF_HOSTED, ws_connect=raising)
+
+    assert refused == "127.0.0.1 refused the session: RuntimeError: MPS backend out of memory"
+    assert unopened == ("could not open 127.0.0.1's Realtime socket (OSError: RuntimeError: "
+                        "MPS backend out of memory)")
+
+
+def test_one_line_keeps_a_short_message_and_cuts_a_long_one():
+    assert realtime_openai.one_line("  no model\n loaded ") == "no model loaded"
+    assert realtime_openai.one_line("") == ""
+    long = realtime_openai.one_line("x" * 500)
+    assert len(long) == realtime_openai.ONE_LINE_CHARS and long.endswith("…")
