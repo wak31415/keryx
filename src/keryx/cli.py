@@ -63,7 +63,7 @@ from keryx.doctor import (
     run_doctor_checks,
 )
 from keryx.events import EventBus
-from keryx.localmodels import catalog, download, hardware, pull, runtimes, servers, use
+from keryx.localmodels import catalog, download, hardware, pull, runtimes, servers, use, voice
 from keryx.logging_util import mask_number
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
@@ -120,6 +120,15 @@ models_app = typer.Typer(
     help="Models on this machine: which fit, downloading one, and the servers that run them."
 )
 app.add_typer(models_app, name="models")
+voice_app = typer.Typer(
+    help="The voice on a call: OpenAI's Realtime API, speech-to-speech here, or a server "
+    "elsewhere."
+)
+app.add_typer(voice_app, name="voice")
+voice_use_app = typer.Typer(
+    help="Make OpenAI, a voice server elsewhere, or this machine the voice."
+)
+voice_app.add_typer(voice_use_app, name="use")
 log = logging.getLogger("keryx.cli")
 
 
@@ -1165,6 +1174,173 @@ def models_serve(
     except servers.ServerConfigError as error:
         typer.echo(f"keryx cannot start the {kind} server: {error}", err=True)
         raise typer.Exit(2) from None
+
+
+@voice_app.callback(invoke_without_command=True)
+def voice_command(
+    ctx: typer.Context,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Where the voice on a call is, and the voice server on this machine."""
+    if ctx.invoked_subcommand is not None:
+        return
+    settings = _configure_readonly()
+    document = voice.status(settings, program=runtimes.speech_to_speech,
+                            installed=use.unit_installed, probe=use.probe,
+                            server_reachable=voice.server_reachable)
+    if as_json:
+        typer.echo(json.dumps(document, indent=2))
+        return
+    yes = {True: "yes", False: "no"}
+    if document["mode"] == voice.HERE:
+        typer.echo(f"the voice: speech-to-speech on this machine: {document['base_url']}")
+    elif document["mode"] == voice.SERVER:
+        typer.echo(f"the voice: a voice server elsewhere: {document['base_url']} "
+                   f"(answers: {yes[document['server']['reachable']]})")
+    else:
+        typer.echo(f"the voice: OpenAI's Realtime API, {document['realtime_model']}, "
+                   f"speaking as {document['voice']}"
+                   + ("" if document["openai_key_set"] else " — OPENAI_API_KEY is not set"))
+    here = document["here"]
+    typer.echo(f"speech-to-speech here: {here['program'] or 'not installed'}; voice "
+               f"{here['voice']} on port {here['port']}; unit installed: "
+               f"{yes[here['unit_installed']]}; answers: {yes[here['reachable']]}")
+    typer.echo(f"its words: {here['words_model'] or voice.NO_WORDS}")
+
+
+def _shown(saved: dict[str, Any]) -> dict[str, Any]:
+    """What was saved, a secret's value as "(set)": never the value itself."""
+    def secret(key: str) -> bool:
+        name = field_for(key)
+        return name is not None and is_secret(name)
+
+    return {key: "(set)" if value is not None and secret(key) else value
+            for key, value in saved.items()}
+
+
+@voice_use_app.command("openai")
+def voice_use_openai(
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Make OpenAI's Realtime API the voice again (it needs OPENAI_API_KEY)."""
+    settings = _configure_readonly()
+    if as_json:
+        saved = _store_values(voice.to_openai(), echo=False)
+        typer.echo(json.dumps({"saved": _shown(saved), "restart_needed": True}, indent=2))
+        return
+    _store_values(voice.to_openai())
+    typer.echo("calls use OpenAI's Realtime API again; `keryx restart` to have Keryx take it up")
+    if not settings.openai_key:
+        typer.echo("it needs OPENAI_API_KEY: keryx config set OPENAI_API_KEY --stdin")
+
+
+@voice_use_app.command("server")
+def voice_use_server(
+    url: Annotated[str, typer.Argument(help="Its address: http://gpu-box:8765, or its …/v1.")],
+    key_stdin: Annotated[
+        bool, typer.Option("--key-stdin", help="Read its key from standard input.")
+    ] = False,
+    clear_key: Annotated[
+        bool, typer.Option("--clear-key", help="Forget the key it had, and ask without one.")
+    ] = False,
+    keep_anyway: Annotated[
+        bool, typer.Option("--keep-anyway", help="Save it although it did not answer.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Make a voice server elsewhere the voice, once it has opened a Realtime session.
+
+    One that does not is saved only with --keep-anyway. The key it has is kept, and asked
+    with, unless --key-stdin replaces it or --clear-key forgets it; it is never on the
+    command line.
+    """
+    settings = _configure_readonly()
+    if key_stdin and clear_key:
+        typer.echo("--key-stdin replaces the key and --clear-key forgets it: one of them",
+                   err=True)
+        raise typer.Exit(2)
+    if key_stdin:
+        key = _read_secret_input("VOICE_API_KEY")
+        if not key:
+            typer.echo("no key on stdin (--clear-key forgets the one it has)", err=True)
+            raise typer.Exit(2)
+    else:
+        key = None if clear_key else settings.voice_api_key
+    steps = voice.Silent() if as_json else voice.TextSteps(typer.echo)
+    try:
+        check = voice.check_server(url, key, probes=voice.machine(), report=steps)
+    except ValueError as error:  # its own words, never the address: it may hold a password
+        typer.echo(f"VOICE_BASE_URL {error}", err=True)
+        raise typer.Exit(2) from None
+    if check.problem is not None and not keep_anyway:
+        if as_json:
+            typer.echo(json.dumps({"saved": None, "problem": check.problem,
+                                   "warnings": check.warnings, "restart_needed": False},
+                                  indent=2))
+        else:
+            typer.echo(check.problem, err=True)
+            typer.echo("nothing saved: calls would not open until it answers "
+                       "(--keep-anyway saves it all the same)", err=True)
+        raise typer.Exit(1)
+    values = check.values(with_key=key_stdin or clear_key)
+    if not as_json:
+        _store_values(values)
+        typer.echo("next: `keryx restart`, to have Keryx take it up")
+        return
+    saved = _store_values(values, echo=False)
+    typer.echo(json.dumps({"saved": _shown(saved), "problem": check.problem,
+                           "warnings": check.warnings, "restart_needed": True}, indent=2))
+
+
+@voice_use_app.command("here")
+def voice_use_here(
+    name: Annotated[
+        str | None,
+        typer.Option("--voice", help="A Kokoro voice (`keryx models list`); else the one "
+                     "chosen before, or the assistant's own."),
+    ] = None,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Print it as JSON lines: each step, then how it ended."),
+    ] = False,
+) -> None:
+    """Install speech-to-speech here, start it, and make it the voice once it answers.
+
+    What `keryx setup` does for a voice on this machine, through the same steps. Its words
+    come from the local agent's model, so that comes first (`keryx models use NAME`).
+    """
+    if not as_json:
+        try:
+            code = _voice_here(_configure_readonly(), name, voice.TextSteps(typer.echo))
+        except KeyboardInterrupt:
+            typer.echo("cancelled: the next `keryx voice use here` picks up where this stopped",
+                       err=True)
+            code = pull.CANCELLED
+        raise typer.Exit(code)
+    events = voice.JsonSteps(typer.echo)
+    with pull.terminate_as_interrupt():
+        code = events.guard(
+            lambda: _voice_here(_configure_readonly(refuse=events.error), name, events)
+        )
+    raise typer.Exit(code)
+
+
+def _voice_here(settings: Settings, name: str | None, report: voice.Report) -> int:
+    if name is not None and (problem := voice.voice_name_problem(name)):
+        report.error(problem)
+        return voice.REFUSED
+    store = ConfigStore()
+
+    def save(values: dict[str, Any]) -> bool:
+        try:
+            store.set(values, actor=current_actor(), settings=settings)
+        except ConfigError as error:
+            report.error(str(error))
+            return False
+        return True
+
+    return voice.here(settings, voice.machine(), report, save=save, root=repo_root(),
+                      choose_voice=lambda: name or voice.current_voice(settings, store))
 
 
 @plugins_app.command("list")

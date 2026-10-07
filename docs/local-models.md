@@ -43,7 +43,18 @@ uv run keryx models use qwen3-coder-30b-a3b   # --default-agent to have it do un
 scripts/install-systemd.sh --llm     # install-launchd.sh on a Mac
 uv run keryx restart                 # Keryx reads the new settings when it starts
 uv run keryx auth status --smoke     # one real task on each enabled agent
+
+uv run keryx voice                   # where the voice is, and the voice server on this machine
+uv run keryx voice use here          # --voice bm_george; installs, starts and waits for it
+uv run keryx voice use server http://gpu-box:8765 --key-stdin   # a new key, on stdin
+uv run keryx voice use openai        # back to OpenAI's Realtime API
 ```
+
+`keryx voice use here` is the wizard's local voice, step for step (the same code): it needs
+the local agent's model first, for the words, and a clone of Keryx, for the unit's installer.
+`keryx voice use server` saves a server only once it has opened a Realtime session, unless
+`--keep-anyway`. The key already saved is kept and asked with, unless `--key-stdin` replaces
+it or `--clear-key` forgets it. Either way Keryx takes the new voice up when it restarts.
 
 `keryx models use` saves exactly what `keryx setup` would for the same model — the model
 server's model and port (a free one, the first time), the local agent's address and model,
@@ -57,6 +68,21 @@ prints JSON lines: `{"event": "progress", "done": …, "total": …}`, then exac
 a refusal before the download included. A SIGTERM or SIGINT cancels it with exit 130, and
 the partial download stays, so the next pull resumes it. `keryx models use NAME --json`
 prints `{"saved": …, "llama_server": …, "restart_needed": true}`.
+
+`keryx voice --json` is `mode` (`openai`, `here` or `server`), `base_url`, `realtime_model`,
+`voice`, `assistant`, `openai_key_set`, `here` (speech-to-speech on this machine: `installed`,
+`program`, `voice`, `port`, `unit_installed`, `reachable` — asked on loopback only — and
+`words_model`), `needs` (`local_agent_model` while there is no local model for its words) and
+`server.reachable` (asked only while a server elsewhere is the voice). `keryx voice use openai
+--json` prints `{"saved": …, "restart_needed": true}`, and `voice use server URL --json` adds
+`problem` and `warnings` — with a problem and no `--keep-anyway` it saves nothing, says
+`"saved": null`, and exits 1. A key is shown as `(set)`, never itself. `keryx voice use here
+--json` prints JSON lines: `{"event": "step", "step": …, "message": …}` before each slow step
+(`install`, `configure`, `unit`, `start`; a warning is a step line too), then exactly one of
+`done` (with its `base_url`), `error` (`message`) or `cancelled`. It exits 2 for a refusal
+before anything is tried (no local model, no installer, a migration still to run), 1 for what
+stopped it — the message names the server's log when it did not come up — and 130 for a
+SIGTERM, which leaves a half-done install for the next run.
 
 ## What an address is
 

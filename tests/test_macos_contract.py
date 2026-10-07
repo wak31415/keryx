@@ -7,8 +7,8 @@ keys the Swift side decodes, by path, each with its type: `""` is the document,
 element of a document that is one). A type is `string`, `integer`, `number`, `boolean`,
 `array`, `object` or `any` (a key the decoder takes in whatever JSON type it comes), and
 `|null` after it is a key the decoder also takes as null; without it, null is a broken
-promise. Its `streams` block is the same promise for the JSON lines
-of `models pull --json`: each event's keys, exactly one ending, and the exit code each
+promise. Its `streams` block is the same promise for the JSON lines of `models pull --json`
+and `voice use here --json`: each event's keys, exactly one ending, and the exit code each
 ending carries. Renaming a field here without the app fails this test, not the owner's
 menu bar.
 
@@ -37,7 +37,7 @@ from keryx.cli import app
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path
-from keryx.localmodels import catalog, download, hardware, servers, use
+from keryx.localmodels import catalog, download, hardware, runtimes, servers, use, voice
 from keryx.localmodels.hardware import Hardware
 from keryx.restart.service import ServiceTarget
 from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
@@ -56,17 +56,25 @@ TYPES: dict[str, tuple[type, ...]] = {
 }
 NULLABLE = "|null"
 PULL = "models pull --json"
+VOICE_HERE = "voice use here --json"
+#: The command lines the app reads as JSON lines; the pull's is the one every contract has.
+STREAMS = (PULL, VOICE_HERE)
 #: The command lines the app reads as one JSON document.
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
     "tasks usage --json", "models list --json", "models use NAME --json",
     "config list --json", "config options KEY --json", "approvals --json", "memory --json",
+    "voice --json", "voice use openai --json", "voice use server URL --json",
 }
 #: What the placeholders in a contract command line stand for.
 TASK_ID = 1
 MODEL = catalog.by_key("qwen3-coder-30b-a3b")
 #: What the faked model server says it has loaded.
 SERVED = "qwen3-coder-q4"
+#: A voice server elsewhere, for `voice use server URL`: its handshake is faked.
+VOICE_SERVER = "http://192.168.1.20:8765"
+#: The speech-to-speech the seeded machine has.
+S2S = "/Users/you/.local/bin/speech-to-speech"
 
 runner = CliRunner()
 
@@ -96,7 +104,8 @@ def contract() -> dict:
 
 def argv(command: str) -> list[str]:
     # The realtime model on the seeded voice server: a list read live, the current appended.
-    words = {"ID": str(TASK_ID), "NAME": MODEL.key, "KEY": "OPENAI_REALTIME_MODEL"}
+    words = {"ID": str(TASK_ID), "NAME": MODEL.key, "KEY": "OPENAI_REALTIME_MODEL",
+             "URL": VOICE_SERVER}
     return [words.get(word, word) for word in command.split()]
 
 
@@ -181,21 +190,32 @@ def shape_problems(doc: object) -> list[str]:
                 continue
             for path, keys in paths.items():
                 problems += _type_problems(f"{command} {path!r}", keys)
-    stream = (doc.get("streams") or {}).get(PULL)
-    if not isinstance(stream, dict):
+    streams = doc.get("streams") or {}
+    if not isinstance(streams.get(PULL), dict):
         return [*problems, f"no {PULL} stream"]
+    for command, stream in streams.items():
+        problems += _stream_problems(command, stream)
+    return problems
+
+
+def _stream_problems(command: str, stream: object) -> list[str]:
+    """What keeps `stream` from being a stream's promise: its events' keys, its endings
+    among them, and an exit code for each ending."""
+    if not isinstance(stream, dict):
+        return [f"{command}: not an object"]
+    problems = []
     events = stream.get("events") or {}
     for name, keys in events.items():
-        problems += _type_problems(f"{PULL} {name}", keys)
+        problems += _type_problems(f"{command} {name}", keys)
     terminal = stream.get("terminal") or []
     exits = stream.get("exit") or {}
     if not terminal or not set(terminal) <= set(events):
-        problems.append(f"{PULL}: the endings are not all events")
+        problems.append(f"{command}: the endings are not all events")
     for ending in terminal:
         code = exits.get(ending)
         codes = code if isinstance(code, list) else [code]
         if not codes or not all(isinstance(c, int) and not isinstance(c, bool) for c in codes):
-            problems.append(f"{PULL}: {ending} has no exit code")
+            problems.append(f"{command}: {ending} has no exit code")
     return problems
 
 
@@ -277,7 +297,11 @@ def test_a_missing_contract_fails_naming_the_file(tmp_path, monkeypatch):
      ({"schema": 2, "commands": {"x": {"": {"a": "string"}}}}, f"no {PULL} stream"),
      ({"schema": 2, "commands": {"x": {"": {"a": "string"}}}, "streams": {PULL: {
          "events": {"done": {}}, "terminal": ["done", "error"], "exit": {"done": 0}}}},
-      f"{PULL}: the endings are not all events")],
+      f"{PULL}: the endings are not all events"),
+     ({"schema": 2, "commands": {"x": {"": {"a": "string"}}}, "streams": {
+         PULL: SMALL_V2["streams"][PULL], VOICE_HERE: {
+             "events": {"done": {}}, "terminal": ["done"], "exit": {}}}},
+      f"{VOICE_HERE}: done has no exit code")],
 )
 def test_a_contract_that_is_not_schema_2_says_why(doc, problem):
     assert problem in shape_problems(doc)
@@ -343,7 +367,9 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("PROJECTS_ROOT", str(tmp_path / "projects"))
     ConfigStore().set({"ASSISTANT_NAME": "Vega", "LLM_SERVER_MODEL": MODEL.key,
-                       "VOICE_BASE_URL": "http://127.0.0.1:8765/v1"})
+                       "VOICE_BASE_URL": "http://127.0.0.1:8765/v1",
+                       "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1",
+                       "LOCAL_AGENT_MODEL": MODEL.key})
     settings = Settings()
     settings.ensure_dirs()
 
@@ -401,6 +427,9 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
                         lambda cache_dir, **_: "/opt/homebrew/bin/llama-server")
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request",
                         lambda self, request: llama_server(request))
+    # The voice commands: speech-to-speech installed, and a server elsewhere that answers.
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: S2S)
+    monkeypatch.setattr("keryx.realtime.openai.realtime_problem", lambda endpoint: None)
     model = download.model_path(settings.cache_dir, MODEL)
     model.parent.mkdir(parents=True, exist_ok=True)
     with model.open("wb") as out:
@@ -433,6 +462,8 @@ def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
     tasks = json.loads(runner.invoke(app, ["tasks", "list", "--json"]).stdout)["tasks"]
     report = json.loads(runner.invoke(app, ["status", "--json"]).stdout)
     options = json.loads(runner.invoke(app, argv("config options KEY --json")).stdout)
+    voice_status = json.loads(runner.invoke(app, ["voice", "--json"]).stdout)
+    voice_server = json.loads(runner.invoke(app, argv("voice use server URL --json")).stdout)
 
     assert models["servers"]["llm"]["reachable"] is True
     assert models["servers"]["llm"]["served_model"] == SERVED
@@ -444,6 +475,10 @@ def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
     assert report["assistant"]["name"] == "Vega"
     assert (options["live"], options["source"]) == (True, "server")
     assert {option["detail"] for option in options["options"]} == {None, "current"}
+    assert voice_status["base_url"] == "http://127.0.0.1:8765/v1"
+    assert voice_status["here"]["program"] == S2S
+    assert voice_status["here"]["words_model"] == MODEL.key
+    assert voice_server["saved"]["VOICE_BASE_URL"] == f"{VOICE_SERVER}/v1"
 
 
 # --- the stream: models pull --json ------------------------------------------------------
@@ -537,6 +572,83 @@ def test_a_pull_streams_the_events_the_app_reads_and_ends_once(
     endings = [event["event"] for event in events if event["event"] in stream["terminal"]]
     assert endings == [ending] and events[-1]["event"] == ending
     assert (events[0]["event"] == "progress") is progressed
+    allowed = stream["exit"][ending]
+    assert result.exit_code == code
+    assert code in (allowed if isinstance(allowed, list) else [allowed])
+
+
+# --- the stream: voice use here --json ---------------------------------------------------
+
+
+def _voice_done(monkeypatch, settings, scripts):
+    scripts.code = 0
+
+
+def _voice_failed(monkeypatch, settings, scripts):
+    scripts.code = 1  # the speech-to-speech install does not finish
+
+
+def _voice_refused(monkeypatch, settings, scripts):
+    ConfigStore().set({"LOCAL_AGENT_BASE_URL": None, "LOCAL_AGENT_MODEL": None})
+
+
+def _voice_cancelled(monkeypatch, settings, scripts):
+    def interrupted(argv):
+        raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+    monkeypatch.setattr(voice, "run_detached", interrupted)
+
+
+class Scripts:
+    """The installers `voice use here` runs, faked: what they were asked, and their code."""
+
+    def __init__(self) -> None:
+        self.code = 0
+        self.ran: list[list[str]] = []
+
+    def __call__(self, argv) -> int:
+        self.ran.append(list(argv))
+        return self.code
+
+
+#: Each way the voice set-up ends: how to arrange it, its ending, its exit code, and
+#: whether a step was told first.
+VOICES = [(_voice_done, "done", 0, True), (_voice_failed, "error", 1, True),
+          (_voice_refused, "error", 2, False), (_voice_cancelled, "cancelled", 130, True)]
+
+
+def test_the_voice_set_ups_below_reach_every_event_the_contract_names():
+    stream = contract()["streams"][VOICE_HERE]
+
+    assert {ending for _, ending, _, _ in VOICES} == set(stream["terminal"])
+    assert set(stream["events"]) == {*stream["terminal"], "step"}
+
+
+@pytest.mark.parametrize(("arrange", "ending", "code", "stepped"), VOICES)
+def test_a_voice_set_up_streams_the_events_the_app_reads_and_ends_once(
+    seeded, monkeypatch, tmp_path, arrange, ending, code, stepped
+):
+    stream = contract()["streams"][VOICE_HERE]
+    scripts = Scripts()
+    installers = tmp_path / "checkout" / "scripts"  # `keryx.cli.repo_root`, the suite's own
+    installers.mkdir(parents=True)
+    for name in ("install-launchd.sh", "install-systemd.sh"):
+        (installers / name).write_text("#!/bin/sh\n")
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: None)  # so it is installed
+    monkeypatch.setattr(voice, "run_detached", scripts)
+    monkeypatch.setattr(servers, "wait_for", lambda endpoint, kind, timeout: None)
+    arrange(monkeypatch, seeded, scripts)
+
+    result = runner.invoke(app, VOICE_HERE.split())
+
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert events, "no events at all"
+    for event in events:
+        assert event.get("event") in stream["events"], event
+        assert not key_problems(event, stream["events"][event["event"]]), event
+    endings = [event["event"] for event in events if event["event"] in stream["terminal"]]
+    assert endings == [ending] and events[-1]["event"] == ending
+    assert (events[0]["event"] == "step") is stepped
     allowed = stream["exit"][ending]
     assert result.exit_code == code
     assert code in (allowed if isinstance(allowed, list) else [allowed])

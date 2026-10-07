@@ -89,6 +89,18 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   [--json]` (a downloaded model as the local agent's: saves what the wizard would, through
   the same `localmodels/use.py`; a restart picks it up), `models serve llm|voice` (what the
   units run: it reads the settings and becomes the server)
+- The voice on a call: `uv run keryx voice [--json]` (where it is — `mode` openai, here or
+  server — and the voice server on this machine: installed, its unit, whether it answers on
+  loopback, the local model its words come from; `needs` says `local_agent_model` while there
+  is none; a server elsewhere is asked only while it is the voice, never with its key in the
+  output), `voice use openai [--json]`, `voice use server URL [--key-stdin | --clear-key]
+  [--keep-anyway] [--json]` (saved only once it opens a Realtime session, unless kept anyway;
+  exit 1 with the `problem` and nothing saved; the stored key is kept and asked with unless
+  `--key-stdin` replaces it — shown as `(set)` — or `--clear-key` forgets it), `voice use here
+  [--voice NAME] [--json]` (what the wizard does, through the same `localmodels/voice.py`:
+  install speech-to-speech, its unit, wait for it, then save it; `--json` is JSON lines — a
+  `step` before each slow one, then exactly one of `done`, `error`, `cancelled`; exit 2 for a
+  refusal before anything is tried, 1 for what stopped it, 130 for a SIGTERM)
 - The Mac app (`macos/`): `macos/scripts/test.sh` (the Swift tests; it adds the Command Line
   Tools' Testing framework path only when they are the developer directory),
   `macos/scripts/build-app.sh [--install]` (`macos/build/Keryx.app`, signed ad hoc;
@@ -185,10 +197,14 @@ remember:
   fits, the recommendation, the Kokoro voices), `download`, `runtimes` (finding or installing
   llama.cpp and speech-to-speech, both pinned), `servers` (each server's command line from
   the settings, `free_port`, `wait_for`), `pull` (`keryx models pull`'s steps, told as a
-  progress bar or as JSON lines) and `use` (the settings that make a model the local agent's —
-  `llama_values`, `enable_local`, which the wizard and `keryx models use` both save — and the
-  servers' status). `setup/local_models.py` is the wizard's section and `keryx models` the
-  command line; every install, download and network read in the wizard goes through `Probes`.
+  progress bar or as JSON lines; its `EventLines` is any stream that ends exactly once), `use`
+  (the settings that make a model the local agent's — `llama_values`, `enable_local`, which
+  the wizard and `keryx models use` both save — and the servers' status) and `voice` (the
+  voice's three places, its status, and the steps that set each up, which the wizard and
+  `keryx voice use` both run: the wizard only asks and tells). `setup/local_models.py` is the
+  wizard's section and `keryx models` and `keryx voice` the command line; every install,
+  download and network read in the wizard goes through `Probes`, and in `keryx voice use`
+  through `voice.machine()`.
 - **continuity** — `continuity/` is what survives the end of a call: `briefing`, `memory`
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
   `retention`, which prunes exactly those artefacts.
@@ -214,8 +230,8 @@ remember:
   stdin, the environment and the output never. The snapshots photograph only the app's own
   windows, by window id. `tests/test_macos_contract.py` holds the JSON contract — the keys
   the Swift decoders require from each command, with their JSON types, and the events,
-  ending and exit codes of the `models pull --json` stream — so renaming a field fails
-  pytest, not the app at runtime.
+  ending and exit codes of the `models pull --json` and `voice use here --json` streams — so
+  renaming a field fails pytest, not the app at runtime.
 
 `logging_util.mask_number` is the only shape a phone number may take in a log line.
 

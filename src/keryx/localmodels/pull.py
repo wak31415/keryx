@@ -106,14 +106,16 @@ class TextReport:
             yield lambda done: bar.update(task, completed=done)
 
 
-class JsonLines:
-    """For the Mac app: one JSON object to a line, written by `write` (which flushes)."""
+class EventLines:
+    """A JSON-lines stream that ends exactly once: one JSON object to a line, written by
+    `write` (which flushes). `models pull --json` and `voice use here --json` are each one,
+    with events of their own; the ending, its guard and Cancel are this class's."""
 
-    def __init__(
-        self, write: Callable[[str], None], *, clock: Callable[[], float] = time.monotonic
-    ) -> None:
+    #: The endings that say the work is done: an interrupt after one is still a success.
+    succeeded: frozenset[str] = frozenset({"done"})
+
+    def __init__(self, write: Callable[[str], None]) -> None:
         self._write = write
-        self._clock = clock
         #: The one ending told ("done", "error", …), or None; nothing is told after it.
         self.ending: str | None = None
 
@@ -140,14 +142,49 @@ class JsonLines:
     def error(self, message: str) -> None:
         self._end({"event": "error", "message": message})
 
+    def cancelled(self) -> None:
+        self._end({"event": "cancelled"})
+
+    def guard(self, run: Callable[[], int]) -> int:
+        """`run`'s exit code, with every way it can stop told as the ending: an interrupt
+        as `cancelled` (130), anything unexpected as an `error` (1). What is raised after
+        the ending was told — a refusal's own exit — goes on unchanged, and an interrupt
+        that lands after it exits with the code that ending says: 0 for a success, 1 for
+        an `error`."""
+        try:
+            return run()
+        except KeyboardInterrupt:
+            if self.ending in self.succeeded:
+                return 0
+            if self.ending == "error":
+                return 1
+            with suppress(KeyboardInterrupt):  # a second Cancel, held off while it was told
+                self.cancelled()
+            return CANCELLED
+        except Exception as exc:
+            if self.ended:
+                raise
+            with suppress(KeyboardInterrupt):
+                self.error(str(exc) or type(exc).__name__)
+            return 1
+
+
+class JsonLines(EventLines):
+    """For the Mac app: the pull's progress, then how it ended."""
+
+    succeeded = SUCCEEDED
+
+    def __init__(
+        self, write: Callable[[str], None], *, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        super().__init__(write)
+        self._clock = clock
+
     def adopted(self, path: Path, found: Path) -> None:
         self._end({"event": "adopted", "path": str(path), "from": str(found)})
 
     def done(self, path: Path) -> None:
         self._end({"event": "done", "path": str(path)})
-
-    def cancelled(self) -> None:
-        self._end({"event": "cancelled"})
 
     @contextmanager
     def downloading(self, title: str, total: int) -> Iterator[download.Progress]:
@@ -162,29 +199,6 @@ class JsonLines:
                 self._emit({"event": "progress", "done": done, "total": total})
 
         yield progress
-
-    def guard(self, run: Callable[[], int]) -> int:
-        """`run`'s exit code, with every way it can stop told as the ending: an interrupt
-        as `cancelled` (130), anything unexpected as an `error` (1). What is raised after
-        the ending was told — a refusal's own exit — goes on unchanged, and an interrupt
-        that lands after it exits with the code that ending says: 0 for `done` or
-        `adopted`, 1 for an `error`."""
-        try:
-            return run()
-        except KeyboardInterrupt:
-            if self.ending in SUCCEEDED:
-                return 0
-            if self.ending == "error":
-                return 1
-            with suppress(KeyboardInterrupt):  # a second Cancel, held off while it was told
-                self.cancelled()
-            return CANCELLED
-        except Exception as exc:
-            if self.ended:
-                raise
-            with suppress(KeyboardInterrupt):
-                self.error(str(exc) or type(exc).__name__)
-            return 1
 
 
 def _interrupt(signum: int, frame: object) -> None:

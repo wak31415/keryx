@@ -4,6 +4,7 @@ share (`keryx.localmodels.voice`), driven here through fake probes and a recordi
 import contextlib
 from pathlib import Path
 
+import httpx
 import pytest
 
 from keryx.config import Settings
@@ -208,6 +209,14 @@ def test_a_machine_with_neither_launchd_nor_systemd_is_refused(settings, root):
                               platform="freebsd14").startswith("Keryx runs its servers")
 
 
+@pytest.mark.parametrize(("name", "problem"), [
+    ("af_heart", False), ("zf_xiaoxiao", False), ("af_new2", False),
+    ("", True), ("heart", True), ("af heart", True), ("--af_heart", True), ("AF_HEART", True),
+])
+def test_a_kokoro_voice_name_has_its_shape(name, problem):
+    assert (voice.voice_name_problem(name) is not None) is problem
+
+
 def test_a_unit_that_will_not_install_is_said_and_no_voice_is_saved(settings, root):
     log = Log()
 
@@ -320,6 +329,95 @@ def test_openai_is_no_voice_server_and_no_key_for_one():
     assert voice.to_openai() == {"VOICE_BASE_URL": None, "VOICE_API_KEY": None}
 
 
+# --- status --------------------------------------------------------------------------------
+
+
+class Asked:
+    def __init__(self, *, program=None, unit=False, up=False, server=True) -> None:
+        self.program, self.unit, self.up, self.server = program, unit, up, server
+        self.probed: list[str] = []
+        self.servers: list[Endpoint] = []
+
+    def status(self, settings):
+        return voice.status(
+            settings, program=lambda: self.program,
+            installed=lambda kind: kind == "voice" and self.unit,
+            probe=lambda url: self.probed.append(url) or (self.up, None),
+            server_reachable=lambda endpoint: self.servers.append(endpoint) or self.server,
+        )
+
+
+def test_status_on_openai_without_a_local_model_needs_one(settings):
+    asked = Asked()
+
+    document = asked.status(settings)
+
+    assert document == {
+        "mode": "openai", "base_url": None,
+        "realtime_model": settings.openai_realtime_model, "voice": settings.voice,
+        "assistant": settings.assistant_name, "openai_key_set": True,
+        "here": {"installed": False, "program": None, "voice": settings.voice_server_voice,
+                 "port": 8765, "unit_installed": False, "reachable": False,
+                 "words_model": None},
+        "needs": "local_agent_model",
+        "server": {"reachable": None},
+    }
+    assert asked.servers == []  # nothing elsewhere is asked when it is not the voice
+
+
+def test_status_here_is_the_voice_server_on_this_machine(settings):
+    asked = Asked(program="/bin/s2s", unit=True, up=True)
+    here = settings.model_copy(update={**WORDS, "voice_base_url": "http://127.0.0.1:8765/v1",
+                                       "voice_server_voice": "bm_george"})
+
+    document = asked.status(here)
+
+    assert document["mode"] == "here" and document["voice"] == "bm_george"
+    assert document["base_url"] == "http://127.0.0.1:8765/v1"
+    assert document["here"] == {"installed": True, "program": "/bin/s2s", "voice": "bm_george",
+                                "port": 8765, "unit_installed": True, "reachable": True,
+                                "words_model": "qwen3-coder-30b-a3b"}
+    assert document["needs"] is None and document["server"] == {"reachable": None}
+    assert asked.probed == ["http://127.0.0.1:8765/v1"]
+
+
+def test_status_server_asks_the_server_and_never_says_its_key(settings):
+    asked = Asked(server=False)
+    there = settings.model_copy(update={"voice_base_url": "http://gpu:8765/v1",
+                                        "voice_api_key": "vk-secret", "openai_api_key": None})
+
+    document = asked.status(there)
+
+    assert document["mode"] == "server" and document["server"] == {"reachable": False}
+    assert document["openai_key_set"] is False
+    assert [endpoint.api_key for endpoint in asked.servers] == ["vk-secret"]
+    assert "vk-secret" not in str(document)
+    # A voice server elsewhere on our own port is still not ours.
+    assert voice.mode(there.model_copy(update={"voice_base_url": "http://gpu:8765/v1"})) == "server"
+
+
+def test_a_server_that_answers_anything_short_of_a_server_error_is_reachable():
+    calls: list[dict] = []
+
+    def answering(code):
+        def get(url, **kwargs):
+            calls.append({"url": url, **kwargs})
+            return httpx.Response(code, request=httpx.Request("GET", url))
+        return get
+
+    endpoint = Endpoint.parse("http://gpu:8765", api_key="vk")
+    assert voice.server_reachable(endpoint, get=answering(404)) is True
+    assert voice.server_reachable(endpoint, get=answering(503)) is False
+    assert calls[0]["url"] == "http://gpu:8765/v1/models"
+    assert calls[0]["headers"] == {"Authorization": "Bearer vk"}
+    assert calls[0]["timeout"] == voice.SERVER_REACH_S == 2.0
+
+    def refused(url, **kwargs):
+        raise httpx.ConnectError("refused")
+
+    assert voice.server_reachable(endpoint, get=refused) is False
+
+
 def test_a_voice_that_answered_but_could_not_be_saved_is_not_done(settings, root):
     log = Log()
     answers = iter([True, False])
@@ -330,3 +428,12 @@ def test_a_voice_that_answered_but_could_not_be_saved_is_not_done(settings, root
     assert code == 1 and log.of("done") == [] and log.of("wait")
 
 
+def test_an_installer_runs_with_nothing_on_its_stdin_and_its_output_off_stdout(capfd):
+    import sys
+
+    code = voice.run_detached([sys.executable, "-c",
+                               "import sys; print('installing'); print(sys.stdin.read() == '')"])
+
+    out, err = capfd.readouterr()
+    assert code == 0 and out == "" and err.split() == ["installing", "True"]
+    assert voice.run_detached(["/no/such/installer"]) == 127
