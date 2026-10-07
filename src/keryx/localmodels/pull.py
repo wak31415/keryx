@@ -16,7 +16,7 @@ import json
 import signal
 import time
 from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, suppress
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -29,6 +29,10 @@ from keryx.localmodels import catalog, download, hardware
 CANCELLED = 130
 #: The most often a progress line is written, unless a whole percent has passed since.
 PROGRESS_EVERY_S = 0.25
+#: The endings that say the model is there: an interrupt after one is still a success.
+SUCCEEDED = frozenset({"done", "adopted"})
+#: What Cancel sends, held off while the ending is written.
+CANCEL_SIGNALS = frozenset({signal.SIGTERM, signal.SIGINT})
 
 
 class Report(Protocol):
@@ -110,16 +114,28 @@ class JsonLines:
     ) -> None:
         self._write = write
         self._clock = clock
-        #: Whether the one ending has been told; nothing is told after it.
-        self.ended = False
+        #: The one ending told ("done", "error", …), or None; nothing is told after it.
+        self.ending: str | None = None
+
+    @property
+    def ended(self) -> bool:
+        return self.ending is not None
 
     def _emit(self, event: dict[str, Any]) -> None:
         self._write(json.dumps(event))
 
     def _end(self, event: dict[str, Any]) -> None:
-        if not self.ended:
-            self.ended = True
+        """Tell `event` as the ending, unless one was told. Cancel is held off while it is
+        written and marked — a SIGTERM halfway would leave the stream with no ending — and
+        lands once it is out, as an interrupt `guard` knows comes after the ending."""
+        if self.ended:
+            return
+        held = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+        try:
             self._emit(event)
+            self.ending = event["event"]
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, held)
 
     def error(self, message: str) -> None:
         self._end({"event": "error", "message": message})
@@ -150,16 +166,24 @@ class JsonLines:
     def guard(self, run: Callable[[], int]) -> int:
         """`run`'s exit code, with every way it can stop told as the ending: an interrupt
         as `cancelled` (130), anything unexpected as an `error` (1). What is raised after
-        the ending was told — a refusal's own exit — goes on unchanged."""
+        the ending was told — a refusal's own exit — goes on unchanged, and an interrupt
+        that lands after it exits with the code that ending says: 0 for `done` or
+        `adopted`, 1 for an `error`."""
         try:
             return run()
         except KeyboardInterrupt:
-            self.cancelled()
+            if self.ending in SUCCEEDED:
+                return 0
+            if self.ending == "error":
+                return 1
+            with suppress(KeyboardInterrupt):  # a second Cancel, held off while it was told
+                self.cancelled()
             return CANCELLED
         except Exception as exc:
             if self.ended:
                 raise
-            self.error(str(exc) or type(exc).__name__)
+            with suppress(KeyboardInterrupt):
+                self.error(str(exc) or type(exc).__name__)
             return 1
 
 

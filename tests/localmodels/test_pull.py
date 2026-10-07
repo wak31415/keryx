@@ -114,7 +114,52 @@ def test_an_interrupt_after_the_ending_is_not_told_again():
         events.done("/m.gguf")
         raise KeyboardInterrupt
 
-    assert events.guard(finished_then_interrupted) == pull.CANCELLED
+    assert events.guard(finished_then_interrupted) == 0  # the code the stream already says
+    assert lines(written) == [{"event": "done", "path": "/m.gguf"}]
+
+
+def test_an_interrupt_after_an_adoption_is_still_a_success():
+    written: list[str] = []
+    events = pull.JsonLines(written.append)
+
+    def adopted_then_interrupted() -> int:
+        events.adopted("/m.gguf", "/hub/m.gguf")
+        raise KeyboardInterrupt
+
+    assert events.guard(adopted_then_interrupted) == 0
+    assert len(written) == 1
+
+
+def test_an_interrupt_after_an_error_is_still_a_failure():
+    written: list[str] = []
+    events = pull.JsonLines(written.append)
+
+    def failed_then_interrupted() -> int:
+        events.error("did not arrive whole")
+        raise KeyboardInterrupt
+
+    assert events.guard(failed_then_interrupted) == 1
+    assert lines(written) == [{"event": "error", "message": "did not arrive whole"}]
+
+
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
+def test_a_cancel_while_the_ending_is_written_waits_for_it(signum):
+    """Held off until the line is out, so the stream never ends with no ending at all."""
+    written: list[str] = []
+
+    def write(line: str) -> None:
+        os.kill(os.getpid(), signum)
+        written.append(line)
+
+    events = pull.JsonLines(write)
+
+    def finishing() -> int:
+        events.done("/m.gguf")
+        return 0
+
+    with pull.terminate_as_interrupt():
+        assert events.guard(finishing) == 0
+
     assert lines(written) == [{"event": "done", "path": "/m.gguf"}]
 
 
@@ -139,3 +184,26 @@ def test_a_handler_python_did_not_install_is_restored_as_the_default(monkeypatch
         pass
 
     assert restored[-1] is signal.SIG_DFL
+
+
+@pytest.mark.parametrize(
+    ("stopping", "ending", "code"),
+    [(KeyboardInterrupt, "cancelled", pull.CANCELLED), (PermissionError, "error", 1)],
+)
+def test_a_second_cancel_while_the_ending_is_written_keeps_its_code(stopping, ending, code):
+    """A Cancel pressed twice: the second lands as `cancelled` or `error` is written."""
+    written: list[str] = []
+
+    def write(line: str) -> None:
+        os.kill(os.getpid(), signal.SIGTERM)
+        written.append(line)
+
+    events = pull.JsonLines(write)
+
+    def stopped() -> int:
+        raise stopping
+
+    with pull.terminate_as_interrupt():
+        assert events.guard(stopped) == code
+
+    assert [event["event"] for event in lines(written)] == [ending]

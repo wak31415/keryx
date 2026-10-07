@@ -111,7 +111,10 @@ def reachable(url: str, *, get: Callable[..., httpx.Response] | None = None) -> 
 
     Any answer short of a server error counts: the voice server speaks the Realtime socket
     and need not list models, and a 404 from it is still a server that is up. An address
-    that is not on this machine is False without being asked.
+    that is not on this machine is False without being asked, and the question never goes
+    through a proxy (`trust_env=False`): `HTTP_PROXY`, `ALL_PROXY` or macOS's system proxy
+    would carry even a 127.0.0.1 request off the machine, and the proxy's 407 would read as
+    a server that is up.
     """
     try:
         endpoint = Endpoint.parse(url)
@@ -120,7 +123,9 @@ def reachable(url: str, *, get: Callable[..., httpx.Response] | None = None) -> 
     if not endpoint.is_loopback:
         return False
     try:
-        response = (get or httpx.get)(endpoint.url("models"), timeout=REACH_TIMEOUT_S)
+        response = (get or httpx.get)(
+            endpoint.url("models"), timeout=REACH_TIMEOUT_S, trust_env=False
+        )
     except httpx.HTTPError:
         return False
     return response.status_code < 500

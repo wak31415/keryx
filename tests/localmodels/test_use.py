@@ -155,7 +155,8 @@ def test_a_remote_address_is_not_reachable_and_is_never_asked():
 def test_a_loopback_server_is_asked_for_its_models_within_a_second():
     asked: list = []
 
-    def get(url, *, timeout):
+    def get(url, *, timeout, trust_env):
+        assert trust_env is False  # a proxy would carry "loopback" off the machine
         asked.append((url, timeout))
         return httpx.Response(200, json={"data": []})
 
@@ -167,14 +168,14 @@ def test_a_loopback_server_is_asked_for_its_models_within_a_second():
 
 @pytest.mark.parametrize("answer", [httpx.ConnectError("refused"), httpx.ReadTimeout("slow")])
 def test_a_loopback_server_that_does_not_answer_is_not_reachable(answer):
-    def get(url, *, timeout):
+    def get(url, *, timeout, trust_env):
         raise answer
 
     assert use.reachable("http://127.0.0.1:8090/v1", get=get) is False
 
 
 def test_a_server_that_answers_with_an_error_is_not_reachable():
-    def get(url, *, timeout):
+    def get(url, *, timeout, trust_env):
         return httpx.Response(503)
 
     assert use.reachable("http://127.0.0.1:8090/v1", get=get) is False
@@ -184,7 +185,7 @@ def test_a_server_without_a_model_list_still_answers():
     """speech-to-speech serves the Realtime socket, not necessarily `/models`: a 404 is a
     server that is up."""
 
-    def get(url, *, timeout):
+    def get(url, *, timeout, trust_env):
         return httpx.Response(404)
 
     assert use.reachable("http://127.0.0.1:8765/v1", get=get) is True
@@ -217,3 +218,25 @@ def test_each_server_is_its_own_unit(platform, kind, target):
 
 def test_a_platform_with_no_service_manager_has_no_unit():
     assert use.unit_installed("llm", platform="win32", is_installed=never) is False
+
+
+def test_the_loopback_probe_never_goes_through_a_proxy(monkeypatch):
+    """With a proxy in the environment (or macOS's system settings), httpx would send even a
+    127.0.0.1 request to it, and a proxy's 407 would read as a server that is up."""
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.com:3128")
+    monkeypatch.setenv("ALL_PROXY", "http://proxy.example.com:3128")
+    proxies: list = []
+    real_init = httpx.HTTPTransport.__init__
+
+    def recording_init(self, *args, proxy=None, **kwargs):
+        proxies.append(proxy)
+        real_init(self, *args, proxy=proxy, **kwargs)
+
+    def answer(self, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": []}, request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "__init__", recording_init)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", answer)
+
+    assert use.reachable("http://127.0.0.1:8090/v1") is True
+    assert proxies and all(proxy is None for proxy in proxies)
