@@ -41,7 +41,6 @@ ask of one fetched a file at a time, which leaves no listing.
 """
 
 import json
-import os
 import shlex
 import subprocess
 import sys
@@ -50,6 +49,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
 
+from keryx.child_env import operational_env
 from keryx.config import Settings
 from keryx.localmodels.download import hf_cache
 
@@ -267,12 +267,13 @@ def fetch(
     (`speech_fetch.py`), `progress` told the bytes on disk; None, or why it stopped.
 
     Its output is read line by line; its stderr is this process's. However this ends — a
-    Cancel included — the download is not left running behind it."""
+    Cancel included — the download is not left running behind it. Its environment holds no
+    secret of Keryx's, and does hold a Hugging Face token (`child_env.operational_env`)."""
     spec = json.dumps([{"id": r.id, "allow": list(r.allow) if r.allow else None}
                        for r in repos])
     try:
         child = subprocess.Popen([python, str(FETCH_SCRIPT), spec], stdin=subprocess.DEVNULL,
-                                 stdout=subprocess.PIPE, text=True, env=dict(os.environ))
+                                 stdout=subprocess.PIPE, text=True, env=operational_env())
     except OSError as error:
         return f"could not run speech-to-speech's Python ({python}): {error.strerror or error}"
     started(child)

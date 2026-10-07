@@ -39,6 +39,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from keryx.child_env import operational_env
 from keryx.config import Settings
 from keryx.config.store import FROM_DEFAULT, ConfigStore
 from keryx.endpoints import Endpoint, warnings
@@ -547,12 +548,13 @@ def run_detached(argv: Sequence[str]) -> int:
     installers runs in a session of its own and is stopped at `INSTALL_TIMEOUT_S`
     (`TIMED_OUT`, and a line on stderr saying so) — it and everything it started, so no
     `launchctl` or `uv` is left running; anything else — a download — is given as long as it
-    takes. A Cancel stops what it ran, then goes on."""
+    takes. A Cancel stops what it ran, then goes on. None of Keryx's secrets is in its
+    environment (`child_env.operational_env`)."""
     name = Path(argv[0]).name if argv else ""
     timed = name in INSTALLERS
     try:
         child = subprocess.Popen(list(argv), stdin=subprocess.DEVNULL, stdout=2,
-                                 start_new_session=timed)
+                                 start_new_session=timed, env=operational_env())
     except OSError:
         return 127
     try:

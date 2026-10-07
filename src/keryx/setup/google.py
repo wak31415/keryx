@@ -53,9 +53,9 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import httpx
 
 from keryx.agents.base import google_mcp_server_config
+from keryx.child_env import login_env
 from keryx.config import GOOGLE_CLIENT_FILE, Settings, parse_google_client, write_private
 from keryx.integrations.gmail import SCOPE, TOKEN_URL, HttpGmail, token_path
-from keryx.setup.child_env import login_env
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from keryx.setup.context import SetupContext

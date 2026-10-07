@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from keryx.child_env import operational_env
 from keryx.config import Settings
 from keryx.localmodels import voice as voice_setup
 from keryx.localmodels.use import UNITS as SERVER_UNITS
@@ -90,10 +91,12 @@ class Outcome:
 
 def run_captured(argv: Sequence[str]) -> tuple[int, str, str]:
     """Run an installer, nothing read from its stdin; its exit code, stdout and stderr. One
-    that has not finished within `INSTALL_TIMEOUT_S` is stopped, and says so on stderr."""
+    that has not finished within `INSTALL_TIMEOUT_S` is stopped, and says so on stderr. None
+    of Keryx's secrets is in its environment (`child_env.operational_env`)."""
     try:
         done = subprocess.run(list(argv), stdin=subprocess.DEVNULL, capture_output=True,
-                              text=True, check=False, timeout=INSTALL_TIMEOUT_S)
+                              text=True, check=False, timeout=INSTALL_TIMEOUT_S,
+                              env=operational_env())
     except subprocess.TimeoutExpired:
         name = Path(argv[0]).name
         return TIMED_OUT, "", f"{name} did not finish within {INSTALL_TIMEOUT_S:g} s"

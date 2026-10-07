@@ -48,13 +48,13 @@ from typing import IO, Any, Protocol
 from urllib.parse import parse_qs, urlparse
 
 from keryx.agents.auth import redact
+from keryx.child_env import login_env
 from keryx.config import Settings
 from keryx.config.permissions import OWNER
 from keryx.config.store import ConfigError, ConfigStore
 from keryx.localmodels.pull import EventLines
 from keryx.setup import agents, google
 from keryx.setup.auth import LOGINS, AuthError, agent_cli, use_client_file
-from keryx.setup.child_env import login_env
 from keryx.setup.terminal import STOP_AFTER_S, Child, PtyChild, visible
 
 #: Where the Claude token goes: the headless subscription tier (`agents/auth.py`).
