@@ -25,6 +25,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Opens the main window and brings the app forward. Handed over by the menu bar label,
     /// the one view alive for the app's whole life, as it appears.
     var openMainWindow: (() -> Void)?
+    /// Opens the Setup Assistant and brings the app forward; handed over as `openMainWindow` is.
+    var openSetupWindow: (() -> Void)?
+    private var launchedAtLogin = false
+    /// The assistant has opened by itself this launch; it does so once at most.
+    private var setupOpenedAtLaunch = false
     private var lastMenuRefresh: ContinuousClock.Instant?
 
     override init() {
@@ -42,12 +47,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let atLogin = Self.isLoginLaunch(NSAppleEventManager.shared().currentAppleEvent)
+        launchedAtLogin = atLogin
         Log.app.info("Launched\(atLogin ? " at login" : "", privacy: .public)")
         TerminalLauncher.removeStaleScripts()
         NotificationCenter.default.addObserver(
             self, selector: #selector(menuDidBeginTracking(_:)),
             name: NSMenu.didBeginTrackingNotification, object: nil)
-        Task { await start() }
+        Task {
+            await start()
+            await openSetupIfNeeded()
+        }
+    }
+
+    /// Once, after launch: opens the Setup Assistant while the plan says Keryx is not ready
+    /// for a first call — not at a login launch, which opens no window, and not once the
+    /// owner has ticked "Don't show at launch".
+    private func openSetupIfNeeded() async {
+        guard !launchedAtLogin, !setupOpenedAtLaunch, !SetupLaunch.isHidden(), model.client != nil else { return }
+        await model.refresh(.setupPlan)
+        guard SetupLaunch.shouldOpen(plan: model.setupPlan.value, hidden: SetupLaunch.isHidden(),
+                                     alreadyOpened: setupOpenedAtLaunch) else { return }
+        setupOpenedAtLaunch = true
+        Log.app.info("Opening the Setup Assistant: setup is not finished")
+        openSetupWindow?()
     }
 
     /// Finds Keryx and starts the status poll, then reads what the menu lists that the poll

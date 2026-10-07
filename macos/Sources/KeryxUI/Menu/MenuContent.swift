@@ -2,17 +2,20 @@ import AppKit
 import KeryxKit
 import SwiftUI
 
-/// What the menu's items do outside KeryxUI: the app opens its window and quits.
+/// What the menu's items do outside KeryxUI: the app opens its windows and quits.
 public struct MenuActions {
     public var openWindow: () -> Void
     public var openSession: (Int) -> Void
     public var quit: () -> Void
+    /// Opens the Setup Assistant.
+    public var openSetup: () -> Void
 
     public init(openWindow: @escaping () -> Void, openSession: @escaping (Int) -> Void,
-                quit: @escaping () -> Void) {
+                quit: @escaping () -> Void, openSetup: @escaping () -> Void = {}) {
         self.openWindow = openWindow
         self.openSession = openSession
         self.quit = quit
+        self.openSetup = openSetup
     }
 }
 
@@ -51,6 +54,7 @@ public struct MenuContent: View {
 
         Button("Open Keryx") { actions.openWindow() }
             .keyboardShortcut("o")
+        Button("Set Up Keryx…") { actions.openSetup() }
         Button("Restart Keryx…") { MenuAlerts.restart(model: model) }
             .disabled(model.client == nil || model.status.value?.service.installed != true)
         Toggle("Pause Approval Calls", isOn: paused)
