@@ -40,6 +40,21 @@ import Testing
         }
     }
 
+    @Test func emptyEnvironmentDoesNotInheritTheParents() async throws {
+        setenv("KERYX_TASK7_MARKER", "present", 1)
+        defer { unsetenv("KERYX_TASK7_MARKER") }
+        let result = try await runner.run(.init(executable: "/usr/bin/env", environment: [:]))
+        #expect(!result.stdoutText.contains("KERYX_TASK7_MARKER"))
+    }
+
+    @Test func linesDrainsStderrWithoutBlocking() async throws {
+        var got: [String] = []
+        for try await line in runner.lines(.init(executable: "/bin/sh",
+            arguments: ["-c", "head -c 200000 /dev/zero | tr '\\0' e >&2; echo done"],
+            timeout: nil)) { got.append(line) }
+        #expect(got == ["done"])
+    }
+
     @Test func streamsLinesAndCancellationKillsTheChild() async throws {
         var got: [String] = []
         for try await line in runner.lines(.init(executable: "/bin/sh",

@@ -51,6 +51,8 @@ public protocol CommandRunner: Sendable {
     /// Yields stdout lines as they arrive, and finishes normally once the child exits,
     /// whatever its exit code was — the caller interprets the terminal JSON event, not this
     /// stream's completion. Only a launch failure throws. Cancelling the consuming task
-    /// terminates the child promptly.
+    /// terminates the child promptly. `request.timeout` is not applied here — a stream has
+    /// no natural end time, and the caller is already the one deciding when to stop
+    /// consuming (and so cancel) it.
     func lines(_ request: CommandRequest) -> AsyncThrowingStream<String, Error>
 }

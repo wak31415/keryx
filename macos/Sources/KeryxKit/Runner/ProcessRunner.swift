@@ -102,7 +102,9 @@ public final class ProcessRunner: CommandRunner, Sendable {
 
             let stdoutPipe = Pipe()
             process.standardOutput = stdoutPipe
-            process.standardError = Pipe() // drained by the OS buffer and discarded
+            // Discarded, but not into a `Pipe` nobody reads: an unread pipe's buffer fills
+            // (~64 KB) and blocks the child forever. `/dev/null` never fills.
+            process.standardError = FileHandle.nullDevice
 
             var stdinPipe: Pipe?
             if request.stdin != nil {
@@ -152,9 +154,9 @@ public final class ProcessRunner: CommandRunner, Sendable {
 private func configure(_ process: Process, with request: CommandRequest) {
     process.executableURL = URL(fileURLWithPath: request.executable)
     process.arguments = request.arguments
-    if !request.environment.isEmpty {
-        process.environment = request.environment
-    }
+    // Set unconditionally: an empty dictionary means "exactly as given" (no environment at
+    // all), not "inherit the parent's" — `Process.environment` left `nil` is what inherits.
+    process.environment = request.environment
     if let workingDirectory = request.workingDirectory {
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
     }
