@@ -152,19 +152,13 @@ private struct HereSection: View {
     var body: some View {
         let here = voice.here
         let setup = model.voiceSetup
+        let report = model.models.value
         let inUse = voice.kind == .here
-        Section(VoiceWording.title(.here)) {
-            if voice.needsLocalModel {
-                LabeledContent {
-                    Button("Go to Local Models") { model.selection = .models }
-                } label: {
-                    Label {
-                        Text(VoiceWording.needsModelTitle)
-                        Text(VoiceWording.needsModelDetail)
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    }
-                }
+        let showing = ThisMacProgress.showing(model)
+        let busy = setup.isBusy || model.modelServerRun.isBusy
+        Section {
+            if voice.needsLocalModel, !showing {
+                needsModel(report)
             }
             LabeledContent("Voice server") {
                 HStack(spacing: 6) {
@@ -179,18 +173,41 @@ private struct HereSection: View {
                     .foregroundStyle(.secondary)
             }
             LabeledContent {
-                Text(VoiceWording.wordsModel(here.wordsModel, models: model.models.value?.models))
-                    .foregroundStyle(here.wordsModel == nil ? .secondary : .primary)
-                    .textSelection(.enabled)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(VoiceWording.wordsModel(here.wordsModel, models: report?.models))
+                        .foregroundStyle(here.wordsModel == nil ? .secondary : .primary)
+                        .textSelection(.enabled)
+                    if here.wordsModel != nil, let server = VoiceWording.wordsServer(report) {
+                        HStack(spacing: 6) {
+                            StatusDot(server.running ? .ok : .inactive)
+                            Text(server.text)
+                        }
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    }
+                }
             } label: {
                 Text("Words")
                 Text("The local model that puts the replies together")
             }
             LabeledContent {
+                let speech = VoiceWording.speechModels(here)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(speech.names)
+                        .textSelection(.enabled)
+                    Text(speech.state)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            } label: {
+                Text("Speech models")
+                Text("How it hears and speaks")
+            }
+            LabeledContent {
                 OptionMenu(key: "VOICE_SERVER_VOICE", title: "Kokoro voice", current: kokoro ?? here.voice) {
                     kokoro = $0
                 }
-                .disabled(setup.isBusy)
+                .disabled(busy)
             } label: {
                 Text("Kokoro voice")
                 if let kokoro, kokoro != here.voice {
@@ -200,106 +217,66 @@ private struct HereSection: View {
                     Text(detail)
                 }
             }
-            if let phase = setup.phase {
-                SetupProgress(phase: phase, titles: Wording.titles(model.config.value),
-                              cancel: { setup.cancel() }, dismiss: { setup.dismiss() })
+            if showing {
+                ThisMacProgress { startServer in start(startServer: startServer) }
             }
-            // While a setup runs, its own row is the one to act on.
-            if !setup.isBusy {
+            // While a setup runs, or has failed, its own rows are the ones to act on.
+            if !busy, !ThisMacProgress.failed(model) {
                 PrimaryRow(inUse: false, inUseTitle: "", working: nil, failure: nil) {
                     Button(inUse ? "Restart Voice Server" : "Set Up…") {
-                        if inUse { start() } else { confirming = true }
+                        if inUse {
+                            start(startServer: nil)
+                        } else {
+                            confirming = true
+                            // The question says whether the model server starts first: as it is now.
+                            Task { await model.refresh(.models) }
+                        }
                     }
                     .disabled(voice.needsLocalModel)
                     .help(voice.needsLocalModel ? VoiceWording.needsModelTitle : "")
                 }
             }
+        } header: {
+            Text(VoiceWording.title(.here))
+        } footer: {
+            HStack(spacing: 4) {
+                Text("Choose the words and speech models in")
+                    .foregroundStyle(.secondary)
+                Button("Local Models") { model.show(inModels: ModelsAnchor.voiceModels) }
+                    .buttonStyle(.link)
+            }
+            .font(.callout)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         // The voice picked stays picked until the setup that applies it has worked.
         .onChange(of: setup.phase) { _, phase in
             if case .finished = phase { kokoro = nil }
         }
         .confirmationDialog(VoiceWording.setUpQuestion, isPresented: $confirming) {
-            Button("Set Up") { start() }
+            Button("Set Up") { start(startServer: nil) }
         } message: {
-            Text(VoiceWording.setUpMessage)
+            Text(VoiceWording.setUpMessage(startsServer: report?.modelServerDown ?? false))
         }
     }
 
-    private func start() {
-        let changed = kokoro.flatMap { $0 == voice.here.voice ? nil : $0 }
-        model.setUpVoiceHere(voice: changed)
-    }
-}
-
-/// A setup under way, stopping, failed or done: its step, a bar, and Cancel.
-private struct SetupProgress: View {
-    let phase: VoiceSetup.Phase
-    let titles: [String: String]
-    let cancel: () -> Void
-    let dismiss: () -> Void
-
-    var body: some View {
-        switch phase {
-        case let .running(step, message, progress):
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(VoiceWording.running(message))
-                    Spacer()
-                    if let progress, progress.total > 0 {
-                        Text(VoiceWording.sizes(progress))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    } else if let count = VoiceWording.stepCount(step) {
-                        Text(count)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                HStack(spacing: 10) {
-                    if let progress, progress.total > 0 {
-                        ProgressView(value: Double(min(progress.done, progress.total)), total: Double(progress.total))
-                    } else {
-                        ProgressView()
-                            .progressViewStyle(.linear)
-                    }
-                    Button("Cancel", action: cancel)
-                        .controlSize(.small)
-                }
-            }
-            .padding(.vertical, 2)
-        case .cancelling:
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Stopping…")
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 10) {
-                    ProgressView()
-                        .progressViewStyle(.linear)
-                    Button("Cancel") {}
-                        .controlSize(.small)
-                        .disabled(true)
-                }
-            }
-            .padding(.vertical, 2)
-        case let .failed(message):
-            LabeledContent {
-                Button("Dismiss", action: dismiss)
-            } label: {
-                Label {
-                    Text("Setup didn't finish")
-                    Text(VoiceWording.sentence(Wording.named(message, titles: titles)))
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                } icon: {
-                    Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-                }
-            }
-        case let .finished(url):
+    /// No local model at all: what to do about it, and the way to the one to choose.
+    private func needsModel(_ report: ModelsReport?) -> some View {
+        let recommended = report?.models.first { $0.recommended }
+        return LabeledContent {
+            Button(VoiceWording.needsModelButton(recommended: recommended)) { model.showRecommendedModel() }
+        } label: {
             Label {
-                Text("Set up at \(VoiceWording.address(url))")
+                Text(VoiceWording.needsModelTitle)
+                Text(VoiceWording.needsModelDetail(recommended: recommended))
             } icon: {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Image(systemName: "info.circle.fill").foregroundStyle(.tint)
             }
         }
+    }
+
+    private func start(startServer: Bool?) {
+        let changed = kokoro.flatMap { $0 == voice.here.voice ? nil : $0 }
+        model.setUpThisMac(voice: changed, startServer: startServer)
     }
 }
 

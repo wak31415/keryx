@@ -3,11 +3,15 @@ import KeryxUI
 import SwiftUI
 
 extension ScreenCatalog {
-    /// The Voice screen: each way of speaking in use and picked, the setup on this Mac
-    /// running (with sizes and without), stopping, failed and needing a local model first,
-    /// a server saved with a warning and one that failed its handshake, and the window.
+    /// The Voice screen: each way of speaking in use and picked; the setup on this Mac
+    /// running (with sizes and without), stopping, failed, finished and refused; the model
+    /// server not running, and Set Up starting it first then going on to the voice (and
+    /// failing there); no local model at all; a server saved with a warning and one that
+    /// failed its handshake; and the window.
     @MainActor static var voiceEntries: [Entry] {
         let screen = CGSize(width: 760, height: 720)
+        // Room for every step of a setup that starts the model server first.
+        let tall = CGSize(width: 760, height: 1040)
         return [
             Entry("voice-openai", size: screen) {
                 VoiceView().environment(AppModel.preview())
@@ -26,7 +30,38 @@ extension ScreenCatalog {
                 VoiceView(mode: .here).environment(settingUp(.holding([downloading])))
             },
             Entry("voice-here-setting-up-step", size: screen) {
-                VoiceView(mode: .here).environment(settingUp(.holding([downloading, unit])))
+                VoiceView(mode: .here).environment(settingUp(.holding([downloading, speech, configure, unit])))
+            },
+            Entry("voice-here-downloading", size: tall) {
+                VoiceView(mode: .here).environment(settingUp(.holding([downloading, speech, speechHalf])))
+            },
+            Entry("voice-here-server-down", size: screen) {
+                VoiceView(mode: .here).environment(AppModel.preview(client: PreviewClient(
+                    models: .success(modelServerDown))))
+            },
+            Entry("voice-here-chain-server", size: tall) {
+                VoiceView(mode: .here).environment(chain(server: .holding([
+                    .step(step: "runtime", message: "Installing llama.cpp with Homebrew"),
+                    .progress(step: "runtime", done: 9_437_184, total: nil),
+                ])))
+            },
+            Entry("voice-here-chain-voice", size: tall) {
+                VoiceView(mode: .here).environment(chain(server: .replay,
+                                                         setup: .holding([downloading, speech, speechHalf])))
+            },
+            Entry("voice-here-chain-failed", size: tall) {
+                VoiceView(mode: .here).environment(chain(server: .events([
+                    .step(step: "runtime", message: "Installing llama.cpp with Homebrew"),
+                    .error("brew install llama.cpp did not finish"),
+                ])))
+            },
+            Entry("voice-here-server-refused", size: screen) {
+                VoiceView(mode: .here).environment({
+                    let model = AppModel.preview(client: PreviewClient(
+                        setup: .events([.error("The local model server isn't running: start it first.")])))
+                    model.setUpThisMac(startServer: false)
+                    return model
+                }())
             },
             Entry("voice-here-stopping", size: screen) {
                 VoiceView(mode: .here).environment(stopping)
@@ -42,11 +77,11 @@ extension ScreenCatalog {
                     let model = AppModel.preview(client: PreviewClient(
                         voice: .success(PreviewData.voiceNeedsModel),
                         setup: .events(PreviewData.voiceHereRefusedLines.compactMap(VoiceSetupEvent.parse))))
-                    model.setUpVoiceHere()
+                    model.setUpThisMac()
                     return model
                 }())
             },
-            Entry("voice-here-finished", size: screen) {
+            Entry("voice-here-finished", size: tall) {
                 VoiceView(mode: .here).environment(settingUp(.replay))
             },
             Entry("voice-here-needs-model", size: screen) {
@@ -106,10 +141,34 @@ extension ScreenCatalog {
     private static let unit = VoiceSetupEvent.step(
         step: "unit", message: "Installing the voice server's service", progress: nil)
 
-    /// A setup on this Mac doing `setup`.
+    private static let speech = VoiceSetupEvent.step(
+        step: "download", message: "Downloading the voice's speech models into the Hugging Face cache: "
+            + "parakeet-tdt to hear, kokoro to speak", progress: nil)
+
+    private static let speechHalf = VoiceSetupEvent.progress(step: "download", done: 1_363_148_800,
+                                                             total: 2_726_297_600)
+
+    private static let configure = VoiceSetupEvent.step(
+        step: "configure", message: "Saving the voice settings", progress: nil)
+
+    /// Set Up… on This Mac starting the model server first, which does `server`; the voice
+    /// setup that follows does `setup`.
+    /// The models say the model server is down until it has started (the voice's part
+    /// reads them again once it has).
+    @MainActor private static func chain(server: PreviewClient.Script<ModelServerStarted>,
+                                         setup: PreviewClient.Setup = .replay) -> AppModel {
+        let started: Bool
+        if case .replay = server { started = true } else { started = false }
+        let model = AppModel.preview(client: PreviewClient(models: .success(started ? PreviewData.models : modelServerDown),
+                                                           setup: setup, modelServer: server))
+        model.setUpThisMac(startServer: true)
+        return model
+    }
+
+    /// A setup on this Mac doing `setup`, with the model server already running.
     @MainActor private static func settingUp(_ setup: PreviewClient.Setup) -> AppModel {
         let model = AppModel.preview(client: PreviewClient(setup: setup))
-        model.setUpVoiceHere()
+        model.setUpThisMac()
         return model
     }
 

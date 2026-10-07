@@ -84,15 +84,6 @@ import KeryxKit
         return here.installed ? "Installed, not running" : "Not installed"
     }
 
-    /// The setup steps, in order, for "Step 2 of 4".
-    static let steps = ["install", "configure", "unit", "start"]
-
-    /// "Step 2 of 4", for a step this build knows.
-    static func stepCount(_ step: String) -> String? {
-        guard let index = steps.firstIndex(of: step) else { return nil }
-        return "Step \(index + 1) of \(steps.count)"
-    }
-
     /// A step's message, as a sentence-cased line that ends in an ellipsis while it runs.
     static func running(_ message: String) -> String {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -101,23 +92,61 @@ import KeryxKit
         return Wording.capitalised(trimmed) + "…"
     }
 
-    /// "120 MB of 480 MB".
-    static func sizes(_ progress: VoiceSetupEvent.Progress) -> String {
-        ModelRow.progress(done: progress.done, total: progress.total)
-    }
-
     /// The model the words come from, by its catalog title when the catalog knows it.
     static func wordsModel(_ name: String?, models: [CatalogModel]?) -> String {
         guard let name else { return "None yet" }
         return models?.first { $0.name == name }?.title ?? name
     }
 
-    static let needsModelTitle = "Set up a local model first"
-    static let needsModelDetail =
-        "This Mac's voice puts its words together with a local model. Download one and choose Use This Model."
+    static let needsModelTitle = "Choose a local model first"
+
+    /// Why This Mac needs a local model first, and where to get the one recommended for it.
+    static func needsModelDetail(recommended: CatalogModel?) -> String {
+        let why = "This Mac's voice puts its words together with a local model."
+        guard let recommended else { return why + " Download one in Local Models and choose Use This Model." }
+        if recommended.downloaded {
+            return why + " \(recommended.title), recommended for this Mac, is downloaded: choose Use This Model."
+        }
+        return why + " \(recommended.title) is recommended for this Mac: download it, then choose Use This Model."
+    }
+
+    /// The button that shows the model to choose.
+    static func needsModelButton(recommended: CatalogModel?) -> String {
+        recommended == nil ? "Go to Local Models" : "Show Recommended Model"
+    }
+
+    /// The words model's server, under its name: whether it answers, and that Set Up starts
+    /// it when it doesn't. `nil` when it is not this Mac's to start (Ollama, elsewhere).
+    static func wordsServer(_ report: ModelsReport?) -> (running: Bool, text: String)? {
+        guard let report, report.servers.llm.model != nil else { return nil }
+        return report.modelServerDown
+            ? (false, "Model server not running — Set Up starts it")
+            : (true, "Model server running")
+    }
+
+    /// "parakeet-tdt and kokoro", and whether they are on this Mac yet.
+    static func speechModels(_ here: HereVoice) -> (names: String, state: String) {
+        ("\(here.stt) and \(here.tts)", here.modelsReady ? "Downloaded" : "Set Up downloads them")
+    }
+
     static let setUpQuestion = "Set up the voice server on this Mac?"
-    static let setUpMessage = "Keryx installs a voice server and its speech models, and starts it in the background. "
-        + "The first start can take a few minutes. Calls use it once Keryx restarts."
+
+    /// What Set Up does, before it is confirmed: the model server first when it isn't
+    /// answering.
+    static func setUpMessage(startsServer: Bool) -> String {
+        let voice = "installs a voice server and its speech models, and starts it in the background."
+        let after = " Calls use it once Keryx restarts."
+        guard startsServer else { return "Keryx \(voice) The first start can take a few minutes." + after }
+        return "The model server isn't running, so Keryx starts it first — installing llama.cpp if it isn't "
+            + "here — then \(voice) The first time can take a while." + after
+    }
+
+    /// The heading over each run's steps when Set Up runs both.
+    static let serverSteps = "Model Server"
+    static let voiceSteps = "Voice Server"
+    static let setupFailed = "Setup didn't finish"
+    static let serverDownTitle = "The model server isn't running"
+    static let serverDownDetail = "The voice takes its words from it. Start it, and the setup carries on."
     static let keyFootnote = "Sent to Keryx on its standard input when you choose Check & Use, and kept in "
         + "secrets.toml, readable only by you."
 }

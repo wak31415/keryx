@@ -7,24 +7,53 @@ public enum Quitting {
         public let detail: String
     }
 
-    /// The question for a download under way, a voice setup under way, or both; `nil` when
-    /// neither is and the app can just quit. `assistant`: the assistant's name ("Lyra").
-    public static func question(downloading: Bool, settingUpVoice: Bool, assistant: String?) -> Question? {
-        let voice = "\(possessive(assistant, opening: true)) voice is being set up"
-        switch (downloading, settingUpVoice) {
-        case (false, false):
-            return nil
-        case (true, false):
-            return Question(message: "A model is downloading. Quit anyway?",
-                            detail: "It will pick up where it left off next time.")
-        case (false, true):
-            return Question(message: "\(voice). Quit anyway?",
-                            detail: "The setup stops. Set Up… in Voice starts it again.")
-        case (true, true):
-            return Question(message: "A model is downloading and \(possessive(assistant, opening: false)) voice is being set up. Quit anyway?",
-                            detail: "Both stop. The download picks up where it left off, and Set Up… in Voice "
-                                + "starts the setup again.")
+    /// The question for what is under way — a model download, a voice setup, a model
+    /// server start, a speech model download, any of them together; `nil` when none is and
+    /// the app can just quit. `assistant`: the assistant's name ("Lyra").
+    public static func question(downloading: Bool, settingUpVoice: Bool, startingModelServer: Bool = false,
+                                downloadingVoiceModels: Bool = false, assistant: String?) -> Question? {
+        // What is under way, as a clause; what quitting does to it alone; and how it comes
+        // back, said beside the others.
+        var under: [(clause: String, alone: String, again: String)] = []
+        if downloading {
+            under.append(("a model is downloading", "It will pick up where it left off next time.",
+                          "the download picks up where it left off"))
         }
+        if settingUpVoice {
+            under.append(("\(possessive(assistant, opening: false)) voice is being set up",
+                          "The setup stops. Set Up… in Voice starts it again.",
+                          "Set Up… in Voice starts the setup again"))
+        }
+        if startingModelServer {
+            under.append(("the model server is starting",
+                          "It stops, and its service is removed. Start Model Server in Local Models starts it again.",
+                          "Start Model Server in Local Models starts the model server again"))
+        }
+        if downloadingVoiceModels {
+            under.append(("the speech models are downloading",
+                          "Download in Local Models picks up where it left off.",
+                          "the speech models pick up where they left off"))
+        }
+        guard let first = under.first else { return nil }
+        guard under.count > 1 else {
+            return Question(message: sentence(first.clause) + ". Quit anyway?", detail: first.alone)
+        }
+        let doing = list(under.map(\.clause), comma: false)
+        let again = list(under.map(\.again), comma: true)
+        return Question(message: sentence(doing) + ". Quit anyway?",
+                        detail: (under.count == 2 ? "Both stop. " : "They all stop. ") + sentence(again) + ".")
+    }
+
+    /// "a and b", "a, b and c"; with `comma`, a comma before the "and" too, for clauses
+    /// long enough to want one.
+    private static func list(_ parts: [String], comma: Bool) -> String {
+        guard let last = parts.last, parts.count > 1 else { return parts.first ?? "" }
+        return parts.dropLast().joined(separator: ", ") + (comma ? ", and " : " and ") + last
+    }
+
+    /// The first letter raised.
+    private static func sentence(_ text: String) -> String {
+        text.prefix(1).uppercased() + text.dropFirst()
     }
 
     /// "Lyra's", or "the assistant's" before a name is known ("The" opening a sentence).
