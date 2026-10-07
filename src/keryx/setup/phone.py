@@ -18,7 +18,15 @@ import sys
 from importlib import resources
 
 from keryx.notify.twilio_out import TwilioAdmin, TwilioError, TwilioNumber
-from keryx.phone import BAD_HOST, Refused, hostname_problem, matches, point_here, webhook_urls
+from keryx.phone import (
+    BAD_HOST,
+    Refused,
+    hostname_problem,
+    matches,
+    point_here,
+    twilio_problem,
+    webhook_urls,
+)
 from keryx.setup.context import SetupContext
 from keryx.setup.ui import Choice
 
@@ -70,8 +78,8 @@ def _twilio(ctx: SetupContext) -> tuple[TwilioAdmin, TwilioNumber] | None:
         with ui.spinner("Checking with Twilio…"):
             account = admin.account_name()
             numbers = admin.numbers()
-    except TwilioError as exc:
-        ui.error(f"Twilio refused: {exc}")
+    except TwilioError as exc:  # by its cause only: its text may quote the token
+        ui.error(twilio_problem(exc))
         return None
     ui.success(f"Twilio account: {account}")
     if not numbers:
@@ -137,8 +145,8 @@ def _webhooks(ctx: SetupContext, admin: TwilioAdmin, number: TwilioNumber) -> No
     except Refused as why:
         ui.error(str(why))
         return
-    except TwilioError as exc:
-        ui.error(f"Twilio refused the change: {exc}")
+    except TwilioError as exc:  # by its cause only: its text may quote the token
+        ui.error(f"The webhooks were not changed. {twilio_problem(exc)}")
         return
     ui.success(f"{number.phone_number} now rings Keryx")
 

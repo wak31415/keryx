@@ -485,11 +485,13 @@ def _webhook_check(settings: Settings, twilio: Any) -> Check:
     if not (settings.twilio_number and settings.public_host):
         return Check("Twilio webhook", True, "not checked — no number or PUBLIC_HOST yet",
                      severity="soft", section="phone")
+    from keryx.phone import twilio_problem  # late: `keryx.phone` reads this module
+
     want = f"https://{settings.public_host}{VOICE_PATH}"
     try:
         numbers = {number.phone_number: number for number in twilio.numbers()}
-    except Exception as exc:  # a network failure is a warning, never a crash
-        return Check("Twilio webhook", False, f"could not ask Twilio: {exc}",
+    except Exception as exc:  # a warning, never a crash; by its cause: its text may quote the token
+        return Check("Twilio webhook", False, f"could not ask Twilio: {twilio_problem(exc)}",
                      severity="soft", section="phone")
     number = numbers.get(settings.twilio_number)
     if number is None:

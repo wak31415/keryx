@@ -4,7 +4,7 @@ one write outside the machine — the webhooks — only on a yes."""
 import pytest
 
 from keryx.config.store import ConfigStore
-from keryx.notify.twilio_out import TwilioNumber
+from keryx.notify.twilio_out import TwilioError, TwilioNumber
 from keryx.setup import phone
 from keryx.setup.phone import hostname_problem, numbers_problem, webhook_urls
 
@@ -147,7 +147,30 @@ def test_credentials_twilio_refuses_stop_the_section_and_store_nothing(make_ctx,
     phone.run_section(ctx)
 
     assert ConfigStore().stored() == {}
-    assert any("Twilio refused" in line for line in ctx.ui.lines("error"))
+    assert any("didn't accept the account SID" in line for line in ctx.ui.lines("error"))
+
+
+def test_a_twilio_failure_is_said_by_its_cause_never_its_text(make_ctx, world, linux):
+    world.twilio_admin.error = TwilioError("Basic tok-SECRET", status=500, cause="HTTPError")
+    ctx = make_ctx([("Set up phone calls", "setup"), ("Account SID", "AC1"), ("Auth token", "x")])
+
+    phone.run_section(ctx)
+
+    errors = ctx.ui.lines("error")
+    assert errors and not any("SECRET" in line for line in errors)
+    assert any("HTTP 500" in line for line in errors)
+
+
+def test_a_refused_webhook_write_is_said_by_its_cause_never_its_text(make_ctx, world):
+    ConfigStore().set({"PUBLIC_HOST": "keryx.example.com"})
+    world.twilio_admin.write_error = TwilioError("Basic tok-SECRET", status=400, cause="X")
+    ctx = make_ctx([("Point +15550001111", True)])
+
+    phone._webhooks(ctx, world.twilio_admin, TwilioNumber("PN1", "+15550001111", None, None))
+
+    errors = ctx.ui.lines("error")
+    assert errors and not any("SECRET" in line for line in errors)
+    assert any("HTTP 400" in line for line in errors)
 
 
 def test_an_account_with_no_number_says_where_to_buy_one(make_ctx, world):

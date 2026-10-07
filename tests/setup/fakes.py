@@ -145,17 +145,26 @@ class FakeTwilioAdmin:
         default_factory=lambda: [TwilioNumber("PN1", "+15550001111", None, None)]
     )
     refuse: bool = False
+    #: Raised by every call, and by the webhook write alone.
+    error: TwilioError | None = None
+    write_error: TwilioError | None = None
     updates: list[tuple[str, str, str]] = field(default_factory=list)
 
     def account_name(self) -> str:
         if self.refuse:
-            raise TwilioError("HTTP 401: Authenticate")
+            raise TwilioError("HTTP 401: Authenticate", status=401)
+        if self.error:
+            raise self.error
         return "My account"
 
     def numbers(self) -> list[TwilioNumber]:
+        if self.error:
+            raise self.error
         return list(self.numbers_)
 
     def set_webhooks(self, number_sid: str, *, voice_url: str, status_url: str) -> None:
+        if self.error or self.write_error:
+            raise self.error or self.write_error
         self.updates.append((number_sid, voice_url, status_url))
 
 

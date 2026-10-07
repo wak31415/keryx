@@ -25,6 +25,7 @@ from keryx.endpoints import Probe
 from keryx.integrations.gmail import token_path
 from keryx.issues import GhStatus
 from keryx.logging_util import mask_number
+from keryx.notify.twilio_out import TwilioError
 
 
 @pytest.fixture(autouse=True)
@@ -774,13 +775,16 @@ def test_an_imported_env_left_behind_is_reported(healthy, tmp_path, monkeypatch)
 
 
 class FakeTwilio:
-    def __init__(self, voice_url=None, *, fail=False):
+    def __init__(self, voice_url=None, *, fail=False, error=None):
         from keryx.notify.twilio_out import TwilioNumber
 
         self.fail = fail
+        self.error = error
         self.number = TwilioNumber("PN1", "+15550000000", voice_url, None)
 
     def numbers(self):
+        if self.error is not None:
+            raise self.error
         if self.fail:
             raise RuntimeError("network down")
         return [self.number]
@@ -813,6 +817,22 @@ def test_twilio_down_is_a_warning_not_a_crash(healthy):
     )["Twilio webhook"]
 
     assert (check.ok, check.severity) == (False, "soft")
+
+
+@pytest.mark.parametrize(("error", "said"), [
+    (TwilioError("Unable to fetch: https://AC1:tok-SECRET@api.twilio.com", status=500,
+                 cause="TwilioRestException"), "Twilio answered with HTTP 500."),
+    (TwilioError("tok-SECRET", cause="ConnectError"),
+     "Keryx couldn't reach Twilio (ConnectError)."),
+    (RuntimeError("Basic tok-SECRET"), "Keryx couldn't reach Twilio (RuntimeError)."),
+])
+def test_twilio_failing_is_said_by_its_cause_never_its_text(healthy, error, said):
+    """`doctor --json` and `setup plan --json` carry this detail to the app: an error's own
+    text can quote the request, and the credential in it, back."""
+    check = by_name(run_doctor_checks(healthy, twilio=FakeTwilio(error=error)))["Twilio webhook"]
+
+    assert "SECRET" not in check.detail
+    assert said in check.detail
 
 
 def test_a_number_not_on_the_account_is_a_failure(healthy):
