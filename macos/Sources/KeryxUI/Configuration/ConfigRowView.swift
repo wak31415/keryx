@@ -13,6 +13,9 @@ struct ConfigRowView: View {
     @State private var writing = false
     @State private var error: KeryxError?
     @State private var editingSecret = false
+    @State private var confirmingRemoval = false
+    /// The last text the CLI refused, so a blur does not send it again unchanged.
+    @State private var refused: String?
     @FocusState private var focused: Bool
 
     init(row: ConfigRow, error: KeryxError? = nil) {
@@ -55,16 +58,22 @@ struct ConfigRowView: View {
             }
         }
         .contextMenu {
-            Button("Reset to Default") { write { await model.unset(row.key) } }
-                .disabled(!row.set || readOnly)
+            Button("Reset to Default") { reset() }
+                .disabled(!row.set || readOnly || writing)
             Button("Copy Key") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(row.key, forType: .string)
             }
         }
         .onChange(of: row.value) { draft = ConfigWording.editText(row.value) }
+        .onChange(of: draft) { refused = nil }
         .sheet(isPresented: $editingSecret) {
             SecretSheet(key: row.key, title: row.displayTitle, description: row.description, replacing: row.set)
+        }
+        .confirmationDialog(ConfigWording.removalTitle(row), isPresented: $confirmingRemoval) {
+            Button("Remove", role: .destructive) { write { await model.unset(row.key) } }
+        } message: {
+            Text(ConfigWording.secretRemovalMessage)
         }
     }
 
@@ -106,9 +115,11 @@ struct ConfigRowView: View {
         Text(row.set ? "Set" : "Not set")
             .foregroundStyle(row.set ? .primary : .secondary)
         if row.set {
-            Button("Remove") { write { await model.unset(row.key) } }
+            Button("Remove") { reset() }
+                .accessibilityLabel("Remove \(row.displayTitle)")
         }
         Button(row.set ? "Change…" : "Set…") { editingSecret = true }
+            .accessibilityLabel(row.set ? "Change \(row.displayTitle)" : "Set \(row.displayTitle)")
     }
 
     // MARK: - Values
@@ -151,20 +162,35 @@ struct ConfigRowView: View {
             .help(readOnly ? ConfigWording.environmentHelp(row) : draft)
     }
 
-    /// Saves the field's text when it differs from what is stored.
+    /// Saves the field's text when it differs from what is stored — once: not while a write
+    /// is under way (disabling the field drops its focus, which would commit again), and not
+    /// the text the CLI just refused until it is edited.
     private func commit() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard text != ConfigWording.editText(row.value) else { return }
-        write { await model.set(row, to: text) }
+        guard ConfigWording.shouldCommit(text, stored: ConfigWording.editText(row.value),
+                                         writing: writing, refused: refused) else { return }
+        write(attempt: text) { await model.set(row, to: text) }
+    }
+
+    /// Back to the default: at once for a plain setting, after asking for a secret, which
+    /// cannot be shown again and would have to be pasted in again.
+    private func reset() {
+        if ConfigWording.resetNeedsConfirmation(row) {
+            confirmingRemoval = true
+        } else {
+            write { await model.unset(row.key) }
+        }
     }
 
     /// Runs one write, shows its error (or clears the last one), and lets the control follow
-    /// the reloaded row again.
-    private func write(_ action: @escaping () async -> KeryxError?) {
+    /// the reloaded row again. `attempt`: a field's text, remembered when it is refused.
+    private func write(attempt: String? = nil, _ action: @escaping () async -> KeryxError?) {
+        guard !writing else { return }
         writing = true
         Task {
             let failure = await action()
             error = failure
+            refused = failure == nil ? nil : attempt
             pending = nil
             writing = false
         }

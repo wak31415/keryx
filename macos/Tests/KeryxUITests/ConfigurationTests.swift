@@ -61,6 +61,24 @@ import Testing
             == "VAD_SILENCE_MS Input should be a valid integer", "no title: the CLI's sentence as written")
     }
 
+    @Test func aFieldIsSentOnceAndARefusalIsNotResentUnchanged() {
+        #expect(ConfigWording.shouldCommit("1300", stored: "1200", writing: false, refused: nil))
+        #expect(!ConfigWording.shouldCommit("1200", stored: "1200", writing: false, refused: nil), "unchanged")
+        #expect(!ConfigWording.shouldCommit("1300", stored: "1200", writing: true, refused: nil),
+                "the blur that disabling the field causes must not send it again")
+        #expect(!ConfigWording.shouldCommit("12oo", stored: "1200", writing: false, refused: "12oo"),
+                "a refused value waits for an edit")
+        #expect(ConfigWording.shouldCommit("1250", stored: "1200", writing: false, refused: "12oo"))
+    }
+
+    @Test func onlyASecretAsksBeforeItIsRemoved() {
+        let key = row("OPENAI_API_KEY", source: "secrets.toml", secret: true, title: "OpenAI API key")
+        #expect(ConfigWording.resetNeedsConfirmation(key))
+        #expect(!ConfigWording.resetNeedsConfirmation(row("VAD_SILENCE_MS", source: "config.toml")))
+        #expect(ConfigWording.removalTitle(key) == "Remove OpenAI API key?")
+        #expect(ConfigWording.secretRemovalMessage.contains("paste it in again"))
+    }
+
     @Test func theEnvironmentNoteNamesTheSettingByItsTitle() {
         let host = row("PUBLIC_HOST", source: "environment", title: "Public hostname")
         #expect(ConfigWording.environmentHelp(host)

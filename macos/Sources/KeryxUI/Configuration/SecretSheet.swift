@@ -72,6 +72,8 @@ struct SecretSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { close() }
                     .keyboardShortcut(.cancelAction)
+                    // The save would still land after the sheet had gone.
+                    .disabled(saving)
                 Button("Save", action: save)
                     .keyboardShortcut(.defaultAction)
                     .disabled(value.isEmpty || saving)

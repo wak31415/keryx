@@ -75,6 +75,26 @@ enum ConfigWording {
         return "\(title): " + rest.prefix(1).lowercased() + rest.dropFirst()
     }
 
+    /// Whether a field's text should be sent: it differs from what is stored, no write is
+    /// under way, and it is not the text the CLI last refused (unchanged since).
+    static func shouldCommit(_ text: String, stored: String, writing: Bool, refused: String?) -> Bool {
+        !writing && text != stored && text != refused
+    }
+
+    /// Unsetting a secret throws away something Keryx cannot show again, so it is asked
+    /// about first; any other setting goes back to its default in one click.
+    static func resetNeedsConfirmation(_ row: ConfigRow) -> Bool {
+        row.secret
+    }
+
+    /// "Remove OpenAI API key?"
+    static func removalTitle(_ row: ConfigRow) -> String {
+        "Remove \(row.displayTitle)?"
+    }
+
+    static let secretRemovalMessage =
+        "Keryx can't show a secret again, so to use it later you'll have to paste it in again."
+
     /// A value as the owner types it back: a list comma-separated (the CLI splits on commas
     /// and trims), a whole number without `.0`, nothing for no value.
     static func editText(_ value: JSONValue?) -> String {
