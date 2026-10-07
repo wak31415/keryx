@@ -35,6 +35,35 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         var voiceHere: @Sendable (String?) -> VoiceSetupStream = { _ in
             VoiceSetupStream(AsyncThrowingStream { $0.finish() })
         }
+        var setupPlan: Result<SetupPlan, KeryxError> = .success(PreviewData.setupPlanPartway)
+        var pin: Result<PinStatus, KeryxError> = .success(PreviewData.pinFile)
+        var pinSet: Result<PinSetResult, KeryxError> = .success(PinSetResult(set: true, replaced: false,
+                                                                             restartNeeded: true))
+        var verify: Result<VerifyResult, KeryxError> = .success(PreviewClient.verified)
+        var service: Result<ServiceReport, KeryxError> = .success(PreviewData.service)
+        var serviceResult: Result<ServiceResult, KeryxError> = .success(ServiceResult(ok: true, message: "done"))
+        var phoneNumbers: Result<PhoneNumbers, KeryxError> = .success(PreviewData.phoneNumbers)
+        var phoneWebhooks: Result<PhoneWebhooks, KeryxError> = .success(PreviewData.phoneWebhooks)
+        var applied: Result<WebhooksApplied, KeryxError> = .success(WebhooksApplied(applied: true,
+                                                                                     number: "+15550001111"))
+        var phoneTunnel: Result<PhoneTunnel, KeryxError> = .success(PreviewData.phoneTunnel)
+        var integrations: Result<IntegrationsReport, KeryxError> = .success(PreviewData.integrations)
+        var signOut: Result<SignOutResult, KeryxError> = .success(SignOutResult(name: "gmail", signedIn: false,
+                                                                                message: "Signed out."))
+        var plugins: Result<PluginsReport, KeryxError> = .success(PreviewData.plugins)
+        var plugin: Result<PluginResult, KeryxError> = .success(PluginResult(name: "check_billing", on: true,
+                                                                             message: "Billing is on."))
+        var tools: Result<ToolsReport, KeryxError> = .success(PreviewData.tools)
+        var sshHosts: Result<SshHostsReport, KeryxError> = .success(PreviewData.sshHosts)
+        var modelServer: @Sendable (String?) -> ModelServerStream = { _ in
+            ModelServerStream(AsyncThrowingStream { $0.finish() })
+        }
+        var voiceDownload: @Sendable () -> VoiceDownloadStream = {
+            VoiceDownloadStream(AsyncThrowingStream { $0.finish() })
+        }
+        var signIn: @Sendable (SignInProvider, String?) -> SignInStream = { _, _ in
+            SignInStream(AsyncThrowingStream { $0.finish() })
+        }
     }
 
     init(_ configure: (inout Replies) -> Void = { _ in }) {
@@ -117,6 +146,107 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         }
         return make(voice)
     }
+
+    // Setup, phone, service, accounts, plugins: recorded as the CLI words them, never a
+    // secret (a PIN or a key is said as `--stdin`).
+    func setupPlan() async throws -> SetupPlan { try answer("setup plan") { $0.setupPlan } }
+    func markSetupStep(_ step: String) async throws -> SetupMarkResult {
+        try write("setup mark \(step)")
+        return SetupMarkResult(id: step, walked: true)
+    }
+    func pin() async throws -> PinStatus { try answer("pin") { $0.pin } }
+    func setPin(_ pin: String, replace: Bool) async throws -> PinSetResult {
+        try answer("pin set --stdin\(replace ? " --replace" : "")") { $0.pinSet }
+    }
+    func verify(key: String) async throws -> VerifyResult { try answer("config verify \(key)") { $0.verify } }
+    func verify(key: String, value: String) async throws -> VerifyResult {
+        try answer("config verify \(key) --stdin") { $0.verify }
+    }
+    func verifyTwilio(accountSID: String, authToken: String) async throws -> VerifyResult {
+        try answer("config verify TWILIO_AUTH_TOKEN --stdin --pair") { $0.verify }
+    }
+    func phoneNumbers() async throws -> PhoneNumbers { try answer("phone numbers") { $0.phoneNumbers } }
+    func phoneWebhooks() async throws -> PhoneWebhooks { try answer("phone webhooks") { $0.phoneWebhooks } }
+    func applyPhoneWebhooks() async throws -> WebhooksApplied { try answer("phone webhooks --apply") { $0.applied } }
+    func phoneTunnel() async throws -> PhoneTunnel { try answer("phone tunnel") { $0.phoneTunnel } }
+    func service() async throws -> ServiceReport { try answer("service") { $0.service } }
+    func installService() async throws -> ServiceResult { try answer("service install") { $0.serviceResult } }
+    func uninstallService(llm: Bool, voice: Bool) async throws -> ServiceResult {
+        try answer("service uninstall" + (llm ? " --llm" : "") + (voice ? " --voice" : "")) { $0.serviceResult }
+    }
+    func startModelServer(runtime: String?) -> ModelServerStream {
+        let make = lock.withLock {
+            recorded.append("models start" + (runtime.map { " --runtime \($0)" } ?? ""))
+            return replies.modelServer
+        }
+        return make(runtime)
+    }
+    func stopModelServer() async throws -> ServiceResult { try answer("models stop") { $0.serviceResult } }
+    func downloadVoiceModels() -> VoiceDownloadStream {
+        let make = lock.withLock {
+            recorded.append("voice download")
+            return replies.voiceDownload
+        }
+        return make()
+    }
+    func signIn(_ provider: SignInProvider, clientFile: String?) -> SignInStream {
+        let make = lock.withLock {
+            recorded.append("auth login \(provider.rawValue)" + (clientFile == nil ? "" : " --client-file"))
+            return replies.signIn
+        }
+        return make(provider, clientFile)
+    }
+    func signOut(_ provider: SignInProvider) async throws -> SignOutResult {
+        try answer("auth logout \(provider.rawValue)") { $0.signOut }
+    }
+    func integrations() async throws -> IntegrationsReport { try answer("integrations") { $0.integrations } }
+    func plugins() async throws -> PluginsReport { try answer("plugins list") { $0.plugins } }
+    func installPlugin(_ name: String, values: PluginValues) async throws -> PluginResult {
+        try answer("plugins install \(name)") { $0.plugin }
+    }
+    func removePlugin(_ name: String) async throws -> PluginResult { try answer("plugins remove \(name)") { $0.plugin } }
+    func setPlugin(_ name: String, values: PluginValues) async throws -> PluginResult {
+        try answer("plugins set \(name)") { $0.plugin }
+    }
+    func tools() async throws -> ToolsReport { try answer("tools") { $0.tools } }
+    func sshHosts() async throws -> SshHostsReport { try answer("plugins hosts") { $0.sshHosts } }
+}
+
+/// A `StreamEvent` stream the test drives by hand, as `ManualSetup` drives a voice setup:
+/// what it was sent, and how often it was asked to stop.
+final class ManualRun<Done: StreamDone>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: AsyncThrowingStream<StreamEvent<Done>, Error>.Continuation?
+    private var stops = 0
+    private var lines: [String] = []
+    private var takesInput = true
+
+    var stopRequests: Int { lock.withLock { stops } }
+    var sent: [String] { lock.withLock { lines } }
+
+    /// Its input closed: `send` is refused from now on.
+    func closeInput() { lock.withLock { takesInput = false } }
+
+    func stream() -> StoppableStream<StreamEvent<Done>> {
+        let events = AsyncThrowingStream<StreamEvent<Done>, Error> { continuation in
+            lock.withLock { self.continuation = continuation }
+        }
+        let input = StreamInput(send: { [weak self] line in
+            guard let self else { return false }
+            return lock.withLock {
+                guard takesInput else { return false }
+                lines.append(line)
+                return true
+            }
+        }, close: { [weak self] in self?.closeInput() })
+        return StoppableStream(events, stop: { [weak self] in
+            guard let self else { return }
+            self.lock.withLock { self.stops += 1 }
+        }, input: input)
+    }
+
+    func send(_ event: StreamEvent<Done>) { lock.withLock { continuation }?.yield(event) }
+    func finish(throwing error: Error? = nil) { lock.withLock { continuation }?.finish(throwing: error) }
 }
 
 /// A `Locating` that answers what the test says, and remembers the preference it was given.

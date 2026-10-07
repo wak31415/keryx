@@ -4,8 +4,24 @@ import KeryxKit
 /// A `KeryxClient` that answers from `PreviewData`, for SwiftUI previews and snapshots.
 /// Every document can be replaced (an empty list, a `KeryxError`, the migration status);
 /// writes succeed unless `writeError` says otherwise; and a pull replays `pull.jsonl` or
-/// holds at a progress value until it is cancelled.
+/// holds at a progress value until it is cancelled. The `StreamEvent` streams (`models
+/// start`, `voice download`, a sign-in) follow a `Script` each.
 public struct PreviewClient: KeryxClient {
+    /// What one of the `StreamEvent` streams does.
+    public enum Script<Done: StreamDone>: Sendable {
+        /// Yields the events of its fixture (`PreviewData.modelsStartLines`, …), then finishes.
+        case replay
+        /// Yields these events, then waits until it is stopped (and says `cancelled`).
+        case holding([StreamEvent<Done>])
+        /// Yields these events, then finishes.
+        case events([StreamEvent<Done>])
+        /// Yields these events, and stops only long after it is asked to.
+        case slowToStop([StreamEvent<Done>])
+        /// Yields the first events, then waits for a line on its input (a sign-in's code or
+        /// address), and then yields the second and finishes.
+        case answering([StreamEvent<Done>], then: [StreamEvent<Done>])
+    }
+
     /// What `pull(model:)` does.
     public enum Pull: Sendable {
         /// Yields the events of `PreviewData.pullLines`, then finishes.
@@ -46,6 +62,20 @@ public struct PreviewClient: KeryxClient {
     let pullBehaviour: Pull
     let setupBehaviour: Setup
     let writeError: KeryxError?
+    let setupPlanReply: Result<SetupPlan, KeryxError>
+    let pinReply: Result<PinStatus, KeryxError>
+    let serviceReply: Result<ServiceReport, KeryxError>
+    let phoneNumbersReply: Result<PhoneNumbers, KeryxError>
+    let phoneWebhooksReply: Result<PhoneWebhooks, KeryxError>
+    let phoneTunnelReply: Result<PhoneTunnel, KeryxError>
+    let integrationsReply: Result<IntegrationsReport, KeryxError>
+    let pluginsReply: Result<PluginsReport, KeryxError>
+    let toolsReply: Result<ToolsReport, KeryxError>
+    let sshHostsReply: Result<SshHostsReport, KeryxError>
+    let verifyReply: Result<VerifyResult, KeryxError>
+    let modelServerScript: Script<ModelServerStarted>
+    let voiceDownloadScript: Script<VoiceModelsDownloaded>
+    let signInScript: Script<SignedIn>
 
     public init(
         status: Result<StatusReport, KeryxError> = .success(PreviewData.status),
@@ -62,7 +92,21 @@ public struct PreviewClient: KeryxClient {
         server: Result<VoiceServerResult, KeryxError> = .success(PreviewClient.serverSaved),
         pull: Pull = .replay,
         setup: Setup = .replay,
-        writeError: KeryxError? = nil
+        writeError: KeryxError? = nil,
+        setupPlan: Result<SetupPlan, KeryxError> = .success(PreviewData.setupPlanPartway),
+        pin: Result<PinStatus, KeryxError> = .success(PreviewData.pinFile),
+        service: Result<ServiceReport, KeryxError> = .success(PreviewData.service),
+        phoneNumbers: Result<PhoneNumbers, KeryxError> = .success(PreviewData.phoneNumbers),
+        phoneWebhooks: Result<PhoneWebhooks, KeryxError> = .success(PreviewData.phoneWebhooks),
+        phoneTunnel: Result<PhoneTunnel, KeryxError> = .success(PreviewData.phoneTunnel),
+        integrations: Result<IntegrationsReport, KeryxError> = .success(PreviewData.integrations),
+        plugins: Result<PluginsReport, KeryxError> = .success(PreviewData.plugins),
+        tools: Result<ToolsReport, KeryxError> = .success(PreviewData.tools),
+        sshHosts: Result<SshHostsReport, KeryxError> = .success(PreviewData.sshHosts),
+        verify: Result<VerifyResult, KeryxError> = .success(PreviewClient.verified),
+        modelServer: Script<ModelServerStarted> = .replay,
+        voiceDownload: Script<VoiceModelsDownloaded> = .replay,
+        signIn: Script<SignedIn> = .replay
     ) {
         statusReply = status
         doctorReply = doctor
@@ -79,6 +123,20 @@ public struct PreviewClient: KeryxClient {
         pullBehaviour = pull
         setupBehaviour = setup
         self.writeError = writeError
+        setupPlanReply = setupPlan
+        pinReply = pin
+        serviceReply = service
+        phoneNumbersReply = phoneNumbers
+        phoneWebhooksReply = phoneWebhooks
+        phoneTunnelReply = phoneTunnel
+        integrationsReply = integrations
+        pluginsReply = plugins
+        toolsReply = tools
+        sshHostsReply = sshHosts
+        verifyReply = verify
+        modelServerScript = modelServer
+        voiceDownloadScript = voiceDownload
+        signInScript = signIn
     }
 
     public func status() async throws -> StatusReport { try statusReply.get() }
@@ -203,6 +261,158 @@ public struct PreviewClient: KeryxClient {
     public func setEscalation(enabled: Bool) async throws { try check() }
     public func restart(force: Bool) async throws { try check() }
 
+    // MARK: Setup
+
+    public func setupPlan() async throws -> SetupPlan { try setupPlanReply.get() }
+
+    public func markSetupStep(_ step: String) async throws -> SetupMarkResult {
+        try check()
+        return SetupMarkResult(id: step, walked: true)
+    }
+
+    public func pin() async throws -> PinStatus { try pinReply.get() }
+
+    public func setPin(_ pin: String, replace: Bool) async throws -> PinSetResult {
+        try check()
+        return PinSetResult(set: true, replaced: replace, restartNeeded: true)
+    }
+
+    public func verify(key: String) async throws -> VerifyResult { try verified(key) }
+    public func verify(key: String, value: String) async throws -> VerifyResult { try verified(key) }
+    public func verifyTwilio(accountSID: String, authToken: String) async throws -> VerifyResult {
+        try verified("TWILIO_AUTH_TOKEN")
+    }
+
+    /// `verifyReply`, said of `key`.
+    private func verified(_ key: String) throws -> VerifyResult {
+        var answer = try verifyReply.get()
+        answer.key = key
+        return answer
+    }
+
+    /// A key that works (a Twilio pair names its account).
+    public static let verified = VerifyResult(key: "OPENAI_API_KEY", ok: true, problem: nil, detail: nil)
+    /// A key that does not, worded as the CLI words it.
+    public static let notVerified = VerifyResult(
+        key: "OPENAI_API_KEY", ok: false, problem: "OpenAI didn't accept the key (401).", detail: nil)
+
+    // MARK: Phone
+
+    public func phoneNumbers() async throws -> PhoneNumbers { try phoneNumbersReply.get() }
+    public func phoneWebhooks() async throws -> PhoneWebhooks { try phoneWebhooksReply.get() }
+    public func phoneTunnel() async throws -> PhoneTunnel { try phoneTunnelReply.get() }
+
+    public func applyPhoneWebhooks() async throws -> WebhooksApplied {
+        try check()
+        return WebhooksApplied(applied: true, number: (try? phoneWebhooksReply.get().number) ?? "+15550001111")
+    }
+
+    // MARK: Service
+
+    public func service() async throws -> ServiceReport { try serviceReply.get() }
+
+    public func installService() async throws -> ServiceResult {
+        try check()
+        return ServiceResult(ok: true, message: "installed dev.keryx.agent, dev.keryx.tunnel")
+    }
+
+    public func uninstallService(llm: Bool, voice: Bool) async throws -> ServiceResult {
+        try check()
+        let units = [llm ? "dev.keryx.llm" : nil, voice ? "dev.keryx.voice" : nil].compactMap { $0 }
+        return ServiceResult(ok: true, message: "removed " + (units.isEmpty
+            ? "dev.keryx.agent, dev.keryx.tunnel" : units.joined(separator: ", ")))
+    }
+
+    public func startModelServer(runtime: String?) -> ModelServerStream {
+        Self.stream(modelServerScript, replay: PreviewData.modelsStartLines)
+    }
+
+    public func stopModelServer() async throws -> ServiceResult {
+        try check()
+        return ServiceResult(ok: true, message: "removed dev.keryx.llm")
+    }
+
+    public func downloadVoiceModels() -> VoiceDownloadStream {
+        Self.stream(voiceDownloadScript, replay: PreviewData.voiceDownloadLines)
+    }
+
+    // MARK: Accounts
+
+    public func signIn(_ provider: SignInProvider, clientFile: String?) -> SignInStream {
+        Self.stream(signInScript, replay: PreviewData.signInLines(provider))
+    }
+
+    public func signOut(_ provider: SignInProvider) async throws -> SignOutResult {
+        try check()
+        return SignOutResult(name: provider.rawValue, signedIn: false,
+                             message: "Signed out: its stored sign-in was removed.")
+    }
+
+    public func integrations() async throws -> IntegrationsReport { try integrationsReply.get() }
+
+    // MARK: Plugins
+
+    public func plugins() async throws -> PluginsReport { try pluginsReply.get() }
+
+    public func installPlugin(_ name: String, values: PluginValues) async throws -> PluginResult {
+        try check()
+        return PluginResult(name: name, on: true, message: "\(title(of: name)) is on from the next call.")
+    }
+
+    public func removePlugin(_ name: String) async throws -> PluginResult {
+        try check()
+        return PluginResult(name: name, on: false,
+                            message: "\(title(of: name)) is off from the next call; its settings are kept.")
+    }
+
+    public func setPlugin(_ name: String, values: PluginValues) async throws -> PluginResult {
+        try check()
+        return PluginResult(name: name, on: true, message: "Settings saved.")
+    }
+
+    public func tools() async throws -> ToolsReport { try toolsReply.get() }
+    public func sshHosts() async throws -> SshHostsReport { try sshHostsReply.get() }
+
+    private func title(of plugin: String) -> String {
+        (try? pluginsReply.get().plugin(plugin)?.title) ?? plugin
+    }
+
+    /// A `StreamEvent` stream as `script` says, `replay` being its fixture's lines. Stopped,
+    /// it says `cancelled` and ends, as the CLI does — except `slowToStop`.
+    static func stream<Done: StreamDone>(_ script: Script<Done>, replay lines: [String])
+        -> StoppableStream<StreamEvent<Done>> {
+        let (stream, continuation) = AsyncThrowingStream<StreamEvent<Done>, Error>.makeStream()
+        let stop: @Sendable () -> Void = {
+            continuation.yield(.cancelled)
+            continuation.finish()
+        }
+        switch script {
+        case .replay:
+            lines.compactMap(StreamEvent<Done>.parse).forEach { continuation.yield($0) }
+            continuation.finish()
+        case let .events(events):
+            events.forEach { continuation.yield($0) }
+            continuation.finish()
+        case let .holding(events):
+            events.forEach { continuation.yield($0) }
+        case let .slowToStop(events):
+            events.forEach { continuation.yield($0) }
+            // The continuation is kept (and never finished), so the stream stays open.
+            return StoppableStream(stream, stop: { _ = continuation })
+        case let .answering(first, then):
+            first.forEach { continuation.yield($0) }
+            let answered = Answered()
+            let input = StreamInput(send: { _ in
+                guard answered.once() else { return false }
+                then.forEach { continuation.yield($0) }
+                continuation.finish()
+                return true
+            }, close: {})
+            return StoppableStream(stream, stop: stop, input: input)
+        }
+        return StoppableStream(stream, stop: stop)
+    }
+
     private func check() throws {
         if let writeError { throw writeError }
     }
@@ -218,5 +428,18 @@ public struct PreviewLocator: Locating {
 
     public func locate(preference: String?) async -> Result<KeryxLocation, LocateFailure> {
         result
+    }
+}
+
+/// True the first time only: a scripted stream answers one line.
+private final class Answered: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+
+    func once() -> Bool {
+        lock.withLock {
+            defer { done = true }
+            return !done
+        }
     }
 }

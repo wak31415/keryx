@@ -13,20 +13,44 @@ public enum CommandLog {
     static let subcommands: [String: Set<String>] = [
         "status": [], "doctor": [], "approvals": [], "memory": [], "restart": [],
         "tasks": ["list", "show", "usage"],
-        "models": ["list", "pull", "use"],
-        "config": ["list", "set", "unset", "options"],
-        "voice": ["use"],
+        "models": ["list", "pull", "use", "start", "stop"],
+        "config": ["list", "set", "unset", "options", "verify"],
+        "voice": ["use", "download"],
+        "setup": ["plan", "mark"],
+        "pin": ["set"],
+        "phone": ["numbers", "webhooks", "tunnel"],
+        "service": ["install", "uninstall"],
+        "auth": ["login", "logout"],
+        "integrations": [],
+        "plugins": ["list", "install", "remove", "set", "hosts"],
+        "tools": [],
     ]
 
-    /// The words a subcommand and verb may be followed by (`keryx voice use here`).
+    /// The words a subcommand and verb may be followed by (`keryx voice use here`): fixed
+    /// names, never something the owner typed. A setup step's id is not one of them (it is
+    /// a value), nor is a plugin's setting.
     static let modes: [String: Set<String>] = [
         "voice use": ["openai", "server", "here"],
+        "auth login": ["claude", "codex", "gmail", "google-workspace"],
+        "auth logout": ["gmail", "google-workspace"],
+        "plugins install": plugins,
+        "plugins remove": plugins,
+        "plugins set": plugins,
     ]
+
+    /// The plugins, by name: Keryx's own four.
+    static let plugins: Set<String> = ["send_to_slack", "check_email", "check_billing", "cluster_stats"]
 
     static let flags: Set<String> = [
         "--json", "--stdin", "--force", "--internal", "--limit", "--days", "--status",
         "--default-agent", "--disable", "--enable", "--llm", "--key-stdin", "--clear-key", "--keep-anyway",
-        "--voice",
+        "--voice", "--pair", "--replace", "--apply",
+    ]
+
+    /// The flags that take a value: the flag is logged, the value never — `--set=…` when
+    /// written as one word, `--set …` as two.
+    static let valueFlags: Set<String> = [
+        "--set", "--cluster", "--guard", "--client-file", "--runtime",
     ]
 
     static let elided = "…"
@@ -57,8 +81,11 @@ public enum CommandLog {
                 named = modes[command[0] + " " + argument]
             } else if index == 2, let allowed = named, allowed.contains(argument) {
                 words.append(argument)
-            } else if flags.contains(argument) {
+            } else if flags.contains(argument) || valueFlags.contains(argument) {
                 words.append(argument)
+            } else if let flag = argument.split(separator: "=", maxSplits: 1).first.map(String.init),
+                      argument.contains("="), valueFlags.contains(flag) {
+                words.append(flag + "=" + elided)
             } else {
                 words.append(elided)
             }

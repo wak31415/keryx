@@ -165,17 +165,193 @@ public struct CLIClient: KeryxClient {
                       stoppedWithoutSaying: VoiceSetupEvent.stoppedWithoutSaying)
     }
 
+    // MARK: - Setup
+
+    public func setupPlan() async throws -> SetupPlan {
+        // It asks what doctor asks, Twilio included.
+        try await decode(["setup", "plan", "--json"], timeout: .seconds(60))
+    }
+
+    public func markSetupStep(_ step: String) async throws -> SetupMarkResult {
+        try await decode(["setup", "mark", step, "--json"])
+    }
+
+    public func pin() async throws -> PinStatus {
+        try await decode(["pin", "--json"])
+    }
+
+    /// The PIN twice on stdin, one per line, as `pin set --stdin` reads it; never argv. A
+    /// refusal (already set, in the environment, two that differ) is the CLI's stderr.
+    public func setPin(_ pin: String, replace: Bool) async throws -> PinSetResult {
+        var arguments = ["pin", "set", "--stdin"]
+        if replace { arguments.append("--replace") }
+        arguments.append("--json")
+        return try await decode(arguments, stdin: Data("\(pin)\n\(pin)\n".utf8))
+    }
+
+    public func verify(key: String) async throws -> VerifyResult {
+        try await decode(["config", "verify", key, "--json"])
+    }
+
+    public func verify(key: String, value: String) async throws -> VerifyResult {
+        try await decode(["config", "verify", key, "--stdin", "--json"],
+                         stdin: Data((Self.oneLine(value) + "\n").utf8))
+    }
+
+    public func verifyTwilio(accountSID: String, authToken: String) async throws -> VerifyResult {
+        let lines = Self.oneLine(accountSID) + "\n" + Self.oneLine(authToken) + "\n"
+        return try await decode(["config", "verify", "TWILIO_AUTH_TOKEN", "--stdin", "--pair", "--json"],
+                                stdin: Data(lines.utf8))
+    }
+
+    // MARK: - Phone
+
+    public func phoneNumbers() async throws -> PhoneNumbers {
+        try await decode(["phone", "numbers", "--json"])
+    }
+
+    public func phoneWebhooks() async throws -> PhoneWebhooks {
+        try await decode(["phone", "webhooks", "--json"])
+    }
+
+    public func applyPhoneWebhooks() async throws -> WebhooksApplied {
+        try await decode(["phone", "webhooks", "--apply", "--json"], timeout: .seconds(60))
+    }
+
+    public func phoneTunnel() async throws -> PhoneTunnel {
+        try await decode(["phone", "tunnel", "--json"])
+    }
+
+    // MARK: - Service
+
+    public func service() async throws -> ServiceReport {
+        try await decode(["service", "--json"])
+    }
+
+    public func installService() async throws -> ServiceResult {
+        try await decode(["service", "install", "--json"], timeout: Self.installerTimeout)
+    }
+
+    public func uninstallService(llm: Bool, voice: Bool) async throws -> ServiceResult {
+        var arguments = ["service", "uninstall"]
+        if llm { arguments.append("--llm") }
+        if voice { arguments.append("--voice") }
+        arguments.append("--json")
+        return try await decode(arguments, timeout: Self.installerTimeout)
+    }
+
+    /// Ends normally only after `done`, `error` or `cancelled`, as `pull` does; no timeout,
+    /// since installing llama.cpp and loading a model can take minutes.
+    public func startModelServer(runtime: String?) -> ModelServerStream {
+        var arguments = ["models", "start"]
+        if let runtime { arguments.append("--runtime=" + runtime) }
+        arguments.append("--json")
+        return events(arguments)
+    }
+
+    public func stopModelServer() async throws -> ServiceResult {
+        try await decode(["models", "stop", "--json"], timeout: Self.installerTimeout)
+    }
+
+    public func downloadVoiceModels() -> VoiceDownloadStream {
+        events(["voice", "download", "--json"])
+    }
+
+    // MARK: - Accounts
+
+    /// The child's stdin stays open for the line a sign-in asks for (`send`); the client
+    /// file is named with `=`, so a path that starts with "-" is still its value.
+    public func signIn(_ provider: SignInProvider, clientFile: String?) -> SignInStream {
+        var arguments = ["auth", "login", provider.rawValue]
+        if let clientFile { arguments.append("--client-file=" + clientFile) }
+        arguments.append("--json")
+        return events(arguments, interactive: true)
+    }
+
+    public func signOut(_ provider: SignInProvider) async throws -> SignOutResult {
+        try await decode(["auth", "logout", provider.rawValue, "--json"])
+    }
+
+    public func integrations() async throws -> IntegrationsReport {
+        try await decode(["integrations", "--json"])
+    }
+
+    // MARK: - Plugins
+
+    public func plugins() async throws -> PluginsReport {
+        try await decode(["plugins", "list", "--json"])
+    }
+
+    /// Each value as `--set=KEY=VALUE` (and `--cluster=`, `--guard=`), so one that starts
+    /// with "-" is still a value; in key order, so the same values make the same command.
+    public func installPlugin(_ name: String, values: PluginValues) async throws -> PluginResult {
+        var arguments = ["plugins", "install", name]
+        arguments += Self.pairs(values.settings).map { "--set=" + $0 }
+        arguments += Self.pairs(values.clusters).map { "--cluster=" + $0 }
+        if let guardScript = values.guardScript { arguments.append("--guard=" + guardScript) }
+        arguments.append("--json")
+        return try await decode(arguments)
+    }
+
+    public func removePlugin(_ name: String) async throws -> PluginResult {
+        try await decode(["plugins", "remove", name, "--json"])
+    }
+
+    /// `KEY=VALUE` after `--`, so none is read as an option whatever it starts with.
+    public func setPlugin(_ name: String, values: PluginValues) async throws -> PluginResult {
+        var arguments = ["plugins", "set", name]
+        arguments += Self.pairs(values.clusters).map { "--cluster=" + $0 }
+        arguments.append("--json")
+        let assignments = Self.pairs(values.settings)
+        if !assignments.isEmpty { arguments += ["--"] + assignments }
+        return try await decode(arguments)
+    }
+
+    /// Exit 1 is a file the next call would refuse, with the report still printed.
+    public func tools() async throws -> ToolsReport {
+        try await decode(["tools", "--json"], acceptedExitCodes: [0, 1])
+    }
+
+    public func sshHosts() async throws -> SshHostsReport {
+        try await decode(["plugins", "hosts", "--json"])
+    }
+
+    /// `KEY=VALUE` for each of `values`, in key order.
+    static func pairs(_ values: [String: String]) -> [String] {
+        values.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+    }
+
+    /// `text` trimmed, and never more than its first line: what goes on stdin is one line.
+    static func oneLine(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(trimmed.prefix { !$0.isNewline })
+    }
+
+    /// The checkout's installers start and stop launchd units.
+    static let installerTimeout: Duration = .seconds(300)
+
     // MARK: - Streams
+
+    /// A `StreamEvent` stream: `events` with its parse, its endings and its words.
+    private func events<Done: StreamDone>(
+        _ subcommand: [String], interactive: Bool = false
+    ) -> StoppableStream<StreamEvent<Done>> {
+        events(subcommand, parse: StreamEvent<Done>.parse, concludes: { $0.isTerminal },
+               stoppedWithoutSaying: Done.stoppedWithoutSaying, interactive: interactive)
+    }
 
     /// `subcommand`'s stdout as events, which ends normally only once one that `concludes`
     /// has come and the CLI has exited, and otherwise throws `stoppedWithoutSaying`. Lines
     /// `parse` does not know are skipped. `stop()` stops the CLI's process group.
+    /// `interactive`: the child's stdin stays open, and the stream's `send` writes to it.
     private func events<Event: Sendable>(
         _ subcommand: [String], parse: @escaping @Sendable (String) -> Event?,
-        concludes: @escaping @Sendable (Event) -> Bool, stoppedWithoutSaying: String
+        concludes: @escaping @Sendable (Event) -> Bool, stoppedWithoutSaying: String,
+        interactive: Bool = false
     ) -> StoppableStream<Event> {
         let command = Self.name(subcommand)
-        let lines = runner.lines(request(subcommand, timeout: nil))
+        let request = request(subcommand, timeout: nil)
+        let lines = interactive ? runner.interactiveLines(request) : runner.lines(request)
         let events = AsyncThrowingStream<Event, Error> { continuation in
             let task = Task {
                 do {
@@ -197,7 +373,7 @@ public struct CLIClient: KeryxClient {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
-        return StoppableStream(events, stop: { lines.stop() })
+        return StoppableStream(events, stop: { lines.stop() }, input: lines.input)
     }
 
     // MARK: - Running

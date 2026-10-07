@@ -111,10 +111,78 @@ import KeryxPreview
     }
 
     @Test func anUnknownSubcommandOrVerbIsAValue() {
-        Self.check(["setup", "--all"], logs: "keryx …", hiding: ["setup", "--all"])
+        Self.check(["migrate", "--dry-run"], logs: "keryx …", hiding: ["migrate", "--dry-run"])
+        Self.check(["setup", "--all"], logs: "keryx setup …", hiding: ["--all"])
         Self.check(["config", "get", "PIN"], logs: "keryx config …", hiding: ["get", "PIN"])
         // A verb is only a verb second: a model named like one is still a value.
         Self.check(["models", "pull", "list"], logs: "keryx models pull …", hiding: [" list"])
+    }
+
+    // MARK: - Setup, the phone, the service, sign-ins and plugins
+
+    @Test func setupLogsItsVerbsButNotTheStep() {
+        Self.check(["setup", "plan", "--json"], logs: "keryx setup plan --json", hiding: [])
+        Self.check(["setup", "mark", "pin", "--json"], logs: "keryx setup mark … --json", hiding: ["pin"])
+    }
+
+    @Test func thePinIsNeverOnTheCommandLineAndItsFlagsAreLogged() {
+        Self.check(["pin", "--json"], logs: "keryx pin --json", hiding: [])
+        Self.check(["pin", "set", "--stdin", "--replace", "--json"],
+                   logs: "keryx pin set --stdin --replace --json", hiding: [])
+    }
+
+    @Test func verifyLogsItsFlagsButNotTheKey() {
+        Self.check(["config", "verify", "TWILIO_AUTH_TOKEN", "--stdin", "--pair", "--json"],
+                   logs: "keryx config verify … --stdin --pair --json", hiding: ["TWILIO", "TOKEN"])
+    }
+
+    @Test func thePhoneAndTheServiceAreLoggedWhole() {
+        Self.check(["phone", "numbers", "--json"], logs: "keryx phone numbers --json", hiding: [])
+        Self.check(["phone", "webhooks", "--apply", "--json"], logs: "keryx phone webhooks --apply --json", hiding: [])
+        Self.check(["phone", "tunnel", "--json"], logs: "keryx phone tunnel --json", hiding: [])
+        Self.check(["service", "--json"], logs: "keryx service --json", hiding: [])
+        Self.check(["service", "uninstall", "--llm", "--voice", "--json"],
+                   logs: "keryx service uninstall --llm --voice --json", hiding: [])
+        Self.check(["models", "stop", "--json"], logs: "keryx models stop --json", hiding: [])
+        Self.check(["voice", "download", "--json"], logs: "keryx voice download --json", hiding: [])
+        Self.check(["integrations", "--json"], logs: "keryx integrations --json", hiding: [])
+        Self.check(["tools", "--json"], logs: "keryx tools --json", hiding: [])
+    }
+
+    @Test func aFlagsValueIsNeverLoggedInEitherSpelling() {
+        Self.check(["models", "start", "--runtime=ollama", "--json"],
+                   logs: "keryx models start --runtime=… --json", hiding: ["ollama"])
+        Self.check(["models", "start", "--runtime", "ollama", "--json"],
+                   logs: "keryx models start --runtime … --json", hiding: ["ollama"])
+        // Only a listed flag is named: an unknown one is a value, `=` or not.
+        Self.check(["models", "start", "--token=sk-very-secret"], logs: "keryx models start …",
+                   hiding: ["sk-very", "--token"])
+    }
+
+    @Test func signInsLogWhichButNeverTheClientFile() {
+        Self.check(["auth", "login", "google-workspace", "--client-file=/Users/ada/Downloads/client.json", "--json"],
+                   logs: "keryx auth login google-workspace --client-file=… --json",
+                   hiding: ["ada", "Downloads", "client.json"])
+        Self.check(["auth", "login", "claude", "--json"], logs: "keryx auth login claude --json", hiding: [])
+        Self.check(["auth", "logout", "gmail", "--json"], logs: "keryx auth logout gmail --json", hiding: [])
+        // A name it does not know is a value.
+        Self.check(["auth", "login", "ada@example.com"], logs: "keryx auth login …", hiding: ["ada"])
+    }
+
+    @Test func pluginsLogTheirNameButNeverASetting() {
+        Self.check(["plugins", "list", "--json"], logs: "keryx plugins list --json", hiding: [])
+        Self.check(["plugins", "hosts", "--json"], logs: "keryx plugins hosts --json", hiding: [])
+        Self.check(["plugins", "install", "check_billing", "--set=provider=openai", "--set=monthly_budget=40", "--json"],
+                   logs: "keryx plugins install check_billing --set=… --set=… --json",
+                   hiding: ["provider", "openai", "budget", "40"])
+        Self.check(["plugins", "install", "cluster_stats", "--cluster=della=gpu", "--guard=/Users/ada/guard",
+                    "--json"],
+                   logs: "keryx plugins install cluster_stats --cluster=… --guard=… --json",
+                   hiding: ["della", "gpu", "ada"])
+        Self.check(["plugins", "set", "check_billing", "--json", "--", "monthly_budget=40"],
+                   logs: "keryx plugins set check_billing --json …", hiding: ["budget", "40"])
+        Self.check(["plugins", "remove", "my_own_tool", "--json"], logs: "keryx plugins remove … --json",
+                   hiding: ["my_own"])
     }
 
     @Test func aShellLogsNoScript() {
