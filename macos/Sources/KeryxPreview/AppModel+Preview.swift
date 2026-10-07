@@ -27,6 +27,11 @@ extension AppModel {
         model.config = .settled(client.configReply)
         model.approvals = .settled(client.approvalsReply)
         model.memory = .settled(client.memoryReply)
+        model.voice = .settled(client.voiceReply)
+        // Every list a screen would ask for, so the menus show it from the first frame.
+        for row in (try? client.configReply.get()) ?? [] where row.hasOptions {
+            model.options[row.key] = .settled(client.optionsReply[row.key] ?? .success(PreviewData.builtinOptions(row.key)))
+        }
         if case let .success(detail) = client.taskReply {
             model.taskDetail[detail.task.id] = .settled(.success(detail))
         }

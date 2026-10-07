@@ -1,0 +1,65 @@
+{
+  "key": "OPENAI_VOICE",
+  "current": "",
+  "options": [
+    {
+      "value": "",
+      "label": "The assistant's own voice",
+      "detail": null
+    },
+    {
+      "value": "alloy",
+      "label": "Alloy",
+      "detail": null
+    },
+    {
+      "value": "ash",
+      "label": "Ash",
+      "detail": null
+    },
+    {
+      "value": "ballad",
+      "label": "Ballad",
+      "detail": null
+    },
+    {
+      "value": "cedar",
+      "label": "Cedar",
+      "detail": "Jarvis's voice"
+    },
+    {
+      "value": "coral",
+      "label": "Coral",
+      "detail": null
+    },
+    {
+      "value": "echo",
+      "label": "Echo",
+      "detail": null
+    },
+    {
+      "value": "marin",
+      "label": "Marin",
+      "detail": "Lyra's voice"
+    },
+    {
+      "value": "sage",
+      "label": "Sage",
+      "detail": null
+    },
+    {
+      "value": "shimmer",
+      "label": "Shimmer",
+      "detail": null
+    },
+    {
+      "value": "verse",
+      "label": "Verse",
+      "detail": null
+    }
+  ],
+  "source": "builtin",
+  "live": false,
+  "free_form": false,
+  "error": null
+}

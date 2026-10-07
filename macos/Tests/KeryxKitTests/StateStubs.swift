@@ -24,6 +24,15 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         var pull: @Sendable (String) -> PullStream = { _ in
             PullStream(AsyncThrowingStream { $0.finish() })
         }
+        var voice: Result<VoiceStatus, KeryxError> = .success(PreviewData.voice)
+        var options: @Sendable (String) -> Result<ConfigOptions, KeryxError> = { key in
+            .success(PreviewData.options[key] ?? PreviewData.builtinOptions(key))
+        }
+        var voiceOpenAI: Result<VoiceUseResult, KeryxError> = .success(VoiceUseResult(saved: [:], restartNeeded: true))
+        var voiceServer: Result<VoiceServerResult, KeryxError> = .success(PreviewClient.serverSaved)
+        var voiceHere: @Sendable (String?) -> VoiceSetupStream = { _ in
+            VoiceSetupStream(AsyncThrowingStream { $0.finish() })
+        }
     }
 
     init(_ configure: (inout Replies) -> Void = { _ in }) {
@@ -87,6 +96,22 @@ final class StubClient: KeryxClient, @unchecked Sendable {
     }
     func memory() async throws -> MemoryDocument { try answer("memory") { $0.memory } }
     func restart(force: Bool) async throws { try write("restart\(force ? " --force" : "")") }
+    func options(key: String) async throws -> ConfigOptions {
+        try answer("config options \(key)") { $0.options(key) }
+    }
+    func voice() async throws -> VoiceStatus { try answer("voice") { $0.voice } }
+    func useVoiceOpenAI() async throws -> VoiceUseResult { try answer("voice use openai") { $0.voiceOpenAI } }
+    func useVoiceServer(url: String, key: String?, keepAnyway: Bool) async throws -> VoiceServerResult {
+        let flags = (key == nil ? "" : " --key-stdin") + (keepAnyway ? " --keep-anyway" : "")
+        return try answer("voice use server \(url)\(flags)") { $0.voiceServer }
+    }
+    func voiceHere(voice: String?) -> VoiceSetupStream {
+        let make = lock.withLock {
+            recorded.append("voice use here" + (voice.map { " --voice \($0)" } ?? ""))
+            return replies.voiceHere
+        }
+        return make(voice)
+    }
 }
 
 /// A `Locating` that answers what the test says, and remembers the preference it was given.
@@ -140,6 +165,28 @@ final class ManualPull: @unchecked Sendable {
     }
 
     func send(_ event: PullEvent) { lock.withLock { continuation }?.yield(event) }
+    func finish(throwing error: Error? = nil) { lock.withLock { continuation }?.finish(throwing: error) }
+}
+
+/// A voice setup stream the test drives by hand, as `ManualPull` drives a download.
+final class ManualSetup: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: AsyncThrowingStream<VoiceSetupEvent, Error>.Continuation?
+    private var stops = 0
+
+    var stopRequests: Int { lock.withLock { stops } }
+
+    func stream() -> VoiceSetupStream {
+        let events = AsyncThrowingStream<VoiceSetupEvent, Error> { continuation in
+            lock.withLock { self.continuation = continuation }
+        }
+        return VoiceSetupStream(events, stop: { [weak self] in
+            guard let self else { return }
+            self.lock.withLock { self.stops += 1 }
+        })
+    }
+
+    func send(_ event: VoiceSetupEvent) { lock.withLock { continuation }?.yield(event) }
     func finish(throwing error: Error? = nil) { lock.withLock { continuation }?.finish(throwing: error) }
 }
 

@@ -14,12 +14,18 @@ public enum CommandLog {
         "status": [], "doctor": [], "approvals": [], "memory": [], "restart": [],
         "tasks": ["list", "show", "usage"],
         "models": ["list", "pull", "use"],
-        "config": ["list", "set", "unset"],
+        "config": ["list", "set", "unset", "options"],
+        "voice": ["use"],
+    ]
+
+    /// The words a subcommand and verb may be followed by (`keryx voice use here`).
+    static let modes: [String: Set<String>] = [
+        "voice use": ["openai", "server", "here"],
     ]
 
     static let flags: Set<String> = [
         "--json", "--stdin", "--force", "--internal", "--limit", "--days", "--status",
-        "--default-agent", "--disable", "--enable", "--llm",
+        "--default-agent", "--disable", "--enable", "--llm", "--key-stdin", "--keep-anyway", "--voice",
     ]
 
     static let elided = "…"
@@ -35,6 +41,7 @@ public enum CommandLog {
         let command = Array(arguments.dropFirst(prefixCount))
         var words = [isKeryx ? "keryx" : file]
         var verbs: Set<String>?
+        var named: Set<String>?
         for (index, argument) in command.enumerated() {
             if argument == "--" {
                 // Everything after `--` is a value, whatever it looks like.
@@ -45,6 +52,9 @@ public enum CommandLog {
                 words.append(argument)
                 verbs = allowed
             } else if index == 1, let allowed = verbs, allowed.contains(argument) {
+                words.append(argument)
+                named = modes[command[0] + " " + argument]
+            } else if index == 2, let allowed = named, allowed.contains(argument) {
                 words.append(argument)
             } else if flags.contains(argument) {
                 words.append(argument)

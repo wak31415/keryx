@@ -1,0 +1,30 @@
+{
+  "key": "SUBAGENT_MODEL",
+  "current": "claude-opus-5-5",
+  "options": [
+    {
+      "value": "claude-opus-5-5",
+      "label": "Claude Opus",
+      "detail": "opus"
+    },
+    {
+      "value": "claude-sonnet-5-5",
+      "label": "Claude Sonnet",
+      "detail": "sonnet"
+    },
+    {
+      "value": "claude-fable-5-1",
+      "label": "Claude Fable",
+      "detail": "fable"
+    },
+    {
+      "value": "claude-haiku-4-5-20251001",
+      "label": "Claude Haiku",
+      "detail": "haiku"
+    }
+  ],
+  "source": "builtin",
+  "live": false,
+  "free_form": true,
+  "error": "Anthropic lists models only to an API key; showing the models Keryx knows"
+}

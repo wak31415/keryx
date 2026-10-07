@@ -1,0 +1,50 @@
+{
+  "key": "LLM_SERVER_MODEL",
+  "current": "qwen3-coder-30b-a3b",
+  "options": [
+    {
+      "value": "gpt-oss-120b",
+      "label": "gpt-oss 120B",
+      "detail": "too big for this Mac"
+    },
+    {
+      "value": "qwen3.6-35b-a3b",
+      "label": "Qwen3.6 35B-A3B",
+      "detail": "too big for this Mac"
+    },
+    {
+      "value": "qwen3-coder-30b-a3b",
+      "label": "Qwen3-Coder 30B-A3B",
+      "detail": "fits"
+    },
+    {
+      "value": "qwen3.8-27b",
+      "label": "Qwen3.8 27B",
+      "detail": "fits"
+    },
+    {
+      "value": "gpt-oss-20b",
+      "label": "gpt-oss 20B",
+      "detail": "fits"
+    },
+    {
+      "value": "gemma-4-12b",
+      "label": "Gemma 4 12B",
+      "detail": "fits"
+    },
+    {
+      "value": "qwen3.5-9b",
+      "label": "Qwen3.5 9B",
+      "detail": "fits"
+    },
+    {
+      "value": "qwen3.5-4b",
+      "label": "Qwen3.5 4B",
+      "detail": "fits"
+    }
+  ],
+  "source": "catalog",
+  "live": false,
+  "free_form": true,
+  "error": null
+}

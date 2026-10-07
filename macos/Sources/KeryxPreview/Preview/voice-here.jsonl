@@ -1,0 +1,7 @@
+{"event": "step", "step": "install", "message": "Installing the voice server"}
+{"event": "step", "step": "install", "message": "Downloading the speech models", "progress": {"done": 120000000, "total": 480000000}}
+{"event": "step", "step": "install", "message": "Downloading the speech models", "progress": {"done": 480000000, "total": 480000000}}
+{"event": "step", "step": "configure", "message": "Saving the voice settings"}
+{"event": "step", "step": "unit", "message": "Installing the voice server's service"}
+{"event": "step", "step": "start", "message": "Starting the voice server"}
+{"event": "done", "base_url": "http://127.0.0.1:8765/v1"}

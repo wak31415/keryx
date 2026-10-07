@@ -1,0 +1,50 @@
+{
+  "key": "CODEX_MODEL",
+  "current": "",
+  "options": [
+    {
+      "value": "",
+      "label": "Codex's default",
+      "detail": null
+    },
+    {
+      "value": "gpt-6-astra",
+      "label": "GPT-6-Astra",
+      "detail": "Frontier intelligence for the most demanding work."
+    },
+    {
+      "value": "gpt-6-sol",
+      "label": "GPT-6-Sol",
+      "detail": "Workhorse model for coding and everyday work."
+    },
+    {
+      "value": "gpt-6-luna",
+      "label": "GPT-6-Luna",
+      "detail": "Fast and affordable model for easier tasks."
+    },
+    {
+      "value": "gpt-5.6-sol",
+      "label": "GPT-5.6-Sol",
+      "detail": "Older coding model for complex work."
+    },
+    {
+      "value": "gpt-5.6-terra",
+      "label": "GPT-5.6-Terra",
+      "detail": "Older balanced model for straightforward work."
+    },
+    {
+      "value": "gpt-5.6-luna",
+      "label": "GPT-5.6-Luna",
+      "detail": "Older fast and efficient model."
+    },
+    {
+      "value": "gpt-5.5",
+      "label": "GPT-5.5",
+      "detail": "Legacy coding model."
+    }
+  ],
+  "source": "codex",
+  "live": true,
+  "free_form": true,
+  "error": null
+}

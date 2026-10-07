@@ -1,0 +1,15 @@
+{
+  "key": "OPENAI_REALTIME_MODEL",
+  "current": "gpt-realtime-2.1",
+  "options": [
+    {
+      "value": "gpt-realtime-2.1",
+      "label": "gpt-realtime-2.1",
+      "detail": "Keryx's default"
+    }
+  ],
+  "source": "builtin",
+  "live": false,
+  "free_form": true,
+  "error": "OPENAI_API_KEY is not set, so OpenAI cannot be asked"
+}

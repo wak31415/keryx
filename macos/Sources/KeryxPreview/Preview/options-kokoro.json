@@ -1,0 +1,60 @@
+{
+  "key": "VOICE_SERVER_VOICE",
+  "current": "af_heart",
+  "options": [
+    {
+      "value": "af_heart",
+      "label": "Heart",
+      "detail": "warm, American, female"
+    },
+    {
+      "value": "af_bella",
+      "label": "Bella",
+      "detail": "bright, American, female"
+    },
+    {
+      "value": "af_nicole",
+      "label": "Nicole",
+      "detail": "soft, American, female"
+    },
+    {
+      "value": "am_michael",
+      "label": "Michael",
+      "detail": "calm, American, male"
+    },
+    {
+      "value": "am_fenrir",
+      "label": "Fenrir",
+      "detail": "deep, American, male"
+    },
+    {
+      "value": "bf_emma",
+      "label": "Emma",
+      "detail": "clear, British, female"
+    },
+    {
+      "value": "bf_isabella",
+      "label": "Isabella",
+      "detail": "warm, British, female"
+    },
+    {
+      "value": "bm_george",
+      "label": "George",
+      "detail": "measured, British, male"
+    },
+    {
+      "value": "bm_fable",
+      "label": "Fable",
+      "detail": "lively, British, male"
+    },
+    {
+      "value": "bm_lewis",
+      "label": "Lewis",
+      "detail": "low, British, male"
+    }
+  ],
+  "source": "catalog",
+  "live": false,
+  "free_form": true,
+  "error": null
+}

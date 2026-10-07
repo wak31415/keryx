@@ -1,0 +1,21 @@
+{
+  "mode": "openai",
+  "base_url": null,
+  "realtime_model": "gpt-realtime-2.1",
+  "voice": "marin",
+  "assistant": "Lyra",
+  "openai_key_set": false,
+  "needs": "local_agent_model",
+  "here": {
+    "installed": false,
+    "program": null,
+    "voice": "af_heart",
+    "port": 8765,
+    "unit_installed": false,
+    "reachable": false,
+    "words_model": null
+  },
+  "server": {
+    "reachable": null
+  }
+}

@@ -40,6 +40,54 @@ public enum PreviewData {
     public static var config: [ConfigRow] { decode("config.json") }
     public static var approvals: ApprovalsReport { decode("approvals.json") }
     public static var memory: MemoryDocument { decode("memory.json") }
+    public static var voice: VoiceStatus { decode("voice.json") }
+    public static var voiceHere: VoiceStatus { decode("voice-here.json") }
+    public static var voiceServer: VoiceStatus { decode("voice-server.json") }
+    public static var voiceNeedsModel: VoiceStatus { decode("voice-needs-model.json") }
+
+    /// `voice-here.jsonl` as its individual lines.
+    public static var voiceHereLines: [String] {
+        String(decoding: data("voice-here.jsonl"), as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+    }
+
+    /// The `config options` documents there are fixtures for, by file, one per key. The
+    /// voice, Claude, Codex, catalog and Kokoro lists are captured from a sandbox (the
+    /// catalog's "fits" edited to match `models.json`'s Mac); the live OpenAI and
+    /// model-server lists, which a sandbox with no key and no server cannot give, are
+    /// written by hand.
+    public static let optionsFixtures = [
+        "options-realtime.json", "options-transcription.json", "options-voice.json",
+        "options-subagent.json", "options-codex.json", "options-local-agent.json", "options-llm-server.json",
+        "options-kokoro.json",
+    ]
+
+    /// The Realtime models with no OpenAI key to ask with: the built-in list and why,
+    /// captured from a sandbox.
+    public static var realtimeFallback: ConfigOptions { decode("options-realtime-fallback.json") }
+
+    /// Each `config options` fixture, by key.
+    public static var options: [String: ConfigOptions] {
+        var byKey: [String: ConfigOptions] = [:]
+        for name in optionsFixtures {
+            let list: ConfigOptions = decode(name)
+            byKey[list.key] = list
+        }
+        return byKey
+    }
+
+    /// What `config options` says for a key with no fixture: the built-in list, holding only
+    /// the value the setting has in `config.json`.
+    public static func builtinOptions(_ key: String) -> ConfigOptions {
+        let current = config.first { $0.key == key }?.value.flatMap { value -> String? in
+            if case let .string(text) = value, !text.isEmpty { return text }
+            return nil
+        }
+        return ConfigOptions(key: key, current: current,
+                             options: current.map { [ConfigOption(value: $0, label: $0, detail: "current")] } ?? [],
+                             source: "builtin", live: false, freeForm: true, error: nil)
+    }
 
     private static func decode<T: Decodable>(_ name: String) -> T {
         do {

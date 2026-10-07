@@ -115,6 +115,29 @@ import KeryxPreview
         #expect(ConfigRow.title(ofGroup: "storage") == "Storage")
     }
 
+    @Test func configRowSaysWhetherItHasOptionsAndAnOlderCLISaysNot() throws {
+        #expect(try decodeConfigRow("").hasOptions == false)
+        #expect(try decodeConfigRow(#""has_options": true,"#).hasOptions)
+        let rows = PreviewData.config
+        #expect(rows.first { $0.key == "OPENAI_REALTIME_MODEL" }?.hasOptions == true)
+        #expect(rows.first { $0.key == "ASSISTANT_NAME" }?.hasOptions == false)
+    }
+
+    @Test func optionsTakeAnEmptyCurrentAndANullOne() throws {
+        func decode(_ current: String) throws -> ConfigOptions {
+            let json = """
+            {"key": "CODEX_MODEL", "current": \(current), "options": [{"value": "", "label": "Codex's default",
+             "detail": null}], "source": "codex", "live": true, "free_form": true, "error": null}
+            """
+            return try JSON.decoder.decode(ConfigOptions.self, from: Data(json.utf8))
+        }
+        // A key that lists a "" option says "" when unset; every other key says null.
+        #expect(try decode(#""""#).current == "")
+        #expect(try decode("null").current == nil)
+        #expect(PreviewData.options["CODEX_MODEL"]?.current == "")
+        #expect(PreviewData.options["OPENAI_VOICE"]?.current == "")
+    }
+
     private func decodeConfigRow(_ titles: String) throws -> ConfigRow {
         let json = """
         {"key": "LLM_SERVER_PORT", "group": "local", \(titles) "description": "The port.",

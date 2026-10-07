@@ -1,0 +1,30 @@
+{
+  "key": "OPENAI_REALTIME_MODEL",
+  "current": "gpt-realtime-2.1",
+  "options": [
+    {
+      "value": "gpt-realtime-2.1",
+      "label": "gpt-realtime-2.1",
+      "detail": null
+    },
+    {
+      "value": "gpt-realtime-2",
+      "label": "gpt-realtime-2",
+      "detail": null
+    },
+    {
+      "value": "gpt-realtime-mini-2",
+      "label": "gpt-realtime-mini-2",
+      "detail": null
+    },
+    {
+      "value": "gpt-realtime",
+      "label": "gpt-realtime",
+      "detail": null
+    }
+  ],
+  "source": "openai",
+  "live": true,
+  "free_form": true,
+  "error": null
+}

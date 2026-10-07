@@ -1,0 +1,25 @@
+{
+  "key": "OPENAI_TRANSCRIPTION_MODEL",
+  "current": "gpt-4o-mini-transcribe",
+  "options": [
+    {
+      "value": "gpt-4o-mini-transcribe",
+      "label": "gpt-4o-mini-transcribe",
+      "detail": null
+    },
+    {
+      "value": "gpt-4o-transcribe",
+      "label": "gpt-4o-transcribe",
+      "detail": null
+    },
+    {
+      "value": "whisper-1",
+      "label": "whisper-1",
+      "detail": null
+    }
+  ],
+  "source": "openai",
+  "live": true,
+  "free_form": true,
+  "error": null
+}

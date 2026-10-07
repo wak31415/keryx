@@ -20,6 +20,9 @@ public protocol KeryxClient: Sendable {
     /// Runs `CHECKOUT/scripts/install-launchd.sh --llm`, and returns what it printed.
     func installModelServer() async throws -> String
     func config() async throws -> [ConfigRow]
+    /// What `key` may be set to. A live list that could not be read is still an answer
+    /// (`live` false, `error` set); a key with no options throws.
+    func options(key: String) async throws -> ConfigOptions
     func set(key: String, value: String) async throws
     /// The value goes on the child's stdin, never its argv or environment.
     func setSecret(key: String, value: String) async throws
@@ -28,4 +31,18 @@ public protocol KeryxClient: Sendable {
     func setEscalation(enabled: Bool) async throws
     func memory() async throws -> MemoryDocument
     func restart(force: Bool) async throws
+
+    // MARK: Voice
+
+    /// How the assistant speaks now (`keryx voice`).
+    func voice() async throws -> VoiceStatus
+    /// Speaks through OpenAI Realtime from the next restart.
+    func useVoiceOpenAI() async throws -> VoiceUseResult
+    /// Speaks through the voice server at `url` from the next restart, once it has answered
+    /// a handshake — or, with `keepAnyway`, even if it did not. A failed handshake is an
+    /// answer (`problem` set, nothing saved), not an error. `key` goes on the child's stdin.
+    func useVoiceServer(url: String, key: String?, keepAnyway: Bool) async throws -> VoiceServerResult
+    /// Installs, configures and starts the voice server on this Mac, step by step; stops
+    /// as `pull` does. `voice`: the Kokoro voice to speak in, else the one set.
+    func voiceHere(voice: String?) -> VoiceSetupStream
 }

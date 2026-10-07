@@ -1,0 +1,20 @@
+{
+  "key": "LOCAL_AGENT_MODEL",
+  "current": "qwen3-coder-30b-a3b",
+  "options": [
+    {
+      "value": "qwen3-coder-30b-a3b",
+      "label": "Qwen3-Coder 30B-A3B",
+      "detail": "serving"
+    },
+    {
+      "value": "gpt-oss-20b",
+      "label": "gpt-oss 20B",
+      "detail": "downloaded"
+    }
+  ],
+  "source": "server",
+  "live": true,
+  "free_form": true,
+  "error": null
+}

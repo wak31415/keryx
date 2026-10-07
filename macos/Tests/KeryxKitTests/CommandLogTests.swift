@@ -52,6 +52,38 @@ import KeryxPreview
                    logs: "keryx models use … --default-agent --json", hiding: ["gemma3"])
     }
 
+    @Test func configOptionsLogsNoKey() {
+        Self.check(["config", "options", "OPENAI_REALTIME_MODEL", "--json"],
+                   logs: "keryx config options … --json", hiding: ["OPENAI_REALTIME_MODEL", "REALTIME"])
+    }
+
+    @Test func voiceAndItsModesAreLogged() {
+        Self.check(["voice", "--json"], logs: "keryx voice --json", hiding: [])
+        Self.check(["voice", "use", "openai", "--json"], logs: "keryx voice use openai --json", hiding: [])
+    }
+
+    @Test func voiceUseServerLogsNoAddressAndNoKey() {
+        Self.check(["voice", "use", "server", "http://studio.local:8000/v1", "--key-stdin", "--keep-anyway", "--json"],
+                   logs: "keryx voice use server … --key-stdin --keep-anyway --json",
+                   hiding: ["studio", "8000", "http"])
+        Self.check(["voice", "use", "server", "--json", "--", "-weird"],
+                   logs: "keryx voice use server --json …", hiding: ["-weird"])
+    }
+
+    @Test func voiceUseHereLogsTheFlagButNotTheVoice() {
+        Self.check(["voice", "use", "here", "--voice", "bf_emma", "--json"],
+                   logs: "keryx voice use here --voice … --json", hiding: ["bf_emma", "emma"])
+        // A value that looks like a mode is still a value past its place.
+        Self.check(["voice", "use", "here", "--voice", "openai"],
+                   logs: "keryx voice use here --voice …", hiding: ["openai"])
+    }
+
+    @Test func aModeIsOnlyAModeThirdAndAfterItsVerb() {
+        Self.check(["voice", "here"], logs: "keryx voice …", hiding: ["here"])
+        Self.check(["config", "set", "here"], logs: "keryx config set …", hiding: ["here"])
+        Self.check(["voice", "use", "elsewhere"], logs: "keryx voice use …", hiding: ["elsewhere"])
+    }
+
     @Test func tasksShowLogsNoTaskID() {
         Self.check(["tasks", "show", "12", "--json"],
                    logs: "keryx tasks show … --json", hiding: ["12"])

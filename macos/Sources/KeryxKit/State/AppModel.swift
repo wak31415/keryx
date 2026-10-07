@@ -10,7 +10,7 @@ import Observation
 public final class AppModel {
     /// What `refresh` reloads.
     public enum Part: Sendable, CaseIterable {
-        case status, doctor, tasks, usage, models, config, approvals, memory, all
+        case status, doctor, tasks, usage, models, config, approvals, memory, voice, all
 
         static let documents: [Part] = allCases.filter { $0 != .all }
     }
@@ -47,6 +47,9 @@ public final class AppModel {
     public package(set) var config: Loadable<[ConfigRow]> = .idle
     public package(set) var approvals: Loadable<ApprovalsReport> = .idle
     public package(set) var memory: Loadable<MemoryDocument> = .idle
+    public package(set) var voice: Loadable<VoiceStatus> = .idle
+    /// What each setting with options may be set to, by key, read once each (`loadOptions`).
+    public package(set) var options: [String: Loadable<ConfigOptions>] = [:]
     public var taskDetail: [Int: Loadable<TaskDetail>] = [:]
 
     public var selection: SidebarItem = .overview
@@ -58,6 +61,8 @@ public final class AppModel {
     public var configNeedsRestart = false
 
     public let downloads: Downloads
+    /// Setting up the voice server on this Mac.
+    public let voiceSetup: VoiceSetup
     /// The client for the Keryx that was found; `nil` until one is.
     public package(set) var client: KeryxClient?
 
@@ -92,6 +97,7 @@ public final class AppModel {
         self.timing = timing
         self.sweep = sweep
         downloads = Downloads()
+        voiceSetup = VoiceSetup()
     }
 
     // MARK: - Finding Keryx
@@ -119,6 +125,7 @@ public final class AppModel {
         location = .idle
         for part in Part.documents { reset(part) }
         taskDetail = [:]
+        options = [:]
         configNeedsRestart = false
         if !started {
             started = true
@@ -205,6 +212,28 @@ public final class AppModel {
         case .approvals:
             await load(\.approvals, current) { try await client.approvals(limit: Self.approvalsLimit) }
         case .memory: await load(\.memory, current) { try await client.memory() }
+        case .voice: await load(\.voice, current) { try await client.voice() }
+        }
+    }
+
+    /// Reads what `key` may be set to — once: a list already read, or being read, is not
+    /// asked for again unless `force`. A list the CLI could not read live is a value (with
+    /// its `error`), not a failure.
+    public func loadOptions(_ key: String, force: Bool = false) async {
+        guard let client else { return }
+        let current = generation
+        let known = options[key]
+        if !force, known?.value != nil || known?.isLoading == true { return }
+        options[key, default: .idle].begin()
+        do {
+            let list = try await client.options(key: key)
+            guard current == generation else { return }
+            options[key, default: .idle].succeed(list)
+        } catch {
+            guard current == generation else { return }
+            settle(error) { options[key, default: .idle].fail($0) } stopped: {
+                options[key, default: .idle].isLoading = false
+            }
         }
     }
 
@@ -266,6 +295,7 @@ public final class AppModel {
         case .config: config = .idle
         case .approvals: approvals = .idle
         case .memory: memory = .idle
+        case .voice: voice = .idle
         }
     }
 
@@ -277,7 +307,18 @@ public final class AppModel {
 
     /// Sets a plain setting.
     public func set(_ row: ConfigRow, to value: String) async -> KeryxError? {
-        await writeSetting { try await $0.set(key: row.key, value: value) }
+        await set(key: row.key, to: value)
+    }
+
+    /// Sets a plain setting by its key.
+    public func set(key: String, to value: String) async -> KeryxError? {
+        await writeSetting { try await $0.set(key: key, value: value) }
+    }
+
+    /// Chooses one of a setting's options (`config options`): an option whose value is
+    /// empty ("Codex's default") means the setting unset, so it is unset — never set to "".
+    public func choose(_ key: String, option value: String) async -> KeryxError? {
+        value.isEmpty ? await unset(key) : await set(key: key, to: value)
     }
 
     /// Sets a secret; the value reaches the CLI on its stdin.
@@ -332,6 +373,45 @@ public final class AppModel {
         guard let client else { return }
         downloads.start(model, client: client) { [weak self] in
             Task { await self?.refresh(.models) }
+        }
+    }
+
+    // MARK: - Voice
+
+    /// Speaks through OpenAI Realtime from the next restart.
+    public func useVoiceOpenAI() async -> KeryxError? {
+        var restartNeeded = false
+        if let error = await perform({ restartNeeded = try await $0.useVoiceOpenAI().restartNeeded }) {
+            return error
+        }
+        if restartNeeded { configNeedsRestart = true }
+        await refresh([.voice, .config])
+        return nil
+    }
+
+    /// Speaks through the voice server at `url` from the next restart. The answer says
+    /// whether it was saved, and if not why (`problem`); a handshake that failed is an
+    /// answer, not an error. `key`, when given, reaches the CLI on its stdin.
+    public func useVoiceServer(url: String, key: String?, keepAnyway: Bool) async -> Result<VoiceServerResult, KeryxError> {
+        var answer: VoiceServerResult?
+        if let error = await perform({
+            answer = try await $0.useVoiceServer(url: url, key: key, keepAnyway: keepAnyway)
+        }) { return .failure(error) }
+        guard let answer else { return .failure(.launch("Keryx said nothing.")) }
+        if answer.saved != nil {
+            if answer.restartNeeded { configNeedsRestart = true }
+            await refresh([.voice, .config])
+        }
+        return .success(answer)
+    }
+
+    /// Sets up (or restarts) the voice server on this Mac, one setup at a time, and reads
+    /// the voice again once it has worked. `voice`: a Kokoro voice to switch to.
+    public func setUpVoiceHere(voice: String? = nil) {
+        guard let client else { return }
+        voiceSetup.start(voice: voice, client: client) { [weak self] in
+            self?.configNeedsRestart = true
+            Task { await self?.refresh([.voice, .config, .models]) }
         }
     }
 

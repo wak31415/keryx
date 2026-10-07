@@ -259,7 +259,24 @@
         "service_writable": "boolean",
         "protected": "boolean",
         "value": "any|null",
-        "choices": "array|null"
+        "choices": "array|null",
+        "has_options": "boolean"
+      }
+    },
+    "config options KEY --json": {
+      "": {
+        "key": "string",
+        "current": "string|null",
+        "options": "array",
+        "source": "string",
+        "live": "boolean",
+        "free_form": "boolean",
+        "error": "string|null"
+      },
+      "options[]": {
+        "value": "string",
+        "label": "string",
+        "detail": "string|null"
       }
     },
     "approvals --json": {
@@ -283,6 +300,45 @@
         "path": "string",
         "exists": "boolean",
         "text": "string|null"
+      }
+    },
+    "voice --json": {
+      "": {
+        "mode": "string",
+        "base_url": "string|null",
+        "realtime_model": "string",
+        "voice": "string",
+        "assistant": "string",
+        "openai_key_set": "boolean",
+        "needs": "string|null",
+        "here": "object",
+        "server": "object"
+      },
+      "here": {
+        "installed": "boolean",
+        "program": "string|null",
+        "voice": "string",
+        "port": "integer",
+        "unit_installed": "boolean",
+        "reachable": "boolean",
+        "words_model": "string|null"
+      },
+      "server": {
+        "reachable": "boolean|null"
+      }
+    },
+    "voice use openai --json": {
+      "": {
+        "saved": "object",
+        "restart_needed": "boolean"
+      }
+    },
+    "voice use server URL --json": {
+      "": {
+        "saved": "object|null",
+        "problem": "string|null",
+        "restart_needed": "boolean",
+        "warnings": "array"
       }
     }
   },
@@ -314,6 +370,34 @@
       "exit": {
         "done": 0,
         "adopted": 0,
+        "error": [
+          1,
+          2
+        ],
+        "cancelled": 130
+      }
+    },
+    "voice use here --json": {
+      "events": {
+        "step": {
+          "step": "string",
+          "message": "string"
+        },
+        "done": {
+          "base_url": "string"
+        },
+        "error": {
+          "message": "string"
+        },
+        "cancelled": {}
+      },
+      "terminal": [
+        "done",
+        "error",
+        "cancelled"
+      ],
+      "exit": {
+        "done": 0,
         "error": [
           1,
           2

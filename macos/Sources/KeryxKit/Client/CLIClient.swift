@@ -52,6 +52,11 @@ public struct CLIClient: KeryxClient {
         try await decode(["config", "list", "--json"])
     }
 
+    public func options(key: String) async throws -> ConfigOptions {
+        // A list asked of a provider can take a while; past that, the CLI falls back itself.
+        try await decode(["config", "options", key, "--json"], timeout: .seconds(45))
+    }
+
     public func approvals(limit: Int) async throws -> ApprovalsReport {
         try await decode(["approvals", "--json", "--limit", String(limit)])
     }
@@ -67,30 +72,9 @@ public struct CLIClient: KeryxClient {
     /// because "it ended" is not "it finished". `stop()` stops the CLI's process group
     /// (which it answers with `cancelled`), and the stream ends once the CLI has exited.
     public func pull(model: String) -> PullStream {
-        let lines = runner.lines(request(["models", "pull", model, "--json"], timeout: nil))
-        let events = AsyncThrowingStream<PullEvent, Error> { continuation in
-            let task = Task {
-                do {
-                    var concluded = false
-                    for try await line in lines {
-                        guard let event = PullEvent.parse(line) else { continue }
-                        if case .progress = event {} else { concluded = true }
-                        continuation.yield(event)
-                    }
-                    if concluded {
-                        continuation.finish()
-                    } else {
-                        continuation.finish(throwing: KeryxError.failed(
-                            command: "keryx models pull", exitCode: -1,
-                            message: PullEvent.stoppedWithoutSaying))
-                    }
-                } catch {
-                    continuation.finish(throwing: Self.map(error, command: "keryx models pull"))
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-        return PullStream(events, stop: { lines.stop() })
+        events(["models", "pull", model, "--json"], parse: PullEvent.parse,
+               concludes: { if case .progress = $0 { false } else { true } },
+               stoppedWithoutSaying: PullEvent.stoppedWithoutSaying)
     }
 
     public func use(model: String, defaultAgent: Bool) async throws -> UseResult {
@@ -143,6 +127,76 @@ public struct CLIClient: KeryxClient {
         try check(result, command: Self.name(arguments))
     }
 
+    // MARK: - Voice
+
+    public func voice() async throws -> VoiceStatus {
+        try await decode(["voice", "--json"])
+    }
+
+    public func useVoiceOpenAI() async throws -> VoiceUseResult {
+        try await decode(["voice", "use", "openai", "--json"])
+    }
+
+    /// Exit 1 with a `problem` is the handshake failing, and is decoded; exit 2 (a refusal)
+    /// and anything unreadable are failures.
+    public func useVoiceServer(url: String, key: String?, keepAnyway: Bool) async throws -> VoiceServerResult {
+        var flags: [String] = []
+        if key != nil { flags.append("--key-stdin") }
+        if keepAnyway { flags.append("--keep-anyway") }
+        flags.append("--json")
+        // An address that starts with "-" would be read as an option without the "--".
+        let arguments = url.hasPrefix("-")
+            ? ["voice", "use", "server"] + flags + ["--", url]
+            : ["voice", "use", "server", url] + flags
+        return try await decode(arguments, acceptedExitCodes: [0, 1], timeout: .seconds(60),
+                                stdin: key.map { Data($0.utf8) })
+    }
+
+    /// Ends normally only after `done`, `error` or `cancelled`, as `pull` does. The first
+    /// start can take minutes, so there is no timeout.
+    public func voiceHere(voice: String?) -> VoiceSetupStream {
+        var arguments = ["voice", "use", "here"]
+        if let voice { arguments += ["--voice", voice] }
+        arguments.append("--json")
+        return events(arguments, parse: VoiceSetupEvent.parse, concludes: { $0.isTerminal },
+                      stoppedWithoutSaying: VoiceSetupEvent.stoppedWithoutSaying)
+    }
+
+    // MARK: - Streams
+
+    /// `subcommand`'s stdout as events, which ends normally only once one that `concludes`
+    /// has come and the CLI has exited, and otherwise throws `stoppedWithoutSaying`. Lines
+    /// `parse` does not know are skipped. `stop()` stops the CLI's process group.
+    private func events<Event: Sendable>(
+        _ subcommand: [String], parse: @escaping @Sendable (String) -> Event?,
+        concludes: @escaping @Sendable (Event) -> Bool, stoppedWithoutSaying: String
+    ) -> StoppableStream<Event> {
+        let command = Self.name(subcommand)
+        let lines = runner.lines(request(subcommand, timeout: nil))
+        let events = AsyncThrowingStream<Event, Error> { continuation in
+            let task = Task {
+                do {
+                    var concluded = false
+                    for try await line in lines {
+                        guard let event = parse(line) else { continue }
+                        if concludes(event) { concluded = true }
+                        continuation.yield(event)
+                    }
+                    if concluded {
+                        continuation.finish()
+                    } else {
+                        continuation.finish(throwing: KeryxError.failed(
+                            command: command, exitCode: -1, message: stoppedWithoutSaying))
+                    }
+                } catch {
+                    continuation.finish(throwing: Self.map(error, command: command))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+        return StoppableStream(events, stop: { lines.stop() })
+    }
+
     // MARK: - Running
 
     private func request(
@@ -158,10 +212,11 @@ public struct CLIClient: KeryxClient {
     }
 
     private func decode<T: Decodable>(
-        _ subcommand: [String], acceptedExitCodes: Set<Int32> = [0], timeout: Duration = .seconds(30)
+        _ subcommand: [String], acceptedExitCodes: Set<Int32> = [0], timeout: Duration = .seconds(30),
+        stdin: Data? = nil
     ) async throws -> T {
         let command = Self.name(subcommand)
-        let result = try await run(request(subcommand, timeout: timeout), command: command)
+        let result = try await run(request(subcommand, stdin: stdin, timeout: timeout), command: command)
         if !acceptedExitCodes.contains(result.exitCode) {
             try check(result, command: command) // throws: every exit but 0 is a failure
         }

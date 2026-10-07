@@ -21,6 +21,9 @@ public struct ConfigRow: Codable, Sendable, Equatable, Identifiable {
     public var protected: Bool
     public var value: JSONValue?
     public var choices: [String]?
+    /// `keryx config options KEY` can list what it may be set to (a model, a voice). A CLI
+    /// older than that command omits it, which reads as false.
+    public var hasOptions: Bool = false
 
     public var id: String { key }
 
@@ -54,6 +57,28 @@ public struct ConfigRow: Codable, Sendable, Equatable, Identifiable {
         case "debug": "Debugging"
         default: group.prefix(1).uppercased() + group.dropFirst()
         }
+    }
+}
+
+extension ConfigRow {
+    /// As synthesised, but with `has_options` read as false when it is missing.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decode(String.self, forKey: .key)
+        group = try container.decode(String.self, forKey: .group)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        groupTitle = try container.decodeIfPresent(String.self, forKey: .groupTitle)
+        description = try container.decode(String.self, forKey: .description)
+        source = try container.decode(String.self, forKey: .source)
+        type = try container.decode(String.self, forKey: .type)
+        required = try container.decode(Bool.self, forKey: .required)
+        set = try container.decode(Bool.self, forKey: .set)
+        secret = try container.decode(Bool.self, forKey: .secret)
+        serviceWritable = try container.decode(Bool.self, forKey: .serviceWritable)
+        protected = try container.decode(Bool.self, forKey: .protected)
+        value = try container.decodeIfPresent(JSONValue.self, forKey: .value)
+        choices = try container.decodeIfPresent([String].self, forKey: .choices)
+        hasOptions = try container.decodeIfPresent(Bool.self, forKey: .hasOptions) ?? false
     }
 }
 

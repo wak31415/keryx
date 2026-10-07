@@ -18,8 +18,13 @@ import KeryxPreview
     struct Contract: Sendable {
         /// Command line → path → key → type.
         var commands: [String: [String: [String: String]]]
-        /// `models pull --json`: each event's keys and types, the terminal events, and the
-        /// events the exit codes are given for.
+        /// Command line → its stream of JSON lines.
+        var streams: [String: Stream]
+    }
+
+    /// A command that prints JSON lines: each event's keys and types, the terminal events,
+    /// and the events the exit codes are given for.
+    struct Stream: Sendable {
         var events: [String: [String: String]]
         var terminal: [String]
         var exits: Set<String>
@@ -31,13 +36,17 @@ import KeryxPreview
         let object = try! JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
         precondition(object["schema"] as? Int == 2, "contract.json is not schema 2")
         let commands = object["commands"] as! [String: [String: [String: String]]]
-        let pull = (object["streams"] as! [String: [String: Any]])["models pull --json"]!
-        let exit = pull["exit"] as! [String: Any]
-        return Contract(
-            commands: commands, events: pull["events"] as! [String: [String: String]],
-            terminal: pull["terminal"] as! [String], exits: Set(exit.keys),
-            cancelledExit: exit["cancelled"] as? Int)
+        let streams = (object["streams"] as! [String: [String: Any]]).mapValues { stream in
+            let exit = stream["exit"] as! [String: Any]
+            return Stream(events: stream["events"] as! [String: [String: String]],
+                          terminal: stream["terminal"] as! [String], exits: Set(exit.keys),
+                          cancelledExit: exit["cancelled"] as? Int)
+        }
+        return Contract(commands: commands, streams: streams)
     }()
+
+    static var pull: Stream { contract.streams["models pull --json"]! }
+    static var voiceHere: Stream { contract.streams["voice use here --json"]! }
 
     /// Each command the app reads as JSON: its real fixtures, and how the app decodes it.
     struct Command: CustomTestStringConvertible, Sendable {
@@ -70,6 +79,13 @@ import KeryxPreview
         .of("config list --json", [ConfigRow].self, ["config.json"]),
         .of("approvals --json", ApprovalsReport.self, ["approvals.json"]),
         .of("memory --json", MemoryDocument.self, ["memory.json"]),
+        .of("config options KEY --json", ConfigOptions.self,
+            PreviewData.optionsFixtures + ["options-realtime-fallback.json"]),
+        .of("voice --json", VoiceStatus.self,
+            ["voice.json", "voice-here.json", "voice-server.json", "voice-needs-model.json"]),
+        .of("voice use openai --json", VoiceUseResult.self, ["fixture:voice-use-openai.json"]),
+        .of("voice use server URL --json", VoiceServerResult.self,
+            ["fixture:voice-use-server.json", "fixture:voice-use-server-problem.json"]),
     ]
 
     /// A preview document (`Sources/KeryxPreview/Preview`), or `fixture:NAME` from this target's.
@@ -229,8 +245,12 @@ import KeryxPreview
 
     // MARK: - The pull stream
 
+    @Test func theAppReadsTheseStreams() {
+        #expect(Set(Self.contract.streams.keys) == ["models pull --json", "voice use here --json"])
+    }
+
     @Test func everyPullEventTheContractListsParsesWithItsKeysAndNotWithoutThem() throws {
-        let events = Self.contract.events
+        let events = Self.pull.events
         #expect(Set(events.keys) == ["progress", "done", "adopted", "error", "cancelled"])
         for (event, keys) in events {
             var line: [String: Any] = ["event": event]
@@ -246,11 +266,50 @@ import KeryxPreview
     }
 
     @Test func theTerminalEventsAreTheOnesThatEndADownload() {
-        let terminal = Self.contract.terminal
+        let terminal = Self.pull.terminal
         // Every event but progress ends a download (`CLIClient.pull`'s `concluded`).
-        #expect(Set(terminal) == Set(Self.contract.events.keys).subtracting(["progress"]))
-        #expect(Self.contract.exits == Set(terminal))
-        #expect(Self.contract.cancelledExit == 130)
+        #expect(Set(terminal) == Set(Self.pull.events.keys).subtracting(["progress"]))
+        #expect(Self.pull.exits == Set(terminal))
+        #expect(Self.pull.cancelledExit == 130)
+    }
+
+    // MARK: - The voice setup stream
+
+    @Test func everyVoiceSetupEventParsesWithItsKeysAndNotWithoutThem() throws {
+        let events = Self.voiceHere.events
+        #expect(Set(events.keys) == ["step", "done", "error", "cancelled"])
+        for (event, keys) in events {
+            var line: [String: Any] = ["event": event]
+            for (key, type) in keys { line[key] = type == "integer" ? 7 : "x" }
+            let parsed = try #require(VoiceSetupEvent.parse(Self.line(line)), "\(event)")
+            #expect(Self.name(of: parsed) == event)
+            for key in keys.keys {
+                var without = line
+                without.removeValue(forKey: key)
+                #expect(try VoiceSetupEvent.parse(Self.line(without)) == nil, "\(event) without \(key)")
+            }
+        }
+    }
+
+    @Test func theTerminalEventsAreTheOnesThatEndASetup() {
+        let terminal = Self.voiceHere.terminal
+        // Every event but step ends a setup (`VoiceSetupEvent.isTerminal`).
+        #expect(Set(terminal) == Set(Self.voiceHere.events.keys).subtracting(["step"]))
+        #expect(Self.voiceHere.exits == Set(terminal))
+        #expect(Self.voiceHere.cancelledExit == 130)
+        for line in PreviewData.voiceHereLines {
+            let event = try? #require(VoiceSetupEvent.parse(line))
+            #expect(event?.isTerminal == terminal.contains(event.map(Self.name(of:)) ?? ""))
+        }
+    }
+
+    static func name(of event: VoiceSetupEvent) -> String {
+        switch event {
+        case .step: "step"
+        case .done: "done"
+        case .error: "error"
+        case .cancelled: "cancelled"
+        }
     }
 
     static func line(_ object: [String: Any]) throws -> String {

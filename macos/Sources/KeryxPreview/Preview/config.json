@@ -13,7 +13,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "OPENAI_REALTIME_MODEL",
@@ -29,7 +30,8 @@
     "protected": false,
     "value": "gpt-realtime-2.1",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": true
   },
   {
     "key": "ASSISTANT_NAME",
@@ -45,7 +47,8 @@
     "protected": false,
     "value": "Lyra",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "OPENAI_VOICE",
@@ -61,7 +64,8 @@
     "protected": false,
     "value": "",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": true
   },
   {
     "key": "OPENAI_TRANSCRIPTION_MODEL",
@@ -77,7 +81,8 @@
     "protected": false,
     "value": "gpt-4o-mini-transcribe",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": true
   },
   {
     "key": "TRANSCRIPTION_LANGUAGE",
@@ -93,7 +98,8 @@
     "protected": false,
     "value": "",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "CLOCK_FORMAT",
@@ -112,7 +118,8 @@
     "choices": [
       "24h",
       "12h"
-    ]
+    ],
+    "has_options": false
   },
   {
     "key": "OPENAI_WEB_SEARCH_MODEL",
@@ -128,7 +135,8 @@
     "protected": false,
     "value": "gpt-6-luna",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": true
   },
   {
     "key": "VAD_MODE",
@@ -147,7 +155,8 @@
     "choices": [
       "server",
       "semantic"
-    ]
+    ],
+    "has_options": false
   },
   {
     "key": "VAD_EAGERNESS",
@@ -168,7 +177,8 @@
       "medium",
       "high",
       "auto"
-    ]
+    ],
+    "has_options": false
   },
   {
     "key": "VAD_SILENCE_MS",
@@ -184,7 +194,8 @@
     "protected": false,
     "value": 1200,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "VAD_THRESHOLD",
@@ -200,7 +211,8 @@
     "protected": false,
     "value": 0.5,
     "type": "float",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "VAD_PREFIX_MS",
@@ -216,7 +228,8 @@
     "protected": false,
     "value": 300,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "NOISE_REDUCTION",
@@ -237,7 +250,8 @@
       "near_field",
       "far_field",
       "off"
-    ]
+    ],
+    "has_options": false
   },
   {
     "key": "AGENT_BACKEND",
@@ -257,7 +271,8 @@
       "claude",
       "codex",
       "local"
-    ]
+    ],
+    "has_options": false
   },
   {
     "key": "AGENTS_ENABLED",
@@ -280,7 +295,8 @@
       "claude",
       "codex",
       "local"
-    ]
+    ],
+    "has_options": false
   },
   {
     "key": "SUBAGENT_TIMEOUT_S",
@@ -296,7 +312,8 @@
     "protected": false,
     "value": 10800.0,
     "type": "float",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "ANTHROPIC_API_KEY",
@@ -312,7 +329,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "CLAUDE_CODE_OAUTH_TOKEN",
@@ -328,7 +346,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "SUBAGENT_MODEL",
@@ -344,7 +363,8 @@
     "protected": false,
     "value": "claude-opus-5-5",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": true
   },
   {
     "key": "SUBAGENT_MAX_TURNS",
@@ -360,7 +380,8 @@
     "protected": false,
     "value": 200,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "SUBAGENT_MAX_BUDGET_USD",
@@ -376,7 +397,8 @@
     "protected": true,
     "value": 10.0,
     "type": "float",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "CODEX_API_KEY",
@@ -392,7 +414,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "CODEX_ACCESS_TOKEN",
@@ -408,7 +431,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "CODEX_MODEL",
@@ -424,7 +448,8 @@
     "protected": false,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": true
   },
   {
     "key": "VOICE_BASE_URL",
@@ -440,7 +465,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "VOICE_API_KEY",
@@ -456,7 +482,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "LOCAL_AGENT_BASE_URL",
@@ -472,7 +499,8 @@
     "protected": true,
     "value": "http://127.0.0.1:8090/v1",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "LOCAL_AGENT_API_KEY",
@@ -488,7 +516,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "LOCAL_AGENT_MODEL",
@@ -504,7 +533,8 @@
     "protected": false,
     "value": "qwen3-coder-30b-a3b",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": true
   },
   {
     "key": "LOCAL_AGENT_API",
@@ -523,7 +553,8 @@
     "choices": [
       "anthropic-messages",
       "openai-responses"
-    ]
+    ],
+    "has_options": false
   },
   {
     "key": "LLM_SERVER_MODEL",
@@ -539,7 +570,8 @@
     "protected": false,
     "value": "qwen3-coder-30b-a3b",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": true
   },
   {
     "key": "LLM_SERVER_PORT",
@@ -555,7 +587,8 @@
     "protected": false,
     "value": 8090,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "VOICE_SERVER_PORT",
@@ -571,7 +604,8 @@
     "protected": false,
     "value": 8765,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "VOICE_SERVER_STT",
@@ -587,7 +621,8 @@
     "protected": false,
     "value": "parakeet-tdt",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": true
   },
   {
     "key": "VOICE_SERVER_TTS",
@@ -603,7 +638,8 @@
     "protected": false,
     "value": "kokoro",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": true
   },
   {
     "key": "VOICE_SERVER_VOICE",
@@ -619,7 +655,8 @@
     "protected": false,
     "value": "af_heart",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": true
   },
   {
     "key": "VOICE_SERVER_ARGS",
@@ -635,7 +672,8 @@
     "protected": true,
     "value": "",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "OWNER_NAME",
@@ -651,7 +689,8 @@
     "protected": false,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "ALLOWED_CALLERS",
@@ -667,7 +706,8 @@
     "protected": true,
     "value": [],
     "type": "list",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "OWNER_NUMBER",
@@ -683,7 +723,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "KERYX_PIN",
@@ -699,7 +740,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "PIN_FAILURE_LIMIT",
@@ -715,7 +757,8 @@
     "protected": true,
     "value": 10,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "PIN_FAILURE_WINDOW_HOURS",
@@ -731,7 +774,8 @@
     "protected": true,
     "value": 24.0,
     "type": "float",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "PIN_LOCKOUT_MINUTES",
@@ -747,7 +791,8 @@
     "protected": true,
     "value": 60.0,
     "type": "float",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "BRIEFING_BEFORE_PIN",
@@ -763,7 +808,8 @@
     "protected": true,
     "value": true,
     "type": "bool",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "TWILIO_ACCOUNT_SID",
@@ -779,7 +825,8 @@
     "protected": false,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "TWILIO_AUTH_TOKEN",
@@ -795,7 +842,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "TWILIO_NUMBER",
@@ -811,7 +859,8 @@
     "protected": false,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "SMS_ENABLED",
@@ -827,7 +876,8 @@
     "protected": true,
     "value": false,
     "type": "bool",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "PUBLIC_HOST",
@@ -843,7 +893,8 @@
     "protected": true,
     "value": "keryx.example.com",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "CLOUDFLARE_TUNNEL",
@@ -859,7 +910,8 @@
     "protected": true,
     "value": "keryx",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "HOST",
@@ -875,7 +927,8 @@
     "protected": true,
     "value": "127.0.0.1",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "PORT",
@@ -891,7 +944,8 @@
     "protected": true,
     "value": 8080,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "GOOGLE_OAUTH_CLIENT_ID",
@@ -907,7 +961,8 @@
     "protected": false,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "GOOGLE_OAUTH_CLIENT_SECRET",
@@ -923,7 +978,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "GOOGLE_CLIENT_SECRETS_FILE",
@@ -939,7 +995,8 @@
     "protected": false,
     "value": null,
     "type": "path",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "USER_GOOGLE_EMAIL",
@@ -955,7 +1012,8 @@
     "protected": false,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "GOOGLE_WORKSPACE_MCP",
@@ -971,7 +1029,8 @@
     "protected": false,
     "value": false,
     "type": "bool",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "SLACK_BOT_TOKEN",
@@ -987,7 +1046,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "OPENAI_ADMIN_KEY",
@@ -1003,7 +1063,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "ANTHROPIC_ADMIN_KEY",
@@ -1019,7 +1080,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "PROJECTS",
@@ -1035,7 +1097,8 @@
     "protected": false,
     "value": {},
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "PROJECTS_ROOT",
@@ -1051,7 +1114,8 @@
     "protected": false,
     "value": "/Users/you/code",
     "type": "path",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "SKILLS_DIR",
@@ -1067,7 +1131,8 @@
     "protected": true,
     "value": "/Users/you/.claude/skills",
     "type": "path",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "KERYX_CHECKOUT",
@@ -1083,7 +1148,8 @@
     "protected": false,
     "value": null,
     "type": "path",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "ISSUE_REPORTING",
@@ -1099,7 +1165,8 @@
     "protected": true,
     "value": false,
     "type": "bool",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "ISSUE_REPO",
@@ -1115,7 +1182,8 @@
     "protected": true,
     "value": "wak31415/keryx",
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "APPROVALS_ENABLED",
@@ -1131,7 +1199,8 @@
     "protected": true,
     "value": true,
     "type": "bool",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "APPROVAL_ESCALATE_SECONDS",
@@ -1147,7 +1216,8 @@
     "protected": false,
     "value": 300.0,
     "type": "float",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "APPROVAL_CALL_WINDOW_SECONDS",
@@ -1163,7 +1233,8 @@
     "protected": false,
     "value": 240.0,
     "type": "float",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "APPROVAL_MAX_PER_HOUR",
@@ -1179,7 +1250,8 @@
     "protected": false,
     "value": 4,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "APPROVAL_QUIET_HOURS",
@@ -1195,7 +1267,8 @@
     "protected": false,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "APPROVAL_BASH_ALLOW",
@@ -1214,7 +1287,8 @@
       "git commit"
     ],
     "type": "list",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "APPROVAL_ROOTS",
@@ -1230,7 +1304,8 @@
     "protected": true,
     "value": [],
     "type": "list",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "MAX_CONCURRENT_TASKS",
@@ -1246,7 +1321,8 @@
     "protected": false,
     "value": 3,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "DISPATCH_WAIT_MAX_SECONDS",
@@ -1262,7 +1338,8 @@
     "protected": false,
     "value": 25,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "LOCAL_SILENCE_TIMEOUT",
@@ -1278,7 +1355,8 @@
     "protected": false,
     "value": 30.0,
     "type": "float",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "MAX_CALL_SECONDS",
@@ -1294,7 +1372,8 @@
     "protected": false,
     "value": 1800.0,
     "type": "float",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "MAX_PHONE_SESSIONS",
@@ -1310,7 +1389,8 @@
     "protected": false,
     "value": 2,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "DAILY_TASK_CAP",
@@ -1326,7 +1406,8 @@
     "protected": true,
     "value": 50,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "TRANSCRIPT_RETENTION_DAYS",
@@ -1342,7 +1423,8 @@
     "protected": true,
     "value": 0,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "TASK_RETENTION_DAYS",
@@ -1358,7 +1440,8 @@
     "protected": true,
     "value": 0,
     "type": "int",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "DATA_DIR",
@@ -1374,7 +1457,8 @@
     "protected": true,
     "value": "/Users/you/.local/share/keryx",
     "type": "path",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "STATE_DIR",
@@ -1390,7 +1474,8 @@
     "protected": true,
     "value": "/Users/you/.local/state/keryx",
     "type": "path",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "CACHE_DIR",
@@ -1406,7 +1491,8 @@
     "protected": true,
     "value": "/Users/you/.cache/keryx",
     "type": "path",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "SERVICE_MANAGER",
@@ -1427,7 +1513,8 @@
       "systemd",
       "launchd",
       "none"
-    ]
+    ],
+    "has_options": false
   },
   {
     "key": "SERVICE_UNIT",
@@ -1443,7 +1530,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "REPORT_SECRET",
@@ -1459,7 +1547,8 @@
     "protected": true,
     "value": null,
     "type": "string",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "LOG_LEVEL",
@@ -1481,7 +1570,8 @@
       "WARNING",
       "ERROR",
       "CRITICAL"
-    ]
+    ],
+    "has_options": false
   },
   {
     "key": "DEBUG_SKIP_TWILIO_VALIDATION",
@@ -1497,7 +1587,8 @@
     "protected": true,
     "value": false,
     "type": "bool",
-    "choices": null
+    "choices": null,
+    "has_options": false
   },
   {
     "key": "DEMO_MODE",
@@ -1513,6 +1604,7 @@
     "protected": true,
     "value": false,
     "type": "bool",
-    "choices": null
+    "choices": null,
+    "has_options": false
   }
 ]

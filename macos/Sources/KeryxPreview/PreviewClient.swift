@@ -19,6 +19,18 @@ public struct PreviewClient: KeryxClient {
         case slowToStop(done: Int64, total: Int64)
     }
 
+    /// What `voiceHere(voice:)` does.
+    public enum Setup: Sendable {
+        /// Yields the events of `PreviewData.voiceHereLines`, then finishes.
+        case replay
+        /// Yields these events, then waits until the setup is stopped.
+        case holding([VoiceSetupEvent])
+        /// Yields these events, then finishes.
+        case events([VoiceSetupEvent])
+        /// Yields these events, and stops only long after it is asked to.
+        case slowToStop([VoiceSetupEvent])
+    }
+
     let statusReply: Result<StatusReport, KeryxError>
     let doctorReply: Result<DoctorReport, KeryxError>
     let tasksReply: Result<[TaskItem], KeryxError>
@@ -28,7 +40,11 @@ public struct PreviewClient: KeryxClient {
     let configReply: Result<[ConfigRow], KeryxError>
     let approvalsReply: Result<ApprovalsReport, KeryxError>
     let memoryReply: Result<MemoryDocument, KeryxError>
+    let voiceReply: Result<VoiceStatus, KeryxError>
+    let optionsReply: [String: Result<ConfigOptions, KeryxError>]
+    let serverReply: Result<VoiceServerResult, KeryxError>
     let pullBehaviour: Pull
+    let setupBehaviour: Setup
     let writeError: KeryxError?
 
     public init(
@@ -41,7 +57,11 @@ public struct PreviewClient: KeryxClient {
         config: Result<[ConfigRow], KeryxError> = .success(PreviewData.config),
         approvals: Result<ApprovalsReport, KeryxError> = .success(PreviewData.approvals),
         memory: Result<MemoryDocument, KeryxError> = .success(PreviewData.memory),
+        voice: Result<VoiceStatus, KeryxError> = .success(PreviewData.voice),
+        options: [String: Result<ConfigOptions, KeryxError>] = PreviewData.options.mapValues { .success($0) },
+        server: Result<VoiceServerResult, KeryxError> = .success(PreviewClient.serverSaved),
         pull: Pull = .replay,
+        setup: Setup = .replay,
         writeError: KeryxError? = nil
     ) {
         statusReply = status
@@ -53,7 +73,11 @@ public struct PreviewClient: KeryxClient {
         configReply = config
         approvalsReply = approvals
         memoryReply = memory
+        voiceReply = voice
+        optionsReply = options
+        serverReply = server
         pullBehaviour = pull
+        setupBehaviour = setup
         self.writeError = writeError
     }
 
@@ -68,6 +92,65 @@ public struct PreviewClient: KeryxClient {
     public func config() async throws -> [ConfigRow] { try configReply.get() }
     public func approvals(limit: Int) async throws -> ApprovalsReport { try approvalsReply.get() }
     public func memory() async throws -> MemoryDocument { try memoryReply.get() }
+
+    public func options(key: String) async throws -> ConfigOptions {
+        try (optionsReply[key] ?? .success(PreviewData.builtinOptions(key))).get()
+    }
+
+    public func voice() async throws -> VoiceStatus { try voiceReply.get() }
+
+    public func useVoiceOpenAI() async throws -> VoiceUseResult {
+        try check()
+        return VoiceUseResult(saved: ["VOICE_BASE_URL": .null], restartNeeded: true)
+    }
+
+    public func useVoiceServer(url: String, key: String?, keepAnyway: Bool) async throws -> VoiceServerResult {
+        try check()
+        var answer = try serverReply.get()
+        if keepAnyway, answer.saved == nil {
+            answer.saved = ["VOICE_BASE_URL": .string(url)]
+            answer.problem = nil
+            answer.restartNeeded = true
+        }
+        return answer
+    }
+
+    /// A server that answered and was saved, with one thing worth knowing about it.
+    public static let serverSaved = VoiceServerResult(
+        saved: ["VOICE_BASE_URL": .string("http://studio.local:8000/v1"), "VOICE_API_KEY": .string("(set)")],
+        problem: nil, restartNeeded: true,
+        warnings: ["The server speaks over plain HTTP, so the call's audio crosses the network unencrypted"])
+
+    /// A server that did not answer the handshake: nothing saved.
+    public static let serverProblem = VoiceServerResult(
+        saved: nil, problem: "studio.local:8000 did not answer the Realtime handshake: connection refused",
+        restartNeeded: false, warnings: [])
+
+    public func voiceHere(voice: String?) -> VoiceSetupStream {
+        switch setupBehaviour {
+        case .replay: Self.stream(PreviewData.voiceHereLines.compactMap(VoiceSetupEvent.parse), finishes: true)
+        case let .holding(events): Self.stream(events, finishes: false)
+        case let .events(events): Self.stream(events, finishes: true)
+        case let .slowToStop(events):
+            {
+                let (stream, continuation) = AsyncThrowingStream<VoiceSetupEvent, Error>.makeStream()
+                for event in events { continuation.yield(event) }
+                return VoiceSetupStream(stream, stop: { _ = continuation })
+            }()
+        }
+    }
+
+    /// `events`, then the end (`finishes`) or a wait until stopped — which, as the CLI does,
+    /// says `cancelled` and ends.
+    private static func stream(_ events: [VoiceSetupEvent], finishes: Bool) -> VoiceSetupStream {
+        let (stream, continuation) = AsyncThrowingStream<VoiceSetupEvent, Error>.makeStream()
+        for event in events { continuation.yield(event) }
+        if finishes { continuation.finish() }
+        return VoiceSetupStream(stream, stop: {
+            continuation.yield(.cancelled)
+            continuation.finish()
+        })
+    }
 
     public func pull(model: String) -> PullStream {
         let events: [PullEvent]

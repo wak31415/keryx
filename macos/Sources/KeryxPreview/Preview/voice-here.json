@@ -1,0 +1,21 @@
+{
+  "mode": "here",
+  "base_url": "http://127.0.0.1:8765/v1",
+  "realtime_model": "gpt-realtime-2.1",
+  "voice": "marin",
+  "assistant": "Lyra",
+  "openai_key_set": true,
+  "needs": null,
+  "here": {
+    "installed": true,
+    "program": "/Users/you/.local/bin/keryx-voice-server",
+    "voice": "af_heart",
+    "port": 8765,
+    "unit_installed": true,
+    "reachable": true,
+    "words_model": "qwen3-coder-30b-a3b"
+  },
+  "server": {
+    "reachable": null
+  }
+}

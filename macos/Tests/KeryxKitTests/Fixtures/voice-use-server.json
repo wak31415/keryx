@@ -1,0 +1,11 @@
+{
+  "saved": {
+    "VOICE_BASE_URL": "http://studio.local:8000/v1",
+    "VOICE_API_KEY": "(set)"
+  },
+  "problem": null,
+  "restart_needed": true,
+  "warnings": [
+    "The server speaks over plain HTTP, so the call's audio crosses the network unencrypted"
+  ]
+}
