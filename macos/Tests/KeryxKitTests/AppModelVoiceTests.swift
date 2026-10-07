@@ -265,7 +265,7 @@ extension AppModelTests {
         let model = AppModel.preview()
         #expect(model.voice.value == PreviewData.voice)
         let keys = PreviewData.config.filter(\.hasOptions).map(\.key)
-        #expect(keys.count == 11)
+        #expect(keys.count == 12)
         #expect(Set(model.options.keys) == Set(keys))
         #expect(model.options["OPENAI_VOICE"]?.value == PreviewData.options["OPENAI_VOICE"])
         #expect(model.options["CODEX_MODEL"]?.value == PreviewData.options["CODEX_MODEL"])
