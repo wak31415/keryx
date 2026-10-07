@@ -38,6 +38,7 @@ from keryx.config.files import (
 from keryx.config.pin import PIN_PATTERN, PIN_RULE, pin_file, read_enrolled_pin, write_enrolled_pin
 from keryx.config.settings import (
     GOOGLE_CLIENT_FILE,
+    GROUPS,
     LEGACY_CLIENT_FILE,
     META_TABLES,
     NOT_STORED,
@@ -47,6 +48,7 @@ from keryx.config.settings import (
     env_var_names,
     field_for,
     field_group,
+    field_title,
     is_secret,
     parse_google_client,
 )
@@ -239,7 +241,9 @@ class ConfigStore:
             rows.append(
                 {
                     "key": key,
+                    "title": field_title(name),
                     "group": field_group(name),
+                    "group_title": GROUPS[field_group(name)],
                     "description": info.description or "",
                     "required": info.is_required(),
                     "set": source != FROM_DEFAULT,

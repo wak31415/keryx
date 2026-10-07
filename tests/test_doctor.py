@@ -15,6 +15,7 @@ from keryx.doctor import (
     Check,
     EndpointReach,
     _data_dir_privacy_check,
+    check_title,
     endpoint_checks,
     format_check,
     has_hard_failure,
@@ -24,6 +25,18 @@ from keryx.endpoints import Probe
 from keryx.integrations.gmail import token_path
 from keryx.issues import GhStatus
 from keryx.logging_util import mask_number
+
+
+@pytest.fixture(autouse=True)
+def every_check_has_a_title(monkeypatch):
+    """Every check any test here makes carries a title for `doctor --json`."""
+    made = Check.__init__
+
+    def titled(self, *args, **kwargs):
+        made(self, *args, **kwargs)
+        assert self.as_dict()["title"].strip(), self
+
+    monkeypatch.setattr(Check, "__init__", titled)
 
 
 @pytest.fixture
@@ -811,6 +824,34 @@ def test_a_number_not_on_the_account_is_a_failure(healthy):
 
     assert (check.ok, check.severity) == (False, "hard")
     assert "+15559999999" not in check.detail
+
+
+def test_a_check_named_by_a_setting_takes_that_settings_title(healthy):
+    checks = by_name(run_doctor_checks(healthy))
+
+    assert checks["OPENAI_API_KEY"].as_dict()["title"] == "OpenAI API key"
+    assert checks["PUBLIC_HOST"].as_dict()["title"] == "Public hostname"
+    assert checks["OPENAI_API_KEY"].as_dict()["name"] == "OPENAI_API_KEY"
+
+
+def test_an_older_key_names_the_same_setting():
+    assert check_title("JARVIS_PIN") == check_title("KERYX_PIN") == "Phone PIN"
+    assert check_title("FAKE_AGENTS") == "Demo mode"
+
+
+@pytest.mark.parametrize(
+    ("name", "title"),
+    [
+        ("storage", "Storage"),
+        ("coding agents", "Coding agents"),
+        ("Twilio credentials", "Twilio credentials"),
+        ("PIN", "PIN"),
+        # Only a key in capitals is a setting's: a check called "port" is not `PORT`.
+        ("port", "Port"),
+    ],
+)
+def test_any_other_check_is_its_name_in_sentence_case(name, title):
+    assert check_title(name) == title
 
 
 def test_every_check_has_a_section_and_a_state(healthy):

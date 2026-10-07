@@ -173,6 +173,26 @@ def test_list_json_says_what_kind_of_value_each_setting_takes(home):
     assert rows["OPENAI_API_KEY"]["type"] == "string"
 
 
+def test_list_json_carries_a_title_for_each_setting_and_its_group(home):
+    """What the owner reads in the Mac app, in place of the environment names."""
+    rows = json.loads(run("config", "list", "--json").output)
+    by_key = {row["key"]: row for row in rows}
+
+    assert all(row["title"] and row["group_title"] for row in rows)
+    assert (by_key["OPENAI_API_KEY"]["title"], by_key["OPENAI_API_KEY"]["group_title"]) == (
+        "OpenAI API key", "Voice"
+    )
+    assert by_key["PORT"]["group_title"] == "Phone"
+
+
+def test_list_as_a_table_still_shows_the_keys(home):
+    """The command line is where keys are typed, so it keeps them."""
+    result = run("config", "list", "--group", "voice")
+
+    assert "OPENAI_API_KEY" in result.output
+    assert "OpenAI API key" not in result.output
+
+
 def test_list_by_group_as_a_table(home):
     run("config", "set", "OPENAI_API_KEY", "--stdin", input="sk-live")
 
@@ -289,6 +309,9 @@ def test_doctor_json_is_one_document_with_sections_and_states(home):
     assert result.exit_code == (0 if document["ok"] else 1)
     voice = next(check for check in document["checks"] if check["name"] == "OPENAI_API_KEY")
     assert (voice["state"], voice["section"]) == ("missing", "voice")
+    assert voice["title"] == "OpenAI API key"
+    assert all(check["title"] for check in document["checks"])
+    assert "OpenAI API key" not in run("doctor").output
 
 
 def test_doctor_fix_tightens_a_loose_secrets_file(home):

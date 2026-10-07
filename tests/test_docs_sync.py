@@ -14,6 +14,7 @@ from pathlib import Path
 from keryx.agents.registry import BACKENDS
 from keryx.config import Settings, env_var_name
 from keryx.config.reference import render as render_configuration
+from keryx.config.settings import field_title
 from keryx.tools.builtin import BUILTIN_TOOL_NAMES
 
 #: The repository root, so the test does not depend on the working directory pytest ran in.
@@ -59,6 +60,14 @@ def test_the_configuration_reference_names_every_setting():
     )
 
     assert missing == set(), f"absent from docs/configuration.md: {sorted(missing)}"
+
+
+def test_the_configuration_reference_gives_each_setting_its_title():
+    """The name the Mac app shows, beside the key a person types."""
+    text = CONFIGURATION_DOC.read_text()
+    shown = dict(re.findall(r"^\| `([A-Z][A-Z0-9_]*)` \| ([^|]+?) \|", text, re.M))
+
+    assert {env_var_name(name): field_title(name) for name in Settings.model_fields} == shown
 
 
 def test_the_reserved_names_are_exactly_the_tools_registered_in_the_source():

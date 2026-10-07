@@ -45,6 +45,8 @@ from keryx.config import (
     PIN_FROM_FILE,
     Settings,
     env_var_name,
+    field_for,
+    field_title,
     pin_file,
 )
 from keryx.config.permissions import is_protected
@@ -95,7 +97,18 @@ class Check:
         return "ok" if self.ok else ("missing" if self.unset else "failed")
 
     def as_dict(self) -> dict[str, Any]:
-        return {**asdict(self), "state": self.state}
+        return {**asdict(self), "state": self.state, "title": check_title(self.name)}
+
+
+def check_title(name: str) -> str:
+    """What `--json` calls a check where a person reads it (the Mac app's Overview).
+
+    A check named by a setting's key (`OPENAI_API_KEY`, or an older name for one) takes that
+    setting's title; any other is its name with the first letter capitalised. Only a key in
+    capitals counts, so a check that happened to be called `port` would not be the setting.
+    """
+    field = field_for(name) if name == name.upper() else None
+    return field_title(field) if field is not None else name[:1].upper() + name[1:]
 
 
 @dataclass(frozen=True)

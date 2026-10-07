@@ -17,14 +17,15 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   missing, saves as it goes; needs a terminal). A coding agent: `uv run keryx setup
   --agent-instructions`, which prints the command-line path below
 - Check the machine's setup: `uv run keryx doctor [--json] [--fix]` (`--fix`
-  only tightens secret files to 0600/0700; `--json` carries each check's `section` and
-  `state`: ok / missing / failed)
+  only tightens secret files to 0600/0700; `--json` carries each check's `section`,
+  `state` — ok / missing / failed — and `title`, a setting's own when a key names the check)
 - Whether it is running, and what it has to say: `uv run keryx status [--json]` (a report,
   so it always exits 0, a `keryx migrate` still to run included; `--json` is the document
   the Mac app's menu bar polls — `keryx/status.py`, schema 1, every part `ok`/`error` with
   its fields present either way)
 - Settings: `uv run keryx config list [--json] [--group G]` (`--json` gives each row its
-  `type` — `keryx/config/types.py` — and a choice's `choices`), `config get KEY… [--shell]`
+  `title` and `group_title`, its `type` — `keryx/config/types.py` — and a choice's
+  `choices`; the table keeps the keys, which are what is typed), `config get KEY… [--shell]`
   (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
   `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
   `config import-env [PATH]`, `config lock|unlock KEY` (what the running service may change)
@@ -151,7 +152,8 @@ remember:
   `web_search` behind a built-in, the rest behind a plugin, which is where the tool is
   built. Their builders take explicit values, never a plugin's file.
 - **config** — `config/` is the settings and where they live: `settings` (every field with
-  a `description`, a `group` and a default `service_writable`, declared with `setting(...)`),
+  a `description`, a `title`, a `group` and a default `service_writable`, declared with
+  `setting(...)`; the title is the sentence-case name the Mac app shows in place of the key),
   `store` (`KERYX_HOME/config.toml` and `secrets.toml`, the only writer of either),
   `permissions` (what the running service may change; `PROTECTED_KEYS`), `pin`
   (`KERYX_HOME/pin`), `files` (the XDG directories, the modes and atomic writes), `migrate`
@@ -719,7 +721,8 @@ inside functions, not imported at module scope, so the suite runs without them.
 - Only `config/store.py` writes the configuration, and a secret is never on argv, in a log
   or in output. Never print or paste `secrets.toml` or an old `.env`. `docs/configuration.md`
   is generated from `Settings` (`python -m keryx.config.reference`); a new field gets a
-  description and a group, and `tests/test_docs_sync.py` fails until the doc is regenerated.
+  description, a group and a title, and `tests/test_docs_sync.py` fails until the doc is
+  regenerated.
 - The database runs ahead of the code. `_migrate` upgrades `tasks.db` from whichever process
   opens it first, and `keryx serve` holds the `Task` it imported at startup, so a new column
   reaches the file while the service is still a build behind. `Task.from_row` drops columns it
