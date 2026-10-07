@@ -121,9 +121,11 @@ public struct PreviewClient: KeryxClient {
         problem: nil, restartNeeded: true,
         warnings: ["The server speaks over plain HTTP, so the call's audio crosses the network unencrypted"])
 
-    /// A server that did not answer the handshake: nothing saved.
+    /// A server that did not answer the handshake: nothing saved. Worded as the CLI words it.
     public static let serverProblem = VoiceServerResult(
-        saved: nil, problem: "studio.local:8000 did not answer the Realtime handshake: connection refused",
+        saved: nil,
+        problem: "could not open studio.local's Realtime socket (ConnectionRefusedError: [Errno 61] "
+            + "Connect call failed ('studio.local', 8000))",
         restartNeeded: false, warnings: [])
 
     public func voiceHere(voice: String?) -> VoiceSetupStream {

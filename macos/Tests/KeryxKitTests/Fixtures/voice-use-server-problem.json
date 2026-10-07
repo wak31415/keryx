@@ -1,6 +1,6 @@
 {
   "saved": null,
-  "problem": "studio.local:8000 did not answer the Realtime handshake: connection refused",
-  "restart_needed": false,
-  "warnings": []
+  "problem": "could not open 127.0.0.1's Realtime socket (ConnectionRefusedError: [Errno 61] Connect call failed ('127.0.0.1', 9))",
+  "warnings": [],
+  "restart_needed": false
 }

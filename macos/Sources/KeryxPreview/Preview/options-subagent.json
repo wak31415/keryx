@@ -26,5 +26,5 @@
   "source": "builtin",
   "live": false,
   "free_form": true,
-  "error": "Anthropic lists models only to an API key; showing the models Keryx knows"
+  "error": "There's no Anthropic API key, so Keryx can't ask which models exist."
 }

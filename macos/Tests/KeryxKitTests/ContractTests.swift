@@ -297,7 +297,7 @@ import KeryxPreview
         #expect(Set(terminal) == Set(Self.voiceHere.events.keys).subtracting(["step"]))
         #expect(Self.voiceHere.exits == Set(terminal))
         #expect(Self.voiceHere.cancelledExit == 130)
-        for line in PreviewData.voiceHereLines {
+        for line in PreviewData.voiceHereLines + PreviewData.voiceHereRefusedLines {
             let event = try? #require(VoiceSetupEvent.parse(line))
             #expect(event?.isTerminal == terminal.contains(event.map(Self.name(of:)) ?? ""))
         }

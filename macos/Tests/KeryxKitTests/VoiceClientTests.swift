@@ -74,8 +74,10 @@ import KeryxPreview
         #expect(request.stdin == Data("vk-very-secret".utf8))
         #expect(!request.arguments.joined().contains("vk-very-secret"))
         #expect(!request.environment.values.contains { $0.contains("vk-very-secret") })
+        // Kept anyway: saved, the key said only as "(set)", and the handshake's problem too.
         #expect(result.saved?["VOICE_API_KEY"] == .string("(set)"))
-        #expect(result.warnings.count == 1)
+        #expect(result.problem != nil)
+        #expect(result.warnings.isEmpty)
 
         _ = try await client.useVoiceServer(url: "http://studio.local:8000/v1", key: .stored, keepAnyway: true)
         let second = try #require(fake.requests.last)
@@ -123,7 +125,7 @@ import KeryxPreview
         let result = try await CLIClient(location: .fixture, runner: fake)
             .useVoiceServer(url: "http://studio.local:8000/v1", key: .stored, keepAnyway: false)
         #expect(result.saved == nil)
-        #expect(result.problem?.contains("handshake") == true)
+        #expect(result.problem?.contains("Realtime socket") == true)
         #expect(!result.restartNeeded)
     }
 

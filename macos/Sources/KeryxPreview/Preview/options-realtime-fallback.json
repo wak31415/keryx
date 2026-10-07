@@ -11,5 +11,5 @@
   "source": "builtin",
   "live": false,
   "free_form": true,
-  "error": "OPENAI_API_KEY is not set, so OpenAI cannot be asked"
+  "error": "There's no OpenAI API key, so Keryx can't ask which models exist."
 }

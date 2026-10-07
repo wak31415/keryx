@@ -51,7 +51,7 @@ import KeryxPreview
         #expect(OptionWording.note(Loadable(error: failure)) == "Couldn't list the choices — No such command 'options'.")
         #expect(OptionWording.note(nil) == nil)
         #expect(OptionWording.note(Loadable(value: PreviewData.realtimeFallback), titles: Wording.titles(PreviewData.config))
-            == "Showing the built-in list — “OpenAI API key” is not set, so OpenAI cannot be asked")
+            == "Showing the built-in list — there's no OpenAI API key, so Keryx can't ask which models exist.")
         let naming = Self.list([], live: false, error: "LOCAL_AGENT_BASE_URL isn't set.")
         #expect(OptionWording.note(Loadable(value: naming), titles: Wording.titles(PreviewData.config))
             == "Showing the built-in list — “Local agent server URL” isn't set.")
@@ -125,7 +125,7 @@ import KeryxPreview
     @Test func catalogHasEveryVoiceAndOptionsState() {
         let ids = Set(ScreenCatalog.entries().map(\.id))
         for id in ["voice-openai", "voice-openai-no-key", "voice-here", "voice-here-picked", "voice-here-setting-up",
-                   "voice-here-setting-up-step", "voice-here-stopping", "voice-here-failed", "voice-here-finished",
+                   "voice-here-setting-up-step", "voice-here-stopping", "voice-here-failed", "voice-here-refused", "voice-here-finished",
                    "voice-here-needs-model", "voice-server", "voice-server-picked", "voice-server-stored-key", "voice-server-removing-key", "voice-server-saved-warning",
                    "voice-server-problem", "voice-error", "window-voice",
                    "configuration-model-menus", "configuration-options-unavailable", "configuration-other-sheet",

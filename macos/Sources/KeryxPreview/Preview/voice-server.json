@@ -1,11 +1,10 @@
 {
   "mode": "server",
-  "base_url": "http://studio.local:8000/v1",
+  "base_url": "http://127.0.0.1:9/v1",
   "realtime_model": "gpt-realtime-2.1",
-  "voice": "marin",
+  "voice": "",
   "assistant": "Lyra",
   "openai_key_set": true,
-  "needs": null,
   "here": {
     "installed": false,
     "program": null,
@@ -15,7 +14,8 @@
     "reachable": false,
     "words_model": "qwen3-coder-30b-a3b"
   },
+  "needs": null,
   "server": {
-    "reachable": true
+    "reachable": false
   }
 }

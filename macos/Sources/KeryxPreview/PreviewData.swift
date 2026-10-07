@@ -40,13 +40,20 @@ public enum PreviewData {
     public static var config: [ConfigRow] { decode("config.json") }
     public static var approvals: ApprovalsReport { decode("approvals.json") }
     public static var memory: MemoryDocument { decode("memory.json") }
+    /// `voice --json` captured from a sandbox: OpenAI with a local model for the words, and
+    /// a server elsewhere that is not answering; with nothing set, needing a local model.
+    /// `voice-here.json` is that first one edited by hand into a running voice server here.
     public static var voice: VoiceStatus { decode("voice.json") }
     public static var voiceHere: VoiceStatus { decode("voice-here.json") }
     public static var voiceServer: VoiceStatus { decode("voice-server.json") }
     public static var voiceNeedsModel: VoiceStatus { decode("voice-needs-model.json") }
 
-    /// `voice-here.jsonl` as its individual lines.
+    /// `voice-here.jsonl` as its individual lines: a setup's steps, written by hand (a
+    /// sandbox cannot install the voice server). uv reports no sizes, so no step has any.
     public static var voiceHereLines: [String] { lines("voice-here.jsonl") }
+
+    /// `voice use here` refused for want of a local model, captured from a sandbox.
+    public static var voiceHereRefusedLines: [String] { lines("voice-here-refused.jsonl") }
 
     private static func lines(_ name: String) -> [String] {
         String(decoding: data(name), as: UTF8.self)

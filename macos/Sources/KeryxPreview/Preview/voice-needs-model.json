@@ -5,7 +5,6 @@
   "voice": "marin",
   "assistant": "Lyra",
   "openai_key_set": false,
-  "needs": "local_agent_model",
   "here": {
     "installed": false,
     "program": null,
@@ -15,6 +14,7 @@
     "reachable": false,
     "words_model": null
   },
+  "needs": "local_agent_model",
   "server": {
     "reachable": null
   }

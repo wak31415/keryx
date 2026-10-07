@@ -1,11 +1,9 @@
 {
   "saved": {
-    "VOICE_BASE_URL": "http://studio.local:8000/v1",
+    "VOICE_BASE_URL": "http://127.0.0.1:9/v1",
     "VOICE_API_KEY": "(set)"
   },
-  "problem": null,
-  "restart_needed": true,
-  "warnings": [
-    "The server speaks over plain HTTP, so the call's audio crosses the network unencrypted"
-  ]
+  "problem": "could not open 127.0.0.1's Realtime socket (ConnectionRefusedError: [Errno 61] Connect call failed ('127.0.0.1', 9))",
+  "warnings": [],
+  "restart_needed": true
 }

@@ -37,6 +37,15 @@ extension ScreenCatalog {
                     .error("Couldn't download the speech models: the connection to huggingface.co was lost"),
                 ])))
             },
+            Entry("voice-here-refused", size: screen) {
+                VoiceView(mode: .here).environment({
+                    let model = AppModel.preview(client: PreviewClient(
+                        voice: .success(PreviewData.voiceNeedsModel),
+                        setup: .events(PreviewData.voiceHereRefusedLines.compactMap(VoiceSetupEvent.parse))))
+                    model.setUpVoiceHere()
+                    return model
+                }())
+            },
             Entry("voice-here-finished", size: screen) {
                 VoiceView(mode: .here).environment(settingUp(.replay))
             },
