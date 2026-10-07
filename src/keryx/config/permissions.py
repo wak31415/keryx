@@ -76,6 +76,9 @@ PROTECTED_PATTERNS = (
     # Where a model is. A voice address pointed elsewhere ships every call's audio, the
     # spoken PIN included, to whoever is there; an agent's, every task and its files.
     "*_BASE_URL",
+    # Where the voice model's searches go: every question looked up on a call, said aloud.
+    "WEB_SEARCH",
+    "SEARXNG_URL",
     # Flags for the local voice server, which could bind it beyond this machine.
     "VOICE_SERVER_ARGS",
     # Development switches, every one of which turns a check off.

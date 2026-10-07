@@ -53,6 +53,7 @@ from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path, read_memory
 from keryx.endpoints import Endpoint, Probe, probe, warnings
 from keryx.integrations.gmail import token_path
+from keryx.integrations.web_search import DESCRIPTIONS, searxng_check
 from keryx.issues import GH_INSTALL_URL, SKILL, gh_status
 from keryx.localmodels import runtimes, servers
 from keryx.logging_util import mask_number
@@ -100,12 +101,13 @@ class Check:
 
 @dataclass(frozen=True)
 class EndpointReach:
-    """The two reads `doctor` makes of a model server, over the network: the model list, and
-    a Realtime session opened and closed. Only `keryx doctor` hands one in; the wizard, which
-    reads these checks on every screen, stays off the network."""
+    """The reads `doctor` makes over the network: a model server's model list, a Realtime
+    session opened and closed, and one search on a SearXNG instance. Only `keryx doctor`
+    hands one in; the wizard, which reads these checks on every screen, stays off it."""
 
     models: Callable[[Endpoint], Probe] = probe
     realtime: Callable[[Endpoint], str | None] = realtime_problem
+    searxng: Callable[[str], str | None] = searxng_check
 
 
 def format_check(check: Check) -> str:
@@ -146,6 +148,7 @@ def run_doctor_checks(
         _storage_check(settings),
         _config_check(store),
         *_voice_checks(settings),
+        _web_search_check(settings, reach),
         _agent_config_check(settings),
         *_agent_checks(settings),
         _local_overview_check(settings),
@@ -205,8 +208,8 @@ def _voice_checks(settings: Settings) -> list[Check]:
     """Where a call's voice goes, and the OpenAI key it may or may not need.
 
     With `VOICE_BASE_URL` blank the key is the voice, and Keryx cannot take a call without
-    it. With a voice server of the owner's own it buys only the voice model's `web_search`,
-    so its absence is a warning.
+    it. With a voice server of the owner's own it is not needed at all; whether search
+    still wants it is `_web_search_check`'s to say.
     """
     key = settings.openai_key
     if not settings.voice_base_url:
@@ -221,15 +224,31 @@ def _voice_checks(settings: Settings) -> list[Check]:
                 )
             ]
         return [Check("OPENAI_API_KEY", True, "set", section="voice")]
-    checks = [Check("voice", True, f"your own server at {settings.voice_base_url}",
-                    section="voice")]
-    if key is None:
-        checks.append(Check("OPENAI_API_KEY", False, "not set — calls have no web_search",
-                            severity="soft", section="voice", unset=True))
-    else:
-        checks.append(Check("OPENAI_API_KEY", True, "set, for web_search", severity="soft",
-                            section="voice"))
-    return checks
+    return [Check("voice", True, f"your own server at {settings.voice_base_url}",
+                  section="voice")]
+
+
+def _web_search_check(settings: Settings, reach: EndpointReach | None = None) -> Check:
+    """What the voice model's `web_search` runs on. Only a soft check: a call without search
+    still works, it just hands every question it cannot answer to an agent."""
+    backend, why = settings.web_search_backend()
+    if settings.web_search == "off":
+        return Check("web search", True, "off", severity="soft", section="local")
+    if backend is None:
+        return Check("web search", False, f"none — {why}", severity="soft", section="local",
+                     unset=settings.web_search == "auto")
+    detail = DESCRIPTIONS[backend]
+    if backend == "searxng":
+        detail += f" at {settings.searxng_url}"
+        problem = reach.searxng(settings.searxng_url) if reach and settings.searxng_url else None
+        if problem is not None:
+            return Check("web search", False, f"{detail}: {problem}", severity="soft",
+                         section="local")
+    elif backend == "google":
+        detail += f" ({settings.google_search_model})"
+    if settings.web_search == "auto":
+        detail += " — the first set up (WEB_SEARCH=auto)"
+    return Check("web search", True, detail, severity="soft", section="local")
 
 
 def _agent_config_check(settings: Settings) -> Check:

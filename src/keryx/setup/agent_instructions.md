@@ -38,7 +38,10 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    Mac) runs it; `keryx config set AGENTS_ENABLED claude,local` offers it. A local voice is
    `--voice` the same way, with `VOICE_BASE_URL` set only once `keryx doctor` says the voice
    server opens a Realtime session. A server elsewhere is just its address in
-   `LOCAL_AGENT_BASE_URL` or `VOICE_BASE_URL`, its key by `--stdin`.
+   `LOCAL_AGENT_BASE_URL` or `VOICE_BASE_URL`, its key by `--stdin`. With a voice of their
+   own, ask where the assistant should search the web: `WEB_SEARCH` is `searxng` (with
+   `SEARXNG_URL`), `google` (`GEMINI_API_KEY` by `--stdin`), `openai`, `ddgs` or `off` —
+   these two settings are theirs to set at the terminal, never yours.
 6. **About them, with their permission.** Ask before you read their folders. If they agree,
    draft one summary per project into `{projects}/<name>.md` — written to be heard, at
    most {max_brief} characters each and {max_total} in all, and nothing from `.env` files,

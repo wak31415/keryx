@@ -90,7 +90,8 @@ def test_the_voice_on_the_same_gpu_keeps_room_for_itself(make_ctx, world):
     world.machine = Hardware("cuda", "RTX 4090", 27.0, 64)
     world.s2s = "/bin/s2s"
     ctx = make_ctx([("model run", "here"), ("voice on a call", "here"),
-                    ("Which model?", DEFAULT), ("do the work", False), ("Which voice?", DEFAULT)])
+                    ("Which model?", DEFAULT), ("do the work", False), ("Which voice?", DEFAULT),
+                    ("search the web", "ddgs")])
 
     local_models.run_section(ctx)
 
@@ -226,7 +227,7 @@ def test_the_voice_on_this_machine_is_installed_voiced_and_only_then_used(make_c
                        "LOCAL_AGENT_MODEL": CODER.key, "ASSISTANT_NAME": "Jarvis"})
     world.ports = {8765: 8766}  # something else has speech-to-speech's own port
     ctx = make_ctx([("model run", "keep"), ("voice on a call", "here"),
-                    ("Which voice?", DEFAULT)])
+                    ("Which voice?", DEFAULT), ("search the web", "ddgs")])
 
     local_models.run_section(ctx)
 
@@ -276,14 +277,15 @@ def test_too_little_disk_for_the_voice_server(make_ctx, world):
 
 def test_a_voice_server_elsewhere_is_asked_for_a_session(make_ctx, world):
     ctx = make_ctx([("model run", "none"), ("voice on a call", "elsewhere"),
-                    ("voice server's address", "http://192.168.1.20:8765"), ("Its key", "")])
+                    ("voice server's address", "http://192.168.1.20:8765"), ("Its key", ""),
+                    ("search the web", "ddgs")])
 
     local_models.run_section(ctx)
 
     assert ctx.refresh().voice_base_url == "http://192.168.1.20:8765/v1"
     assert ("realtime", "http://192.168.1.20:8765/v1") in world.calls
     assert "spoken PIN" in ctx.ui.lines("warn")[0]
-    assert any("no web search" in line for line in ctx.ui.lines("note"))
+    assert ctx.refresh().web_search == "ddgs"  # a voice of its own asks where to search
 
 
 def test_a_voice_server_that_refuses_is_kept_only_if_asked(make_ctx, world):
@@ -317,7 +319,8 @@ def test_what_is_set_is_offered_to_keep(make_ctx, world):
     ConfigStore().set({"VOICE_BASE_URL": "http://127.0.0.1:8765/v1",
                        "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1",
                        "LOCAL_AGENT_MODEL": "m"})
-    ctx = make_ctx([("model run", DEFAULT), ("voice on a call", DEFAULT)])
+    ctx = make_ctx([("model run", DEFAULT), ("voice on a call", DEFAULT),
+                    ("search the web", "ddgs")])
 
     local_models.run_section(ctx)
 
@@ -429,7 +432,7 @@ def test_a_voice_server_kept_although_it_did_not_answer(make_ctx, world):
     ConfigStore().set({"OPENAI_API_KEY": "sk-x"})
     ctx = make_ctx([("model run", "none"), ("voice on a call", "elsewhere"),
                     ("voice server's address", "https://voice.example.com"), ("Its key", "vk"),
-                    ("Keep it anyway", True)])
+                    ("Keep it anyway", True), ("search the web", "ddgs")])
 
     local_models.run_section(ctx)
 
@@ -462,7 +465,8 @@ def test_the_voice_already_ours_keeps_its_port(make_ctx, world):
                        "VOICE_BASE_URL": "http://127.0.0.1:18765/v1"})
     world.s2s = "/bin/s2s"
     world.ports = {18765: 18766}  # it is ours that is listening there
-    ctx = make_ctx([("model run", "keep"), ("voice on a call", "here"), ("Which voice?", DEFAULT)])
+    ctx = make_ctx([("model run", "keep"), ("voice on a call", "here"), ("Which voice?", DEFAULT),
+                    ("search the web", "ddgs")])
 
     local_models.run_section(ctx)
 
@@ -475,3 +479,87 @@ def test_no_local_agent_when_there_is_none_changes_nothing(make_ctx, world):
     local_models.run_section(ctx)
 
     assert ConfigStore().stored() == {} and world.calls == []
+
+
+# --- web search --------------------------------------------------------------------------
+
+SEARCH = "Where should the assistant search the web?"
+
+
+def _own_voice() -> None:
+    ConfigStore().set({"VOICE_BASE_URL": "http://127.0.0.1:8765/v1"})
+
+
+def test_a_voice_of_your_own_asks_where_to_search_and_keeps_the_answer(make_ctx, world):
+    _own_voice()
+    ctx = make_ctx([("model run", "none"), ("voice on a call", "keep"),
+                    ("search the web", "ddgs")])
+
+    local_models.run_section(ctx)
+
+    assert ctx.ui.done(), ctx.ui.answers
+    assert ctx.refresh().web_search == "ddgs"
+    offered = [choice.value for choice in ctx.ui.choices[SEARCH]]
+    assert offered[0] == "ddgs" and offered[-1] == "off"
+    again = make_ctx([("model run", "none"), ("voice on a call", "keep")])
+    local_models.run_section(again)
+    assert again.ui.done(), again.ui.answers  # chosen once, not asked again
+
+
+def test_the_openai_voice_with_search_that_works_is_not_asked(make_ctx, world):
+    ctx = make_ctx([("model run", "none"), ("voice on a call", "openai")])
+
+    local_models.run_section(ctx)
+
+    assert ctx.ui.done() and SEARCH not in ctx.ui.choices
+
+
+def test_searxng_is_searched_once_before_it_is_kept(make_ctx, world):
+    _own_voice()
+    ctx = make_ctx([("model run", "none"), ("voice on a call", "keep"),
+                    ("search the web", "searxng"), ("Its address", "http://127.0.0.1:8888/")])
+
+    local_models.run_section(ctx)
+
+    settings = ctx.refresh()
+    assert (settings.web_search, settings.searxng_url) == ("searxng", "http://127.0.0.1:8888")
+    assert ("searxng", "http://127.0.0.1:8888/") in world.calls
+
+
+def test_a_searxng_that_refuses_is_kept_only_if_asked(make_ctx, world):
+    _own_voice()
+    world.searxng = "it answered 403: add `json` to `search.formats` in its settings.yml"
+    ctx = make_ctx([("model run", "none"), ("voice on a call", "keep"),
+                    ("search the web", "searxng"), ("Its address", "http://127.0.0.1:8888"),
+                    ("Keep it anyway", False)])
+
+    local_models.run_section(ctx)
+
+    assert "search.formats" in ctx.ui.lines("error")[0]
+    assert ctx.refresh().searxng_url is None
+
+
+def test_google_takes_a_gemini_key_into_the_secrets(make_ctx, world):
+    _own_voice()
+    ctx = make_ctx([("model run", "none"), ("voice on a call", "keep"),
+                    ("search the web", "google"), ("Gemini API key", "g-key")])
+
+    local_models.run_section(ctx)
+
+    settings = ctx.refresh()
+    assert (settings.web_search, settings.gemini_api_key) == ("google", "g-key")
+    assert "g-key" not in ctx.store.config_path.read_text()
+
+
+def test_without_ddgs_or_an_openai_key_neither_is_offered(make_ctx, world, monkeypatch):
+    _own_voice()
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    world.ddgs = False
+    ctx = make_ctx([("model run", "none"), ("voice on a call", "keep"),
+                    ("search the web", "off")])
+
+    local_models.run_section(ctx)
+
+    offered = {choice.value for choice in ctx.ui.choices[SEARCH]}
+    assert "ddgs" not in offered and "openai" not in offered
+    assert ctx.refresh().web_search == "off"

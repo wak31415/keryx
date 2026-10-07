@@ -19,11 +19,13 @@ settings: a removed or renamed setting or command is a major bump.
   credentials are never sent to it.
 - **A voice server of your own** (`VOICE_BASE_URL`): any server that speaks the Realtime
   protocol, such as Hugging Face's speech-to-speech. Keryx converts the phone's audio for it.
+- **Web search without OpenAI** (`WEB_SEARCH`): SearXNG, Google through Gemini, or the public
+  search engines through `ddgs`, as well as OpenAI. `auto`, the default, uses the first that
+  is set up.
 
 ### Changed
 
-- `OPENAI_API_KEY` is needed only for OpenAI's voice. With a voice server of your own it is
-  optional, and gives the assistant its web search.
+- `OPENAI_API_KEY` is needed only for OpenAI's voice (and OpenAI's search, if you pick it).
 
 ## [0.1.0] - 2026-09-30
 

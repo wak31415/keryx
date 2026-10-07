@@ -138,16 +138,49 @@ def test_a_voice_server_of_your_own_needs_no_openai_key(healthy):
 
     checks = by_name(run_doctor_checks(settings))
     assert checks["voice"].ok and "127.0.0.1:8765" in checks["voice"].detail
-    key = checks["OPENAI_API_KEY"]
-    assert (key.ok, key.severity) == (False, "soft") and "web_search" in key.detail
-    assert not has_hard_failure([key])
+    assert "OPENAI_API_KEY" not in checks
+    assert not has_hard_failure(list(checks.values()))
 
 
-def test_with_a_voice_server_of_your_own_the_openai_key_is_for_web_search(healthy):
-    settings = healthy.model_copy(update={"voice_base_url": "http://127.0.0.1:8765/v1"})
+def test_web_search_says_which_backend_answers(healthy, monkeypatch):
+    monkeypatch.setattr("keryx.config.settings.ddgs_installed", lambda: True)
+    keyless = healthy.model_copy(update={"openai_api_key": None,
+                                         "voice_base_url": "http://127.0.0.1:8765/v1"})
 
-    key = by_name(run_doctor_checks(settings))["OPENAI_API_KEY"]
-    assert key.ok and "web_search" in key.detail
+    check = by_name(run_doctor_checks(keyless))["web search"]
+    assert check.ok and "ddgs" in check.detail and "WEB_SEARCH=auto" in check.detail
+    google = keyless.model_copy(update={"web_search": "google", "gemini_api_key": "g"})
+    assert "gemini-3.8-flash" in by_name(run_doctor_checks(google))["web search"].detail
+    off = keyless.model_copy(update={"web_search": "off"})
+    assert by_name(run_doctor_checks(off))["web search"].detail == "off"
+
+
+def test_web_search_with_nothing_set_up_is_a_soft_missing(healthy, monkeypatch):
+    monkeypatch.setattr("keryx.config.settings.ddgs_installed", lambda: False)
+    keyless = healthy.model_copy(update={"openai_api_key": None,
+                                         "voice_base_url": "http://127.0.0.1:8765/v1"})
+
+    check = by_name(run_doctor_checks(keyless))["web search"]
+    assert (check.ok, check.severity, check.state) == (False, "soft", "missing")
+    named = keyless.model_copy(update={"web_search": "searxng"})
+    check = by_name(run_doctor_checks(named))["web search"]
+    assert check.state == "failed" and "SEARXNG_URL" in check.detail
+
+
+def test_doctor_searches_searxng_once_when_it_may_reach_out(healthy):
+    settings = healthy.model_copy(update={"web_search": "searxng",
+                                          "searxng_url": "http://127.0.0.1:8888"})
+    asked: list[str] = []
+
+    def refuse(url: str) -> str:
+        asked.append(url)
+        return "it answered 403: add `json` to `search.formats` in its settings.yml"
+
+    reach = EndpointReach(models=lambda e: None, realtime=lambda e: None, searxng=refuse)
+    check = by_name(run_doctor_checks(settings, reach=reach))["web search"]
+    assert asked == ["http://127.0.0.1:8888"]
+    assert not check.ok and "search.formats" in check.detail
+    assert by_name(run_doctor_checks(settings))["web search"].ok  # no reach, no search
 
 
 CLAUDE = "Claude Code agent (default)"

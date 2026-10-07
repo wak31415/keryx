@@ -25,6 +25,7 @@ import logging
 import re
 import secrets
 import tomllib
+import urllib.parse
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
@@ -68,6 +69,10 @@ from keryx.config.pin import (
     write_enrolled_pin,
 )
 from keryx.endpoints import OPENAI_BASE_URL, Endpoint
+from keryx.integrations.web_search import Backend as WebSearchBackend
+from keryx.integrations.web_search import Choice as WebSearchChoice
+from keryx.integrations.web_search import choose as choose_web_search
+from keryx.integrations.web_search import ddgs_installed
 from keryx.persona import DEFAULT_NAME, DEFAULT_VOICE, PERSONAS, voice_for
 
 log = logging.getLogger("keryx.config")
@@ -92,6 +97,8 @@ OPTIONAL_STR_FIELDS = (
     "local_agent_api_key",
     "local_agent_model",
     "llm_server_model",
+    "searxng_url",
+    "gemini_api_key",
     "anthropic_api_key",
     "claude_code_oauth_token",
     "codex_api_key",
@@ -127,6 +134,7 @@ GROUPS: dict[str, str] = {
     "voice": "Voice",
     "agents": "Coding agents",
     "local": "Local and self-hosted models",
+    "search": "Web search",
     "owner": "Owner, callers and PIN",
     "phone": "Phone",
     "google": "Google",
@@ -283,7 +291,8 @@ class Settings(BaseSettings):
     openai_api_key: str | None = setting(
         None,
         "OpenAI API key with Realtime access: the voice, unless `VOICE_BASE_URL` names a "
-        "server of your own, and the voice model's `web_search`.",
+        "server of your own, and the voice model's `web_search` when `WEB_SEARCH` picks "
+        "`openai`.",
         group="voice",
         repr=False,
     )
@@ -327,12 +336,6 @@ class Settings(BaseSettings):
         "the assistant tends to say it.",
         group="voice",
         service_writable=True,
-    )
-    openai_web_search_model: str = setting(
-        "gpt-6-luna",
-        "Answers the voice model's own `web_search` tool, through the Responses API (the "
-        "Realtime API has no hosted search tool).",
-        group="voice",
     )
     #: Was "low" until 2026-08-26, which left about two seconds of silence at the end of
     #: every sentence; "medium" lands near a second and still waits out a pause.
@@ -458,6 +461,39 @@ class Settings(BaseSettings):
 
     # Both addresses are protected (`*_BASE_URL`): a voice address pointed elsewhere would
     # ship every call's audio, the spoken PIN included, to whoever is there.
+    # --- web search -------------------------------------------------------------------
+
+    web_search: WebSearchChoice = setting(
+        "auto",
+        "Where the voice model's `web_search` tool looks: `searxng`, `google` (Gemini, "
+        "grounded on Google Search), `openai` (the Responses API), `ddgs` (the public search "
+        "engines, no key), `off`, or `auto` — the first of those four that is set up, in that "
+        "order.",
+        group="search",
+    )
+    searxng_url: str | None = setting(
+        None,
+        "A SearXNG instance for `web_search`, such as `http://127.0.0.1:8888`. Its "
+        "settings.yml must list `json` under `search.formats`.",
+        group="search",
+    )
+    gemini_api_key: str | None = setting(
+        None,
+        "A Gemini API key, for `web_search` through Google. Each search is billed by Google.",
+        group="search",
+        repr=False,
+    )
+    google_search_model: str = setting(
+        "gemini-3.8-flash",
+        "The Gemini model that answers `web_search` through Google.",
+        group="search",
+    )
+    openai_web_search_model: str = setting(
+        "gpt-6-luna",
+        "The model that answers `web_search` through OpenAI's Responses API.",
+        group="search",
+    )
+
     voice_base_url: str | None = setting(
         None,
         "A voice server of your own that speaks the OpenAI Realtime protocol, as its `…/v1` "
@@ -970,6 +1006,19 @@ class Settings(BaseSettings):
             return None
         return Endpoint.parse(value).base_url
 
+    @field_validator("searxng_url", mode="after")
+    @classmethod
+    def _searxng_url_is_an_address(cls, value: str | None) -> str | None:
+        """An `http://` or `https://` address with no credentials in it, never quoted back."""
+        if value is None:
+            return None
+        parts = urllib.parse.urlsplit(value.strip())
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise ValueError("must be an http:// or https:// address")
+        if parts.username or parts.password:
+            raise ValueError("must not carry a user or password; SearXNG takes none")
+        return value.strip().rstrip("/")
+
     @field_validator("google_client_secrets_file", "keryx_checkout", mode="before")
     @classmethod
     def _blank_path_is_unset(cls, value: object) -> object:
@@ -1131,6 +1180,16 @@ class Settings(BaseSettings):
         """`OPENAI_API_KEY`, or None when it is unset (or the read-only loader's stand-in)."""
         key = self.openai_api_key
         return key if key and key != PLACEHOLDER_KEY else None
+
+    def web_search_backend(self) -> tuple[WebSearchBackend | None, str | None]:
+        """What the voice model's `web_search` runs on, or None and why there is none."""
+        return choose_web_search(
+            self.web_search,
+            openai_key=self.openai_key is not None,
+            gemini_key=bool(self.gemini_api_key),
+            searxng_url=bool(self.searxng_url),
+            ddgs=ddgs_installed(),
+        )
 
     @property
     def voice_endpoint(self) -> Endpoint:

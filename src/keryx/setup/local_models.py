@@ -21,6 +21,7 @@ read goes through `Probes`.
 
 import asyncio
 import sys
+import urllib.parse
 from pathlib import Path
 
 from keryx.agents.registry import BACKENDS
@@ -84,6 +85,8 @@ def run_section(ctx: SetupContext) -> None:
         _voice_elsewhere(ctx)
     elif voice == OPENAI:
         _voice_to_openai(ctx)
+    if _search_undecided(ctx):
+        _web_search(ctx)
 
 
 # --- the two questions -------------------------------------------------------------------
@@ -376,7 +379,6 @@ def _voice_here(ctx: SetupContext) -> None:
         return
     if ctx.save({"VOICE_BASE_URL": endpoint.base_url, "VOICE_API_KEY": None}):
         ui.success("calls now use the voice server on this machine")
-        _after_voice(ctx)
 
 
 def _current_voice(ctx: SetupContext) -> str:
@@ -406,14 +408,7 @@ def _voice_elsewhere(ctx: SetupContext) -> None:
         ui.error(problem)
         if not ui.confirm("Keep it anyway? Calls will not open until it answers.", default=False):
             return
-    if ctx.save({"VOICE_BASE_URL": endpoint.base_url, "VOICE_API_KEY": key or None}):
-        _after_voice(ctx)
-
-
-def _after_voice(ctx: SetupContext) -> None:
-    if not ctx.settings.openai_key:
-        ctx.ui.note("Without an OpenAI key the assistant has no web search; the Voice section "
-                    "takes one, for that alone.")
+    ctx.save({"VOICE_BASE_URL": endpoint.base_url, "VOICE_API_KEY": key or None})
 
 
 def _voice_to_openai(ctx: SetupContext) -> None:
@@ -421,6 +416,81 @@ def _voice_to_openai(ctx: SetupContext) -> None:
         ctx.ui.success("calls use OpenAI's Realtime API again")
         if not ctx.settings.openai_key:
             ctx.ui.note("It needs OPENAI_API_KEY: the Voice section takes it.")
+
+
+# --- web search --------------------------------------------------------------------------
+
+
+def _search_undecided(ctx: SetupContext) -> bool:
+    """Asked until the owner has chosen: when nothing would answer `web_search`, or when the
+    voice is their own and `WEB_SEARCH` is still `auto`, which may be about to send every
+    search to OpenAI on a machine whose owner meant to keep things here."""
+    settings = ctx.refresh()
+    backend, _why = settings.web_search_backend()
+    if settings.web_search == "off":
+        return False
+    return backend is None or (settings.web_search == "auto" and bool(settings.voice_base_url))
+
+
+def _web_search(ctx: SetupContext) -> None:
+    """Where the assistant's `web_search` looks. Asked here because a voice of the owner's
+    own is what usually leaves it without one: OpenAI's search needs OpenAI's key."""
+    ui, settings = ctx.ui, ctx.settings
+    backend, _why = settings.web_search_backend()
+    options = [
+        Choice("searxng", "SearXNG", hint="a search server of your own; no key"),
+        Choice("google", "Google, through Gemini", hint="a Gemini API key; billed per search"),
+    ]
+    if ctx.probes.ddgs_installed():
+        options.insert(0, Choice("ddgs", "DuckDuckGo and other public engines",
+                                 hint="no key, no server; it reads their pages, so it can "
+                                      "be rate-limited"))
+    if settings.openai_key:
+        options.append(Choice("openai", "OpenAI", hint="the Responses API, on your OpenAI key"))
+    options.append(Choice("off", "No web search", hint="questions it cannot answer go to an "
+                                                       "agent"))
+    current = "off" if settings.web_search == "off" else backend
+    choice = ui.select("Where should the assistant search the web?", options,
+                       default=current if current in {o.value for o in options} else None)
+    if choice == "searxng":
+        _searxng(ctx)
+    elif choice == "google":
+        _google_search(ctx)
+    elif ctx.save({"WEB_SEARCH": choice}):
+        ui.success("web search is off" if choice == "off" else f"web search: {choice}")
+
+
+def _searxng(ctx: SetupContext) -> None:
+    ui = ctx.ui
+    ui.note("SearXNG's settings.yml must list `json` under `search.formats`, or every search "
+            "is refused (HTTP 403).")
+    url = ui.text("Its address", default=ctx.settings.searxng_url or "http://127.0.0.1:8888",
+                  validate=_web_address)
+    with ui.spinner("Searching once on it…"):
+        problem = ctx.probes.searxng_problem(url)
+    if problem is not None:
+        ui.error(problem)
+        if not ui.confirm("Keep it anyway? Searches fail until it answers.", default=False):
+            return
+    if ctx.save({"WEB_SEARCH": "searxng", "SEARXNG_URL": url}):
+        ui.success("web search: SearXNG")
+
+
+def _google_search(ctx: SetupContext) -> None:
+    ui = ctx.ui
+    ui.note("A Gemini API key from https://aistudio.google.com/apikey. Google bills each "
+            "search Gemini makes.")
+    key = ui.secret("Gemini API key", validate=_not_blank,
+                    current=ctx.settings.gemini_api_key or "")
+    if ctx.save({"WEB_SEARCH": "google", "GEMINI_API_KEY": key}):
+        ui.success("web search: Google, through Gemini")
+
+
+def _web_address(value: str) -> str | None:
+    parts = urllib.parse.urlsplit(value.strip())
+    if parts.scheme in ("http", "https") and parts.hostname:
+        return None
+    return "An http:// or https:// address."
 
 
 # --- shared ------------------------------------------------------------------------------

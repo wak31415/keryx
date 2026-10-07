@@ -1383,13 +1383,16 @@ async def test_end_session_asks_the_session_to_end(tools):
 class FakeSearcher:
     """A `WebSearcher` that answers from a script."""
 
-    def __init__(self, answer: str = "It is seventeen degrees and clear.") -> None:
-        self.answer = answer
+    backend = "openai"
+
+    def __init__(self, answer: str = "It is seventeen degrees and clear",
+                 found: dict | None = None) -> None:
+        self.found = found if found is not None else ({"answer": answer} if answer else {})
         self.queries: list[str] = []
 
-    async def search(self, query: str) -> str:
+    async def search(self, query: str) -> dict:
         self.queries.append(query)
-        return self.answer
+        return self.found
 
 
 async def test_web_search_hands_back_a_spoken_answer(make_tools):
@@ -1398,8 +1401,18 @@ async def test_web_search_hands_back_a_spoken_answer(make_tools):
 
     result = await tools.call("web_search", {"query": "weather tomorrow"})
 
-    assert result == {"answer": "It is seventeen degrees and clear."}
+    assert result == {"answer": "It is seventeen degrees and clear"}
     assert searcher.queries == ["weather tomorrow"]
+
+
+async def test_web_search_results_come_with_how_to_answer_from_them(make_tools):
+    rows = [{"title": "Forecast", "snippet": "17 degrees, clear", "site": "weather.example"}]
+    tools = make_tools(searcher=FakeSearcher(found={"results": rows}))
+
+    result = await tools.call("web_search", {"query": "weather tomorrow"})
+
+    assert result["results"] == rows
+    assert "never read the list out" in result["instructions"]
 
 
 async def test_web_search_needs_a_query(make_tools):

@@ -1000,3 +1000,35 @@ def test_local_as_the_default_needs_a_server(tmp_path, every_agent_installed):
     assert "LOCAL_AGENT_BASE_URL" in (settings.agent_refusal() or "")
     served = settings.model_copy(update={"local_agent_base_url": "http://box/v1"})
     assert served.agent_refusal() is None
+
+
+# --- web search ----------------------------------------------------------------------------
+
+
+def test_a_searxng_address_is_kept_without_its_slash_and_never_quoted_when_refused(tmp_path):
+    settings = Settings(data_dir=tmp_path / "keryx", searxng_url=" http://127.0.0.1:8888/ ")
+    assert settings.searxng_url == "http://127.0.0.1:8888"
+
+    for bad in ("searx.lan:8888", "ftp://searx.lan", "http://me:hunter2@searx.lan"):
+        with pytest.raises(ValidationError) as refused:
+            Settings(data_dir=tmp_path / "keryx", searxng_url=bad)
+        assert "hunter2" not in str(refused.value)
+
+
+def test_where_searches_go_and_the_gemini_key_are_the_owners_alone():
+    from keryx.config.permissions import PROTECTED_KEYS
+
+    assert {"WEB_SEARCH", "SEARXNG_URL", "GEMINI_API_KEY"} <= PROTECTED_KEYS
+
+
+def test_web_search_resolves_from_what_is_set_up(tmp_path, monkeypatch):
+    monkeypatch.setattr("keryx.config.settings.ddgs_installed", lambda: False)
+    keyless = Settings(data_dir=tmp_path / "keryx", openai_api_key=None)
+
+    assert keyless.web_search_backend()[0] is None
+    assert keyless.model_copy(update={"gemini_api_key": "g"}).web_search_backend() == (
+        "google", None
+    )
+    assert Settings(data_dir=tmp_path / "keryx", openai_api_key="sk").web_search_backend() == (
+        "openai", None
+    )

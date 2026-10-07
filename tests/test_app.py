@@ -4,7 +4,7 @@ import pytest
 from fakes import FakeVoiceSession, eventually
 
 from keryx.agents.router import RoutingAgentRunner
-from keryx.app import AppState, build_app_state, shutdown_app_state
+from keryx.app import AppState, build_app_state, shutdown_app_state, web_searcher
 from keryx.continuity.briefing import Briefer
 from keryx.continuity.memory import MemoryWriter, memory_path
 from keryx.continuity.transcripts import transcript_path
@@ -172,16 +172,31 @@ def test_make_provider_speaks_to_a_voice_server_of_the_owners_own(settings):
     assert (endpoint.base_url, endpoint.api_key) == ("http://127.0.0.1:8765/v1", "vk")
 
 
-async def test_web_search_is_offered_only_with_an_openai_key(settings):
+async def test_web_search_is_offered_only_when_a_backend_is_set_up(settings):
+    off = settings.model_copy(update={"web_search": "off"})
+    with_search, without = build_app_state(settings), build_app_state(off)
+
+    assert "web_search" in with_search.registry.names()
+    assert "web_search" not in without.registry.names()
+    await shutdown_app_state(with_search)
+    await shutdown_app_state(without)
+
+
+def test_the_searcher_is_the_backend_web_search_resolves_to(settings, monkeypatch):
+    monkeypatch.setattr("keryx.config.settings.ddgs_installed", lambda: True)
     keyless = settings.model_copy(
         update={"openai_api_key": None, "voice_base_url": "http://127.0.0.1:8765/v1"}
     )
-    with_key, without = build_app_state(settings), build_app_state(keyless)
+    searxng = keyless.model_copy(
+        update={"web_search": "searxng", "searxng_url": "http://127.0.0.1:8888"}
+    )
+    google = keyless.model_copy(update={"web_search": "google", "gemini_api_key": "g"})
 
-    assert "web_search" in with_key.registry.names()
-    assert "web_search" not in without.registry.names()
-    await shutdown_app_state(with_key)
-    await shutdown_app_state(without)
+    assert web_searcher(settings).backend == "openai"
+    assert web_searcher(keyless).backend == "ddgs"  # no OpenAI key: nothing goes to OpenAI
+    assert web_searcher(searxng).backend == "searxng"
+    assert web_searcher(google).backend == "google"
+    assert web_searcher(keyless.model_copy(update={"web_search": "openai"})) is None
 
 
 # --- continuity: the briefer, the memory writer and recall ------------------

@@ -162,6 +162,10 @@ STILL_RUNNING_MESSAGE = (
     "Nothing about what the answer will contain — you do not know yet."
 )
 SEARCH_FAILED_MESSAGE = "the search came back empty; say so, or offer to put Claude on it"
+SEARCH_RESULTS_MESSAGE = (
+    "answer the question from these in one or two spoken sentences, naming the site only "
+    "if it matters; never read the list out, and if they do not answer it, say so"
+)
 RECALL_EMPTY_MESSAGE = (
     "nothing on record about that; say so plainly and offer to put Claude on it"
 )

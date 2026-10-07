@@ -195,6 +195,9 @@ class FakeWorld:
     #: What `wait_for_server` says, by kind ("models", "realtime"); None is "it answered".
     server_problem: dict = field(default_factory=dict)
     download_error: BaseException | None = None
+    #: Web search: whether ddgs is installed, and what one SearXNG search says (None is fine).
+    ddgs: bool = True
+    searxng: str | None = None
     #: What `free_port` hands back for each port asked about; the port itself otherwise.
     ports: dict = field(default_factory=dict)
     calls: list[tuple] = field(default_factory=list)
@@ -264,6 +267,8 @@ class FakeWorld:
             realtime_problem=lambda endpoint: self.calls.append(("realtime", endpoint.base_url))
             or self.realtime,
             wait_for_server=self._wait,
+            searxng_problem=lambda url: self.calls.append(("searxng", url)) or self.searxng,
+            ddgs_installed=lambda: self.ddgs,
         )
 
     def _download(self, url, dest, *, size, sha256, progress):

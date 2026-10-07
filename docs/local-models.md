@@ -116,8 +116,8 @@ And three you will notice:
 - **The voice is the server's.** OpenAI's voice names mean nothing there, so none is sent;
   pick one with `VOICE_SERVER_VOICE` (`keryx models list` shows Kokoro's), or `OPENAI_VOICE`
   for a server of your own that takes one.
-- **No web search** unless `OPENAI_API_KEY` is still set: the assistant's `web_search` tool
-  is OpenAI's Responses API.
+- **Web search is yours to choose** (`WEB_SEARCH`, below): nothing goes to OpenAI unless
+  you pick it.
 
 On one GPU the voice and the agent share one model; setup keeps 3 GB free for the voice's own
 speech models when it picks one. The voice server holds two calls at once, so a reconnect
@@ -125,6 +125,37 @@ does not find its only slot still taken.
 
 The keypad PIN, approvals and call-backs are Twilio's and Keryx's, and work the same. A
 spoken PIN is heard by your speech-to-text.
+
+## Web search
+
+The assistant looks small things up itself with its `web_search` tool. Where it looks is
+`WEB_SEARCH`, and `keryx setup` asks once your voice is your own:
+
+| `WEB_SEARCH` | Needs | What it is |
+|---|---|---|
+| `searxng` | `SEARXNG_URL` | a [SearXNG](https://docs.searxng.org/) instance, usually your own: no key, no account |
+| `google` | `GEMINI_API_KEY` | Gemini, grounded on Google Search; Google bills each search |
+| `openai` | `OPENAI_API_KEY` | OpenAI's Responses API, which has a hosted search |
+| `ddgs` | the `ddgs` extra (in a clone's `uv sync`) | the public search engines, through the [ddgs](https://pypi.org/project/ddgs/) library: nothing to set up, but it reads their result pages, so a burst of searches gets rate-limited |
+| `off` | | no search: a question the assistant cannot answer goes to an agent |
+| `auto` (default) | | the first of `searxng`, `google`, `openai`, `ddgs` that is set up |
+
+Google's own search API (Custom Search JSON) closed to new customers in 2025 and ends on
+1 January 2027, which is why `google` means Gemini. SearXNG must list `json` under
+`search.formats` in its `settings.yml`, or it refuses every search with HTTP 403;
+`keryx doctor` searches it once and says so. A minimal `settings.yml` for one on this
+machine:
+
+```yaml
+use_default_settings: true
+server:
+  bind_address: "127.0.0.1"
+  port: 8888
+  secret_key: "<openssl rand -hex 32>"
+  limiter: false
+search:
+  formats: [html, json]
+```
 
 ## Security
 
@@ -135,6 +166,8 @@ spoken PIN is heard by your speech-to-text.
   `http://` across your network carries the call audio unencrypted, and `keryx doctor` warns
   about it. speech-to-speech checks no key, so keep it on `127.0.0.1` (setup does) or behind
   Tailscale or a proxy that checks one.
+- **Where searches go is protected too** (`WEB_SEARCH`, `SEARXNG_URL`): every question the
+  assistant looks up is something said on a call.
 - **A public address with no key is warned about, not refused** — it may be behind a firewall
   Keryx cannot see.
 
@@ -158,5 +191,7 @@ saying so is welcome.
 | `LOCAL_AGENT_BASE_URL`, `LOCAL_AGENT_API_KEY`, `LOCAL_AGENT_MODEL`, `LOCAL_AGENT_API` | the `local` agent's server, key, model and harness |
 | `LLM_SERVER_MODEL`, `LLM_SERVER_PORT` | the model `keryx-llm` serves here, and its port |
 | `VOICE_SERVER_PORT`, `VOICE_SERVER_STT`, `VOICE_SERVER_TTS`, `VOICE_SERVER_VOICE`, `VOICE_SERVER_ARGS` | the voice server `keryx-voice` runs here |
+| `WEB_SEARCH`, `SEARXNG_URL`, `GEMINI_API_KEY`, `GOOGLE_SEARCH_MODEL` | where the assistant's `web_search` looks |
 
-All of them are in [configuration.md](configuration.md), under "Local and self-hosted models".
+All of them are in [configuration.md](configuration.md), under "Local and self-hosted models"
+and "Web search".

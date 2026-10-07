@@ -75,7 +75,10 @@ codex = [
     # re-recording tests/agents/fixtures/codex_app_*.jsonl.
     "openai-codex==0.157.1",
 ]
-all = ["keryx-voice[claude,codex]"]
+# Web search with no key and no server: `WEB_SEARCH=ddgs`, or the `auto` fallback. It scrapes
+# public search pages rather than calling an API, so it is held to one minor.
+ddgs = ["ddgs>=9.16.0,<9.17"]
+all = ["keryx-voice[claude,codex,ddgs]"]
 
 [project.urls]
 Homepage = "https://github.com/wak31415/keryx"

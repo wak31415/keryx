@@ -27,6 +27,7 @@ And it builds the `PinGuard`, the count of wrong PINs that every phone session s
 the `PinLockoutAlerter` that tells the owner when that count locks PIN entry.
 """
 
+import logging
 from dataclasses import dataclass, field
 
 from keryx.agents.registry import build_agent_runner, offered_agents
@@ -37,7 +38,7 @@ from keryx.continuity.memory import MemoryWriter
 from keryx.continuity.recall import Recaller
 from keryx.events import EventBus
 from keryx.inline_waits import InlineWaits
-from keryx.integrations.web_search import OpenAIWebSearch
+from keryx.integrations.web_search import DESCRIPTIONS, WebSearcher, make_searcher
 from keryx.notify.notifier import Notifier
 from keryx.notify.pin_alert import PinLockoutAlerter
 from keryx.notify.twilio_out import TwilioOut
@@ -55,6 +56,8 @@ from keryx.tools.builtin import register_builtin_tools
 from keryx.tools.custom import register_custom_tools
 
 TASK_DB_NAME = "tasks.db"
+
+log = logging.getLogger("keryx.app")
 
 
 @dataclass
@@ -89,6 +92,23 @@ class AppState:
     pin_alerts: PinLockoutAlerter | None = None
 
 
+def web_searcher(settings: Settings) -> WebSearcher | None:
+    """The voice model's `web_search`, on whichever backend `WEB_SEARCH` resolves to; None,
+    and so no tool at all, when there is none."""
+    backend, why = settings.web_search_backend()
+    if backend is None:
+        log.info("no web_search on calls: %s", why)
+        return None
+    log.info("web_search on calls: %s", DESCRIPTIONS[backend])
+    return make_searcher(
+        backend,
+        openai_key=settings.openai_key,
+        openai_model=settings.openai_web_search_model,
+        gemini_key=settings.gemini_api_key,
+        google_model=settings.google_search_model,
+        searxng_url=settings.searxng_url,
+    )
+
 def build_app_state(settings: Settings) -> AppState:
     """The production wiring: a real OpenAI provider per session and a live task stack."""
     settings.ensure_dirs()
@@ -113,13 +133,7 @@ def build_app_state(settings: Settings) -> AppState:
         manager=manager,
         settings=settings,
         inline_waits=inline_waits,
-        # OpenAI's Responses API is the search; a voice server of the owner's own has none,
-        # so without an OpenAI key the voice model simply has no `web_search` tool.
-        searcher=(
-            OpenAIWebSearch(settings.openai_key, settings.openai_web_search_model)
-            if settings.openai_key
-            else None
-        ),
+        searcher=web_searcher(settings),
         restarter=restart,
         recaller=Recaller(settings.data_dir, manager, pin=settings.pin),
         approvals=approvals,

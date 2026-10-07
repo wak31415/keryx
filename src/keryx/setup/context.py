@@ -21,6 +21,7 @@ from keryx.config import Settings
 from keryx.config.permissions import OWNER
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
 from keryx.endpoints import Endpoint, Probe, probe
+from keryx.integrations.web_search import ddgs_installed, searxng_check
 from keryx.issues import GhStatus, gh_status
 from keryx.localmodels import download as model_files
 from keryx.localmodels import hardware as machine
@@ -144,6 +145,9 @@ class Probes:
     endpoint_models: Callable[[Endpoint], Probe] = probe
     realtime_problem: Callable[[Endpoint], str | None] = _realtime_problem
     wait_for_server: Callable[[Endpoint, str, float], str | None] = servers.wait_for
+    #: One JSON search on a SearXNG instance: None when it answers, else why not.
+    searxng_problem: Callable[[str], str | None] = searxng_check
+    ddgs_installed: Callable[[], bool] = ddgs_installed
 
 
 @dataclass

@@ -168,8 +168,8 @@ remember:
 There is one `TaskKind` (`agent`) and no per-kind tool restriction: every subagent gets
 the full built-in tool set, the Google MCP server, the installed skills and subagents of
 its own, and decides for itself what a request needs. The voice model's only routing
-decision is answer-it-myself (small facts go through its `web_search` tool, backed by the
-Responses API) versus dispatch. Do not reintroduce kinds to express "this one is
+decision is answer-it-myself (small facts go through its `web_search` tool, backed by
+whichever search `WEB_SEARCH` resolves to) versus dispatch. Do not reintroduce kinds to express "this one is
 read-only" — the phone PIN gates every dispatch instead.
 
 ## Two harnesses, three agent names, one of them per task
@@ -253,9 +253,18 @@ OpenAI-compatible client describes one. Five rulings:
   goes in the child's `OPENAI_API_KEY` in place of the owner's — never on argv. Setup saves
   `VOICE_BASE_URL` only after the server has answered a Realtime handshake.
 - **`OPENAI_API_KEY` is optional.** It is the voice only while `VOICE_BASE_URL` is blank
-  (`Settings.voice_refusal`, which `serve` asks); otherwise it buys the voice model's
-  `web_search` (the Responses API — no local server has a hosted search tool), which is
-  registered only when there is a key.
+  (`Settings.voice_refusal`, which `serve` asks). A machine with no OpenAI key sends
+  nothing to OpenAI at all.
+- **Search is a setting too, and nothing is sent to OpenAI unasked.** `WEB_SEARCH` picks
+  the backend behind `web_search` (`integrations/web_search.py`): `searxng` (`SEARXNG_URL`),
+  `google` (Gemini grounded on Google Search, `GEMINI_API_KEY` — Google's own Custom Search
+  API closed to new customers and ends 2027-01-01), `openai`, `ddgs` (the `ddgs` extra: no
+  key, no server, but it scrapes and gets rate-limited), or `off`. `auto` takes the first
+  that is set up in that order — most deliberate first, since a SearXNG address or a Gemini
+  key exists only for search — and with none there is no tool at all. The first two return an
+  answer, the last two a few results the voice model answers from; neither ever hands the
+  model a URL. `WEB_SEARCH` and `SEARXNG_URL` are protected: they say where every spoken
+  question goes.
 
 ## Two names
 

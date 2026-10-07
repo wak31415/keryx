@@ -32,14 +32,13 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 
 | Setting | Default | Service may change | What it is |
 |---|---|---|---|
-| `OPENAI_API_KEY` | (secret) | never | OpenAI API key with Realtime access: the voice, unless `VOICE_BASE_URL` names a server of your own, and the voice model's `web_search`. |
+| `OPENAI_API_KEY` | (secret) | never | OpenAI API key with Realtime access: the voice, unless `VOICE_BASE_URL` names a server of your own, and the voice model's `web_search` when `WEB_SEARCH` picks `openai`. |
 | `OPENAI_REALTIME_MODEL` | `gpt-realtime-2.1` | no | The realtime speech-to-speech model a call runs on. |
 | `ASSISTANT_NAME` | `Lyra` | yes | What the assistant on the phone is called: the name it answers to and introduces itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or `marin`. |
 | `OPENAI_VOICE` | `` | yes | The Realtime voice the assistant speaks in. Empty is the assistant's own (`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail to open. |
 | `OPENAI_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | no | Transcribes what the caller says, for the call log. |
 | `TRANSCRIPTION_LANGUAGE` | `` | yes | The language you speak on a call, as an ISO-639-1 code (`en`, `de`, `fr`), for the call log's transcription — which `recall` and the memory read. Empty lets the transcriber guess each turn. The voice model itself hears the audio either way. |
 | `CLOCK_FORMAT` | `24h` | yes | How the voice prompt writes the time of day (`14:05` or `2:05 PM`), and so how the assistant tends to say it. |
-| `OPENAI_WEB_SEARCH_MODEL` | `gpt-6-luna` | no | Answers the voice model's own `web_search` tool, through the Responses API (the Realtime API has no hosted search tool). |
 | `VAD_MODE` | `semantic` | yes | How the assistant decides you have finished: `semantic` waits on whether the sentence sounds finished, so a pause to think does not cut you off; `server` is a plain silence timer of `VAD_SILENCE_MS`. |
 | `VAD_EAGERNESS` | `medium` | yes | Semantic mode only: `low` waits longest, `high` jumps in soonest, `auto` is `medium`. |
 | `VAD_SILENCE_MS` | `1200` | yes | Server mode only: the silence, in milliseconds, that ends a turn. |
@@ -80,6 +79,16 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 | `VOICE_SERVER_TTS` | `kokoro` | no | How the local voice server speaks: speech-to-speech's `--tts` (`kokoro`, `qwen3`, …). |
 | `VOICE_SERVER_VOICE` | `af_heart` | no | The Kokoro voice the local voice server speaks in (`af_heart`, `bm_george`, …; `keryx models list` shows them). |
 | `VOICE_SERVER_ARGS` | `` | never | More flags for `speech-to-speech serve`, as a command line — a smaller speech model (`--stt_model_name openai/whisper-base`), a TTS speed. Never a key: it is on argv. |
+
+## Web search
+
+| Setting | Default | Service may change | What it is |
+|---|---|---|---|
+| `WEB_SEARCH` | `auto` | never | Where the voice model's `web_search` tool looks: `searxng`, `google` (Gemini, grounded on Google Search), `openai` (the Responses API), `ddgs` (the public search engines, no key), `off`, or `auto` — the first of those four that is set up, in that order. |
+| `SEARXNG_URL` |  | never | A SearXNG instance for `web_search`, such as `http://127.0.0.1:8888`. Its settings.yml must list `json` under `search.formats`. |
+| `GEMINI_API_KEY` | (secret) | never | A Gemini API key, for `web_search` through Google. Each search is billed by Google. |
+| `GOOGLE_SEARCH_MODEL` | `gemini-3.8-flash` | no | The Gemini model that answers `web_search` through Google. |
+| `OPENAI_WEB_SEARCH_MODEL` | `gpt-6-luna` | no | The model that answers `web_search` through OpenAI's Responses API. |
 
 ## Owner, callers and PIN
 

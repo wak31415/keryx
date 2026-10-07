@@ -17,7 +17,7 @@ if you want them, and anything else is [a tool of your own](#your-own-tools).
 | `recall` | search past call transcripts and past task summaries |
 | `list_projects` | the project names that can be dispatched into |
 | `request_callback` | call back when a task lands |
-| `web_search` | answer a small factual question on the spot, through the Responses API |
+| `web_search` | answer a small factual question on the spot, through whichever search `WEB_SEARCH` picks (SearXNG, Google through Gemini, OpenAI, or ddgs) |
 | `restart_service` | restart Keryx (after the call ends) |
 | `set_config` | change one of Keryx's own settings — only those the running service may (`keryx config list`); saved, applied at the next restart |
 | `submit_pin` | check a spoken PIN |
