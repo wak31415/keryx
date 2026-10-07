@@ -51,6 +51,7 @@ from keryx.config.migrate import Service as MigratingService
 from keryx.config.migrate import run as run_migration
 from keryx.config.options import has_options, options_for
 from keryx.config.permissions import ACTOR_ENVS, SERVICE, current_actor
+from keryx.config.pin import pin_file
 from keryx.config.settings import ConfigFileError, tolerate_broken_files
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
 from keryx.continuity.memory import memory_document, memory_path, read_memory
@@ -86,6 +87,7 @@ from keryx.restart.watchdog import watch
 from keryx.server import create_app
 from keryx.session import VoiceSession
 from keryx.setup import auth as auth_flow
+from keryx.setup import pin as pin_flow
 from keryx.setup import profile
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
@@ -93,7 +95,7 @@ from keryx.setup.plan import StepRefused, build_plan, failed_plan, format_plan, 
 from keryx.setup.sections import repo_root
 from keryx.setup.ui import Aborted
 from keryx.setup.wizard import agent_instructions, run_wizard
-from keryx.status import build_status, failed_status, format_status
+from keryx.status import build_status, failed_status, format_status, service_running
 from keryx.tasks.export import read_log, task_json, told
 from keryx.tasks.manager import install_default_executor
 from keryx.tasks.models import ProjectUsage, Task, TaskStatus, task_log_path
@@ -135,6 +137,10 @@ setup_app = typer.Typer(
     help="Set Keryx up: the guided walk, and the plan the Mac app's assistant follows."
 )
 app.add_typer(setup_app, name="setup")
+pin_app = typer.Typer(
+    help="The phone PIN: whether one is set, and setting or replacing it (the owner's alone)."
+)
+app.add_typer(pin_app, name="pin")
 log = logging.getLogger("keryx.cli")
 
 
@@ -1665,6 +1671,90 @@ def status(
         return
     for line in format_status(report):
         typer.echo(line)
+
+
+# --- the PIN -----------------------------------------------------------------
+
+
+def _pin_settings() -> Settings:
+    """The settings `keryx pin` reads, or the reason they will not load and exit 1."""
+    try:
+        return _load_settings_reporting()[0]
+    except ConfigFileError as error:
+        typer.echo(str(error), err=True)
+    except ValidationError as error:
+        typer.echo(_config_summary(error), err=True)
+    raise typer.Exit(1)
+
+
+@pin_app.callback(invoke_without_command=True)
+def pin(
+    ctx: typer.Context,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Whether a phone PIN is set, where it is kept, and whether PIN entry is locked.
+
+    Never the digits, nor how many there are. A report, so it exits 0.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    found = pin_flow.pin_status(_pin_settings())
+    if as_json:
+        typer.echo(json.dumps(found))
+        return
+    for line in pin_flow.format_pin_status(found):
+        typer.echo(line)
+
+
+@pin_app.command("set")
+def pin_set(
+    stdin: Annotated[
+        bool, typer.Option("--stdin", help="Read the new PIN from stdin, twice, one per line.")
+    ] = False,
+    replace: Annotated[
+        bool, typer.Option("--replace", help="Put it in place of the PIN already set.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Set the phone PIN, or replace it with --replace: the owner's alone, never the service's.
+
+    The digits come only on stdin, typed twice; they are never printed, logged or quoted back.
+    A Keryx already running keeps the PIN it started with until `keryx restart`.
+    """
+    _owner_only("set the phone PIN")  # before stdin is read: the service never gets that far
+    if not stdin:
+        typer.echo("the PIN is read from stdin only, never the command line: --stdin", err=True)
+        raise typer.Exit(2)
+    text = sys.stdin.read()
+    settings = _pin_settings()
+    if refusal := pin_flow.set_refusal(settings, replace=replace):
+        typer.echo(refusal, err=True)
+        raise typer.Exit(1)
+    digits, problem = pin_flow.read_twice(text)
+    if digits is None:
+        typer.echo(problem, err=True)
+        raise typer.Exit(2)
+    replacing = pin_flow.existing_pin(settings) is not None
+    path = pin_file(settings.config_dir)
+    try:
+        written = pin_flow.write_pin(settings, digits, replacing=replacing)
+    except OSError:
+        written = False
+    if not written:
+        typer.echo(
+            pin_flow.ALREADY_SET if path.exists() and not replacing
+            else pin_flow.NOT_WRITTEN.format(path=path),
+            err=True,
+        )
+        raise typer.Exit(1)
+    restart_needed = service_running(settings)
+    if as_json:
+        typer.echo(json.dumps({"set": True, "replaced": replacing,
+                               "restart_needed": restart_needed}))
+        return
+    typer.echo(f"PIN {'replaced' if replacing else 'set'}, kept in {path} (readable by you alone)")
+    if restart_needed:
+        typer.echo("Keryx is running with the PIN it started with; `keryx restart` moves it on.")
 
 
 # --- setup, config, auth ---------------------------------------------------

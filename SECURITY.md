@@ -66,7 +66,8 @@ anything behind, or reach a coding agent. In particular:
   placed it to a number that is not yours (see
   [Calls Keryx places itself](#calls-keryx-places-itself)).
 - **Anything that sets or replaces a PIN while one already exists**, from the phone or from
-  a coding agent, or that reads an enrolled PIN back out anywhere.
+  a coding agent, or that reads an enrolled PIN back out anywhere. That includes
+  `keryx pin set` going through for anything `keryx serve` started.
 - With `BRIEFING_BEFORE_PIN=false`, anything of yours reaching a call that has not given
   the PIN.
 - A way for untrusted content, such as an email, a web page, or a file, to reach a coding
@@ -179,12 +180,24 @@ a PIN is ever set from the phone.
 the two entries match, that is the PIN. Once a PIN exists, enrollment is closed, and the
 file write itself closes it rather than a separate check: Keryx creates `KERYX_HOME/pin` with
 `O_CREAT | O_EXCL`, so the kernel refuses a second write. On purpose, no voice tool and no
-`keryx config set` can change an enrolled PIN. Only `keryx setup` at a terminal can.
+`keryx config set` can change an enrolled PIN. Only you at the keyboard can, with
+`keryx setup` at a terminal or `keryx pin set` from the Mac app.
 
 `keryx setup`, run at a terminal, is you at the keyboard. It writes a first PIN the same
 way. It replaces an existing PIN only after you confirm twice and type the new digits twice,
 and it swaps the file by an atomic rename, so a failure partway through leaves the old PIN in
 place. A running Keryx keeps the PIN it started with until `keryx restart`.
+
+The Mac app is you at the keyboard too. Its PIN sheet runs `keryx pin set`, which uses the
+same code and the same safeguards. The new PIN arrives on standard input, typed twice, and
+never on a command line. The two entries are compared in constant time, and they must be six
+to eight digits and not a run or a repeated digit. A first PIN goes through the same
+`O_EXCL` write. An existing PIN is replaced only when the app passes `--replace`, by the same
+atomic rename. A `KERYX_PIN` in the environment still wins, so the command refuses rather
+than write a PIN that nothing would read. The digits, and how many there are, never appear in
+its output, its errors or a log line. `keryx pin` reports whether a PIN is set, where it is
+kept, and whether PIN entry is locked, never what it is. Setting a PIN does not reset the
+wrong-PIN count or lift a lockout.
 
 **The accepted risk: whoever calls first sets the PIN.** The window is the few minutes
 between starting Keryx and making the first call. It closes on first use, and nobody is
@@ -219,6 +232,13 @@ Deleting the file locks you out and opens enrollment for whoever calls next. Tha
 and `keryx doctor` shows it, which is better than a PIN quietly becoming someone else's. If
 this worries you, set `KERYX_PIN` in the service's own environment (the unit's
 `Environment=` line), which always takes precedence over the file.
+
+`keryx pin set` is refused for a coding agent that Keryx started. Like every owner-only
+command, it checks the `KERYX_ACTOR=service` that `keryx serve` gives everything it starts,
+and it refuses before it reads a digit. No voice tool calls it. This binds Keryx's own
+commands. It is not a sandbox, and it does not need to be: a coding agent runs as you, and
+anyone who has your machine can already change your files. The command gives them nothing
+new. What it adds is a way for you to set the PIN without a terminal.
 
 **Why Keryx has no PIN-setting script it can call.** Any sudoers rule that lets Keryx run a
 setter without a password also lets a coding agent run it. That would give back exactly the

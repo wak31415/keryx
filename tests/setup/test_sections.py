@@ -6,6 +6,7 @@ import pytest
 
 from keryx.config import Settings, pin_file, read_enrolled_pin, write_enrolled_pin
 from keryx.config.store import ConfigStore
+from keryx.setup import pin as pin_flow
 from keryx.setup import sections
 from keryx.setup.sections import pin_problem
 
@@ -214,7 +215,7 @@ def test_a_pin_that_appears_meanwhile_is_never_overwritten(make_ctx, monkeypatch
     def raced(data_dir, digits):
         return False
 
-    monkeypatch.setattr(sections, "write_enrolled_pin", raced)
+    monkeypatch.setattr(pin_flow, "write_enrolled_pin", raced)
 
     sections.run_pin(ctx)
 

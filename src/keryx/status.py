@@ -221,6 +221,23 @@ def build_status(
     return {"schema": SCHEMA, **{name: _part(name, computed[name]) for name in DEFAULTS}}
 
 
+def service_running(settings: Settings, *, probes: StatusProbes | None = None) -> bool:
+    """Whether a Keryx may be running now: its unit active, or one answering on loopback.
+
+    What `keryx pin set` asks, because a running service keeps the PIN it started with. A
+    probe that fails counts as running: a needless "restart it" costs a restart, a wrong
+    "nothing to do" leaves the old PIN answering the phone.
+    """
+    probes = probes or default_probes()
+    try:
+        target = probes.target(settings)
+        if target is not None and probes.installed(target) and probes.active(target):
+            return True
+        return probes.health(settings) is not None
+    except Exception:  # noqa: BLE001 - any failure is "may be running"
+        return True
+
+
 def failed_status(error: str) -> dict[str, Any]:
     """The document when there are no settings to report from at all: every part failed,
     each with the one reason, so the app still has a whole document to decode."""

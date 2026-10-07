@@ -20,6 +20,9 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `uv run keryx setup plan [--json]` (a report, so it exits 0; it asks what `doctor` asks, and
   a migration still to run is its first step), `uv run keryx setup mark STEP [--json]` (an
   optional step skipped, or `pin` left to the first call; an unknown step exits 2)
+- The phone PIN: `uv run keryx pin [--json]` (set or not, where, the enrolment door and the
+  wrong-PIN lockout; never the digits), `uv run keryx pin set --stdin [--replace] [--json]`
+  (the owner's alone: the new PIN twice on stdin, one per line)
 - Check the machine's setup: `uv run keryx doctor [--json] [--fix]` (`--fix`
   only tightens secret files to 0600/0700; `--json` carries each check's `section`,
   `state` — ok / missing / failed — and `title`, a setting's own when a key names the check)
@@ -513,7 +516,7 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
   commands that write what the service may not — `config import-env`, `auth login`,
-  `memory seed`, `setup`, `setup mark`, `config lock|unlock`, `migrate`,
+  `memory seed`, `setup`, `setup mark`, `pin set`, `config lock|unlock`, `migrate`,
   `plugins install|remove`,
   `models use`, `voice use` (before any install, handshake or save) — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
@@ -832,11 +835,18 @@ inside functions, not imported at module scope, so the suite runs without them.
   phone ever sets a PIN: `Settings.pin` resolves environment-then-`KERYX_HOME/pin`,
   `pin_enrolment_open` is the door, and `config.write_enrolled_pin` shuts it with
   `O_CREAT | O_EXCL` — the kernel refusing a second write is the whole guarantee, which is
-  why there is no setter in any tool or CLI command and why you must not add one. The one
-  keyboard path is `keryx setup` at a terminal, which sets a PIN the same way when there is
-  none and replaces one only after two explicit yeses, with the new digits already typed
-  twice, by an atomic rename (`pin.replace_pin_at_keyboard`) so no failure leaves no PIN.
-  A running service keeps the PIN it started with until it restarts, and setup says so. The
+  why no voice tool, no call and nothing the service starts reaches a setter, and why you
+  must not add one that could. There are two keyboard paths and one set of doors
+  (`keryx/setup/pin.py`): `keryx setup` at a terminal, which sets a PIN the same way when
+  there is none and replaces one only after two explicit yeses, with the new digits already
+  typed twice; and `keryx pin set --stdin [--replace]`, the owner's Mac app at the keyboard
+  (the owner's ruling of 2026-10-07), which takes the digits twice on stdin, compares them in
+  constant time before judging them, and replaces only with `--replace`. Both replace by an
+  atomic rename (`pin.replace_pin_at_keyboard`) so no failure leaves no PIN, both are
+  owner-only — refused under `KERYX_ACTOR=service` before a digit is read — and neither says
+  the digits or their length anywhere. A `KERYX_PIN` in the environment wins, so `pin set`
+  refuses rather than write a PIN nothing would read.
+  A running service keeps the PIN it started with until it restarts, and both say so. The
   digits are keyed twice and compared (`session._enrol_keypad_pin`), never spoken: a
   mishearing here is unfixable. Any `KERYX_HOME/pin` shuts the door, usable or not, and so
   does a PIN still in an unmigrated `~/.jarvis`; only the owner at the keyboard re-opens it.

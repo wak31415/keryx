@@ -65,8 +65,10 @@ COMMANDS = {
     "tasks usage --json", "models list --json", "models use NAME --json",
     "config list --json", "config options KEY --json", "approvals --json", "memory --json",
     "voice --json", "voice use openai --json", "voice use server URL --json",
-    "setup plan --json", "setup mark STEP --json",
+    "setup plan --json", "setup mark STEP --json", "pin --json", "pin set --json",
 }
+#: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice.
+STDIN = {"pin set --json": "482915\n482915\n"}
 #: What the placeholders in a contract command line stand for.
 TASK_ID = 1
 MODEL = catalog.by_key("qwen3-coder-30b-a3b")
@@ -107,7 +109,8 @@ def argv(command: str) -> list[str]:
     # The realtime model on the seeded voice server: a list read live, the current appended.
     words = {"ID": str(TASK_ID), "NAME": MODEL.key, "KEY": "OPENAI_REALTIME_MODEL",
              "URL": VOICE_SERVER, "STEP": "google"}
-    return [words.get(word, word) for word in command.split()]
+    stdin = ["--stdin"] if command in STDIN else []
+    return [words.get(word, word) for word in command.split()] + stdin
 
 
 # --- the rules ---------------------------------------------------------------------------
@@ -444,7 +447,7 @@ def test_the_contract_names_every_command_the_app_reads_as_json():
 
 @pytest.mark.parametrize("command", sorted(COMMANDS))
 def test_every_key_the_app_needs_is_printed_with_its_type(command, seeded):
-    result = runner.invoke(app, argv(command))
+    result = runner.invoke(app, argv(command), input=STDIN.get(command))
 
     assert result.exit_code in ((0, 1) if command == "doctor --json" else (0,)), result.output
     document = json.loads(result.stdout)

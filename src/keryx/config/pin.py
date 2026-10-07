@@ -9,9 +9,11 @@ because where the PIN is must not depend on a setting. Were it `DATA_DIR/pin`, p
 `KERYX_HOME` is an environment variable only, never a setting. The PIN is still not a
 *setting* either: a file of its own, written once, and never a key in `config.toml`.
 
-It is written in exactly two places — a first call keying one in
-(`session._enrol_keypad_pin`), and the owner choosing one at the keyboard in `keryx setup`
-— and both go through `enrol`, so both go through the same `O_CREAT | O_EXCL`.
+It is written from exactly two kinds of place — a first call keying one in
+(`session._enrol_keypad_pin`), and the owner at the keyboard: `keryx setup` at a terminal,
+or `keryx pin set` from their Mac app, which share `keryx.setup.pin`. A first PIN from any
+of them goes through the same `O_CREAT | O_EXCL`; only the keyboard may replace one, and
+both keyboard commands refuse anything `keryx serve` started.
 """
 
 import logging
@@ -115,9 +117,8 @@ def write_enrolled_pin(home: Path, digits: str) -> bool:
     **This is the one-way door, and the kernel is what holds it shut.** `O_CREAT | O_EXCL`
     makes the write fail on an existing file in the syscall, so no path in this code —
     no voice tool, no CLI command, no retry, no later refactor — can replace a PIN that
-    has been enrolled. A policy check would not be that guarantee. There is deliberately
-    no setter anywhere: changing a PIN means the owner removing this file at the keyboard
-    (`keryx setup` asks them to, in so many words) and enrolling afresh.
+    has been enrolled. A policy check would not be that guarantee. Changing a PIN is
+    `replace_pin_at_keyboard`, the owner's alone, never a call's.
 
     A write that fails part way leaves a file that is not a usable PIN, and it is left
     exactly there rather than cleaned up: "delete the enrolled PIN" is the one operation
@@ -149,8 +150,9 @@ def write_enrolled_pin(home: Path, digits: str) -> bool:
 
 
 def replace_pin_at_keyboard(home: Path, digits: str) -> None:
-    """The owner, at a terminal, putting a new PIN in place of the one there. `keryx setup`
-    only, after two yeses — never a tool, never a command a subagent could run for itself.
+    """The owner, at the keyboard, putting a new PIN in place of the one there: `keryx setup`
+    after two yeses, or `keryx pin set --replace` from the owner's app — never a tool, and
+    both owner-only, so never a command a subagent of the service is let run.
 
     A rename rather than delete-then-create, so there is no moment with no PIN and an open
     door, and a write that fails leaves the old PIN exactly where it was. The running

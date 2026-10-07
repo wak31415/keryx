@@ -6,10 +6,11 @@ Each is a function of a `SetupContext`. None asks again for something already se
 the wizard is reviewing (`ctx.review`), and each saves as it goes.
 
 The PIN is the one thing here with a door of its own (`keryx.config.pin`): it is written
-once, with `O_CREAT | O_EXCL`, and this is the only place outside a first call that writes
-it. Replacing one is the owner at the keyboard — only on two explicit yeses, only after the
-new PIN has been typed twice, and by an atomic rename, so that stopping or failing half way
-never leaves the machine with no PIN and an open door.
+once, with `O_CREAT | O_EXCL`, through `keryx.setup.pin`, which `keryx pin set` shares, so
+the two keyboard paths are one set of doors. Replacing one is the owner at the keyboard —
+here only on two explicit yeses, only after the new PIN has been typed twice, and by an
+atomic rename, so that stopping or failing half way never leaves the machine with no PIN
+and an open door.
 """
 
 import json
@@ -21,18 +22,11 @@ from typing import Any
 import keryx
 from keryx.config import (
     GROUPS,
-    PIN_FROM_ENV,
-    PIN_FROM_FILE,
-    PIN_PATTERN,
-    PIN_RULE,
     Settings,
     env_var_name,
     field_group,
     is_secret,
-    is_trivial_pin,
     pin_file,
-    replace_pin_at_keyboard,
-    write_enrolled_pin,
 )
 from keryx.config.permissions import is_protected, service_writable, writable_keys
 from keryx.config.store import ConfigError, validate
@@ -40,6 +34,7 @@ from keryx.doctor import service_manager_check
 from keryx.persona import DEFAULT_VOICE, PERSONAS
 from keryx.setup.context import SetupContext
 from keryx.setup.phone import numbers_problem
+from keryx.setup.pin import ENVIRONMENT, FILE, UNUSABLE, existing_pin, pin_problem, write_pin
 from keryx.setup.ui import Choice, Prompter
 
 #: Settings the manual walk does not offer: each has a section, or a door, of its own.
@@ -299,28 +294,21 @@ def run_owner(ctx: SetupContext) -> None:
     run_pin(ctx)
 
 
-def pin_problem(digits: str) -> str | None:
-    if not PIN_PATTERN.fullmatch(digits):
-        return f"It {PIN_RULE}."
-    if is_trivial_pin(digits):
-        return "Pick something less guessable than a run or a repeated digit."
-    return None
-
-
 def run_pin(ctx: SetupContext) -> None:
     """Set the PIN here, or leave it to the first call; replace one only on two yeses."""
     ui, settings = ctx.ui, ctx.settings
     path = pin_file(settings.config_dir)
-    if settings.pin_source == PIN_FROM_ENV:
+    where = existing_pin(settings)
+    if where == ENVIRONMENT:
         ui.success("PIN: set by KERYX_PIN in your environment, which wins over anything here")
         return
     replacing = False
-    if settings.pin_source == PIN_FROM_FILE:
+    if where == FILE:
         ui.success(f"PIN: set, kept in {path}")
         if not ctx.review or not ui.confirm("Choose a new PIN?", default=False):
             return
         replacing = True
-    elif path.exists():
+    elif where == UNUSABLE:
         ui.error(f"{path} is not a usable PIN, so there is none — and no call can set one.")
         replacing = True
     else:
@@ -343,11 +331,9 @@ def run_pin(ctx: SetupContext) -> None:
     digits = _new_pin(ctx)
     if digits is None:
         return
-    if replacing:
-        if not ui.confirm(f"Replace the PIN in {path} with the new one?", default=False):
-            return
-        replace_pin_at_keyboard(settings.config_dir, digits)
-    elif not write_enrolled_pin(settings.config_dir, digits):
+    if replacing and not ui.confirm(f"Replace the PIN in {path} with the new one?", default=False):
+        return
+    if not write_pin(settings, digits, replacing=replacing):
         ui.error(f"A PIN appeared in {path} meanwhile; it was left alone.")
         return
     ctx.refresh()
