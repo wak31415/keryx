@@ -7,8 +7,9 @@ Skippable — a Mac on the local channel alone needs none of it. When it is not 
 2. **The tunnel.** Cloudflare Tunnel on Linux, ngrok on macOS (`guides/tunnel.md`), and the
    hostname it gives is `PUBLIC_HOST`.
 3. **The webhooks.** Shown next to where the number points now, and written only on a yes
-   — the one write this section makes to anything outside the machine. On a no, nothing is
-   touched and the console link is given instead.
+   — the one write this section makes to anything outside the machine, through
+   `keryx.phone`, as `keryx phone webhooks --apply` makes it. On a no, nothing is touched
+   and the console link is given instead.
 4. **Texting** stays off unless asked for, with the reason.
 """
 
@@ -16,8 +17,8 @@ import re
 import sys
 from importlib import resources
 
-from keryx.doctor import STATUS_PATH, VOICE_PATH
 from keryx.notify.twilio_out import TwilioAdmin, TwilioError, TwilioNumber
+from keryx.phone import matches, point_here, webhook_urls
 from keryx.setup.context import SetupContext
 from keryx.setup.ui import Choice
 
@@ -28,11 +29,6 @@ CONSOLE_NUMBERS = "https://console.twilio.com/us1/develop/phone-numbers/manage/i
 
 def guide(name: str) -> str:
     return resources.files("keryx.setup.guides").joinpath(name).read_text(encoding="utf-8")
-
-
-def webhook_urls(public_host: str) -> tuple[str, str]:
-    """The voice webhook and the status callback, for a hostname."""
-    return f"https://{public_host}{VOICE_PATH}", f"https://{public_host}{STATUS_PATH}"
 
 
 def hostname_problem(value: str) -> str | None:
@@ -128,9 +124,7 @@ def _webhooks(ctx: SetupContext, admin: TwilioAdmin, number: TwilioNumber) -> No
     ui, settings = ctx.ui, ctx.settings
     assert settings.public_host is not None
     voice, status = webhook_urls(settings.public_host)
-    if (number.voice_url or "").rstrip("/") == voice and (
-        number.status_callback or ""
-    ).rstrip("/") == status:
+    if matches(number, settings.public_host):
         ui.success(f"{number.phone_number} already calls {voice}")
         return
     ui.table(
@@ -144,7 +138,7 @@ def _webhooks(ctx: SetupContext, admin: TwilioAdmin, number: TwilioNumber) -> No
         ui.note(f"Left as it is. To set it yourself: {CONSOLE_NUMBERS} (HTTP POST, both).")
         return
     try:
-        admin.set_webhooks(number.sid, voice_url=voice, status_url=status)
+        point_here(admin, number, settings.public_host)
     except TwilioError as exc:
         ui.error(f"Twilio refused the change: {exc}")
         return
