@@ -28,6 +28,16 @@ extension AppModel {
         model.approvals = .settled(client.approvalsReply)
         model.memory = .settled(client.memoryReply)
         model.voice = .settled(client.voiceReply)
+        model.setupPlan = .settled(client.setupPlanReply)
+        model.pin = .settled(client.pinReply)
+        model.service = .settled(client.serviceReply)
+        model.phoneNumbers = .settled(client.phoneNumbersReply)
+        model.phoneWebhooks = .settled(client.phoneWebhooksReply)
+        model.phoneTunnel = .settled(client.phoneTunnelReply)
+        model.integrations = .settled(client.integrationsReply)
+        model.plugins = .settled(client.pluginsReply)
+        model.tools = .settled(client.toolsReply)
+        model.sshHosts = .settled(client.sshHostsReply)
         // Every list a screen would ask for, so the menus show it from the first frame.
         for row in (try? client.configReply.get()) ?? [] where row.hasOptions {
             model.options[row.key] = .settled(client.optionsReply[row.key] ?? .success(PreviewData.builtinOptions(row.key)))

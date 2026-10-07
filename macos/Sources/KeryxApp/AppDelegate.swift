@@ -6,7 +6,7 @@ import KeryxUI
 /// (the menu needs Keryx found whether or not the window ever opens), a menu opening, and
 /// quitting while a model downloads or the voice is being set up.
 /// The app's windows, for its activation policy.
-enum AppWindow: String { case main, settings }
+enum AppWindow: String { case main, settings, setup }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -111,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let downloads = model.downloads
         let setup = model.voiceSetup
-        guard downloads.isBusy || setup.isBusy else { return .terminateNow }
+        guard model.isBusy else { return .terminateNow }
         // Only what is still running asks; what is already stopping is just waited for.
         if let question = Quitting.question(downloading: downloads.isRunning, settingUpVoice: setup.isRunning,
                                             assistant: Wording.assistant(model.status.value)) {
@@ -127,9 +127,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (SIGKILL follows SIGTERM within seconds); a download's part stays for next time.
         if let current = downloads.current, downloads.isRunning { downloads.cancel(current.name) }
         setup.cancel()
+        model.cancelRuns()
         Task {
             let deadline = ContinuousClock.now + .seconds(8)
-            while downloads.isBusy || setup.isBusy, ContinuousClock.now < deadline {
+            while model.isBusy, ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .milliseconds(100))
             }
             NSApp.reply(toApplicationShouldTerminate: true)

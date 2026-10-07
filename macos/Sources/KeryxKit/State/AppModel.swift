@@ -10,7 +10,10 @@ import Observation
 public final class AppModel {
     /// What `refresh` reloads.
     public enum Part: Sendable, CaseIterable {
-        case status, doctor, tasks, usage, models, config, approvals, memory, voice, all
+        case status, doctor, tasks, usage, models, config, approvals, memory, voice
+        case setupPlan, pin, service, phoneNumbers, phoneWebhooks, phoneTunnel
+        case integrations, plugins, tools, sshHosts
+        case all
 
         static let documents: [Part] = allCases.filter { $0 != .all }
     }
@@ -48,6 +51,22 @@ public final class AppModel {
     public package(set) var approvals: Loadable<ApprovalsReport> = .idle
     public package(set) var memory: Loadable<MemoryDocument> = .idle
     public package(set) var voice: Loadable<VoiceStatus> = .idle
+    /// The steps to a first working call (`keryx setup plan`).
+    public package(set) var setupPlan: Loadable<SetupPlan> = .idle
+    public package(set) var pin: Loadable<PinStatus> = .idle
+    /// Keryx's units (`keryx service`).
+    public package(set) var service: Loadable<ServiceReport> = .idle
+    /// The Twilio account's numbers. Read only when asked for (`.phoneNumbers`, or `.all`):
+    /// it asks Twilio.
+    public package(set) var phoneNumbers: Loadable<PhoneNumbers> = .idle
+    public package(set) var phoneWebhooks: Loadable<PhoneWebhooks> = .idle
+    public package(set) var phoneTunnel: Loadable<PhoneTunnel> = .idle
+    public package(set) var integrations: Loadable<IntegrationsReport> = .idle
+    public package(set) var plugins: Loadable<PluginsReport> = .idle
+    /// The owner's own voice tools (`keryx tools`).
+    public package(set) var tools: Loadable<ToolsReport> = .idle
+    /// The ssh hosts `cluster_stats` could ask (`keryx plugins hosts`).
+    public package(set) var sshHosts: Loadable<SshHostsReport> = .idle
     /// What each setting with options may be set to, by key (`loadOptions`).
     public package(set) var options: [String: Loadable<ConfigOptions>] = [:]
     public var taskDetail: [Int: Loadable<TaskDetail>] = [:]
@@ -63,6 +82,14 @@ public final class AppModel {
     public let downloads: Downloads
     /// Setting up the voice server on this Mac.
     public let voiceSetup: VoiceSetup
+    /// Starting the model server here (`keryx models start`).
+    public let modelServerRun: StreamRun<ModelServerStarted>
+    /// Downloading the voice's speech models (`keryx voice download`).
+    public let voiceDownloadRun: StreamRun<VoiceModelsDownloaded>
+    /// A sign-in (`keryx auth login NAME`), one at a time whichever it is.
+    public let signInRun: StreamRun<SignedIn>
+    /// The provider of the sign-in `signInRun` holds, while it holds one.
+    public private(set) var signingIn: SignInProvider?
     /// The client for the Keryx that was found; `nil` until one is.
     public package(set) var client: KeryxClient?
 
@@ -103,6 +130,9 @@ public final class AppModel {
         self.sweep = sweep
         downloads = Downloads()
         voiceSetup = VoiceSetup()
+        modelServerRun = StreamRun()
+        voiceDownloadRun = StreamRun()
+        signInRun = StreamRun()
     }
 
     // MARK: - Finding Keryx
@@ -219,7 +249,22 @@ public final class AppModel {
             await load(\.approvals, current) { try await client.approvals(limit: Self.approvalsLimit) }
         case .memory: await load(\.memory, current) { try await client.memory() }
         case .voice: await load(\.voice, current) { try await client.voice() }
+        case .setupPlan: await load(\.setupPlan, current) { try await client.setupPlan() }
+        case .pin: await load(\.pin, current) { try await client.pin() }
+        case .service: await load(\.service, current) { try await client.service() }
+        case .phoneNumbers: await load(\.phoneNumbers, current) { try await client.phoneNumbers() }
+        case .phoneWebhooks: await load(\.phoneWebhooks, current) { try await client.phoneWebhooks() }
+        case .phoneTunnel: await load(\.phoneTunnel, current) { try await client.phoneTunnel() }
+        case .integrations: await load(\.integrations, current) { try await client.integrations() }
+        case .plugins: await load(\.plugins, current) { try await client.plugins() }
+        case .tools: await load(\.tools, current) { try await client.tools() }
+        case .sshHosts: await load(\.sshHosts, current) { try await client.sshHosts() }
         }
+    }
+
+    /// Reloads each of `parts`, side by side.
+    public func refresh(_ parts: Part...) async {
+        await refresh(parts)
     }
 
     /// Reads what `key` may be set to. A list already read is kept unless `force` (a menu
@@ -325,6 +370,16 @@ public final class AppModel {
         case .approvals: approvals = .idle
         case .memory: memory = .idle
         case .voice: voice = .idle
+        case .setupPlan: setupPlan = .idle
+        case .pin: pin = .idle
+        case .service: service = .idle
+        case .phoneNumbers: phoneNumbers = .idle
+        case .phoneWebhooks: phoneWebhooks = .idle
+        case .phoneTunnel: phoneTunnel = .idle
+        case .integrations: integrations = .idle
+        case .plugins: plugins = .idle
+        case .tools: tools = .idle
+        case .sshHosts: sshHosts = .idle
         }
     }
 
@@ -453,11 +508,183 @@ public final class AppModel {
         }
     }
 
+    // MARK: - Setup
+
+    /// Records a setup step as walked (an optional one skipped, or the PIN left to the first
+    /// call), then reads the plan again.
+    public func markSetupStep(_ step: String) async -> KeryxError? {
+        if let error = await perform({ _ = try await $0.markSetupStep(step) }) { return error }
+        await refresh(.setupPlan)
+        return nil
+    }
+
+    /// Sets the phone PIN (or replaces it), the digits on the CLI's stdin. The caller has
+    /// had them typed twice and compared them; a running Keryx keeps its old PIN until it
+    /// restarts, which `restartNeeded` says.
+    public func setPin(_ pin: String, replace: Bool) async -> Result<PinSetResult, KeryxError> {
+        let answer = await answer { try await $0.setPin(pin, replace: replace) }
+        if case let .success(result) = answer {
+            if result.restartNeeded { configNeedsRestart = true }
+            await refresh(.pin, .setupPlan)
+        }
+        return answer
+    }
+
+    /// Whether the saved `key` works; nothing is saved.
+    public func verify(key: String) async -> Result<VerifyResult, KeryxError> {
+        await answer { try await $0.verify(key: key) }
+    }
+
+    /// Whether `value` works for `key`, before it is saved; it reaches the CLI on stdin.
+    public func verify(key: String, value: String) async -> Result<VerifyResult, KeryxError> {
+        await answer { try await $0.verify(key: key, value: value) }
+    }
+
+    /// Whether a Twilio account SID and auth token work together, both unsaved.
+    public func verifyTwilio(accountSID: String, authToken: String) async -> Result<VerifyResult, KeryxError> {
+        await answer { try await $0.verifyTwilio(accountSID: accountSID, authToken: authToken) }
+    }
+
+    // MARK: - Phone
+
+    /// Reads the three phone documents (numbers, webhooks, tunnel) side by side.
+    public func refreshPhone() async {
+        await refresh(.phoneNumbers, .phoneWebhooks, .phoneTunnel)
+    }
+
+    /// Points `TWILIO_NUMBER` here — only after the owner has seen both addresses and said
+    /// yes — then reads the phone documents and the plan again.
+    public func applyPhoneWebhooks() async -> Result<WebhooksApplied, KeryxError> {
+        let answer = await answer { try await $0.applyPhoneWebhooks() }
+        if case .success = answer { await refresh(.phoneWebhooks, .phoneNumbers, .setupPlan) }
+        return answer
+    }
+
+    // MARK: - Service
+
+    /// Installs Keryx and its tunnel as services, then reads the units and the status again.
+    public func installService() async -> Result<ServiceResult, KeryxError> {
+        let answer = await answer { try await $0.installService() }
+        if case .success = answer { await refresh(.service, .status, .setupPlan) }
+        return answer
+    }
+
+    /// Removes Keryx and its tunnel, or with `llm`/`voice` that server's unit.
+    public func uninstallService(llm: Bool = false, voice: Bool = false) async -> Result<ServiceResult, KeryxError> {
+        let answer = await answer { try await $0.uninstallService(llm: llm, voice: voice) }
+        if case .success = answer { await refresh(.service, .status, .models, .voice, .setupPlan) }
+        return answer
+    }
+
+    /// Starts the model server here (`keryx models start`), one run at a time, and reads the
+    /// models, the units and the plan again once it serves the chosen model.
+    public func runModelServer(runtime: String? = nil) {
+        guard let client else { return }
+        modelServerRun.start(reason: "Starting the model server", { client.startModelServer(runtime: runtime) }) {
+            [weak self] _ in
+            self?.invalidateOptions()
+            Task { await self?.refresh(.models, .service, .voice, .config, .setupPlan) }
+        }
+    }
+
+    /// Stops the model server and removes its unit.
+    public func stopModelServer() async -> Result<ServiceResult, KeryxError> {
+        let answer = await answer { try await $0.stopModelServer() }
+        if case .success = answer { await refresh(.models, .service, .voice) }
+        return answer
+    }
+
+    /// Downloads the voice's speech models ahead of its first start, one run at a time,
+    /// and reads the voice again once they are in.
+    public func downloadVoiceModels() {
+        guard let client else { return }
+        voiceDownloadRun.start(reason: "Downloading the voice's speech models", { client.downloadVoiceModels() }) {
+            [weak self] _ in
+            Task { await self?.refresh(.voice) }
+        }
+    }
+
+    // MARK: - Accounts
+
+    /// Signs in to `provider` in `signInRun`, one sign-in at a time: false when one is
+    /// already going. Its `open` is the page to open, its `send` takes the line it asks for.
+    /// Once it has worked the accounts are read again; a token stored as a setting
+    /// (Claude's) is loaded by the next restart.
+    @discardableResult
+    public func signIn(_ provider: SignInProvider, clientFile: String? = nil) -> Bool {
+        guard let client else { return false }
+        let started = signInRun.start(reason: "Signing in", { client.signIn(provider, clientFile: clientFile) }) {
+            [weak self] done in
+            if done.stored != nil { self?.configNeedsRestart = true }
+            self?.invalidateOptions()
+            Task { await self?.refresh(.integrations, .plugins, .tools, .config, .doctor, .setupPlan) }
+        }
+        if started { signingIn = provider }
+        return started
+    }
+
+    /// Signs out of Gmail or Google for agents, then reads the accounts again.
+    public func signOut(_ provider: SignInProvider) async -> Result<SignOutResult, KeryxError> {
+        let answer = await answer { try await $0.signOut(provider) }
+        if case .success = answer { await refresh(.integrations, .plugins, .tools, .setupPlan) }
+        return answer
+    }
+
+    // MARK: - Plugins
+
+    /// Turns a plugin on with `values` written first; from the next call, no restart.
+    public func installPlugin(_ name: String, values: PluginValues = PluginValues()) async
+        -> Result<PluginResult, KeryxError> {
+        await pluginChange { try await $0.installPlugin(name, values: values) }
+    }
+
+    /// Turns a plugin off; its settings are kept.
+    public func removePlugin(_ name: String) async -> Result<PluginResult, KeryxError> {
+        await pluginChange { try await $0.removePlugin(name) }
+    }
+
+    /// Changes an installed plugin's settings.
+    public func setPlugin(_ name: String, values: PluginValues) async -> Result<PluginResult, KeryxError> {
+        await pluginChange { try await $0.setPlugin(name, values: values) }
+    }
+
+    private func pluginChange(_ change: (KeryxClient) async throws -> PluginResult) async
+        -> Result<PluginResult, KeryxError> {
+        let answer = await answer(change)
+        if case .success = answer { await refresh(.plugins, .tools, .setupPlan) }
+        return answer
+    }
+
+    // MARK: - Work under way
+
+    /// Something long-running is going or still stopping: a download, a voice setup, a
+    /// model server start, a speech model download, a sign-in.
+    public var isBusy: Bool {
+        downloads.isBusy || voiceSetup.isBusy || modelServerRun.isBusy || voiceDownloadRun.isBusy
+            || signInRun.isBusy
+    }
+
+    /// Asks the streams this model holds beside the downloads and the voice setup to stop
+    /// (the model server start, the speech model download, a sign-in).
+    public func cancelRuns() {
+        modelServerRun.cancel()
+        voiceDownloadRun.cancel()
+        signInRun.cancel()
+    }
+
     private func writeSetting(_ write: (KeryxClient) async throws -> Void) async -> KeryxError? {
         if let error = await perform(write) { return error }
         configNeedsRestart = true
         await refresh(.config)
         return nil
+    }
+
+    /// `action`'s answer, or its error as a `KeryxError`.
+    private func answer<Value>(_ action: (KeryxClient) async throws -> Value) async -> Result<Value, KeryxError> {
+        var value: Value?
+        if let error = await perform({ value = try await action($0) }) { return .failure(error) }
+        guard let value else { return .failure(.launch("Keryx said nothing.")) }
+        return .success(value)
     }
 
     private func perform(_ action: (KeryxClient) async throws -> Void) async -> KeryxError? {
