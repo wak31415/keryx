@@ -253,13 +253,21 @@ def memory_document(data_dir: Path, *, max_chars: int) -> dict[str, Any]:
 
     `text` is None both when there is no memory and when one is there that cannot be read
     (a directory in its place, bytes that are not UTF-8); `exists` tells the two apart.
+
+    Derived from whichever exception the read raised, if any — never from a second
+    `path.exists()` call. That call is a filesystem access of its own and can raise too (an
+    inaccessible parent directory), and a traceback is a much worse answer than either `True`
+    or `False` would have been.
     """
     path = memory_path(data_dir)
+    exists = True
     try:
         text: str | None = _trimmed(path.read_text(encoding="utf-8").strip(), max_chars)
+    except (FileNotFoundError, NotADirectoryError):
+        text, exists = None, False
     except (OSError, UnicodeDecodeError):
         text = None
-    return {"path": str(path), "exists": path.exists(), "text": text}
+    return {"path": str(path), "exists": exists, "text": text}
 
 
 class MemoryWriter:

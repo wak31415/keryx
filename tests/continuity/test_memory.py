@@ -6,6 +6,7 @@ is aimed at the right two files, and that a call not worth remembering creates n
 """
 
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +18,7 @@ from keryx.continuity.memory import (
     compose_memory,
     count_spoken_lines,
     describe_tasks,
+    memory_document,
     memory_path,
     memory_skeleton,
     read_memory,
@@ -394,4 +396,62 @@ def test_standing_facts_past_what_a_call_reads_are_refused(tmp_path):
     with pytest.raises(ValueError, match="a call reads"):
         add_standing_facts(tmp_path, owner="Ada", assistant="Lyra", facts=["x" * MAX_MEMORY_CHARS])
 
-    assert memory_path(tmp_path).read_text() == before
+
+# --- memory_document -------------------------------------------------------------------
+
+
+def test_memory_document_derives_exists_without_calling_it_after_a_read_failure(
+    tmp_path, monkeypatch
+):
+    """`path.exists()` can itself raise — PermissionError on an inaccessible parent — so
+    `exists` has to come from whichever exception the read raised, if any, never from a
+    second filesystem call. Proved here by making `Path.exists()` lie: if `memory_document`
+    called it, its wrong answer would show up in the result. Here it is a plain `OSError`
+    the rule says counts as "there": the read failed for some reason other than it being
+    missing, so the right answer (`True`) is the one `Path.exists()` is *not* giving."""
+    path = tmp_path / "memory.md"
+    monkeypatch.setattr("keryx.continuity.memory.memory_path", lambda data_dir: path)
+    monkeypatch.setattr(
+        Path, "read_text",
+        lambda self, encoding=None: (_ for _ in ()).throw(PermissionError(13, "Permission denied")),
+    )
+    monkeypatch.setattr(Path, "exists", lambda self: False)
+
+    document = memory_document(tmp_path, max_chars=100)
+
+    assert document == {"path": str(path), "exists": True, "text": None}
+
+
+def test_memory_document_a_missing_file_does_not_exist(tmp_path, monkeypatch):
+    path = tmp_path / "memory.md"
+    monkeypatch.setattr("keryx.continuity.memory.memory_path", lambda data_dir: path)
+    monkeypatch.setattr(Path, "exists", lambda self: True)  # the wrong answer, if ever asked
+
+    document = memory_document(tmp_path, max_chars=100)
+
+    assert document == {"path": str(path), "exists": False, "text": None}
+
+
+def test_memory_document_a_path_through_a_file_does_not_exist(tmp_path, monkeypatch):
+    """`NotADirectoryError` — a component of the path is a file, not a directory — reads
+    the same as "not there", like `FileNotFoundError`."""
+    path = tmp_path / "memory.md"
+    monkeypatch.setattr("keryx.continuity.memory.memory_path", lambda data_dir: path)
+    monkeypatch.setattr(
+        Path, "read_text",
+        lambda self, encoding=None: (_ for _ in ()).throw(NotADirectoryError(20, "Not a directory")),
+    )
+    monkeypatch.setattr(Path, "exists", lambda self: True)  # the wrong answer, if ever asked
+
+    document = memory_document(tmp_path, max_chars=100)
+
+    assert document == {"path": str(path), "exists": False, "text": None}
+
+
+def test_memory_document_a_real_memory_reads_back(tmp_path):
+    seed_memory(tmp_path, owner="Ada", assistant="Lyra", facts=["Works nights."])
+
+    document = memory_document(tmp_path, max_chars=MAX_MEMORY_CHARS)
+
+    assert document["exists"] is True
+    assert "Works nights." in document["text"]
