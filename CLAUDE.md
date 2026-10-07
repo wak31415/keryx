@@ -19,6 +19,10 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Check the machine's setup: `uv run keryx doctor [--json] [--fix]` (`--fix`
   only tightens secret files to 0600/0700; `--json` carries each check's `section` and
   `state`: ok / missing / failed)
+- Whether it is running, and what it has to say: `uv run keryx status [--json]` (a report,
+  so it always exits 0, a `keryx migrate` still to run included; `--json` is the document
+  the Mac app's menu bar polls — `keryx/status.py`, schema 1, every part `ok`/`error` with
+  its fields present either way)
 - Settings: `uv run keryx config list [--json] [--group G]`, `config get KEY… [--shell]`
   (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
   `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),

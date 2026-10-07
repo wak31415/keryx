@@ -29,6 +29,7 @@ from keryx.cli import (
     app,
 )
 from keryx.config import Settings
+from keryx.config.settings import ConfigFileError
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path
 from keryx.realtime.base import AudioDelta, Transcript
@@ -989,6 +990,83 @@ def test_restart_status_reads_back_a_failure(restart_settings):
     assert "failed" in result.output
     assert "twilio would not take the call" in result.output
     assert "+15550000001" not in result.output  # masked, even here
+
+
+# --- status ----------------------------------------------------------------
+
+
+@pytest.fixture
+def quiet_status_probes(monkeypatch):
+    """No launchctl, no git, no loopback GET: the status command's probes, all answered."""
+    from keryx import status
+
+    probes = status.StatusProbes(
+        target=lambda settings: None,
+        installed=lambda target: False,
+        active=lambda target: False,
+        health=lambda settings: None,
+        running_version=lambda settings: None,
+        checkout_version=lambda settings: None,
+    )
+    monkeypatch.setattr(status, "default_probes", lambda: probes)
+
+
+def test_status_json_is_a_report_even_when_keryx_migrate_has_yet_to_run(
+    settings_stub, quiet_status_probes, tmp_path
+):
+    old = tmp_path / "home" / ".local" / "share" / "jarvis"
+    old.mkdir(parents=True)
+    (old / "memory.md").write_text("# Memory\n")
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert document["schema"] == 1
+    assert document["storage"]["migration_required"] is True
+    assert document["tasks"]["error"] == "needs keryx migrate"
+    assert not (settings_stub.data_dir / TASK_DB_NAME).exists()
+
+
+def test_status_json_with_settings_that_will_not_load_is_still_a_document(
+    monkeypatch, quiet_status_probes
+):
+    with pytest.raises(ValidationError) as refused:
+        Settings(_env_file=None, openai_api_key="test", assistant_name="Claude")
+
+    def load(**overrides):
+        raise refused.value
+
+    monkeypatch.setattr("keryx.cli.load_settings", load)
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert document["storage"]["ok"] is False
+    assert "ASSISTANT_NAME" in document["storage"]["error"]
+    assert document["assistant"] == {"ok": False, "error": document["storage"]["error"], "name": ""}
+
+
+def test_status_json_with_unreadable_settings_files_is_still_a_document(
+    monkeypatch, quiet_status_probes
+):
+    def load(**overrides):
+        raise ConfigFileError("secrets.toml is not valid TOML")
+
+    monkeypatch.setattr("keryx.cli.load_settings", load)
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["storage"]["error"] == "secrets.toml is not valid TOML"
+
+
+def test_status_text_says_whether_keryx_is_running(settings_stub, quiet_status_probes):
+    result = runner.invoke(app, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[0].split() == ["Keryx", "not", "installed"]
 
 
 # --- doctor ----------------------------------------------------------------

@@ -91,6 +91,7 @@ from keryx.setup.context import SetupContext, run_command
 from keryx.setup.sections import repo_root
 from keryx.setup.ui import Aborted
 from keryx.setup.wizard import agent_instructions, run_wizard
+from keryx.status import build_status, failed_status, format_status
 from keryx.tasks.export import read_log, task_json, told
 from keryx.tasks.manager import install_default_executor
 from keryx.tasks.models import ProjectUsage, Task, TaskStatus, task_log_path
@@ -1394,6 +1395,28 @@ def doctor(
         typer.echo(f"\n{failed} check(s) failed.")
         raise typer.Exit(1)
     typer.echo("\nall good.")
+
+
+@app.command()
+def status(
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print it as one JSON document.")
+    ] = False,
+) -> None:
+    """Say whether Keryx is running, and what it has to tell you; a report, so it exits 0."""
+    try:
+        settings, problems = _load_settings_reporting()
+    except ConfigFileError as error:
+        report = failed_status(str(error))
+    except ValidationError as error:
+        report = failed_status(_config_summary(error))
+    else:
+        report = build_status(settings, config_problems=problems)
+    if as_json:
+        typer.echo(json.dumps(report, indent=2))
+        return
+    for line in format_status(report):
+        typer.echo(line)
 
 
 # --- setup, config, auth ---------------------------------------------------
