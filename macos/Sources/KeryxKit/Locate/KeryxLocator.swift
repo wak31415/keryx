@@ -5,18 +5,21 @@ import Foundation
 /// bare `keryx` on some PATH would read different settings from the service's. In order:
 ///
 /// 1. The owner's chosen folder (`preference`): a checkout, when its `pyproject.toml` names
-///    `keryx`.
+///    `keryx`. It runs with the login shell's environment — or, when it is the service's own
+///    checkout, with the service's (its `KERYX_HOME` and XDG homes).
 /// 2. `~/Library/LaunchAgents/dev.keryx.agent.plist`: the service's own program, folder and
 ///    environment.
 /// 3. The login shell: its environment, and `command -v keryx`; then `~/.local/bin/keryx`.
 ///
-/// A checkout is optional: a `keryx` installed on its own runs with no prefix from `HOME`.
+/// A checkout is optional: a `keryx` installed on its own runs with no prefix, from `/` (as
+/// launchd runs it) — never from `HOME`, where an unrelated `.env` would make the CLI refuse.
 /// Every step that does not do appends one sentence to `LocateFailure.lookedAt`.
 ///
 /// `KERYX_APP_ENVIRONMENT=inherit` in the app's own environment replaces the login shell
 /// with that environment, for both questions it answers (the environment, and where `keryx`
-/// is on `PATH`): only someone who started the binary from a shell can set it, and it is how
-/// a run against a sandbox (`KERYX_HOME` and the XDG homes exported) reaches that sandbox.
+/// is on `PATH`), and skips the launch agent, whose environment is the real installation's:
+/// only someone who started the binary from a shell can set it, and it is how a run against
+/// a sandbox (`KERYX_HOME` and the XDG homes exported) reaches that sandbox and nothing else.
 public struct KeryxLocator: Locating {
     static let agentPlist = "Library/LaunchAgents/dev.keryx.agent.plist"
     static let environmentOverride = "KERYX_APP_ENVIRONMENT"
@@ -42,13 +45,26 @@ public struct KeryxLocator: Locating {
     public func locate(preference: String?) async -> Result<KeryxLocation, LocateFailure> {
         var lookedAt: [String] = []
         var shell = LoginShell(inherited: inherits ? inheritedEnvironment : nil)
+        // Read once, before the preference needs it; never under `inherit`.
+        let agent = inherits ? nil : readLaunchAgent()
 
         if let preference {
             if isKeryxCheckout(preference) {
-                let environment = await shell.environment(runner: runner, base: processEnvironment)
+                let environment: [String: String]
+                let uv: String?
+                if case let .success(service)? = agent, let checkout = service.checkout,
+                   Self.samePath(checkout, preference) {
+                    // The service's own checkout: what the service sees, not the login shell.
+                    environment = service.environment
+                    uv = service.uv
+                } else {
+                    environment = await shell.environment(runner: runner, base: processEnvironment)
+                        ?? processEnvironment
+                    uv = nil
+                }
                 if let location = forCheckout(
-                    preference, uv: nil, environment: environment ?? processEnvironment,
-                    source: .preference, lookedAt: &lookedAt) {
+                    preference, uv: uv, environment: environment, source: .preference,
+                    lookedAt: &lookedAt) {
                     return .success(location)
                 }
             } else {
@@ -58,8 +74,15 @@ public struct KeryxLocator: Locating {
             lookedAt.append("No Keryx folder has been chosen in the app.")
         }
 
-        if let location = fromLaunchAgent(lookedAt: &lookedAt) {
-            return .success(location)
+        switch agent {
+        case nil:
+            lookedAt.append("\(Self.environmentOverride)=inherit, so the service's launch agent was not read.")
+        case let .failure(reason):
+            lookedAt.append(reason.sentence)
+        case let .success(service):
+            if let location = fromLaunchAgent(service, lookedAt: &lookedAt) {
+                return .success(location)
+            }
         }
         if let location = await fromLoginShell(&shell, lookedAt: &lookedAt) {
             return .success(location)
@@ -69,22 +92,36 @@ public struct KeryxLocator: Locating {
 
     // MARK: - The launch agent
 
-    private func fromLaunchAgent(lookedAt: inout [String]) -> KeryxLocation? {
+    /// What the service's plist says, already checked: its program is `keryx`, or `uv run
+    /// --project CHECKOUT` with a checkout that names keryx.
+    private struct LaunchAgent {
+        /// `CHECKOUT/…/keryx` or the like, for a `keryx` run directly; else `nil`.
+        var keryx: String?
+        /// The `uv` that runs the checkout; `nil` for a `keryx` run directly.
+        var uv: String?
+        /// A checkout, validated: `--project` for uv, a valid `WorkingDirectory` for keryx.
+        var checkout: String?
+        var environment: [String: String]
+    }
+
+    private struct Unusable: Error {
+        var sentence: String
+    }
+
+    private func readLaunchAgent() -> Result<LaunchAgent, Unusable> {
         let path = home + "/" + Self.agentPlist
+        let name = tilde(path)
         guard let data = fileSystem.contents(atPath: path) else {
-            lookedAt.append("There is no \(tilde(path)), so the service is not installed.")
-            return nil
+            return .failure(Unusable(sentence: "There is no \(name), so the service is not installed."))
         }
         guard let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil))
             as? [String: Any]
         else {
-            lookedAt.append("\(tilde(path)) could not be read as a property list.")
-            return nil
+            return .failure(Unusable(sentence: "\(name) could not be read as a property list."))
         }
         let arguments = plist["ProgramArguments"] as? [String] ?? []
         guard let program = arguments.first else {
-            lookedAt.append("\(tilde(path)) names no program to run.")
-            return nil
+            return .failure(Unusable(sentence: "\(name) names no program to run."))
         }
         let workingDirectory = plist["WorkingDirectory"] as? String
         let declared = (plist["EnvironmentVariables"] as? [String: Any] ?? [:])
@@ -92,29 +129,45 @@ public struct KeryxLocator: Locating {
         let environment = ["HOME": home, "USER": NSUserName()]
             .merging(declared) { _, plist in plist }
 
-        // A `keryx` run directly (a `uv tool install` or a PyPI install): no prefix, and
-        // whatever follows it (`serve`) is the service's business, not ours.
-        if (program as NSString).lastPathComponent == "keryx" {
-            guard fileSystem.isExecutableFile(atPath: program) else {
-                lookedAt.append("\(tilde(path)) runs \(tilde(program)), which is not there.")
+        switch (program as NSString).lastPathComponent {
+        case "keryx":
+            // A `keryx` run directly (a `uv tool install` or a PyPI install): no prefix, and
+            // whatever follows it (`serve`) is the service's business, not ours. Its folder
+            // is a checkout only if it still is one: a moved or deleted checkout is not.
+            return .success(LaunchAgent(
+                keryx: program, uv: nil,
+                checkout: workingDirectory.flatMap { isKeryxCheckout($0) ? $0 : nil },
+                environment: environment))
+        case "uv":
+            guard arguments.count > 1, arguments[1] == "run", let checkout = projectArgument(arguments)
+            else {
+                return .failure(Unusable(sentence: "\(name) runs uv, but not as uv run --project with a checkout."))
+            }
+            guard isKeryxCheckout(checkout) else {
+                return .failure(Unusable(
+                    sentence: "\(name) points at \(tilde(checkout)), which has no pyproject.toml naming keryx."))
+            }
+            return .success(LaunchAgent(keryx: nil, uv: program, checkout: checkout,
+                                        environment: environment))
+        default:
+            return .failure(Unusable(sentence: "\(name) runs \(tilde(program)), which is neither keryx nor uv."))
+        }
+    }
+
+    private func fromLaunchAgent(_ service: LaunchAgent, lookedAt: inout [String]) -> KeryxLocation? {
+        if let keryx = service.keryx {
+            guard fileSystem.isExecutableFile(atPath: keryx) else {
+                lookedAt.append("\(tilde(home + "/" + Self.agentPlist)) runs \(tilde(keryx)), which is not there.")
                 return nil
             }
             return KeryxLocation(
-                checkout: workingDirectory.flatMap { isKeryxCheckout($0) ? $0 : nil },
-                executable: program, prefixArguments: [],
-                environment: Sanitise.environment(environment),
-                workingDirectory: workingDirectory ?? home, source: .launchAgent)
+                checkout: service.checkout, executable: keryx, prefixArguments: [],
+                environment: Sanitise.environment(service.environment),
+                workingDirectory: service.checkout ?? KeryxLocation.noCheckoutDirectory,
+                source: .launchAgent)
         }
-
-        guard let checkout = workingDirectory ?? projectArgument(arguments) else {
-            lookedAt.append("\(tilde(path)) names no checkout (no WorkingDirectory, no --project).")
-            return nil
-        }
-        guard isKeryxCheckout(checkout) else {
-            lookedAt.append("\(tilde(path)) points at \(tilde(checkout)), which has no pyproject.toml naming keryx.")
-            return nil
-        }
-        return forCheckout(checkout, uv: program, environment: environment,
+        guard let checkout = service.checkout else { return nil }
+        return forCheckout(checkout, uv: service.uv, environment: service.environment,
                            source: .launchAgent, lookedAt: &lookedAt)
     }
 
@@ -138,8 +191,10 @@ public struct KeryxLocator: Locating {
             ?? processEnvironment
 
         if let path = await commandV(), path.hasPrefix("/"), fileSystem.isExecutableFile(atPath: path) {
-            if path.hasSuffix("/.venv/bin/keryx") {
-                let checkout = dirname(dirname(dirname(path)))
+            // A checkout's own venv — when the folder above it is one; any other project's
+            // venv is only a `keryx` installed there.
+            let checkout = dirname(dirname(dirname(path)))
+            if path.hasSuffix("/.venv/bin/keryx"), isKeryxCheckout(checkout) {
                 return KeryxLocation(
                     checkout: checkout, executable: path, prefixArguments: [],
                     environment: Sanitise.environment(environment),
@@ -162,7 +217,7 @@ public struct KeryxLocator: Locating {
         KeryxLocation(
             checkout: nil, executable: path, prefixArguments: [],
             environment: Sanitise.environment(environment),
-            workingDirectory: home, source: .loginShell)
+            workingDirectory: KeryxLocation.noCheckoutDirectory, source: .loginShell)
     }
 
     /// `command -v keryx` in the login shell: the last line it printed, since an
@@ -245,6 +300,11 @@ public struct KeryxLocator: Locating {
         environment.merging(["HOME": home]) { own, _ in own }
     }
 
+    /// The same folder, written either way (a trailing slash, a `.`).
+    private static func samePath(_ a: String, _ b: String) -> Bool {
+        (a as NSString).standardizingPath == (b as NSString).standardizingPath
+    }
+
     private func tilde(_ path: String) -> String {
         path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
     }
@@ -256,7 +316,12 @@ public struct KeryxLocator: Locating {
 
 /// The login shell's environment, asked for at most once per `locate` — or, `inherited`,
 /// never asked at all.
-private struct LoginShell {
+struct LoginShell {
+    /// What the shell runs: a marker between two NULs, then `env -0`. Whatever an
+    /// interactive profile prints comes before the marker, newline or not, and is dropped.
+    static let marker = "keryx-environment"
+    static let script = "printf '\\0%s\\0' \(marker); env -0"
+
     private var fetched = false
     private var cached: [String: String]?
 
@@ -271,7 +336,7 @@ private struct LoginShell {
         if fetched { return cached }
         fetched = true
         let request = CommandRequest(
-            executable: "/bin/zsh", arguments: ["-lic", "env -0"], environment: base,
+            executable: "/bin/zsh", arguments: ["-lic", Self.script], environment: base,
             workingDirectory: base["HOME"], stdin: Data(), timeout: .seconds(5))
         if let result = try? await runner.run(request), result.exitCode == 0 {
             cached = Self.parse(result.stdout)
@@ -279,18 +344,17 @@ private struct LoginShell {
         return cached
     }
 
-    /// `env -0` output: `KEY=value` entries separated by NUL. Anything an interactive
-    /// profile printed before the first entry is dropped, as is any entry whose name is not
-    /// a variable name.
+    /// The `KEY=value` entries after the marker, each ended by a NUL; `nil` with no marker
+    /// (nothing printed can be told from a profile's noise then). An entry whose name is not
+    /// a variable name (a logout script's farewell, say) is dropped.
     static func parse(_ data: Data) -> [String: String]? {
+        let marker = Data([0] + Array(Self.marker.utf8) + [0])
+        guard let range = data.range(of: marker) else { return nil }
         var environment: [String: String] = [:]
-        for entry in data.split(separator: 0) {
+        for entry in data[range.upperBound...].split(separator: 0) {
             let text = String(decoding: entry, as: UTF8.self)
             guard let equals = text.firstIndex(of: "=") else { continue }
-            var name = Substring(text[..<equals])
-            if let newline = name.lastIndex(where: \.isNewline) {
-                name = name[name.index(after: newline)...]
-            }
+            let name = text[..<equals]
             guard let first = name.first, first == "_" || first.isLetter,
                   name.allSatisfy({ $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) })
             else { continue }

@@ -14,7 +14,7 @@ public struct KeryxLocation: Sendable, Equatable {
     public var prefixArguments: [String]
     /// Already passed through `Sanitise.environment`.
     public var environment: [String: String]
-    /// The checkout (the CLI's `storage_refusal` looks at the cwd), else `HOME`.
+    /// The checkout (the CLI's `storage_refusal` looks at the cwd), else `/`.
     public var workingDirectory: String
     public var source: Source
 
@@ -28,6 +28,17 @@ public struct KeryxLocation: Sendable, Equatable {
         self.environment = environment
         self.workingDirectory = workingDirectory
         self.source = source
+    }
+
+    /// Where a `keryx` with no checkout runs: `/`, as launchd runs it. Never `HOME`: the
+    /// CLI refuses to run beside a `.env`, and an unrelated one there would read as a Keryx
+    /// waiting for `keryx migrate` — which would then import it.
+    public static let noCheckoutDirectory = "/"
+
+    /// The folder a command runs in: the checkout's, else `noCheckoutDirectory` — whatever
+    /// `workingDirectory` says, so no location without a checkout runs anywhere else.
+    public var runDirectory: String {
+        checkout == nil ? Self.noCheckoutDirectory : workingDirectory
     }
 
     /// A checkout run through `uv`, for previews and tests. Nothing on disk is consulted.

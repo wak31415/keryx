@@ -25,15 +25,24 @@ import Testing
         FakeRunner { request in
             #expect(request.executable == "/bin/zsh")
             let script = request.arguments.last ?? ""
-            if script == "env -0", let env {
-                let body = env.map { "\($0.key)=\($0.value)" }.joined(separator: "\0") + "\0"
-                return .init(exitCode: 0, stdout: Data(body.utf8), stderr: Data())
+            if script == LoginShell.script, let env {
+                return .init(exitCode: 0, stdout: envOutput(env), stderr: Data())
             }
             if script == "command -v keryx", let keryx {
                 return .init(exitCode: 0, stdout: Data((keryx + "\n").utf8), stderr: Data())
             }
             return .init(exitCode: 1, stdout: Data(), stderr: Data())
         }
+    }
+
+    /// What the login shell prints for `env`: the marker between NULs, then the entries.
+    static func envOutput(_ env: [String: String], before: String = "") -> Data {
+        let body = env.map { "\($0.key)=\($0.value)" }.joined(separator: "\0") + "\0"
+        return Data((before + "\0" + LoginShell.marker + "\0" + body).utf8)
+    }
+
+    static func plist(_ object: [String: Any]) throws -> Data {
+        try PropertyListSerialization.data(fromPropertyList: object, format: .xml, options: 0)
     }
 
     // MARK: - The launch agent
@@ -103,8 +112,67 @@ import Testing
         #expect(location.executable == "/Users/x/.local/bin/keryx")
         #expect(location.prefixArguments == [])
         #expect(location.checkout == nil)
-        #expect(location.workingDirectory == "/Users/x")
+        // No checkout: from `/`, as launchd runs it, never from HOME.
+        #expect(location.workingDirectory == "/")
+        #expect(location.runDirectory == "/")
         #expect(location.environment["KERYX_HOME"] == "/Users/x/.config/keryx")
+    }
+
+    @Test func aBareKeryxPlistsWorkingDirectoryIsUsedOnlyWhenItIsACheckout() async throws {
+        func locate(workingDirectory: String, files: [String: Data]) async throws -> KeryxLocation {
+            var fs = FakeFileSystem(files: files)
+            fs.files[Self.plistPath] = try Self.plist([
+                "ProgramArguments": ["/Users/x/.local/bin/keryx", "serve"],
+                "WorkingDirectory": workingDirectory,
+            ])
+            fs.executables = ["/Users/x/.local/bin/keryx"]
+            let locator = KeryxLocator(fileSystem: fs, runner: Self.shell(), home: Self.home)
+            return try await locator.locate(preference: nil).get()
+        }
+        // A checkout moved or deleted since the service was installed: not a checkout.
+        let stale = try await locate(workingDirectory: "/Users/x/gone", files: [:])
+        #expect(stale.checkout == nil)
+        #expect(stale.workingDirectory == "/")
+        // Home, with no pyproject.toml: not a checkout either, and not where it runs.
+        let home = try await locate(workingDirectory: "/Users/x", files: [:])
+        #expect(home.checkout == nil)
+        #expect(home.workingDirectory == "/")
+        // A checkout: both.
+        let checkout = try await locate(workingDirectory: "/Users/x/code/keryx",
+                                        files: ["/Users/x/code/keryx/pyproject.toml": Self.pyproject])
+        #expect(checkout.checkout == "/Users/x/code/keryx")
+        #expect(checkout.workingDirectory == "/Users/x/code/keryx")
+    }
+
+    @Test func aPlistProgramThatIsNeitherKeryxNorUvFallsThrough() async throws {
+        var fs = FakeFileSystem()
+        fs.files[Self.plistPath] = try Self.plist([
+            "ProgramArguments": ["/usr/bin/python3", "-m", "keryx", "serve"],
+            "WorkingDirectory": "/Users/x/code/keryx",
+        ])
+        fs.files["/Users/x/code/keryx/pyproject.toml"] = Self.pyproject
+        fs.executables = ["/usr/bin/python3", "/Users/x/.local/bin/uv"]
+        let locator = KeryxLocator(fileSystem: fs, runner: Self.shell(), home: Self.home)
+
+        let failure = try #require(await locator.locate(preference: nil).failure)
+        #expect(failure.lookedAt.contains { $0.contains("/usr/bin/python3") && $0.contains("neither keryx nor uv") })
+    }
+
+    @Test func aUvPlistMustRunAProject() async throws {
+        for arguments in [["/Users/x/.local/bin/uv", "tool", "run", "keryx", "serve"],
+                          ["/Users/x/.local/bin/uv", "--project", "/Users/x/code/keryx", "keryx"],
+                          ["/Users/x/.local/bin/uv", "run", "keryx", "serve"]] {
+            var fs = FakeFileSystem()
+            fs.files[Self.plistPath] = try Self.plist([
+                "ProgramArguments": arguments, "WorkingDirectory": "/Users/x/code/keryx",
+            ])
+            fs.files["/Users/x/code/keryx/pyproject.toml"] = Self.pyproject
+            fs.executables = ["/Users/x/.local/bin/uv"]
+            let locator = KeryxLocator(fileSystem: fs, runner: Self.shell(), home: Self.home)
+
+            let failure = try #require(await locator.locate(preference: nil).failure, "\(arguments)")
+            #expect(failure.lookedAt.contains { $0.contains("uv run --project") }, "\(arguments)")
+        }
     }
 
     @Test func plistWhoseCheckoutIsNotKeryxFallsThrough() async throws {
@@ -135,7 +203,7 @@ import Testing
         #expect(location.environment["PATH"] == "/login/bin")
         #expect(location.environment["KERYX_ACTOR"] == nil)
         let envCall = try #require(runner.requests.first)
-        #expect(envCall.arguments == ["-lic", "env -0"])
+        #expect(envCall.arguments == ["-lic", LoginShell.script])
         #expect(envCall.timeout == .seconds(5))
     }
 
@@ -158,10 +226,46 @@ import Testing
         #expect(failure.lookedAt.first?.contains("pyproject.toml") == true)
     }
 
+    @Test func theServicesOwnCheckoutChosenRunsWithTheServicesEnvironment() async throws {
+        for chosen in ["/Users/x/code/keryx", "/Users/x/code/keryx/"] {
+            var fs = FakeFileSystem()
+            fs.files[Self.plistPath] = try Self.fixture("agent.plist")
+            fs.files["/Users/x/code/keryx/pyproject.toml"] = Self.pyproject
+            fs.files["/Users/x/code/keryx//pyproject.toml"] = Self.pyproject
+            fs.executables = ["/Users/x/.local/bin/uv"]
+            let runner = Self.shell(env: ["PATH": "/login/bin", "KERYX_HOME": "/elsewhere"])
+            let locator = KeryxLocator(fileSystem: fs, runner: runner, home: Self.home)
+
+            let location = try await locator.locate(preference: chosen).get()
+            #expect(location.source == .preference)
+            #expect(location.environment["KERYX_HOME"] == "/Users/x/.config/keryx")
+            #expect(location.environment["XDG_STATE_HOME"] == "/Users/x/.local/state")
+            #expect(location.environment["PATH"] == "/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin:/bin")
+            // The service's uv, and no login shell asked.
+            #expect(location.executable == "/Users/x/.local/bin/uv")
+            #expect(runner.requests.isEmpty)
+        }
+    }
+
+    @Test func anotherCheckoutChosenRunsWithTheLoginShellsEnvironment() async throws {
+        var fs = FakeFileSystem()
+        fs.files[Self.plistPath] = try Self.fixture("agent.plist")
+        fs.files["/Users/x/code/keryx/pyproject.toml"] = Self.pyproject
+        fs.files["/Users/x/other/pyproject.toml"] = Self.pyproject
+        fs.executables = ["/Users/x/.local/bin/uv"]
+        let runner = Self.shell(env: ["PATH": "/login/bin", "KERYX_HOME": "/elsewhere"])
+        let locator = KeryxLocator(fileSystem: fs, runner: runner, home: Self.home)
+
+        let location = try await locator.locate(preference: "/Users/x/other").get()
+        #expect(location.checkout == "/Users/x/other")
+        #expect(location.environment["KERYX_HOME"] == "/elsewhere")
+    }
+
     // MARK: - The login shell
 
     @Test func loginShellFindsAVenvKeryx() async throws {
         var fs = FakeFileSystem()
+        fs.files["/Users/x/code/keryx/pyproject.toml"] = Self.pyproject
         fs.executables = ["/Users/x/code/keryx/.venv/bin/keryx"]
         let runner = Self.shell(env: ["PATH": "/a:/b", "HOME": "/Users/x"],
                                 keryx: "/Users/x/code/keryx/.venv/bin/keryx")
@@ -184,7 +288,20 @@ import Testing
         let location = try await locator.locate(preference: nil).get()
         #expect(location.checkout == nil)
         #expect(location.executable == "/opt/homebrew/bin/keryx")
-        #expect(location.workingDirectory == "/Users/x")
+        #expect(location.workingDirectory == "/")
+    }
+
+    @Test func aVenvKeryxOutsideAKeryxCheckoutIsABareKeryx() async throws {
+        var fs = FakeFileSystem()
+        fs.files["/Users/x/other/pyproject.toml"] = Data("[project]\nname = \"other\"\n".utf8)
+        fs.executables = ["/Users/x/other/.venv/bin/keryx"]
+        let runner = Self.shell(env: ["PATH": "/a"], keryx: "/Users/x/other/.venv/bin/keryx")
+        let locator = KeryxLocator(fileSystem: fs, runner: runner, home: Self.home)
+
+        let location = try await locator.locate(preference: nil).get()
+        #expect(location.executable == "/Users/x/other/.venv/bin/keryx")
+        #expect(location.checkout == nil)
+        #expect(location.workingDirectory == "/")
     }
 
     @Test func loginShellAliasIsNotAPath() async throws {
@@ -195,8 +312,10 @@ import Testing
 
     @Test func loginShellNoiseBeforeEnvIsIgnored() async throws {
         let runner = FakeRunner { request in
-            if request.arguments.last == "env -0" {
-                return .init(exitCode: 0, stdout: Data("Welcome!\nPATH=/p\0HOME=/Users/x\0".utf8),
+            if request.arguments.last == LoginShell.script {
+                // A banner with no newline before the marker cannot run into the first name.
+                return .init(exitCode: 0, stdout: Self.envOutput(["PATH": "/p", "HOME": "/Users/x"],
+                                                                 before: "Welcome!\nPATH=/wrong"),
                              stderr: Data())
             }
             return .init(exitCode: 0, stdout: Data("noise\n/u/bin/keryx\n".utf8), stderr: Data())
@@ -210,6 +329,14 @@ import Testing
         #expect(location.executable == "/u/bin/keryx")
     }
 
+    @Test func theEnvironmentIsReadOnlyAfterTheMarker() {
+        let merged = Data("WelcomePATH=/wrong\0HOME=/h\0".utf8)
+        #expect(LoginShell.parse(merged) == nil)
+        let output = Self.envOutput(["PATH": "/p"], before: "WelcomePATH=/wrong")
+            + Data("Goodbye\n".utf8)
+        #expect(LoginShell.parse(output) == ["PATH": "/p"])
+    }
+
     @Test func uvToolInstallIsTheLastResort() async throws {
         var fs = FakeFileSystem()
         fs.executables = ["/Users/x/.local/bin/keryx"]
@@ -219,6 +346,7 @@ import Testing
         #expect(location.executable == "/Users/x/.local/bin/keryx")
         #expect(location.checkout == nil)
         #expect(location.prefixArguments == [])
+        #expect(location.workingDirectory == "/")
     }
 
     @Test func nothingFoundListsAllThreePlaces() async throws {
@@ -276,6 +404,51 @@ import Testing
         #expect(runner.requests.isEmpty)
     }
 
+    @Test func inheritSkipsTheLaunchAgent() async throws {
+        var fs = FakeFileSystem()
+        fs.files[Self.plistPath] = try Self.fixture("agent.plist")
+        fs.files["/Users/x/code/keryx/pyproject.toml"] = Self.pyproject
+        fs.executables = ["/Users/x/.local/bin/uv", "/sb/bin/keryx"]
+        let runner = Self.noShell()
+        let locator = KeryxLocator(
+            fileSystem: fs, runner: runner, home: Self.home,
+            environment: ["KERYX_APP_ENVIRONMENT": "inherit", "PATH": "/sb/bin",
+                          "KERYX_HOME": "/sb/home/.config/keryx"])
+
+        let location = try await locator.locate(preference: nil).get()
+        #expect(location.source == .loginShell)
+        #expect(location.executable == "/sb/bin/keryx")
+        #expect(location.environment["KERYX_HOME"] == "/sb/home/.config/keryx")
+        #expect(location.environment["XDG_STATE_HOME"] == nil)
+        #expect(runner.requests.isEmpty)
+
+        // With nothing on the PATH it fails rather than fall back to the real installation.
+        var bare = fs
+        bare.executables = ["/Users/x/.local/bin/uv"]
+        let failing = KeryxLocator(
+            fileSystem: bare, runner: Self.noShell(), home: Self.home,
+            environment: ["KERYX_APP_ENVIRONMENT": "inherit", "PATH": "/sb/bin"])
+        let failure = try #require(await failing.locate(preference: nil).failure)
+        #expect(failure.lookedAt.contains { $0.contains("KERYX_APP_ENVIRONMENT=inherit") })
+    }
+
+    @Test func inheritStillLetsAChosenFolderWinOverThePlist() async throws {
+        var fs = FakeFileSystem()
+        fs.files[Self.plistPath] = try Self.fixture("agent.plist")
+        // The chosen folder is the service's own checkout: under inherit, still the app's env.
+        fs.files["/Users/x/code/keryx/pyproject.toml"] = Self.pyproject
+        fs.executables = ["/Users/x/.local/bin/uv"]
+        let locator = KeryxLocator(
+            fileSystem: fs, runner: Self.noShell(), home: Self.home,
+            environment: ["KERYX_APP_ENVIRONMENT": "inherit", "PATH": "/sb/bin",
+                          "KERYX_HOME": "/sb/home/.config/keryx"])
+
+        let location = try await locator.locate(preference: "/Users/x/code/keryx").get()
+        #expect(location.source == .preference)
+        #expect(location.environment["KERYX_HOME"] == "/sb/home/.config/keryx")
+        #expect(location.environment["PATH"] == "/sb/bin")
+    }
+
     @Test func anyOtherValueStillAsksTheLoginShell() async throws {
         var fs = FakeFileSystem()
         fs.files["/Users/x/elsewhere/pyproject.toml"] = Self.pyproject
@@ -287,7 +460,7 @@ import Testing
 
         let location = try await locator.locate(preference: "/Users/x/elsewhere").get()
         #expect(location.environment["PATH"] == "/login/bin")
-        #expect(runner.requests.first?.arguments == ["-lic", "env -0"])
+        #expect(runner.requests.first?.arguments == ["-lic", LoginShell.script])
     }
 
     // MARK: - Sanitise
