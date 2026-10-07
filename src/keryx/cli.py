@@ -34,6 +34,7 @@ from keryx.approvals.audit_log import (
     settled_with_escalation,
 )
 from keryx.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
+from keryx.child_env import redact_known
 from keryx.config import (
     GROUPS,
     PLACEHOLDER_KEY,
@@ -357,7 +358,7 @@ def _configure_readonly(
         if isinstance(error, ValidationError):
             refuse(_config_summary(error))
         else:
-            refuse(SETTINGS_UNREADABLE, detail=str(error))
+            refuse(SETTINGS_UNREADABLE, detail=redact_known(str(error)))
         raise typer.Exit(1) from None
     if migrated and (refusal := settings.storage_refusal()):
         message = f"keryx cannot do that yet: {refusal}"
@@ -1399,7 +1400,7 @@ def voice_use_server(
         raise typer.Exit(2) from None
     if check.problem is not None and not keep_anyway:
         if as_json:
-            typer.echo(json.dumps({"saved": None, "problem": check.problem,
+            typer.echo(json.dumps({"saved": None, **_server_problem(check),
                                    "warnings": check.warnings, "restart_needed": False},
                                   indent=2))
         else:
@@ -1413,8 +1414,20 @@ def voice_use_server(
         typer.echo("next: `keryx restart`, to have Keryx take it up")
         return
     saved = _store_values(values, echo=False)
-    typer.echo(json.dumps({"saved": _shown(saved), "problem": check.problem,
+    typer.echo(json.dumps({"saved": _shown(saved), **_server_problem(check),
                            "warnings": check.warnings, "restart_needed": True}, indent=2))
+
+
+#: `voice use server --json`'s `problem` while the server opened no session: for a person.
+SERVER_REFUSED = "The voice server did not open a Realtime session."
+
+
+def _server_problem(check: voice.ServerCheck) -> dict[str, str | None]:
+    """`problem` for the app, and `detail` — what the server or its socket said, one line
+    with no credential in it (`realtime.openai.handshake`) — both null when it answered."""
+    if check.problem is None:
+        return {"problem": None, "detail": None}
+    return {"problem": SERVER_REFUSED, "detail": check.problem}
 
 
 @voice_use_app.command("here")
@@ -1517,7 +1530,8 @@ def _saver(
         try:
             store.set(values, actor=current_actor(), settings=settings)
         except ConfigError as error:  # its own sentence names keys and rules: the detail
-            report.error("Keryx could not save the settings this needs.", detail=str(error))
+            report.error("Keryx could not save the settings this needs.",
+                         detail=redact_known(str(error), settings))
             return False
         return True
 

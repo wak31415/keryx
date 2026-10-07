@@ -25,6 +25,7 @@ from typing import Any, Protocol
 import httpx
 
 from keryx import endpoints
+from keryx.child_env import redact_known
 from keryx.config import Settings
 from keryx.endpoints import Endpoint, Probe
 from keryx.localmodels import catalog, download, hardware, runtimes, servers, use, voice
@@ -284,7 +285,8 @@ def _have_llama(settings: Settings, probes: Probes, report: StartReport, *, plat
                               install=lambda cache, machine: probes.download_llama_cpp(
                                   cache, machine, report.progress))
             except InstallError as error:
-                report.error("llama.cpp could not be installed.", detail=str(error))
+                report.error("llama.cpp could not be installed.",
+                             detail=redact_known(str(error), settings))
                 return False
         found = probes.llama_server(settings.cache_dir)
         if found is None:

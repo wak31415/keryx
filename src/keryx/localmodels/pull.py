@@ -186,10 +186,17 @@ class EventLines:
             if self.ended:
                 raise
             with suppress(KeyboardInterrupt):
-                said = str(exc)
-                self.error(UNEXPECTED, detail=f"{type(exc).__name__}: {said}" if said
-                           else type(exc).__name__)
+                self.error(UNEXPECTED, detail=unexpected_detail(exc))
             return 1
+
+
+def unexpected_detail(exc: BaseException) -> str:
+    """An exception nobody wrote a sentence for, as an error's `detail`: its type, then its
+    text with every credential Keryx knows of taken out — it can quote a key or a code."""
+    from keryx.child_env import redact_known
+
+    said = str(exc)
+    return f"{type(exc).__name__}: {redact_known(said)}" if said else type(exc).__name__
 
 
 class JsonLines(EventLines):

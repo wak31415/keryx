@@ -39,6 +39,7 @@ from keryx.agents.registry import (
     without_google,
 )
 from keryx.agents.registry import harness as agent_harness
+from keryx.child_env import redact_known
 from keryx.config import (
     DATA_DIR_MODE,
     DATA_FILE_MODE,
@@ -971,7 +972,7 @@ def _secrets_in_config_check(store: ConfigStore) -> Check:
     except Exception as exc:  # a config.toml that does not parse: `serve` will not start
         return Check("config.toml", False, "the settings file does not parse, and only an "
                      "edit by hand can mend it", section="security",
-                     hint=f"{exc}; fix it by hand")
+                     hint=f"{redact_known(str(exc))}; fix it by hand")
     if found:
         return Check(
             "config.toml",
@@ -1182,7 +1183,8 @@ def plugin_checks(settings: Settings) -> list[Check]:
         statuses = plugins.status(settings)
     except Exception as exc:  # the owner's own files are loaded too; never take doctor down
         return [Check("plugins", False, "the plugins could not be loaded", severity="soft",
-                      section="plugins", hint=f"{settings.custom_tools_dir}: {exc}")]
+                      section="plugins",
+                      hint=f"{settings.custom_tools_dir}: {redact_known(str(exc), settings)}")]
     checks = []
     for status in statuses:
         name = status.name
@@ -1216,7 +1218,7 @@ def _refused_plugin(settings: Settings, status: plugins.Status) -> Check:
     from keryx.integrations.accounts import INTEGRATIONS, connected
 
     spec = plugins.plugin(status.name)
-    hint = f"refused: {status.refused}" if status.refused else None
+    hint = f"refused: {redact_known(status.refused, settings)}" if status.refused else None
     if spec.needs and not any(connected(settings, spec.needs).values()):
         account = INTEGRATIONS[spec.needs[0]]
         signin = account.signin if account.signin in fixes.SIGNINS else None

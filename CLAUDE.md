@@ -192,7 +192,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   VOICE_SERVER_STT|TTS` offers only the ones it can name — never whisper-mlx, though one set
   before is kept — and marks the downloaded ones), `voice use openai [--json]`, `voice use
   server URL [--key-stdin | --clear-key] [--keep-anyway] [--json]` (saved only once it opens
-  a Realtime session, unless kept anyway; exit 1 with the `problem` and nothing saved; the
+  a Realtime session, unless kept anyway; exit 1 with the `problem` and nothing saved —
+  `--json`'s `problem` a sentence for a person, what the server said its `detail`; the
   stored key is kept and asked with unless `--key-stdin` replaces it — shown as `(set)` — or
   `--clear-key` forgets it), `voice use here [--voice NAME] [--json]` (what the wizard does,
   through the same `localmodels/voice.py`: install speech-to-speech, download its speech
@@ -383,7 +384,10 @@ is ready once it has an address. Six rulings:
   build running behind the database.
 - **A credential goes in the child's environment and nowhere else** — not argv, not a log,
   not a spoken error (`agents/auth.redact`, and `AdapterSession` redacts every error it
-  returns or logs of the credential *and* of every MCP secret the agent was handed). One
+  returns or logs of the credential *and* of every MCP secret the agent was handed). What a
+  tool, a server or an exception said reaches a `detail`, a `hint` or a problem only through
+  `child_env.redact_known`, which takes out every secret setting's value, every credential
+  variable in the environment, the Hugging Face tokens, and any key in hand. One
   exception, forced by Codex's app-server ignoring `CODEX_API_KEY`: that key is logged in
   once, on stdin, into `data_dir/codex`, never the owner's `~/.codex`. `OPENAI_API_KEY` is
   never lent to Codex: that would move a ChatGPT-plan user onto per-token billing unasked,

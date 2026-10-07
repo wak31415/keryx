@@ -39,7 +39,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from keryx.child_env import operational_env
+from keryx.child_env import operational_env, redact_known
 from keryx.config import Settings
 from keryx.config.store import FROM_DEFAULT, ConfigStore
 from keryx.endpoints import Endpoint, warnings
@@ -444,7 +444,9 @@ def fetch_models(
                                  f"Face cache: {stt} to hear, {tts} to speak"):
         problem = probes.fetch_speech(python, repos, report.progress)
     if problem is not None:
-        report.error("The voice's speech models could not be downloaded.", detail=problem)
+        # Its child holds the Hugging Face tokens, and a failed request can quote one.
+        report.error("The voice's speech models could not be downloaded.",
+                     detail=redact_known(problem, settings))
         return False
     return True
 

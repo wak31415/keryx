@@ -17,12 +17,18 @@ other side:
 Either way every secret setting's variable is dropped, under every name `Settings` reads it
 by and in any case (it reads them case-insensitively, so `keryx_pin` is a PIN to it), with
 the Anthropic credentials that are not settings.
+
+And the same list read the other way: `redact_known` takes every one of those values out of
+text Keryx is about to show — an error's `detail`, a check's `hint`, a server's problem —
+since what a tool or a server says can quote the credential it was handed.
 """
 
 import os
+from collections.abc import Iterable
 
+from keryx.agents.auth import redact
 from keryx.agents.codex import CREDENTIAL_VARIABLES, LOCAL_KEY_ENV
-from keryx.config import Settings
+from keryx.config import PLACEHOLDER_KEY, Settings
 from keryx.config.settings import env_var_names
 
 #: Not settings, but credentials all the same (the last is a local server's key, lent to Codex).
@@ -38,6 +44,36 @@ def secret_variables() -> frozenset[str]:
              for name in env_var_names(field)}
     names |= {*env_var_names("pin"), *CREDENTIAL_VARIABLES, *ALSO_SECRET}
     return frozenset(name.upper() for name in names)
+
+
+def redact_known(
+    text: str, settings: Settings | None = None, extra: Iterable[str | None] = ()
+) -> str:
+    """`text` with every credential Keryx knows of replaced by `[redacted]`: each secret
+    setting's value (in `settings`, else the settings as the store holds them now, when they
+    load), each `secret_variables()` and Hugging Face token (`OPERATIONAL_KEEPS`) in this
+    process's environment, and `extra` — a key in hand, like a server's. Longest first, so
+    one that contains another goes whole; anything shaped like a masked key goes too
+    (`agents.auth.redact`). Never raises."""
+    found = [*extra]
+    known = settings if settings is not None else _settings_now()
+    if known is not None:
+        found += [getattr(known, name) for name, info in Settings.model_fields.items()
+                  if not info.repr]
+    names = secret_variables() | OPERATIONAL_KEEPS
+    found += [value for key, value in os.environ.items() if key.upper() in names]
+    secrets = {str(value) for value in found if value and str(value) != PLACEHOLDER_KEY}
+    return redact(text, sorted(secrets, key=len, reverse=True))
+
+
+def _settings_now() -> Settings | None:
+    """The settings as the store holds them now, or None when they will not load."""
+    from keryx.config import load_settings
+
+    try:
+        return load_settings()
+    except Exception:  # what is being redacted may be exactly why they will not load
+        return None
 
 
 def _without_secrets(keep: frozenset[str] = frozenset()) -> dict[str, str]:

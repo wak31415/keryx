@@ -9,6 +9,7 @@ import pytest
 from typer.testing import CliRunner
 from wording import for_the_app
 
+from keryx import cli
 from keryx.cli import app
 from keryx.config.store import ConfigStore
 from keryx.localmodels import runtimes, servers, speech, use, voice
@@ -213,7 +214,8 @@ def test_use_server_that_does_not_answer_saves_nothing(machine):
 
     assert result.exit_code == 1
     assert json.loads(result.stdout) == {
-        "saved": None, "problem": "could not open gpu-box's Realtime socket", "warnings": [],
+        "saved": None, "problem": cli.SERVER_REFUSED,
+        "detail": "could not open gpu-box's Realtime socket", "warnings": [],
         "restart_needed": False,
     }
     assert ConfigStore().stored() == {}
@@ -230,7 +232,8 @@ def test_use_server_kept_anyway_with_its_key_from_stdin(machine):
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {
         "saved": {"VOICE_BASE_URL": "https://voice.example.com/v1", "VOICE_API_KEY": "(set)"},
-        "problem": "could not open voice.example.com's Realtime socket", "warnings": [],
+        "problem": cli.SERVER_REFUSED,
+        "detail": "could not open voice.example.com's Realtime socket", "warnings": [],
         "restart_needed": True,
     }
     assert "vk-secret" not in result.output
@@ -245,6 +248,7 @@ def test_use_server_that_answers_is_saved_with_its_warnings(machine):
     document = json.loads(result.stdout)
     assert document["saved"] == {"VOICE_BASE_URL": "http://192.168.1.20:8765/v1"}
     assert document["problem"] is None and document["restart_needed"] is True
+    assert document["detail"] is None
     [warning] = document["warnings"]
     assert "spoken PIN" in warning
     assert ConfigStore().stored() == {"VOICE_BASE_URL": "http://192.168.1.20:8765/v1"}
