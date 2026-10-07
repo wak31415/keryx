@@ -154,6 +154,19 @@ def test_entry_json_defaults_ts_and_event_to_empty_strings():
     assert entry_json({})["event"] == ""
 
 
+def test_entry_json_reads_an_odd_line_as_strings_and_keeps_the_request_id():
+    """The Mac app decodes `ts`, `event` and `what` as strings: a hand-edited or older line
+    with a number, a null or an object in them must not break the whole list."""
+    odd = {"ts": 1759654800, "event": None, "request_id": [7], "summary": {"tool": "Bash"}}
+
+    assert entry_json(odd) == {
+        "ts": "1759654800", "event": "", "request_id": [7], "what": "{'tool': 'Bash'}",
+    }
+    assert entry_json({"reason": 403})["what"] == "403"
+    assert entry_json({"ts": None, "answer": True})["ts"] == ""
+    assert entry_json({"ts": None, "answer": True})["what"] == "True"
+
+
 # --- escalation_enabled ------------------------------------------------------
 
 

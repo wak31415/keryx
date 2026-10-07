@@ -61,16 +61,23 @@ def escalation_counts(entries: list[dict]) -> tuple[int, int]:
     return cancelled, late
 
 
+def _text(value: object) -> str:
+    """A field the Mac app decodes as a string, whatever the line held: absent or null is
+    empty, anything else its `str()`."""
+    return "" if value is None else str(value)
+
+
 def entry_json(entry: dict) -> dict[str, Any]:
     """One audit line as `--json` and the table both read it: `{ts, event, request_id,
     what}`, where `what` is whichever of a request's summary, a denial's reason or a
-    verdict's answer the line actually carries.
+    verdict's answer the line actually carries. `ts`, `event` and `what` are always strings,
+    so one odd line cannot break the app's decoding of the list; `request_id` is as written.
     """
     return {
-        "ts": str(entry.get("ts", "")),
-        "event": str(entry.get("event", "")),
+        "ts": _text(entry.get("ts")),
+        "event": _text(entry.get("event")),
         "request_id": entry.get("request_id"),
-        "what": entry.get("summary") or entry.get("reason") or entry.get("answer") or "",
+        "what": _text(entry.get("summary") or entry.get("reason") or entry.get("answer")),
     }
 
 
