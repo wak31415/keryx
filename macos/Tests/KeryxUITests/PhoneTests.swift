@@ -114,13 +114,13 @@ import KeryxPreview
         let alone = Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
                                       changingService: .installing)
         #expect(alone?.message == "Keryx's service is being installed. Quit anyway?")
-        #expect(alone?.detail == "It may stop part way; Install… in the Overview runs it again.")
+        #expect(alone?.detail == "It stops, and may be left part done. Install… in the Overview runs it again.")
         // With something else under way, one question names both.
         let both = Quitting.question(downloading: true, settingUpVoice: false, assistant: "Lyra",
                                      changingService: .uninstalling)
         #expect(both?.message == "A model is downloading and Keryx's service is being uninstalled. Quit anyway?")
         #expect(both?.detail == "Both stop. The download picks up where it left off, and the service's uninstall "
-            + "may stop part way (Uninstall… in the Overview runs it again).")
+            + "may be left part done (Uninstall… in the Overview runs it again).")
         #expect(Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
                                   changingService: nil) == nil)
     }
@@ -132,7 +132,7 @@ import KeryxPreview
         #expect(both?.message
             == "A sign-in to Claude is still going and Keryx's service is being installed. Quit anyway?")
         #expect(both?.detail.hasPrefix("Both stop. The sign-in to Claude can be started again later, ") == true)
-        #expect(both?.detail.contains("the service's install may stop part way") == true)
+        #expect(both?.detail.contains("the service's install may be left part done") == true)
     }
 
     @Test func uninstallingSaysWhatStopsAndWhatIsKept() {

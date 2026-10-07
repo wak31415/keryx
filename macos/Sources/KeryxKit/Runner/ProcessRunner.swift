@@ -21,16 +21,24 @@ public final class ProcessRunner: CommandRunner, Sendable {
     private let observeChild: (@Sendable (Child) -> Void)?
     /// Between SIGTERM and SIGKILL.
     private let grace: Duration
+    /// Where every child it spawns is listed until its group is closed.
+    private let registry: ChildRegistry
+
+    /// The usual time between SIGTERM and SIGKILL.
+    public static let defaultGrace: Duration = .seconds(3)
 
     public init() {
         observeCollector = nil
         observeChild = nil
-        grace = .seconds(3)
+        grace = Self.defaultGrace
+        registry = .shared
     }
 
-    init(grace: Duration = .seconds(3), observingCollector: (@Sendable (AnyObject) -> Void)? = nil,
+    init(grace: Duration = ProcessRunner.defaultGrace, registry: ChildRegistry = .shared,
+         observingCollector: (@Sendable (AnyObject) -> Void)? = nil,
          observingChild: (@Sendable (Child) -> Void)? = nil) {
         self.grace = grace
+        self.registry = registry
         observeCollector = observingCollector
         observeChild = observingChild
     }
@@ -44,7 +52,7 @@ public final class ProcessRunner: CommandRunner, Sendable {
 
                 let spawned: Spawned
                 do {
-                    spawned = try Child.spawn(request, stderr: .pipe, grace: grace)
+                    spawned = try Child.spawn(request, stderr: .pipe, grace: grace, registry: registry)
                 } catch {
                     collector.launchFailed(error)
                     return
@@ -85,7 +93,8 @@ public final class ProcessRunner: CommandRunner, Sendable {
         do {
             // stderr is discarded, but into `/dev/null`, not a pipe nobody reads: an unread
             // pipe's buffer fills (~64 KB) and blocks the child forever.
-            spawned = try Child.spawn(request, stderr: .discard, grace: grace, keepInput: interactive)
+            spawned = try Child.spawn(request, stderr: .discard, grace: grace, registry: registry,
+                                      keepInput: interactive)
         } catch {
             continuation.finish(throwing: error)
             return LineStream(stream)
@@ -231,6 +240,8 @@ final class Child: @unchecked Sendable {
 
     let pid: pid_t
     private let grace: Duration
+    /// Lists the child until its group is closed (`release`, or the end of a stop).
+    private weak var registry: ChildRegistry?
     private let lock = NSLock()
     private var status: Int32?
     private var handlers: [@Sendable (Int32) -> Void] = []
@@ -245,9 +256,10 @@ final class Child: @unchecked Sendable {
     private var reapClaimed = false
     private var log: [Event] = []
 
-    private init(pid: pid_t, grace: Duration) {
+    private init(pid: pid_t, grace: Duration, registry: ChildRegistry?) {
         self.pid = pid
         self.grace = grace
+        self.registry = registry
     }
 
     /// True once `stop()` has been called.
@@ -313,11 +325,12 @@ final class Child: @unchecked Sendable {
     /// again, whatever it left behind — and the leader reaped (now, or when it exits). Does
     /// nothing while a stop is under way, which ends the same way by itself.
     func release() {
-        let reapNow: Bool = lock.withLock {
-            guard !closed, !stopRequested else { return false }
+        let (reapNow, released): (Bool, Bool) = lock.withLock {
+            guard !closed, !stopRequested else { return (false, false) }
             closed = true
-            return leaderExited && claimReap()
+            return (leaderExited && claimReap(), true)
         }
+        if released { registry?.remove(self) }
         if reapNow { reap() }
     }
 
@@ -386,6 +399,7 @@ final class Child: @unchecked Sendable {
             defer { groupHandlers = [] }
             return groupHandlers
         }
+        registry?.remove(self)
         waiting.forEach { $0(end) }
     }
 
@@ -398,7 +412,7 @@ final class Child: @unchecked Sendable {
     /// `keepInput`: stdin is a pipe even with no `request.stdin`, for the caller to write
     /// to and close (`InputWriter`).
     static func spawn(_ request: CommandRequest, stderr: Output, grace: Duration,
-                      keepInput: Bool = false) throws -> Spawned {
+                      registry: ChildRegistry? = nil, keepInput: Bool = false) throws -> Spawned {
         var opened: [Int32] = []
         func pipePair() throws -> (read: Int32, write: Int32) {
             var fds: [Int32] = [-1, -1]
@@ -477,7 +491,9 @@ final class Child: @unchecked Sendable {
         }
 
         let spawnedPID = pid
-        let child = Child(pid: spawnedPID, grace: grace)
+        let child = Child(pid: spawnedPID, grace: grace, registry: registry)
+        // Listed before its exit can be noticed, so a release never comes before the listing.
+        registry?.add(child)
         let waiter = Thread {
             // Exited, but not reaped (`WNOWAIT`): `Child` decides when.
             var info = siginfo_t()
@@ -844,5 +860,95 @@ extension Duration {
     var timeInterval: TimeInterval {
         let (seconds, attoseconds) = (components.seconds, components.attoseconds)
         return TimeInterval(seconds) + TimeInterval(attoseconds) / 1e18
+    }
+}
+
+// MARK: - Every child
+
+/// Every process group the app has started and not yet let go of: a child is listed from
+/// its spawn until its group is closed — released by its owner once its run or stream is
+/// over, or ended after a stop. Quitting stops them all here (`stopAll`), whatever started
+/// them: a stream, a one-shot write (a PIN, a secret, the webhooks), an installer, a read.
+public final class ChildRegistry: @unchecked Sendable {
+    /// The app's: every `ProcessRunner()` lists its children here.
+    public static let shared = ChildRegistry()
+
+    /// The longest a stop takes to end, for a child stopped with the usual grace: SIGTERM,
+    /// SIGKILL `ProcessRunner.defaultGrace` later, `Child.killWait` more before a group still
+    /// there is reported as surviving — and a look or two of slack.
+    public static let stopBound: Duration = ProcessRunner.defaultGrace + Child.killWait + .milliseconds(500)
+
+    private let lock = NSLock()
+    private var children: [ObjectIdentifier: Child] = [:]
+
+    public init() {}
+
+    /// How many groups are listed now.
+    public var count: Int { lock.withLock { children.count } }
+
+    func add(_ child: Child) {
+        lock.withLock { children[ObjectIdentifier(child)] = child }
+    }
+
+    func remove(_ child: Child) {
+        _ = lock.withLock { children.removeValue(forKey: ObjectIdentifier(child)) }
+    }
+
+    /// Stops every listed group (each as its own stop does: SIGTERM, SIGKILL after its grace)
+    /// and returns once each has ended, with the process group ids of those still there
+    /// after SIGKILL — empty when all are gone. A child listed while this runs is stopped too.
+    public func stopAll() async -> [Int32] {
+        var survivors: [Int32] = []
+        while true {
+            let listed = lock.withLock { Array(children.values) }
+            guard !listed.isEmpty else { return survivors }
+            let ended = await withTaskGroup(of: (Int32, Child.GroupEnd).self) { group in
+                for child in listed {
+                    group.addTask {
+                        let end = await withCheckedContinuation { continuation in
+                            child.onGroupEnd { continuation.resume(returning: $0) }
+                            child.stop()
+                        }
+                        return (child.pid, end)
+                    }
+                }
+                return await group.reduce(into: []) { $0.append($1) }
+            }
+            survivors += ended.filter { $0.1 == .survived }.map(\.0)
+            // Ended, each is gone from the list; anything still listed was spawned meanwhile.
+            for child in listed { remove(child) }
+        }
+    }
+
+    /// `stopAll()`, unless `limit` passes first: then `nil`, at the limit, with the stop
+    /// still going behind it — the last resort, for a quit that must not hang.
+    public func stopAll(within limit: Duration) async -> [Int32]? {
+        let first = FirstAnswer<[Int32]?>()
+        return await withCheckedContinuation { continuation in
+            first.await(continuation)
+            Task.detached { first.answer(await self.stopAll()) }
+            Task.detached {
+                try? await Task.sleep(for: limit)
+                first.answer(nil)
+            }
+        }
+    }
+}
+
+/// Resumes a continuation with whichever answer comes first, and drops the rest.
+private final class FirstAnswer<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Never>?
+
+    func await(_ continuation: CheckedContinuation<Value, Never>) {
+        lock.withLock { self.continuation = continuation }
+    }
+
+    func answer(_ value: Value) {
+        let waiting = lock.withLock {
+            defer { continuation = nil }
+            return continuation
+        }
+        waiting?.resume(returning: value)
     }
 }

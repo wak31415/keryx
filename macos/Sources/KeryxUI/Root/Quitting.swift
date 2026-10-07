@@ -45,13 +45,14 @@ public enum Quitting {
                           "the sign-in to \(signingIn) can be started again later"))
         }
         if let changingService {
-            // An installer stopped part way may leave the service half done.
+            // Quitting stops the installer (its whole process group); stopped part way, it
+            // may leave the service half done.
             let (doing, verb, button) = switch changingService {
             case .installing: ("Keryx's service is being installed", "install", "Install…")
             case .uninstalling: ("Keryx's service is being uninstalled", "uninstall", "Uninstall…")
             }
-            under.append((doing, "It may stop part way; \(button) in the Overview runs it again.",
-                          "the service's \(verb) may stop part way (\(button) in the Overview runs it again)"))
+            under.append((doing, "It stops, and may be left part done. \(button) in the Overview runs it again.",
+                          "the service's \(verb) may be left part done (\(button) in the Overview runs it again)"))
         }
         guard let first = under.first else { return nil }
         guard under.count > 1 else {

@@ -133,7 +133,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let downloads = model.downloads
         let setup = model.voiceSetup
-        guard model.isBusy else { return .terminateNow }
+        let children = ChildRegistry.shared
+        guard model.isBusy || children.count > 0 else { return .terminateNow }
         // Only what is still running asks; what is already stopping is just waited for.
         // A model server started by This Mac's Set Up… is part of setting the voice up.
         let server = model.modelServerRun.isRunning
@@ -155,15 +156,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
         }
-        // Stop each child rather than leave it running without us, and wait for it to go
-        // (SIGKILL follows SIGTERM within seconds); a download's part stays for next time.
+        // Stop every child rather than leave it running without us — the runs above, and
+        // whatever else is still going (a write, an installer, a read) — and wait until each
+        // group is gone (SIGKILL follows SIGTERM within seconds); a download's part stays for
+        // next time. The deadline outlasts the bounded stop, and is the last resort.
         if let current = downloads.current, downloads.isRunning { downloads.cancel(current.name) }
         setup.cancel()
         model.cancelRuns()
         Task {
-            let deadline = ContinuousClock.now + .seconds(8)
-            while model.isBusy, ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(100))
+            let survivors = await children.stopAll(within: ChildRegistry.stopBound + .seconds(3))
+            if let survivors, !survivors.isEmpty {
+                Log.app.error("Quitting with \(survivors.count) process group(s) still running after SIGKILL: \(survivors.map(String.init).joined(separator: ", "), privacy: .public)")
+            } else if survivors == nil {
+                Log.app.error("Quitting before every process group had stopped: \(children.count) still listed")
             }
             NSApp.reply(toApplicationShouldTerminate: true)
         }
