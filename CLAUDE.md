@@ -36,7 +36,9 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   the kill switch); install the Claude hook with `scripts/install-claude-hook.sh`
 - Inspect tasks: `uv run keryx tasks list [--status …] [--limit N] [--internal] [--json]`,
   `uv run keryx tasks show <id> [--json]` (the `TOLD` column is `NO` until the assistant has
-  said it; `--json` on either is the shape the Mac app reads — `keryx/tasks/export.py`)
+  said it; `--json` on either is the shape the Mac app reads — `keryx/tasks/export.py` —
+  and on `show` it also carries the task's agent session: its progress log, follow-ups and
+  whether it is resumable)
 - What the tasks spent, per project: `uv run keryx tasks usage [--days N] [--json]` (by the
   project each was dispatched with; the dollars are the agents' own estimates, and the
   voice calls are not tasks)

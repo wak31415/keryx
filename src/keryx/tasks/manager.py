@@ -44,7 +44,7 @@ from keryx.agents.registry import resolve_model
 from keryx.config import Settings, secure_file
 from keryx.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
 from keryx.projects import discover_projects
-from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.models import Task, TaskKind, TaskStatus, task_log_path
 from keryx.tasks.store import MAX_UNREPORTED, TaskStore
 
 log = logging.getLogger("keryx.tasks.manager")
@@ -553,7 +553,7 @@ class TaskManager:
     # --- progress, logs and reports --------------------------------------
 
     def _log_path(self, task_id: int) -> Path:
-        return self._settings.data_dir / "tasks" / f"{task_id}.log"
+        return task_log_path(self._settings.data_dir, task_id)
 
     def _report_path(self, task_id: int) -> Path:
         return self._settings.data_dir / "tasks" / f"{task_id}.md"

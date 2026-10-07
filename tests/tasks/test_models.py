@@ -2,9 +2,10 @@
 
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 
 from keryx.tasks import models
-from keryx.tasks.models import ProjectUsage, Task, TaskKind, TaskStatus
+from keryx.tasks.models import ProjectUsage, Task, TaskKind, TaskStatus, task_log_path
 
 # --- enums -------------------------------------------------------------
 
@@ -26,6 +27,10 @@ def test_rows_written_before_the_kinds_collapsed_still_load():
     """Old rows carry chat/research/coding/cowork; they are all just agent work now."""
     for legacy in ("chat", "research", "coding", "cowork"):
         assert TaskKind(legacy) is TaskKind.AGENT
+
+
+def test_task_log_path_is_the_tasks_directory():
+    assert task_log_path(Path("/data"), 7) == Path("/data/tasks/7.log")
 
 
 # --- Task construction and defaults -------------------------------------

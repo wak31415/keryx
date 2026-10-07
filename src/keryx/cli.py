@@ -84,9 +84,9 @@ from keryx.setup.context import SetupContext, run_command
 from keryx.setup.sections import repo_root
 from keryx.setup.ui import Aborted
 from keryx.setup.wizard import agent_instructions, run_wizard
-from keryx.tasks.export import task_json, told
+from keryx.tasks.export import read_log, task_json, told
 from keryx.tasks.manager import install_default_executor
-from keryx.tasks.models import ProjectUsage, Task, TaskStatus
+from keryx.tasks.models import ProjectUsage, Task, TaskStatus, task_log_path
 from keryx.tasks.store import TaskStore
 from keryx.tools import ToolRegistry
 from keryx.tools.builtin import BUILTIN_TOOL_NAMES
@@ -715,7 +715,7 @@ def tasks_list(
         ),
     ] = False,
     as_json: Annotated[
-        bool, typer.Option("--json", help="Machine-readable output.")
+        bool, typer.Option("--json", help="Print it as one JSON document.")
     ] = False,
 ) -> None:
     """List recent tasks, newest first."""
@@ -759,7 +759,7 @@ def _reported_flag(task: Task) -> str:
 def tasks_show(
     task_id: Annotated[int, typer.Argument(help="The task id to show.")],
     as_json: Annotated[
-        bool, typer.Option("--json", help="Machine-readable output.")
+        bool, typer.Option("--json", help="Print it as one JSON document.")
     ] = False,
 ) -> None:
     """Show everything stored about one task, including its report."""
@@ -773,9 +773,17 @@ def tasks_show(
         report, truncated = (
             _read_report(Path(task.report_path)) if task.report_path else (None, False)
         )
+        log_entries, log_truncated = read_log(task_log_path(settings.data_dir, task.id))
         typer.echo(
             json.dumps(
-                {"task": task_json(task), "report": report, "report_truncated": truncated},
+                {
+                    "task": task_json(task),
+                    "report": report,
+                    "report_truncated": truncated,
+                    "log": log_entries,
+                    "log_truncated": log_truncated,
+                    "resumable": bool(task.claude_session_id),
+                },
                 indent=2,
             )
         )

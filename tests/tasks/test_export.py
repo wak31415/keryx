@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from keryx.tasks.export import task_json, told
+from keryx.tasks.export import MAX_LOG_ENTRIES, parse_log, read_log, task_json, told
 from keryx.tasks.models import Task, TaskKind, TaskStatus
 
 
@@ -52,3 +52,72 @@ def test_task_json_told_agrees_with_told():
     assert task_json(done_unreported)["told"] is False
     assert task_json(done_reported)["told"] is True
     assert task_json(running)["told"] is None
+
+
+# --- the agent session log --------------------------------------------------
+
+
+def test_parse_log_reads_a_progress_line():
+    assert parse_log(["[10:30:00] looked at the failing test"]) == [
+        {"time": "10:30:00", "kind": "progress", "text": "looked at the failing test"}
+    ]
+
+
+def test_parse_log_strips_the_followup_prefix_and_names_the_kind():
+    assert parse_log(["[10:31:05] [followup] also check the README"]) == [
+        {"time": "10:31:05", "kind": "followup", "text": "also check the README"}
+    ]
+
+
+def test_parse_log_joins_a_continuation_line_to_the_entry_before_it():
+    lines = ["[10:30:00] a multi-line progress note:", "second line", "third line"]
+
+    entries = parse_log(lines)
+
+    assert entries == [
+        {
+            "time": "10:30:00",
+            "kind": "progress",
+            "text": "a multi-line progress note:\nsecond line\nthird line",
+        }
+    ]
+
+
+def test_parse_log_a_leading_continuation_line_has_no_time():
+    entries = parse_log(["stray line with no stamp before it"])
+
+    assert entries == [
+        {"time": None, "kind": "progress", "text": "stray line with no stamp before it"}
+    ]
+
+
+def test_parse_log_is_empty_for_no_lines():
+    assert parse_log([]) == []
+
+
+def test_read_log_keeps_only_the_last_500_entries(tmp_path):
+    path = tmp_path / "9.log"
+    path.write_text("".join(f"[10:00:{i % 60:02d}] entry {i}\n" for i in range(600)))
+
+    entries, truncated = read_log(path)
+
+    assert truncated is True
+    assert len(entries) == MAX_LOG_ENTRIES
+    assert entries[0]["text"] == "entry 100"  # oldest kept, newest first dropped from the front
+    assert entries[-1]["text"] == "entry 599"
+
+
+def test_read_log_says_untruncated_under_the_limit(tmp_path):
+    path = tmp_path / "9.log"
+    path.write_text("[10:00:00] only one\n")
+
+    entries, truncated = read_log(path)
+
+    assert truncated is False
+    assert entries == [{"time": "10:00:00", "kind": "progress", "text": "only one"}]
+
+
+def test_read_log_missing_file_is_an_empty_untruncated_list(tmp_path):
+    entries, truncated = read_log(tmp_path / "no-such-task.log")
+
+    assert (entries, truncated) == ([], False)

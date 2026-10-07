@@ -11,9 +11,19 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Self
 
 log = logging.getLogger("keryx.tasks.models")
+
+
+def task_log_path(data_dir: Path, task_id: int) -> Path:
+    """Where `task_id`'s progress log lives under `data_dir`.
+
+    The one place this join is written: `TaskManager._log_path` calls it to write the log,
+    and `keryx.tasks.export.read_log` calls it to read it back, so the two cannot drift.
+    """
+    return data_dir / "tasks" / f"{task_id}.log"
 
 
 class TaskKind(StrEnum):

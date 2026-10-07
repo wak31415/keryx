@@ -600,6 +600,50 @@ def test_tasks_show_json_unknown_id_exits_one(settings_stub):
     assert "no task 999" in result.output
 
 
+def test_tasks_show_json_includes_the_log_and_resumable(settings_stub):
+    [task] = seed_tasks(
+        settings_stub,
+        make_task("fix the parser", status=TaskStatus.DONE, claude_session_id="sess-secret-42"),
+    )
+    log_path = settings_stub.data_dir / "tasks" / f"{task.id}.log"
+    log_path.write_text(
+        "[10:30:00] looked at the failing test\n"
+        "[10:31:05] [followup] also check the README\n"
+    )
+
+    result = runner.invoke(app, ["tasks", "show", str(task.id), "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert "sess-secret-42" not in result.output
+    document = json.loads(result.output)
+    assert document["log"] == [
+        {"time": "10:30:00", "kind": "progress", "text": "looked at the failing test"},
+        {"time": "10:31:05", "kind": "followup", "text": "also check the README"},
+    ]
+    assert document["log_truncated"] is False
+    assert document["resumable"] is True
+
+
+def test_tasks_show_json_without_a_session_is_not_resumable(settings_stub):
+    seed_tasks(settings_stub, make_task("never dispatched", claude_session_id=None))
+
+    result = runner.invoke(app, ["tasks", "show", "1", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["resumable"] is False
+
+
+def test_tasks_show_json_with_no_log_file_has_an_empty_log(settings_stub):
+    seed_tasks(settings_stub, make_task("never ran"))
+
+    result = runner.invoke(app, ["tasks", "show", "1", "--json"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.output)
+    assert document["log"] == []
+    assert document["log_truncated"] is False
+
+
 def test_tasks_usage_prints_a_row_per_project_and_a_total(settings_stub):
     seed_tasks(
         settings_stub,
