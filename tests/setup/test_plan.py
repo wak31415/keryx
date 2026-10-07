@@ -102,7 +102,7 @@ def test_a_fresh_machine_needs_every_required_step(plan_of, signed_out):
     }
     found = steps(plan)
     assert [s["required"] for s in plan["steps"]] == [True] * 6 + [False] * 6
-    assert found["voice"]["why"] == "OpenAI API key: not set — the voice session cannot start."
+    assert found["voice"]["why"] == "OpenAI API key: not set."
     assert found["voice"]["checks"] == [
         {"title": "OpenAI API key", "state": "missing",
          "detail": "not set — the voice session cannot start"}
@@ -173,8 +173,8 @@ def test_phone_waits_for_the_owner_and_the_service_for_three(plan_of, signed_out
 
     assert found["phone"]["blocked_by"] == ["owner"]
     assert found["service"]["blocked_by"] == ["phone", "voice", "agents"]
-    assert found["phone"]["why"] == "Finish Owner first."
-    assert found["service"]["why"] == "Finish Voice, Coding agents and Phone first."
+    assert found["phone"]["why"] == "Waits for Owner."
+    assert found["service"]["why"] == "Waits for Voice, Coding agents and Phone."
     assert all(found[key]["blocked_by"] == [] for key in ("voice", "agents", "owner", "pin"))
 
 
@@ -187,7 +187,7 @@ def test_blocked_gives_way_once_the_blockers_are_done(plan_of, signed_in):
     assert found["phone"]["state"] == NEEDED  # missing Twilio, the host and a tunnel
     assert found["phone"]["why"].startswith("Twilio credentials: missing TWILIO_ACCOUNT_SID")
     assert found["service"]["state"] == BLOCKED
-    assert found["service"]["why"] == "Finish Voice and Phone first."
+    assert found["service"]["why"] == "Waits for Voice and Phone."
 
 
 def test_a_check_that_failed_fails_its_step(plan_of, signed_out):
@@ -201,12 +201,14 @@ def test_a_check_that_failed_fails_its_step(plan_of, signed_out):
 
 def test_failed_shows_through_blocked(plan_of, signed_out):
     """Something configured and broken is said, even before its turn."""
-    webhook = Check("Twilio webhook", False, "calls go to elsewhere", severity="soft",
-                    section="phone")
+    webhook = Check("Twilio webhook", False, "calls go to https://old.example/twilio/voice, "
+                    "not https://keryx.example.com/twilio/voice — `keryx setup` can point it "
+                    "here", severity="soft", section="phone")
 
     phone = steps(plan_of(extra=[webhook]))["phone"]
 
-    assert (phone["state"], phone["why"]) == (FAILED, "Twilio webhook: calls go to elsewhere.")
+    assert (phone["state"], phone["why"]) == (FAILED, "Twilio webhook: points elsewhere.")
+    assert phone["checks"][-1]["detail"] == webhook.detail  # doctor's own words, untouched
 
 
 def test_soft_checks_of_another_agent_or_web_search_do_not_hold_a_step(plan_of, signed_in):
@@ -227,8 +229,9 @@ def test_a_local_voice_waits_for_the_local_models(plan_of, signed_in):
 
     assert found["voice"]["blocked_by"] == ["local"]
     assert found["local"]["required"] is True
-    # Done is what the voice's own checks say; the local step carries what is wrong.
-    assert (found["local"]["state"], found["voice"]["state"]) == (FAILED, DONE)
+    assert (found["local"]["state"], found["voice"]["state"]) == (FAILED, BLOCKED)
+    assert found["voice"]["why"] == "Waits for Local models."
+    assert found["service"]["why"] == "Waits for Voice and Phone."  # a chain waits too
     assert plan_of()["ready"] is False
 
 
@@ -251,6 +254,22 @@ def test_a_local_default_agent_waits_for_the_local_models(plan_of, signed_in):
     assert found["local"]["required"] is True
 
 
+def test_a_step_whose_checks_pass_still_waits_for_a_blocker(plan_of, signed_in):
+    """Blocked beats done: agents' own checks pass, but the local agent's server failed."""
+    ConfigStore().set({"AGENT_BACKEND": "local",
+                       "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1"})
+    broken = Check("model server", False, "llama-server is not installed — `keryx setup` "
+                   "installs it", section="local")
+
+    found = steps(plan_of(extra=[broken]))
+
+    assert all(check["state"] == "ok" for check in found["agents"]["checks"])
+    assert found["local"]["state"] == FAILED
+    assert (found["agents"]["state"], found["agents"]["why"]) == (
+        BLOCKED, "Waits for Local models."
+    )
+
+
 def test_the_migration_comes_first_and_holds_everything_back(plan_of, signed_out, tmp_path):
     (tmp_path / ".env").write_text("OWNER_NAME=Ada\n")
 
@@ -260,17 +279,16 @@ def test_the_migration_comes_first_and_holds_everything_back(plan_of, signed_out
     assert (migrate["id"], migrate["required"], migrate["state"]) == ("migrate", True, NEEDED)
     assert ".env" in migrate["why"]
     assert all("migrate" in step["blocked_by"] for step in plan["steps"][1:])
-    found = states(plan)
-    assert (found["voice"], found["owner"], found["phone"]) == (BLOCKED, BLOCKED, BLOCKED)
-    assert steps(plan)["voice"]["why"] == "Finish Migration first."
+    assert {step["state"] for step in plan["steps"][1:]} <= {BLOCKED, FAILED}
+    assert steps(plan)["voice"]["why"] == "Waits for Migration."
 
 
 def test_the_checklist_marks_each_step(plan_of, signed_out):
     lines = format_plan(plan_of())
 
     assert lines[0] == "Not ready: 6 required steps left before the first call."
-    assert "○  Voice — OpenAI API key: not set — the voice session cannot start." in lines
-    assert "…  Phone — Finish Owner first." in lines
+    assert "○  Voice — OpenAI API key: not set." in lines
+    assert "…  Phone — Waits for Owner." in lines
     assert any(line.startswith("·  Plugins (optional) — ") for line in lines)
     assert "✓  Google (optional)" in lines
 
@@ -314,3 +332,43 @@ def test_the_service_is_asked_from_outside_whether_it_runs(monkeypatch, make_ctx
 
     monkeypatch.setattr("keryx.restart.service.resolve_target", lambda settings, **_: None)
     assert setup_plan._service_active(make_ctx([]).settings) is False
+
+
+#: Doctor's own details, each with a command in it somewhere, as the app must never show one.
+SHELL_TEXT = ("keryx ", "scripts/", "uv ", "`")
+COMMAND_DETAILS = [
+    ("model server", "llama-server is not installed — `keryx setup` installs it"),
+    ("Codex agent", "not installed — uv sync --extra codex"),
+    ("service manager", "dev.keryx.agent is not installed (scripts/install-launchd.sh) — "
+     "`keryx restart` and the voice's restart_service refuse"),
+    ("send_to_slack", "off (optional) — `keryx setup` → Plugins, or `keryx plugins install "
+     "send_to_slack`"),
+    ("Claude Code agent", "/venv/bin/claude (2.1.0); no credential — `keryx auth login claude`"),
+    ("tunnel", "run `brew install cloudflared`"),
+    ("voice server program", "uv tool install speech-to-speech"),
+    ("storage", "/home/you/.env is configuration Keryx no longer reads — run `keryx migrate`"),
+]
+
+
+@pytest.mark.parametrize(("name", "detail"), COMMAND_DETAILS)
+def test_why_never_names_a_command(plan_of, signed_out, name, detail):
+    bad = Check(name, False, detail, section="voice")
+
+    voice = steps(plan_of(extra=[bad]))["voice"]
+
+    assert voice["state"] == FAILED
+    assert voice["why"].endswith(".") and ": " in voice["why"]
+    assert not any(text in voice["why"] for text in SHELL_TEXT), voice["why"]
+    assert detail in [check["detail"] for check in voice["checks"]]
+
+
+def test_no_why_on_a_machine_with_everything_missing_names_a_command(
+    plan_of, signed_out, tmp_path
+):
+    plans = [plan_of(active=False)]
+    (tmp_path / ".env").write_text("OWNER_NAME=Ada\n")
+    plans.append(plan_of())
+
+    whys = [step["why"] for plan in plans for step in plan["steps"] if step["why"]]
+
+    assert whys and not [why for why in whys if any(text in why for text in SHELL_TEXT)]

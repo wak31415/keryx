@@ -10,12 +10,13 @@ does not make, whether the installed unit is running, because a first call needs
 
 The states, for the app's decoder:
 
-- **done**: nothing missing or failed — or a step the owner has walked and chose to leave:
-  an optional one skipped, or `pin` left to the first call (the wizard's "Owner and PIN"
-  walked counts, since that is where it asks).
+- **done**: nothing missing or failed, and nothing it waits for left — or a step the owner
+  has walked and chose to leave: an optional one skipped, or `pin` left to the first call
+  (the wizard's "Owner and PIN" walked counts, since that is where it asks).
 - **failed**: a check failed. Said even before the step's turn, since something configured
   is broken.
-- **blocked**: a step in `blocked_by` is not done. It wins over needed and optional.
+- **blocked**: a step in `blocked_by` is not done. It wins over done, needed and optional:
+  a voice whose own checks pass is not working while the local server it runs on is not.
 - **needed**: a required step with something missing; **optional**: one that is not.
 
 `local` is required while the voice or the default agent runs on it, since the first call
@@ -24,6 +25,7 @@ step waits for it, as the wizard does: whatever setup saved would land where the
 is about to move things.
 """
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -119,22 +121,31 @@ def build_plan(
         required = step.required or (step.id == "local" and bool(local_needed))
         rows.append((step, own, required, _status(step, own, found), _walked(step, walked)))
     present = {step.id for step, *_ in rows}
-    done = {
+    settled = {
         step.id
         for step, _own, required, status, was_walked in rows
         if status == WIZARD_DONE
         or (status != WIZARD_FAILED and was_walked and (not required or step.id == "pin"))
     }
+    blocked_by = {step.id: _blockers(step, settings, present) for step, *_ in rows}
+    done: dict[str, bool] = {}
+
+    def is_done(key: str) -> bool:
+        # Settled by its own checks, and everything it waits for done too (acyclic).
+        if key not in done:
+            done[key] = key in settled and all(is_done(b) for b in blocked_by[key])
+        return done[key]
+
     steps = []
     for step, own, required, status, was_walked in rows:
-        blockers = _blockers(step, settings, present)
-        waiting = [_BY_ID[key] for key in STEP_IDS if key in blockers and key not in done]
-        if step.id in done:
-            state, why = DONE, None
-        elif status == WIZARD_FAILED:
+        blockers = blocked_by[step.id]
+        waiting = [_BY_ID[key] for key in STEP_IDS if key in blockers and not is_done(key)]
+        if status == WIZARD_FAILED:
             state, why = FAILED, _why(own, "failed", step)
         elif waiting:
-            state, why = BLOCKED, f"Finish {_and([s.title for s in waiting])} first."
+            state, why = BLOCKED, f"Waits for {_and([s.title for s in waiting])}."
+        elif is_done(step.id):
+            state, why = DONE, None
         else:
             state = NEEDED if required else OPTIONAL
             why = _why(own, "missing", step)
@@ -200,16 +211,36 @@ def _blockers(step: Step, settings: Settings, present: set[str]) -> list[str]:
 
 
 def _why(own: list[Check], state: str, step: Step) -> str:
-    """One sentence: the first check in `state`, by its title, or the step's own offer."""
+    """One sentence for the app: the first check in `state`, by its title, and what is
+    wrong with it in a few words — or the step's own offer. Never a command: what to run is
+    the app's to offer, and doctor's whole sentence stays in `checks[].detail`."""
     for check in own:
-        if check.state == state and check.detail:
-            return _sentence(f"{check_title(check.name)}: {check.detail}")
+        if check.state == state:
+            return f"{check_title(check.name)}: {_phrase(check)}."
     return step.offer or f"{step.title} is not set up yet."
 
 
-def _sentence(text: str) -> str:
-    text = text.strip()
-    return text if text.endswith((".", "!", "?")) else f"{text}."
+#: What gives a command away, in a detail written for a terminal.
+SHELL_TEXT = ("`", "keryx ", "scripts/", "uv ", "brew ", "$ ")
+#: Details whose first clause is too long for a sentence beside a title, by their start.
+PHRASES = (("calls go to ", "points elsewhere"),)
+#: The phrase for a check whose detail is nothing but terminal advice.
+GENERIC = {"missing": "not set up", "failed": "not working"}
+
+
+def _phrase(check: Check) -> str:
+    """A check's detail as a short state phrase: its first clause, before the em dash that
+    leads into terminal advice, without asides in brackets, and only the last of the
+    `where; what` parts doctor joins. Anything still holding shell text is the generic
+    phrase for its state."""
+    text = check.detail.split(" — ", 1)[0]
+    text = re.sub(r"\s*\([^)]*\)", "", text).split("; ")[-1].strip().rstrip(".")
+    for start, phrase in PHRASES:
+        if text.startswith(start):
+            return phrase
+    if not text or any(shell in text for shell in SHELL_TEXT):
+        return GENERIC.get(check.state, "not working")
+    return text
 
 
 def _and(titles: list[str]) -> str:
