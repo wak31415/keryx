@@ -24,7 +24,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   the Mac app's menu bar polls — `keryx/status.py`, schema 1, every part `ok`/`error` with
   its fields present either way)
 - Settings: `uv run keryx config list [--json] [--group G]` (`--json` gives each row its
-  `title` and `group_title`, its `type` — `keryx/config/types.py` — and a choice's
+  `title` and `group_title`, the Mac app's `tab`, `tab_title` and `tab_order` and whether
+  it is `advanced`, its `type` — `keryx/config/types.py` — and a choice's
   `choices`, and `has_options`; the table keeps the keys, which are what is typed),
   `config options KEY [--json]` (the models or voices a setting can take, read live from
   OpenAI, Anthropic, Codex or a server of the owner's when it can be, else Keryx's own list
@@ -176,8 +177,10 @@ remember:
   `web_search` behind a built-in, the rest behind a plugin, which is where the tool is
   built. Their builders take explicit values, never a plugin's file.
 - **config** — `config/` is the settings and where they live: `settings` (every field with
-  a `description`, a `title`, a `group` and a default `service_writable`, declared with
-  `setting(...)`; the title is the sentence-case name the Mac app shows in place of the key),
+  a `description`, a `title`, a `group`, `advanced` and a default `service_writable`,
+  declared with `setting(...)`; the title is the sentence-case name the Mac app shows in
+  place of the key, `TABS` is the one table of the app's tabs and the groups each holds,
+  and `advanced` puts a field under its tab's "Advanced" disclosure),
   `store` (`KERYX_HOME/config.toml` and `secrets.toml`, the only writer of either),
   `permissions` (what the running service may change; `PROTECTED_KEYS`), `pin`
   (`KERYX_HOME/pin`), `files` (the XDG directories, the modes and atomic writes), `migrate`
@@ -779,8 +782,8 @@ inside functions, not imported at module scope, so the suite runs without them.
 - Only `config/store.py` writes the configuration, and a secret is never on argv, in a log
   or in output. Never print or paste `secrets.toml` or an old `.env`. `docs/configuration.md`
   is generated from `Settings` (`python -m keryx.config.reference`); a new field gets a
-  description, a group and a title, and `tests/test_docs_sync.py` fails until the doc is
-  regenerated.
+  description, a group, a title, and whether it is advanced, and `tests/test_docs_sync.py`
+  fails until the doc is regenerated.
 - The database runs ahead of the code. `_migrate` upgrades `tasks.db` from whichever process
   opens it first, and `keryx serve` holds the `Task` it imported at startup, so a new column
   reaches the file while the service is still a build behind. `Task.from_row` drops columns it

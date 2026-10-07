@@ -192,6 +192,26 @@ def test_list_json_carries_a_title_for_each_setting_and_its_group(home):
     assert by_key["PORT"]["group_title"] == "Phone"
 
 
+def test_list_json_carries_each_settings_tab_and_whether_it_is_advanced(home):
+    """The Mac app's tabs: a tab per row, its title and place, and key or advanced."""
+    rows = json.loads(run("config", "list", "--json").output)
+    by_key = {row["key"]: row for row in rows}
+
+    for row in rows:
+        assert isinstance(row["tab"], str) and isinstance(row["tab_title"], str)
+        assert isinstance(row["tab_order"], int) and isinstance(row["advanced"], bool)
+    owner = by_key["OWNER_NAME"]
+    assert (owner["tab"], owner["tab_title"], owner["tab_order"]) == ("general", "General", 0)
+    assert (by_key["DEMO_MODE"]["tab"], by_key["DEMO_MODE"]["tab_order"]) == ("system", 7)
+    assert by_key["LLM_SERVER_PORT"]["tab_title"] == "Local Models"
+    assert (by_key["OPENAI_API_KEY"]["advanced"], by_key["VAD_THRESHOLD"]["advanced"]) == (
+        False, True
+    )
+    # The rows of one tab all agree on its title and its place.
+    tabs = {(row["tab"], row["tab_title"], row["tab_order"]) for row in rows}
+    assert len(tabs) == 8 == len({tab for tab, _, _ in tabs})
+
+
 def test_list_as_a_table_still_shows_the_keys(home):
     """The command line is where keys are typed, so it keeps them."""
     result = run("config", "list", "--group", "voice")

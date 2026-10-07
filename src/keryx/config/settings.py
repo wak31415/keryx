@@ -1,13 +1,15 @@
 """Application settings: every one of them, where it is read from, and what it is for.
 
-Each field is declared with `setting(...)`, which carries four things beside its type and
+Each field is declared with `setting(...)`, which carries five things beside its type and
 default: a `description` (the sentence `keryx config list` prints and
 `docs/configuration.md` is generated from), a `title` (the short name a person reads in
 place of the environment name: the Mac app's label, in sentence case), a `group` (the
-section it is listed and set up under, `GROUPS`), and `service_writable` (whether the
-running service may change it by default — `keryx.config.permissions` has the rest of
-that rule). A secret is a field declared `repr=False`; it is stored in `secrets.toml`
-rather than `config.toml`, and nothing ever prints it.
+section it is listed and set up under, `GROUPS`, and through it the Mac app's tab, `TABS`),
+`advanced` (whether the app shows it under its tab's "Advanced" disclosure rather than
+among the key settings), and `service_writable` (whether the running service may change it
+by default — `keryx.config.permissions` has the rest of that rule). A secret is a field
+declared `repr=False`; it is stored in `secrets.toml` rather than `config.toml`, and nothing
+ever prints it.
 
 A value is taken from the first of these that has one (`settings_customise_sources`):
 
@@ -28,7 +30,7 @@ import secrets
 import tomllib
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, Literal, NamedTuple, get_args
 
 from pydantic import AliasChoices, Field, PrivateAttr, field_validator, model_validator
 from pydantic.fields import FieldInfo
@@ -139,6 +141,30 @@ GROUPS: dict[str, str] = {
     "debug": "Development switches",
 }
 
+
+class Tab(NamedTuple):
+    """One tab of the Mac app's Configuration screen: its title and the groups it holds."""
+
+    title: str
+    groups: tuple[str, ...]
+
+
+#: The Mac app's tabs, in the order it shows them, each holding one or more `GROUPS` as its
+#: sections. Every group is in exactly one tab. Within a tab, a field declared
+#: `advanced=False` is a key setting, shown first; the rest go under "Advanced".
+TABS: dict[str, Tab] = {
+    "general": Tab("General", ("owner",)),
+    "voice": Tab("Voice", ("voice",)),
+    "agents": Tab("Agents", ("agents",)),
+    "local": Tab("Local Models", ("local",)),
+    "phone": Tab("Phone", ("phone",)),
+    "approvals": Tab("Approvals", ("approvals",)),
+    "integrations": Tab("Integrations", ("google", "plugins", "projects")),
+    "system": Tab("System", ("limits", "service", "debug")),
+}
+#: Which tab each group is in: `TABS` read the other way round.
+TAB_OF_GROUP = {group: key for key, tab in TABS.items() for group in tab.groups}
+
 #: Keys that are never read from, or written to, the configuration files. The PIN has a
 #: store of its own (`KERYX_HOME/pin`, keryx.config.pin), written once; a copy in a TOML
 #: file would be a second PIN that a text editor can change.
@@ -178,13 +204,25 @@ def setting(
     *,
     title: str,
     group: str,
+    advanced: bool,
     service_writable: bool = False,
     **kwargs: Any,
 ) -> Any:
-    """A `Field` carrying the four things `keryx config` needs to know about a setting."""
+    """A `Field` carrying the five things `keryx config` needs to know about a setting.
+
+    `advanced` is required, like `title`, so every new field decides it on purpose: key is
+    what an owner sets to get a first call working or changes from time to time (keys,
+    numbers, names, models, voices); advanced is tuning and internals (VAD numbers, ports,
+    timeouts, caps, retention, directories, unit names, debug switches, extra flags).
+    """
     assert title.strip(), "a setting needs a title"
     assert group in GROUPS, group
-    extra = {"title": title, "group": group, "service_writable": service_writable}
+    extra = {
+        "title": title,
+        "group": group,
+        "advanced": advanced,
+        "service_writable": service_writable,
+    }
     if "default_factory" not in kwargs:
         kwargs["default"] = default
     return Field(description=description, json_schema_extra=extra, **kwargs)
@@ -299,13 +337,13 @@ class Settings(BaseSettings):
         "OpenAI API key with Realtime access: the voice, unless `VOICE_BASE_URL` names a "
         "server of your own, and the voice model's `web_search`.",
         title="OpenAI API key",
-        group="voice",
+        group="voice", advanced=False,
         repr=False,
     )
     openai_realtime_model: str = setting(
         "gpt-realtime-2.1", "The realtime speech-to-speech model a call runs on.",
         title="Realtime model",
-        group="voice"
+        group="voice", advanced=False
     )
     assistant_name: str = setting(
         DEFAULT_NAME,
@@ -314,7 +352,7 @@ class Settings(BaseSettings):
         f"spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or "
         f"`{DEFAULT_VOICE}`.",
         title="Assistant name",
-        group="voice",
+        group="voice", advanced=False,
         service_writable=True,
     )
     openai_voice: str = setting(
@@ -323,14 +361,14 @@ class Settings(BaseSettings):
         "(`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail "
         "to open.",
         title="Assistant voice",
-        group="voice",
+        group="voice", advanced=False,
         service_writable=True,
     )
     openai_transcription_model: str = setting(
         "gpt-4o-mini-transcribe",
         "Transcribes what the caller says, for the call log.",
         title="Transcription model",
-        group="voice",
+        group="voice", advanced=True,
     )
     transcription_language: str = setting(
         "",
@@ -338,7 +376,7 @@ class Settings(BaseSettings):
         "call log's transcription — which `recall` and the memory read. Empty lets the "
         "transcriber guess each turn. The voice model itself hears the audio either way.",
         title="Transcription language",
-        group="voice",
+        group="voice", advanced=False,
         service_writable=True,
         pattern=r"^([a-z]{2,3})?$",
     )
@@ -347,7 +385,7 @@ class Settings(BaseSettings):
         "How the voice prompt writes the time of day (`14:05` or `2:05 PM`), and so how "
         "the assistant tends to say it.",
         title="Clock format",
-        group="voice",
+        group="voice", advanced=False,
         service_writable=True,
     )
     openai_web_search_model: str = setting(
@@ -355,7 +393,7 @@ class Settings(BaseSettings):
         "Answers the voice model's own `web_search` tool, through the Responses API (the "
         "Realtime API has no hosted search tool).",
         title="Web search model",
-        group="voice",
+        group="voice", advanced=True,
     )
     #: Was "low" until 2026-08-26, which left about two seconds of silence at the end of
     #: every sentence; "medium" lands near a second and still waits out a pause.
@@ -365,7 +403,7 @@ class Settings(BaseSettings):
         "sounds finished, so a pause to think does not cut you off; `server` is a plain "
         "silence timer of `VAD_SILENCE_MS`.",
         title="Turn detection",
-        group="voice",
+        group="voice", advanced=True,
         service_writable=True,
     )
     vad_eagerness: Literal["low", "medium", "high", "auto"] = setting(
@@ -373,19 +411,19 @@ class Settings(BaseSettings):
         "Semantic mode only: `low` waits longest, `high` jumps in soonest, `auto` is "
         "`medium`.",
         title="Reply eagerness",
-        group="voice",
+        group="voice", advanced=True,
         service_writable=True,
     )
     vad_silence_ms: int = setting(
         1200, "Server mode only: the silence, in milliseconds, that ends a turn.",
         title="Silence to end a turn (ms)",
-        group="voice", service_writable=True,
+        group="voice", advanced=True, service_writable=True,
         ge=0,
     )
     vad_threshold: float = setting(
         0.5, "Server mode only: how loud counts as speech (0 to 1).",
         title="Speech threshold",
-        group="voice", service_writable=True,
+        group="voice", advanced=True, service_writable=True,
         ge=0, le=1,
     )
     vad_prefix_ms: int = setting(
@@ -393,7 +431,7 @@ class Settings(BaseSettings):
         "Server mode only: audio kept from before speech was detected, so the first "
         "syllable is not clipped.",
         title="Audio before speech (ms)",
-        group="voice",
+        group="voice", advanced=True,
         service_writable=True,
         ge=0,
     )
@@ -403,7 +441,7 @@ class Settings(BaseSettings):
         "for a phone and `far_field` for a microphone across the room. Mostly about "
         "barge-in: noise mistaken for speech is noise that cuts the assistant off.",
         title="Noise reduction",
-        group="voice",
+        group="voice", advanced=True,
         service_writable=True,
     )
 
@@ -416,14 +454,14 @@ class Settings(BaseSettings):
         "The coding agent a task runs on when nobody names one out loud. The running "
         "service may switch it only among `AGENTS_ENABLED`.",
         title="Default agent",
-        group="agents",
+        group="agents", advanced=False,
         service_writable=True,
     )
     agents_enabled: Annotated[list[AgentName], NoDecode] = setting(
         description="Every agent a task may be sent to, comma-separated; blank is "
         "`AGENT_BACKEND` alone. `keryx serve` refuses a default that is not in here.",
         title="Enabled agents",
-        group="agents",
+        group="agents", advanced=False,
         default_factory=list,
     )
     #: Claude also has a turn cap and a dollar cap below; Codex has neither, so this is
@@ -432,7 +470,7 @@ class Settings(BaseSettings):
         3 * 60 * 60,
         "The longest one subagent run may take, on any agent, in seconds; 0 is no limit.",
         title="Time limit per task (seconds)",
-        group="agents",
+        group="agents", advanced=True,
         service_writable=True,
         ge=0,
     )
@@ -442,7 +480,7 @@ class Settings(BaseSettings):
         None,
         "Claude, paid per token. Set, it wins over the subscription.",
         title="Anthropic API key",
-        group="agents",
+        group="agents", advanced=False,
         repr=False,
     )
     claude_code_oauth_token: str | None = setting(
@@ -450,23 +488,24 @@ class Settings(BaseSettings):
         "Claude on your subscription, for a machine with no browser: the token "
         "`claude setup-token` prints. Blank uses the stored `claude` login.",
         title="Claude subscription token",
-        group="agents",
+        group="agents", advanced=False,
         repr=False,
     )
     subagent_model: str = setting(
         "claude-opus-5-5", "The model a Claude task runs on when none is named.",
         title="Claude model",
-        group="agents", service_writable=True,
+        group="agents", advanced=False, service_writable=True,
     )
     subagent_max_turns: int = setting(
         200, "Agent turns one Claude task may take.", title="Turns per task", group="agents",
+        advanced=True,
         ge=1,
     )
     subagent_max_budget_usd: float = setting(
         10.0, "Dollars one Claude task may spend: a runaway cap. On a subscription it is "
         "the SDK's estimate of what the task would have cost, not a charge.",
         title="Budget per task (USD)",
-        group="agents",
+        group="agents", advanced=True,
         gt=0,
     )
     # Codex. The same order: CODEX_API_KEY > CODEX_ACCESS_TOKEN (logged in once into
@@ -477,7 +516,7 @@ class Settings(BaseSettings):
         "Codex, paid per token. Keryx logs in with it once, into its own `CODEX_HOME`; "
         "`OPENAI_API_KEY` is never used for Codex.",
         title="Codex API key",
-        group="agents",
+        group="agents", advanced=False,
         repr=False,
     )
     codex_access_token: str | None = setting(
@@ -485,13 +524,13 @@ class Settings(BaseSettings):
         "Codex on your ChatGPT plan, for a machine with no browser. Blank uses the stored "
         "`codex login`.",
         title="Codex subscription token",
-        group="agents",
+        group="agents", advanced=False,
         repr=False,
     )
     codex_model: str | None = setting(
         None, "The model a Codex task runs on; blank is Codex's own default.",
         title="Codex model",
-        group="agents", service_writable=True,
+        group="agents", advanced=False, service_writable=True,
     )
 
     # --- local and self-hosted models ------------------------------------------------------
@@ -504,13 +543,13 @@ class Settings(BaseSettings):
         "address (`http://127.0.0.1:8765/v1` is the one `keryx setup` installs). Blank is "
         "OpenAI.",
         title="Voice server URL",
-        group="local",
+        group="local", advanced=False,
     )
     voice_api_key: str | None = setting(
         None,
         "The Bearer key for that voice server, when it checks one.",
         title="Voice server API key",
-        group="local",
+        group="local", advanced=False,
         repr=False,
     )
     local_agent_base_url: str | None = setting(
@@ -518,21 +557,21 @@ class Settings(BaseSettings):
         "An inference server for the `local` agent — Ollama, llama.cpp, vLLM, LM Studio — "
         "as `http://gpu-box:11434` or its `…/v1` address. Blank is no local agent.",
         title="Local agent server URL",
-        group="local",
+        group="local", advanced=False,
     )
     local_agent_api_key: str | None = setting(
         None,
         "The Bearer key for that server, when it checks one. The owner's Anthropic and "
         "OpenAI credentials are never sent there.",
         title="Local agent API key",
-        group="local",
+        group="local", advanced=False,
         repr=False,
     )
     local_agent_model: str | None = setting(
         None,
         "The model a `local` task runs on, by the server's own name for it.",
         title="Local agent model",
-        group="local",
+        group="local", advanced=False,
         service_writable=True,
     )
     local_agent_api: LocalAgentApi = setting(
@@ -540,7 +579,7 @@ class Settings(BaseSettings):
         "Which harness drives the local model: `anthropic-messages` runs it inside Claude "
         "Code, `openai-responses` inside Codex. The server must speak that API.",
         title="Local agent harness",
-        group="local",
+        group="local", advanced=True,
         service_writable=True,
     )
 
@@ -551,18 +590,18 @@ class Settings(BaseSettings):
         "The model the local llama.cpp server runs: a name from `keryx models list`, or a "
         "GGUF file's path. Blank runs none.",
         title="Model to serve",
-        group="local",
+        group="local", advanced=False,
     )
     llm_server_port: int = setting(
         8090, "The port the local llama.cpp server binds, on 127.0.0.1.",
         title="Model server port",
-        group="local",
+        group="local", advanced=True,
         ge=1, le=65535,
     )
     voice_server_port: int = setting(
         8765, "The port the local voice server binds, on 127.0.0.1.",
         title="Voice server port",
-        group="local",
+        group="local", advanced=True,
         ge=1, le=65535,
     )
     voice_server_stt: str = setting(
@@ -570,27 +609,27 @@ class Settings(BaseSettings):
         "How the local voice server hears: speech-to-speech's `--stt` (`parakeet-tdt`, "
         "`whisper`, …).",
         title="Speech-to-text model",
-        group="local",
+        group="local", advanced=False,
     )
     voice_server_tts: str = setting(
         "kokoro",
         "How the local voice server speaks: speech-to-speech's `--tts` (`kokoro`, `qwen3`, …).",
         title="Text-to-speech model",
-        group="local",
+        group="local", advanced=False,
     )
     voice_server_voice: str = setting(
         "af_heart",
         "The Kokoro voice the local voice server speaks in (`af_heart`, `bm_george`, …; "
         "`keryx models list` shows them).",
         title="Kokoro voice",
-        group="local",
+        group="local", advanced=False,
     )
     voice_server_args: str = setting(
         "",
         "More flags for `speech-to-speech serve`, as a command line — a smaller speech model "
         "(`--stt_model_name openai/whisper-base`), a TTS speed. Never a key: it is on argv.",
         title="Extra voice server flags",
-        group="local",
+        group="local", advanced=True,
     )
 
     # --- owner, callers and PIN ----------------------------------------------------------
@@ -600,14 +639,14 @@ class Settings(BaseSettings):
         'What the assistant calls you in the prompts it is handed; blank is "the owner". Only a '
         "name: the rest of what it knows about you is its memory.",
         title="Your name",
-        group="owner",
+        group="owner", advanced=False,
     )
     allowed_callers: Annotated[list[str], NoDecode] = setting(
         description="Your phone numbers in E.164 (`+15551234567`), comma-separated. Every "
         "other caller is refused. This is the handsets one person picks up, not a guest "
         "list: a call Keryx places to any of them reached you.",
         title="Your phone numbers",
-        group="owner",
+        group="owner", advanced=False,
         default_factory=list,
     )
     owner_number_explicit: str | None = setting(
@@ -615,7 +654,7 @@ class Settings(BaseSettings):
         "Which of your numbers Keryx rings first; blank is the first of "
         "`ALLOWED_CALLERS`.",
         title="Number to ring first",
-        group="owner",
+        group="owner", advanced=False,
         validation_alias="OWNER_NUMBER",
     )
     #: `KERYX_PIN` always wins; with it unset this is filled from `KERYX_HOME/pin` by
@@ -628,7 +667,7 @@ class Settings(BaseSettings):
         "environment, overrides that file. With no PIN anywhere nothing of yours is read "
         "out on the phone and every dispatch is refused.",
         title="Phone PIN",
-        group="owner",
+        group="owner", advanced=False,
         # `JARVIS_PIN` was its name before the service was Keryx, and a unit or a shell
         # profile from then still sets it: read, never written, and the new name wins.
         validation_alias=AliasChoices("KERYX_PIN", "JARVIS_PIN"),
@@ -639,18 +678,18 @@ class Settings(BaseSettings):
         "Wrong PINs, counted across every call, before PIN entry locks for everyone — "
         "the right PIN included.",
         title="Wrong PINs before lockout",
-        group="owner",
+        group="owner", advanced=True,
         ge=1,
     )
     pin_failure_window_hours: float = setting(
         24, "How long a wrong PIN is remembered.",
         title="Wrong PINs remembered (hours)",
-        group="owner", gt=0
+        group="owner", advanced=True, gt=0
     )
     pin_lockout_minutes: float = setting(
         60, "How long PIN entry stays locked once the limit is reached.",
         title="Lockout length (minutes)",
-        group="owner", gt=0
+        group="owner", advanced=True, gt=0
     )
     #: On by design (the owner's ruling, 2026-09-19): the PIN's job is to stop a phone-side
     #: caller-id spoofer *acting*; against somebody who has the machine it buys nothing.
@@ -661,52 +700,54 @@ class Settings(BaseSettings):
         "reading and acting; off means nothing of yours is said until it is given. Does "
         "nothing until a PIN exists.",
         title="Briefing before the PIN",
-        group="owner",
+        group="owner", advanced=False,
     )
 
     # --- phone ---------------------------------------------------------------------------
 
     twilio_account_sid: str | None = setting(
-        None, "Your Twilio account SID (`AC…`).", title="Twilio account SID", group="phone"
+        None, "Your Twilio account SID (`AC…`).", title="Twilio account SID", group="phone",
+        advanced=False,
     )
     twilio_auth_token: str | None = setting(
-        None, "Your Twilio auth token.", title="Twilio auth token", group="phone", repr=False
+        None, "Your Twilio auth token.", title="Twilio auth token", group="phone",
+        advanced=False, repr=False,
     )
     twilio_number: str | None = setting(
         None, "The Twilio number Keryx answers and calls from, in E.164.",
         title="Twilio number",
-        group="phone"
+        group="phone", advanced=False
     )
     sms_enabled: bool = setting(
         False,
         "Whether Keryx may text at all. Off: many Twilio accounts cannot send SMS in "
         "their region, and Slack is the written channel. Outbound calls are unaffected.",
         title="Text messages (SMS)",
-        group="phone",
+        group="phone", advanced=False,
     )
     public_host: str | None = setting(
         None,
         "The public hostname Twilio reaches this machine on, e.g. `keryx.example.com`: "
         "the name routed to your tunnel.",
         title="Public hostname",
-        group="phone",
+        group="phone", advanced=False,
     )
     cloudflare_tunnel: str = setting(
         "keryx",
         "The Cloudflare tunnel the service scripts run (`scripts/dev.sh`, "
         "`scripts/install-systemd.sh`).",
         title="Cloudflare tunnel",
-        group="phone",
+        group="phone", advanced=True,
     )
     host: str = setting(
         "127.0.0.1", "The address the phone server binds.",
         title="Phone server address",
-        group="phone",
+        group="phone", advanced=True,
     )
     port: int = setting(
         8080, "The port the phone server binds.",
         title="Phone server port",
-        group="phone", ge=1, le=65535,
+        group="phone", advanced=True, ge=1, le=65535,
     )
 
     # --- google -------------------------------------------------------------------------
@@ -715,25 +756,25 @@ class Settings(BaseSettings):
         None,
         "The Google OAuth client id. Blank: read from `GOOGLE_CLIENT_SECRETS_FILE`.",
         title="OAuth client ID",
-        group="google",
+        group="google", advanced=False,
     )
     google_oauth_client_secret: str | None = setting(
         None, "The Google OAuth client secret, with the id above.",
         title="OAuth client secret",
-        group="google", repr=False
+        group="google", advanced=False, repr=False
     )
     google_client_secrets_file: Path | None = setting(
         None,
         "The OAuth client JSON the Google Cloud console downloads (desktop or web shape). "
         f"Blank: `KERYX_HOME/{GOOGLE_CLIENT_FILE}`, where `keryx setup` puts it.",
         title="OAuth client file",
-        group="google",
+        group="google", advanced=True,
     )
     user_google_email: str | None = setting(
         None,
         "The Google account agents act as; `keryx setup` fills it in from the sign-in.",
         title="Google account",
-        group="google",
+        group="google", advanced=False,
     )
     #: Off since 2026-08-24: the Claude CLI already carries authorized claude.ai
     #: Gmail/Calendar/Drive connectors, so this only added a second path to trip over.
@@ -742,7 +783,7 @@ class Settings(BaseSettings):
         "Give every subagent the workspace-mcp server (send mail, manage the calendar). "
         "Needed for Codex, which has no claude.ai connectors; Claude already has them.",
         title="Workspace MCP server",
-        group="google",
+        group="google", advanced=False,
     )
 
     # --- plugin credentials --------------------------------------------------------------
@@ -753,7 +794,7 @@ class Settings(BaseSettings):
         None,
         "The bot token the `send_to_slack` plugin posts with (and the PIN-lockout alert).",
         title="Slack bot token",
-        group="plugins",
+        group="plugins", advanced=False,
         repr=False,
     )
     # Read-only, and on an *admin*-scoped credential: the key the voice agent talks to the
@@ -763,13 +804,13 @@ class Settings(BaseSettings):
         "An OpenAI *admin* key for the `check_billing` plugin; the ordinary key gets a 401 "
         "on the costs endpoint.",
         title="OpenAI admin key",
-        group="plugins",
+        group="plugins", advanced=False,
         repr=False,
     )
     anthropic_admin_key: str | None = setting(
         None, "An `sk-ant-admin…` key, for what the subagents have cost (`check_billing`).",
         title="Anthropic admin key",
-        group="plugins", repr=False,
+        group="plugins", advanced=False, repr=False,
     )
 
     # --- projects ------------------------------------------------------------------------
@@ -778,7 +819,7 @@ class Settings(BaseSettings):
         description='Spoken project names for repositories outside `PROJECTS_ROOT`, as '
         '`{"name": "/path"}`.',
         title="Other projects",
-        group="projects",
+        group="projects", advanced=False,
         default_factory=dict,
     )
     projects_root: Path = setting(
@@ -786,13 +827,13 @@ class Settings(BaseSettings):
         "Where a task with no project starts; each subdirectory is a project you can name. "
         "Never created: without it, such a task starts in `DATA_DIR/workspace`.",
         title="Projects folder",
-        group="projects",
+        group="projects", advanced=False,
     )
     skills_dir: Path = setting(
         description="Where the Claude CLI keeps its skills; listed in the voice prompt so "
         "the assistant knows what the subagents are good at.",
         title="Skills folder",
-        group="projects",
+        group="projects", advanced=True,
         default_factory=lambda: claude_config_dir() / "skills",
     )
     keryx_checkout: Path | None = setting(
@@ -800,7 +841,7 @@ class Settings(BaseSettings):
         "The Keryx repository on this machine, which a subagent reads when it reports a "
         "problem with Keryx. Unset: the checkout Keryx runs from, when it runs from one.",
         title="Keryx checkout",
-        group="projects",
+        group="projects", advanced=True,
         validation_alias=AliasChoices("KERYX_CHECKOUT", "JARVIS_CHECKOUT"),
     )
     issue_reporting: bool = setting(
@@ -808,13 +849,13 @@ class Settings(BaseSettings):
         "Whether a bug or a feature request for Keryx, said on a call, may be filed as a "
         "GitHub issue by a subagent, with `gh`. `keryx setup` asks; only you can turn it on.",
         title="GitHub issue reports",
-        group="projects",
+        group="projects", advanced=False,
     )
     issue_repo: str = setting(
         UPSTREAM_REPO,
         "The GitHub repository (`owner/name`) those issues are filed on.",
         title="Issue repository",
-        group="projects",
+        group="projects", advanced=True,
     )
 
     # --- the approval bridge -------------------------------------------------------------
@@ -824,31 +865,31 @@ class Settings(BaseSettings):
         "Whether a Claude Code prompt left unanswered on your screen may become a call. "
         "The hook is installed separately (`scripts/install-claude-hook.sh`).",
         title="Approval calls",
-        group="approvals",
+        group="approvals", advanced=False,
     )
     approval_escalate_seconds: float = setting(
         300, "How long a prompt waits on screen before Keryx rings about it.",
         title="Ring after (seconds)",
-        group="approvals",
+        group="approvals", advanced=True,
     )
     approval_call_window_seconds: float = setting(
         240,
         "How long the hook keeps waiting after that. The two together are the longest the "
         "hook blocks; its `timeout` in `~/.claude/settings.json` must exceed their sum.",
         title="Answer window (seconds)",
-        group="approvals",
+        group="approvals", advanced=True,
     )
     approval_max_per_hour: int = setting(
         4, "Approval calls per hour, however many prompts pile up.",
         title="Maximum calls per hour",
-        group="approvals",
+        group="approvals", advanced=True,
         ge=0,
     )
     approval_quiet_hours: str | None = setting(
         None,
         "`HH:MM-HH:MM` in which it never rings (may cross midnight), in the host's time.",
         title="Quiet hours",
-        group="approvals",
+        group="approvals", advanced=False,
         service_writable=True,
     )
     approval_bash_allow: Annotated[list[str], NoDecode] = setting(
@@ -857,14 +898,14 @@ class Settings(BaseSettings):
         "(`keryx/approvals/policy.py`). This allowlist is the primary control: widening "
         "it widens exactly what a phone keypad can execute.",
         title="Allowed commands",
-        group="approvals",
+        group="approvals", advanced=True,
         default_factory=lambda: ["git push", "git commit"],
     )
     approval_roots: Annotated[list[str], NoDecode] = setting(
         description="Where a file may be written by phone approval; blank is "
         "`PROJECTS_ROOT` plus every project in `PROJECTS`.",
         title="Writable folders",
-        group="approvals",
+        group="approvals", advanced=True,
         default_factory=list,
     )
 
@@ -873,20 +914,20 @@ class Settings(BaseSettings):
     max_concurrent_tasks: int = setting(
         3, "Subagents running at once; the rest queue.",
         title="Tasks at once",
-        group="limits", service_writable=True,
+        group="limits", advanced=True, service_writable=True,
         ge=1,
     )
     dispatch_wait_max_seconds: int = setting(
         25, "How long a call waits for a short task to answer inline.",
         title="Inline answer wait (seconds)",
-        group="limits",
+        group="limits", advanced=True,
         ge=0,
     )
     local_silence_timeout: float = setting(
         30,
         "Seconds of silence that end a local session; 0 never does.",
         title="Local session timeout (seconds)",
-        group="limits",
+        group="limits", advanced=True,
         service_writable=True,
         ge=0,
     )
@@ -894,7 +935,7 @@ class Settings(BaseSettings):
         1800,
         "The longest a phone call may run; Keryx wraps up 30 s before. 0 is no limit.",
         title="Maximum call length (seconds)",
-        group="limits",
+        group="limits", advanced=True,
         service_writable=True,
         ge=0,
     )
@@ -903,11 +944,11 @@ class Settings(BaseSettings):
         "Phone calls open at once, each one a realtime session being paid for; another "
         "hears that the line is busy.",
         title="Phone calls at once",
-        group="limits",
+        group="limits", advanced=True,
         ge=1,
     )
     daily_task_cap: int = setting(
-        50, "Tasks dispatched per day.", title="Tasks per day", group="limits", ge=0
+        50, "Tasks dispatched per day.", title="Tasks per day", group="limits", advanced=True, ge=0
     )
     # Both off at 0, which is what Keryx has always done: a default that deleted
     # someone's own call transcripts because nobody changed a number is not one worth
@@ -916,14 +957,14 @@ class Settings(BaseSettings):
         0,
         "Delete call transcripts older than this many days; 0 keeps everything.",
         title="Keep transcripts for (days)",
-        group="limits",
+        group="limits", advanced=True,
     )
     task_retention_days: int = setting(
         0,
         "Delete finished tasks older than this; 0 keeps everything. A result you have not "
         "been told about is never deleted.",
         title="Keep finished tasks for (days)",
-        group="limits",
+        group="limits", advanced=True,
     )
 
     # --- service, storage and logging ----------------------------------------------------
@@ -932,20 +973,20 @@ class Settings(BaseSettings):
         description="Where tasks, transcripts, memory and sign-in tokens are kept, owner-only "
         "(0700, files 0600).",
         title="Data folder",
-        group="service",
+        group="service", advanced=True,
         default_factory=default_data_dir,
     )
     state_dir: Path = setting(
         description="Where the logs, the restart record and the approval bridge's socket "
         "are kept, owner-only.",
         title="State folder",
-        group="service",
+        group="service", advanced=True,
         default_factory=default_state_dir,
     )
     cache_dir: Path = setting(
         description="Where what can be downloaded again is kept.",
         title="Cache folder",
-        group="service",
+        group="service", advanced=True,
         default_factory=default_cache_dir,
     )
     service_manager: Literal["auto", "systemd", "launchd", "none"] = setting(
@@ -953,25 +994,26 @@ class Settings(BaseSettings):
         "What `keryx restart` asks to restart this process: `auto` is systemd or launchd, "
         "but only for a process actually running under it; `none` refuses.",
         title="Service manager",
-        group="service",
+        group="service", advanced=True,
     )
     service_unit: str | None = setting(
         None,
         "The systemd unit or launchd label; blank is the installed default "
         "(`keryx.service`, `dev.keryx.agent`).",
         title="Service unit or label",
-        group="service",
+        group="service", advanced=True,
     )
     report_secret: str | None = setting(
         None,
         "Signs the `/reports/{id}` links texted to you; blank generates one into "
         "`DATA_DIR/report_secret`.",
         title="Report link secret",
-        group="service",
+        group="service", advanced=True,
         repr=False,
     )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = setting(
         "INFO", "How much `STATE_DIR/logs/keryx.log` says.", title="Log level", group="service",
+        advanced=False,
         service_writable=True,
     )
 
@@ -982,7 +1024,7 @@ class Settings(BaseSettings):
         "Skip Twilio's request signatures, for a machine nothing outside can reach. "
         "`keryx serve` refuses the phone with it on behind a `PUBLIC_HOST`.",
         title="Skip Twilio signatures",
-        group="debug",
+        group="debug", advanced=True,
     )
     demo_mode: bool = setting(
         False,
@@ -991,7 +1033,7 @@ class Settings(BaseSettings):
         "was a demo. No agent runs and no agent tokens are spent. `keryx serve --demo` turns "
         "it on for one run.",
         title="Demo mode",
-        group="debug",
+        group="debug", advanced=True,
         # `FAKE_AGENTS` until 2026-09-29, still read for one release.
         validation_alias=AliasChoices("DEMO_MODE", "FAKE_AGENTS"),
     )
@@ -1535,6 +1577,16 @@ def field_group(name: str) -> str:
 def field_title(name: str) -> str:
     """What a field is called where a person reads it rather than types it."""
     return str(_extra(name)["title"])
+
+
+def field_tab(name: str) -> str:
+    """The `TABS` key of the tab a field is shown on in the Mac app."""
+    return TAB_OF_GROUP[field_group(name)]
+
+
+def field_advanced(name: str) -> bool:
+    """Whether a field is shown under its tab's "Advanced" disclosure rather than first."""
+    return bool(_extra(name)["advanced"])
 
 
 def field_service_writable(name: str) -> bool:
