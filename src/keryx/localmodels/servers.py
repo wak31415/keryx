@@ -15,6 +15,7 @@ import socket
 import sys
 import time
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import NoReturn
 
@@ -186,15 +187,22 @@ def wait_for(
     session ("realtime") — or `timeout_s` passes; None, or the last reason it did not.
 
     A server's first start downloads what it runs on, so the caller says how long that may
-    take rather than this guessing.
+    take rather than this guessing. The credentials taken out of what a refusal says are
+    gathered once for the whole wait, not on every attempt (`child_env.known_secrets`).
     """
-    if realtime is None:
+    if realtime is None and kind == "realtime":
+        from keryx.child_env import known_secrets
         from keryx.realtime.openai import realtime_problem
 
-        realtime = realtime_problem
+        try:
+            secrets: tuple[str, ...] | None = known_secrets()
+        except Exception:  # each attempt then gathers them itself, and withholds on failure
+            secrets = None
+        realtime = partial(realtime_problem, secrets=secrets)
     deadline = clock() + timeout_s
     while True:
         if kind == "realtime":
+            assert realtime is not None
             problem = realtime(endpoint)
         else:
             found = models(endpoint)

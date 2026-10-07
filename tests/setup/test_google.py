@@ -7,6 +7,7 @@ import time
 import pytest
 
 from keryx.config import Settings
+from keryx.setup import google
 from keryx.setup.google import (
     MCP_PROTOCOL_VERSION,
     PROBE_TOOL,
@@ -240,10 +241,10 @@ def test_a_tool_error_is_reported_as_a_failure(settings):
         ]
     )
 
-    with pytest.raises(GoogleSetupError) as excinfo:
+    with pytest.raises(google.WorkspaceRefused) as excinfo:
         run_google_setup(settings, popen=make_popen(process, []))
 
-    assert "nope" in str(excinfo.value)
+    assert "nope" in str(excinfo.value)  # the server's words, which are shown only redacted
 
 
 def test_the_instructions_and_the_server_output_are_echoed(settings):

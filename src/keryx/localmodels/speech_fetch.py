@@ -55,7 +55,9 @@ def _free(path: Path) -> int:
 
 
 def _said(error: BaseException) -> str:
-    first = (str(error).strip().splitlines() or [""])[0][:200]
+    """The error's type and its first line, whole: its parent takes the credentials out
+    first and shortens it after, so a token is never cut at the edge and half of it said."""
+    first = (str(error).strip().splitlines() or [""])[0]
     return f"{type(error).__name__}: {first}" if first else type(error).__name__
 
 

@@ -125,3 +125,88 @@ def test_a_refused_handshake_never_quotes_a_credential_or_the_key_it_was_asked_w
     assert survivors(refused) == [] and refused.startswith("127.0.0.1 refused the session:")
     assert survivors(unopened) == []
     assert unopened.startswith("could not open 127.0.0.1's Realtime socket (ConnectionError: ")
+
+
+def test_a_failure_anywhere_in_redaction_withholds_the_text(planted, monkeypatch):
+    """`redact_known` never raises, and never falls back to what it was asked to clean."""
+    def broken(text, secrets=()):
+        raise RuntimeError("the redactor broke")
+
+    def exploding():
+        yield KEY
+        raise RuntimeError("an extra that breaks halfway")
+
+    assert redact_known(SAID, extra=exploding()) == "(details withheld)"
+    monkeypatch.setattr("keryx.child_env.redact", broken)
+    assert redact_known(SAID) == "(details withheld)"
+
+
+def test_a_token_straddling_the_cut_leaves_nothing_of_itself(planted):
+    """The download's words are redacted whole, then shortened: a token across the
+    two-hundredth character is not cut first and half of it said."""
+    told: list[tuple] = []
+    report = SimpleNamespace(
+        error=lambda message, **kwargs: told.append((message, kwargs.get("detail"))),
+        step=lambda step, message, **kwargs: _nothing(), progress=lambda done, total: None,
+    )
+    said = "x" * 190 + HF + " and more after it" * 10
+    probes = SimpleNamespace(speech_python=lambda: "/py",
+                             fetch_speech=lambda python, repos, progress: said)
+
+    voice.fetch_models(load_settings(), probes, report, [])
+
+    [(_message, detail)] = told
+    assert len(detail) == voice.DETAIL_CHARS and detail.endswith("…")
+    assert "hf_" not in detail and "planted" not in detail
+    assert detail.startswith("x" * 190 + "[redacted")  # the marker may be what is cut
+
+
+def test_the_download_child_says_its_error_whole():
+    from keryx.localmodels import speech_fetch
+
+    said = speech_fetch._said(ValueError("y" * 500 + "\nsecond line"))
+
+    assert said == "ValueError: " + "y" * 500
+
+
+def test_a_server_polled_until_it_answers_gathers_the_secrets_once(planted, monkeypatch):
+    from keryx import child_env
+    from keryx.localmodels import servers
+
+    gathered: list[int] = []
+    asked: list[tuple] = []
+
+    def known(settings=None):
+        gathered.append(1)
+        return (SETTING,)
+
+    def realtime(endpoint, *, secrets=None):
+        asked.append(secrets)
+        return "no session"
+
+    monkeypatch.setattr(child_env, "known_secrets", known)
+    monkeypatch.setattr(realtime_openai, "realtime_problem", realtime)
+    times = iter([0.0, 1.0, 2.0, 3.0, 99.0])
+
+    problem = servers.wait_for(Endpoint.parse("http://127.0.0.1:8765/v1"), "realtime", 10.0,
+                               sleep=lambda s: None, clock=lambda: next(times))
+
+    assert problem == "no session" and len(asked) == 4
+    assert gathered == [1] and asked == [(SETTING,)] * 4
+
+
+def test_a_secrets_list_that_cannot_be_gathered_is_asked_for_each_time(monkeypatch):
+    from keryx import child_env
+    from keryx.localmodels import servers
+
+    def broken(settings=None):
+        raise RuntimeError("no")
+
+    asked: list[tuple] = []
+    monkeypatch.setattr(child_env, "known_secrets", broken)
+    monkeypatch.setattr(realtime_openai, "realtime_problem",
+                        lambda endpoint, *, secrets=None: asked.append(secrets))
+
+    servers.wait_for(Endpoint.parse("http://127.0.0.1:8765/v1"), "realtime", 1.0,
+                     clock=lambda: 0.0)
+    assert asked == [None]

@@ -684,16 +684,17 @@ def one_line(text: str) -> str:
     return said if len(said) <= ONE_LINE_CHARS else said[: ONE_LINE_CHARS - 1] + "…"
 
 
-def _said(text: str, endpoint: Endpoint) -> str:
+def _said(text: str, endpoint: Endpoint, secrets: tuple[str, ...] | None) -> str:
     """What a server or its socket said, without a credential, on one line. Redacted first,
     so a key is never cut in half where `one_line` shortens it."""
     from keryx.child_env import redact_known
 
-    return one_line(redact_known(text, extra=[endpoint.api_key]))
+    return one_line(redact_known(text, extra=[endpoint.api_key], secrets=secrets))
 
 
 async def handshake(
-    endpoint: Endpoint, *, ws_connect: WebSocketFactory | None = None
+    endpoint: Endpoint, *, ws_connect: WebSocketFactory | None = None,
+    secrets: tuple[str, ...] | None = None,
 ) -> str | None:
     """Why a Realtime session cannot open on `endpoint`, in a sentence; None when it can.
 
@@ -701,7 +702,8 @@ async def handshake(
     then closes: no audio, no response, nothing billed. What the server or the socket said
     is repeated on one line (`one_line`): a voice server of the owner's own can answer with
     its whole traceback. Every credential Keryx knows of is taken out of it first, the key it
-    was asked with included: a refusal can quote the key it refused.
+    was asked with included: a refusal can quote the key it refused. `secrets` is that list
+    gathered already (`child_env.known_secrets`), for a caller that asks again and again.
     """
     connect = ws_connect or _default_ws_connect
     where = endpoint.host
@@ -711,7 +713,7 @@ async def handshake(
         )
     except Exception as exc:
         return (f"could not open {where}'s Realtime socket "
-                f"({type(exc).__name__}: {_said(str(exc), endpoint)})")
+                f"({type(exc).__name__}: {_said(str(exc), endpoint, secrets)})")
     try:
         event = json.loads(await asyncio.wait_for(ws.recv(), HANDSHAKE_TIMEOUT_S))
     except Exception as exc:
@@ -723,11 +725,14 @@ async def handshake(
     if kind == "session.created":
         return None
     if kind == "error":
-        message = _said(str((event.get("error") or {}).get("message") or ""), endpoint)
+        message = _said(str((event.get("error") or {}).get("message") or ""), endpoint,
+                        secrets)
         return f"{where} refused the session: {message or 'no reason'}"
     return f"{where} opened with {kind or 'something'} rather than session.created"
 
 
-def realtime_problem(endpoint: Endpoint) -> str | None:
+def realtime_problem(
+    endpoint: Endpoint, *, secrets: tuple[str, ...] | None = None
+) -> str | None:
     """`handshake`, for a caller with no event loop (`keryx doctor`)."""
-    return asyncio.run(handshake(endpoint))
+    return asyncio.run(handshake(endpoint, secrets=secrets))

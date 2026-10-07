@@ -446,7 +446,7 @@ def fetch_models(
     if problem is not None:
         # Its child holds the Hugging Face tokens, and a failed request can quote one.
         report.error("The voice's speech models could not be downloaded.",
-                     detail=redact_known(problem, settings))
+                     detail=shortened(redact_known(problem, settings)))
         return False
     return True
 
@@ -517,6 +517,15 @@ def no_installer(report: Told, problem: str | None) -> None:
         report.error(NO_CHECKOUT, detail=problem)
     else:
         report.error(problem)
+
+
+#: The most of a tool's own words an error's `detail` repeats.
+DETAIL_CHARS = 200
+
+
+def shortened(text: str) -> str:
+    """`text` cut to `DETAIL_CHARS` — after its credentials are out, never before."""
+    return text if len(text) <= DETAIL_CHARS else text[: DETAIL_CHARS - 1] + "…"
 
 
 def did_not_come_up(server: str, removed: str) -> str:

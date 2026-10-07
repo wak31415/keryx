@@ -616,3 +616,35 @@ def test_a_codex_terminal_that_fails_under_it_has_changed(settings, agents, cloc
 
     assert run("codex", settings, clock=clock) == 1
     assert ending(run) == {"event": "error", "message": CODEX_CHANGED, "detail": None}
+
+
+def test_a_workspace_server_refusal_is_a_sentence_and_its_words_redacted(
+    settings, client_file, monkeypatch
+):
+    """The workspace-mcp server's own words can quote the OAuth client's secret, read here
+    from the client file and from no setting: the app is told a sentence, and the words
+    only redacted, as the detail."""
+    monkeypatch.setenv("HF_TOKEN", "hf_planted_token_0003")
+
+    def workspace(settings, *, echo, timeout_s):
+        raise google.WorkspaceRefused("the server refused: bad client cs-client-secret-0001 "
+                                      "token hf_planted_token_0003")
+
+    client_file.write_text('{"installed": {"client_id": "cid", '
+                           '"client_secret": "cs-client-secret-0001"}}')
+    run = Run()
+
+    assert run("google-workspace", settings, client_file=client_file, workspace=workspace) == 1
+    event = ending(run)
+    assert event["message"] == auth_stream.WORKSPACE_REFUSED
+    assert event["detail"] == ("the server refused: bad client [redacted] token [redacted]")
+
+
+def test_any_other_google_failure_is_redacted_where_it_is_said(settings, client_file):
+    def workspace(settings, *, echo, timeout_s):
+        raise google.GoogleSetupError("Google said: cs")
+
+    run = Run()
+
+    assert run("google-workspace", settings, client_file=client_file, workspace=workspace) == 1
+    assert ending(run)["message"] == "Google said: [redacted]"  # "cs" is the client's secret

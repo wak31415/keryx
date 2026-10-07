@@ -46,24 +46,44 @@ def secret_variables() -> frozenset[str]:
     return frozenset(name.upper() for name in names)
 
 
+#: What `redact_known` says in place of text it could not make safe: never the text itself.
+WITHHELD = "(details withheld)"
+
+
 def redact_known(
-    text: str, settings: Settings | None = None, extra: Iterable[str | None] = ()
+    text: str, settings: Settings | None = None, extra: Iterable[str | None] = (), *,
+    secrets: Iterable[str] | None = None,
 ) -> str:
     """`text` with every credential Keryx knows of replaced by `[redacted]`: each secret
     setting's value (in `settings`, else the settings as the store holds them now, when they
     load), each `secret_variables()` and Hugging Face token (`OPERATIONAL_KEEPS`) in this
     process's environment, and `extra` — a key in hand, like a server's. Longest first, so
     one that contains another goes whole; anything shaped like a masked key goes too
-    (`agents.auth.redact`). Never raises."""
-    found = [*extra]
+    (`agents.auth.redact`).
+
+    `secrets` is that list gathered already (`known_secrets`), for a caller that redacts
+    over and over — a server polled until it answers — and `extra` is added to it. Never
+    raises: when anything in here fails, the answer is `WITHHELD`, never `text`."""
+    try:
+        found = [*(known_secrets(settings) if secrets is None else secrets), *extra]
+        unique = {str(value) for value in found if value and str(value) != PLACEHOLDER_KEY}
+        return redact(text, sorted(unique, key=len, reverse=True))
+    except Exception:  # a secret may be in `text`: say nothing of it rather than all of it
+        return WITHHELD
+
+
+def known_secrets(settings: Settings | None = None) -> tuple[str, ...]:
+    """Every credential `redact_known` takes out, gathered once (see there): the secret
+    settings' values and the credential variables in the environment, longest first."""
+    found: list[object] = []
     known = settings if settings is not None else _settings_now()
     if known is not None:
         found += [getattr(known, name) for name, info in Settings.model_fields.items()
                   if not info.repr]
     names = secret_variables() | OPERATIONAL_KEEPS
-    found += [value for key, value in os.environ.items() if key.upper() in names]
-    secrets = {str(value) for value in found if value and str(value) != PLACEHOLDER_KEY}
-    return redact(text, sorted(secrets, key=len, reverse=True))
+    found += [value for key, value in list(os.environ.items()) if key.upper() in names]
+    unique = {str(value) for value in found if value and str(value) != PLACEHOLDER_KEY}
+    return tuple(sorted(unique, key=len, reverse=True))
 
 
 def _settings_now() -> Settings | None:

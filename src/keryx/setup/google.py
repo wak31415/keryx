@@ -105,6 +105,11 @@ class GoogleSetupError(RuntimeError):
     """A sign-in that cannot go on, in one sentence to print."""
 
 
+class WorkspaceRefused(GoogleSetupError):
+    """The workspace-mcp server's own words for a sign-in it refused or failed. They are the
+    server's, and can quote the OAuth client's secret: shown only redacted, as a detail."""
+
+
 NO_CLIENT = (
     "there is no Google OAuth client yet: download one from the Google Cloud console "
     "(Clients → Create client → Desktop app) and pass it with --client-file"
@@ -161,7 +166,7 @@ def run_google_setup(
                                    "capabilities": {}, "clientInfo": CLIENT_INFO}})
         handshake = _await_reply(replies, _INITIALIZE_ID, deadline, echo)
         if "error" in handshake:
-            raise GoogleSetupError(f"the server refused: {_error_text(handshake['error'])}")
+            raise WorkspaceRefused(f"the server refused: {_error_text(handshake['error'])}")
 
         _send(process, {"jsonrpc": "2.0", "method": "notifications/initialized"})
         reply = _probe(process, replies, _PROBE_ID, deadline, echo)
@@ -181,7 +186,7 @@ def run_google_setup(
             reply = _probe(process, replies, _CONFIRM_ID, confirm_deadline, echo)
 
         if _is_failure(reply):
-            raise GoogleSetupError(f"{PROBE_TOOL} failed: {' '.join(_reply_texts(reply))}")
+            raise WorkspaceRefused(f"{PROBE_TOOL} failed: {' '.join(_reply_texts(reply))}")
 
         echo(f"Google access is authorized; credentials are in {credentials}")
         return True
