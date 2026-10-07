@@ -1,40 +1,87 @@
-"""The Mac app's JSON contract: every key its decoders rely on is in what the CLI prints.
+"""The Mac app's JSON contract: every key its decoders rely on is in what the CLI prints,
+with the JSON type the decoder needs.
 
-`macos/Tests/KeryxKitTests/Fixtures/contract.json` maps a command line to the keys the
-Swift side reads, by path: `""` is the document, `"servers.llm"` a nested object, and a
-path that lands on a list means its first element. Renaming a field here without the app
-fails this test, not the owner's menu bar.
+`macos/Tests/KeryxKitTests/Fixtures/contract.json` (schema 2) maps a command line to the
+keys the Swift side decodes, by path, each with its type: `""` is the document,
+`"servers.llm"` a nested object, `"tasks[]"` each element of a list (and `"[]"` each
+element of a document that is one). A type is `string`, `integer`, `number`, `boolean`,
+`array` or `object`, and `|null` after it is a key the decoder also takes as null; without
+it, null is a broken promise. Its `streams` block is the same promise for the JSON lines
+of `models pull --json`: each event's keys, exactly one ending, and the exit code each
+ending carries. Renaming a field here without the app fails this test, not the owner's
+menu bar.
 
-Each command runs against a store seeded so that no list it walks is empty, with the same
-fakes as the rest of the suite: no service manager, no loopback GET, no `git`, no network.
+Until the Swift side writes schema 2, the contract read is
+`tests/fixtures/macos_contract_v2_sample.json`, a small one that exercises every rule; the
+sample is held to the schema either way, so it cannot rot unnoticed.
+
+Each command runs against a store seeded so that no list it walks is empty and as few
+values as possible are their defaults — a running task and a told one, a setting saved, a
+model on disk, a model server that answers — with the same fakes as the rest of the suite:
+no service manager, no `git`, and nothing that leaves the process (the model server is
+httpx's own transport, faked, answering on loopback only).
 """
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
 from keryx import status
 from keryx.cli import app
 from keryx.config import Settings
+from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path
 from keryx.localmodels import catalog, download, hardware, servers, use
 from keryx.localmodels.hardware import Hardware
+from keryx.restart.service import ServiceTarget
+from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
 from keryx.tasks.models import Task, TaskKind, TaskStatus, task_log_path
 from keryx.tasks.store import TaskStore
 
 CONTRACT = Path(__file__).parents[1] / "macos/Tests/KeryxKitTests/Fixtures/contract.json"
+SAMPLE = Path(__file__).parent / "fixtures/macos_contract_v2_sample.json"
+SCHEMA = 2
+#: Each contract type, as the Python value `json.loads` gives for it. A bool is an int to
+#: Python and never to the decoder, so `type_problem` refuses one as a number.
+TYPES: dict[str, tuple[type, ...]] = {
+    "string": (str,), "integer": (int,), "number": (int, float), "boolean": (bool,),
+    "array": (list,), "object": (dict,),
+}
+NULLABLE = "|null"
+PULL = "models pull --json"
+#: The command lines the app reads as one JSON document.
+COMMANDS = {
+    "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
+    "tasks usage --json", "models list --json", "models use NAME --json",
+    "config list --json", "approvals --json", "memory --json",
+}
 #: What the placeholders in a contract command line stand for.
 TASK_ID = 1
 MODEL = catalog.by_key("qwen3-coder-30b-a3b")
+#: What the faked model server says it has loaded.
+SERVED = "qwen3-coder-q4"
 
 runner = CliRunner()
 
 
-def contract() -> dict[str, dict[str, list[str]]]:
-    return json.loads(CONTRACT.read_text())
+def _read(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def contract() -> dict:
+    """The Swift side's contract once it is schema 2, else the sample."""
+    real = _read(CONTRACT)
+    if isinstance(real, dict) and real.get("schema") == SCHEMA:
+        return real
+    return _read(SAMPLE)
 
 
 def argv(command: str) -> list[str]:
@@ -42,26 +89,207 @@ def argv(command: str) -> list[str]:
     return [words.get(word, word) for word in command.split()]
 
 
+# --- the rules ---------------------------------------------------------------------------
+
+
+def type_problem(value: object, expected: str) -> str | None:
+    """Why `value` does not meet the contract type `expected`, or None when it does."""
+    base, _, nullable = expected.partition("|")
+    if value is None:
+        return None if nullable == "null" else "is null"
+    wanted = TYPES[base]
+    if isinstance(value, bool) and bool not in wanted:
+        return f"is a boolean, not {base}"
+    if not isinstance(value, wanted):
+        return f"is {type(value).__name__}, not {base}"
+    return None
+
+
+def key_problems(node: object, keys: dict[str, str]) -> list[str]:
+    """Every key in `keys` that `node` lacks or holds as the wrong type."""
+    if not isinstance(node, dict):
+        return [f"is {type(node).__name__}, not an object"]
+    problems = []
+    for key, expected in keys.items():
+        if key not in node:
+            problems.append(f"has no {key!r}")
+        elif why := type_problem(node[key], expected):
+            problems.append(f"{key!r} {why}")
+    return problems
+
+
+def nodes_at(document: object, path: str) -> list[object]:
+    """Every object at `path`: dotted keys, where `name[]` (or `[]` alone, for the
+    document) is each element of that list. A list on the way must not be empty, or what
+    is behind it was never checked."""
+    found = [document]
+    for part in [p for p in path.split(".") if p]:
+        name, each = (part[:-2], True) if part.endswith("[]") else (part, False)
+        stepped = []
+        for node in found:
+            if name:
+                assert isinstance(node, dict) and name in node, f"no {name!r} on {path!r}"
+                node = node[name]
+            if each:
+                assert isinstance(node, list), f"{path!r}: {name or 'the document'} is no list"
+                assert node, f"{path!r} is an empty list; seed it so the contract is checked"
+                stepped.extend(node)
+            else:
+                stepped.append(node)
+        found = stepped
+    return found
+
+
+def _type_problems(where: str, keys: object) -> list[str]:
+    if not isinstance(keys, dict):
+        return [f"{where} is not an object of keys"]
+    return [
+        f"{where}: {key!r} has no type {expected!r}"
+        for key, expected in keys.items()
+        if not isinstance(expected, str)
+        or expected.removesuffix(NULLABLE) not in TYPES
+    ]
+
+
+def shape_problems(doc: object) -> list[str]:
+    """What keeps `doc` from being a schema 2 contract."""
+    if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
+        return ["not schema 2"]
+    problems = []
+    commands = doc.get("commands")
+    if not isinstance(commands, dict) or not commands:
+        problems.append("no commands")
+    else:
+        for command, paths in commands.items():
+            if not isinstance(paths, dict) or not paths:
+                problems.append(f"{command}: no paths")
+                continue
+            for path, keys in paths.items():
+                problems += _type_problems(f"{command} {path!r}", keys)
+    stream = (doc.get("streams") or {}).get(PULL)
+    if not isinstance(stream, dict):
+        return [*problems, f"no {PULL} stream"]
+    events = stream.get("events") or {}
+    for name, keys in events.items():
+        problems += _type_problems(f"{PULL} {name}", keys)
+    terminal = stream.get("terminal") or []
+    exits = stream.get("exit") or {}
+    if not terminal or not set(terminal) <= set(events):
+        problems.append(f"{PULL}: the endings are not all events")
+    for ending in terminal:
+        code = exits.get(ending)
+        codes = code if isinstance(code, list) else [code]
+        if not codes or not all(isinstance(c, int) and not isinstance(c, bool) for c in codes):
+            problems.append(f"{PULL}: {ending} has no exit code")
+    return problems
+
+
+def test_the_sample_is_a_schema_2_contract_that_exercises_every_rule():
+    sample = _read(SAMPLE)
+
+    assert shape_problems(sample) == []
+    paths = [path for command in sample["commands"].values() for path in command]
+    types = [kind for command in sample["commands"].values()
+             for keys in command.values() for kind in keys.values()]
+    assert "" in paths and "[]" in paths
+    assert any("." in path for path in paths) and any(path.endswith("[]") for path in paths)
+    assert {kind.removesuffix(NULLABLE) for kind in types} == set(TYPES)
+    assert any(kind.endswith(NULLABLE) for kind in types)
+    assert set(sample["commands"]) == COMMANDS
+
+
+def test_the_contract_read_is_schema_2():
+    assert shape_problems(contract()) == []
+
+
+@pytest.mark.parametrize(
+    ("doc", "problem"),
+    [({"schema": 1}, "not schema 2"),
+     ({"schema": 2, "commands": {}}, "no commands"),
+     ({"schema": 2, "commands": {"x": {"": {"a": "text"}}}}, "x '': 'a' has no type 'text'"),
+     ({"schema": 2, "commands": {"x": {"": {"a": "string"}}}}, f"no {PULL} stream"),
+     ({"schema": 2, "commands": {"x": {"": {"a": "string"}}}, "streams": {PULL: {
+         "events": {"done": {}}, "terminal": ["done", "error"], "exit": {"done": 0}}}},
+      f"{PULL}: the endings are not all events")],
+)
+def test_a_contract_that_is_not_schema_2_says_why(doc, problem):
+    assert problem in shape_problems(doc)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected", "problem"),
+    [("a", "string", None), (None, "string|null", None), (None, "string", "is null"),
+     (3, "integer", None), (3.5, "integer", "is float, not integer"),
+     (True, "integer", "is a boolean, not integer"), (3, "number", None),
+     (2.5, "number", None), (False, "number", "is a boolean, not number"),
+     (False, "boolean", None), (0, "boolean", "is int, not boolean"),
+     ([], "array", None), ({}, "object", None), ([], "object", "is list, not object")],
+)
+def test_a_value_meets_its_type_or_says_why_not(value, expected, problem):
+    assert type_problem(value, expected) == problem
+
+
+def test_a_missing_key_and_a_wrong_type_are_both_named():
+    assert key_problems({"id": "1"}, {"id": "integer", "text": "string|null"}) == [
+        "'id' is str, not integer", "has no 'text'",
+    ]
+    assert key_problems([], {"id": "integer"}) == ["is list, not an object"]
+
+
+def test_a_path_steps_into_objects_and_through_every_element_of_a_list():
+    document = {"servers": {"llm": {"port": 1}}, "tasks": [{"id": 1}, {"id": 2}]}
+
+    assert nodes_at(document, "") == [document]
+    assert nodes_at(document, "servers.llm") == [{"port": 1}]
+    assert nodes_at(document, "tasks[]") == [{"id": 1}, {"id": 2}]
+    assert nodes_at([{"key": "A"}], "[]") == [{"key": "A"}]
+    with pytest.raises(AssertionError, match="empty list"):
+        nodes_at({"tasks": []}, "tasks[]")
+
+
+# --- the commands ------------------------------------------------------------------------
+
+
+def llama_server(request: httpx.Request) -> httpx.Response:
+    """httpx's transport, faked: a model server on loopback that has `SERVED` loaded, and
+    nothing anywhere else."""
+    if request.url.host not in {"127.0.0.1", "localhost"}:
+        raise httpx.ConnectError("no network in tests", request=request)
+    if request.url.path.endswith("/models"):
+        return httpx.Response(200, json={"object": "list", "data": [{"id": SERVED}]},
+                              request=request)
+    return httpx.Response(404, request=request)
+
+
 @pytest.fixture
 def seeded(tmp_path, monkeypatch, every_agent_installed):
-    """A store with one finished task (report, log, usage), an approval, and a memory."""
+    """A store with a told task (report, log, usage), a running one, saved settings, a
+    failed restart, approvals, a memory, a model on disk and a model server that answers."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("PROJECTS_ROOT", str(tmp_path / "projects"))
+    ConfigStore().set({"ASSISTANT_NAME": "Vega", "LLM_SERVER_MODEL": MODEL.key,
+                       "VOICE_BASE_URL": "http://127.0.0.1:8765/v1"})
     settings = Settings()
     settings.ensure_dirs()
 
     report = settings.data_dir / "tasks" / f"{TASK_ID}.md"
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text("# Task 1\n\ncheck the logs\n\n---\n\nAll fine.\n")
-    task = Task(id=None, kind=TaskKind.AGENT, description="check the logs", project="keryx",
-                status=TaskStatus.DONE, report_path=str(report), input_tokens=10,
-                output_tokens=2, cost_usd=0.01)
+    now = datetime(2026, 10, 5, 9, 0, tzinfo=UTC)
+    told = Task(id=None, kind=TaskKind.AGENT, description="check the logs", project="keryx",
+                status=TaskStatus.DONE, report_path=str(report), summary="All fine.",
+                input_tokens=10, output_tokens=2, cost_usd=0.01, claude_session_id="s-1",
+                callback_requested=True, needs_restart=True, started_at=now,
+                finished_at=now, reported_at=now)
+    running = Task(id=None, kind=TaskKind.AGENT, description="build it", project="keryx",
+                   status=TaskStatus.RUNNING, started_at=now)
 
     async def seed() -> None:
         store = TaskStore(settings.data_dir / "tasks.db")
         try:
-            assert (await store.create(task)).id == TASK_ID
+            assert (await store.create(told)).id == TASK_ID
+            await store.create(running)
         finally:
             await store.close()
 
@@ -71,22 +299,34 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     )
     audit = settings.state_dir / "approvals" / "audit.jsonl"
     audit.parent.mkdir(parents=True, exist_ok=True)
-    audit.write_text(json.dumps({"ts": "2026-10-05T09:00:00+00:00", "event": "raised",
-                                 "request_id": 1, "summary": "Claude wants to run: ls"}) + "\n")
+    audit.write_text("".join(json.dumps(line) + "\n" for line in [
+        {"ts": "2026-10-05T09:00:00+00:00", "event": "raised", "request_id": 1,
+         "summary": "Claude wants to run: ls"},
+        {"ts": "2026-10-05T09:01:00+00:00", "event": "settled", "request_id": 1,
+         "escalation": "cancelled", "outcome": "resolved_elsewhere"},
+        {"ts": None, "event": 3, "summary": 7},  # an odd line still decodes as strings
+    ]))
     memory_path(settings.data_dir).write_text("## Standing facts\n\n- Likes it short.\n")
-
-    # The status command's probes, answered (`tests/test_cli.py`'s `quiet_status_probes`).
-    monkeypatch.setattr(status, "default_probes", lambda: status.StatusProbes(
-        target=lambda settings: None, installed=lambda target: False,
-        active=lambda target: False, health=lambda settings: None,
-        running_version=lambda settings: None, checkout_version=lambda settings: None,
+    RestartStore(settings.state_dir / RECORD_NAME).save(RestartRecord(
+        requested_at=now.isoformat(), state="failed", error="launchctl exited 5",
     ))
-    # The models commands: a known machine, no server asked, and one model on disk (sparse).
+
+    # The status command's probes: a service installed and running, two calls live.
+    monkeypatch.setattr(status, "default_probes", lambda: status.StatusProbes(
+        target=lambda settings: ServiceTarget("launchd", "dev.keryx.agent"),
+        installed=lambda target: True, active=lambda target: True,
+        health=lambda settings: 2, running_version=lambda settings: "v0.1.0-3-g1ad6420",
+        checkout_version=lambda settings: "v0.1.0-5-gabc1234",
+    ))
+    # The models commands: a known machine, its units, and one model on disk (sparse).
     monkeypatch.setattr(hardware, "detect", lambda: Hardware("metal", "Apple silicon", 0.0, 36.0))
-    monkeypatch.setattr(use, "unit_installed", lambda kind: False)
-    monkeypatch.setattr(use, "probe", lambda url: (False, None))
+    monkeypatch.setattr(hardware, "free_bytes", lambda path: 10**12)
+    monkeypatch.setattr(use, "unit_installed", lambda kind: True)
     monkeypatch.setattr(servers, "free_port", lambda preferred: preferred)
-    monkeypatch.setattr("keryx.localmodels.runtimes.llama_server", lambda cache_dir, **_: None)
+    monkeypatch.setattr("keryx.localmodels.runtimes.llama_server",
+                        lambda cache_dir, **_: "/opt/homebrew/bin/llama-server")
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request",
+                        lambda self, request: llama_server(request))
     model = download.model_path(settings.cache_dir, MODEL)
     model.parent.mkdir(parents=True, exist_ok=True)
     with model.open("wb") as out:
@@ -94,41 +334,132 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     return settings
 
 
-def at(document: object, path: str, command: str) -> object:
-    """The object at `path` (dotted), stepping into the first element of any list."""
-    node = document
-    for part in [p for p in path.split(".") if p]:
-        node = _first(node, command, part)
-        assert isinstance(node, dict), f"{command}: {path!r} is not an object"
-        assert part in node, f"{command}: no {part!r} on the way to {path!r}"
-        node = node[part]
-    return _first(node, command, path)
-
-
-def _first(node: object, command: str, path: str) -> object:
-    if isinstance(node, list):
-        assert node, f"{command}: {path!r} is an empty list; seed it so the contract is checked"
-        return node[0]
-    return node
-
-
 def test_the_contract_names_every_command_the_app_reads_as_json():
-    assert set(contract()) == {
-        "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
-        "tasks usage --json", "models list --json", "models use NAME --json",
-        "config list --json", "approvals --json", "memory --json",
-    }
+    assert set(contract()["commands"]) == COMMANDS
 
 
-@pytest.mark.parametrize("command", sorted(contract()))
-def test_every_key_the_app_needs_is_printed(command, seeded):
+@pytest.mark.parametrize("command", sorted(contract()["commands"]))
+def test_every_key_the_app_needs_is_printed_with_its_type(command, seeded):
     result = runner.invoke(app, argv(command))
 
     assert result.exit_code in ((0, 1) if command == "doctor --json" else (0,)), result.output
     document = json.loads(result.stdout)
-    for path, keys in contract()[command].items():
-        node = at(document, path, command)
-        assert isinstance(node, dict), f"{command}: {path!r} is not an object"
-        missing = [key for key in keys if key not in node]
-        assert not missing, f"{command}: {path or 'the document'} has no {missing}"
+    problems = [
+        f"{path or 'the document'} {problem}"
+        for path, keys in contract()["commands"][command].items()
+        for node in nodes_at(document, path)
+        for problem in key_problems(node, keys)
+    ]
+    assert not problems, f"{command}: {problems}"
 
+
+def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
+    """A null meets any `|null`, so the seed must make the nullable values worth checking."""
+    models = json.loads(runner.invoke(app, ["models", "list", "--json"]).stdout)
+    tasks = json.loads(runner.invoke(app, ["tasks", "list", "--json"]).stdout)["tasks"]
+    report = json.loads(runner.invoke(app, ["status", "--json"]).stdout)
+
+    assert models["servers"]["llm"]["reachable"] is True
+    assert models["servers"]["llm"]["served_model"] == SERVED
+    assert models["servers"]["llm"]["model"] == MODEL.key
+    assert {task["status"] for task in tasks} == {"running", "done"}
+    assert any(task["told"] for task in tasks)
+    assert report["restart"]["failure"] == "launchctl exited 5"
+    assert report["health"]["live_sessions"] == 2
+    assert report["assistant"]["name"] == "Vega"
+
+
+# --- the stream: models pull --json ------------------------------------------------------
+
+
+def _missing(settings: Settings) -> None:
+    """The seeded copy gone, so there is something to download."""
+    download.model_path(settings.cache_dir, MODEL).unlink()
+
+
+def _done(monkeypatch, settings):
+    _missing(settings)
+    monkeypatch.setattr(download, "already_on_disk", lambda entry: None)
+
+    def fetch(url, dest, *, size, sha256, progress):
+        progress(0)
+        progress(size)
+        return dest
+
+    monkeypatch.setattr(download, "download", fetch)
+
+
+def _adopted(monkeypatch, settings):
+    _missing(settings)
+    found = settings.data_dir / MODEL.file  # anywhere that is not CACHE_DIR/models
+    found.write_bytes(b"x")
+    monkeypatch.setattr(download, "already_on_disk", lambda entry: found)
+
+
+def _failed(monkeypatch, settings):
+    _missing(settings)
+    monkeypatch.setattr(download, "already_on_disk", lambda entry: None)
+
+    def broken(url, dest, *, size, sha256, progress):
+        progress(1)
+        raise download.DownloadError("did not arrive whole")
+
+    monkeypatch.setattr(download, "download", broken)
+
+
+def _unknown(monkeypatch, settings):
+    return ["models", "pull", "no-such-model", "--json"]
+
+
+def _migration_refused(monkeypatch, settings):
+    old = Path.home() / ".local" / "share" / "jarvis"
+    old.mkdir(parents=True)
+    (old / "memory.md").write_text("# Memory\n")
+    assert Settings().storage_refusal()
+
+
+def _cancelled(monkeypatch, settings):
+    _missing(settings)
+    monkeypatch.setattr(download, "already_on_disk", lambda entry: None)
+
+    def interrupted(url, dest, *, size, sha256, progress):
+        progress(1)
+        raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+    monkeypatch.setattr(download, "download", interrupted)
+
+
+#: Each way a pull ends: how to arrange it, its ending, its exit code, and whether a
+#: download ran (so `progress` came first).
+PULLS = [(_done, "done", 0, True), (_adopted, "adopted", 0, False),
+         (_failed, "error", 1, True), (_unknown, "error", 2, False),
+         (_migration_refused, "error", 2, False), (_cancelled, "cancelled", 130, True)]
+
+
+def test_the_pulls_below_reach_every_event_the_contract_names():
+    stream = contract()["streams"][PULL]
+
+    assert {ending for _, ending, _, _ in PULLS} == set(stream["terminal"])
+    assert set(stream["events"]) == {*stream["terminal"], "progress"}
+
+
+@pytest.mark.parametrize(("arrange", "ending", "code", "progressed"), PULLS)
+def test_a_pull_streams_the_events_the_app_reads_and_ends_once(
+    seeded, monkeypatch, arrange, ending, code, progressed
+):
+    stream = contract()["streams"][PULL]
+    command = arrange(monkeypatch, seeded) or ["models", "pull", MODEL.key, "--json"]
+
+    result = runner.invoke(app, command)
+
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert events, "no events at all"
+    for event in events:
+        assert event.get("event") in stream["events"], event
+        assert not key_problems(event, stream["events"][event["event"]]), event
+    endings = [event["event"] for event in events if event["event"] in stream["terminal"]]
+    assert endings == [ending] and events[-1]["event"] == ending
+    assert (events[0]["event"] == "progress") is progressed
+    allowed = stream["exit"][ending]
+    assert result.exit_code == code
+    assert code in (allowed if isinstance(allowed, list) else [allowed])

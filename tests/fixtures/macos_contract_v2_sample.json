@@ -1,0 +1,57 @@
+{
+  "schema": 2,
+  "commands": {
+    "status --json": {
+      "": {"schema": "integer", "storage": "object"},
+      "restart": {"ok": "boolean", "error": "string|null", "state": "string|null", "failure": "string|null"},
+      "agents": {"default": "string", "enabled": "array"}
+    },
+    "doctor --json": {
+      "": {"ok": "boolean", "checks": "array"},
+      "checks[]": {"name": "string", "state": "string", "title": "string|null"}
+    },
+    "tasks list --json": {
+      "": {"tasks": "array"},
+      "tasks[]": {"id": "integer", "status": "string", "created_at": "string", "reported_at": "string|null", "cost_usd": "number|null"}
+    },
+    "tasks show ID --json": {
+      "task": {"id": "integer", "needs_restart": "boolean"},
+      "log[]": {"time": "string|null", "kind": "string", "text": "string"}
+    },
+    "tasks usage --json": {
+      "projects[]": {"label": "string", "input_tokens": "integer", "cost_usd": "number|null"}
+    },
+    "models list --json": {
+      "hardware": {"vram_gb": "number", "gpu": "string|null"},
+      "models[]": {"name": "string", "size_gb": "number", "downloaded": "boolean"},
+      "servers.llm": {"model": "string|null", "port": "integer", "reachable": "boolean", "served_model": "string|null"},
+      "servers.local_agent": {"api": "string", "default": "boolean"}
+    },
+    "models use NAME --json": {
+      "": {"saved": "object", "restart_needed": "boolean"}
+    },
+    "config list --json": {
+      "[]": {"key": "string", "set": "boolean", "choices": "array|null"}
+    },
+    "approvals --json": {
+      "": {"escalate_after_s": "number", "max_per_hour": "integer"},
+      "entries[]": {"ts": "string", "event": "string", "what": "string"}
+    },
+    "memory --json": {
+      "": {"path": "string", "exists": "boolean", "text": "string|null"}
+    }
+  },
+  "streams": {
+    "models pull --json": {
+      "events": {
+        "progress": {"done": "integer", "total": "integer"},
+        "done": {"path": "string"},
+        "adopted": {"path": "string", "from": "string"},
+        "error": {"message": "string"},
+        "cancelled": {}
+      },
+      "terminal": ["done", "adopted", "error", "cancelled"],
+      "exit": {"done": 0, "adopted": 0, "error": [1, 2], "cancelled": 130}
+    }
+  }
+}
