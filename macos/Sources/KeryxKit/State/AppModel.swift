@@ -113,6 +113,45 @@ public final class AppModel {
     @ObservationIgnored private var serviceTask: Task<Result<ServiceResult, KeryxError>, Never>?
     /// The model server is being stopped (`stopModelServer`): nothing starts it meanwhile.
     public private(set) var stoppingModelServer = false
+    /// The short writes under way — a setting, the PIN, the webhooks … — which quitting gives
+    /// a moment to finish, and names if they have not.
+    public private(set) var writes: [UUID: Write] = [:]
+
+    /// A short write to Keryx, as quitting names it.
+    public enum Write: Sendable, Equatable, Hashable, CaseIterable {
+        case setting, pin, webhooks, voice, model, setupStep, plugin, signOut, modelServerStop, restart
+
+        /// "the phone PIN is being saved": a clause for the quit question.
+        public var clause: String {
+            switch self {
+            case .setting: "a setting is being saved"
+            case .pin: "the phone PIN is being saved"
+            case .webhooks: "the phone number's webhooks are being changed"
+            case .voice: "the voice is being changed"
+            case .model: "a model is being chosen"
+            case .setupStep: "a setup step is being recorded"
+            case .plugin: "a plugin is being changed"
+            case .signOut: "an account is being signed out"
+            case .modelServerStop: "the model server is being stopped"
+            case .restart: "Keryx is being restarted"
+            }
+        }
+    }
+
+    /// What `writes` holds, each kind once, in the order `Write` lists them.
+    public var writing: [Write] {
+        let kinds = Set(writes.values)
+        return Write.allCases.filter(kinds.contains)
+    }
+
+    /// Waits until no write is under way, or `limit` has passed: true once there is none.
+    public func writesFinish(within limit: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + limit
+        while !writes.isEmpty, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return writes.isEmpty
+    }
 
     /// What is being done to Keryx's own service.
     public enum ServiceChange: Sendable, Equatable {
@@ -481,7 +520,9 @@ public final class AppModel {
 
     /// Turns the approval calls on or off (the kill switch; no restart needed).
     public func setEscalation(enabled: Bool) async -> KeryxError? {
-        if let error = await perform({ try await $0.setEscalation(enabled: enabled) }) { return error }
+        if let error = await perform({ try await $0.setEscalation(enabled: enabled) }, writing: .setting) {
+            return error
+        }
         await refresh([.approvals, .status])
         return nil
     }
@@ -489,7 +530,7 @@ public final class AppModel {
     /// Restarts the service, then reads its status again a few seconds later. A refusal
     /// because calls are in progress comes back as `.liveCalls`.
     public func restart(force: Bool) async -> KeryxError? {
-        if let error = await perform({ try await $0.restart(force: force) }) { return error }
+        if let error = await perform({ try await $0.restart(force: force) }, writing: .restart) { return error }
         configNeedsRestart = false
         try? await Task.sleep(for: timing.afterRestart)
         await refresh(.status)
@@ -501,7 +542,7 @@ public final class AppModel {
         var restartNeeded = false
         if let error = await perform({
             restartNeeded = try await $0.use(model: model, defaultAgent: defaultAgent).restartNeeded
-        }) { return error }
+        }, writing: .model) { return error }
         if restartNeeded { configNeedsRestart = true }
         invalidateOptions()
         await refresh([.models, .config])
@@ -522,7 +563,8 @@ public final class AppModel {
     /// Speaks through OpenAI Realtime from the next restart.
     public func useVoiceOpenAI() async -> KeryxError? {
         var restartNeeded = false
-        if let error = await perform({ restartNeeded = try await $0.useVoiceOpenAI().restartNeeded }) {
+        if let error = await perform({ restartNeeded = try await $0.useVoiceOpenAI().restartNeeded },
+                                     writing: .voice) {
             return error
         }
         if restartNeeded { configNeedsRestart = true }
@@ -539,7 +581,7 @@ public final class AppModel {
         var answer: VoiceServerResult?
         if let error = await perform({
             answer = try await $0.useVoiceServer(url: url, key: key, keepAnyway: keepAnyway)
-        }) { return .failure(error) }
+        }, writing: .voice) { return .failure(error) }
         guard let answer else { return .failure(.launch("Keryx said nothing.")) }
         if answer.saved != nil {
             if answer.restartNeeded { configNeedsRestart = true }
@@ -585,7 +627,7 @@ public final class AppModel {
     /// Records a setup step as walked (an optional one skipped, or the PIN left to the first
     /// call), then reads the plan again.
     public func markSetupStep(_ step: String) async -> KeryxError? {
-        if let error = await perform({ _ = try await $0.markSetupStep(step) }) { return error }
+        if let error = await perform({ _ = try await $0.markSetupStep(step) }, writing: .setupStep) { return error }
         await refresh(.setupPlan)
         return nil
     }
@@ -594,7 +636,7 @@ public final class AppModel {
     /// had them typed twice and compared them; a running Keryx keeps its old PIN until it
     /// restarts, which `restartNeeded` says.
     public func setPin(_ pin: String, replace: Bool) async -> Result<PinSetResult, KeryxError> {
-        let answer = await answer { try await $0.setPin(pin, replace: replace) }
+        let answer = await answer(writing: .pin) { try await $0.setPin(pin, replace: replace) }
         if case let .success(result) = answer {
             if result.restartNeeded { configNeedsRestart = true }
             await refresh(.pin, .setupPlan)
@@ -633,7 +675,7 @@ public final class AppModel {
     /// Points `TWILIO_NUMBER` here — only after the owner has seen both addresses and said
     /// yes — then reads the phone documents and the plan again.
     public func applyPhoneWebhooks() async -> Result<WebhooksApplied, KeryxError> {
-        let answer = await answer { try await $0.applyPhoneWebhooks() }
+        let answer = await answer(writing: .webhooks) { try await $0.applyPhoneWebhooks() }
         if case .success = answer { await refresh(.phoneWebhooks, .phoneNumbers, .setupPlan) }
         return answer
     }
@@ -752,7 +794,7 @@ public final class AppModel {
         if modelServerRun.isBusy || voiceSetup.isBusy { return .failure(.refused(Self.modelServerInUse)) }
         stoppingModelServer = true
         defer { stoppingModelServer = false }
-        let answer = await answer { try await $0.stopModelServer() }
+        let answer = await answer(writing: .modelServerStop) { try await $0.stopModelServer() }
         if case .success = answer { await refresh(.models, .service, .voice) }
         return answer
     }
@@ -799,7 +841,7 @@ public final class AppModel {
 
     /// Signs out of Gmail or Google for agents, then reads the accounts again.
     public func signOut(_ provider: SignInProvider) async -> Result<SignOutResult, KeryxError> {
-        let answer = await answer { try await $0.signOut(provider) }
+        let answer = await answer(writing: .signOut) { try await $0.signOut(provider) }
         if case .success = answer { await refresh(.integrations, .plugins, .tools, .setupPlan) }
         return answer
     }
@@ -824,7 +866,7 @@ public final class AppModel {
 
     private func pluginChange(_ change: (KeryxClient) async throws -> PluginResult) async
         -> Result<PluginResult, KeryxError> {
-        let answer = await answer(change)
+        let answer = await answer(writing: .plugin, change)
         if case .success = answer { await refresh(.plugins, .tools, .setupPlan) }
         return answer
     }
@@ -858,24 +900,29 @@ public final class AppModel {
         "The speech models are still downloading. Set it up again once they're in."
 
     private func writeSetting(_ write: (KeryxClient) async throws -> Void) async -> KeryxError? {
-        if let error = await perform(write) { return error }
+        if let error = await perform(write, writing: .setting) { return error }
         configNeedsRestart = true
         await refresh(.config)
         return nil
     }
 
-    /// `action`'s answer, or its error as a `KeryxError`.
-    private func answer<Value>(_ action: (KeryxClient) async throws -> Value) async -> Result<Value, KeryxError> {
+    /// `action`'s answer, or its error as a `KeryxError`. `writing`: what it changes, listed
+    /// in `writes` while it runs.
+    private func answer<Value>(writing: Write? = nil, _ action: (KeryxClient) async throws -> Value) async
+        -> Result<Value, KeryxError> {
         var value: Value?
-        if let error = await perform({ value = try await action($0) }) { return .failure(error) }
+        if let error = await perform({ value = try await action($0) }, writing: writing) { return .failure(error) }
         guard let value else { return .failure(.launch("Keryx said nothing.")) }
         return .success(value)
     }
 
-    private func perform(_ action: (KeryxClient) async throws -> Void) async -> KeryxError? {
+    private func perform(_ action: (KeryxClient) async throws -> Void, writing: Write? = nil) async -> KeryxError? {
         guard let client else {
             return location.error ?? .notFound(LocateFailure(lookedAt: []))
         }
+        let id = UUID()
+        if let writing { writes[id] = writing }
+        defer { writes[id] = nil }
         do {
             try await action(client)
             return nil

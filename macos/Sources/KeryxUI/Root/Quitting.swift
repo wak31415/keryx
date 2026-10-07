@@ -12,11 +12,13 @@ public enum Quitting {
     /// server start, a speech model download, a sign-in, Keryx's service being installed or
     /// uninstalled, any of them together; `nil` when none is and the app can just quit.
     /// `signingIn`: what a sign-in under way signs in to ("Claude"), and `signInDetail` what
-    /// stopping it does. `assistant`: the assistant's name ("Lyra").
+    /// stopping it does. `assistant`: the assistant's name ("Lyra"). `writing`: the short
+    /// writes still going after the moment quitting gave them (`AppModel.writing`).
     public static func question(downloading: Bool, settingUpVoice: Bool, startingModelServer: Bool = false,
                                 downloadingVoiceModels: Bool = false, signingIn: String? = nil,
                                 signInDetail: String? = nil, assistant: String?,
-                                changingService: AppModel.ServiceChange? = nil) -> Question? {
+                                changingService: AppModel.ServiceChange? = nil,
+                                writing: [AppModel.Write] = []) -> Question? {
         // What is under way, as a clause; what quitting does to it alone; and how it comes
         // back, said beside the others.
         var under: [(clause: String, alone: String, again: String)] = []
@@ -53,6 +55,14 @@ public enum Quitting {
             }
             under.append((doing, "It stops, and may be left part done. \(button) in the Overview runs it again.",
                           "the service's \(verb) may be left part done (\(button) in the Overview runs it again)"))
+        }
+        if !writing.isEmpty {
+            // Cut short, a write can leave its change half made (one webhook of two).
+            let alone = writing.count == 1
+                ? "It stops part way, and may leave the change half made."
+                : "They stop part way, and may leave their changes half made."
+            under.append((list(writing.map(\.clause), comma: false), alone,
+                          "a change cut short may be left half made"))
         }
         guard let first = under.first else { return nil }
         guard under.count > 1 else {

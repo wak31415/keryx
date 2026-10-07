@@ -131,4 +131,37 @@ import KeryxPreview
         #expect(!model.stoppingModelServer)
         #expect(model.canStartModelServer)
     }
+
+    // MARK: - Short writes, for quitting
+
+    @Test func aWriteIsListedWhileItRunsAndQuittingCanWaitForIt() async {
+        let gate = OptionsGate()
+        let client = StubClient { $0.stopWait = { await gate.wait() } }
+        let model = await makeModel(client: client)
+        defer { model.stop() }
+        #expect(model.writing.isEmpty)
+        let stopping = Task { await model.stopModelServer() }
+        #expect(await eventually { gate.held == 1 })
+        #expect(model.writing == [.modelServerStop])
+        #expect(await model.writesFinish(within: .milliseconds(100)) == false, "still going at the limit")
+        gate.open()
+        #expect(await model.writesFinish(within: .seconds(10)))
+        _ = await stopping.value
+        #expect(model.writes.isEmpty)
+    }
+
+    @Test func settledWritesAndReadsLeaveNothingListed() async {
+        let model = await makeModel(client: StubClient())
+        defer { model.stop() }
+        // Settled, a write leaves nothing listed; failed or not.
+        _ = await model.set(key: "ASSISTANT_NAME", to: "Vega")
+        _ = await model.setPin("482915", replace: false)
+        _ = await model.applyPhoneWebhooks()
+        #expect(model.writes.isEmpty)
+        // A read is never one.
+        _ = await model.freshPhoneWebhooks()
+        _ = await model.verify(key: "OPENAI_API_KEY", value: "sk-x")
+        #expect(model.writes.isEmpty)
+        #expect(Set(AppModel.Write.allCases.map(\.clause)).count == AppModel.Write.allCases.count)
+    }
 }

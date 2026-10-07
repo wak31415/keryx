@@ -130,11 +130,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    /// How long quitting lets a short write (a setting, the PIN, the webhooks) finish before
+    /// it asks about it.
+    static let writeGrace: Duration = .seconds(5)
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let children = ChildRegistry.shared
+        guard model.isBusy || children.count > 0 || !model.writes.isEmpty else { return .terminateNow }
+        Task { await quit(children) }
+        return .terminateLater
+    }
+
+    /// Lets a short write finish first; asks while anything that quitting would cut short is
+    /// still going — the long runs, and a write that outlived its moment — and on a yes stops
+    /// every child and waits for each group to go.
+    private func quit(_ children: ChildRegistry) async {
         let downloads = model.downloads
         let setup = model.voiceSetup
-        let children = ChildRegistry.shared
-        guard model.isBusy || children.count > 0 else { return .terminateNow }
+        // A write is a moment's work: killed part way it can leave a change half made.
+        if !model.writes.isEmpty { _ = await model.writesFinish(within: Self.writeGrace) }
         // Only what is still running asks; what is already stopping is just waited for.
         // A model server started by This Mac's Set Up… is part of setting the voice up.
         let server = model.modelServerRun.isRunning
@@ -147,14 +161,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                             signingIn: signingIn.map(SignInWording.name),
                                             signInDetail: signingIn.map(SignInWording.quitDetail),
                                             assistant: Wording.assistant(model.status.value),
-                                            changingService: model.serviceChange) {
+                                            changingService: model.serviceChange,
+                                            writing: model.writing) {
             NSApp.activate()
             let alert = NSAlert()
             alert.messageText = question.message
             alert.informativeText = question.detail
             alert.addButton(withTitle: "Quit")
             alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                NSApp.reply(toApplicationShouldTerminate: false)
+                return
+            }
         }
         // Stop every child rather than leave it running without us — the runs above, and
         // whatever else is still going (a write, an installer, a read) — and wait until each
@@ -163,16 +181,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let current = downloads.current, downloads.isRunning { downloads.cancel(current.name) }
         setup.cancel()
         model.cancelRuns()
-        Task {
-            let survivors = await children.stopAll(within: ChildRegistry.stopBound + .seconds(3))
-            if let survivors, !survivors.isEmpty {
-                Log.app.error("Quitting with \(survivors.count) process group(s) still running after SIGKILL: \(survivors.map(String.init).joined(separator: ", "), privacy: .public)")
-            } else if survivors == nil {
-                Log.app.error("Quitting before every process group had stopped: \(children.count) still listed")
-            }
-            NSApp.reply(toApplicationShouldTerminate: true)
+        let survivors = await children.stopAll(within: ChildRegistry.stopBound + .seconds(3))
+        if let survivors, !survivors.isEmpty {
+            Log.app.error("Quitting with \(survivors.count) process group(s) still running after SIGKILL: \(survivors.map(String.init).joined(separator: ", "), privacy: .public)")
+        } else if survivors == nil {
+            Log.app.error("Quitting before every process group had stopped: \(children.count) still listed")
         }
-        return .terminateLater
+        NSApp.reply(toApplicationShouldTerminate: true)
     }
 
     /// Opening the menu bar menu (or any menu that is not the main menu's, nor a pop-up

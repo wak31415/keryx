@@ -151,6 +151,18 @@ import KeryxPreview
                                   changingService: nil) == nil)
     }
 
+    @Test func quittingNamesAWriteStillGoing() {
+        let alone = Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
+                                      writing: [.webhooks])
+        #expect(alone?.message == "The phone number's webhooks are being changed. Quit anyway?")
+        #expect(alone?.detail == "It stops part way, and may leave the change half made.")
+        let both = Quitting.question(downloading: true, settingUpVoice: false, assistant: "Lyra",
+                                     writing: [.setting, .pin])
+        #expect(both?.message
+            == "A model is downloading and a setting is being saved and the phone PIN is being saved. Quit anyway?")
+        #expect(both?.detail.hasSuffix("and a change cut short may be left half made.") == true)
+    }
+
     @Test func quittingNamesTheServiceAndASignInTogether() {
         let both = Quitting.question(downloading: false, settingUpVoice: false, signingIn: "Claude",
                                      signInDetail: SignInWording.quitDetail(.claude), assistant: "Lyra",
