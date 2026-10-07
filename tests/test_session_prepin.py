@@ -449,6 +449,29 @@ async def test_news_is_announced_into_a_call_before_the_pin(make_session, phone,
         assert "Task 41 finished" in provider.injected[-1][0]
 
 
+async def test_news_before_the_pin_is_not_asked_to_be_stamped(make_session, phone, provider):
+    """Whoever heard it may not be the owner, and `mark_reported` would refuse the task
+    anyway: it was not in the digest this call opened with."""
+    session = make_session(phone, provider)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert await session.announce("Task 41 finished.", needs=NONE, task_id=41) is True
+        assert "mark_reported" not in provider.injected[-1][0]
+
+
+async def test_a_call_keryx_placed_is_asked_to_stamp_news(make_session, phone, provider):
+    """Possession may stamp any task (`mark_reported`), so it is asked to, like `FULL`."""
+    session = make_session(phone, provider, possession=True)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert await session.announce("Task 41 finished.", needs=NONE, task_id=41) is True
+        assert "mark_reported with task_ids [41]" in provider.injected[-1][0]
+
+
 async def test_with_the_briefing_off_nothing_is_announced_before_the_pin(
     make_session, phone, provider
 ):
