@@ -169,7 +169,14 @@ def test_list_json_says_what_kind_of_value_each_setting_takes(home):
     assert (rows["SMS_ENABLED"]["type"], rows["SMS_ENABLED"]["choices"]) == ("bool", None)
     assert rows["PORT"]["type"] == "int"
     assert rows["DATA_DIR"]["type"] == "path"
-    assert rows["AGENTS_ENABLED"]["type"] == "list"
+    # A `list` whose element type is a `Literal` carries those values as `choices` too
+    # (the type itself stays `list`: it is still comma-separated at the command line).
+    assert (rows["AGENTS_ENABLED"]["type"], rows["AGENTS_ENABLED"]["choices"]) == (
+        "list", ["claude", "codex", "local"]
+    )
+    assert (rows["ALLOWED_CALLERS"]["type"], rows["ALLOWED_CALLERS"]["choices"]) == (
+        "list", None
+    )
     assert rows["OPENAI_API_KEY"]["type"] == "string"
 
 

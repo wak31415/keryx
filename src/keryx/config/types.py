@@ -29,7 +29,10 @@ def field_type(name: str) -> tuple[str, list[str] | None]:
     """`(kind, choices)` for a `Settings` field: one of `TYPES`, and a `choice`'s values.
 
     A mapping, a secret and anything unforeseen are `string`, since that is how each is
-    typed at `keryx config set`.
+    typed at `keryx config set`. A `list` whose element type is itself a `Literal`
+    (`AGENTS_ENABLED`: `list[Literal["claude", "codex", "local"]]`) carries those values as
+    `choices` too, in declaration order — the type stays `list`, since it is still
+    comma-separated at the command line; every other list keeps `choices: None`.
     """
     annotation = _unwrap_optional(Settings.model_fields[name].annotation)
     origin = get_origin(annotation)
@@ -42,6 +45,9 @@ def field_type(name: str) -> tuple[str, list[str] | None]:
     if origin is Literal:
         return "choice", [str(choice) for choice in get_args(annotation)]
     if annotation in _LISTS or origin in _LISTS:
+        args = get_args(annotation)
+        if len(args) == 1 and get_origin(args[0]) is Literal:
+            return "list", [str(choice) for choice in get_args(args[0])]
         return "list", None
     if isinstance(annotation, type) and issubclass(annotation, Path):
         return "path", None
