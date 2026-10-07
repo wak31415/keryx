@@ -178,7 +178,7 @@ def test_a_refused_key_falls_back_and_says_so_without_the_key(keyed, status):
     found = options_for("OPENAI_REALTIME_MODEL", keyed, sources(get=get))
 
     assert (found.source, found.live, found.error) == (
-        "builtin", False, "OpenAI did not accept the key"
+        "builtin", False, "OpenAI didn't accept the API key."
     )
     assert values(found) == ["gpt-realtime-2.1"]
     assert KEY not in repr(found.as_dict())
@@ -191,7 +191,7 @@ def test_an_unreachable_openai_falls_back(keyed, error):
     found = options_for("OPENAI_TRANSCRIPTION_MODEL", keyed, sources(get=FakeGet(raises=error)))
 
     assert (found.source, found.live) == ("builtin", False)
-    assert found.error == f"could not reach OpenAI ({type(error).__name__})"
+    assert found.error == f"Keryx couldn't reach OpenAI ({type(error).__name__})."
     assert values(found) == ["gpt-4o-mini-transcribe"]
 
 
@@ -200,14 +200,14 @@ def test_another_status_is_named_by_its_code_only(keyed):
 
     found = options_for("OPENAI_WEB_SEARCH_MODEL", keyed, sources(get=get))
 
-    assert found.error == "OpenAI answered HTTP 502"
+    assert found.error == "OpenAI answered with HTTP 502."
     assert "upstream" not in found.error
 
 
 def test_a_redirect_is_not_followed(keyed):
     found = options_for("OPENAI_WEB_SEARCH_MODEL", keyed, sources(get=FakeGet(status=307)))
 
-    assert found.error == "OpenAI answered HTTP 307" and not found.live
+    assert found.error == "OpenAI answered with HTTP 307." and not found.live
 
 
 def test_a_body_that_is_not_a_model_list_falls_back(keyed):
@@ -215,7 +215,7 @@ def test_a_body_that_is_not_a_model_list_falls_back(keyed):
 
     found = options_for("OPENAI_WEB_SEARCH_MODEL", keyed, sources(get=get))
 
-    assert found.error == "OpenAI did not answer with a model list"
+    assert found.error == "OpenAI didn't answer with a list of models."
 
 
 def test_a_list_with_none_of_the_family_falls_back(keyed):
@@ -223,7 +223,7 @@ def test_a_list_with_none_of_the_family_falls_back(keyed):
 
     found = options_for("OPENAI_REALTIME_MODEL", keyed, sources(get=get))
 
-    assert not found.live and found.error == "OpenAI listed no model of this kind"
+    assert not found.live and found.error == "OpenAI lists no Realtime voice models."
 
 
 def test_an_unexpected_failure_in_a_source_is_a_reason_not_a_crash(keyed):
@@ -232,7 +232,7 @@ def test_an_unexpected_failure_in_a_source_is_a_reason_not_a_crash(keyed):
     found = options_for("OPENAI_REALTIME_MODEL", keyed, sources(get=get))
 
     assert (found.source, found.live) == ("builtin", False)
-    assert found.error == "the list could not be read (RuntimeError)"
+    assert found.error == "Keryx couldn't read the list (RuntimeError)."
     assert values(found) == ["gpt-realtime-2.1"]
 
 
@@ -243,7 +243,7 @@ def test_a_provider_that_fails_outside_its_read_still_answers(settings):
     found = options_for("LLM_SERVER_MODEL", settings, sources(hardware=broken))
 
     assert (found.source, found.live, found.options) == ("builtin", False, [])
-    assert found.error == "the list could not be read (OSError)"
+    assert found.error == "Keryx couldn't read the list (OSError)."
 
 
 def test_a_server_answering_with_a_json_array_is_not_a_model_list(settings):
@@ -253,7 +253,7 @@ def test_a_server_answering_with_a_json_array_is_not_a_model_list(settings):
 
     found = options_for("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(body=["x"])))
 
-    assert found.error == "gpu-box did not answer with a model list"
+    assert found.error == "The server at gpu-box didn't answer with a list of models."
     assert values(found) == ["qwen3"]
 
 
@@ -262,7 +262,7 @@ def test_without_an_openai_key_nothing_is_asked(settings):
 
     found = options_for("OPENAI_REALTIME_MODEL", unkeyed, sources())
 
-    assert found.error == "OPENAI_API_KEY is not set, so OpenAI cannot be asked"
+    assert found.error == "There's no OpenAI API key, so Keryx can't ask which models exist."
     assert values(found) == ["gpt-realtime-2.1"]
 
 
@@ -302,7 +302,7 @@ def test_a_voice_server_that_does_not_answer_offers_only_the_current(keyed):
     found = options_for("OPENAI_REALTIME_MODEL", local, sources(get=get))
 
     assert (found.source, found.live) == ("builtin", False)
-    assert found.error == "could not reach 127.0.0.1 (ConnectError)"
+    assert found.error == "Keryx couldn't reach the server at 127.0.0.1 (ConnectError)."
     assert values(found) == ["s2s"]
 
 
@@ -358,7 +358,7 @@ def test_without_an_anthropic_key_the_known_models_are_offered(settings):
     found = options_for("SUBAGENT_MODEL", settings, sources())
 
     assert found.error == (
-        "Anthropic lists models only to an API key; showing the models Keryx knows"
+        "There's no Anthropic API key, so Keryx can't ask which models exist."
     )
     assert (found.source, found.live) == ("builtin", False)
     assert found.options[0] == Option("claude-opus-5-5", "Claude Opus", "opus")
@@ -371,7 +371,7 @@ def test_a_refused_anthropic_key_falls_back(settings, status):
 
     found = options_for("SUBAGENT_MODEL", keyed, sources(get=FakeGet(status=status)))
 
-    assert found.error == "Anthropic did not accept the key"
+    assert found.error == "Anthropic didn't accept the API key."
     assert found.source == "builtin" and "claude-sonnet-5-5" in values(found)
 
 
@@ -381,7 +381,7 @@ def test_an_unreachable_anthropic_falls_back(settings):
 
     found = options_for("SUBAGENT_MODEL", keyed, sources(get=get))
 
-    assert found.error == "could not reach Anthropic (ReadTimeout)"
+    assert found.error == "Keryx couldn't reach Anthropic (ReadTimeout)."
 
 
 def test_anthropic_listing_no_claude_model_falls_back(settings):
@@ -389,7 +389,7 @@ def test_anthropic_listing_no_claude_model_falls_back(settings):
 
     found = options_for("SUBAGENT_MODEL", keyed, sources(get=FakeGet(body={"data": []})))
 
-    assert found.error == "Anthropic listed no Claude models" and not found.live
+    assert found.error == "Anthropic lists no Claude models." and not found.live
 
 
 def test_claude_has_no_blank_option_since_a_blank_model_is_not_a_default(settings):
@@ -466,7 +466,7 @@ def test_codex_on_an_api_key_uses_keryxs_own_home_once_logged_in(settings):
 
     # Not logged in yet: a dropdown never logs in, so it says so instead.
     assert asked == []
-    assert found.error == "Codex has not logged in with CODEX_API_KEY yet (its first task does)"
+    assert found.error == "Codex hasn't logged in with CODEX_API_KEY yet."
     assert values(found) == ["", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-terra"]
     assert found.options[0] == Option("", "Codex's default", None)
     assert found.options[1] == Option("gpt-6-astra", "GPT-6-Astra", "astra")
@@ -483,19 +483,19 @@ def test_codex_on_an_api_key_uses_keryxs_own_home_once_logged_in(settings):
 
 def test_codex_that_fails_falls_back_to_the_known_models(settings):
     def codex_models(env, timeout):
-        raise Unavailable("Codex did not list its models within 5 seconds")
+        raise Unavailable("Codex didn't list its models within 5 seconds.")
 
     found = options_for("CODEX_MODEL", settings, sources(codex_models=codex_models))
 
     assert (found.source, found.live) == ("builtin", False)
-    assert found.error == "Codex did not list its models within 5 seconds"
+    assert found.error == "Codex didn't list its models within 5 seconds."
     assert "gpt-5.6-terra" in values(found)
 
 
 def test_codex_listing_nothing_falls_back(settings):
     found = options_for("CODEX_MODEL", settings, sources(codex_models=lambda env, timeout: []))
 
-    assert found.error == "Codex listed no models" and not found.live
+    assert found.error == "Codex lists no models." and not found.live
 
 
 class FakeCodex:
@@ -558,7 +558,7 @@ def test_the_sdk_lister_says_why_without_the_error_text(fake_sdk):
     with pytest.raises(Unavailable) as raised:
         options.sdk_codex_models({}, 5.0)
 
-    assert str(raised.value) == "Codex did not list its models (RuntimeError)"
+    assert str(raised.value) == "Codex couldn't list its models (RuntimeError)."
     assert KEY not in str(raised.value)
 
 
@@ -568,7 +568,7 @@ def test_the_sdk_lister_gives_up_at_the_timeout(fake_sdk):
     with pytest.raises(Unavailable) as raised:
         options.sdk_codex_models({}, 0.05)
 
-    assert str(raised.value) == "Codex did not list its models within 0.05 seconds"
+    assert str(raised.value) == "Codex didn't list its models within 0.05 seconds."
     # The app-server it started is not left behind: the caller closes it.
     (codex,) = fake_sdk.instances
     assert codex.closes >= 1
@@ -580,7 +580,7 @@ def test_the_sdk_lister_without_the_sdk_says_how_to_install_it(monkeypatch):
     with pytest.raises(Unavailable) as raised:
         options.sdk_codex_models({}, 5.0)
 
-    assert "uv sync --extra codex" in str(raised.value)
+    assert str(raised.value) == "The Codex agent isn't installed."
 
 
 # --- the local agent's server ------------------------------------------------------------------
@@ -610,7 +610,9 @@ def test_an_unset_key_whose_blank_is_an_option_is_current_as_blank(settings):
 def test_no_local_agent_server_offers_only_the_current(settings):
     found = options_for("LOCAL_AGENT_MODEL", settings, sources())
 
-    assert found.error == "LOCAL_AGENT_BASE_URL is not set, so there is no server to ask"
+    assert found.error == (
+        "There's no local agent server address, so Keryx can't ask which models exist."
+    )
     assert (found.options, found.current) == ([], None)
 
 
@@ -621,7 +623,7 @@ def test_a_local_agent_server_that_refuses_the_key_says_so(settings):
 
     found = options_for("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(status=401)))
 
-    assert found.error == "gpu-box does not accept that key"
+    assert found.error == "The server at gpu-box didn't accept the API key."
     assert values(found) == ["qwen3"]
 
 
@@ -630,7 +632,7 @@ def test_a_server_listing_no_models_says_so(settings):
 
     found = options_for("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(body={"data": []})))
 
-    assert found.error == "gpu-box listed no models" and found.options == []
+    assert found.error == "The server at gpu-box lists no models." and found.options == []
 
 
 # --- the catalog -------------------------------------------------------------------------------
@@ -725,3 +727,84 @@ def test_the_real_hardware_and_disk_are_asked(monkeypatch, settings):
 
     assert real.hardware().ram_gb == 8.0
     assert real.downloaded(catalog.by_key("qwen3.5-4b"))
+
+
+# --- what an error says -------------------------------------------------------------------
+
+
+def _every_error(settings) -> list[str]:
+    """One error of each kind the module can give, each from its own failure."""
+    openai = settings.model_copy(update={"openai_api_key": KEY})
+    anthropic = settings.model_copy(update={"anthropic_api_key": KEY})
+    local = settings.model_copy(update={"local_agent_base_url": "http://gpu-box:11434"})
+    unkeyed = settings.model_copy(update={"openai_api_key": None})
+    coded = settings.model_copy(update={"codex_api_key": KEY})
+
+    def failing(error):
+        def codex_models(env, timeout):
+            raise error
+
+        return codex_models
+
+    cases = [
+        ("OPENAI_REALTIME_MODEL", unkeyed, sources()),
+        ("OPENAI_REALTIME_MODEL", openai, sources(get=FakeGet(status=401))),
+        ("OPENAI_REALTIME_MODEL", openai, sources(get=FakeGet(raises=httpx.ConnectError("x")))),
+        ("OPENAI_REALTIME_MODEL", openai, sources(get=FakeGet(status=500))),
+        ("OPENAI_REALTIME_MODEL", openai, sources(get=FakeGet(body=["x"]))),
+        ("OPENAI_REALTIME_MODEL", openai, sources(get=FakeGet(body={"data": []}))),
+        ("OPENAI_TRANSCRIPTION_MODEL", openai, sources(get=FakeGet(body={"data": []}))),
+        ("OPENAI_WEB_SEARCH_MODEL", openai, sources(get=FakeGet(body={"data": []}))),
+        ("OPENAI_REALTIME_MODEL", openai, sources(get=FakeGet(raises=RuntimeError(KEY)))),
+        ("SUBAGENT_MODEL", settings, sources()),
+        ("SUBAGENT_MODEL", anthropic, sources(get=FakeGet(status=403))),
+        ("SUBAGENT_MODEL", anthropic, sources(get=FakeGet(body={"data": []}))),
+        ("CODEX_MODEL", coded, sources()),
+        ("CODEX_MODEL", settings, sources(codex_models=lambda env, timeout: [])),
+        ("LOCAL_AGENT_MODEL", settings, sources()),
+        ("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(status=401))),
+        ("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(status=500))),
+        ("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(raises=httpx.ReadTimeout("x")))),
+        ("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(body=["x"]))),
+        ("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(body={"data": []}))),
+        ("LLM_SERVER_MODEL", settings, sources(hardware=failing(OSError("x")))),
+    ]
+    return [options_for(key, given, found).error for key, given, found in cases]
+
+
+def test_every_error_is_one_sentence_of_cause_only(settings):
+    """The app prefixes "Showing the built-in list —", so an error says why and only why."""
+    errors = _every_error(settings)
+
+    assert len(set(errors)) == len(errors), errors
+    for error in errors:
+        assert error and error[0].isupper() and error.endswith("."), error
+        assert error.count(". ") == 0 and ";" not in error, error
+        assert "show" not in error.lower() and "known" not in error.lower(), error
+        assert KEY not in error, error
+
+
+def test_the_family_names_itself_when_openai_lists_none(keyed):
+    empty = sources(get=FakeGet(body={"data": []}))
+
+    assert options_for("OPENAI_TRANSCRIPTION_MODEL", keyed, empty).error == (
+        "OpenAI lists no transcription models."
+    )
+    assert options_for("OPENAI_WEB_SEARCH_MODEL", keyed, empty).error == (
+        "OpenAI lists no chat models."
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "says"),
+    [
+        (403, "The server at gpu-box didn't accept the API key."),
+        (500, "The server at gpu-box answered with HTTP 500."),
+    ],
+)
+def test_a_server_says_what_went_wrong_by_status(settings, status, says):
+    local = settings.model_copy(update={"local_agent_base_url": "http://gpu-box:11434"})
+
+    found = options_for("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(status=status)))
+
+    assert found.error == says

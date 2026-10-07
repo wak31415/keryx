@@ -682,7 +682,7 @@ def test_options_falls_back_and_still_exits_0(home, option_sources):
 
     assert result.exit_code == 0
     document = json.loads(result.stdout)
-    assert (document["live"], document["error"]) == (False, "Anthropic did not accept the key")
+    assert (document["live"], document["error"]) == (False, "Anthropic didn't accept the API key.")
     assert document["current"] in [option["value"] for option in document["options"]]
 
 
@@ -690,7 +690,7 @@ def test_options_as_text_is_one_option_a_line_the_error_first(home, option_sourc
     lines = run("config", "options", "SUBAGENT_MODEL").output.splitlines()
 
     assert lines[0] == (
-        "Anthropic lists models only to an API key; showing the models Keryx knows"
+        "There's no Anthropic API key, so Keryx can't ask which models exist."
     )
     assert lines[1].split() == ["claude-opus-5-5", "Claude", "Opus", "(opus)"]
 
@@ -746,6 +746,8 @@ def test_options_survives_a_server_that_answers_with_a_json_array(home, monkeypa
     realtime = run("config", "options", "OPENAI_REALTIME_MODEL", "--json")
 
     assert local.exit_code == 0, local.output
-    assert json.loads(local.stdout)["error"] == "gpu-box did not answer with a model list"
+    assert json.loads(local.stdout)["error"] == (
+        "The server at gpu-box didn't answer with a list of models."
+    )
     assert realtime.exit_code == 0, realtime.output
-    assert json.loads(realtime.stdout)["error"] == "the list could not be read (RuntimeError)"
+    assert json.loads(realtime.stdout)["error"] == "Keryx couldn't read the list (RuntimeError)."

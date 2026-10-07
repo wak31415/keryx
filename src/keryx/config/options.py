@@ -7,8 +7,9 @@ here; whatever reaches outside the process (the HTTP getter, Codex, the hardware
 disk) comes in through `Sources`, which the tests replace wholesale.
 
 A list that cannot be read is never a failure of the command: it falls back to the values
-Keryx knows, `live` false and `error` one sentence saying why — a status code at most,
-never a response body, which can quote the key back. A key goes in a request header and
+Keryx knows, `live` false and `error` one sentence saying why, and only why (the app says
+what it shows instead) — an exception's type or a status code at most, never a response
+body, which can quote the key back. A key goes in a request header and
 nowhere else: not in an error, not in a log line, not in what is printed. Every request is
 a `GET` with a five-second timeout that follows no redirect.
 
@@ -57,7 +58,9 @@ Source = Literal["openai", "anthropic", "codex", "server", "catalog", "builtin"]
 
 
 class Unavailable(Exception):
-    """Why a live list could not be read, as one sentence fit to show the owner."""
+    """Why a live list could not be read: one sentence of cause and nothing else — the app
+    says itself that it is showing the built-in list — in sentence case, ending with a full
+    stop, never quoting a key or a response body."""
 
 
 class CodexModel(NamedTuple):
@@ -140,9 +143,7 @@ def sdk_codex_models(env: dict[str, str], timeout: float) -> list[CodexModel]:
     try:
         from openai_codex import Codex, CodexConfig
     except ImportError:
-        raise Unavailable(
-            "the Codex agent is not installed (uv sync --extra codex)"
-        ) from None
+        raise Unavailable("The Codex agent isn't installed.") from None
     result: list[CodexModel] = []
     failure: list[BaseException] = []
     started: list[Any] = []
@@ -171,9 +172,9 @@ def sdk_codex_models(env: dict[str, str], timeout: float) -> list[CodexModel]:
         for codex in started:
             with contextlib.suppress(Exception):
                 codex.close()
-        raise Unavailable(f"Codex did not list its models within {timeout:g} seconds")
+        raise Unavailable(f"Codex didn't list its models within {timeout:g} seconds.")
     if failure:
-        raise Unavailable(f"Codex did not list its models ({type(failure[0]).__name__})")
+        raise Unavailable(f"Codex couldn't list its models ({type(failure[0]).__name__}).")
     return result
 
 
@@ -203,25 +204,18 @@ def _get_json(get: Callable[..., Any], url: str, headers: dict[str, str], provid
     try:
         response = get(url, headers=headers, timeout=TIMEOUT_S, follow_redirects=False)
     except httpx.HTTPError as exc:
-        raise Unavailable(f"could not reach {provider} ({type(exc).__name__})") from None
+        raise Unavailable(f"Keryx couldn't reach {provider} ({type(exc).__name__}).") from None
     if response.status_code in (401, 403):
-        raise Unavailable(f"{provider} did not accept the key")
+        raise Unavailable(f"{provider} didn't accept the API key.")
     if response.status_code != 200:
-        raise Unavailable(f"{provider} answered HTTP {response.status_code}")
+        raise Unavailable(f"{provider} answered with HTTP {response.status_code}.")
     try:
         body = response.json()
     except ValueError:
         body = None
     if not isinstance(body, dict) or not isinstance(body.get("data"), list):
-        raise Unavailable(f"{provider} did not answer with a model list")
+        raise Unavailable(f"{provider} didn't answer with a list of models.")
     return body
-
-
-def _timed(get: Callable[..., Any]) -> Callable[..., Any]:
-    """`get` with this module's timeout and no redirects, for `endpoints.probe`."""
-    return lambda url, **kwargs: get(
-        url, **{**kwargs, "timeout": TIMEOUT_S, "follow_redirects": False}
-    )
 
 
 def _live(source: Source, read: Callable[[], list[Option]], fallback: list[Option]) -> Found:
@@ -234,7 +228,12 @@ def _live(source: Source, read: Callable[[], list[Option]], fallback: list[Optio
 
 
 def _unreadable(exc: Exception) -> str:
-    return f"the list could not be read ({type(exc).__name__})"
+    return f"Keryx couldn't read the list ({type(exc).__name__})."
+
+
+def _no_key(missing: str) -> str:
+    """Why nothing could be asked: `missing`, said as a cause and nothing else."""
+    return f"{missing}, so Keryx can't ask which models exist."
 
 
 def _default(field: str) -> str:
@@ -246,14 +245,16 @@ def _ids(field: str, ids: list[str]) -> list[Option]:
     return [Option(i, i, "Keryx's default" if i == default else None) for i in ids]
 
 
-def _openai(field: str, keep: Callable[[str], bool]) -> Callable[[Settings, Sources], Found]:
-    """A provider for one family of OpenAI's models, newest-looking id first."""
+def _openai(
+    field: str, family: str, keep: Callable[[str], bool]
+) -> Callable[[Settings, Sources], Found]:
+    """A provider for one `family` of OpenAI's models, newest-looking id first."""
 
     def provide(settings: Settings, sources: Sources) -> Found:
         def read() -> list[Option]:
             key = settings.openai_key
             if not key:
-                raise Unavailable("OPENAI_API_KEY is not set, so OpenAI cannot be asked")
+                raise Unavailable(_no_key("There's no OpenAI API key"))
             body = _get_json(
                 sources.get, OPENAI_MODELS_URL, {"Authorization": f"Bearer {key}"}, "OpenAI"
             )
@@ -263,7 +264,7 @@ def _openai(field: str, keep: Callable[[str], bool]) -> Callable[[Settings, Sour
             )
             found = [i for i in ids if keep(i)]
             if not found:
-                raise Unavailable("OpenAI listed no model of this kind")
+                raise Unavailable(f"OpenAI lists no {family} models.")
             return _ids(field, found)
 
         return _live("openai", read, _ids(field, [_default(field)]))
@@ -272,16 +273,39 @@ def _openai(field: str, keep: Callable[[str], bool]) -> Callable[[Settings, Sour
 
 
 def _server(endpoint: Endpoint | None, get: Callable[..., Any], missing: str) -> Found:
-    """A server of the owner's own, asked for its models; only the current value without."""
+    """A server of the owner's own, asked for its models; only the current value without.
+
+    `endpoints.probe` reads the answer (both servers' shapes); what happened on the wire is
+    noted on the way through, so the error can say it in this module's own sentences.
+    """
 
     def read() -> list[Option]:
         if endpoint is None:
             raise Unavailable(missing)
-        said = probe(endpoint, get=_timed(get))
+        seen: dict[str, Any] = {}
+
+        def noting(url: str, **kwargs: Any) -> Any:
+            kwargs.update(timeout=TIMEOUT_S, follow_redirects=False)
+            try:
+                response = get(url, **kwargs)
+            except httpx.HTTPError as exc:
+                seen["error"] = type(exc).__name__
+                raise
+            seen["status"] = response.status_code
+            return response
+
+        said = probe(endpoint, get=noting)
+        host, status = endpoint.host, seen.get("status")
         if not said.ok:
-            raise Unavailable(said.problem or f"{endpoint.host} did not list its models")
+            if "error" in seen:
+                raise Unavailable(f"Keryx couldn't reach the server at {host} ({seen['error']}).")
+            if status in (401, 403):
+                raise Unavailable(f"The server at {host} didn't accept the API key.")
+            if status != 200:
+                raise Unavailable(f"The server at {host} answered with HTTP {status}.")
+            raise Unavailable(f"The server at {host} didn't answer with a list of models.")
         if not said.models:
-            raise Unavailable(f"{endpoint.host} listed no models")
+            raise Unavailable(f"The server at {host} lists no models.")
         return [Option(model, model) for model in said.models]
 
     return _live("server", read, [])
@@ -293,6 +317,7 @@ def _server(endpoint: Endpoint | None, get: Callable[..., Any], missing: str) ->
 NOT_VOICE = ("whisper", "translate", "transcribe", "audio-preview")
 _openai_realtime = _openai(
     "openai_realtime_model",
+    "Realtime voice",
     lambda i: "realtime" in i and not any(word in i for word in NOT_VOICE),
 )
 
@@ -306,10 +331,13 @@ def realtime_models(settings: Settings, sources: Sources) -> Found:
 
 
 transcription_models = _openai(
-    "openai_transcription_model", lambda i: "transcribe" in i or i.startswith("whisper")
+    "openai_transcription_model",
+    "transcription",
+    lambda i: "transcribe" in i or i.startswith("whisper"),
 )
 web_search_models = _openai(
     "openai_web_search_model",
+    "chat",
     lambda i: i.startswith("gpt-") and not any(word in i for word in NOT_CHAT),
 )
 
@@ -338,9 +366,7 @@ def claude_models(settings: Settings, sources: Sources) -> Found:
     def read() -> list[Option]:
         key = settings.anthropic_api_key
         if not key:
-            raise Unavailable(
-                "Anthropic lists models only to an API key; showing the models Keryx knows"
-            )
+            raise Unavailable(_no_key("There's no Anthropic API key"))
         body = _get_json(
             sources.get,
             ANTHROPIC_MODELS_URL,
@@ -353,7 +379,7 @@ def claude_models(settings: Settings, sources: Sources) -> Found:
             if isinstance(m, dict) and str(m.get("id", "")).startswith("claude-")
         ]
         if not found:
-            raise Unavailable("Anthropic listed no Claude models")
+            raise Unavailable("Anthropic lists no Claude models.")
         return found
 
     return _live("anthropic", read, known)
@@ -377,9 +403,7 @@ def _codex_env(settings: Settings) -> dict[str, str]:
     if auth.mode is AuthMode.API_KEY:
         home = private_codex_home(settings)
         if not (home / "auth.json").exists():
-            raise Unavailable(
-                "Codex has not logged in with CODEX_API_KEY yet (its first task does)"
-            )
+            raise Unavailable("Codex hasn't logged in with CODEX_API_KEY yet.")
         env["CODEX_HOME"] = str(home)
     elif auth.mode is AuthMode.TOKEN:
         env["CODEX_ACCESS_TOKEN"] = auth.secret or ""
@@ -398,7 +422,7 @@ def codex_models(settings: Settings, sources: Sources) -> Found:
     def read() -> list[Option]:
         listed = sources.codex_models(_codex_env(settings), TIMEOUT_S)
         if not listed:
-            raise Unavailable("Codex listed no models")
+            raise Unavailable("Codex lists no models.")
         return [
             CODEX_DEFAULT,
             *(Option(m.id, m.display_name or m.id, m.description or None) for m in listed),
@@ -412,7 +436,7 @@ def local_agent_models(settings: Settings, sources: Sources) -> Found:
     return _server(
         settings.local_agent_endpoint,
         sources.get,
-        "LOCAL_AGENT_BASE_URL is not set, so there is no server to ask",
+        _no_key("There's no local agent server address"),
     )
 
 
