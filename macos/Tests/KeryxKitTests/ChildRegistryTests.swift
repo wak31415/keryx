@@ -70,11 +70,15 @@ import Testing
 
     @Test func theDeadlineAnswersFirstWhenTheStopTakesLonger() async throws {
         let registry = ChildRegistry()
+        let file = NSTemporaryDirectory() + "keryx-registry-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: file) }
         let write = Task {
             try await runner(registry, grace: .seconds(2)).run(.init(executable: "/bin/sh",
-                arguments: ["-c", "trap '' TERM; sleep 30"], timeout: nil))
+                arguments: ["-c", "trap '' TERM; echo $$ > \"$0\"; sleep 30", file], timeout: nil))
         }
-        #expect(await eventually { registry.count == 1 })
+        // Only once the trap is set: a SIGTERM before it would end the group at once.
+        _ = try await ProcessRunnerTests.pid(writtenTo: file)
+        #expect(registry.count == 1)
         let answer = await registry.stopAll(within: .milliseconds(100))
         #expect(answer == nil, "the limit came first")
         // The stop goes on behind it, and still ends the group.
