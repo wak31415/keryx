@@ -123,7 +123,8 @@ def _entry(name: str, found: list[Check]) -> dict[str, Any]:
         # An agent that is not enabled has no doctor check: say so rather than guess.
         return {"state": "missing", "detail": "not enabled"}
     worst = next((check for check in found if not check.ok), found[0])
-    return {"state": worst.state, "detail": worst.detail}
+    # The terminal's sentence, hint and all: `keryx auth status` is read at one.
+    return {"state": worst.state, "detail": worst.text}
 
 
 @dataclass

@@ -2,11 +2,13 @@
 
 import dataclasses
 import importlib.util
+import re
+import sys
 from pathlib import Path
 
 import pytest
 
-from keryx import plugins
+from keryx import fixes, plugins
 from keryx.agents.registry import BACKENDS
 from keryx.config import Settings, pin_file
 from keryx.config.store import ConfigStore
@@ -27,15 +29,33 @@ from keryx.issues import GhStatus
 from keryx.logging_util import mask_number
 from keryx.notify.twilio_out import TwilioError
 
+#: What the Mac app must never show in a check's `detail`: a command, a slash command, a
+#: traceback — written out here rather than read from `doctor.SHELL_TEXT`, so a word taken
+#: off that list does not quietly pass.
+NOT_FOR_THE_APP = ("`", "keryx ", "brew ", "/login", "Traceback")
+#: A path on this machine: a word that starts at the root or at home.
+A_PATH = re.compile(r"(?:^|[\s(\[\"'])~?/(?!/)\S")
+
+
+def for_the_app(text: str) -> bool:
+    return not any(word in text for word in NOT_FOR_THE_APP) and not A_PATH.search(text)
+
 
 @pytest.fixture(autouse=True)
 def every_check_has_a_title(monkeypatch):
-    """Every check any test here makes carries a title for `doctor --json`."""
+    """Every check any test here makes carries a title for `doctor --json` — and, for each
+    one doctor makes, across every state these tests put it in, a detail the Mac app can
+    show and a `fix` it knows: the walk over every check function's states is this file."""
     made = Check.__init__
 
     def titled(self, *args, **kwargs):
         made(self, *args, **kwargs)
         assert self.as_dict()["title"].strip(), self
+        if sys._getframe(1).f_globals.get("__name__") == "keryx.doctor":
+            assert for_the_app(self.detail), self
+            assert fixes.is_valid(self.fix), self
+            assert self.fix is None or not self.ok, self  # nothing to mend when ok
+            assert set(self.as_dict()) >= {"hint", "fix"}
 
     monkeypatch.setattr(Check, "__init__", titled)
 
@@ -116,7 +136,7 @@ def test_files_left_in_the_old_home_are_a_migration_still_to_run(healthy):
     check = by_name(run_doctor_checks(healthy))["storage"]
 
     assert (check.ok, check.severity, check.state) == (False, "hard", "missing")
-    assert "keryx migrate" in check.detail and str(legacy) in check.detail
+    assert "keryx migrate" in check.text and str(legacy) in check.text
     assert check.section == "import"
 
 
@@ -125,7 +145,7 @@ def test_a_env_in_the_working_directory_is_a_migration_still_to_run(healthy):
 
     check = by_name(run_doctor_checks(healthy))["storage"]
 
-    assert check.ok is False and "keryx migrate" in check.detail
+    assert check.ok is False and "keryx migrate" in check.text
 
 
 def test_nothing_legacy_is_fine(healthy):
@@ -151,9 +171,9 @@ def test_a_voice_server_of_your_own_needs_no_openai_key(healthy):
     )
 
     checks = by_name(run_doctor_checks(settings))
-    assert checks["voice"].ok and "127.0.0.1:8765" in checks["voice"].detail
+    assert checks["voice"].ok and "127.0.0.1:8765" in checks["voice"].text
     key = checks["OPENAI_API_KEY"]
-    assert (key.ok, key.severity) == (False, "soft") and "web_search" in key.detail
+    assert (key.ok, key.severity) == (False, "soft") and "web_search" in key.text
     assert not has_hard_failure([key])
 
 
@@ -161,7 +181,7 @@ def test_with_a_voice_server_of_your_own_the_openai_key_is_for_web_search(health
     settings = healthy.model_copy(update={"voice_base_url": "http://127.0.0.1:8765/v1"})
 
     key = by_name(run_doctor_checks(settings))["OPENAI_API_KEY"]
-    assert key.ok and "web_search" in key.detail
+    assert key.ok and "web_search" in key.text
 
 
 CLAUDE = "Claude Code agent (default)"
@@ -183,7 +203,7 @@ def with_agent(monkeypatch, name, *, cli="/bin/agent", login=True):
 
 def test_an_api_key_satisfies_the_default_agent(healthy):
     check = by_name(run_doctor_checks(healthy))[CLAUDE]
-    assert (check.ok, "pay per token" in check.detail) == (True, True)
+    assert (check.ok, "pay per token" in check.text) == (True, True)
 
 
 def test_an_oauth_token_satisfies_the_default_agent(healthy):
@@ -192,7 +212,7 @@ def test_an_oauth_token_satisfies_the_default_agent(healthy):
     )
 
     check = by_name(run_doctor_checks(settings))[CLAUDE]
-    assert (check.ok, "subscription" in check.detail) == (True, True)
+    assert (check.ok, "subscription" in check.text) == (True, True)
 
 
 def test_a_stored_login_satisfies_the_default_agent(healthy, monkeypatch):
@@ -200,7 +220,7 @@ def test_a_stored_login_satisfies_the_default_agent(healthy, monkeypatch):
     settings = healthy.model_copy(update={"anthropic_api_key": None})
 
     check = by_name(run_doctor_checks(settings))[CLAUDE]
-    assert (check.ok, "login" in check.detail) == (True, True)
+    assert (check.ok, "login" in check.text) == (True, True)
 
 
 def test_a_default_agent_with_no_auth_at_all_is_a_hard_failure(healthy, monkeypatch):
@@ -210,7 +230,7 @@ def test_a_default_agent_with_no_auth_at_all_is_a_hard_failure(healthy, monkeypa
 
     check = by_name(run_doctor_checks(settings))[CLAUDE]
     assert (check.ok, check.severity) == (False, "hard")
-    assert "claude setup-token" in check.detail
+    assert "claude setup-token" in check.text
 
 
 def test_a_default_agent_that_is_not_installed_says_how_to_install_it(healthy, monkeypatch):
@@ -218,14 +238,14 @@ def test_a_default_agent_that_is_not_installed_says_how_to_install_it(healthy, m
 
     check = by_name(run_doctor_checks(healthy))[CLAUDE]
     assert (check.ok, check.severity) == (False, "hard")
-    assert "uv sync" in check.detail
+    assert "uv sync" in check.text
 
 
 def test_the_agents_cli_is_named_when_it_is_there(healthy, monkeypatch):
     with_agent(monkeypatch, "claude", cli="/opt/claude")
 
     check = by_name(run_doctor_checks(healthy))[CLAUDE]
-    assert check.detail.startswith("/opt/claude; ")
+    assert (check.detail, check.hint) == ("ANTHROPIC_API_KEY set (pay per token)", "/opt/claude")
 
 
 def test_an_agent_that_is_not_installed_says_which_extra_installs_it(healthy, monkeypatch):
@@ -235,7 +255,7 @@ def test_an_agent_that_is_not_installed_says_which_extra_installs_it(healthy, mo
     check = by_name(run_doctor_checks(settings))["Codex agent"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert check.detail == (
+    assert check.text == (
         "not installed — uv sync --extra codex (the openai-codex SDK bundles the codex CLI)"
     )
 
@@ -247,7 +267,7 @@ def test_codex_is_named_by_its_bundled_binary_and_version(healthy, monkeypatch):
 
     check = by_name(run_doctor_checks(settings))["Codex agent"]
 
-    assert check.detail.startswith("/venv/codex_cli_bin/bin/codex (codex-cli 0.157.1); ")
+    assert check.hint == "/venv/codex_cli_bin/bin/codex (codex-cli 0.157.1)"
 
 
 def test_a_second_agent_that_is_not_ready_is_only_a_warning(healthy, monkeypatch):
@@ -256,9 +276,9 @@ def test_a_second_agent_that_is_not_ready_is_only_a_warning(healthy, monkeypatch
 
     checks = by_name(run_doctor_checks(settings))
     assert (checks["Codex agent"].ok, checks["Codex agent"].severity) == (False, "soft")
-    assert "codex login" in checks["Codex agent"].detail
+    assert "codex login" in checks["Codex agent"].text
     assert checks[CLAUDE].ok is True
-    assert checks["coding agents"].detail == "claude by default; enabled: claude, codex"
+    assert checks["coding agents"].text == "claude by default; enabled: claude, codex"
 
 
 def test_a_default_agent_that_is_not_enabled_is_a_hard_failure(healthy):
@@ -276,14 +296,15 @@ def test_codex_without_workspace_mcp_has_no_mailbox_and_says_so(healthy, monkeyp
 
     check = by_name(run_doctor_checks(settings))["Google for agents"]
     assert (check.ok, check.severity, check.state) == (False, "soft", "missing")
-    assert "not set up (optional)" in check.detail and "keryx setup" in check.detail
+    assert "not set up (optional)" in check.text and "keryx setup" in check.text
 
 
 def test_cloudflared_satisfies_the_tunnel_check(healthy, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: None if name == "ngrok" else "/bin/" + name)
 
     check = by_name(run_doctor_checks(healthy))["tunnel"]
-    assert (check.ok, check.detail) == (True, "/bin/cloudflared")
+    assert (check.ok, check.detail, check.hint) == (True, "cloudflared is installed",
+                                                    "/bin/cloudflared")
 
 
 def test_ngrok_still_counts_as_a_tunnel(healthy, monkeypatch):
@@ -293,7 +314,7 @@ def test_ngrok_still_counts_as_a_tunnel(healthy, monkeypatch):
     )
 
     check = by_name(run_doctor_checks(healthy))["tunnel"]
-    assert (check.ok, check.detail) == (True, "/bin/ngrok")
+    assert (check.ok, check.detail, check.hint) == (True, "ngrok is installed", "/bin/ngrok")
 
 
 def test_no_tunnel_binary_at_all_is_a_hard_failure(healthy, monkeypatch):
@@ -303,7 +324,7 @@ def test_no_tunnel_binary_at_all_is_a_hard_failure(healthy, monkeypatch):
 
     check = by_name(run_doctor_checks(healthy))["tunnel"]
     assert (check.ok, check.severity) == (False, "hard")
-    assert "cloudflared" in check.detail
+    assert "cloudflared" in check.text
 
 
 def test_incomplete_twilio_credentials_name_what_is_missing(healthy):
@@ -311,9 +332,9 @@ def test_incomplete_twilio_credentials_name_what_is_missing(healthy):
 
     check = by_name(run_doctor_checks(settings))["Twilio credentials"]
     assert check.ok is False
-    assert "TWILIO_AUTH_TOKEN" in check.detail
-    assert "TWILIO_NUMBER" in check.detail
-    assert "TWILIO_ACCOUNT_SID" not in check.detail
+    assert "TWILIO_AUTH_TOKEN" in check.text
+    assert "TWILIO_NUMBER" in check.text
+    assert "TWILIO_ACCOUNT_SID" not in check.text
 
 
 def test_a_missing_public_host_is_a_hard_failure(healthy):
@@ -334,7 +355,7 @@ def test_skipping_signature_checks_behind_a_public_host_is_a_hard_failure(health
     checks = run_doctor_checks(settings)
     check = by_name(checks)["Twilio signatures"]
     assert (check.ok, check.severity) == (False, "hard")
-    assert "DEBUG_SKIP_TWILIO_VALIDATION" in check.detail
+    assert "DEBUG_SKIP_TWILIO_VALIDATION" in check.text
     assert has_hard_failure(checks) is True
 
 
@@ -355,8 +376,8 @@ def test_the_numbers_doctor_prints_are_masked(healthy):
     """A terminal is somewhere a number gets written down too (`logging_util`)."""
     checks = by_name(run_doctor_checks(healthy))
 
-    assert checks["allowed callers"].detail == mask_number("+15551234567")
-    assert checks["Twilio credentials"].detail == mask_number("+15550000000")
+    assert checks["allowed callers"].text == mask_number("+15551234567")
+    assert checks["Twilio credentials"].text == mask_number("+15550000000")
 
 
 def test_a_missing_pin_only_warns_and_says_the_first_call_can_set_one(healthy):
@@ -367,9 +388,10 @@ def test_a_missing_pin_only_warns_and_says_the_first_call_can_set_one(healthy):
     checks = run_doctor_checks(settings)
     check = by_name(checks)["PIN"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "no PIN yet" in check.detail
-    assert "`keryx setup` or the first call can set one" in check.detail
-    assert "nothing of yours is read out until then" in check.detail
+    assert "no PIN yet" in check.text
+    assert "the first call can set one" in check.detail
+    assert check.hint == "`keryx setup` sets one now" and check.fix == "pin"
+    assert "nothing of yours is read out until then" in check.text
     assert check.state == "missing"
     assert has_hard_failure(checks) is False
 
@@ -378,8 +400,8 @@ def test_a_pin_from_the_environment_says_so(healthy):
     check = by_name(run_doctor_checks(healthy))["PIN"]
 
     assert check.ok is True
-    assert check.detail.startswith("set from the environment")
-    assert "123456" not in check.detail
+    assert check.text.startswith("set from the environment")
+    assert "123456" not in check.text
 
 
 def test_a_pin_in_its_own_file_says_when_and_where(healthy):
@@ -390,9 +412,9 @@ def test_a_pin_in_its_own_file_says_when_and_where(healthy):
     check = by_name(run_doctor_checks(settings))["PIN"]
 
     assert check.ok is True
-    assert check.detail.startswith("set on ")
-    assert str(pin_file(settings.config_dir)) in check.detail
-    assert "987654" not in check.detail
+    assert check.text.startswith("set on ")
+    assert str(pin_file(settings.config_dir)) in check.text
+    assert "987654" not in check.text
 
 
 def test_the_environment_wins_over_the_same_digits_in_the_file(healthy):
@@ -403,7 +425,7 @@ def test_the_environment_wins_over_the_same_digits_in_the_file(healthy):
 
     check = by_name(run_doctor_checks(healthy))["PIN"]
 
-    assert check.detail.startswith("set from the environment")
+    assert check.text.startswith("set from the environment")
 
 
 def test_a_pin_file_that_is_not_a_pin_is_reported_as_the_dead_end_it_is(healthy):
@@ -415,8 +437,8 @@ def test_a_pin_file_that_is_not_a_pin_is_reported_as_the_dead_end_it_is(healthy)
     check = by_name(checks)["PIN"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert str(pin_file(settings.config_dir)) in check.detail
-    assert "no call can set one" in check.detail
+    assert str(pin_file(settings.config_dir)) in check.text
+    assert "no call can set one" in check.text
     assert has_hard_failure(checks) is False
 
 
@@ -424,7 +446,7 @@ def test_an_installed_service_is_reported(healthy):
     check = by_name(run_doctor_checks(healthy))["service manager"]
 
     assert check.ok is True
-    assert check.detail.split()[0] in {"systemd", "launchd"}
+    assert check.text.split()[0] in {"systemd", "launchd"}
 
 
 def test_a_service_manager_with_nothing_installed_is_not_a_tick(healthy, monkeypatch):
@@ -434,9 +456,9 @@ def test_a_service_manager_with_nothing_installed_is_not_a_tick(healthy, monkeyp
     check = by_name(run_doctor_checks(healthy))["service manager"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert "not installed" in check.detail
-    assert "install-" in check.detail  # which installer puts it there
-    assert "restart_service" in check.detail
+    assert "not installed" in check.text
+    assert "install-" in check.text  # which installer puts it there
+    assert "restart_service" in check.text
 
 
 def test_nothing_supervising_the_process_is_a_warning_that_says_what_is_lost(healthy):
@@ -446,7 +468,7 @@ def test_nothing_supervising_the_process_is_a_warning_that_says_what_is_lost(hea
     check = by_name(run_doctor_checks(settings))["service manager"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert "restart_service" in check.detail
+    assert "restart_service" in check.text
 
 
 def test_no_service_manager_at_all_says_so_rather_than_naming_a_unit(healthy, monkeypatch):
@@ -455,7 +477,7 @@ def test_no_service_manager_at_all_says_so_rather_than_naming_a_unit(healthy, mo
     check = by_name(run_doctor_checks(healthy))["service manager"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert check.detail.startswith("no service manager on this machine")
+    assert check.text.startswith("no service manager on this machine")
 
 
 def test_a_missing_git_is_reported_next_to_the_service_manager(healthy, monkeypatch):
@@ -465,7 +487,7 @@ def test_a_missing_git_is_reported_next_to_the_service_manager(healthy, monkeypa
     check = by_name(run_doctor_checks(healthy))["service manager"]
 
     assert check.ok is True
-    assert "no git on PATH" in check.detail
+    assert "no git on PATH" in check.text
 
 
 def test_an_unwritable_data_dir_is_a_hard_failure(healthy, tmp_path):
@@ -482,8 +504,8 @@ def test_a_world_readable_data_dir_only_warns(healthy):
     check = by_name(run_doctor_checks(healthy))["data dir private"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert "0755" in check.detail
-    assert "keryx doctor --fix" in check.detail
+    assert "0755" in check.text
+    assert "keryx doctor --fix" in check.text
 
 
 def test_a_group_readable_data_dir_is_reported_too(healthy):
@@ -497,7 +519,7 @@ def test_a_group_readable_data_dir_is_reported_too(healthy):
 def test_an_owner_only_data_dir_passes(healthy):
     check = by_name(run_doctor_checks(healthy))["data dir private"]
 
-    assert (check.ok, check.detail) == (True, "0700 (owner only)")
+    assert (check.ok, check.text) == (True, "0700 (owner only)")
 
 
 def test_doctor_creates_a_missing_data_dir_owner_only(healthy, tmp_path):
@@ -506,7 +528,7 @@ def test_doctor_creates_a_missing_data_dir_owner_only(healthy, tmp_path):
 
     check = by_name(run_doctor_checks(settings))["data dir private"]
 
-    assert (check.ok, check.detail) == (True, "0700 (owner only)")
+    assert (check.ok, check.text) == (True, "0700 (owner only)")
 
 
 def test_a_data_dir_that_cannot_be_read_is_reported_not_raised(healthy):
@@ -519,7 +541,7 @@ def test_google_is_reported_as_unused_while_workspace_mcp_is_off(healthy):
     check = by_name(run_doctor_checks(healthy))["Google for agents"]
 
     assert (check.ok, check.severity) == (True, "soft")
-    assert "connectors" in check.detail
+    assert "connectors" in check.text
 
 
 def test_google_credentials_only_warn_when_the_oauth_client_is_configured(healthy, tmp_path):
@@ -530,7 +552,7 @@ def test_google_credentials_only_warn_when_the_oauth_client_is_configured(health
     checks = run_doctor_checks(healthy)
     check = by_name(checks)["Google for agents"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "keryx auth login google-workspace" in check.detail
+    assert "keryx auth login google-workspace" in check.text
     assert has_hard_failure(checks) is False
 
 
@@ -545,7 +567,7 @@ def test_google_is_reported_as_not_configured_without_an_oauth_client(healthy):
 
     check = by_name(run_doctor_checks(settings))["Google for agents"]
     assert (check.ok, check.severity, check.state) == (False, "soft", "failed")
-    assert "no OAuth client" in check.detail
+    assert "no OAuth client" in check.text
 
 
 # --- what a stranger needs to know about their own install -----------------
@@ -560,12 +582,12 @@ def test_no_owner_name_only_warns(healthy):
 
     check = by_name(run_doctor_checks(settings))["owner name"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "OWNER_NAME" in check.detail and "the owner" in check.detail
+    assert "OWNER_NAME" in check.text and "the owner" in check.text
 
 
 def test_an_owner_name_is_reported(healthy):
     check = by_name(run_doctor_checks(healthy))["owner name"]
-    assert (check.ok, check.detail) == (True, "Sam")
+    assert (check.ok, check.text) == (True, "Sam")
 
 
 def test_an_empty_memory_points_at_setup(healthy):
@@ -574,14 +596,14 @@ def test_an_empty_memory_points_at_setup(healthy):
     checks = run_doctor_checks(healthy)
     check = by_name(checks)["memory"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "keryx setup" in check.detail
+    assert "keryx setup" in check.text
     assert has_hard_failure(checks) is False
 
 
 def test_a_seeded_memory_says_how_much_every_call_carries(healthy):
     check = by_name(run_doctor_checks(healthy))["memory"]
     assert check.ok is True
-    assert "characters" in check.detail
+    assert "characters" in check.text
 
 
 def test_a_missing_projects_root_only_warns_and_says_where_tasks_go(healthy):
@@ -589,18 +611,18 @@ def test_a_missing_projects_root_only_warns_and_says_where_tasks_go(healthy):
 
     check = by_name(run_doctor_checks(healthy))["projects root"]
     assert (check.ok, check.severity) == (False, "soft")
-    assert "PROJECTS_ROOT" in check.detail
-    assert "workspace" in check.detail
+    assert "PROJECTS_ROOT" in check.text
+    assert "workspace" in check.text
     assert not healthy.projects_root.exists()  # reported, never created
 
 
 def test_every_plugin_on_names_what_it_does(healthy):
     checks = by_name(run_doctor_checks(healthy))
 
-    assert checks["send_to_slack"].detail == "on — posts to D123"
-    assert checks["check_email"].detail == "on — claude-opus-5-5, low effort"
-    assert checks["check_billing"].detail == "on — auto, budget $40"
-    assert checks["cluster_stats"].detail == "on — alpha through the built-in guard"
+    assert checks["send_to_slack"].text == "on — posts to D123"
+    assert checks["check_email"].text == "on — claude-opus-5-5, low effort"
+    assert checks["check_billing"].text == "on — auto, budget $40"
+    assert checks["cluster_stats"].text == "on — alpha through the built-in guard"
     assert all(checks[name].section == "plugins" for name in plugins.PLUGINS)
     assert "xoxb-test" not in str(checks)
 
@@ -611,7 +633,7 @@ def test_a_plugin_that_is_off_is_optional_and_says_how(healthy):
     check = by_name(checks)["cluster_stats"]
 
     assert (check.ok, check.state, check.severity) == (False, "missing", "soft")
-    assert "keryx plugins install cluster_stats" in check.detail
+    assert "keryx plugins install cluster_stats" in check.text
     assert format_check(check).startswith("○")
     assert has_hard_failure(checks) is False
 
@@ -622,7 +644,7 @@ def test_a_plugin_that_is_on_and_refused_says_why(healthy):
     check = by_name(run_doctor_checks(healthy))["cluster_stats"]
 
     assert (check.ok, check.state) == (False, "failed")
-    assert "names no host" in check.detail
+    assert "names no host" in check.text
 
 
 @pytest.mark.parametrize(
@@ -640,8 +662,8 @@ def test_a_secret_set_for_a_plugin_that_is_off_is_a_warning(healthy, name, says)
     check = by_name(run_doctor_checks(healthy))[name]
 
     assert (check.ok, check.state, check.severity) == (False, "failed", "soft")
-    assert says in check.detail
-    assert f"keryx plugins install {name}" in check.detail
+    assert says in check.text
+    assert f"keryx plugins install {name}" in check.text
 
 
 def test_email_signed_in_without_the_claude_cli_is_refused_with_how(healthy, monkeypatch):
@@ -650,7 +672,7 @@ def test_email_signed_in_without_the_claude_cli_is_refused_with_how(healthy, mon
     check = by_name(run_doctor_checks(healthy))["check_email"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert "uv sync --extra claude" in check.detail
+    assert "uv sync --extra claude" in check.text
 
 
 def test_settings_a_plugin_replaced_point_at_the_one_command(healthy):
@@ -660,8 +682,8 @@ def test_settings_a_plugin_replaced_point_at_the_one_command(healthy):
     check = by_name(run_doctor_checks(healthy))["retired settings"]
 
     assert (check.ok, check.severity, check.section) == (False, "soft", "plugins")
-    assert "CLUSTERS, SLACK_MCP_SERVER" in check.detail
-    assert "keryx plugins install --from-settings" in check.detail
+    assert "CLUSTERS, SLACK_MCP_SERVER" in check.text
+    assert "keryx plugins install --from-settings" in check.text
 
 
 # --- formatting ------------------------------------------------------------
@@ -696,7 +718,7 @@ def test_a_loose_secret_file_is_named_and_fix_tightens_only_modes(healthy):
         "secret files private"
     ]
     assert (check.ok, check.severity) == (False, "soft")
-    assert str(store.secrets_path) in check.detail and "0644" in check.detail
+    assert str(store.secrets_path) in check.text and "0644" in check.text
     # After the checks: loading the email plugin tightens its token by itself.
     token_path(healthy).chmod(0o640)
 
@@ -720,7 +742,7 @@ def test_a_config_inside_a_git_work_tree_warns(healthy, tmp_path, monkeypatch):
     check = by_name(run_doctor_checks(healthy, store=store))["outside git"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert str(tmp_path / "repo") in check.detail
+    assert str(tmp_path / "repo") in check.text
 
 
 def test_a_relative_config_path_that_steps_out_of_a_work_tree_does_not_warn(healthy):
@@ -743,7 +765,7 @@ def test_a_secret_written_into_config_toml_by_hand_warns(healthy):
     check = by_name(run_doctor_checks(healthy, store=store))["config.toml"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert "TWILIO_AUTH_TOKEN" in check.detail and "tok" not in check.detail
+    assert "TWILIO_AUTH_TOKEN" in check.text and "tok" not in check.text
 
 
 def test_a_protected_key_unlocked_by_hand_is_reported(healthy):
@@ -758,7 +780,7 @@ def test_a_protected_key_unlocked_by_hand_is_reported(healthy):
     ]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert "PORT" in check.detail
+    assert "PORT" in check.text
 
 
 def test_an_imported_env_left_behind_is_reported(healthy, tmp_path, monkeypatch):
@@ -768,7 +790,7 @@ def test_an_imported_env_left_behind_is_reported(healthy, tmp_path, monkeypatch)
     check = by_name(run_doctor_checks(healthy))["old .env"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert ".env.imported-2026-09-27" in check.detail
+    assert ".env.imported-2026-09-27" in check.text
 
 
 # --- the Twilio webhook -----------------------------------------------------------
@@ -813,7 +835,7 @@ def test_a_status_callback_pointed_elsewhere_is_not_pointed_here(healthy):
     check = by_name(run_doctor_checks(healthy, twilio=twilio))["Twilio webhook"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert "old.example.com" in check.detail and HERE_STATUS in check.detail
+    assert "old.example.com" in check.text and HERE_STATUS in check.text
 
 
 @pytest.mark.parametrize(("voice", "status"), [
@@ -838,7 +860,7 @@ def test_a_host_that_is_not_a_hostname_never_passes_the_webhook(healthy):
                                       twilio=twilio))["Twilio webhook"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert "isn't a bare hostname" in check.detail
+    assert "isn't a bare hostname" in check.text
 
 
 def test_a_webhook_pointed_elsewhere_is_a_warning_that_says_setup_fixes_it(healthy):
@@ -847,7 +869,7 @@ def test_a_webhook_pointed_elsewhere_is_a_warning_that_says_setup_fixes_it(healt
     check = by_name(run_doctor_checks(healthy, twilio=twilio))["Twilio webhook"]
 
     assert (check.ok, check.severity) == (False, "soft")
-    assert "old.example.com" in check.detail and "keryx setup" in check.detail
+    assert "old.example.com" in check.text and "keryx setup" in check.text
 
 
 def test_twilio_down_is_a_warning_not_a_crash(healthy):
@@ -870,8 +892,8 @@ def test_twilio_failing_is_said_by_its_cause_never_its_text(healthy, error, said
     text can quote the request, and the credential in it, back."""
     check = by_name(run_doctor_checks(healthy, twilio=FakeTwilio(error=error)))["Twilio webhook"]
 
-    assert "SECRET" not in check.detail
-    assert said in check.detail
+    assert "SECRET" not in check.text
+    assert said in check.text
 
 
 def test_a_number_not_on_the_account_is_a_failure(healthy):
@@ -882,7 +904,7 @@ def test_a_number_not_on_the_account_is_a_failure(healthy):
     )["Twilio webhook"]
 
     assert (check.ok, check.severity) == (False, "hard")
-    assert "+15559999999" not in check.detail
+    assert "+15559999999" not in check.text
 
 
 def test_a_check_named_by_a_setting_takes_that_settings_title(healthy):
@@ -960,31 +982,31 @@ def test_issue_reports_off_pass_and_never_ask_gh(healthy, monkeypatch):
 
     check = by_name(run_doctor_checks(healthy))["issue reports"]
 
-    assert check.ok and check.section == "issues" and "off" in check.detail
+    assert check.ok and check.section == "issues" and "off" in check.text
 
 
 def test_issue_reports_on_with_gh_signed_in(healthy, monkeypatch):
     check = _reporting(healthy, monkeypatch, GhStatus(True, True, "octocat"))
 
     assert check.ok
-    assert check.detail == f"filed on {healthy.issue_repo} as octocat"
+    assert check.text == f"filed as octocat on {healthy.issue_repo}"
 
 
 def test_a_token_in_the_keyring_is_named_not_failed(healthy, monkeypatch):
     check = _reporting(healthy, monkeypatch, GhStatus(True, True, "octocat", keyring=True))
 
-    assert check.ok and "--insecure-storage" in check.detail
+    assert check.ok and "--insecure-storage" in check.text
 
 
 @pytest.mark.parametrize(
     ("status", "says"),
-    [(GhStatus(False), "gh is not installed"), (GhStatus(True, False), "`gh auth login`")],
+    [(GhStatus(False), "gh, is not installed"), (GhStatus(True, False), "`gh auth login`")],
 )
 def test_issue_reports_on_without_gh_are_missing_and_soft(healthy, monkeypatch, status, says):
     check = _reporting(healthy, monkeypatch, status)
 
     assert check.state == "missing" and check.severity == "soft"
-    assert says in check.detail
+    assert says in check.text
 
 
 def test_issue_reports_on_with_no_checkout_to_read(healthy, monkeypatch, tmp_path):
@@ -993,7 +1015,7 @@ def test_issue_reports_on_with_no_checkout_to_read(healthy, monkeypatch, tmp_pat
 
     check = by_name(run_doctor_checks(settings))["issue reports"]
 
-    assert check.state == "missing" and "KERYX_CHECKOUT" in check.detail
+    assert check.state == "missing" and "KERYX_CHECKOUT" in check.text
 
 
 # --- model servers of your own ----------------------------------------------------------
@@ -1036,7 +1058,7 @@ def test_a_local_agent_serving_its_model_passes(healthy):
     reach, asked = _reach()
 
     (check,) = endpoint_checks(local_agent(healthy), reach)
-    assert check.ok and check.section == "local" and "serves qwen3-coder" in check.detail
+    assert check.ok and check.section == "local" and "serves qwen3-coder" in check.text
     assert asked == ["http://127.0.0.1:8080/v1"]
 
 
@@ -1044,7 +1066,7 @@ def test_a_model_the_server_does_not_serve_is_named_with_what_it_does(healthy):
     reach, _ = _reach(models=("gpt-oss-20b", "llama3"))
 
     (check,) = endpoint_checks(local_agent(healthy), reach)
-    assert check.state == "failed" and "gpt-oss-20b, llama3" in check.detail
+    assert check.state == "failed" and "gpt-oss-20b, llama3" in check.text
     assert check.severity == "soft"  # not the default agent
 
 
@@ -1052,14 +1074,14 @@ def test_an_unreachable_server_is_hard_when_local_is_the_default(healthy):
     reach, _ = _reach(ok=False, models=(), problem="could not reach 127.0.0.1 (ConnectError)")
 
     (check,) = endpoint_checks(local_agent(healthy, agent_backend="local"), reach)
-    assert (check.ok, check.severity) == (False, "hard") and "ConnectError" in check.detail
+    assert (check.ok, check.severity) == (False, "hard") and "ConnectError" in check.text
 
 
 def test_an_unset_model_is_missing_and_lists_the_choices(healthy):
     reach, _ = _reach(models=("a", "b"))
 
     (check,) = endpoint_checks(local_agent(healthy, local_agent_model=None), reach)
-    assert check.state == "missing" and "a, b" in check.detail
+    assert check.state == "missing" and "a, b" in check.text
 
 
 def test_a_public_server_without_a_key_is_only_warned_about(healthy):
@@ -1076,7 +1098,7 @@ def test_a_voice_server_is_asked_for_a_session(healthy):
 
     ok, _ = _reach()
     (opened,) = endpoint_checks(voice, ok)
-    assert opened.ok and "opens a Realtime session" in opened.detail
+    assert opened.ok and "opens a Realtime session" in opened.text
 
     refused, _ = _reach(realtime="could not open 127.0.0.1's Realtime socket")
     (failed,) = endpoint_checks(voice, refused)
@@ -1087,7 +1109,7 @@ def test_a_lan_voice_server_over_http_warns_about_the_pin(healthy):
     voice = healthy.model_copy(update={"voice_base_url": "http://192.168.1.20:8765"})
 
     (warning,) = endpoint_checks(voice)
-    assert warning.severity == "soft" and "PIN" in warning.detail
+    assert warning.severity == "soft" and "PIN" in warning.text
 
 
 # --- the servers `keryx setup` runs here -----------------------------------------------
@@ -1095,12 +1117,12 @@ def test_a_lan_voice_server_over_http_warns_about_the_pin(healthy):
 
 def test_local_models_none_passes_and_some_are_described(healthy):
     checks = by_name(run_doctor_checks(healthy))
-    assert checks["local models"].ok and "optional" in checks["local models"].detail
+    assert checks["local models"].ok and "optional" in checks["local models"].text
 
     both = healthy.model_copy(update={"voice_base_url": "http://127.0.0.1:8765/v1",
                                       "local_agent_base_url": "http://127.0.0.1:8090/v1",
                                       "local_agent_model": "qwen"})
-    detail = by_name(run_doctor_checks(both))["local models"].detail
+    detail = by_name(run_doctor_checks(both))["local models"].text
     assert "voice at http://127.0.0.1:8765/v1" in detail and "agent qwen at" in detail
 
 
@@ -1113,7 +1135,7 @@ def test_the_model_server_needs_its_file_and_llama_server(healthy, monkeypatch, 
     settings = healthy.model_copy(update={"llm_server_model": entry.key,
                                           "cache_dir": tmp_path / "cache"})
     missing = by_name(run_doctor_checks(settings))["model server"]
-    assert not missing.ok and "keryx models pull gpt-oss-20b" in missing.detail
+    assert not missing.ok and "keryx models pull gpt-oss-20b" in missing.text
     assert missing.severity == "soft"
 
     path = model_path(settings.cache_dir, entry)
@@ -1121,11 +1143,11 @@ def test_the_model_server_needs_its_file_and_llama_server(healthy, monkeypatch, 
     path.write_bytes(b"gguf")
     monkeypatch.setattr(runtimes, "llama_server", lambda cache: None)
     no_binary = by_name(run_doctor_checks(settings))["model server"]
-    assert not no_binary.ok and "llama-server is not installed" in no_binary.detail
+    assert not no_binary.ok and "llama-server is not installed" in no_binary.text
 
     monkeypatch.setattr(runtimes, "llama_server", lambda cache: "/bin/llama-server")
     ok = by_name(run_doctor_checks(settings))["model server"]
-    assert ok.ok and str(path) in ok.detail
+    assert ok.ok and str(path) in ok.text
 
 
 def test_the_voice_server_on_this_machine_needs_its_program(healthy, monkeypatch):
@@ -1140,3 +1162,266 @@ def test_the_voice_server_on_this_machine_needs_its_program(healthy, monkeypatch
     assert by_name(run_doctor_checks(settings))["voice server program"].ok
     elsewhere = healthy.model_copy(update={"voice_base_url": "http://gpu:8765/v1"})
     assert "voice server program" not in by_name(run_doctor_checks(elsewhere))
+
+
+# --- what the Mac app can do about each ---------------------------------------------------
+#
+# The autouse fixture above holds every check doctor makes in this file to a detail the app
+# can show and a `fix` from `keryx.fixes`. These say which fix each problem gets: the button
+# the app offers, never a command.
+
+
+def _twilio_refusing(healthy):
+    error = TwilioError("refused", status=401)
+    return run_doctor_checks(healthy, twilio=FakeTwilio(error=error))
+
+
+def _plugin_refused(healthy):
+    plugins.config_path(healthy, "cluster_stats").write_text("[clusters]\n")
+    return run_doctor_checks(healthy)
+
+
+def _email_signed_out(healthy):
+    token_path(healthy).unlink()
+    return run_doctor_checks(healthy)
+
+
+def _slack_unconnected(healthy):
+    return run_doctor_checks(healthy.model_copy(update={"slack_bot_token": None}))
+
+
+def _pin_file_broken(healthy):
+    settings = healthy.model_copy(update={"pin": None})
+    settings.config_dir.mkdir(parents=True, exist_ok=True)
+    pin_file(settings.config_dir).write_text("not-a-pin\n", encoding="utf-8")
+    return run_doctor_checks(settings)
+
+
+def _projects_root_gone(healthy):
+    healthy.projects_root.rmdir()
+    return run_doctor_checks(healthy)
+
+
+def _google_signed_out(healthy):
+    for path in (healthy.data_dir / "google").iterdir():
+        path.unlink()
+    return run_doctor_checks(healthy.model_copy(update={"google_workspace_mcp": True}))
+
+
+def _jarvis_files(healthy):
+    (Path.home() / ".jarvis").mkdir(parents=True)
+    (Path.home() / ".jarvis" / "tasks.db").touch()
+    return run_doctor_checks(healthy)
+
+
+def _secret_in_config(healthy):
+    from keryx.config.files import dump_toml, write_private
+
+    store = ConfigStore()
+    write_private(store.config_path, dump_toml({"TWILIO_AUTH_TOKEN": "tok"}))
+    return run_doctor_checks(healthy, store=store)
+
+
+def _with(**update):
+    return lambda healthy: run_doctor_checks(healthy.model_copy(update=update))
+
+
+#: Each problem the app has a button for, as (how to make it, the check, its fix).
+FIXED = [
+    (_jarvis_files, "storage", "migrate"),
+    (_with(openai_api_key=None), "OPENAI_API_KEY", "secret:OPENAI_API_KEY"),
+    (_with(openai_api_key=None, voice_base_url="http://127.0.0.1:8765/v1"), "OPENAI_API_KEY",
+     "secret:OPENAI_API_KEY"),
+    (_with(agents_enabled=["claude"], agent_backend="codex"), "coding agents",
+     "setting:AGENTS_ENABLED"),
+    (_with(agent_backend="local", agents_enabled=["local"]), "coding agents", "models:choose"),
+    (_with(agent_backend="local", agents_enabled=["local"]), "Local model agent (default)",
+     "models:choose"),
+    (_with(twilio_number=None), "Twilio credentials", "phone:account"),
+    (_with(debug_skip_twilio_validation=True), "Twilio signatures",
+     "setting:DEBUG_SKIP_TWILIO_VALIDATION"),
+    (_with(public_host=None), "PUBLIC_HOST", "phone:tunnel"),
+    (_twilio_refusing, "Twilio webhook", "phone:account"),
+    (lambda h: run_doctor_checks(h, twilio=FakeTwilio("https://elsewhere.example.com/v")),
+     "Twilio webhook", "phone:webhooks"),
+    (lambda h: run_doctor_checks(h.model_copy(update={"public_host": "https://x.example.com"}),
+                                 twilio=FakeTwilio()), "Twilio webhook", "phone:tunnel"),
+    (_with(allowed_callers=[]), "allowed callers", "setting:ALLOWED_CALLERS"),
+    (_with(pin=None), "PIN", "pin"),
+    (_pin_file_broken, "PIN", "pin"),
+    (_with(owner_name=None), "owner name", "setting:OWNER_NAME"),
+    (_with(service_manager="none"), "service manager", "setting:SERVICE_MANAGER"),
+    (_secret_in_config, "config.toml", "secret:TWILIO_AUTH_TOKEN"),
+    (_google_signed_out, "Google for agents", "signin:google-workspace"),
+    (_with(google_workspace_mcp=True, google_oauth_client_id=None,
+           google_oauth_client_secret=None), "Google for agents", "integration:google"),
+    (_projects_root_gone, "projects root", "setting:PROJECTS_ROOT"),
+    (_plugin_refused, "cluster_stats", "plugin:cluster_stats"),
+    (_email_signed_out, "check_email", "signin:gmail"),
+    (_slack_unconnected, "send_to_slack", "integration:slack"),
+    (_with(issue_reporting=True, keryx_checkout=Path("/nowhere")), "issue reports",
+     "setting:KERYX_CHECKOUT"),
+]
+
+
+@pytest.mark.parametrize(("make", "name", "fix"), FIXED,
+                         ids=[f"{name}->{fix}" for _, name, fix in FIXED])
+def test_each_problem_the_app_can_mend_carries_its_fix(healthy, make, name, fix):
+    check = by_name(make(healthy))[name]
+
+    assert not check.ok and check.fix == fix
+    assert fixes.is_valid(check.fix)
+
+
+def test_a_check_that_is_fine_has_nothing_to_mend(healthy):
+    assert [check.fix for check in run_doctor_checks(healthy)] == [None] * len(
+        run_doctor_checks(healthy)
+    )
+
+
+def test_a_service_not_installed_is_installed_from_the_app(healthy, monkeypatch):
+    monkeypatch.setattr("keryx.restart.service.is_installed", lambda target: False)
+
+    check = by_name(run_doctor_checks(healthy))["service manager"]
+
+    assert check.fix == "service:install" and "install-" in check.hint
+
+
+def test_a_plugin_that_is_off_or_half_set_up_is_turned_on_from_the_app(healthy):
+    plugins.remove(healthy, "cluster_stats")
+    plugins.remove(healthy, "send_to_slack")
+
+    checks = by_name(run_doctor_checks(healthy))
+
+    assert checks["cluster_stats"].fix == "plugin:cluster_stats"
+    assert checks["send_to_slack"].fix == "plugin:send_to_slack"
+
+
+def test_issue_reports_without_gh_point_at_the_github_card(healthy, monkeypatch):
+    for status in (GhStatus(False), GhStatus(True, False)):
+        assert _reporting(healthy, monkeypatch, status).fix == "integration:github"
+
+
+def test_the_agents_fixes(healthy, monkeypatch):
+    """Signed out is a sign-in; a default that is not installed is another agent chosen."""
+    with_agent(monkeypatch, "claude", login=False)
+    signed_out = healthy.model_copy(update={"anthropic_api_key": None})
+    assert by_name(run_doctor_checks(signed_out))[CLAUDE].fix == "signin:claude"
+
+    monkeypatch.setattr("keryx.doctor.installed", lambda agent, settings=None: agent != "codex")
+    monkeypatch.setattr("keryx.agents.registry.installed",
+                        lambda agent, settings=None: agent != "codex")
+    codex = healthy.model_copy(update={"agent_backend": "codex", "agents_enabled": []})
+    checks = by_name(run_doctor_checks(codex))
+    assert checks["coding agents"].fix == "setting:AGENT_BACKEND"
+    assert checks["Codex agent (default)"].fix is None  # installing an extra is a terminal's
+    assert "uv sync --extra codex" in checks["Codex agent (default)"].hint
+
+
+def test_the_local_servers_fixes(healthy, monkeypatch, tmp_path):
+    from keryx.localmodels import runtimes
+    from keryx.localmodels.catalog import by_key
+    from keryx.localmodels.download import model_path
+
+    entry = by_key("gpt-oss-20b")
+    settings = healthy.model_copy(update={"llm_server_model": entry.key,
+                                          "cache_dir": tmp_path / "cache"})
+    assert by_name(run_doctor_checks(settings))["model server"].fix == "models:choose"
+    path = model_path(settings.cache_dir, entry)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"gguf")
+    monkeypatch.setattr(runtimes, "llama_server", lambda cache: None)
+    assert by_name(run_doctor_checks(settings))["model server"].fix == "models:start"
+
+    here = healthy.model_copy(update={"voice_base_url": "http://127.0.0.1:8765/v1"})
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: None)
+    assert by_name(run_doctor_checks(here))["voice server program"].fix == "voice:here"
+
+
+def test_a_server_here_is_started_and_one_elsewhere_is_readdressed(healthy):
+    down, _ = _reach(ok=False, models=(), problem="could not reach 127.0.0.1 (ConnectError)")
+    here = local_agent(healthy, local_agent_base_url="http://127.0.0.1:8090/v1")
+    elsewhere = local_agent(healthy, local_agent_base_url="http://10.0.0.5:8080/v1")
+
+    assert endpoint_checks(here, down)[-1].fix == "models:start"
+    assert endpoint_checks(elsewhere, down)[-1].fix == "setting:LOCAL_AGENT_BASE_URL"
+
+    wrong, _ = _reach(models=("other",))
+    assert endpoint_checks(here, wrong)[-1].fix == "models:start"
+    assert endpoint_checks(elsewhere, wrong)[-1].fix == "setting:LOCAL_AGENT_MODEL"
+
+    unset = local_agent(healthy, local_agent_base_url="http://127.0.0.1:8090/v1",
+                        local_agent_model=None)
+    assert endpoint_checks(unset)[-1].fix == "models:choose"
+    assert endpoint_checks(unset, wrong)[-1].fix == "models:choose"
+
+
+def test_a_server_warning_mends_its_key_or_its_address(healthy):
+    public = local_agent(healthy, local_agent_base_url="http://gpu.example.com:8080")
+    lan_voice = healthy.model_copy(update={"voice_base_url": "http://192.168.1.20:8765"})
+
+    warned = [c.fix for c in endpoint_checks(public) if c.severity == "soft" and not c.ok]
+
+    assert warned == ["secret:LOCAL_AGENT_API_KEY", "setting:LOCAL_AGENT_BASE_URL"]
+    assert endpoint_checks(lan_voice)[0].fix == "setting:VOICE_BASE_URL"
+
+
+def test_a_voice_server_that_will_not_open_a_session_never_shows_its_traceback(healthy):
+    """A server's error can be a Python traceback: the terminal's, never the app's."""
+    here = healthy.model_copy(update={"voice_base_url": "http://127.0.0.1:8765/v1"})
+    elsewhere = healthy.model_copy(update={"voice_base_url": "https://voice.example.com/v1",
+                                           "voice_api_key": "k"})
+    said = "127.0.0.1 refused the session: RuntimeError: CUDA out of memory"
+    failing, _ = _reach(realtime=said)
+
+    (check,) = endpoint_checks(here, failing)
+    assert (check.ok, check.detail) == (False, "127.0.0.1 did not open a Realtime session")
+    assert check.hint == said and check.fix == "voice:here"
+    assert endpoint_checks(elsewhere, failing)[-1].fix == "setting:VOICE_BASE_URL"
+
+
+def test_a_stray_jarvis_home_is_named_and_left_to_the_terminal(healthy, monkeypatch):
+    monkeypatch.setenv("JARVIS_HOME", "/somewhere")
+    monkeypatch.delenv("KERYX_HOME", raising=False)
+
+    check = by_name(run_doctor_checks(healthy))["storage"]
+
+    assert (check.ok, check.fix) == (False, None)
+    assert check.detail.startswith("JARVIS_HOME is set") and "rename it" in check.hint
+
+
+def test_a_config_toml_that_does_not_parse_is_mended_by_hand(healthy):
+    store = ConfigStore()
+    store.config_path.parent.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text("this is = = not toml\n")
+
+    checks = by_name(run_doctor_checks(healthy, store=store))
+
+    assert checks["config.toml"].state == "failed" and checks["config.toml"].fix is None
+    assert "fix it by hand" in checks["config.toml"].hint
+    assert checks["protected settings"].ok and checks["retired settings"].ok
+
+
+def test_a_malformed_pin_in_the_environment_is_the_terminals_to_mend(healthy):
+    check = by_name(run_doctor_checks(healthy, config_problems={"pin": "6-8 digits"}))["PIN"]
+
+    assert (check.ok, check.fix) == (False, None) and "6-8 digits" in check.detail
+
+
+def test_google_signed_in_says_so_and_where_in_the_hint(healthy):
+    check = by_name(run_doctor_checks(
+        healthy.model_copy(update={"google_workspace_mcp": True})))["Google for agents"]
+
+    assert (check.ok, check.detail) == (True, "signed in")
+    assert check.hint == str(healthy.data_dir / "google")
+
+
+def test_the_terminal_still_reads_the_command_after_the_detail(healthy):
+    """`keryx doctor` prints the detail, then the hint: what the terminal used to read."""
+    check = by_name(_email_signed_out(healthy))["check_email"]
+
+    assert format_check(check) == (
+        f"⚠️  check_email: {check.detail} — {check.hint}"
+    )
+    assert "keryx auth login gmail" in check.hint
+    assert Check("a", True, hint="only a hint").text == "only a hint"

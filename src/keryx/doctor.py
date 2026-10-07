@@ -20,6 +20,7 @@ else.
 """
 
 import os
+import re
 import shutil
 import stat
 from collections.abc import Callable, Mapping
@@ -28,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from keryx import plugins
+from keryx import fixes, plugins
 from keryx.agents.registry import (
     BACKENDS,
     auth_status,
@@ -50,6 +51,7 @@ from keryx.config import (
     field_title,
     pin_file,
 )
+from keryx.config.files import HOME_ENV, LEGACY_HOME_ENV
 from keryx.config.permissions import is_protected
 from keryx.config.settings import LEGACY_ENV_FILE
 from keryx.config.store import ConfigStore
@@ -58,6 +60,7 @@ from keryx.endpoints import Endpoint, Probe, probe, warnings
 from keryx.integrations.gmail import token_path
 from keryx.issues import GH_INSTALL_URL, SKILL, gh_status
 from keryx.localmodels import runtimes, servers
+from keryx.localmodels.server import OLLAMA_URL
 from keryx.logging_util import mask_number
 from keryx.realtime.openai import realtime_problem
 from keryx.restart.service import INSTALLERS, candidate_target, resolve_target
@@ -72,6 +75,13 @@ MARKERS = {"ok": "✅", "hard": "❌", "soft": "⚠️", "optional": "○ "}
 #: Tunnels that can put `/twilio/*` in front of Twilio, best first. The deployment uses
 #: Cloudflare Tunnel; ngrok still counts, so a dev machine set up before the move passes.
 TUNNEL_BINARIES = ("cloudflared", "ngrok")
+
+#: What gives a terminal's text away — a command, a prompt, a traceback — which nothing the
+#: Mac app shows may hold (`app_facing`).
+SHELL_TEXT = ("`", "keryx ", "claude ", "brew ", "uv ", "scripts/", "$ ", "/login",
+              "Traceback")
+#: A path on this machine: a word that starts at the root, or at home.
+_PATH = re.compile(r"(?:^|[\s(\[\"'])~?/(?!/)\S")
 
 #: The webhook paths Twilio must be pointed at, under `https://PUBLIC_HOST`.
 VOICE_PATH = "/twilio/voice"
@@ -94,11 +104,25 @@ class Check:
     #: Not fine because what it asks did not answer this time (Twilio unreachable): it says
     #: nothing either way about the setup, so it holds no section or setup step back.
     unknown: bool = False
+    #: What a terminal adds to `detail`: the command that mends it, or where the thing is on
+    #: disk. `detail` is written for a person at the Mac app — no command, no path, no
+    #: traceback — and `keryx doctor` prints the two together (`text`).
+    hint: str | None = None
+    #: What the Mac app can do about it, as one of `keryx.fixes`' ids; None when it can do
+    #: nothing, or nothing is wrong.
+    fix: str | None = None
 
     @property
     def state(self) -> str:
         """`ok`, `missing` or `failed` — what `--json` and the wizard read."""
         return "ok" if self.ok else ("missing" if self.unset else "failed")
+
+    @property
+    def text(self) -> str:
+        """The detail with the terminal's hint after it: what `keryx doctor` prints."""
+        if self.hint and self.detail:
+            return f"{self.detail} — {self.hint}"
+        return self.detail or self.hint or ""
 
     def as_dict(self) -> dict[str, Any]:
         return {**asdict(self), "state": self.state, "title": check_title(self.name)}
@@ -112,6 +136,12 @@ CHECK_TITLES = {
     "config.toml": "Settings file",
     "old .env": "Old .env file",
 }
+
+
+def app_facing(text: str) -> bool:
+    """Whether `text` is fit for the Mac app: no command, no traceback, no path. What a
+    check's `detail` and the setup plan's `why` must be; a terminal's goes in `hint`."""
+    return not any(shell in text for shell in SHELL_TEXT) and not _PATH.search(text)
 
 
 def check_title(name: str) -> str:
@@ -146,14 +176,14 @@ class EndpointReach:
 
 
 def format_check(check: Check) -> str:
-    """One printable line: a marker, the check's name, and the detail behind it."""
+    """One printable line: a marker, the check's name, and the detail and hint behind it."""
     if check.ok:
         marker = MARKERS["ok"]
     elif check.unset and check.severity == "soft":
         marker = MARKERS["optional"]
     else:
         marker = MARKERS[check.severity]
-    return f"{marker}  {check.name}: {check.detail}" if check.detail else f"{marker}  {check.name}"
+    return f"{marker}  {check.name}: {check.text}" if check.text else f"{marker}  {check.name}"
 
 
 def has_hard_failure(checks: list[Check]) -> bool:
@@ -227,15 +257,27 @@ def _storage_check(settings: Settings) -> Check:
     missing rather than failed: nothing is broken, a step has not been taken yet.
     """
     refusal = settings.storage_refusal()
-    if refusal is not None:
-        return Check("storage", False, refusal, section="import", unset=True)
-    return Check("storage", True, "the XDG directories", section="import")
+    if refusal is None:
+        return Check("storage", True, "the XDG directories", section="import")
+    if refusal.startswith(f"{LEGACY_HOME_ENV}="):  # the environment's: nothing to move
+        return Check("storage", False, f"{LEGACY_HOME_ENV} is set and {HOME_ENV} is not, so "
+                     "Keryx would not find its settings", section="import", unset=True,
+                     hint=refusal)
+    if "no longer reads" in refusal:  # a `.env` or Google client file in the working dir
+        detail = "settings in an old .env file have not been moved into Keryx's store yet"
+    else:
+        detail = "files from when Keryx was called Jarvis have not been moved yet"
+    return Check("storage", False, detail, section="import", unset=True, hint=refusal,
+                 fix="migrate")
 
 
 def _config_check(store: ConfigStore) -> Check:
     """Where the configuration lives."""
-    where = store.config_path if store.config_path.is_file() else store.home
-    return Check("configuration", True, str(where), severity="soft", section="import")
+    if store.config_path.is_file():
+        return Check("configuration", True, "saved", severity="soft", section="import",
+                     hint=str(store.config_path))
+    return Check("configuration", True, "nothing saved yet", severity="soft", section="import",
+                 hint=str(store.home))
 
 
 def _voice_checks(settings: Settings) -> list[Check]:
@@ -255,6 +297,7 @@ def _voice_checks(settings: Settings) -> list[Check]:
                     "not set — the voice session cannot start",
                     section="voice",
                     unset=True,
+                    fix=fixes.secret("OPENAI_API_KEY"),
                 )
             ]
         return [Check("OPENAI_API_KEY", True, "set", section="voice")]
@@ -262,7 +305,8 @@ def _voice_checks(settings: Settings) -> list[Check]:
                     section="voice")]
     if key is None:
         checks.append(Check("OPENAI_API_KEY", False, "not set — calls have no web_search",
-                            severity="soft", section="voice", unset=True))
+                            severity="soft", section="voice", unset=True,
+                            fix=fixes.secret("OPENAI_API_KEY")))
     else:
         checks.append(Check("OPENAI_API_KEY", True, "set, for web_search", severity="soft",
                             section="voice"))
@@ -273,7 +317,15 @@ def _agent_config_check(settings: Settings) -> Check:
     """`AGENT_BACKEND` among `AGENTS_ENABLED`, which `keryx serve` refuses to start without."""
     refusal = settings.agent_refusal()
     if refusal is not None:
-        return Check("coding agents", False, refusal, section="agents")
+        detail, _, hint = refusal.partition(" — ")
+        if settings.agents_enabled and settings.agent_backend not in settings.agents_enabled:
+            fix = fixes.setting("AGENTS_ENABLED")
+        elif installed(settings.agent_backend, settings):
+            fix = "models:choose"  # the local agent with no server: choosing a model sets one
+        else:
+            fix = fixes.setting("AGENT_BACKEND")  # another agent; installing one is a terminal's
+        return Check("coding agents", False, detail, section="agents", hint=hint or None,
+                     fix=fix)
     enabled = ", ".join(settings.enabled_agents)
     return Check(
         "coding agents",
@@ -304,32 +356,44 @@ def _agent_checks(settings: Settings) -> list[Check]:
                 Check(
                     label,
                     False,
-                    f"not installed — {hint}",
+                    "not installed",
                     severity=severity,
                     section=section,
                     unset=True,
+                    hint=hint,
                 )
             )
             continue
         cli = cli_path(name, settings)
         harness = BACKENDS[agent_harness(name, settings)]
         if cli is None:
-            detail = f"{harness.name} CLI not found — {harness.install_hint}"
-            checks.append(Check(label, False, detail, severity=severity, section=section))
+            checks.append(Check(label, False, f"the {harness.name} program is missing",
+                                severity=severity, section=section, hint=harness.install_hint))
             continue
         status = auth_status(name, settings)
+        # A credential that is not there says so, then what to run: the terminal's half.
+        login = status.detail.partition(" — ")[2] or status.detail
         version = harness.cli_version()
         where = f"{cli} ({version})" if version else cli
         if spec.harness is not None:
-            where = f"in {harness.label}"
+            # Its "credential" is its server's address, which is no secret and no path.
+            checks.append(Check(label, status.ready,
+                                f"in {harness.label}; {status.detail}" if status.ready
+                                else "no server set", severity=severity, section=section,
+                                unset=not status.ready,
+                                hint=None if status.ready else login,
+                                fix=None if status.ready else "models:choose"))
+            continue
         checks.append(
             Check(
                 label,
                 status.ready,
-                f"{where}; {status.detail}",
+                status.detail if status.ready else "not signed in",
                 severity=severity,
                 section=section,
                 unset=not status.ready,
+                hint=where if status.ready else login,
+                fix=None if status.ready else fixes.signin(name),
             )
         )
     return checks
@@ -344,8 +408,9 @@ def _local_overview_check(settings: Settings) -> Check:
         parts.append(f"agent {settings.local_agent_model or '?'} at "
                      f"{settings.local_agent_endpoint.base_url}")
     if not parts:
-        return Check("local models", True, "none (optional) — `keryx setup` can run the voice "
-                     "and the agent on your own hardware", severity="soft", section="local")
+        return Check("local models", True, "none (optional) — the voice and the agent can run "
+                     "on your own hardware", severity="soft", section="local",
+                     hint="`keryx setup` sets them up")
     return Check("local models", True, "; ".join(parts), severity="soft", section="local")
 
 
@@ -356,22 +421,29 @@ def _local_server_checks(settings: Settings) -> list[Check]:
         severity: Severity = "hard" if settings.agent_backend == "local" else "soft"
         try:
             alias, path, _context = servers.llm_model(settings)
-            problem = None
         except servers.ServerConfigError as error:
-            problem = str(error)
-        if problem is None and runtimes.llama_server(settings.cache_dir) is None:
-            problem = "llama-server is not installed — `keryx setup` installs it"
-        checks.append(Check("model server", problem is None,
-                            problem or f"{alias} from {path}", severity=severity,
-                            section="local"))
-    own_voice = f"http://{servers.HOST}:{settings.voice_server_port}/v1"
-    if settings.voice_base_url == own_voice:
+            checks.append(Check("model server", False, "the chosen model is not on disk",
+                                severity=severity, section="local", hint=str(error),
+                                fix="models:choose"))
+        else:
+            if runtimes.llama_server(settings.cache_dir) is None:
+                checks.append(Check("model server", False, "llama-server is not installed",
+                                    severity=severity, section="local",
+                                    hint="`keryx models start` or `keryx setup` installs it",
+                                    fix="models:start"))
+            else:
+                checks.append(Check("model server", True, f"{alias}, on disk",
+                                    severity=severity, section="local", hint=str(path)))
+    if settings.voice_base_url == _own_voice(settings):
         found = runtimes.speech_to_speech()
-        checks.append(Check(
-            "voice server program", found is not None,
-            found or "speech-to-speech is not installed — `keryx setup` installs it",
-            section="local",
-        ))
+        if found is None:
+            checks.append(Check("voice server program", False,
+                                "speech-to-speech is not installed", section="local",
+                                hint="`keryx voice use here` or `keryx setup` installs it",
+                                fix="voice:here"))
+        else:
+            checks.append(Check("voice server program", True, "speech-to-speech is installed",
+                                section="local", hint=found))
     return checks
 
 
@@ -387,42 +459,71 @@ def endpoint_checks(settings: Settings, reach: EndpointReach | None = None) -> l
     if settings.voice_base_url:
         voice = settings.voice_endpoint
         checks += [
-            Check("voice server", False, warning, severity="soft", section="local")
+            Check("voice server", False, warning, severity="soft", section="local",
+                  fix=_warning_fix(warning, "VOICE_BASE_URL", "VOICE_API_KEY"))
             for warning in warnings(voice, carries_voice=True)
         ]
         if reach is not None:
             problem = reach.realtime(voice)
-            detail = problem or f"{voice.base_url} opens a Realtime session"
-            checks.append(Check("voice server", problem is None, detail, section="local"))
+            if problem is None:
+                checks.append(Check("voice server", True,
+                                    f"{voice.base_url} opens a Realtime session",
+                                    section="local"))
+            else:
+                # Its own words go to the terminal: a server's error can be a traceback.
+                here = settings.voice_base_url == _own_voice(settings)
+                checks.append(Check("voice server", False,
+                                    f"{voice.host} did not open a Realtime session",
+                                    section="local", hint=problem,
+                                    fix="voice:here" if here
+                                    else fixes.setting("VOICE_BASE_URL")))
     agent = settings.local_agent_endpoint
     if agent is None:
         return checks
     severity: Severity = "hard" if settings.agent_backend == "local" else "soft"
     name = "local agent server"
     checks += [
-        Check(name, False, warning, severity="soft", section="local")
+        Check(name, False, warning, severity="soft", section="local",
+              fix=_warning_fix(warning, "LOCAL_AGENT_BASE_URL", "LOCAL_AGENT_API_KEY"))
         for warning in warnings(agent)
     ]
+    # A server Keryx runs here is started from the app; one elsewhere is only an address.
+    ours = agent.base_url in (f"http://{servers.HOST}:{settings.llm_server_port}/v1",
+                              f"{OLLAMA_URL}/v1")
+    model_fix = "models:choose" if ours else fixes.setting("LOCAL_AGENT_MODEL")
     if reach is None:
         if not agent.model:
             checks.append(Check(name, False, "LOCAL_AGENT_MODEL is not set",
-                                severity=severity, section="local", unset=True))
+                                severity=severity, section="local", unset=True, fix=model_fix))
         return checks
     found = reach.models(agent)
     listed = ", ".join(found.models[:6]) + (", …" if len(found.models) > 6 else "")
     if not found.ok:
         checks.append(Check(name, False, found.problem or "no answer", severity=severity,
-                            section="local"))
+                            section="local", fix="models:start" if ours
+                            else fixes.setting("LOCAL_AGENT_BASE_URL")))
     elif not agent.model:
         checks.append(Check(name, False, f"LOCAL_AGENT_MODEL is not set — it serves {listed}",
-                            severity=severity, section="local", unset=True))
+                            severity=severity, section="local", unset=True, fix=model_fix))
     elif found.models and agent.model not in found.models:
         checks.append(Check(name, False, f"{agent.model} is not one it serves ({listed})",
-                            severity=severity, section="local"))
+                            severity=severity, section="local",
+                            fix="models:start" if ours else model_fix))
     else:
         checks.append(Check(name, True, f"{agent.base_url} serves {agent.model}",
                             severity=severity, section="local"))
     return checks
+
+
+def _own_voice(settings: Settings) -> str:
+    """The address of the voice server Keryx runs on this machine."""
+    return f"http://{servers.HOST}:{settings.voice_server_port}/v1"
+
+
+def _warning_fix(warning: str, address: str, key: str) -> str:
+    """What mends a warning about where a server is: its key, when it has none, else its
+    address."""
+    return fixes.secret(key) if "no key is set" in warning else fixes.setting(address)
 
 
 def _twilio_check(settings: Settings) -> Check:
@@ -443,6 +544,7 @@ def _twilio_check(settings: Settings) -> Check:
             f"missing {', '.join(missing)} — no phone channel",
             section="phone",
             unset=True,
+            fix="phone:account",
         )
     return Check("Twilio credentials", True, mask_number(settings.twilio_number), section="phone")
 
@@ -456,15 +558,17 @@ def _signature_check(settings: Settings) -> Check:
     """
     if not settings.debug_skip_twilio_validation:
         return Check("Twilio signatures", True, "validated", section="phone")
+    fix = fixes.setting("DEBUG_SKIP_TWILIO_VALIDATION")
     refusal = settings.phone_refusal()
     if refusal is not None:
-        return Check("Twilio signatures", False, refusal, section="phone")
+        return Check("Twilio signatures", False, refusal, section="phone", fix=fix)
     return Check(
         "Twilio signatures",
         False,
         "DEBUG_SKIP_TWILIO_VALIDATION is on — for a machine nothing outside can reach",
         severity="soft",
         section="phone",
+        fix=fix,
     )
 
 
@@ -476,6 +580,7 @@ def _public_host_check(settings: Settings) -> Check:
             "not set — Twilio cannot reach this machine",
             section="phone",
             unset=True,
+            fix="phone:tunnel",
         )
     return Check("PUBLIC_HOST", True, settings.public_host, section="phone")
 
@@ -502,14 +607,15 @@ def _webhook_check(settings: Settings, twilio: Any) -> Check:
         return Check("Twilio webhook", True, "not checked — no number or PUBLIC_HOST yet",
                      severity="soft", section="phone")
     if hostname_problem(settings.public_host):
-        return Check("Twilio webhook", False, BAD_HOST, severity="soft", section="phone")
+        return Check("Twilio webhook", False, BAD_HOST, severity="soft", section="phone",
+                     fix="phone:tunnel")
     want, want_status = webhook_urls(settings.public_host)
     try:
         numbers = {number.phone_number: number for number in twilio.numbers()}
     except Exception as exc:  # a warning, never a crash; by its cause: its text may quote the token
         if refused_credentials(exc):  # an answer: these credentials do not work
             return Check("Twilio webhook", False, twilio_problem(exc), severity="soft",
-                         section="phone")
+                         section="phone", fix="phone:account")
         return Check("Twilio webhook", False, f"could not ask Twilio: {twilio_problem(exc)}",
                      severity="soft", section="phone", unknown=True)
     number = numbers.get(settings.twilio_number)
@@ -519,6 +625,7 @@ def _webhook_check(settings: Settings, twilio: Any) -> Check:
             False,
             f"{mask_number(settings.twilio_number)} is not a number on this Twilio account",
             section="phone",
+            fix="phone:account",
         )
     if not matches(number, settings.public_host):
         if (number.voice_url or "").rstrip("/") != want:
@@ -528,9 +635,11 @@ def _webhook_check(settings: Settings, twilio: Any) -> Check:
         return Check(
             "Twilio webhook",
             False,
-            f"{found} — `keryx setup` can point it here",
+            found,
             severity="soft",
             section="phone",
+            hint="`keryx setup` can point it here",
+            fix="phone:webhooks",
         )
     return Check("Twilio webhook", True, want, severity="soft", section="phone")
 
@@ -544,6 +653,7 @@ def _allowed_callers_check(settings: Settings) -> Check:
             "ALLOWED_CALLERS is empty — every call is refused",
             section="owner",
             unset=True,
+            fix=fixes.setting("ALLOWED_CALLERS"),
         )
     return Check(
         "allowed callers",
@@ -578,27 +688,31 @@ def _pin_check(settings: Settings, problem: str | None = None) -> Check:
         return Check(
             "PIN",
             True,
-            f"set on {_enrolled_on(path)}, kept in {path}",
+            f"set on {_enrolled_on(path)}",
             severity="soft",
             section="owner",
+            hint=f"kept in {path}",
         )
     if settings.pin_enrolment_open:
         return Check(
             "PIN",
             False,
-            "no PIN yet — `keryx setup` or the first call can set one, and nothing of "
-            "yours is read out until then",
+            "no PIN yet — the first call can set one, and nothing of yours is read out "
+            "until then",
             severity="soft",
             section="owner",
             unset=True,
+            hint="`keryx setup` sets one now",
+            fix="pin",
         )
     return Check(
         "PIN",
         False,
-        f"{path} is not 6-8 digits, so there is no PIN and no call can set one — "
-        "`keryx setup` replaces it",
+        "the PIN file is not 6-8 digits, so there is no PIN and no call can set one",
         severity="soft",
         section="owner",
+        hint=f"{path}; `keryx setup` replaces it",
+        fix="pin",
     )
 
 
@@ -620,6 +734,7 @@ def _owner_name_check(settings: Settings) -> Check:
             severity="soft",
             section="owner",
             unset=True,
+            fix=fixes.setting(env_var_name("owner_name")),
         )
     return Check("owner name", True, settings.owner_label, severity="soft", section="owner")
 
@@ -632,13 +747,16 @@ def _tunnel_check() -> Check:
     for name in TUNNEL_BINARIES:
         found = shutil.which(name)
         if found:
-            return Check("tunnel", True, found, section="phone")
+            return Check("tunnel", True, f"{name} is installed", section="phone", hint=found)
     return Check(
         "tunnel",
         False,
-        f"none of {', '.join(TUNNEL_BINARIES)} on PATH — no tunnel for the phone channel",
+        f"the tunnel program, {TUNNEL_BINARIES[0]}, is not installed — Twilio cannot reach "
+        "this machine without one",
         section="phone",
         unset=True,
+        hint=f"none of {', '.join(TUNNEL_BINARIES)} on PATH; `brew install cloudflared`",
+        fix="phone:tunnel",
     )
 
 
@@ -658,20 +776,26 @@ def service_manager_check(settings: Settings) -> Check:
     candidate = candidate_target(settings)
     target = resolve_target(settings, from_outside=True) if candidate is not None else None
     if target is None:
+        refused = "`keryx restart` and the voice's restart_service refuse"
+        fix: str | None = None
         if settings.service_manager == "none":
-            why = "SERVICE_MANAGER=none"
+            why, hint = "SERVICE_MANAGER is none", refused
+            fix = fixes.setting("SERVICE_MANAGER")
         elif candidate is None:
-            why = "no service manager on this machine"
+            why, hint = "no service manager on this machine", refused
         else:
-            why = f"{candidate.unit} is not installed ({INSTALLERS[candidate.manager]})"
+            why = f"{candidate.unit} is not installed"
+            hint = f"{INSTALLERS[candidate.manager]} installs it; until then {refused}"
+            fix = "service:install"
         return Check(
             "service manager",
             False,
-            f"{why} — `keryx restart` and the voice's restart_service refuse, and nothing "
-            "restarts Keryx if it dies",
+            f"{why} — Keryx cannot restart itself, and nothing restarts it if it dies",
             severity="soft",
             section="service",
             unset=True,
+            hint=hint,
+            fix=fix,
         )
     detail = target.describe()
     if shutil.which("git") is None:
@@ -693,8 +817,9 @@ def _data_dir_check(settings: Settings) -> Check:
         probe.write_text("ok")
         probe.unlink()
     except OSError as exc:
-        return Check("data dir writable", False, f"{path}: {exc}", section="security")
-    return Check("data dir writable", True, str(path), section="security")
+        return Check("data dir writable", False, "Keryx cannot write to its data folder",
+                     section="security", hint=f"{path}: {exc}")
+    return Check("data dir writable", True, "yes", section="security", hint=str(path))
 
 
 def _data_dir_privacy_check(settings: Settings) -> Check:
@@ -709,18 +834,18 @@ def _data_dir_privacy_check(settings: Settings) -> Check:
     try:
         mode = stat.S_IMODE(path.stat().st_mode)
     except OSError as exc:
-        return Check("data dir private", False, f"{path}: {exc}", severity="soft",
-                     section="security")
+        return Check("data dir private", False, "Keryx cannot look at its data folder",
+                     severity="soft", section="security", hint=f"{path}: {exc}")
 
     exposed = mode & (stat.S_IRWXG | stat.S_IRWXO)
     if exposed:
         return Check(
             "data dir private",
             False,
-            f"{path} is {mode:04o} — transcripts and reports are readable by others; "
-            "`keryx doctor --fix` makes it owner-only",
+            f"the data folder is {mode:04o} — transcripts and reports are readable by others",
             severity="soft",
             section="security",
+            hint=f"{path}; `keryx doctor --fix` makes it owner-only",
         )
     return Check("data dir private", True, f"{mode:04o} (owner only)", severity="soft",
                  section="security")
@@ -796,12 +921,14 @@ def _file_modes_check(settings: Settings, store: ConfigStore) -> Check:
     loose = loose_paths(settings, store)
     if loose:
         names = ", ".join(f"{path} ({mode:04o})" for path, mode, _ in loose)
+        count = f"{len(loose)} file{'s' * (len(loose) != 1)} or folder{'s' * (len(loose) != 1)}"
         return Check(
             "secret files private",
             False,
-            f"readable by others: {names} — `keryx doctor --fix`",
+            f"{count} holding secrets can be read by others",
             severity="soft",
             section="security",
+            hint=f"{names}; `keryx doctor --fix` makes them owner-only",
         )
     return Check("secret files private", True, "owner only", severity="soft", section="security")
 
@@ -827,10 +954,12 @@ def _git_check(settings: Settings, store: ConfigStore) -> Check:
             return Check(
                 "outside git",
                 False,
-                f"{path} is inside the git work tree at {tree} — move it (KERYX_HOME, "
-                "DATA_DIR) somewhere a commit cannot reach",
+                "Keryx's settings or data are inside a git work tree, one commit from being "
+                "pushed somewhere",
                 severity="soft",
                 section="security",
+                hint=f"{path} is inside the git work tree at {tree} — move it (KERYX_HOME, "
+                "DATA_DIR) somewhere a commit cannot reach",
             )
     return Check("outside git", True, "not in a git work tree", severity="soft",
                  section="security")
@@ -840,18 +969,26 @@ def _secrets_in_config_check(store: ConfigStore) -> Check:
     try:
         found = store.secrets_in_config()
     except Exception as exc:  # a config.toml that does not parse: `serve` will not start
-        return Check("config.toml", False, f"does not parse — {exc}; fix it by hand",
-                     section="security")
+        return Check("config.toml", False, "the settings file does not parse, and only an "
+                     "edit by hand can mend it", section="security",
+                     hint=f"{exc}; fix it by hand")
     if found:
         return Check(
             "config.toml",
             False,
-            f"holds {', '.join(found)}, which belong in secrets.toml — "
-            f"`keryx config set {found[0]} --stdin` moves one",
+            f"holds {', '.join(found)}, which belong in secrets.toml",
             severity="soft",
             section="security",
+            hint=f"`keryx config set {found[0]} --stdin` moves one",
+            fix=_secret_fix(found[0]),
         )
     return Check("config.toml", True, "no secrets in it", severity="soft", section="security")
+
+
+def _secret_fix(key: str) -> str | None:
+    """Saving a secret again, which puts it where it belongs; None for a key that is none."""
+    fix = f"secret:{key}"
+    return fix if fixes.is_valid(fix) else None
 
 
 def _unlocked_check(store: ConfigStore) -> Check:
@@ -866,9 +1003,10 @@ def _unlocked_check(store: ConfigStore) -> Check:
             "protected settings",
             False,
             f"config.toml unlocks {', '.join(unlocked)}, which nothing may unlock — ignored, "
-            "but somebody tried; remove it from [service_writable]",
+            "but somebody tried",
             severity="soft",
             section="security",
+            hint="remove it from [service_writable]",
         )
     return Check("protected settings", True, "none unlocked", severity="soft",
                  section="security")
@@ -880,10 +1018,12 @@ def _imported_env_check() -> Check:
         return Check(
             "old .env",
             False,
-            f"{', '.join(str(path) for path in leftovers)} still hold the secrets that were "
-            "imported — delete them once Keryx runs from the store",
+            f"{len(leftovers)} old .env "
+            f"{'copy still holds' if len(leftovers) == 1 else 'copies still hold'} the secrets "
+            "that were imported — delete them once Keryx runs from the store",
             severity="soft",
             section="security",
+            hint=", ".join(str(path) for path in leftovers),
         )
     return Check("old .env", True, "none left behind", severity="soft", section="security")
 
@@ -904,10 +1044,12 @@ def google_check(settings: Settings) -> Check:
                 "Google for agents",
                 False,
                 f"not set up (optional) — {' and '.join(without)} tasks have no Gmail or "
-                "Calendar; `keryx setup` connects Google",
+                "Calendar",
                 severity="soft",
                 section="google",
                 unset=True,
+                hint="`keryx setup` connects Google",
+                fix=fixes.integration("google"),
             )
         return Check(
             "Google for agents",
@@ -920,9 +1062,11 @@ def google_check(settings: Settings) -> Check:
         return Check(
             "Google for agents",
             False,
-            "GOOGLE_WORKSPACE_MCP is on but there is no OAuth client — `keryx setup`",
+            "GOOGLE_WORKSPACE_MCP is on but there is no OAuth client",
             severity="soft",
             section="google",
+            hint="`keryx setup` saves one",
+            fix=fixes.integration("google"),
         )
     credentials_dir = settings.data_dir / "google"
     stored = sorted(credentials_dir.glob("*")) if credentials_dir.is_dir() else []
@@ -930,13 +1074,15 @@ def google_check(settings: Settings) -> Check:
         return Check(
             "Google for agents",
             False,
-            f"nothing in {credentials_dir} — `keryx auth login google-workspace`",
+            "not signed in to Google",
             severity="soft",
             section="google",
             unset=True,
+            hint=f"nothing in {credentials_dir} — `keryx auth login google-workspace`",
+            fix=fixes.signin("google-workspace"),
         )
-    return Check("Google for agents", True, str(credentials_dir), severity="soft",
-                 section="google")
+    return Check("Google for agents", True, "signed in", severity="soft", section="google",
+                 hint=str(credentials_dir))
 
 
 def _memory_check(settings: Settings) -> Check:
@@ -949,19 +1095,20 @@ def _memory_check(settings: Settings) -> Check:
         return Check(
             "memory",
             False,
-            "nothing remembered yet — `keryx setup` writes a first memory, and every "
-            "authorized call adds to it",
+            "nothing remembered yet — every authorized call adds to it",
             severity="soft",
             section="profile",
             unset=True,
+            hint="`keryx setup` writes a first memory",
         )
     path = memory_path(settings.data_dir)
     return Check(
         "memory",
         True,
-        f"{len(memory)} characters in {path}, sent on every call",
+        f"{len(memory)} characters, sent on every call",
         severity="soft",
         section="profile",
+        hint=str(path),
     )
 
 
@@ -969,16 +1116,20 @@ def _projects_root_check(settings: Settings) -> Check:
     """Warn-only, and never created: a missing root sends unscoped tasks to the workspace."""
     root = settings.projects_root
     if not root.is_dir():
+        key = env_var_name("projects_root")
         return Check(
             "projects root",
             False,
-            f"{root} does not exist — a task with no project starts in "
-            f"{settings.data_dir / 'workspace'}; set {env_var_name('projects_root')}",
+            "the projects folder does not exist — a task with no project starts in Keryx's "
+            "own workspace",
             severity="soft",
             section="projects",
             unset=True,
+            hint=f"{root}; tasks start in {settings.data_dir / 'workspace'}; set {key}",
+            fix=fixes.setting(key),
         )
-    return Check("projects root", True, str(root), severity="soft", section="projects")
+    return Check("projects root", True, f"the {root.name or 'projects'} folder",
+                 severity="soft", section="projects", hint=str(root))
 
 
 # --- plugins ---------------------------------------------------------------------
@@ -1016,7 +1167,7 @@ def _plugin_detail(status: plugins.Status) -> str:
     if status.name == "check_billing":
         budget = values.get("monthly_budget")
         return f"{values.get('provider')}" + (f", budget ${budget:g}" if budget else "")
-    guard = values.get("guard") or "the built-in guard"
+    guard = "a guard script of your own" if values.get("guard") else "the built-in guard"
     return f"{', '.join(values.get('clusters') or {})} through {guard}"
 
 
@@ -1030,31 +1181,52 @@ def plugin_checks(settings: Settings) -> list[Check]:
     try:
         statuses = plugins.status(settings)
     except Exception as exc:  # the owner's own files are loaded too; never take doctor down
-        return [Check("plugins", False, f"could not load {settings.custom_tools_dir}: {exc}",
-                      severity="soft", section="plugins")]
+        return [Check("plugins", False, "the plugins could not be loaded", severity="soft",
+                      section="plugins", hint=f"{settings.custom_tools_dir}: {exc}")]
     checks = []
     for status in statuses:
         name = status.name
         if status.on:
+            guard = (status.values or {}).get("guard")
             checks.append(Check(name, True, f"on — {_plugin_detail(status)}", severity="soft",
-                                section="plugins"))
+                                section="plugins", hint=str(guard) if guard else None))
         elif status.installed:
-            checks.append(Check(name, False, f"on but refused: {status.refused}",
-                                severity="soft", section="plugins"))
+            checks.append(_refused_plugin(settings, status))
         elif (secret := _secret_without_plugin(settings, name)) is not None:
             checks.append(Check(
                 name, False,
-                f"{secret} is set but {name} is off, so {_UNUSED_SECRET[name]} — "
-                f"`keryx plugins install {name}`",
+                f"{secret} is set but {name} is off, so {_UNUSED_SECRET[name]}",
                 severity="soft", section="plugins",
+                hint=f"`keryx plugins install {name}`", fix=fixes.plugin(name),
             ))
         else:
             checks.append(Check(
-                name, False,
-                f"off (optional) — `keryx setup` → Plugins, or `keryx plugins install {name}`",
+                name, False, "off (optional)",
                 severity="soft", section="plugins", unset=True,
+                hint=f"`keryx setup` → Plugins, or `keryx plugins install {name}`",
+                fix=fixes.plugin(name),
             ))
     return checks
+
+
+def _refused_plugin(settings: Settings, status: plugins.Status) -> Check:
+    """A plugin that is on and refused: the account it needs when none is connected, which
+    is the usual reason (Email with no Gmail sign-in), else that it does not load. The
+    loader's own sentence, which can quote a command or a path, is the terminal's."""
+    from keryx.integrations.accounts import INTEGRATIONS, connected
+
+    spec = plugins.plugin(status.name)
+    hint = f"refused: {status.refused}" if status.refused else None
+    if spec.needs and not any(connected(settings, spec.needs).values()):
+        account = INTEGRATIONS[spec.needs[0]]
+        signin = account.signin if account.signin in fixes.SIGNINS else None
+        detail = (f"on, but not signed in to {account.called}" if signin
+                  else f"on, but {account.called} is not connected")
+        return Check(status.name, False, detail, severity="soft", section="plugins",
+                     hint=hint, fix=fixes.signin(signin) if signin
+                     else fixes.integration(account.id))
+    return Check(status.name, False, "on, but it does not load", severity="soft",
+                 section="plugins", hint=hint, fix=fixes.plugin(status.name))
 
 
 def _retired_check(store: ConfigStore) -> Check:
@@ -1068,10 +1240,10 @@ def _retired_check(store: ConfigStore) -> Check:
         return Check(
             "retired settings",
             False,
-            f"{', '.join(leftover)} are plugin settings now and nothing reads them — "
-            "`keryx plugins install --from-settings`",
+            f"{', '.join(leftover)} are plugin settings now and nothing reads them",
             severity="soft",
             section="plugins",
+            hint="`keryx plugins install --from-settings` moves them",
         )
     return Check("retired settings", True, "none", severity="soft", section="plugins")
 
@@ -1085,31 +1257,37 @@ def _issues_check(settings: Settings) -> Check:
     """
     name = "issue reports"
     if not settings.issue_reporting:
-        return Check(name, True, "off — `keryx setup` turns them on", severity="soft",
-                     section="issues")
+        return Check(name, True, "off", severity="soft", section="issues",
+                     hint="`keryx setup` turns them on")
+    github = fixes.integration("github")
     checkout = settings.checkout
     if checkout is None or not (checkout / SKILL).is_file():
         return Check(
             name,
             False,
-            "no Keryx checkout with the skill in it — set KERYX_CHECKOUT to a clone",
+            "there is no Keryx checkout with the report skill in it",
             severity="soft",
             section="issues",
             unset=True,
+            hint="set KERYX_CHECKOUT to a clone",
+            fix=fixes.setting("KERYX_CHECKOUT"),
         )
     status = gh_status()
     if not status.installed:
-        detail = f"gh is not installed ({GH_INSTALL_URL}); until it is, reports are not filed"
-        return Check(name, False, detail, severity="soft", section="issues", unset=True)
+        return Check(name, False, "the GitHub command-line tool, gh, is not installed, so "
+                     "reports are not filed", severity="soft", section="issues", unset=True,
+                     hint=GH_INSTALL_URL, fix=github)
     if not status.signed_in:
-        return Check(name, False, "gh is not signed in to GitHub — `gh auth login`",
-                     severity="soft", section="issues", unset=True)
-    detail = f"filed on {settings.issue_repo}" + (
-        f" as {status.account}" if status.account else ""
+        return Check(name, False, "gh is not signed in to GitHub", severity="soft",
+                     section="issues", unset=True, hint="`gh auth login`", fix=github)
+    # The repository last: its name may end in "keryx", which is no command.
+    detail = (f"filed as {status.account} on " if status.account else "filed on ") + (
+        settings.issue_repo
     )
+    hint = None
     if status.keyring:
         detail += (
-            "; gh keeps its token in the keyring, which the background service may not open "
-            "(`gh auth login --insecure-storage` keeps it in a private file instead)"
+            "; gh keeps its token in the keyring, which the background service may not open"
         )
-    return Check(name, True, detail, severity="soft", section="issues")
+        hint = "`gh auth login --insecure-storage` keeps it in a private file instead"
+    return Check(name, True, detail, severity="soft", section="issues", hint=hint)

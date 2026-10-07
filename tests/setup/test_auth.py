@@ -179,7 +179,8 @@ def test_google_for_agents_is_the_doctor_check_auth_status_reads(settings):
 
     assert auth.sign_in("google-workspace", on) == {
         "state": "failed",
-        "detail": "GOOGLE_WORKSPACE_MCP is on but there is no OAuth client — `keryx setup`",
+        "detail": "GOOGLE_WORKSPACE_MCP is on but there is no OAuth client — `keryx setup` "
+        "saves one",
     }
     assert auth.status(on, ConfigStore())["google-workspace"] == auth.sign_in(
         "google-workspace", on

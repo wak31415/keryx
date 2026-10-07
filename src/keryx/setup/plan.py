@@ -40,7 +40,7 @@ from typing import Any
 from keryx.agents.registry import BACKENDS
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
-from keryx.doctor import Check, check_title
+from keryx.doctor import Check, app_facing, check_title
 from keryx.setup.wizard import DONE as WIZARD_DONE
 from keryx.setup.wizard import FAILED as WIZARD_FAILED
 from keryx.setup.wizard import from_checks, section_statuses
@@ -142,7 +142,8 @@ def build_plan(
             if _all_ok(own):
                 active = service_active(settings)
                 own.append(Check(RUNNING_CHECK, active, "running" if active else
-                                 "installed, but not running", section="service"))
+                                 "installed, but not running", section="service",
+                                 fix=None if active else "service:install"))
             own += orphans
         counted = [c for c in own if _counts(step, c)] if required else own
         status = from_checks(counted) if required else found[step.section]
@@ -168,14 +169,15 @@ def build_plan(
         blockers = blocked_by[step.id]
         waiting = [_BY_ID[key] for key in STEP_IDS if key in blockers and not is_done(key)]
         if status == WIZARD_FAILED:
-            state, why = FAILED, _why(counted, "failed", step)
+            state, why, fix = FAILED, _why(counted, "failed", step), _fix(counted, "failed")
         elif waiting:
             state, why = BLOCKED, f"Waits for {_and([s.title for s in waiting])}."
+            fix = None
         elif is_done(step.id):
-            state, why = DONE, None
+            state, why, fix = DONE, None, None
         else:
             state = NEEDED if required else OPTIONAL
-            why = _why(counted, "missing", step)
+            why, fix = _why(counted, "missing", step), _fix(counted, "missing")
         steps.append({
             "id": step.id,
             "title": step.title,
@@ -184,8 +186,10 @@ def build_plan(
             "why": why,
             "blocked_by": blockers,
             "walked": was_walked,
+            "fix": fix,
             "checks": [
-                {"title": check_title(check.name), "state": check.state, "detail": check.detail}
+                {"title": check_title(check.name), "state": check.state,
+                 "detail": check.detail, "fix": check.fix}
                 for check in own
             ],
         })
@@ -258,6 +262,11 @@ def _blockers(step: Step, local: _Local, present: set[str]) -> list[str]:
     return after
 
 
+def _fix(own: list[Check], state: str) -> str | None:
+    """The app's action for the check `_why` names — the first in `state` — or None."""
+    return next((check.fix for check in own if check.state == state), None)
+
+
 def _why(own: list[Check], state: str, step: Step) -> str:
     """One sentence for the app: the first check in `state`, by its title, and what is
     wrong with it in a few words — or the step's own offer. Never a command: what to run is
@@ -268,8 +277,6 @@ def _why(own: list[Check], state: str, step: Step) -> str:
     return step.offer or f"{step.title} is not set up yet."
 
 
-#: What gives a command away, in a detail written for a terminal.
-SHELL_TEXT = ("`", "keryx ", "scripts/", "uv ", "brew ", "$ ")
 #: Details whose first clause is too long for a sentence beside a title, by their start.
 PHRASES = (("calls go to ", "points elsewhere"), ("call status goes to ", "points elsewhere"))
 #: The phrase for a check whose detail is nothing but terminal advice.
@@ -286,7 +293,7 @@ def _phrase(check: Check) -> str:
     for start, phrase in PHRASES:
         if text.startswith(start):
             return phrase
-    if not text or any(shell in text for shell in SHELL_TEXT):
+    if not text or not app_facing(text):
         return GENERIC.get(check.state, "not working")
     return text
 
@@ -327,7 +334,9 @@ def failed_plan(problem: str) -> dict[str, Any]:
             "why": why,
             "blocked_by": [],
             "walked": False,
-            "checks": [{"title": "Settings", "state": "failed", "detail": problem}],
+            "fix": None,
+            "checks": [{"title": "Settings", "state": "failed", "detail": problem,
+                        "fix": None}],
         }
         for step in STEPS
         if step.id != "migrate"  # not knowable without the settings

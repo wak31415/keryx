@@ -27,7 +27,13 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   only tightens secret files to 0600/0700; `--json` carries each check's `section`,
   `state` — ok / missing / failed — `title`, a setting's own when a key names the check, and
   `unknown`, true for one that could not ask — Twilio not answering — which holds no section
-  or setup step back, where Twilio refusing the credentials or a webhook elsewhere does)
+  or setup step back, where Twilio refusing the credentials or a webhook elsewhere does; and
+  `fix` and `hint`. The Mac app never shows a shell command, so a check's `detail` (and the
+  plan's `why`) is written for a person — no command, no path, no traceback,
+  `doctor.app_facing` — and what a terminal runs, or where a thing is on disk, is its
+  `hint`, which `keryx doctor` prints after the detail. `fix` is the app's button for it: one
+  id from the closed set in `keryx/fixes.py`, or null; the plan's steps and their checks
+  carry it too, a step's being its first problem's)
 - Whether it is running, and what it has to say: `uv run keryx status [--json]` (a report,
   so it always exits 0, a `keryx migrate` still to run included; `--json` is the document
   the Mac app's menu bar polls — `keryx/status.py`, schema 1, every part `ok`/`error` with

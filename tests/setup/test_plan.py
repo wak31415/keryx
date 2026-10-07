@@ -2,6 +2,7 @@
 doctor checks and wizard statuses `keryx setup` reads — so the two cannot drift."""
 
 import dataclasses
+import re
 
 import pytest
 
@@ -9,6 +10,7 @@ from keryx.agents.registry import BACKENDS
 from keryx.config import write_enrolled_pin
 from keryx.config.store import ConfigStore
 from keryx.doctor import Check, _webhook_check, run_doctor_checks
+from keryx.fixes import is_valid
 from keryx.notify.twilio_out import TwilioError
 from keryx.setup import plan as setup_plan
 from keryx.setup.plan import (
@@ -109,19 +111,20 @@ def test_a_fresh_machine_needs_every_required_step(plan_of, signed_out):
     assert found["voice"]["why"] == "OpenAI API key: not set."
     assert found["voice"]["checks"] == [
         {"title": "OpenAI API key", "state": "missing",
-         "detail": "not set — the voice session cannot start"}
+         "detail": "not set — the voice session cannot start", "fix": "secret:OPENAI_API_KEY"}
     ]
+    assert found["voice"]["fix"] == "secret:OPENAI_API_KEY"
     assert not any(step["walked"] for step in plan["steps"])
 
 
 def test_every_step_has_the_shape_the_app_decodes(plan_of, signed_out):
     for step in plan_of()["steps"]:
         assert set(step) == {"id", "title", "required", "state", "why", "blocked_by",
-                             "walked", "checks"}
+                             "walked", "fix", "checks"}
         assert step["title"] and isinstance(step["blocked_by"], list)
         assert (step["why"] is None) == (step["state"] == DONE)
         for check in step["checks"]:
-            assert set(check) == {"title", "state", "detail"}
+            assert set(check) == {"title", "state", "detail", "fix"}
 
 
 def test_a_set_up_machine_is_ready(plan_of, set_up):
@@ -130,7 +133,7 @@ def test_a_set_up_machine_is_ready(plan_of, set_up):
     assert {key: states(plan)[key] for key in REQUIRED} == dict.fromkeys(REQUIRED, DONE)
     assert plan["ready"] is True
     assert steps(plan)["service"]["checks"][-1] == {
-        "title": "Service running", "state": "ok", "detail": "running"
+        "title": "Service running", "state": "ok", "detail": "running", "fix": None
     }
 
 
@@ -140,6 +143,7 @@ def test_a_service_installed_and_stopped_failed(plan_of, set_up):
     service = steps(plan)["service"]
     assert service["state"] == FAILED and plan["ready"] is False
     assert service["why"] == "Service running: installed, but not running."
+    assert service["fix"] == service["checks"][-1]["fix"] == "service:install"
 
 
 def test_a_pin_left_to_the_first_call_is_done(plan_of, signed_out):
@@ -321,15 +325,15 @@ def test_a_check_that_could_not_be_asked_leaves_a_sections_status_alone():
 
 
 def test_a_hard_failure_no_step_owns_is_the_services_and_not_ready(plan_of, set_up):
-    broken = Check("data dir writable", False, "/data: read-only file system",
-                   section="security")
+    broken = Check("data dir writable", False, "the folder is read-only",
+                   section="security", hint="/data: read-only file system")
 
     plan = plan_of(extra=[broken])
 
     service = steps(plan)["service"]
     assert plan["ready"] is False
     assert (service["state"], service["why"]) == (
-        FAILED, "Data folder writable: /data: read-only file system."
+        FAILED, "Data folder writable: the folder is read-only."
     )
     assert service["checks"][-1]["title"] == "Data folder writable"
 
@@ -397,6 +401,7 @@ def test_the_migration_comes_first_and_holds_everything_back(plan_of, signed_out
     assert all("migrate" in step["blocked_by"] for step in plan["steps"][1:])
     assert {step["state"] for step in plan["steps"][1:]} <= {BLOCKED, FAILED}
     assert steps(plan)["voice"]["why"] == "Waits for Migration."
+    assert migrate["fix"] == "migrate" and steps(plan)["voice"]["fix"] is None
 
 
 def test_the_checklist_marks_each_step(plan_of, signed_out):
@@ -451,8 +456,10 @@ def test_a_plan_without_settings_fails_every_step_with_why():
     for step in plan["steps"]:
         assert step["state"] == FAILED
         assert step["why"] == "Settings: PORT Input should be a valid integer."
+        assert step["fix"] is None
         assert step["checks"] == [{"title": "Settings", "state": "failed",
-                                   "detail": "PORT Input should be a valid integer"}]
+                                   "detail": "PORT Input should be a valid integer",
+                                   "fix": None}]
 
 
 def test_mark_refuses_a_step_that_is_not_one():
@@ -481,8 +488,18 @@ def test_the_service_is_asked_from_outside_whether_it_runs(monkeypatch, make_ctx
     assert setup_plan._service_active(make_ctx([]).settings) is False
 
 
-#: Doctor's own details, each with a command in it somewhere, as the app must never show one.
-SHELL_TEXT = ("keryx ", "scripts/", "uv ", "`")
+#: What the app must never show: a command, a slash command, a traceback — and a path,
+#: `A_PATH`. Written out here rather than read from `doctor.SHELL_TEXT`.
+SHELL_TEXT = ("keryx ", "scripts/", "uv ", "`", "brew ", "/login", "Traceback")
+A_PATH = re.compile(r"(?:^|[\s(\[\"'])~?/(?!/)\S")
+
+
+def for_the_app(text: str) -> bool:
+    return not any(word in text for word in SHELL_TEXT) and not A_PATH.search(text)
+
+
+#: Details with a command, a path or a traceback in them, as a check made before doctor
+#: moved them to `hint` had: `why` turns each into a phrase the app can show.
 COMMAND_DETAILS = [
     ("model server", "llama-server is not installed — `keryx setup` installs it"),
     ("Codex agent", "not installed — uv sync --extra codex"),
@@ -494,6 +511,9 @@ COMMAND_DETAILS = [
     ("tunnel", "run `brew install cloudflared`"),
     ("voice server program", "uv tool install speech-to-speech"),
     ("storage", "/home/you/.env is configuration Keryx no longer reads — run `keryx migrate`"),
+    ("Claude Code agent", "no login found; run claude and /login once"),
+    ("voice server", "refused the session: Traceback (most recent call last)"),
+    ("data dir writable", "the folder at /data is read-only"),
 ]
 
 
@@ -505,7 +525,7 @@ def test_why_never_names_a_command(plan_of, signed_out, name, detail):
 
     assert voice["state"] == FAILED
     assert voice["why"].endswith(".") and ": " in voice["why"]
-    assert not any(text in voice["why"] for text in SHELL_TEXT), voice["why"]
+    assert for_the_app(voice["why"]), voice["why"]
     assert detail in [check["detail"] for check in voice["checks"]]
 
 
@@ -518,4 +538,56 @@ def test_no_why_on_a_machine_with_everything_missing_names_a_command(
 
     whys = [step["why"] for plan in plans for step in plan["steps"] if step["why"]]
 
-    assert whys and not [why for why in whys if any(text in why for text in SHELL_TEXT)]
+    assert whys and not [why for why in whys if not for_the_app(why)]
+
+
+def _plans(plan_of, tmp_path, monkeypatch) -> list[dict]:
+    """The plan on a fresh machine, with the service stopped, part-way set up, with a
+    migration to run, and without settings at all."""
+    found = [plan_of(active=False)]
+    ConfigStore().set({"OWNER_NAME": "Ada", "OPENAI_API_KEY": "sk-test",
+                       "PUBLIC_HOST": "https://not-a-host.example.com",
+                       "TWILIO_ACCOUNT_SID": "AC1", "TWILIO_AUTH_TOKEN": "t",
+                       "TWILIO_NUMBER": "+15557654321", "ISSUE_REPORTING": "true"})
+    found.append(plan_of())
+    (tmp_path / ".env").write_text("OWNER_NAME=Ada\n")
+    found.append(plan_of())
+    found.append(setup_plan.failed_plan("PORT Input should be a valid integer"))
+    return found
+
+
+def test_no_why_detail_or_fix_the_app_reads_is_a_terminals(plan_of, signed_out, tmp_path,
+                                                          monkeypatch):
+    for plan in _plans(plan_of, tmp_path, monkeypatch):
+        for step in plan["steps"]:
+            assert step["why"] is None or for_the_app(step["why"]), step
+            assert is_valid(step["fix"]), step
+            for check in step["checks"]:
+                assert for_the_app(check["detail"]), check
+                assert is_valid(check["fix"]), check
+                assert check["fix"] is None or check["state"] != "ok", check
+
+
+def test_a_steps_fix_is_its_first_problems(plan_of, signed_out, tmp_path, monkeypatch):
+    """The fix of the check `why` names — the first failed, else the first missing — and
+    none for a step that is done, or waits for another."""
+    for plan in _plans(plan_of, tmp_path, monkeypatch)[:-1]:
+        for step in plan["steps"]:
+            if step["state"] in (DONE, BLOCKED):
+                assert step["fix"] is None, step
+                continue
+            want = "failed" if step["state"] == FAILED else "missing"
+            first = next((c for c in step["checks"] if c["state"] == want), None)
+            if first is not None and step["why"].startswith(first["title"] + ":"):
+                assert step["fix"] == first["fix"], step
+            elif step["why"] is not None and ":" not in step["why"]:
+                assert step["fix"] is None, step  # the step's own offer: no check behind it
+
+
+def test_the_steps_the_app_can_mend_say_how(plan_of, signed_out):
+    found = steps(plan_of())
+
+    assert {key: found[key]["fix"] for key in ("voice", "agents", "owner", "pin")} == {
+        "voice": "secret:OPENAI_API_KEY", "agents": "signin:claude",
+        "owner": "setting:ALLOWED_CALLERS", "pin": "pin",
+    }
