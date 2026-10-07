@@ -94,7 +94,8 @@
         "state": "string",
         "ok": "boolean",
         "unset": "boolean",
-        "title": "string|null"
+        "title": "string|null",
+        "unknown": "boolean|null"
       }
     },
     "tasks list --json": {
@@ -260,7 +261,11 @@
         "protected": "boolean",
         "value": "any|null",
         "choices": "array|null",
-        "has_options": "boolean"
+        "has_options": "boolean",
+        "tab": "string",
+        "tab_title": "string",
+        "tab_order": "integer",
+        "advanced": "boolean"
       }
     },
     "config options KEY --json": {
@@ -321,7 +326,10 @@
         "port": "integer",
         "unit_installed": "boolean",
         "reachable": "boolean",
-        "words_model": "string|null"
+        "words_model": "string|null",
+        "stt": "string",
+        "tts": "string",
+        "models_ready": "boolean"
       },
       "server": {
         "reachable": "boolean|null"
@@ -339,6 +347,252 @@
         "problem": "string|null",
         "restart_needed": "boolean",
         "warnings": "array"
+      }
+    },
+    "auth logout gmail --json": {
+      "": {
+        "name": "string",
+        "signed_in": "boolean",
+        "message": "string"
+      }
+    },
+    "auth logout google-workspace --json": {
+      "": {
+        "name": "string",
+        "signed_in": "boolean",
+        "message": "string"
+      }
+    },
+    "config verify KEY --json": {
+      "": {
+        "key": "string",
+        "ok": "boolean",
+        "problem": "string|null",
+        "detail": "string|null"
+      }
+    },
+    "integrations --json": {
+      "": {
+        "integrations": "array"
+      },
+      "integrations[]": {
+        "id": "string",
+        "title": "string",
+        "description": "string",
+        "connected": "boolean",
+        "why": "string|null",
+        "secrets": "array",
+        "settings": "array",
+        "signin": "string|null",
+        "used_by": "array"
+      }
+    },
+    "models stop --json": {
+      "": {
+        "ok": "boolean",
+        "message": "string"
+      }
+    },
+    "phone numbers --json": {
+      "": {
+        "account": "string|null",
+        "numbers": "array",
+        "error": "string|null"
+      },
+      "numbers[]": {
+        "number": "string",
+        "friendly_name": "string",
+        "voice_url": "string|null",
+        "points_here": "boolean"
+      }
+    },
+    "phone tunnel --json": {
+      "": {
+        "kind": "string|null",
+        "binary": "string|null",
+        "public_host": "string|null",
+        "unit_installed": "boolean",
+        "reachable": "boolean|null",
+        "error": "string|null"
+      }
+    },
+    "phone webhooks --apply --json": {
+      "": {
+        "applied": "boolean",
+        "number": "string"
+      }
+    },
+    "phone webhooks --json": {
+      "": {
+        "number": "string|null",
+        "expected": "object",
+        "current": "object|null",
+        "matches": "boolean",
+        "error": "string|null"
+      },
+      "expected": {
+        "voice_url": "string|null",
+        "status_url": "string|null"
+      }
+    },
+    "pin --json": {
+      "": {
+        "set": "boolean",
+        "source": "string|null",
+        "enrolment_open": "boolean",
+        "locked": "boolean",
+        "locked_until": "string|null"
+      }
+    },
+    "pin set --json": {
+      "": {
+        "set": "boolean",
+        "replaced": "boolean",
+        "restart_needed": "boolean"
+      }
+    },
+    "plugins hosts --json": {
+      "": {
+        "hosts": "array"
+      },
+      "hosts[]": {
+        "alias": "string",
+        "hostname": "string",
+        "user": "string",
+        "control_master": "boolean",
+        "control_path": "string",
+        "master_alive": "boolean"
+      }
+    },
+    "plugins install NAME --json": {
+      "": {
+        "name": "string",
+        "on": "boolean",
+        "message": "string"
+      }
+    },
+    "plugins list --json": {
+      "": {
+        "directory": "string",
+        "plugins": "array"
+      },
+      "plugins[]": {
+        "name": "string",
+        "on": "boolean",
+        "installed": "boolean",
+        "tool_file": "string",
+        "config_file": "string",
+        "refused": "string|null",
+        "settings": "object|null",
+        "title": "string",
+        "description": "string",
+        "fields": "array",
+        "needs": "array",
+        "ready": "boolean",
+        "why": "string|null"
+      },
+      "plugins[].fields[]": {
+        "key": "string",
+        "title": "string",
+        "type": "string",
+        "choices": "array|null",
+        "important": "boolean",
+        "value": "any"
+      }
+    },
+    "plugins remove NAME --json": {
+      "": {
+        "name": "string",
+        "on": "boolean",
+        "message": "string"
+      }
+    },
+    "plugins set NAME --json": {
+      "": {
+        "name": "string",
+        "on": "boolean",
+        "message": "string"
+      }
+    },
+    "service --json": {
+      "": {
+        "manager": "string|null",
+        "units": "object"
+      },
+      "units": {
+        "agent": "object",
+        "tunnel": "object",
+        "llm": "object",
+        "voice": "object"
+      },
+      "units.agent": {
+        "installed": "boolean",
+        "active": "boolean"
+      },
+      "units.tunnel": {
+        "installed": "boolean",
+        "active": "boolean"
+      },
+      "units.llm": {
+        "installed": "boolean",
+        "active": "boolean"
+      },
+      "units.voice": {
+        "installed": "boolean",
+        "active": "boolean"
+      }
+    },
+    "service install --json": {
+      "": {
+        "ok": "boolean",
+        "message": "string"
+      }
+    },
+    "service uninstall --json": {
+      "": {
+        "ok": "boolean",
+        "message": "string"
+      }
+    },
+    "setup mark STEP --json": {
+      "": {
+        "id": "string",
+        "walked": "boolean"
+      }
+    },
+    "setup plan --json": {
+      "": {
+        "schema": "integer",
+        "ready": "boolean",
+        "steps": "array"
+      },
+      "steps[]": {
+        "id": "string",
+        "title": "string",
+        "required": "boolean",
+        "state": "string",
+        "why": "string|null",
+        "blocked_by": "array",
+        "walked": "boolean",
+        "checks": "array"
+      },
+      "steps[].checks[]": {
+        "title": "string",
+        "state": "string",
+        "detail": "string"
+      }
+    },
+    "tools --json": {
+      "": {
+        "directory": "string",
+        "tools": "array",
+        "refused": "array"
+      },
+      "tools[]": {
+        "name": "string",
+        "needs_pin": "boolean",
+        "file": "string",
+        "description": "string"
       }
     }
   },
@@ -385,6 +639,185 @@
         },
         "done": {
           "base_url": "string"
+        },
+        "error": {
+          "message": "string"
+        },
+        "cancelled": {},
+        "progress": {
+          "step": "string",
+          "done": "integer",
+          "total": "integer|null"
+        }
+      },
+      "terminal": [
+        "done",
+        "error",
+        "cancelled"
+      ],
+      "exit": {
+        "done": 0,
+        "error": [
+          1,
+          2
+        ],
+        "cancelled": 130
+      }
+    },
+    "auth login claude --json": {
+      "events": {
+        "open": {
+          "url": "string"
+        },
+        "code": {},
+        "done": {
+          "name": "string",
+          "message": "string",
+          "stored": "string"
+        },
+        "error": {
+          "message": "string"
+        },
+        "cancelled": {}
+      },
+      "terminal": [
+        "done",
+        "error",
+        "cancelled"
+      ],
+      "exit": {
+        "done": 0,
+        "error": [
+          1,
+          2
+        ],
+        "cancelled": 130
+      }
+    },
+    "auth login codex --json": {
+      "events": {
+        "open": {
+          "url": "string",
+          "code": "string"
+        },
+        "done": {
+          "name": "string",
+          "message": "string"
+        },
+        "error": {
+          "message": "string"
+        },
+        "cancelled": {}
+      },
+      "terminal": [
+        "done",
+        "error",
+        "cancelled"
+      ],
+      "exit": {
+        "done": 0,
+        "error": 1,
+        "cancelled": 130
+      }
+    },
+    "auth login gmail --json": {
+      "events": {
+        "open": {
+          "url": "string"
+        },
+        "done": {
+          "name": "string",
+          "message": "string"
+        },
+        "error": {
+          "message": "string"
+        },
+        "cancelled": {}
+      },
+      "terminal": [
+        "done",
+        "error",
+        "cancelled"
+      ],
+      "exit": {
+        "done": 0,
+        "error": 1,
+        "cancelled": 130
+      }
+    },
+    "auth login google-workspace --json": {
+      "events": {
+        "open": {
+          "url": "string"
+        },
+        "done": {
+          "name": "string",
+          "message": "string"
+        },
+        "error": {
+          "message": "string"
+        },
+        "cancelled": {}
+      },
+      "terminal": [
+        "done",
+        "error",
+        "cancelled"
+      ],
+      "exit": {
+        "done": 0,
+        "error": 1,
+        "cancelled": 130
+      }
+    },
+    "models start --json": {
+      "events": {
+        "step": {
+          "step": "string",
+          "message": "string"
+        },
+        "progress": {
+          "step": "string",
+          "done": "integer",
+          "total": "integer|null"
+        },
+        "done": {
+          "url": "string",
+          "served_model": "string"
+        },
+        "error": {
+          "message": "string"
+        },
+        "cancelled": {}
+      },
+      "terminal": [
+        "done",
+        "error",
+        "cancelled"
+      ],
+      "exit": {
+        "done": 0,
+        "error": [
+          1,
+          2
+        ],
+        "cancelled": 130
+      }
+    },
+    "voice download --json": {
+      "events": {
+        "step": {
+          "step": "string",
+          "message": "string"
+        },
+        "progress": {
+          "step": "string",
+          "done": "integer",
+          "total": "integer|null"
+        },
+        "done": {
+          "stt": "string",
+          "tts": "string"
         },
         "error": {
           "message": "string"

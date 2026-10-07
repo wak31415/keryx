@@ -55,6 +55,68 @@ public enum PreviewData {
     /// `voice use here` refused for want of a local model, captured from a sandbox.
     public static var voiceHereRefusedLines: [String] { lines("voice-here-refused.jsonl") }
 
+    // MARK: Setup, phone, service, accounts and plugins
+
+    /// `setup plan --json`: a new machine (sandbox), one part way (sandbox: the owner, the
+    /// PIN and a skipped step done, a plugin refused), and one ready for a first call
+    /// (hand-edited from the part-way plan: a sandbox has no key, no agent and no Twilio).
+    public static var setupPlan: SetupPlan { decode("setup-plan.json") }
+    public static var setupPlanPartway: SetupPlan { decode("setup-plan-partway.json") }
+    public static var setupPlanReady: SetupPlan { decode("setup-plan-ready.json") }
+
+    /// `pin --json`: none yet (sandbox), one kept in its file (sandbox), and — written by
+    /// hand — locked after wrong guesses, and one in the environment.
+    public static var pinNone: PinStatus { decode("pin.json") }
+    public static var pinFile: PinStatus { decode("pin-file.json") }
+    public static var pinLocked: PinStatus { decode("pin-locked.json") }
+    public static var pinEnvironment: PinStatus { decode("pin-environment.json") }
+
+    /// `service --json` in the faked run's shape, its units edited by hand: Keryx and its
+    /// tunnel running, the model server installed and stopped, no voice server.
+    public static var service: ServiceReport { decode("service.json") }
+
+    /// `phone numbers --json`: the faked account's number, and one more by hand that
+    /// already points here; and with nothing saved to ask Twilio with (sandbox).
+    public static var phoneNumbers: PhoneNumbers { decode("phone-numbers.json") }
+    public static var phoneNumbersUnset: PhoneNumbers { decode("phone-numbers-unset.json") }
+    /// `phone webhooks --json`: pointed elsewhere (faked run), nothing saved (sandbox), and
+    /// already pointed here (hand-edited).
+    public static var phoneWebhooks: PhoneWebhooks { decode("phone-webhooks.json") }
+    public static var phoneWebhooksUnset: PhoneWebhooks { decode("phone-webhooks-unset.json") }
+    public static var phoneWebhooksMatching: PhoneWebhooks { decode("phone-webhooks-matching.json") }
+    /// `phone tunnel --json`: cloudflared answering at its host (faked run; `reachable` by
+    /// hand), and no host and no tunnel (sandbox).
+    public static var phoneTunnel: PhoneTunnel { decode("phone-tunnel.json") }
+    public static var phoneTunnelUnset: PhoneTunnel { decode("phone-tunnel-unset.json") }
+
+    /// `integrations --json` from the sandbox: Slack connected, the rest not.
+    public static var integrations: IntegrationsReport { decode("integrations.json") }
+    /// `plugins list --json` from the sandbox: Slack on, Email answers installed and
+    /// refused, Billing on and not ready, Cluster stats off.
+    public static var plugins: PluginsReport { decode("plugins.json") }
+    /// `tools --json` from the sandbox: the plugins' tools and two of the owner's, one file
+    /// that will not import and one plugin refused.
+    public static var tools: ToolsReport { decode("tools.json") }
+    /// `plugins hosts --json`, written by hand: `ssh -G` reads the real ~/.ssh/config
+    /// whatever HOME says, so a sandbox cannot give it.
+    public static var sshHosts: SshHostsReport { decode("ssh-hosts.json") }
+
+    // MARK: Streams
+
+    /// `models start --json`: llama.cpp installed (its sizes unknown), its unit, the model
+    /// loaded and checked — the faked run with its runtime download added by hand.
+    public static var modelsStartLines: [String] { lines("models-start.jsonl") }
+    /// `models start --json` with no model chosen: refused before anything (faked run).
+    public static var modelsStartRefusedLines: [String] { lines("models-start-refused.jsonl") }
+    /// `voice download --json`: the faked run, with real sizes put in by hand.
+    public static var voiceDownloadLines: [String] { lines("voice-download.jsonl") }
+
+    /// `auth login NAME --json` signing in, from the faked runs (their one-off state and
+    /// challenge replaced).
+    public static func signInLines(_ provider: SignInProvider) -> [String] {
+        lines("login-\(provider.rawValue).jsonl")
+    }
+
     private static func lines(_ name: String) -> [String] {
         String(decoding: data(name), as: UTF8.self)
             .split(separator: "\n", omittingEmptySubsequences: true)

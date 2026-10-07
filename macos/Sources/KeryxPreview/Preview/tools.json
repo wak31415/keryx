@@ -1,0 +1,39 @@
+{
+  "directory": "/Users/you/.local/share/keryx/tools",
+  "tools": [
+    {
+      "name": "check_billing",
+      "needs_pin": false,
+      "file": "check_billing.py",
+      "description": "What the API bill is so far this month, and what it is on track to be. No PIN needed: it only reads. Call it for \"what am I spending\", \"how much has this cost\", \"what's the bill\" rather than guessing or dispatching. Say \"one moment\", then the money to the nearest dollar or two \u2014 \"about thirty-one dollars so far, on track for ninety-odd\" \u2014 never every decimal, once, and call the month-end figure an estimate, because it is a straight-line projection. Leave provider out for the configured default; ask for anthropic when they mean what Claude and the subagents have cost. If it comes back with a status other than ok, say the one thing it tells you to say and do not speculate about why."
+    },
+    {
+      "name": "open_garage",
+      "needs_pin": true,
+      "file": "garage.py",
+      "description": "Opens the garage door. Say that it is opening, and nothing else."
+    },
+    {
+      "name": "send_to_slack",
+      "needs_pin": true,
+      "file": "send_to_slack.py",
+      "description": "Send Ada a written message on Slack, in the direct-message channel they already use for this. Needs the PIN \u2014 call it anyway and let it ask. Only call it when they have explicitly asked for something in writing \u2014 \"send me that\", \"Slack me that\", \"put it on Slack\", \"text me the link\", \"I want that in writing\". Never call it unasked, however awkward the content is to say out loud, and never volunteer a written copy of something you have already said; but when they ask for what you just said in writing, that is exactly what to send, with this tool. If something truly will not survive being spoken \u2014 a long link, a list of ten things \u2014 offer it in half a sentence (\"want that on Slack?\") and call this only once they say yes. When it comes back sent, say so in a few words, once. For anything a subagent produced (a file, a plot, a report), dispatch the sending to Claude instead: it can attach the file itself."
+    },
+    {
+      "name": "tides",
+      "needs_pin": false,
+      "file": "tides.py",
+      "description": "The next high and low tide at the owner's harbour. Say the two times in one sentence."
+    }
+  ],
+  "refused": [
+    {
+      "file": "broken.py",
+      "reason": "ModuleNotFoundError: No module named 'not_a_module_anyone_has'"
+    },
+    {
+      "file": "check_email.py",
+      "reason": "not signed in to Gmail: `keryx auth login gmail`"
+    }
+  ]
+}

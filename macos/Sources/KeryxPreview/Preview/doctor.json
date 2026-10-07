@@ -9,7 +9,8 @@
       "section": "import",
       "unset": false,
       "state": "ok",
-      "title": "Storage"
+      "title": "Storage",
+      "unknown": false
     },
     {
       "name": "configuration",
@@ -19,7 +20,8 @@
       "section": "import",
       "unset": false,
       "state": "ok",
-      "title": "Configuration"
+      "title": "Configuration",
+      "unknown": false
     },
     {
       "name": "OPENAI_API_KEY",
@@ -29,7 +31,8 @@
       "section": "voice",
       "unset": false,
       "state": "ok",
-      "title": "OpenAI API key"
+      "title": "OpenAI API key",
+      "unknown": false
     },
     {
       "name": "coding agents",
@@ -39,7 +42,8 @@
       "section": "agents",
       "unset": false,
       "state": "ok",
-      "title": "Coding agents"
+      "title": "Coding agents",
+      "unknown": false
     },
     {
       "name": "Claude Code agent (default)",
@@ -49,7 +53,8 @@
       "section": "agents",
       "unset": true,
       "state": "missing",
-      "title": "Claude Code agent (default)"
+      "title": "Claude Code agent (default)",
+      "unknown": false
     },
     {
       "name": "Local model agent",
@@ -59,7 +64,8 @@
       "section": "local",
       "unset": false,
       "state": "ok",
-      "title": "Local model agent"
+      "title": "Local model agent",
+      "unknown": false
     },
     {
       "name": "local models",
@@ -69,7 +75,8 @@
       "section": "local",
       "unset": false,
       "state": "ok",
-      "title": "Local models"
+      "title": "Local models",
+      "unknown": false
     },
     {
       "name": "model server",
@@ -79,7 +86,8 @@
       "section": "local",
       "unset": false,
       "state": "failed",
-      "title": "Model server"
+      "title": "Model server",
+      "unknown": false
     },
     {
       "name": "local agent server",
@@ -89,7 +97,8 @@
       "section": "local",
       "unset": false,
       "state": "failed",
-      "title": "Local agent server"
+      "title": "Local agent server",
+      "unknown": false
     },
     {
       "name": "Twilio credentials",
@@ -99,7 +108,8 @@
       "section": "phone",
       "unset": true,
       "state": "missing",
-      "title": "Twilio credentials"
+      "title": "Twilio credentials",
+      "unknown": false
     },
     {
       "name": "Twilio signatures",
@@ -109,7 +119,8 @@
       "section": "phone",
       "unset": false,
       "state": "ok",
-      "title": "Twilio signatures"
+      "title": "Twilio signatures",
+      "unknown": false
     },
     {
       "name": "PUBLIC_HOST",
@@ -119,7 +130,8 @@
       "section": "phone",
       "unset": false,
       "state": "ok",
-      "title": "Public hostname"
+      "title": "Public hostname",
+      "unknown": false
     },
     {
       "name": "tunnel",
@@ -129,7 +141,8 @@
       "section": "phone",
       "unset": true,
       "state": "missing",
-      "title": "Tunnel"
+      "title": "Tunnel",
+      "unknown": false
     },
     {
       "name": "allowed callers",
@@ -139,7 +152,8 @@
       "section": "owner",
       "unset": true,
       "state": "missing",
-      "title": "Allowed callers"
+      "title": "Allowed callers",
+      "unknown": false
     },
     {
       "name": "PIN",
@@ -149,7 +163,8 @@
       "section": "owner",
       "unset": false,
       "state": "ok",
-      "title": "PIN"
+      "title": "PIN",
+      "unknown": false
     },
     {
       "name": "owner name",
@@ -159,7 +174,8 @@
       "section": "owner",
       "unset": true,
       "state": "missing",
-      "title": "Owner name"
+      "title": "Owner name",
+      "unknown": false
     },
     {
       "name": "service manager",
@@ -169,7 +185,8 @@
       "section": "service",
       "unset": true,
       "state": "missing",
-      "title": "Service manager"
+      "title": "Service manager",
+      "unknown": false
     },
     {
       "name": "data dir writable",
@@ -179,7 +196,8 @@
       "section": "security",
       "unset": false,
       "state": "ok",
-      "title": "Data folder writable"
+      "title": "Data folder writable",
+      "unknown": false
     },
     {
       "name": "data dir private",
@@ -189,7 +207,8 @@
       "section": "security",
       "unset": false,
       "state": "ok",
-      "title": "Data folder private"
+      "title": "Data folder private",
+      "unknown": false
     },
     {
       "name": "secret files private",
@@ -199,7 +218,8 @@
       "section": "security",
       "unset": false,
       "state": "ok",
-      "title": "Secret files private"
+      "title": "Secret files private",
+      "unknown": false
     },
     {
       "name": "outside git",
@@ -209,7 +229,8 @@
       "section": "security",
       "unset": false,
       "state": "ok",
-      "title": "Settings outside Git"
+      "title": "Settings outside Git",
+      "unknown": false
     },
     {
       "name": "config.toml",
@@ -219,7 +240,8 @@
       "section": "security",
       "unset": false,
       "state": "ok",
-      "title": "Settings file"
+      "title": "Settings file",
+      "unknown": false
     },
     {
       "name": "protected settings",
@@ -229,7 +251,8 @@
       "section": "security",
       "unset": false,
       "state": "ok",
-      "title": "Protected settings"
+      "title": "Protected settings",
+      "unknown": false
     },
     {
       "name": "old .env",
@@ -239,7 +262,8 @@
       "section": "security",
       "unset": false,
       "state": "ok",
-      "title": "Old .env file"
+      "title": "Old .env file",
+      "unknown": false
     },
     {
       "name": "Google for agents",
@@ -249,7 +273,8 @@
       "section": "google",
       "unset": true,
       "state": "missing",
-      "title": "Google for agents"
+      "title": "Google for agents",
+      "unknown": false
     },
     {
       "name": "memory",
@@ -259,7 +284,8 @@
       "section": "profile",
       "unset": false,
       "state": "ok",
-      "title": "Memory"
+      "title": "Memory",
+      "unknown": false
     },
     {
       "name": "projects root",
@@ -269,7 +295,8 @@
       "section": "projects",
       "unset": false,
       "state": "ok",
-      "title": "Projects root"
+      "title": "Projects root",
+      "unknown": false
     },
     {
       "name": "send_to_slack",
@@ -279,7 +306,8 @@
       "section": "plugins",
       "unset": true,
       "state": "missing",
-      "title": "Slack"
+      "title": "Slack",
+      "unknown": false
     },
     {
       "name": "check_email",
@@ -289,7 +317,8 @@
       "section": "plugins",
       "unset": true,
       "state": "missing",
-      "title": "Email answers"
+      "title": "Email answers",
+      "unknown": false
     },
     {
       "name": "check_billing",
@@ -299,7 +328,8 @@
       "section": "plugins",
       "unset": true,
       "state": "missing",
-      "title": "Billing"
+      "title": "Billing",
+      "unknown": false
     },
     {
       "name": "cluster_stats",
@@ -309,7 +339,8 @@
       "section": "plugins",
       "unset": true,
       "state": "missing",
-      "title": "Cluster stats"
+      "title": "Cluster stats",
+      "unknown": false
     },
     {
       "name": "retired settings",
@@ -319,7 +350,8 @@
       "section": "plugins",
       "unset": false,
       "state": "ok",
-      "title": "Retired settings"
+      "title": "Retired settings",
+      "unknown": false
     },
     {
       "name": "issue reports",
@@ -329,7 +361,8 @@
       "section": "issues",
       "unset": false,
       "state": "ok",
-      "title": "Issue reports"
+      "title": "Issue reports",
+      "unknown": false
     }
   ]
 }

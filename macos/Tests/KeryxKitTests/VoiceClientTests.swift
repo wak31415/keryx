@@ -193,4 +193,21 @@ import KeryxPreview
         #expect(VoiceSetupEvent.parse("not json") == nil)
         #expect(VoiceSetupEvent.parse(#"{"event": "something new"}"#) == nil)
     }
+
+    @Test func aProgressLineIsBytesInItsStepItsTotalMaybeUnknown() {
+        #expect(VoiceSetupEvent.parse(#"{"event": "progress", "step": "download", "done": 1, "total": 2}"#)
+            == .progress(step: "download", done: 1, total: 2))
+        #expect(VoiceSetupEvent.parse(#"{"event": "progress", "step": "download", "done": 1, "total": null}"#)
+            == .progress(step: "download", done: 1, total: nil))
+        #expect(VoiceSetupEvent.parse(#"{"event": "progress", "step": "download", "done": true}"#) == nil)
+        #expect(VoiceSetupEvent.parse(#"{"event": "progress", "done": 1}"#) == nil)
+        #expect(VoiceSetupEvent.progress(step: "download", done: 1, total: nil).isTerminal == false)
+    }
+
+    @Test func theVoiceSaysItsSpeechModels() {
+        #expect(PreviewData.voice.here.stt == "parakeet-tdt")
+        #expect(PreviewData.voice.here.tts == "kokoro")
+        #expect(!PreviewData.voice.here.modelsReady)
+        #expect(PreviewData.voiceHere.here.modelsReady)
+    }
 }

@@ -12,7 +12,10 @@
     "port": 8765,
     "unit_installed": false,
     "reachable": false,
-    "words_model": "qwen3-coder-30b-a3b"
+    "words_model": "qwen3-coder-30b-a3b",
+    "stt": "parakeet-tdt",
+    "tts": "kokoro",
+    "models_ready": false
   },
   "needs": null,
   "server": {

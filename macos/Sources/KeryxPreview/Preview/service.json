@@ -1,0 +1,21 @@
+{
+  "manager": "launchd",
+  "units": {
+    "agent": {
+      "installed": true,
+      "active": true
+    },
+    "tunnel": {
+      "installed": true,
+      "active": true
+    },
+    "llm": {
+      "installed": true,
+      "active": false
+    },
+    "voice": {
+      "installed": false,
+      "active": false
+    }
+  }
+}

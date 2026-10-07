@@ -1,0 +1,2 @@
+{"event": "open", "url": "https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=cid&state=example"}
+{"event": "done", "name": "google-workspace", "message": "Google for agents is signed in: Gmail and Calendar."}

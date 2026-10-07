@@ -37,6 +37,28 @@ import KeryxPreview
 
     static let install = VoiceSetupEvent.step(step: "install", message: "Installing the voice server", progress: nil)
 
+    @Test func theSpeechModelsDownloadShowsItsBytesUnderItsStepsWords() async {
+        let setup = makeSetup()
+        let manual = ManualSetup()
+        setup.start(voice: nil, client: client(manual), onFinish: {})
+        manual.send(.step(step: "download", message: "Downloading the voice's speech models", progress: nil))
+        manual.send(.progress(step: "download", done: 1, total: 4))
+        #expect(await eventually {
+            setup.phase == .running(step: "download", message: "Downloading the voice's speech models",
+                                    progress: .init(done: 1, total: 4))
+        })
+        // A size Hugging Face does not say is 0: the bar has no end.
+        manual.send(.progress(step: "download", done: 2, total: nil))
+        #expect(await eventually {
+            setup.phase == .running(step: "download", message: "Downloading the voice's speech models",
+                                    progress: .init(done: 2, total: 0))
+        })
+        manual.send(.step(step: "configure", message: "Saving", progress: nil))
+        #expect(await eventually { setup.phase == .running(step: "configure", message: "Saving", progress: nil) })
+        manual.finish()
+        await setup.settled()
+    }
+
     @Test func stepsAreShownAsTheyComeAndDoneFinishes() async {
         let setup = makeSetup()
         let manual = ManualSetup()

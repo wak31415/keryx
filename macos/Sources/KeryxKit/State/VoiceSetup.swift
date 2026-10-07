@@ -13,8 +13,9 @@ import Observation
 @Observable @MainActor
 public final class VoiceSetup {
     public enum Phase: Equatable, Sendable {
-        /// `step` is the CLI's phase (`install`, `configure`, `unit`, `start`), empty until
-        /// the first is announced; `progress` only while the phase reports sizes.
+        /// `step` is the CLI's phase (`install`, `download`, `configure`, `unit`, `start`),
+        /// empty until the first is announced; `progress` only while the phase reports
+        /// sizes (`total` 0 when the size is not known).
         case running(step: String, message: String, progress: VoiceSetupEvent.Progress?)
         /// Asked to stop, and not yet stopped: nothing may start until it has.
         case cancelling
@@ -113,11 +114,17 @@ public final class VoiceSetup {
         step: @MainActor (String, String, VoiceSetupEvent.Progress?) -> Void
     ) async -> Outcome {
         var outcome: Outcome?
+        // A progress line says its step, not its words: those of the step it belongs to.
+        var lastMessage = starting
         do {
             for try await event in stream {
                 guard outcome == nil else { continue }
                 switch event {
-                case let .step(name, message, progress): step(name, message, progress)
+                case let .step(name, message, progress):
+                    lastMessage = message
+                    step(name, message, progress)
+                case let .progress(name, done, total):
+                    step(name, lastMessage, .init(done: done, total: total ?? 0))
                 case let .done(url): outcome = .finished(url)
                 case let .error(message): outcome = .failed(message)
                 case .cancelled: outcome = .cancelled

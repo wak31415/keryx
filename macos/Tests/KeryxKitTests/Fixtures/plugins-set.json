@@ -1,0 +1,5 @@
+{
+  "name": "check_billing",
+  "on": true,
+  "message": "Settings saved."
+}

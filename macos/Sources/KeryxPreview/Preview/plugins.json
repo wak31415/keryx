@@ -1,0 +1,196 @@
+{
+  "directory": "/Users/you/.local/share/keryx/tools",
+  "plugins": [
+    {
+      "name": "send_to_slack",
+      "on": true,
+      "installed": true,
+      "tool_file": "/Users/you/.local/share/keryx/tools/send_to_slack.py",
+      "config_file": "/Users/you/.local/share/keryx/tools/send_to_slack.toml",
+      "refused": null,
+      "settings": {
+        "channel_id": "D0PLACEHOLD",
+        "mcp_server": ""
+      },
+      "title": "Slack",
+      "description": "Sends you a written copy on Slack when you ask for one on a call, and posts PIN lockouts there too.",
+      "fields": [
+        {
+          "key": "channel_id",
+          "title": "DM channel ID",
+          "type": "string",
+          "choices": null,
+          "important": true,
+          "value": "D0PLACEHOLD"
+        },
+        {
+          "key": "mcp_server",
+          "title": "Slack MCP server",
+          "type": "string",
+          "choices": null,
+          "important": false,
+          "value": ""
+        }
+      ],
+      "needs": [
+        "slack"
+      ],
+      "ready": true,
+      "why": null
+    },
+    {
+      "name": "check_email",
+      "on": false,
+      "installed": true,
+      "tool_file": "/Users/you/.local/share/keryx/tools/check_email.py",
+      "config_file": "/Users/you/.local/share/keryx/tools/check_email.toml",
+      "refused": "not signed in to Gmail: `keryx auth login gmail`",
+      "settings": {
+        "model": "claude-opus-5-5",
+        "effort": "low"
+      },
+      "title": "Email answers",
+      "description": "Answers questions about your email on a call in about five seconds, from a read-only look at Gmail.",
+      "fields": [
+        {
+          "key": "model",
+          "title": "Model",
+          "type": "string",
+          "choices": null,
+          "important": false,
+          "value": "claude-opus-5-5"
+        },
+        {
+          "key": "effort",
+          "title": "Effort",
+          "type": "choice",
+          "choices": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "important": false,
+          "value": "low"
+        }
+      ],
+      "needs": [
+        "gmail"
+      ],
+      "ready": false,
+      "why": "Connect Gmail in Integrations first."
+    },
+    {
+      "name": "check_billing",
+      "on": true,
+      "installed": true,
+      "tool_file": "/Users/you/.local/share/keryx/tools/check_billing.py",
+      "config_file": "/Users/you/.local/share/keryx/tools/check_billing.toml",
+      "refused": null,
+      "settings": {
+        "provider": "openai",
+        "monthly_budget": 60,
+        "openai_project_id": "",
+        "openai_api_key_id": "",
+        "anthropic_workspace_id": ""
+      },
+      "title": "Billing",
+      "description": "Tells you what you are spending, read from OpenAI's or Anthropic's billing API.",
+      "fields": [
+        {
+          "key": "provider",
+          "title": "Provider",
+          "type": "choice",
+          "choices": [
+            "auto",
+            "openai",
+            "anthropic"
+          ],
+          "important": true,
+          "value": "openai"
+        },
+        {
+          "key": "monthly_budget",
+          "title": "Monthly budget (USD)",
+          "type": "float",
+          "choices": null,
+          "important": true,
+          "value": 60
+        },
+        {
+          "key": "openai_project_id",
+          "title": "OpenAI project ID",
+          "type": "string",
+          "choices": null,
+          "important": false,
+          "value": ""
+        },
+        {
+          "key": "openai_api_key_id",
+          "title": "OpenAI API key ID",
+          "type": "string",
+          "choices": null,
+          "important": false,
+          "value": ""
+        },
+        {
+          "key": "anthropic_workspace_id",
+          "title": "Anthropic workspace ID",
+          "type": "string",
+          "choices": null,
+          "important": false,
+          "value": ""
+        }
+      ],
+      "needs": [
+        "openai-admin",
+        "anthropic-admin"
+      ],
+      "ready": false,
+      "why": "Connect the OpenAI admin key or the Anthropic admin key in Integrations first."
+    },
+    {
+      "name": "cluster_stats",
+      "on": false,
+      "installed": false,
+      "tool_file": "/Users/you/.local/share/keryx/tools/cluster_stats.py",
+      "config_file": "/Users/you/.local/share/keryx/tools/cluster_stats.toml",
+      "refused": null,
+      "settings": {
+        "clusters": {},
+        "guard": "",
+        "timeout_s": 20.0
+      },
+      "title": "Cluster stats",
+      "description": "Tells you what is free on your Slurm cluster and whether your jobs are still running, over the ssh login you already have open.",
+      "fields": [
+        {
+          "key": "clusters",
+          "title": "Clusters",
+          "type": "map",
+          "choices": null,
+          "important": true,
+          "value": {}
+        },
+        {
+          "key": "guard",
+          "title": "Guard script",
+          "type": "string",
+          "choices": null,
+          "important": false,
+          "value": ""
+        },
+        {
+          "key": "timeout_s",
+          "title": "Timeout (seconds)",
+          "type": "float",
+          "choices": null,
+          "important": false,
+          "value": 20.0
+        }
+      ],
+      "needs": [],
+      "ready": false,
+      "why": "Needs a cluster host."
+    }
+  ]
+}

@@ -1,0 +1,249 @@
+{
+  "schema": 1,
+  "ready": false,
+  "steps": [
+    {
+      "id": "voice",
+      "title": "Voice",
+      "required": true,
+      "state": "needed",
+      "why": "OpenAI API key: not set.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "OpenAI API key",
+          "state": "missing",
+          "detail": "not set \u2014 the voice session cannot start"
+        }
+      ]
+    },
+    {
+      "id": "agents",
+      "title": "Coding agents",
+      "required": true,
+      "state": "needed",
+      "why": "Claude Code agent (default): no login found.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Coding agents",
+          "state": "ok",
+          "detail": "claude by default; enabled: claude"
+        },
+        {
+          "title": "Claude Code agent (default)",
+          "state": "missing",
+          "detail": "/Users/you/code/keryx/.venv/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude; no login found \u2014 run `claude` and `/login` once, or `claude setup-token` for a headless machine, or set ANTHROPIC_API_KEY"
+        }
+      ]
+    },
+    {
+      "id": "owner",
+      "title": "Owner",
+      "required": true,
+      "state": "needed",
+      "why": "Allowed callers: ALLOWED_CALLERS is empty.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Allowed callers",
+          "state": "missing",
+          "detail": "ALLOWED_CALLERS is empty \u2014 every call is refused"
+        },
+        {
+          "title": "Owner name",
+          "state": "missing",
+          "detail": "OWNER_NAME is not set \u2014 the prompts call you \"the owner\""
+        }
+      ]
+    },
+    {
+      "id": "pin",
+      "title": "PIN",
+      "required": true,
+      "state": "needed",
+      "why": "PIN: no PIN yet.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "PIN",
+          "state": "missing",
+          "detail": "no PIN yet \u2014 `keryx setup` or the first call can set one, and nothing of yours is read out until then"
+        }
+      ]
+    },
+    {
+      "id": "phone",
+      "title": "Phone",
+      "required": true,
+      "state": "blocked",
+      "why": "Waits for Owner.",
+      "blocked_by": [
+        "owner"
+      ],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Twilio credentials",
+          "state": "missing",
+          "detail": "missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER \u2014 no phone channel"
+        },
+        {
+          "title": "Twilio signatures",
+          "state": "ok",
+          "detail": "validated"
+        },
+        {
+          "title": "Public hostname",
+          "state": "missing",
+          "detail": "not set \u2014 Twilio cannot reach this machine"
+        },
+        {
+          "title": "Tunnel",
+          "state": "missing",
+          "detail": "none of cloudflared, ngrok on PATH \u2014 no tunnel for the phone channel"
+        }
+      ]
+    },
+    {
+      "id": "service",
+      "title": "Background service",
+      "required": true,
+      "state": "blocked",
+      "why": "Waits for Voice, Coding agents and Phone.",
+      "blocked_by": [
+        "phone",
+        "voice",
+        "agents"
+      ],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Service manager",
+          "state": "missing",
+          "detail": "dev.keryx.agent is not installed (scripts/install-launchd.sh) \u2014 `keryx restart` and the voice's restart_service refuse, and nothing restarts Keryx if it dies"
+        }
+      ]
+    },
+    {
+      "id": "local",
+      "title": "Local models",
+      "required": false,
+      "state": "optional",
+      "why": "Optional: the voice and the coding agent can run on this Mac.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Local models",
+          "state": "ok",
+          "detail": "none (optional) \u2014 `keryx setup` can run the voice and the agent on your own hardware"
+        }
+      ]
+    },
+    {
+      "id": "google",
+      "title": "Google",
+      "required": false,
+      "state": "done",
+      "why": null,
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Google for agents",
+          "state": "ok",
+          "detail": "Claude's own connectors carry Gmail and Calendar"
+        }
+      ]
+    },
+    {
+      "id": "plugins",
+      "title": "Plugins",
+      "required": false,
+      "state": "optional",
+      "why": "Slack: off.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Slack",
+          "state": "missing",
+          "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install send_to_slack`"
+        },
+        {
+          "title": "Email answers",
+          "state": "missing",
+          "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install check_email`"
+        },
+        {
+          "title": "Billing",
+          "state": "missing",
+          "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install check_billing`"
+        },
+        {
+          "title": "Cluster stats",
+          "state": "missing",
+          "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install cluster_stats`"
+        },
+        {
+          "title": "Retired settings",
+          "state": "ok",
+          "detail": "none"
+        }
+      ]
+    },
+    {
+      "id": "issues",
+      "title": "Issue reports",
+      "required": false,
+      "state": "optional",
+      "why": "Off until you choose: Keryx can file its own bug reports and your ideas.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Issue reports",
+          "state": "ok",
+          "detail": "off \u2014 `keryx setup` turns them on"
+        }
+      ]
+    },
+    {
+      "id": "profile",
+      "title": "About you",
+      "required": false,
+      "state": "optional",
+      "why": "Memory: nothing remembered yet.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Memory",
+          "state": "missing",
+          "detail": "nothing remembered yet \u2014 `keryx setup` writes a first memory, and every authorized call adds to it"
+        }
+      ]
+    },
+    {
+      "id": "projects",
+      "title": "Project context",
+      "required": false,
+      "state": "optional",
+      "why": "Projects root: /Users/you/projects does not exist.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Projects root",
+          "state": "missing",
+          "detail": "/Users/you/projects does not exist \u2014 a task with no project starts in /Users/you/.local/share/keryx/workspace; set PROJECTS_ROOT"
+        }
+      ]
+    }
+  ]
+}

@@ -12,7 +12,10 @@
     "port": 8765,
     "unit_installed": false,
     "reachable": false,
-    "words_model": null
+    "words_model": null,
+    "stt": "parakeet-tdt",
+    "tts": "kokoro",
+    "models_ready": false
   },
   "needs": "local_agent_model",
   "server": {

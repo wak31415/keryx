@@ -1,0 +1,6 @@
+{
+  "key": "OPENAI_API_KEY",
+  "ok": false,
+  "problem": "There's no OPENAI_API_KEY to check.",
+  "detail": null
+}

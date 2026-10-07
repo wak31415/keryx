@@ -50,6 +50,13 @@ public struct HereVoice: Codable, Sendable, Equatable {
     public var reachable: Bool
     /// The local model it puts the words in; `nil` while there is none.
     public var wordsModel: String?
+    /// The speech-to-text model it hears with (`VOICE_SERVER_STT`).
+    public var stt: String
+    /// The text-to-speech model it speaks with (`VOICE_SERVER_TTS`).
+    public var tts: String
+    /// Both are already in the Hugging Face cache, so its first start downloads nothing
+    /// (`keryx voice download` fetches them ahead).
+    public var modelsReady: Bool
 }
 
 /// A voice server somewhere else.
@@ -109,15 +116,19 @@ public struct VoiceServerResult: Codable, Sendable, Equatable {
 /// One line of `keryx voice use here --json`. Like `PullEvent`, parsed by hand: a line that
 /// is not one of these is not an event.
 public enum VoiceSetupEvent: Equatable, Sendable {
-    /// A phase begins (`install`, `configure`, `unit`, `start`). `progress` only when the
-    /// tool reports sizes; without it the phase's length is unknown.
+    /// A phase begins (`install`, `download`, `configure`, `unit`, `start`). `progress` only
+    /// when an older CLI nests sizes in the step; a current one says them in `.progress`.
     case step(step: String, message: String, progress: Progress?)
+    /// Bytes so far while the speech models download (`step` is `download`); `total` is
+    /// `nil` when Hugging Face does not say.
+    case progress(step: String, done: Int64, total: Int64?)
     case done(baseURL: String)
     case error(String)
     case cancelled
 
     public struct Progress: Equatable, Sendable {
         public var done: Int64
+        /// 0 when the size is not known.
         public var total: Int64
 
         public init(done: Int64, total: Int64) {
@@ -132,7 +143,10 @@ public enum VoiceSetupEvent: Equatable, Sendable {
 
     /// It ends the setup.
     public var isTerminal: Bool {
-        if case .step = self { false } else { true }
+        switch self {
+        case .step, .progress: false
+        case .done, .error, .cancelled: true
+        }
     }
 
     public static func parse(_ line: String) -> VoiceSetupEvent? {
@@ -152,6 +166,14 @@ public enum VoiceSetupEvent: Equatable, Sendable {
                 progress = Progress(done: done, total: total)
             }
             return .step(step: step, message: message, progress: progress)
+        case "progress":
+            guard let step = object["step"] as? String,
+                  let done = object["done"] as? NSNumber, CFGetTypeID(done) != CFBooleanGetTypeID()
+            else { return nil }
+            let total = (object["total"] as? NSNumber).flatMap {
+                CFGetTypeID($0) == CFBooleanGetTypeID() ? nil : $0.int64Value
+            }
+            return .progress(step: step, done: done.int64Value, total: total)
         case "done":
             guard let url = object["base_url"] as? String else { return nil }
             return .done(baseURL: url)

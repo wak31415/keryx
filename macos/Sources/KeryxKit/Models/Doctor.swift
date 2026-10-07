@@ -21,6 +21,13 @@ public struct DoctorCheck: Codable, Sendable, Equatable, Identifiable {
     /// ("OpenAI API key" for `OPENAI_API_KEY`), else the name with a capital first letter.
     /// Optional, so a CLI from before it existed still decodes.
     public var title: String?
+    /// The check could not ask what it checks (Twilio not answering): shown as failed, but
+    /// holding nothing back — not a step's reason, and not `ready`'s. Optional, so a CLI
+    /// from before it existed still decodes; see `couldNotAsk`.
+    public var unknown: Bool?
+
+    /// `unknown`, false when the CLI did not say.
+    public var couldNotAsk: Bool { unknown ?? false }
 
     /// `title`, else the name as doctor gives it.
     public var displayTitle: String { title ?? name }

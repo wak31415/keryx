@@ -1,0 +1,3 @@
+{"event": "open", "url": "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=user%3Ainference&code_challenge=example&code_challenge_method=S256&state=example"}
+{"event": "code"}
+{"event": "done", "name": "claude", "message": "Signed in to Claude with your subscription.", "stored": "CLAUDE_CODE_OAUTH_TOKEN"}

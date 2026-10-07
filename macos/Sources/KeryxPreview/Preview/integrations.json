@@ -1,0 +1,102 @@
+{
+  "integrations": [
+    {
+      "id": "google",
+      "title": "Google for agents",
+      "description": "Gmail and Calendar for every agent's tasks through Google's workspace server, which Codex needs and Claude has connectors of its own for.",
+      "connected": false,
+      "why": "Off: Claude's tasks use Claude's own Gmail and Calendar connectors.",
+      "secrets": [],
+      "settings": [
+        "GOOGLE_WORKSPACE_MCP",
+        "USER_GOOGLE_EMAIL"
+      ],
+      "signin": "google-workspace",
+      "used_by": []
+    },
+    {
+      "id": "gmail",
+      "title": "Gmail",
+      "description": "A read-only look at your mailbox, which Email answers reads on a call.",
+      "connected": false,
+      "why": "Not signed in. Needs a Google OAuth client file first.",
+      "secrets": [],
+      "settings": [],
+      "signin": "gmail",
+      "used_by": [
+        "check_email"
+      ]
+    },
+    {
+      "id": "slack",
+      "title": "Slack",
+      "description": "The bot that posts what you ask for in writing to your Slack DM.",
+      "connected": true,
+      "why": null,
+      "secrets": [
+        {
+          "key": "SLACK_BOT_TOKEN",
+          "title": "Slack bot token",
+          "set": true
+        }
+      ],
+      "settings": [],
+      "signin": null,
+      "used_by": [
+        "send_to_slack"
+      ]
+    },
+    {
+      "id": "github",
+      "title": "GitHub",
+      "description": "Bugs and feature requests you report on a call, filed as GitHub issues with gh.",
+      "connected": false,
+      "why": "Issue reports are off.",
+      "secrets": [],
+      "settings": [
+        "ISSUE_REPORTING",
+        "ISSUE_REPO"
+      ],
+      "signin": "gh",
+      "used_by": []
+    },
+    {
+      "id": "openai-admin",
+      "title": "OpenAI admin key",
+      "description": "An OpenAI admin key, which Billing reads what you spend on OpenAI with.",
+      "connected": false,
+      "why": "No admin key yet.",
+      "secrets": [
+        {
+          "key": "OPENAI_ADMIN_KEY",
+          "title": "OpenAI admin key",
+          "set": false
+        }
+      ],
+      "settings": [],
+      "signin": null,
+      "used_by": [
+        "check_billing"
+      ]
+    },
+    {
+      "id": "anthropic-admin",
+      "title": "Anthropic admin key",
+      "description": "An Anthropic admin key, which Billing reads what the agents cost with.",
+      "connected": false,
+      "why": "No admin key yet.",
+      "secrets": [
+        {
+          "key": "ANTHROPIC_ADMIN_KEY",
+          "title": "Anthropic admin key",
+          "set": false
+        }
+      ],
+      "settings": [],
+      "signin": null,
+      "used_by": [
+        "check_billing"
+      ]
+    }
+  ]
+}

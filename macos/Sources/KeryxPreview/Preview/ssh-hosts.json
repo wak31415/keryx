@@ -1,0 +1,20 @@
+{
+  "hosts": [
+    {
+      "alias": "cluster",
+      "hostname": "login.cluster.example.edu",
+      "user": "ada",
+      "control_master": true,
+      "control_path": "/Users/you/.ssh/cm-ada@login.cluster.example.edu:22",
+      "master_alive": true
+    },
+    {
+      "alias": "lab",
+      "hostname": "lab.example.org",
+      "user": "ada",
+      "control_master": false,
+      "control_path": "",
+      "master_alive": false
+    }
+  ]
+}

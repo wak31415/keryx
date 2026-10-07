@@ -1,0 +1,8 @@
+{
+  "kind": "cloudflared",
+  "binary": "/opt/homebrew/bin/cloudflared",
+  "public_host": "keryx.example.com",
+  "unit_installed": true,
+  "reachable": true,
+  "error": null
+}

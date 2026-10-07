@@ -1,0 +1,243 @@
+{
+  "schema": 1,
+  "ready": true,
+  "steps": [
+    {
+      "id": "voice",
+      "title": "Voice",
+      "required": true,
+      "state": "done",
+      "why": null,
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "OpenAI API key",
+          "state": "ok",
+          "detail": "set"
+        }
+      ]
+    },
+    {
+      "id": "agents",
+      "title": "Coding agents",
+      "required": true,
+      "state": "done",
+      "why": null,
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Coding agents",
+          "state": "ok",
+          "detail": "claude by default; enabled: claude"
+        },
+        {
+          "title": "Claude Code agent (default)",
+          "state": "ok",
+          "detail": "/Users/you/code/keryx/.venv/lib/python3.12/site-packages/claude_agent_sdk/_bundled/claude; signed in"
+        }
+      ]
+    },
+    {
+      "id": "owner",
+      "title": "Owner",
+      "required": true,
+      "state": "done",
+      "why": null,
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Allowed callers",
+          "state": "ok",
+          "detail": "\u20260100"
+        },
+        {
+          "title": "Owner name",
+          "state": "ok",
+          "detail": "Ada"
+        }
+      ]
+    },
+    {
+      "id": "pin",
+      "title": "PIN",
+      "required": true,
+      "state": "done",
+      "why": null,
+      "blocked_by": [],
+      "walked": true,
+      "checks": [
+        {
+          "title": "PIN",
+          "state": "ok",
+          "detail": "set on 2026-10-07, kept in /Users/you/.config/keryx/pin"
+        }
+      ]
+    },
+    {
+      "id": "phone",
+      "title": "Phone",
+      "required": true,
+      "state": "done",
+      "why": null,
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Twilio credentials",
+          "state": "ok",
+          "detail": "set"
+        },
+        {
+          "title": "Twilio signatures",
+          "state": "ok",
+          "detail": "checked"
+        },
+        {
+          "title": "Public hostname",
+          "state": "ok",
+          "detail": "keryx.example.com"
+        },
+        {
+          "title": "Tunnel",
+          "state": "ok",
+          "detail": "cloudflared"
+        }
+      ]
+    },
+    {
+      "id": "service",
+      "title": "Background service",
+      "required": true,
+      "state": "done",
+      "why": null,
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Service manager",
+          "state": "ok",
+          "detail": "launchd: dev.keryx.agent installed and running"
+        }
+      ]
+    },
+    {
+      "id": "local",
+      "title": "Local models",
+      "required": false,
+      "state": "done",
+      "why": null,
+      "blocked_by": [],
+      "walked": true,
+      "checks": [
+        {
+          "title": "Local models",
+          "state": "ok",
+          "detail": "none (optional) \u2014 `keryx setup` can run the voice and the agent on your own hardware"
+        }
+      ]
+    },
+    {
+      "id": "google",
+      "title": "Google",
+      "required": false,
+      "state": "done",
+      "why": null,
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Google for agents",
+          "state": "ok",
+          "detail": "Claude's own connectors carry Gmail and Calendar"
+        }
+      ]
+    },
+    {
+      "id": "plugins",
+      "title": "Plugins",
+      "required": false,
+      "state": "done",
+      "why": null,
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Slack",
+          "state": "ok",
+          "detail": "on \u2014 posts to D0PLACEHOLD"
+        },
+        {
+          "title": "Email answers",
+          "state": "ok",
+          "detail": "on"
+        },
+        {
+          "title": "Billing",
+          "state": "ok",
+          "detail": "on \u2014 openai, budget $60"
+        },
+        {
+          "title": "Cluster stats",
+          "state": "ok",
+          "detail": "off (optional) \u2014 `keryx setup` \u2192 Plugins, or `keryx plugins install cluster_stats`"
+        },
+        {
+          "title": "Retired settings",
+          "state": "ok",
+          "detail": "none"
+        }
+      ]
+    },
+    {
+      "id": "issues",
+      "title": "Issue reports",
+      "required": false,
+      "state": "optional",
+      "why": "Off until you choose: Keryx can file its own bug reports and your ideas.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Issue reports",
+          "state": "ok",
+          "detail": "off \u2014 `keryx setup` turns them on"
+        }
+      ]
+    },
+    {
+      "id": "profile",
+      "title": "About you",
+      "required": false,
+      "state": "optional",
+      "why": "Memory: nothing remembered yet.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Memory",
+          "state": "missing",
+          "detail": "nothing remembered yet \u2014 `keryx setup` writes a first memory, and every authorized call adds to it"
+        }
+      ]
+    },
+    {
+      "id": "projects",
+      "title": "Project context",
+      "required": false,
+      "state": "optional",
+      "why": "Optional: an agent can write a short brief of each of your projects.",
+      "blocked_by": [],
+      "walked": false,
+      "checks": [
+        {
+          "title": "Projects root",
+          "state": "ok",
+          "detail": "/Users/you/projects"
+        }
+      ]
+    }
+  ]
+}

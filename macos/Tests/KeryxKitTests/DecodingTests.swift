@@ -38,6 +38,44 @@ import KeryxPreview
         let report = try JSON.decoder.decode(DoctorReport.self, from: Data(json.utf8))
         #expect(report.checks[0].title == nil)
         #expect(report.checks[0].displayTitle == "tunnel")
+        #expect(report.checks[0].unknown == nil && !report.checks[0].couldNotAsk)
+    }
+
+    @Test func theSetupPlansSayEachStepsState() {
+        let fresh = PreviewData.setupPlan
+        #expect(!fresh.ready && fresh.schema == 1)
+        #expect(fresh.steps.allSatisfy { $0.kind != nil }, "every state is one this build knows")
+        #expect(fresh.step("phone")?.kind == .blocked && fresh.step("phone")?.blockedBy == ["owner"])
+        #expect(fresh.steps.filter(\.required).map(\.id) == ["voice", "agents", "owner", "pin", "phone", "service"])
+        let partway = PreviewData.setupPlanPartway
+        #expect(partway.step("local")?.walked == true && partway.step("local")?.kind == .done)
+        #expect(partway.step("plugins")?.kind == .failed)
+        let ready = PreviewData.setupPlanReady
+        #expect(ready.ready && ready.remaining.isEmpty)
+    }
+
+    @Test func pluginsSayTheirFieldsByType() throws {
+        let plugins = PreviewData.plugins
+        #expect(plugins.plugins.map(\.name) == ["send_to_slack", "check_email", "check_billing", "cluster_stats"])
+        let billing = try #require(plugins.plugin("check_billing"))
+        #expect(billing.on && !billing.ready && billing.needs == ["openai-admin", "anthropic-admin"])
+        let budget = try #require(billing.fields.first { $0.key == "monthly_budget" })
+        #expect(budget.kind == .float && budget.value == .number(60))
+        let provider = try #require(billing.fields.first { $0.key == "provider" })
+        #expect(provider.kind == .choice && provider.choices == ["auto", "openai", "anthropic"])
+        let cluster = try #require(plugins.plugin("cluster_stats"))
+        #expect(cluster.fields.first?.kind == .map && cluster.needs.isEmpty)
+        #expect(PluginFieldType.allCases.count == 6)
+    }
+
+    @Test func integrationsSayWhatConnectsEach() {
+        let report = PreviewData.integrations
+        #expect(report.integrations.map(\.id) == ["google", "gmail", "slack", "github", "openai-admin",
+                                                   "anthropic-admin"])
+        #expect(report.integration("slack")?.secrets.first == IntegrationSecret(key: "SLACK_BOT_TOKEN",
+                                                                              title: "Slack bot token", set: true))
+        #expect(report.integration("google")?.signInProvider == .googleWorkspace)
+        #expect(SignInProvider.allCases.filter(\.canSignOut) == [.gmail, .googleWorkspace])
     }
 
     @Test func tasksFixtureDecodes() throws {

@@ -1,0 +1,6 @@
+{
+  "key": "OPENAI_API_KEY",
+  "ok": false,
+  "problem": "Could not reach OpenAI (ConnectError).",
+  "detail": null
+}

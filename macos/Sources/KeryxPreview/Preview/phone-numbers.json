@@ -1,0 +1,18 @@
+{
+  "account": "Ada's account",
+  "numbers": [
+    {
+      "number": "+15550001111",
+      "friendly_name": "Office",
+      "voice_url": "https://demo.twilio.com/welcome/voice/",
+      "points_here": false
+    },
+    {
+      "number": "+15550002222",
+      "friendly_name": "Keryx",
+      "voice_url": "https://keryx.example.com/twilio/voice",
+      "points_here": true
+    }
+  ],
+  "error": null
+}

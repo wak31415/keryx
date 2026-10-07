@@ -61,6 +61,7 @@ from keryx.localmodels import (
 )
 from keryx.localmodels.hardware import Hardware
 from keryx.notify.twilio_out import TwilioNumber
+from keryx.plugins import ssh_hosts
 from keryx.restart.service import ServiceTarget
 from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
 from keryx.setup import google
@@ -100,7 +101,7 @@ COMMANDS = {
     "integrations --json", "auth logout google-workspace --json", "auth logout gmail --json",
     "plugins install NAME --json", "plugins remove NAME --json", "plugins set NAME --json",
     "phone numbers --json", "phone webhooks --json", "phone webhooks --apply --json",
-    "phone tunnel --json",
+    "phone tunnel --json", "plugins list --json", "tools --json", "plugins hosts --json",
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
@@ -429,8 +430,8 @@ def llama_server(request: httpx.Request) -> httpx.Response:
 @pytest.fixture
 def seeded(tmp_path, monkeypatch, every_agent_installed):
     """A store with a told task (report, log, usage), a running one, saved settings, a
-    plugin on, a failed restart, approvals, a memory, a model on disk and a model server
-    that answers."""
+    plugin on, an ssh host, a failed restart, approvals, a memory, a model on disk and a
+    model server that answers."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("PROJECTS_ROOT", str(tmp_path / "projects"))
@@ -485,6 +486,10 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     monkeypatch.setattr(phone, "rest_admin", TwilioAccount())
     # A plugin on, for the plugin commands to change and turn off.
     plugins.install(settings, "check_billing")
+    # An ssh host cluster_stats could ask, its master up: `ssh` itself is never run.
+    monkeypatch.setattr(ssh_hosts, "discover", lambda: [ssh_hosts.SshHost(
+        "cluster", "login.cluster.example.edu", "ada", True, "/Users/you/.ssh/cm-ada")])
+    monkeypatch.setattr(ssh_hosts, "master_alive", lambda alias: True)
     # The integrations: `gh` signed in, though only issue reports turned on would ask it.
     monkeypatch.setattr("keryx.issues.gh_status",
                         lambda: GhStatus(installed=True, signed_in=True, account="ada"))
