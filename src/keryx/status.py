@@ -8,8 +8,8 @@ that part's defaults (`DEFAULTS`), and the others render as if nothing happened.
 defaults are one table so a failed part can never drift in shape from a good one: the
 app's decoder treats every field in it as required.
 
-Cheap on purpose, because of how often it is asked: one SQLite read for every task count,
-a bounded loopback GET for the live calls, and service-manager probes that each carry
+Cheap on purpose, because of how often it is asked: two COUNT queries for the tasks, a
+bounded loopback GET for the live calls, and service-manager probes that each carry
 their own timeout. Everything that leaves the process is a `StatusProbes` field, replaced
 wholesale in tests (the `setup.context.Probes` pattern).
 
@@ -31,7 +31,6 @@ from keryx.restart.health import health_probe
 from keryx.restart.service import ServiceTarget, resolve_target
 from keryx.restart.store import RECORD_NAME, RestartStore
 from keryx.restart.version import current_version, running_version
-from keryx.tasks.export import told
 from keryx.tasks.models import TaskStatus
 from keryx.tasks.store import TaskStore
 
@@ -40,10 +39,6 @@ SCHEMA = 1
 #: The loopback health GET's bound: the app asks every ten seconds, and a Keryx too busy to
 #: answer in this long is reported as not answering rather than waited on.
 HEALTH_TIMEOUT_S = 1.5
-#: How many of the newest tasks the counts are taken over, in one read. Running and queued
-#: tasks are always among the newest; a finished one not yet told older than this many
-#: others is not counted, which is the price of a read that stays cheap at any size.
-TASK_SCAN_LIMIT = 500
 #: The `tasks` part's error while the database is still where Jarvis left it.
 NEEDS_MIGRATE = "needs keryx migrate"
 
@@ -157,27 +152,30 @@ def _agents(settings: Settings) -> dict[str, Any]:
 
 
 def _tasks(settings: Settings) -> dict[str, Any]:
-    """The counts, from one read. Never opens a database `keryx migrate` has yet to move
-    (opening one creates it), and never creates one where there is none yet."""
+    """The counts, exact, from the store's own queries: `unreported` is `count_unreported`,
+    the count the call briefing reads and the same rule as `told(task) is False`. Never
+    opens a database `keryx migrate` has yet to move (opening one creates it), and never
+    creates one where there is none yet."""
     if settings.storage_refusal():
         return {"ok": False, "error": NEEDS_MIGRATE}
     path = settings.data_dir / TASK_DB_NAME
     if not path.exists():
         return {}
 
-    async def read():
+    async def count() -> dict[str, int]:
         store = TaskStore(path)
         try:
-            return await store.list(limit=TASK_SCAN_LIMIT)
+            active = await store.count_by_status(TaskStatus.RUNNING, TaskStatus.QUEUED)
+            unreported = await store.count_unreported()
         finally:
             await store.close()
+        return {
+            "running": active[TaskStatus.RUNNING],
+            "queued": active[TaskStatus.QUEUED],
+            "unreported": unreported,
+        }
 
-    tasks = asyncio.run(read())
-    return {
-        "running": sum(task.status == TaskStatus.RUNNING for task in tasks),
-        "queued": sum(task.status == TaskStatus.QUEUED for task in tasks),
-        "unreported": sum(told(task) is False for task in tasks),
-    }
+    return asyncio.run(count())
 
 
 def _approvals(settings: Settings) -> dict[str, Any]:

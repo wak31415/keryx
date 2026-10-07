@@ -348,21 +348,30 @@ def test_no_database_yet_is_nothing_to_count_and_is_not_created(settings):
     assert not (settings.data_dir / TASK_DB_NAME).exists()
 
 
-def test_the_task_counts_are_one_read(monkeypatch, settings):
-    seed(settings, task(TaskStatus.RUNNING))
-    calls = []
-    real = TaskStore.list
+def test_the_task_counts_are_counted_never_listed(monkeypatch, settings):
+    seed(settings, task(TaskStatus.RUNNING), task(TaskStatus.DONE))
 
-    async def counting(self, **kwargs):
-        calls.append(kwargs)
-        return await real(self, **kwargs)
+    async def no_list(self, **kwargs):
+        raise AssertionError("the counts must not depend on a list read and its limit")
 
-    monkeypatch.setattr(TaskStore, "list", counting)
+    monkeypatch.setattr(TaskStore, "list", no_list)
 
-    build_status(settings, probes=FAKE)
+    report = build_status(settings, probes=FAKE)
 
-    assert len(calls) == 1
-    assert calls[0].get("status") is None
+    assert report["tasks"] == {
+        "ok": True, "error": None, "running": 1, "queued": 0, "unreported": 1,
+    }
+
+
+def test_an_unreported_task_older_than_five_hundred_others_is_still_counted(settings):
+    told_at = datetime.now(UTC)
+    seed(
+        settings,
+        task(TaskStatus.DONE),  # the oldest, never told
+        *(task(TaskStatus.DONE, reported_at=told_at) for _ in range(501)),
+    )
+
+    assert build_status(settings, probes=FAKE)["tasks"]["unreported"] == 1
 
 
 # --- one broken part does not take the others ---------------------------------------------

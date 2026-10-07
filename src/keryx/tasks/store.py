@@ -316,6 +316,22 @@ class TaskStore:
             ).fetchone()
         return row["n"]
 
+    async def count_by_status(self, *statuses: TaskStatus) -> dict[TaskStatus, int]:
+        """How many of their tasks are in each of `statuses` (0 for none), in one query.
+        Housekeeping is left out, as `list` leaves it out."""
+        return await asyncio.to_thread(self._count_by_status_sync, statuses)
+
+    def _count_by_status_sync(self, statuses: tuple[TaskStatus, ...]) -> dict[TaskStatus, int]:
+        placeholders = ",".join("?" for _ in statuses)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT status, COUNT(*) AS n FROM tasks WHERE internal = 0 "
+                f"AND status IN ({placeholders}) GROUP BY status",
+                [status.value for status in statuses],
+            ).fetchall()
+        found = {row["status"]: row["n"] for row in rows}
+        return {status: found.get(status.value, 0) for status in statuses}
+
     async def mark_reported(self, task_ids: Iterable[int], *, when: datetime) -> list[int]:
         """Stamp `reported_at` on each id that exists and had none. Returns the ids stamped.
 

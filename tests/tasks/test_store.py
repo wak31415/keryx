@@ -359,6 +359,20 @@ async def test_unreported_respects_its_limit_while_the_count_stays_honest(store)
     assert await store.count_unreported() == 4
 
 
+async def test_count_by_status_counts_each_asked_status_and_leaves_out_housekeeping(store):
+    for status in (TaskStatus.RUNNING, TaskStatus.QUEUED, TaskStatus.QUEUED, TaskStatus.DONE):
+        await store.create(_task(status=status))
+    await store.create(_task(status=TaskStatus.RUNNING, internal=True))
+
+    counts = await store.count_by_status(TaskStatus.RUNNING, TaskStatus.QUEUED)
+
+    assert counts == {TaskStatus.RUNNING: 1, TaskStatus.QUEUED: 2}
+
+
+async def test_count_by_status_is_zero_for_a_status_with_no_tasks(store):
+    assert await store.count_by_status(TaskStatus.RUNNING) == {TaskStatus.RUNNING: 0}
+
+
 async def test_mark_reported_stamps_only_the_ids_that_needed_it(store):
     first = await _finished(store, "first")
     second = await _finished(store, "second")
