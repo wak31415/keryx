@@ -396,6 +396,8 @@ def test_standing_facts_past_what_a_call_reads_are_refused(tmp_path):
     with pytest.raises(ValueError, match="a call reads"):
         add_standing_facts(tmp_path, owner="Ada", assistant="Lyra", facts=["x" * MAX_MEMORY_CHARS])
 
+    assert memory_path(tmp_path).read_text() == before
+
 
 # --- memory_document -------------------------------------------------------------------
 
@@ -437,9 +439,9 @@ def test_memory_document_a_path_through_a_file_does_not_exist(tmp_path, monkeypa
     the same as "not there", like `FileNotFoundError`."""
     path = tmp_path / "memory.md"
     monkeypatch.setattr("keryx.continuity.memory.memory_path", lambda data_dir: path)
+    error = NotADirectoryError(20, "Not a directory")
     monkeypatch.setattr(
-        Path, "read_text",
-        lambda self, encoding=None: (_ for _ in ()).throw(NotADirectoryError(20, "Not a directory")),
+        Path, "read_text", lambda self, encoding=None: (_ for _ in ()).throw(error)
     )
     monkeypatch.setattr(Path, "exists", lambda self: True)  # the wrong answer, if ever asked
 

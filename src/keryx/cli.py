@@ -938,6 +938,9 @@ def memory(
     """
     if ctx.invoked_subcommand is not None:
         return
+    if path_only and as_json:
+        typer.echo("pick one of --path and --json", err=True)
+        raise typer.Exit(code=2)
     settings = _configure_readonly()
     path = memory_path(settings.data_dir)
     if path_only:

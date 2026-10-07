@@ -1587,6 +1587,15 @@ def test_memory_path_prints_only_the_path(settings_stub):
     assert result.output.strip() == str(memory_path(settings_stub.data_dir))
 
 
+def test_memory_refuses_path_and_json_together(settings_stub):
+    """As `approvals` refuses `--json` with `--enable`/`--disable`: one line, exit 2."""
+    result = runner.invoke(app, ["memory", "--path", "--json"])
+
+    assert result.exit_code == 2
+    assert result.stderr.strip() == "pick one of --path and --json"
+    assert result.stdout == ""
+
+
 def test_memory_json_carries_the_path_and_the_text(settings_stub):
     settings_stub.ensure_dirs()
     memory_path(settings_stub.data_dir).write_text("# What Keryx knows\n\nThey hate jargon.\n")
