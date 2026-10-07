@@ -28,6 +28,10 @@ extension ScreenCatalog {
                     .error("The connection to huggingface.co was lost. Try again to pick up where it stopped."),
                 ])))
             },
+            Entry("models-agent-menu-fallback", size: CGSize(width: 720, height: 560)) {
+                ModelsView().environment(AppModel.preview(client: PreviewClient(
+                    options: ["LOCAL_AGENT_MODEL": .success(serverDown)])))
+            },
             Entry("models-use-sheet", size: CGSize(width: 440, height: 176)) {
                 UseModelSheet(entry: gptOss20b).environment(AppModel.preview())
             },
@@ -76,6 +80,16 @@ extension ScreenCatalog {
         report.servers.llm.model = "gpt-oss-20b"
         report.servers.llm.servedModel = "qwen3-coder-30b-a3b"
         return report
+    }
+
+    /// The model server not answering, so the agent's menu holds the downloaded models.
+    private static var serverDown: ConfigOptions {
+        var list = PreviewData.options["LOCAL_AGENT_MODEL"]!
+        list.source = "catalog"
+        list.live = false
+        list.error = "the model server isn't answering at 127.0.0.1:8090"
+        list.options = list.options.map { ConfigOption(value: $0.value, label: $0.label, detail: "downloaded") }
+        return list
     }
 
     /// Downloaded and not in use: what Use This Model… is offered on.

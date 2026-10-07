@@ -44,6 +44,7 @@ public struct RootView: View {
             switch model.selection {
             case .overview: OverviewView()
             case .sessions: SessionsView()
+            case .voice: VoiceView()
             case .models: ModelsView()
             case .configuration: ConfigurationView()
             }

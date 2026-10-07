@@ -4,12 +4,18 @@ import SwiftUI
 /// Sets or replaces a secret. What is typed lives only in this sheet's state: it reaches the
 /// CLI on its stdin (`AppModel.setSecret`), is never shown, logged or put on argv, and is
 /// cleared whenever the sheet goes away, saved or not.
+///
+/// With `keep`, the sheet saves nothing itself: it hands what was typed to `keep`, for a
+/// command that takes the secret on its own stdin (`keryx voice use server --key-stdin`).
 package struct SecretSheet: View {
     let key: String
     /// The setting's name for a person ("OpenAI API key"), which labels the field.
     let title: String
     /// The secret is already set, so saving replaces it.
     let replacing: Bool
+    /// Where the secret goes instead of `config set --stdin`, and what the footer says of it.
+    private let keep: ((String) -> Void)?
+    private let footnote: String
 
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -21,11 +27,16 @@ package struct SecretSheet: View {
         self.init(key: key, title: title, replacing: replacing, typed: "")
     }
 
+    static let stored = "Kept in secrets.toml, readable only by you. Keryx never shows it again."
+
     /// `typed`: what the field starts holding — the catalog's dots, never a real secret.
-    package init(key: String, title: String, replacing: Bool, typed: String) {
+    package init(key: String, title: String, replacing: Bool, typed: String,
+                 footnote: String = SecretSheet.stored, keep: ((String) -> Void)? = nil) {
         self.key = key
         self.title = title
         self.replacing = replacing
+        self.keep = keep
+        self.footnote = footnote
         _value = State(initialValue: typed)
     }
 
@@ -47,7 +58,7 @@ package struct SecretSheet: View {
                                 .foregroundStyle(.red)
                                 .textSelection(.enabled)
                         }
-                        Text("Kept in secrets.toml, readable only by you. Keryx never shows it again.")
+                        Text(footnote)
                             .foregroundStyle(.secondary)
                     }
                     .font(.callout)
@@ -79,6 +90,11 @@ package struct SecretSheet: View {
 
     private func save() {
         guard !value.isEmpty, !saving else { return }
+        if let keep {
+            keep(value)
+            close()
+            return
+        }
         saving = true
         error = nil
         Task {

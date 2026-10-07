@@ -2,7 +2,7 @@ import Foundation
 
 /// The window's sections.
 public enum SidebarItem: String, CaseIterable, Identifiable, Sendable {
-    case overview, sessions, models, configuration
+    case overview, sessions, voice, models, configuration
 
     public var id: String { rawValue }
 
@@ -10,6 +10,7 @@ public enum SidebarItem: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .overview: "Overview"
         case .sessions: "Sessions"
+        case .voice: "Voice"
         case .models: "Local Models"
         case .configuration: "Configuration"
         }
@@ -19,6 +20,7 @@ public enum SidebarItem: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .overview: "gauge.with.dots.needle.33percent"
         case .sessions: "bubble.left.and.text.bubble.right"
+        case .voice: "waveform"
         case .models: "cpu"
         case .configuration: "slider.horizontal.3"
         }

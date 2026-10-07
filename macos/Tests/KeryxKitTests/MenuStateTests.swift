@@ -103,10 +103,10 @@ import KeryxPreview
     }
 
     @Test func sidebarItems() {
-        #expect(SidebarItem.allCases == [.overview, .sessions, .models, .configuration])
-        #expect(SidebarItem.allCases.map(\.title) == ["Overview", "Sessions", "Local Models", "Configuration"])
+        #expect(SidebarItem.allCases == [.overview, .sessions, .voice, .models, .configuration])
+        #expect(SidebarItem.allCases.map(\.title) == ["Overview", "Sessions", "Voice", "Local Models", "Configuration"])
         #expect(SidebarItem.allCases.map(\.systemImage) == [
-            "gauge.with.dots.needle.33percent", "bubble.left.and.text.bubble.right", "cpu",
+            "gauge.with.dots.needle.33percent", "bubble.left.and.text.bubble.right", "waveform", "cpu",
             "slider.horizontal.3",
         ])
         #expect(SidebarItem.sessions.id == "sessions")

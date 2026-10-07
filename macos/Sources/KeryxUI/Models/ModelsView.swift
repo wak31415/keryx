@@ -113,9 +113,16 @@ private struct LocalAgentSection: View {
         let llm = report.servers.llm
         Section("Local Agent") {
             if let name = agent.model {
-                LabeledContent("Model") {
-                    Text(title(of: name))
-                        .textSelection(.enabled)
+                if agent.baseUrl != nil {
+                    // What the server has to offer, asked of it; a choice is a setting.
+                    SettingMenuRow(key: "LOCAL_AGENT_MODEL", title: "Model", current: name) {
+                        await model.refresh(.models)
+                    }
+                } else {
+                    LabeledContent("Model") {
+                        Text(title(of: name))
+                            .textSelection(.enabled)
+                    }
                 }
                 LabeledContent("Model server") {
                     VStack(alignment: .trailing, spacing: 2) {
@@ -270,6 +277,8 @@ enum ModelsOrder {
 private struct VoiceSection: View {
     let voice: VoiceServer
 
+    @Environment(AppModel.self) private var model
+
     var body: some View {
         Section("Voice") {
             LabeledContent("Voice server") {
@@ -286,9 +295,9 @@ private struct VoiceSection: View {
             }
             if voice.url == nil {
                 LabeledContent {
-                    OpenSetupButton()
+                    Button("Go to Voice") { model.selection = .voice }
                 } label: {
-                    Text("Set up a local voice with keryx setup")
+                    Text("Set up a voice on this Mac in Voice")
                         .foregroundStyle(.secondary)
                 }
             }
