@@ -117,6 +117,48 @@ def test_every_part_has_the_same_keys_good_or_failed(settings):
         assert set(report[part]) == {"ok", "error", *FAILED_DEFAULTS[part]}, part
 
 
+def computed_parts(monkeypatch, settings, probes) -> dict[str, dict]:
+    """What each part's own function found, before `_part` lays it over the defaults."""
+    found: dict[str, dict] = {}
+    real_part = status._part
+
+    def spying(name, compute):
+        found[name] = compute()
+        return real_part(name, lambda: found[name])
+
+    monkeypatch.setattr(status, "_part", spying)
+    build_status(settings, probes=probes)
+    return found
+
+
+def test_a_part_computes_only_keys_its_defaults_have(monkeypatch, settings):
+    """`{**DEFAULTS, **found}` would hide a renamed key: the old one stays, at its default,
+    beside the new. So everything a part finds must be a key its defaults already have."""
+    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    RestartStore(settings.state_dir / RECORD_NAME).save(
+        RestartRecord(requested_at="2026-10-06T09:30:00+00:00", state="failed", error="no")
+    )
+    seed(settings, task(TaskStatus.RUNNING), task(TaskStatus.DONE))
+
+    found = computed_parts(monkeypatch, settings, FAKE)
+
+    assert set(found) == set(PARTS)
+    for name, keys in found.items():
+        assert set(keys) <= set(status.DEFAULTS[name]), name
+    # Every branch that finds something was taken, so no part passed by finding nothing.
+    assert [name for name, keys in found.items() if not keys] == ["storage"]
+
+
+def test_a_part_that_finds_a_failure_adds_only_ok_and_error(
+    monkeypatch, settings_with_old_jarvis_dir
+):
+    found = computed_parts(monkeypatch, settings_with_old_jarvis_dir, FAKE)
+
+    for name in ("storage", "tasks"):
+        assert found[name]["ok"] is False, name
+        assert set(found[name]) <= {"ok", "error", *status.DEFAULTS[name]}, name
+
+
 def test_the_paths_are_where_keryx_keeps_things(settings):
     report = build_status(settings, probes=FAKE)
 
@@ -280,6 +322,21 @@ def test_a_failed_restart_is_reported_with_its_error(settings):
         "failure": "launchctl exited 5",
     }
     assert "5555550123" not in json.dumps(report)  # the record's number never leaves it
+
+
+def test_a_number_in_a_restart_failure_is_masked(settings):
+    """The record's error is free text: a Twilio failure to dial back can quote the number."""
+    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    RestartStore(settings.state_dir / RECORD_NAME).save(RestartRecord(
+        requested_at="x", number="+15555550123", state="failed",
+        error="could not call +15555550123 back, nor +442079460123",
+    ))
+
+    report = build_status(settings, probes=FAKE)
+
+    assert report["restart"]["failure"] == "could not call …0123 back, nor …0123"
+    assert "5555550123" not in json.dumps(report)
+    assert "2079460123" not in json.dumps(report)
 
 
 def test_a_pending_restart_has_no_failure(settings):

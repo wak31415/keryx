@@ -14,7 +14,6 @@ stack logs a failure with its traceback.
 
 import asyncio
 import logging
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -23,12 +22,9 @@ from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse
 
 from keryx.config import Settings
-from keryx.logging_util import mask_number
+from keryx.logging_util import mask_number, mask_numbers
 
 log = logging.getLogger("keryx.notify.twilio_out")
-
-#: A number in the E.164 shape Twilio writes them in, wherever it turns up in its errors.
-E164_NUMBER = re.compile(r"\+\d{7,15}")
 
 
 class TwilioError(RuntimeError):
@@ -39,7 +35,7 @@ def _without_numbers(text: str, number: str) -> str:
     """`text` with `number`, and anything else shaped like one, masked."""
     if number:
         text = text.replace(number, mask_number(number))
-    return E164_NUMBER.sub(lambda match: mask_number(match.group()), text)
+    return mask_numbers(text)
 
 
 def stream_twiml(public_host: str, params: dict[str, str]) -> str:

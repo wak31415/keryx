@@ -13,7 +13,8 @@ bounded loopback GET for the live calls, and service-manager probes that each ca
 their own timeout. Everything that leaves the process is a `StatusProbes` field, replaced
 wholesale in tests (the `setup.context.Probes` pattern).
 
-No phone number and no secret is in it: the restart record's number stays in the record.
+No phone number and no secret is in it: the restart record's number stays in the record,
+and one its failure quotes is masked (`mask_numbers`).
 """
 
 import asyncio
@@ -26,6 +27,7 @@ from keryx.app import TASK_DB_NAME
 from keryx.approvals.audit_log import escalation_enabled
 from keryx.config import Settings
 from keryx.continuity.memory import memory_path
+from keryx.logging_util import mask_numbers
 from keryx.restart import service
 from keryx.restart.health import health_probe
 from keryx.restart.service import ServiceTarget, resolve_target
@@ -139,7 +141,7 @@ def _restart(settings: Settings) -> dict[str, Any]:
     return {
         "state": record.state,
         "requested_at": record.requested_at or None,
-        "failure": record.error,
+        "failure": mask_numbers(record.error) if record.error else None,
     }
 
 

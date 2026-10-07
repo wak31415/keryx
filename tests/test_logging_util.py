@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from keryx.logging_util import mask_number
+from keryx.logging_util import mask_number, mask_numbers
 
 
 @pytest.mark.parametrize(
@@ -35,3 +35,14 @@ def test_the_full_number_is_not_in_the_masked_form(caplog):
 
     assert number not in caplog.text
     assert "…4567" in caplog.text
+
+
+def test_every_number_in_a_sentence_is_masked():
+    text = "Twilio could not call +15551234567 from +442079460123 (error 21211)."
+
+    assert mask_numbers(text) == "Twilio could not call …4567 from …0123 (error 21211)."
+
+
+@pytest.mark.parametrize("text", ["", "exit status 5", "pid 123456789", "+123"])
+def test_a_sentence_without_a_number_is_left_alone(text):
+    assert mask_numbers(text) == text
