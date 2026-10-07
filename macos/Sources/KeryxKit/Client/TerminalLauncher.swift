@@ -12,8 +12,14 @@ public enum TerminalLauncher {
         "PATH", "HOME",
     ]
 
-    /// The text of a .command file that runs `keryx <arguments>` in the checkout with the
-    /// resolved KERYX_HOME / XDG_* / PATH / HOME exported, every value single-quoted.
+    /// A script left behind (Terminal opened it but never ran it) is removed once it is this
+    /// old: it holds no secret, but it does hold paths.
+    static let staleAfter: TimeInterval = 10 * 60
+
+    /// The text of a .command file that runs `keryx <arguments>` in the checkout (or `/`,
+    /// with none) with the resolved KERYX_HOME / XDG_* / PATH / HOME exported, every value
+    /// single-quoted, and each of those the location does not set unset — so Terminal's own
+    /// value (its shell's `KERYX_HOME`, say) cannot stand in for one the service never had.
     public static func script(for location: KeryxLocation, arguments: [String]) -> String {
         var lines = [
             "#!/bin/sh",
@@ -25,17 +31,21 @@ public enum TerminalLauncher {
         for name in exported {
             if let value = location.environment[name] {
                 lines.append("export \(name)=\(quote(value))")
+            } else {
+                lines.append("unset \(name)")
             }
         }
-        lines.append("cd \(quote(location.workingDirectory)) || exit 1")
+        lines.append("cd \(quote(location.runDirectory)) || exit 1")
         let argv = [location.executable] + location.prefixArguments + arguments
         lines.append("exec " + argv.map(quote).joined(separator: " "))
         return lines.joined(separator: "\n") + "\n"
     }
 
     /// Writes it (0700, NSTemporaryDirectory, name keryx-<uuid>.command; the script deletes
-    /// itself first) and opens it with NSWorkspace. Throws on write failure.
+    /// itself first) and opens it with NSWorkspace. Throws on write failure. Any script an
+    /// earlier call left behind is removed first (`removeStaleScripts`).
     @MainActor public static func open(_ location: KeryxLocation, arguments: [String]) throws {
+        removeStaleScripts()
         let path = (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("keryx-\(UUID().uuidString).command")
         let contents = Data(script(for: location, arguments: arguments).utf8)
@@ -48,6 +58,30 @@ public enum TerminalLauncher {
             try? FileManager.default.removeItem(atPath: path)
             throw KeryxError.launch("Terminal could not be opened.")
         }
+    }
+
+    /// Removes every `keryx-<uuid>.command` in `directory` (NSTemporaryDirectory, which is
+    /// this user's own) last changed more than `staleAfter` before `now`: a script whose
+    /// Terminal never ran it, so never deleted itself. Run at launch and before each open.
+    public static func removeStaleScripts(in directory: String = NSTemporaryDirectory(), now: Date = Date()) {
+        let files = FileManager.default
+        guard let names = try? files.contentsOfDirectory(atPath: directory) else { return }
+        for name in names where isScriptName(name) {
+            let path = (directory as NSString).appendingPathComponent(name)
+            guard let attributes = try? files.attributesOfItem(atPath: path),
+                  attributes[.type] as? FileAttributeType == .typeRegular,
+                  let modified = attributes[.modificationDate] as? Date,
+                  now.timeIntervalSince(modified) > staleAfter
+            else { continue }
+            try? files.removeItem(atPath: path)
+        }
+    }
+
+    /// `keryx-<uuid>.command`, as `open` names them, and nothing else.
+    static func isScriptName(_ name: String) -> Bool {
+        guard name.hasPrefix("keryx-"), name.hasSuffix(".command") else { return false }
+        let middle = name.dropFirst("keryx-".count).dropLast(".command".count)
+        return UUID(uuidString: String(middle)) != nil
     }
 
     /// POSIX single quotes: `it's` becomes `'it'"'"'s'`.

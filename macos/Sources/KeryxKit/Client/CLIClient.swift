@@ -2,8 +2,10 @@ import Foundation
 
 /// Runs the `keryx` CLI where `location` says, as the owner at a terminal: argv is
 /// `prefixArguments + subcommand`, the environment is sanitised (no actor variables), and
-/// the working directory is the checkout. A secret only ever travels on stdin. Nothing here
-/// logs an argument, the environment, stdin or output.
+/// the working directory is the checkout, or `/` with none (`KeryxLocation.runDirectory`). A
+/// secret only ever travels on stdin. Nothing here logs an argument, the environment, stdin
+/// or output. A command whose caller was cancelled throws `CancellationError`, whatever the
+/// child it stopped said on the way out.
 public struct CLIClient: KeryxClient {
     static let migrationMarker = "keryx cannot do that yet:"
     static let restartReason = "from the Mac app"
@@ -79,7 +81,7 @@ public struct CLIClient: KeryxClient {
                     } else {
                         continuation.finish(throwing: KeryxError.failed(
                             command: "keryx models pull", exitCode: -1,
-                            message: "The download stopped without saying whether it finished."))
+                            message: PullEvent.stoppedWithoutSaying))
                     }
                 } catch {
                     continuation.finish(throwing: Self.map(error, command: "keryx models pull"))
@@ -148,7 +150,7 @@ public struct CLIClient: KeryxClient {
             executable: location.executable,
             arguments: location.prefixArguments + subcommand,
             environment: Sanitise.environment(location.environment),
-            workingDirectory: location.workingDirectory,
+            workingDirectory: location.runDirectory,
             stdin: stdin,
             timeout: timeout)
     }
@@ -177,14 +179,21 @@ public struct CLIClient: KeryxClient {
         return result
     }
 
-    /// The runner, with its own errors turned into `KeryxError`s.
+    /// The runner, with its own errors turned into `KeryxError`s. Cancelled — before the
+    /// child starts, or while it runs — it throws `CancellationError`: the child the runner
+    /// stopped exits 15 (or times out), and that is not the command failing.
     private func run(_ request: CommandRequest, command: String? = nil) async throws -> CommandResult {
         let command = command ?? name(of: request)
+        try Task.checkCancellation()
+        let result: CommandResult
         do {
-            return try await runner.run(request)
+            result = try await runner.run(request)
         } catch {
+            try Task.checkCancellation()
             throw Self.map(error, command: command)
         }
+        try Task.checkCancellation()
+        return result
     }
 
     private func name(of request: CommandRequest) -> String {

@@ -84,7 +84,7 @@ import Testing
     }
 
     @Test func otherProgramsLogTheirNameAndNoUnlistedArgument() {
-        Self.check(["--llm"], logs: "install-launchd.sh …", hiding: ["--llm", "/Users/you"],
+        Self.check(["--llm", "/Users/you/x"], logs: "install-launchd.sh --llm …", hiding: ["/Users/you"],
                    executable: "/Users/you/code/keryx/scripts/install-launchd.sh")
         // Another program's arguments are never read as keryx subcommands.
         Self.check(["status"], logs: "zsh …", hiding: ["status"], executable: "/bin/zsh")
@@ -100,6 +100,21 @@ import Testing
         }
     }
 
+    @Test func theLoggingRunnerNamesKeryxOnlyPastItsPrefix() {
+        let runner = LoggingRunner(FakeRunner(), prefix: Self.prefix)
+        #expect(runner.describe(CommandRequest(executable: Self.uv, arguments: Self.prefix + ["status", "--json"]))
+            == "keryx status --json")
+        // The model server's installer, run by the same client: itself, not `keryx`.
+        let installer = CommandRequest(executable: "/Users/you/code/keryx/scripts/install-launchd.sh",
+                                       arguments: ["--llm"])
+        #expect(runner.describe(installer) == "install-launchd.sh --llm")
+        // A checkout's own venv keryx has no prefix, and is keryx by its name.
+        let venv = LoggingRunner(FakeRunner())
+        #expect(venv.describe(CommandRequest(executable: "/Users/you/code/keryx/.venv/bin/keryx",
+                                             arguments: ["doctor", "--json"])) == "keryx doctor --json")
+        #expect(venv.describe(installer) == "install-launchd.sh --llm")
+    }
+
     @Test func errorsAreNamedByTheirCaseOnly() {
         #expect(CommandLog.errorName(RunnerError.launchFailed("/Users/you/.local/bin/uv: no such file"))
             == "launchFailed")
@@ -110,7 +125,7 @@ import Testing
 
     @Test func theLoggingRunnerPassesRequestsAndResultsThrough() async throws {
         let fake = FakeRunner(responder: { _ in .init(exitCode: 3, stdout: Data("out".utf8), stderr: Data()) })
-        let runner = LoggingRunner(fake, prefixCount: Self.prefix.count)
+        let runner = LoggingRunner(fake, prefix: Self.prefix)
         let request = CommandRequest(executable: Self.uv, arguments: Self.prefix + ["status", "--json"])
         let result = try await runner.run(request)
         #expect(result.exitCode == 3)

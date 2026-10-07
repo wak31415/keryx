@@ -87,6 +87,10 @@ public enum PullEvent: Equatable, Sendable {
     case error(String)
     case cancelled
 
+    /// What a pull that ended with none of `done`, `adopted`, `error` or `cancelled` says.
+    public static let stoppedWithoutSaying =
+        "The download stopped without saying why. Run keryx doctor in Terminal."
+
     public static func parse(_ line: String) -> PullEvent? {
         guard let data = line.data(using: .utf8),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],

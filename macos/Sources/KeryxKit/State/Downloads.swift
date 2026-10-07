@@ -17,8 +17,7 @@ public final class Downloads {
     }
 
     /// What a stream that ended with no terminal event becomes. It never counts as finished.
-    static let stoppedWithoutSaying =
-        "The download stopped without saying why. Run keryx doctor in Terminal."
+    static let stoppedWithoutSaying = PullEvent.stoppedWithoutSaying
 
     /// Model name → phase.
     public private(set) var active: [String: Phase] = [:]

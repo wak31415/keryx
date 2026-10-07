@@ -30,12 +30,71 @@ import Testing
         let request = try #require(fake.requests.last)
         #expect(request.executable == location.executable)
         #expect(request.arguments == location.prefixArguments + ["status", "--json"])
-        #expect(request.workingDirectory == location.workingDirectory)
+        #expect(request.workingDirectory == location.checkout)
         #expect(request.environment["KERYX_ACTOR"] == nil)
         #expect(request.environment["JARVIS_ACTOR"] == nil)
         #expect(request.environment["NO_COLOR"] == "1")
         #expect(request.environment["KERYX_HOME"] == location.environment["KERYX_HOME"])
         #expect(request.stdin == nil)
+    }
+
+    @Test func withNoCheckoutEveryCommandRunsFromTheRoot() async throws {
+        var location = KeryxLocation.fixture
+        location.checkout = nil
+        location.executable = "/Users/you/.local/bin/keryx"
+        location.prefixArguments = []
+        location.workingDirectory = "/Users/you"   // never HOME, whatever the location says
+        let fake = FakeRunner { _ in Self.ok(PreviewData.data("status.json")) }
+        let client = CLIClient(location: location, runner: fake)
+        _ = try await client.status()
+        try await client.set(key: "ASSISTANT_NAME", value: "Vega")
+        #expect(fake.requests.count == 2)
+        #expect(fake.requests.allSatisfy { $0.workingDirectory == "/" })
+    }
+
+    // MARK: - Cancellation
+
+    /// A runner that runs until its caller is cancelled, then answers as a child stopped by
+    /// SIGTERM does: exit 15, a word on stderr.
+    final class StoppedBySignal: CommandRunner, @unchecked Sendable {
+        private let lock = NSLock()
+        private var started = 0
+        var runs: Int { lock.withLock { started } }
+
+        func run(_ request: CommandRequest) async throws -> CommandResult {
+            lock.withLock { started += 1 }
+            while !Task.isCancelled { await Task.yield() }
+            return .init(exitCode: 15, stdout: Data(), stderr: Data("Terminated\n".utf8))
+        }
+
+        func lines(_ request: CommandRequest) -> AsyncThrowingStream<String, Error> {
+            AsyncThrowingStream { $0.finish() }
+        }
+    }
+
+    @Test func aCancelledReadThrowsCancellationNotAFailure() async throws {
+        let runner = StoppedBySignal()
+        let client = CLIClient(location: .fixture, runner: runner)
+        let read = Task { try await client.status() }
+        while runner.runs == 0 { await Task.yield() }
+        read.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await read.value }
+
+        let write = Task { try await client.unset(key: "ASSISTANT_NAME") }
+        while runner.runs == 1 { await Task.yield() }
+        write.cancel()
+        await #expect(throws: CancellationError.self) { try await write.value }
+    }
+
+    @Test func aReadCancelledBeforeItStartsRunsNothing() async throws {
+        let fake = FakeRunner { _ in Self.ok(PreviewData.data("status.json")) }
+        let client = CLIClient(location: .fixture, runner: fake)
+        let read = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await client.status()
+        }
+        await #expect(throws: CancellationError.self) { _ = try await read.value }
+        #expect(fake.requests.isEmpty)
     }
 
     @Test func setPassesKeyAndValue() async throws {
@@ -212,7 +271,7 @@ import Testing
 
     static let unfinished = KeryxError.failed(
         command: "keryx models pull", exitCode: -1,
-        message: "The download stopped without saying whether it finished.")
+        message: "The download stopped without saying why. Run keryx doctor in Terminal.")
 
     @Test func pullEndingWithOnlyProgressThrows() async throws {
         let fake = FakeRunner()

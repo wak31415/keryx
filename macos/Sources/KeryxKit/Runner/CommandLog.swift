@@ -19,7 +19,7 @@ public enum CommandLog {
 
     static let flags: Set<String> = [
         "--json", "--stdin", "--force", "--internal", "--limit", "--days", "--status",
-        "--default-agent", "--disable", "--enable",
+        "--default-agent", "--disable", "--enable", "--llm",
     ]
 
     static let elided = "…"
@@ -86,12 +86,15 @@ public struct LoggingRunner: CommandRunner {
     static let logger = Logger(subsystem: "dev.keryx.app", category: "commands")
 
     private let base: CommandRunner
-    private let prefixCount: Int
+    private let prefix: [String]
 
-    /// `prefixCount`: how many leading arguments run `keryx` rather than name the command.
-    public init(_ base: CommandRunner = ProcessRunner(), prefixCount: Int = 0) {
+    /// `prefix`: the leading arguments that run `keryx` rather than name the command
+    /// (`run --project … keryx` for uv). A request is read as `keryx` past them only when it
+    /// starts with them: anything else this client runs (the model server's installer) is
+    /// that program, named by its file.
+    public init(_ base: CommandRunner = ProcessRunner(), prefix: [String] = []) {
         self.base = base
-        self.prefixCount = prefixCount
+        self.prefix = prefix
     }
 
     public func run(_ request: CommandRequest) async throws -> CommandResult {
@@ -120,9 +123,10 @@ public struct LoggingRunner: CommandRunner {
         return base.lines(request)
     }
 
-    private func describe(_ request: CommandRequest) -> String {
-        CommandLog.describe(executable: request.executable, arguments: request.arguments,
-                            prefixCount: prefixCount)
+    func describe(_ request: CommandRequest) -> String {
+        let prefixed = !prefix.isEmpty && request.arguments.starts(with: prefix)
+        return CommandLog.describe(executable: request.executable, arguments: request.arguments,
+                                   prefixCount: prefixed ? prefix.count : 0)
     }
 
     private static func seconds(_ duration: Duration) -> String {

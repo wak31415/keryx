@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             locator: KeryxLocator(runner: LoggingRunner()),
             makeClient: { location in
                 CLIClient(location: location,
-                          runner: LoggingRunner(prefixCount: location.prefixArguments.count))
+                          runner: LoggingRunner(prefix: location.prefixArguments))
             },
             preferences: preferences)
         super.init()
@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let atLogin = Self.isLoginLaunch(NSAppleEventManager.shared().currentAppleEvent)
         Log.app.info("Launched\(atLogin ? " at login" : "", privacy: .public)")
+        TerminalLauncher.removeStaleScripts()
         NotificationCenter.default.addObserver(
             self, selector: #selector(menuDidBeginTracking(_:)),
             name: NSMenu.didBeginTrackingNotification, object: nil)
