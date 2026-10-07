@@ -30,7 +30,8 @@ log = logging.getLogger("keryx.config")
 #: caller who could not authorize. Six of them at minimum because this is the single thing
 #: between someone who has spoofed a caller ID and a subagent running with
 #: `bypassPermissions`, and eight at most because it is said or keyed under time pressure.
-PIN_PATTERN = re.compile(r"\d{6,8}")
+#: ASCII digits only: `\d` alone also takes other scripts' digits, which no keypad has.
+PIN_PATTERN = re.compile(r"\d{6,8}", re.ASCII)
 PIN_RULE = "must be 6 to 8 digits, and nothing but digits"
 #: The longest `PIN_PATTERN` allows. A keypad entry with no configured PIN to measure
 #: itself against runs to here, since no further digit could be part of one.

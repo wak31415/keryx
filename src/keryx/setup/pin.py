@@ -16,6 +16,7 @@ their length either.
 """
 
 import hmac
+import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,6 +32,7 @@ from keryx.config.pin import (
     replace_pin_at_keyboard,
     write_enrolled_pin,
 )
+from keryx.config.settings import env_var_names
 from keryx.pin_guard import PinGuard
 
 #: Where the PIN on this machine is (`existing_pin`).
@@ -46,7 +48,7 @@ DIFFER = "The two PINs differ."
 TWICE = "stdin must carry the new PIN twice, one per line, and nothing else."
 ALREADY_SET = "A PIN is already set."
 IN_ENVIRONMENT = (
-    "A PIN is set in the environment (KERYX_PIN), and it wins over any PIN set here: "
+    "A PIN is set in the environment ({name}), and it wins over any PIN set here: "
     "remove it from the environment first."
 )
 UNUSABLE_THERE = "{path} holds no usable PIN; --replace puts the new one in its place."
@@ -54,16 +56,30 @@ IN_JARVIS = (
     "The PIN is still in {path}, from when Keryx was Jarvis: run `keryx migrate` to move it "
     "before setting a new one."
 )
-NOT_WRITTEN = "The PIN could not be written to {path}; the PIN there is as it was."
+NOT_WRITTEN = "The PIN could not be written to {path}; `keryx pin` says what is there now."
+TERMINAL = "Type the PIN in the Keryx app or `keryx setup`; it is not echoed there."
+
+
+def environment_pin_variable() -> str | None:
+    """The variable setting a PIN in this process's environment, usable or not, or None.
+
+    Read from the environment itself rather than `Settings.pin`: a malformed one leaves the
+    field empty in the settings a report loads (`DOCTOR_FALLBACKS`), and yet `keryx serve`
+    refuses to start on it, so a PIN written beside it is one nothing would ever read.
+    Names match as the settings match them, in any case; the new name first.
+    """
+    present = {name.upper(): name for name, value in os.environ.items() if value.strip()}
+    return next((present[name] for name in env_var_names("pin") if name in present), None)
 
 
 def existing_pin(settings: Settings) -> str | None:
     """Where this machine's PIN is (`ENVIRONMENT`, `FILE`, `UNUSABLE`, `JARVIS`), or None.
 
-    In the order `Settings.pin` and `pin_enrolment_open` read them: the environment wins, then
-    `KERYX_HOME/pin`, usable or not, then a PIN `keryx migrate` has yet to move.
+    In the order `Settings.pin` and `pin_enrolment_open` read them: the environment wins,
+    usable or not, then `KERYX_HOME/pin`, usable or not, then a PIN `keryx migrate` has yet
+    to move.
     """
-    if settings.pin_source == PIN_FROM_ENV:
+    if settings.pin_source == PIN_FROM_ENV or environment_pin_variable():
         return ENVIRONMENT
     if settings.pin_source == PIN_FROM_FILE:
         return FILE
@@ -77,10 +93,10 @@ def existing_pin(settings: Settings) -> str | None:
 def pin_problem(digits: str) -> str | None:
     """Why `digits` will not do as a PIN chosen at the keyboard, or None when they will.
 
-    ASCII digits only: `PIN_PATTERN`'s `\\d` also takes the digits of other scripts, which no
-    keypad can enter, and a PIN nobody can key in is an owner locked out.
+    `PIN_PATTERN` takes ASCII digits only: a PIN in another script's digits is one no keypad
+    can enter, and an owner locked out.
     """
-    if not (digits.isascii() and PIN_PATTERN.fullmatch(digits)):
+    if not PIN_PATTERN.fullmatch(digits):
         return f"It {PIN_RULE}."
     if is_trivial_pin(digits):
         return "Pick something less guessable than a run or a repeated digit."
@@ -127,7 +143,7 @@ def set_refusal(settings: Settings, *, replace: bool) -> str | None:
     """
     where = existing_pin(settings)
     if where == ENVIRONMENT:
-        return IN_ENVIRONMENT
+        return IN_ENVIRONMENT.format(name=environment_pin_variable() or "KERYX_PIN")
     if where == JARVIS:
         return IN_JARVIS.format(path=legacy_home())
     if refusal := settings.storage_refusal():
@@ -148,10 +164,11 @@ def pin_status(settings: Settings, guard: PinGuard | None = None) -> dict[str, A
     where = existing_pin(settings)
     until = (guard or PinGuard.for_settings(settings)).locked_until()
     return {
-        "set": where in (ENVIRONMENT, FILE, JARVIS),
+        # A malformed one in the environment is no PIN, and still the one that counts.
+        "set": where in (FILE, JARVIS) or (where == ENVIRONMENT and bool(settings.pin)),
         "source": {ENVIRONMENT: "environment", FILE: "file", UNUSABLE: "file",
                    JARVIS: "jarvis"}.get(where) if where else None,
-        "enrolment_open": settings.pin_enrolment_open,
+        "enrolment_open": settings.pin_enrolment_open and where is None,
         "locked": until is not None,
         "locked_until": (
             None if until is None
@@ -172,6 +189,9 @@ def format_pin_status(found: dict[str, Any]) -> list[str]:
     """`pin_status` as a person reads it."""
     if found["set"]:
         lines = [f"PIN: {SOURCES_SAID[found['source']]}"]
+    elif found["source"] == "environment":
+        lines = ["PIN: the one in the environment is not 6 to 8 digits, and wins over any "
+                 "other; Keryx will not start until it is fixed or removed"]
     elif found["source"] == "file":
         lines = ["PIN: none usable (the file there is not a PIN, and no call can set one)"]
     else:

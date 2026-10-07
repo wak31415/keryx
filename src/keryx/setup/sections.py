@@ -28,13 +28,23 @@ from keryx.config import (
     is_secret,
     pin_file,
 )
+from keryx.config.files import legacy_home
 from keryx.config.permissions import is_protected, service_writable, writable_keys
 from keryx.config.store import ConfigError, validate
 from keryx.doctor import service_manager_check
 from keryx.persona import DEFAULT_VOICE, PERSONAS
 from keryx.setup.context import SetupContext
 from keryx.setup.phone import numbers_problem
-from keryx.setup.pin import ENVIRONMENT, FILE, UNUSABLE, existing_pin, pin_problem, write_pin
+from keryx.setup.pin import (
+    ENVIRONMENT,
+    FILE,
+    IN_JARVIS,
+    JARVIS,
+    UNUSABLE,
+    existing_pin,
+    pin_problem,
+    write_pin,
+)
 from keryx.setup.ui import Choice, Prompter
 
 #: Settings the manual walk does not offer: each has a section, or a door, of its own.
@@ -301,6 +311,9 @@ def run_pin(ctx: SetupContext) -> None:
     where = existing_pin(settings)
     if where == ENVIRONMENT:
         ui.success("PIN: set by KERYX_PIN in your environment, which wins over anything here")
+        return
+    if where == JARVIS:  # `keryx migrate` refuses two different PINs: move the old one first
+        ui.error(IN_JARVIS.format(path=legacy_home()))
         return
     replacing = False
     if where == FILE:

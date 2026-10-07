@@ -52,7 +52,7 @@ from keryx.config.migrate import Service as MigratingService
 from keryx.config.migrate import run as run_migration
 from keryx.config.options import has_options, options_for
 from keryx.config.permissions import ACTOR_ENVS, SERVICE, current_actor
-from keryx.config.pin import pin_file
+from keryx.config.pin import pin_file, read_enrolled_pin
 from keryx.config.settings import ConfigFileError, tolerate_broken_files
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
 from keryx.continuity.memory import memory_document, memory_path, read_memory
@@ -116,7 +116,8 @@ from keryx.tools.builtin import BUILTIN_TOOL_NAMES
 from keryx.tools.custom import load_custom_tools
 from keryx.transports.wav import WavTransport
 
-app = typer.Typer(help="Keryx voice agent.")
+# No locals in a crash: `pin set` holds the digits in one.
+app = typer.Typer(help="Keryx voice agent.", pretty_exceptions_show_locals=False)
 tasks_app = typer.Typer(help="Inspect the tasks handed to subagents.")
 app.add_typer(tasks_app, name="tasks")
 config_app = typer.Typer(
@@ -1883,6 +1884,9 @@ def pin_set(
     if not stdin:
         typer.echo("the PIN is read from stdin only, never the command line: --stdin", err=True)
         raise typer.Exit(2)
+    if sys.stdin.isatty():  # typed there, the digits would stay on the screen and in scrollback
+        typer.echo(pin_flow.TERMINAL, err=True)
+        raise typer.Exit(2)
     text = sys.stdin.read()
     settings = _pin_settings()
     if refusal := pin_flow.set_refusal(settings, replace=replace):
@@ -1900,7 +1904,9 @@ def pin_set(
         written = False
     if not written:
         typer.echo(
-            pin_flow.ALREADY_SET if path.exists() and not replacing
+            # A first write that failed after its O_EXCL create leaves no PIN, just a file.
+            pin_flow.ALREADY_SET
+            if not replacing and read_enrolled_pin(settings.config_dir) is not None
             else pin_flow.NOT_WRITTEN.format(path=path),
             err=True,
         )

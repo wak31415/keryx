@@ -197,6 +197,20 @@ def test_a_pin_in_the_environment_is_never_touched(make_ctx, monkeypatch):
     assert not pin_file(ctx.settings.config_dir).exists()
 
 
+def test_a_pin_still_in_jarvis_waits_for_the_migration(make_ctx):
+    from keryx.config.files import legacy_home
+
+    legacy_home().mkdir(parents=True)
+    pin_file(legacy_home()).write_text("482915\n")
+    ctx = make_ctx([], review=True)
+
+    sections.run_pin(ctx)
+
+    assert ctx.ui.asked == []
+    assert any("keryx migrate" in line for line in ctx.ui.lines("error"))
+    assert not pin_file(ctx.settings.config_dir).exists()
+
+
 def test_an_unusable_pin_file_is_replaced_after_asking(make_ctx):
     ctx = make_ctx([("New PIN", "739104"), ("same PIN", "739104"), ("Replace the PIN", True)])
     ctx.settings.data_dir.mkdir(parents=True)

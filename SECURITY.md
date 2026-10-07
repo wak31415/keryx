@@ -65,9 +65,10 @@ anything behind, or reach a coding agent. In particular:
 - A call being treated as one Keryx placed to your number when Keryx did not place it, or
   placed it to a number that is not yours (see
   [Calls Keryx places itself](#calls-keryx-places-itself)).
-- **Anything that sets or replaces a PIN while one already exists**, from the phone or from
-  a coding agent, or that reads an enrolled PIN back out anywhere. That includes
-  `keryx pin set` going through for anything `keryx serve` started.
+- **Anything that sets or replaces a PIN while one already exists** from the phone or a
+  voice tool, or through Keryx's own commands under the `KERYX_ACTOR=service` that
+  `keryx serve` gives everything it starts (`keryx pin set` included); or anything that
+  reads an enrolled PIN back out anywhere.
 - With `BRIEFING_BEFORE_PIN=false`, anything of yours reaching a call that has not given
   the PIN.
 - A way for untrusted content, such as an email, a web page, or a file, to reach a coding
@@ -94,10 +95,9 @@ These are the design, not flaws in it:
   naming an agent on a call is an argument to that one gated tool, not a way around it. A
   way to reach that access *without* the PIN is in scope, on either agent.
 - **Attacks that already need your account on the host.** Someone who can read
-  `~/.config/keryx` or write `~/.claude/settings.json` is already you. Deleting
-  `KERYX_HOME/pin` is one example: it reopens enrollment for the next caller rather than
-  changing the PIN in place (see
-  [Setting the first PIN](#setting-the-first-pin-on-the-first-call)).
+  `~/.config/keryx` or write `~/.claude/settings.json` is already you. Deleting or
+  overwriting `KERYX_HOME/pin` is one example: deleting it reopens enrollment for the next
+  caller (see [Setting the first PIN](#setting-the-first-pin-on-the-first-call)).
 - **Vulnerabilities in dependencies**, unless the way Keryx uses one makes a harmless bug
   exploitable. Report those upstream. Dependabot watches the versions here.
 - **Missing rate limits or hardening on `/health`**, which returns `ok`, a session count,
@@ -226,9 +226,12 @@ still in an old `~/.jarvis` directory also keeps enrollment closed, until `keryx
 moves it.
 
 **What a coding agent can and cannot do to the PIN.** A coding agent runs as you with full
-permissions, so it can delete `KERYX_HOME/pin`, as it can edit any of your files. It cannot
-rewrite an enrolled PIN, because of `O_EXCL`, so the PIN cannot be swapped silently.
-Deleting the file locks you out and opens enrollment for whoever calls next. That is loud,
+permissions, so it can delete `KERYX_HOME/pin`, as it can edit any of your files. It can
+also write new digits over it. `O_EXCL` keeps Keryx's own code (a voice tool, a call, a
+retry) from replacing an enrolled PIN, not a process with your file permissions. And
+`keryx pin set` refuses only what `keryx serve` started, by an environment variable that
+such a process could drop. What Keryx guarantees is that none of its own paths swaps the PIN
+for an agent. Deleting the file locks you out and opens enrollment for whoever calls next. That is loud,
 and `keryx doctor` shows it, which is better than a PIN quietly becoming someone else's. If
 this worries you, set `KERYX_PIN` in the service's own environment (the unit's
 `Environment=` line), which always takes precedence over the file.
@@ -241,8 +244,8 @@ anyone who has your machine can already change your files. The command gives the
 new. What it adds is a way for you to set the PIN without a terminal.
 
 **Why Keryx has no PIN-setting script it can call.** Any sudoers rule that lets Keryx run a
-setter without a password also lets a coding agent run it. That would give back exactly the
-ability the `O_EXCL` write removes. A root-owned setter that you run with your own sudo
+setter without a password also lets a coding agent run it. That would hand Keryx itself a
+way past the `O_EXCL` write. A root-owned setter that you run with your own sudo
 password is fine. What matters is that Keryx has no privileged way to run it.
 
 ### Calls Keryx places itself
@@ -430,8 +433,10 @@ This is **a rule Keryx's own tools obey, not a sandbox.** A coding agent runs as
 shell, and can edit `config.toml` directly, as it can edit any of your files. What the rule
 buys is that the ordinary paths refuse, and say so: the tool the voice model is given, and
 the commands a coding agent would reach for. `keryx config set` is limited to the
-service-writable keys. `config import-env`, `auth login`, `memory seed`, `setup`, `migrate`,
-`plugins install`, `plugins remove`, and `config lock|unlock` refuse the service outright.
+service-writable keys. `config import-env`, `auth login`, `memory seed`, `setup`,
+`setup mark`, `pin set`, `migrate`, `plugins install`, `plugins remove`, `config lock|unlock`,
+`models use`, `models start|stop`, `voice use`, and `service install|uninstall` refuse the
+service outright.
 
 ### Models of your own
 
