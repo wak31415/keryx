@@ -79,8 +79,16 @@ different settings from the service's, so the app looks in this order:
    then `~/.local/bin/keryx`.
 
 Each command runs in the checkout, because the CLI refuses to run while an old `.env` is in
-its working directory; with no checkout it runs in your home folder. When nothing is found,
-the window says where it looked and offers to choose the folder.
+its working directory; with no checkout it runs in `/`, as launchd runs the service, and
+never in your home folder, where an unrelated `.env` would make the CLI refuse. When nothing
+is found, the window says where it looked and offers to choose the folder.
+
+`KERYX_APP_ENVIRONMENT=inherit`, in the environment the app is started with, is for sandbox
+and development runs, and is never set in normal use. The app then uses its own process
+environment in place of the login shell's, both to run each command and to find `keryx` on
+its `PATH`, and it skips the service's launchd plist, whose environment is the real
+installation's. Started from a shell that exports a sandbox's `KERYX_HOME` and XDG
+directories, it reaches that sandbox and nothing else.
 
 ## What it shows
 

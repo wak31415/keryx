@@ -199,15 +199,19 @@ remember:
   terminal and never the service. It finds Keryx the way the service runs — the folder
   chosen in its Settings, then `~/Library/LaunchAgents/dev.keryx.agent.plist`'s program,
   working directory and environment, then a login shell — with a checkout optional, and
-  runs each command in the checkout, else `HOME`. It has no PIN control (the PIN row shows
+  runs each command in the checkout, else in `/` as launchd does (never `HOME`, where an
+  unrelated `.env` would make the CLI refuse). `KERYX_APP_ENVIRONMENT=inherit` in the app's
+  own environment, for sandbox and development runs only, replaces the login shell with that
+  environment and skips the launchd plist. It has no PIN control (the PIN row shows
   whether one is set and opens `keryx setup` in Terminal) and cannot approve anything (it
   can pause the approval calls). A secret goes to `config set KEY --stdin` and nowhere
   else. Its command log is an allowlist (`CommandLog`): the subcommand, its verb and its
   flags from fixed lists, every other word `…`, then the exit code and the duration;
   stdin, the environment and the output never. The snapshots photograph only the app's own
   windows, by window id. `tests/test_macos_contract.py` holds the JSON contract — the keys
-  the Swift decoders require from each command — so renaming a field fails pytest, not the
-  app at runtime.
+  the Swift decoders require from each command, with their JSON types, and the events,
+  ending and exit codes of the `models pull --json` stream — so renaming a field fails
+  pytest, not the app at runtime.
 
 `logging_util.mask_number` is the only shape a phone number may take in a log line.
 
