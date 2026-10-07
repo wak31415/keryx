@@ -656,7 +656,7 @@ class Settings(BaseSettings):
     # --- phone ---------------------------------------------------------------------------
 
     twilio_account_sid: str | None = setting(
-        None, "Your Twilio account SID (`AC…`).", title="Twilio account ID", group="phone"
+        None, "Your Twilio account SID (`AC…`).", title="Twilio account SID", group="phone"
     )
     twilio_auth_token: str | None = setting(
         None, "Your Twilio auth token.", title="Twilio auth token", group="phone", repr=False

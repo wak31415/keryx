@@ -854,6 +854,32 @@ def test_any_other_check_is_its_name_in_sentence_case(name, title):
     assert check_title(name) == title
 
 
+def test_a_plugin_check_takes_the_plugins_title():
+    for name, plugin in plugins.PLUGINS.items():
+        assert check_title(name) == plugin.title
+    assert check_title("send_to_slack") == "Slack"
+
+
+@pytest.mark.parametrize(
+    ("name", "title"),
+    [
+        ("data dir writable", "Data folder writable"),
+        ("data dir private", "Data folder private"),
+        ("secret files private", "Secret files private"),
+        ("outside git", "Settings outside Git"),
+        ("config.toml", "Settings file"),
+        ("old .env", "Old .env file"),
+    ],
+)
+def test_a_terse_check_name_reads_like_the_settings_titles(name, title):
+    assert check_title(name) == title
+
+
+@pytest.mark.parametrize("name", ["keryx.log", "some_tool", "tasks.db"])
+def test_a_file_or_identifier_name_is_left_as_written(name):
+    assert check_title(name) == name
+
+
 def test_every_check_has_a_section_and_a_state(healthy):
     for check in run_doctor_checks(healthy):
         assert check.section

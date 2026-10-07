@@ -8,15 +8,15 @@ import pytest
 from keryx.config.settings import Settings, env_var_name, field_title, setting
 
 #: Acronyms and product names a title keeps as their owners write them; any other word in
-#: capitals is an environment name leaking through.
+#: capitals is an environment name leaking through. SID is Twilio's, as its console labels it.
 ACRONYMS = frozenset({
     "OpenAI", "API", "PIN", "Twilio", "URL", "SMS", "Slack", "Gmail", "Google", "Codex",
     "Claude", "Realtime", "VAD", "MCP", "GGUF", "Kokoro", "llama.cpp", "Ollama", "ID", "USD",
-    "TTS", "STT", "SSH", "macOS",
+    "TTS", "STT", "SSH", "macOS", "SID",
 })
 #: Proper nouns that are not acronyms: capitalised mid-title because they are names.
 PROPER_NOUNS = frozenset({"Anthropic", "Cloudflare", "GitHub", "Keryx", "OAuth"})
-#: The ones the owner's request named, word for word.
+#: The ones the owner's request (and the review after it) named, word for word.
 NAMED = {
     "OPENAI_API_KEY": "OpenAI API key",
     "OPENAI_REALTIME_MODEL": "Realtime model",
@@ -25,6 +25,8 @@ NAMED = {
     "LLM_SERVER_PORT": "Model server port",
     "AGENTS_ENABLED": "Enabled agents",
     "APPROVAL_ESCALATE_SECONDS": "Ring after (seconds)",
+    # The label Twilio's console uses, which the owner copies the value from.
+    "TWILIO_ACCOUNT_SID": "Twilio account SID",
 }
 TITLES = {name: field_title(name) for name in Settings.model_fields}
 

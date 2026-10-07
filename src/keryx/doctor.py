@@ -100,15 +100,35 @@ class Check:
         return {**asdict(self), "state": self.state, "title": check_title(self.name)}
 
 
+#: Check names too terse to read beside the settings' titles, as the Overview shows them.
+CHECK_TITLES = {
+    "data dir writable": "Data folder writable",
+    "data dir private": "Data folder private",
+    "outside git": "Settings outside Git",
+    "config.toml": "Settings file",
+    "old .env": "Old .env file",
+}
+
+
 def check_title(name: str) -> str:
     """What `--json` calls a check where a person reads it (the Mac app's Overview).
 
-    A check named by a setting's key (`OPENAI_API_KEY`, or an older name for one) takes that
-    setting's title; any other is its name with the first letter capitalised. Only a key in
-    capitals counts, so a check that happened to be called `port` would not be the setting.
+    In order: a check named by a setting's key (`OPENAI_API_KEY`, or an older name for one)
+    takes that setting's title, and one named by a plugin the plugin's; then
+    `CHECK_TITLES`; any other is its name with the first letter capitalised, unless it holds
+    a `.` or a `_` — a file or an identifier, left as written. Only a key in capitals counts
+    as a setting's, so a check that happened to be called `port` would not be one.
     """
     field = field_for(name) if name == name.upper() else None
-    return field_title(field) if field is not None else name[:1].upper() + name[1:]
+    if field is not None:
+        return field_title(field)
+    if name in plugins.PLUGINS:
+        return plugins.PLUGINS[name].title
+    if name in CHECK_TITLES:
+        return CHECK_TITLES[name]
+    if "." in name or "_" in name:
+        return name
+    return name[:1].upper() + name[1:]
 
 
 @dataclass(frozen=True)

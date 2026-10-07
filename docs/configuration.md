@@ -98,7 +98,7 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 
 | Setting | Title | Default | Service may change | What it is |
 |---|---|---|---|---|
-| `TWILIO_ACCOUNT_SID` | Twilio account ID |  | no | Your Twilio account SID (`AC…`). |
+| `TWILIO_ACCOUNT_SID` | Twilio account SID |  | no | Your Twilio account SID (`AC…`). |
 | `TWILIO_AUTH_TOKEN` | Twilio auth token | (secret) | never | Your Twilio auth token. |
 | `TWILIO_NUMBER` | Twilio number |  | no | The Twilio number Keryx answers and calls from, in E.164. |
 | `SMS_ENABLED` | Text messages (SMS) | `false` | never | Whether Keryx may text at all. Off: many Twilio accounts cannot send SMS in their region, and Slack is the written channel. Outbound calls are unaffected. |
