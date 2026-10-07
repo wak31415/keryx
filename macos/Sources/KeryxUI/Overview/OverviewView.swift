@@ -24,6 +24,7 @@ public struct OverviewView: View {
             // settings for the titles doctor's details are said in.
             await model.refresh(.approvals)
             await model.refresh(.memory)
+            await model.refresh(.service)
             if model.config.value == nil { await model.refresh(.config) }
         }
     }
@@ -39,6 +40,9 @@ private struct ServiceSection: View {
     @State private var liveCalls: Int?
     @State private var failure: KeryxError?
     @State private var restarting = false
+    /// Installing or uninstalling the service: the question asked, then the run under way.
+    @State private var unitChange: ServiceWording.Change?
+    @State private var changingUnit: ServiceWording.Change?
 
     var body: some View {
         Section {
@@ -70,9 +74,22 @@ private struct ServiceSection: View {
                                 .textSelection(.enabled)
                         }
                     }
-                    if !status.service.installed, status.service.ok, model.location.value?.checkout != nil {
-                        Button("Install Service…") { installService() }
-                            .help("Runs scripts/install-launchd.sh in Terminal")
+                    if let changingUnit {
+                        ProgressView().controlSize(.small)
+                            .accessibilityLabel(changingUnit.progress)
+                    } else if !status.service.installed, status.service.ok, model.location.value?.checkout != nil {
+                        Button("Install…") { unitChange = .install }
+                            .help("Installs Keryx and its tunnel as services that start at login")
+                    }
+                }
+            }
+
+            if let tunnel = model.service.value?.units.tunnel, status.service.installed || tunnel.installed {
+                LabeledContent("Tunnel") {
+                    HStack(spacing: 6) {
+                        let line = ServiceWording.tunnel(tunnel)
+                        StatusDot(line.tone)
+                        Text(line.text)
                     }
                 }
             }
@@ -132,14 +149,29 @@ private struct ServiceSection: View {
                 if restarting {
                     ProgressView().controlSize(.small)
                     Text("Restarting…").foregroundStyle(.secondary)
+                } else if let changingUnit {
+                    ProgressView().controlSize(.small)
+                    Text(changingUnit.progress).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("Reveal Logs") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: status.paths.logs)])
                 }
+                if status.service.installed {
+                    Button("Uninstall…") { unitChange = .uninstall }
+                        .disabled(restarting || changingUnit != nil)
+                }
                 Button("Restart…") { confirmingRestart = true }
-                    .disabled(restarting || !status.service.installed)
+                    .disabled(restarting || changingUnit != nil || !status.service.installed)
             }
+        }
+        .confirmationDialog(unitChange?.question ?? "", isPresented: Binding(
+            get: { unitChange != nil }, set: { if !$0 { unitChange = nil } }
+        ), presenting: unitChange) { change in
+            Button(change.button, role: change == .uninstall ? .destructive : nil) { run(change) }
+        } message: { change in
+            Text(change.message(assistant: Wording.assistant(status) ?? "The assistant",
+                                liveCalls: status.health.liveSessions ?? 0))
         }
         .confirmationDialog("Restart Keryx?", isPresented: $confirmingRestart) {
             Button("Restart") { restart(force: false) }
@@ -188,12 +220,15 @@ private struct ServiceSection: View {
         return (.inactive, "Stopped", nil, "Stopped (\(manager))")
     }
 
-    private func installService() {
-        guard let location = model.location.value else { return }
-        do {
-            try TerminalLauncher.openInstallService(location)
-        } catch {
-            failure = (error as? KeryxError) ?? .terminal(error.localizedDescription)
+    /// Installs or uninstalls Keryx and its tunnel (`keryx service install|uninstall`),
+    /// asked first; never the model or voice server, which their own screens start.
+    private func run(_ change: ServiceWording.Change) {
+        guard changingUnit == nil else { return }
+        changingUnit = change
+        Task {
+            let answer = change == .install ? await model.installService() : await model.uninstallService()
+            changingUnit = nil
+            if case let .failure(error) = answer { failure = error }
         }
     }
 
