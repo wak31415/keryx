@@ -22,8 +22,17 @@ extension ScreenCatalog {
             Entry("wizard-welcome-resuming", size: size) { wizard(.welcome, model: partway()) },
             Entry("wizard-welcome-review", size: size) { wizard(.welcome, mode: .review, model: ready()) },
             Entry("wizard-loading", size: size) {
+                let model = fresh()
+                model.setupPlan = Loadable(isLoading: true)
+                return SetupWizardView(wizard: SetupWizard(), reads: false).environment(model)
+            },
+            Entry("wizard-needs-updating", size: size) {
                 wizard(.welcome, model: AppModel.preview(client: PreviewClient(setupPlan: .failure(.failed(
                     command: "keryx setup plan", exitCode: 2, message: "No such command 'plan'.")))))
+            },
+            Entry("wizard-plan-failed", size: size) {
+                wizard(.welcome, model: AppModel.preview(client: PreviewClient(setupPlan: .failure(
+                    .timedOut(command: "keryx setup plan")))))
             },
             Entry("wizard-not-found", size: size) {
                 wizard(.welcome, model: AppModel.preview(location: .failure(LocateFailure(lookedAt: []))))
@@ -56,8 +65,15 @@ extension ScreenCatalog {
             Entry("wizard-about-you-typed", size: size) {
                 frame(.aboutYou, model: fresh()) {
                     AboutYouFrame(typed: AboutYouAnswers(name: "Ada", assistant: "",
-                                                         numbers: ["+44 7700 900123", "07700 900456"]))
+                                                         numbers: ["+44 7700 900123", "07700 900456"]),
+                                  pin: "482915")
                 }
+            },
+            Entry("wizard-about-you-pin-set", size: size) {
+                wizard(.aboutYou, model: fresh(values: ["OWNER_NAME": .string("Ada")], pin: PreviewData.pinFile))
+            },
+            Entry("wizard-about-you-pin-started-with", size: size) {
+                wizard(.aboutYou, model: fresh(pin: PreviewData.pinEnvironment))
             },
             Entry("wizard-about-you-partway", size: size) {
                 wizard(.aboutYou, model: fresh(values: ["OWNER_NAME": .string("Ada")]))
@@ -107,10 +123,6 @@ extension ScreenCatalog {
                     $0.workModel = "gemma-4-12b"
                 }
             },
-            // The PIN
-            Entry("wizard-pin", size: size) { wizard(.pin, model: fresh()) },
-            Entry("wizard-pin-set", size: size) { wizard(.pin, mode: .review, model: ready()) },
-            Entry("wizard-pin-environment", size: size) { wizard(.pin, model: fresh(pin: PreviewData.pinEnvironment)) },
             // The phone line
             Entry("wizard-phone", size: size) { wizard(.phone, model: fresh()) },
             Entry("wizard-phone-partway", size: size) {
@@ -123,6 +135,17 @@ extension ScreenCatalog {
             },
             Entry("wizard-phone-refused", size: size) {
                 wizard(.phone, model: fresh(values: twilioAccount, phone: .refused))
+            },
+            Entry("wizard-phone-installing-tunnel", size: size) {
+                wizard(.phone, model: {
+                    let model = fresh(values: twilioAccount.merging(["TWILIO_NUMBER": .string("+15550001111")]) { $1 },
+                                      phone: .connected)
+                    model.installTunnel()
+                    return model
+                }())
+            },
+            Entry("wizard-phone-no-homebrew", size: size) {
+                wizard(.phone, model: fresh(values: twilioAccount, phone: .connected, homebrew: nil))
             },
             // Checking, and how it ends
             Entry("wizard-checking", size: size) {
@@ -138,7 +161,24 @@ extension ScreenCatalog {
                                          detail: "huggingface_hub: 503 Service Unavailable")),
                 ]))) { $0.voicePlace = .thisMac }
             },
+            Entry("wizard-checking-stopped", size: size) {
+                wizard(.finish, model: checking(voiceDownload: .replay)) {
+                    $0.voicePlace = .thisMac
+                    $0.stopped = [.downloadSpeech]
+                }
+            },
+            Entry("wizard-checking-review", size: size) {
+                wizard(.finish, mode: .review, model: checking(voiceDownload: .replay)) { $0.voicePlace = .thisMac }
+            },
+            Entry("wizard-checking-details-left", size: size) {
+                wizard(.finish, model: fresh(plan: ownerLeft, values: readyValues, claudeSignedIn: true,
+                                             pin: PreviewData.pinFile, phone: .pointed))
+            },
             Entry("wizard-ready", size: size) { wizard(.finish, model: ready()) },
+            Entry("wizard-not-pointed", size: size) {
+                wizard(.finish, model: fresh(plan: PreviewData.setupPlanReady, values: readyValues,
+                                             claudeSignedIn: true, pin: PreviewData.pinFile, phone: .reachable))
+            },
             Entry("wizard-ready-no-pin", size: size) { wizard(.finish, model: ready(pin: PreviewData.pinNone)) },
             Entry("wizard-nearly-ready", size: size) {
                 wizard(.finish, model: fresh(plan: nearlyReady, values: ["OPENAI_API_KEY": .string("(set)")])) {
@@ -203,14 +243,14 @@ extension ScreenCatalog {
 
     // MARK: - Models
 
-    enum PhoneState { case none, connected, reachable, refused }
+    enum PhoneState { case none, connected, reachable, pointed, refused }
 
     /// A new Mac (or `plan`), with `values` saved, Claude signed in or not, the PIN, the local
     /// models, the phone as far as `phone`, and scripts for the runs.
     @MainActor private static func fresh(
         plan: SetupPlan = PreviewData.setupPlan, values: [String: JSONValue] = [:], claudeSignedIn: Bool = false,
         pin: PinStatus = PreviewData.pinNone, models: ModelsReport = PreviewData.models, voiceLLMRows: Bool = false,
-        phone: PhoneState = .none, pull: PreviewClient.Pull = .replay,
+        phone: PhoneState = .none, homebrew: String? = "/opt/homebrew/bin/brew", pull: PreviewClient.Pull = .replay,
         voiceDownload: PreviewClient.Script<VoiceModelsDownloaded> = .replay,
         projectDraft: PreviewClient.Script<ProjectDraft> = .replay
     ) -> AppModel {
@@ -233,6 +273,10 @@ extension ScreenCatalog {
         case .reachable:
             set(&config, "PUBLIC_HOST", .string("keryx.example.com"))
             (numbers, tunnel, webhooks) = (PreviewData.phoneNumbers, PreviewData.phoneTunnel, PreviewData.phoneWebhooks)
+        case .pointed:
+            set(&config, "PUBLIC_HOST", .string("keryx.example.com"))
+            (numbers, tunnel, webhooks) = (PreviewData.phoneNumbers, PreviewData.phoneTunnel,
+                                           PreviewData.phoneWebhooksMatching)
         case .refused:
             var refused = PreviewData.phoneNumbersUnset
             refused.error = "Twilio refused the account SID and auth token (401)."
@@ -244,7 +288,7 @@ extension ScreenCatalog {
             doctor: .success(claudeSignedIn ? signedIn : PreviewData.doctor), models: .success(models),
             config: .success(config), voice: .success(voice), pull: pull, setupPlan: .success(plan), pin: .success(pin),
             phoneNumbers: .success(numbers), phoneWebhooks: .success(webhooks), phoneTunnel: .success(tunnel),
-            voiceDownload: voiceDownload, projectDraft: projectDraft))
+            voiceDownload: voiceDownload, projectDraft: projectDraft, homebrew: homebrew))
     }
 
     /// Part way: the owner and the PIN done, the voice and the work still to set.
@@ -254,15 +298,27 @@ extension ScreenCatalog {
               pin: PreviewData.pinFile)
     }
 
-    /// Everything set: ready for a first call on +15550001111.
+    /// What a Mac ready for its first call has saved.
+    private static let readyValues: [String: JSONValue] = twilioAccount.merging([
+        "OPENAI_API_KEY": .string("(set)"), "OWNER_NAME": .string("Ada"),
+        "ALLOWED_CALLERS": .array([.string("+15550100100"), .string("+447700900123")]),
+        "OWNER_NUMBER": .string("+15550100100"), "TWILIO_NUMBER": .string("+15550001111"),
+    ]) { $1 }
+
+    /// Everything set: ready for a first call on +1 555 000 1111, which rings this Mac.
     @MainActor private static func ready(pin: PinStatus = PreviewData.pinFile) -> AppModel {
-        fresh(plan: PreviewData.setupPlanReady,
-              values: twilioAccount.merging([
-                  "OPENAI_API_KEY": .string("(set)"), "OWNER_NAME": .string("Ada"),
-                  "ALLOWED_CALLERS": .array([.string("+15550100"), .string("+447700900123")]),
-                  "OWNER_NUMBER": .string("+15550100"), "TWILIO_NUMBER": .string("+15550001111"),
-              ]) { $1 },
-              claudeSignedIn: true, pin: pin, phone: .reachable)
+        fresh(plan: PreviewData.setupPlanReady, values: readyValues, claudeSignedIn: true, pin: pin, phone: .pointed)
+    }
+
+    /// Ready but for the owner's details, as today's CLI holds a blank name.
+    private static var ownerLeft: SetupPlan {
+        var plan = PreviewData.setupPlanReady
+        plan.ready = false
+        if let index = plan.steps.firstIndex(where: { $0.id == "owner" }) {
+            plan.steps[index].state = SetupStepState.needed.rawValue
+            plan.steps[index].why = "Owner name: OWNER_NAME is not set."
+        }
+        return plan
     }
 
     /// Checking on a Mac whose voice runs here: the speech models still to download, the

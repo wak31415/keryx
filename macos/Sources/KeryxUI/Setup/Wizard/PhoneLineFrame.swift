@@ -23,12 +23,15 @@ package struct PhoneLineFrame: View {
     /// The sub-steps the owner asked to change, though done.
     @State private var changing: Set<Int> = []
     @State private var leaving = false
+    @FocusState private var hostFocused: Bool
+    @State private var noDomainShown = false
 
     package init(host: String = "") {
         _host = State(initialValue: host)
     }
 
     static let console = URL(string: "https://console.twilio.com/")!
+    static let signUp = URL(string: "https://www.twilio.com/try-twilio")!
     static let buyNumber = URL(string: "https://console.twilio.com/us1/develop/phone-numbers/manage/search")!
 
     package var body: some View {
@@ -38,22 +41,29 @@ package struct PhoneLineFrame: View {
                                webhooks: model.phoneWebhooks.value)
         WizardPage(symbol: .system("phone"), title: WizardWording.phoneTitle,
                    sentence: WizardWording.phoneSentence(who), position: wizard.position(facts)) {
-            VStack(spacing: 8) {
-                account(steps)
-                number(steps, assistant: who)
-                reaching(steps, facts: facts)
-                pointHere(steps)
-                if let failure {
-                    ErrorText(failure.said("That wasn't saved."))
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            ScrollView {
+                VStack(spacing: 6) {
+                    account(steps)
+                    number(steps, assistant: who)
+                    reaching(steps, facts: facts)
+                    pointHere(steps)
+                    if let failure {
+                        ErrorText(failure.said("That wasn't saved."))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        } leading: {
+            Button(WizardWording.setUpLater) { setUpLater(facts) }
+                .disabled(leaving)
+            if !steps.canContinue(pickedNumber: picked, typedHost: typedHost) {
+                WaitingCaption(text: "Finish steps 1 to 3, or set up later")
             }
         } trailing: {
             if leaving { ProgressView().controlSize(.small) }
             Button("Back") { wizard.back() }
                 .keyboardShortcut(.cancelAction)
-            Button(WizardWording.setUpLater) { setUpLater(facts) }
-                .disabled(leaving)
             Button("Continue") { proceed(steps) }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
@@ -82,20 +92,38 @@ package struct PhoneLineFrame: View {
             FoldedSection(title: "1  Twilio Account", summary: steps.accountName ?? "Connected") { editingAccount = true }
         } else {
             WizardSection(title: "1  Twilio Account") {
-                HStack(spacing: 10) {
-                    if model.phoneNumbers.isLoading {
-                        StatusLine(tone: .working, text: "Checking with Twilio…")
+                VStack(alignment: .leading, spacing: 6) {
+                    if steps.sidSet, steps.tokenSet, !model.phoneNumbers.isLoading,
+                       let error = model.phoneNumbers.value?.error {
+                        // Refused: what to do is in the sentence; the change is beside it.
+                        HStack(alignment: .top) {
+                            ErrorText(StreamFailure(PhoneSteps.refused, detail: error))
+                            Spacer()
+                            Button("Change…") { editingAccount = true }
+                                .controlSize(.regular)
+                        }
                     } else {
-                        let line = PhoneWording.account(model.phoneNumbers.value, sidSet: steps.sidSet,
-                                                        tokenSet: steps.tokenSet)
-                        StatusLine(tone: steps.sidSet && steps.tokenSet ? .problem : .none,
-                                   text: line.hint ?? line.text)
-                    }
-                    Spacer(minLength: 8)
-                    Link("Open the Twilio Console", destination: Self.console)
+                        if model.phoneNumbers.isLoading {
+                            StatusLine(tone: .working, text: "Checking with Twilio…")
+                        } else {
+                            Text(WizardWording.twilioIntro)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        HStack(spacing: 12) {
+                            Link("Open Twilio", destination: Self.console)
+                                .foregroundStyle(.tint)
+                            if !steps.sidSet {
+                                Link("Sign Up Free", destination: Self.signUp)
+                                    .foregroundStyle(.tint)
+                            }
+                            Spacer()
+                            Button(steps.sidSet ? "Change…" : "Connect…") { editingAccount = true }
+                                .controlSize(.regular)
+                        }
                         .font(.callout)
-                    Button(steps.sidSet ? "Change…" : "Connect…") { editingAccount = true }
-                        .controlSize(.regular)
+                    }
                 }
             }
         }
@@ -106,7 +134,7 @@ package struct PhoneLineFrame: View {
     @ViewBuilder private func number(_ steps: PhoneSteps, assistant: String) -> some View {
         let title = "2  \(assistant)'s Number"
         if steps.numberDone, !changing.contains(2) {
-            FoldedSection(title: title, summary: steps.savedNumber ?? "") { changing.insert(2) }
+            FoldedSection(title: title, summary: steps.savedNumber.map(PhoneDisplay.format) ?? "") { changing.insert(2) }
         } else {
             WizardSection(title: title) {
                 if !steps.accountDone {
@@ -148,43 +176,98 @@ package struct PhoneLineFrame: View {
     @ViewBuilder private func reaching(_ steps: PhoneSteps, facts: WizardFacts) -> some View {
         if steps.reachDone, !changing.contains(3) {
             FoldedSection(title: "3  Reaching This Mac",
-                          summary: [steps.tunnelKind, steps.savedHost].compactMap { $0 }.joined(separator: " · ")) {
+                          summary: [steps.tunnelKind.map(PhoneSteps.tunnelName), steps.savedHost]
+                              .compactMap { $0 }.joined(separator: " · ")) {
                 changing.insert(3)
             }
         } else {
             WizardSection(title: "3  Reaching This Mac") {
-                VStack(alignment: .leading, spacing: 8) {
-                    if let tunnel = model.phoneTunnel.value {
-                        HStack(spacing: 8) {
-                            if tunnel.kind != nil {
-                                StatusLine(tone: .ok, text: "\(tunnel.kind ?? "") · Installed")
-                            } else {
-                                StatusLine(tone: .warning, text: "cloudflared isn't installed")
-                            }
-                            Spacer()
-                            if let page = FixAction.tunnelPage(tunnel.installUrl) {
-                                Button("Get cloudflared…") { openURL(page) }
-                                    .controlSize(.regular)
-                                Button("Check Again") { Task { await model.refresh(.phoneTunnel) } }
-                                    .controlSize(.regular)
-                            }
-                        }
-                    } else {
-                        StatusLine(tone: .working, text: "Looking for a tunnel…")
-                    }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(WizardWording.reachIntro)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    tunnelRow()
                     HStack(spacing: 8) {
-                        TextField("Public hostname", text: $host, prompt: Text("keryx.example.com"))
+                        Text(WizardWording.addressLabel)
+                        TextField(WizardWording.addressLabel, text: $host, prompt: Text("lyra.yourdomain.com"))
                             .textFieldStyle(.roundedBorder)
-                            .frame(width: 260)
+                            .labelsHidden()
+                            .focused($hostFocused)
                             .onSubmit { saveHost() }
                         if savingHost { ProgressView().controlSize(.small) }
-                        Button("Save") { saveHost() }
-                            .controlSize(.regular)
-                            .disabled(typedHost.isEmpty || typedHost == steps.savedHost || savingHost)
                     }
-                    .disabled(!steps.accountDone)
+                    .onChange(of: hostFocused) { _, focused in if !focused { saveHost() } }
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(WizardWording.addressCaption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("No Domain?") { noDomainShown = true }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                            .foregroundStyle(.tint)
+                            .popover(isPresented: $noDomainShown, arrowEdge: .bottom) {
+                                Text(WizardWording.noDomain)
+                                    .font(.callout)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(width: 280)
+                                    .padding(14)
+                            }
+                    }
                 }
             }
+        }
+    }
+
+    /// Whether Cloudflare Tunnel is here; if not, the way to get it — installed by the app
+    /// with Homebrew, after a click, or its download page.
+    @ViewBuilder private func tunnelRow() -> some View {
+        let install = model.tunnelInstall
+        if let tunnel = model.phoneTunnel.value {
+            switch install.phase {
+            case let .running(line)?:
+                HStack(spacing: 10) {
+                    StatusLine(tone: .working, text: "Installing Cloudflare Tunnel…")
+                    Spacer()
+                    Button("Cancel") { install.cancel() }
+                        .controlSize(.regular)
+                }
+                if let line {
+                    Text(line).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                }
+            case .cancelling?:
+                StatusLine(tone: .working, text: "Stopping…")
+            case let .failed(failure)?:
+                HStack(alignment: .top) {
+                    ErrorText(failure)
+                    Spacer()
+                    Button("Try Again") { install.dismiss(); model.installTunnel() }
+                        .controlSize(.regular)
+                }
+            case .finished?, nil:
+                HStack(spacing: 8) {
+                    if let kind = tunnel.kind {
+                        StatusLine(tone: .ok, text: "\(PhoneSteps.tunnelName(kind)) is installed")
+                    } else {
+                        StatusLine(tone: .warning, text: WizardWording.tunnelMissing)
+                    }
+                    Spacer()
+                    if tunnel.kind == nil {
+                        if model.homebrew != nil {
+                            Button("Install Cloudflare Tunnel…") { model.installTunnel() }
+                                .controlSize(.regular)
+                        } else if let page = FixAction.tunnelPage(tunnel.installUrl) {
+                            Button("Get Cloudflare Tunnel…") { openURL(page) }
+                                .controlSize(.regular)
+                        }
+                        Button("Check Again") { Task { await model.refresh(.phoneTunnel) } }
+                            .controlSize(.regular)
+                    }
+                }
+            }
+        } else {
+            StatusLine(tone: .working, text: "Looking for a tunnel…")
         }
     }
 
@@ -196,10 +279,10 @@ package struct PhoneLineFrame: View {
         } else {
             WizardSection(title: "4  Point the Number Here") {
                 if !(steps.numberDone && steps.reachDone) {
-                    StatusLine(tone: .none, text: "Choose the number and the hostname first.")
+                    StatusLine(tone: .none, text: "Choose the number and the address for calls first.")
                 } else if let report = model.phoneWebhooks.value {
                     VStack(alignment: .leading, spacing: 6) {
-                        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 3) {
+                        Grid(alignment: .topLeading, horizontalSpacing: 10, verticalSpacing: 4) {
                             GridRow {
                                 Text("").gridColumnAlignment(.leading)
                                 Text("Now").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
@@ -213,8 +296,11 @@ package struct PhoneLineFrame: View {
                                 }
                             }
                         }
-                        HStack {
-                            Text(WizardWording.pointLater).font(.caption).foregroundStyle(.secondary)
+                        HStack(alignment: .top) {
+                            Text(WizardWording.pointHereCaption)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                             Spacer()
                             Button("Point It Here…") { pointing = true }
                                 .controlSize(.regular)
@@ -228,12 +314,12 @@ package struct PhoneLineFrame: View {
         }
     }
 
+    /// An address as compared: no scheme, the host whole, wrapping rather than cut.
     private func url(_ text: String?) -> some View {
-        Text(text ?? "Not set")
+        Text(text.map(PhoneSteps.shortURL) ?? "Not set")
             .font(.caption.monospaced())
             .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .truncationMode(.middle)
+            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: 190, alignment: .leading)
             .help(text ?? "")
     }
@@ -259,9 +345,10 @@ package struct PhoneLineFrame: View {
         }
     }
 
+    /// Saves the address once it is committed (Return, or leaving the field), when changed.
     private func saveHost() {
         let value = typedHost
-        guard !value.isEmpty, !savingHost else { return }
+        guard !value.isEmpty, !savingHost, value != WizardFacts(model).text("PUBLIC_HOST") else { return }
         savingHost = true
         failure = nil
         Task {
@@ -318,6 +405,20 @@ package struct PhoneSteps {
         self.numbers = numbers
         self.tunnel = tunnel
         self.webhooks = webhooks
+    }
+
+    /// What a refused account says; Twilio's own words (and its status code) are details.
+    static let refused = "Twilio refused the Account SID and Auth Token. Check them on the Twilio Console and try again."
+
+    /// The tunnel program by the name a person knows it by.
+    static func tunnelName(_ kind: String) -> String {
+        kind == "cloudflared" ? "Cloudflare Tunnel" : kind
+    }
+
+    /// "demo.twilio.com/welcome/voice/": an address without its scheme.
+    static func shortURL(_ url: String) -> String {
+        for scheme in ["https://", "http://"] where url.hasPrefix(scheme) { return String(url.dropFirst(scheme.count)) }
+        return url
     }
 
     var sidSet: Bool { facts.text("TWILIO_ACCOUNT_SID") != nil }

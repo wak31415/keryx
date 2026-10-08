@@ -8,17 +8,17 @@ public enum Quitting {
         public let detail: String
     }
 
+    /// Quitting while Jarvis's files move: refused, said why.
+    public static let migratingTitle = "Keryx Is Moving Its Files"
+    public static let migratingDetail = "Quit once the move has finished. Stopped part way, it would leave "
+        + "Keryx stopped and its files half moved."
+
     /// The question for what is under way — a model download, a voice setup, a model
     /// server start, a speech model download, a sign-in, Keryx's service being installed or
     /// uninstalled, any of them together; `nil` when none is and the app can just quit.
     /// `signingIn`: what a sign-in under way signs in to ("Claude"), and `signInDetail` what
     /// stopping it does. `assistant`: the assistant's name ("Lyra"). `writing`: the short
     /// writes still going after the moment quitting gave them (`AppModel.writing`).
-    /// Quitting while Jarvis's files move: refused, said why.
-    public static let migratingTitle = "Keryx Is Moving Its Files"
-    public static let migratingDetail = "Quit once the move has finished. Stopped part way, it would leave "
-        + "Keryx's background service stopped and its files half moved."
-
     public static func question(downloading: Bool, settingUpVoice: Bool, startingModelServer: Bool = false,
                                 downloadingVoiceModels: Bool = false, signingIn: String? = nil,
                                 signInDetail: String? = nil, assistant: String?,

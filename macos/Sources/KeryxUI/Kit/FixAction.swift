@@ -124,7 +124,7 @@ enum FixAction: Equatable, Sendable {
                 // A page, not an installer: the app installs no tunnel itself.
                 return SetupAction(title: "How to Install…", effect: .openURL(page))
             }
-            return open("Open Phone", .show(.phone))
+            return open("Fix…", .show(.phone))
         case .migrate:
             return open("Migrate…", .show(.overview))
         }

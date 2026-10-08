@@ -13,19 +13,24 @@ public struct SetupWizardView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.openURL) private var openURL
     @State private var wizard: SetupWizard
     /// The catalog's own wizard, at a frame: never restarted by the model's opening.
     private let fixed: Bool
+    /// Reads Keryx as it appears (the catalog's loading state reads nothing).
+    private let reads: Bool
 
     public init() {
         _wizard = State(initialValue: SetupWizard())
         fixed = false
+        reads = true
     }
 
     /// The catalog's: a run already at `path`'s last frame.
-    package init(wizard: SetupWizard) {
+    package init(wizard: SetupWizard, reads: Bool = true) {
         _wizard = State(initialValue: wizard)
         fixed = true
+        self.reads = reads
     }
 
     public var body: some View {
@@ -34,14 +39,22 @@ public struct SetupWizardView: View {
             .environment(wizard)
             .task(id: model.wizardOpening.id) {
                 if !fixed { wizard.start(model.wizardOpening) }
-                await refresh()
+                if reads { await refresh() }
             }
-            .onWindowBecomingKey { Task { await refresh() } }
+            .onWindowBecomingKey { if reads { Task { await refresh() } } }
             // Opened before Keryx was found: read everything once it is.
             .onChange(of: model.client == nil) { _, missing in
-                if !missing { Task { await refresh() } }
+                if !missing, reads { Task { await refresh() } }
             }
             .closeDisabled(model.migrationRun.isRunning)
+            .remembersStops(wizard)
+            .onDisappear {
+                guard !fixed else { return }
+                // The agent's test is the wizard's: it goes with the window.
+                model.smokeRun.cancel()
+                // Closed from Checking: setup has been seen; the checklist takes it from here.
+                if wizard.current == .finish { SetupLaunch.markCompleted() }
+            }
     }
 
     @ViewBuilder private var content: some View {
@@ -63,32 +76,55 @@ public struct SetupWizardView: View {
         case .migrate: MoveFilesFrame(close: close)
         case .aboutYou: AboutYouFrame()
         case .models: ModelsFrame()
-        case .pin: PinFrame()
         case .phone: PhoneLineFrame()
         case .finish: FinishFrame(close: close, showMain: showMainWindow)
         }
     }
 
-    /// The plan is being read, or could not be: Welcome's frame, saying so.
-    private var waiting: some View {
-        WizardPage(symbol: .mark, title: WizardWording.welcomeTitle,
-                   sentence: model.setupPlan.error.map { $0.message } ?? "Checking this Mac…", position: nil) {
-            if model.setupPlan.error == nil {
-                ProgressView().controlSize(.regular).padding(.top, 40)
+    /// The plan is being read, or could not be: Welcome's frame, saying so — a Keryx older
+    /// than the app said as needing an update, since trying again cannot help.
+    @ViewBuilder private var waiting: some View {
+        if let error = model.setupPlan.error, error.isOlderKeryx {
+            WizardPage(symbol: .mark, title: WizardWording.needsUpdatingTitle, sentence: WizardWording.needsUpdating,
+                       position: nil, hero: true) {
+                EmptyView()
+            } trailing: {
+                Button("Not Now") { close() }
+                    .keyboardShortcut(.cancelAction)
+                Button("How to Update…") { openURL(LocateView.installURL) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
             }
-        } trailing: {
-            Button("Not Now") { close() }
-                .keyboardShortcut(.cancelAction)
-            Button("Try Again") { Task { await model.refresh(.setupPlan) } }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.setupPlan.error == nil)
+        } else if let error = model.setupPlan.error, !model.setupPlan.isLoading {
+            WizardPage(symbol: .mark, title: WizardWording.welcomeTitle, sentence: error.message, position: nil,
+                       hero: true) {
+                if let details = error.details {
+                    DetailsDisclosure(details).frame(maxWidth: 420)
+                }
+            } trailing: {
+                Button("Not Now") { close() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Try Again") { Task { await model.refresh(.setupPlan) } }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+        } else {
+            WizardPage(symbol: .mark, title: WizardWording.welcomeTitle, sentence: WizardWording.checkingThisMac,
+                       position: nil, hero: true) {
+                ProgressView().controlSize(.regular)
+            } trailing: {
+                Button("Not Now") { close() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Get Started") {}
+                    .buttonStyle(.borderedProminent)
+                    .disabled(true)
+            }
         }
     }
 
     private var notFound: some View {
-        WizardPage(symbol: .system("questionmark.folder", .secondary), title: "Keryx Wasn't Found",
-                   sentence: "Show this app where Keryx is, and setup carries on from there.", position: nil) {
+        WizardPage(symbol: .system("questionmark.folder", .secondary), title: WizardWording.notFoundTitle,
+                   sentence: WizardWording.notFound, position: nil, hero: true) {
             EmptyView()
         } trailing: {
             Button("Not Now") { close() }
@@ -116,6 +152,13 @@ public struct SetupWizardView: View {
 }
 
 extension View {
+    /// Remembers in `wizard` what the owner stopped, from wherever they stopped it (a row
+    /// here, or Local Models): a run that was cancelling and has gone. Nothing restarts it
+    /// by itself.
+    func remembersStops(_ wizard: SetupWizard) -> some View {
+        modifier(StopWatcher(wizard: wizard))
+    }
+
     /// The window's close button is off while `disabled`: a migration under way finishes
     /// before its window can go.
     func closeDisabled(_ disabled: Bool) -> some View {
@@ -146,5 +189,29 @@ private struct CloseButtonSwitch: NSViewRepresentable {
         private func apply() {
             window?.standardWindowButton(.closeButton)?.isEnabled = !disabled
         }
+    }
+}
+
+private struct StopWatcher: ViewModifier {
+    let wizard: SetupWizard
+    @Environment(AppModel.self) private var model
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: model.downloads.active) { old, new in
+                for (name, phase) in old where phase == .cancelling && new[name] == nil {
+                    wizard.stopped.insert(.download(name))
+                }
+            }
+            .onChange(of: model.voiceDownloadRun.phase) { old, new in
+                if old == .cancelling, new == nil { wizard.stopped.insert(.downloadSpeech) }
+            }
+            .onChange(of: model.voiceSetup.phase) { old, new in
+                if old == .cancelling, new == nil { wizard.stopped.insert(.setUpVoice) }
+            }
+            .onChange(of: model.modelServerRun.phase) { old, new in
+                guard old == .cancelling, new == nil else { return }
+                wizard.stopped.insert(model.thisMacSetup?.startsServer == true ? .setUpVoice : .startServer)
+            }
     }
 }

@@ -38,7 +38,7 @@ package struct LocalIntent: Equatable, Sendable {
 }
 
 /// The next thing to do for a `LocalIntent`.
-package enum LocalStep: Equatable, Sendable {
+package enum LocalStep: Hashable, Sendable {
     /// `models pull NAME`.
     case download(String)
     /// `models use NAME [--default-agent]`.
@@ -53,10 +53,12 @@ package enum LocalStep: Equatable, Sendable {
     case wait
     case done
 
-    /// The Checking row it belongs to.
-    package var row: CheckRow {
+    /// The Checking row it belongs to: the voice's, or the work's — or, for the model the
+    /// voice's words come from while the work is in the cloud, the voice's.
+    package func row(_ intent: LocalIntent) -> CheckRow {
         switch self {
         case .downloadSpeech, .setUpVoice: .voice
+        case .download, .use: intent.workHere ? .work : .voice
         default: .work
         }
     }

@@ -6,9 +6,9 @@ package enum WizardFrame: String, CaseIterable, Hashable, Sendable {
     case welcome
     /// Move Your Files: only while Jarvis's files are still to move.
     case migrate
+    /// Your name, your phones and your PIN.
     case aboutYou
     case models
-    case pin
     case phone
     /// Checking, which becomes You're Ready (or Nearly Ready) in place.
     case finish
@@ -58,7 +58,7 @@ package enum WizardFlow {
             return true
         case .migrate:
             return facts.needs("migrate")
-        case .aboutYou, .models, .pin, .phone:
+        case .aboutYou, .models, .phone:
             guard mode == .firstRun else { return true }
             return !steps(of: frame).allSatisfy(facts.done)
         }
@@ -69,9 +69,8 @@ package enum WizardFlow {
         switch frame {
         case .welcome, .finish: []
         case .migrate: ["migrate"]
-        case .aboutYou: ["owner"]
+        case .aboutYou: ["owner", "pin"]
         case .models: ["voice", "agents"]
-        case .pin: ["pin"]
         case .phone: ["phone"]
         }
     }
@@ -86,6 +85,12 @@ package enum WizardFlow {
         let order = WizardFrame.allCases
         guard let index = order.firstIndex(of: frame) else { return [] }
         return order[(index + 1)...].filter { shows($0, mode: mode, facts: facts) }
+    }
+
+    /// The questions this run asks: the frames it shows but Welcome and the last, for
+    /// Welcome's "Three short steps".
+    package static func questions(mode: SetupWizardMode, facts: WizardFacts) -> Int {
+        upcoming(after: .welcome, mode: mode, facts: facts).filter { $0 != .finish && $0 != .migrate }.count
     }
 
     /// Where the dot strip is: the frame shown (1-based) of all this run will show — the
@@ -202,6 +207,47 @@ package struct AboutYouAnswers: Equatable, Sendable {
             }
         }
         return writes
+    }
+}
+
+// MARK: - The PIN
+
+/// How the owner chose to settle the PIN on About You.
+package enum PinChoice: Hashable, Sendable {
+    /// Typed twice on the frame.
+    case now
+    /// Chosen by whoever calls first (`setup mark pin`).
+    case firstCall
+}
+
+/// The PIN's part of About You. A PIN that works is changed only through the PIN sheet (its
+/// two confirmations); a new one is typed on the frame and goes on `pin set --stdin`.
+package enum PinRules {
+    /// The fields are offered: there is no PIN this Mac's app may not write, and none that
+    /// works — a file with no usable PIN has nothing to lose.
+    package static func asksForDigits(_ status: PinStatus?) -> Bool {
+        guard let status else { return false }
+        return PinWording.canSet(status) && !PinWording.asksFirst(status)
+    }
+
+    /// The section is answered: a PIN in place (or one the app cannot change), the first
+    /// call chosen, or the same usable digits typed twice.
+    package static func answered(_ status: PinStatus?, choice: PinChoice, first: String, second: String) -> Bool {
+        guard let status else { return false }
+        guard asksForDigits(status) else { return true }
+        return choice == .firstCall || PinWording.ready(first: first, second: second)
+    }
+
+    /// What Continue writes besides the digits: leaving the PIN to the first call, unless
+    /// the plan has that already.
+    package static func writes(_ status: PinStatus?, choice: PinChoice, stepDone: Bool) -> [WizardWrite] {
+        guard asksForDigits(status), choice == .firstCall, !stepDone else { return [] }
+        return [.mark("pin")]
+    }
+
+    /// The digits go on stdin (`pin set --stdin`): only for a first PIN chosen now.
+    package static func savesDigits(_ status: PinStatus?, choice: PinChoice) -> Bool {
+        asksForDigits(status) && choice == .now
     }
 }
 
@@ -448,11 +494,17 @@ package enum ModelsRules {
 
 // MARK: - Checking
 
-/// One row of the Checking frame.
-package enum CheckRow: String, CaseIterable, Identifiable, Sendable {
+/// One row of the Checking frame: the four a first call needs, and any other step the plan
+/// still holds open (the owner, the PIN, a migration, the local models), so nothing it
+/// waits for is ever off the list.
+package enum CheckRow: Hashable, Identifiable, Sendable {
     case voice, work, phone, service
+    /// Another step of the plan, by its id.
+    case step(String)
 
-    package var id: String { rawValue }
+    package static let fixed: [CheckRow] = [.voice, .work, .phone, .service]
+
+    package var id: String { step }
 
     /// The plan's step it reads.
     package var step: String {
@@ -461,16 +513,29 @@ package enum CheckRow: String, CaseIterable, Identifiable, Sendable {
         case .work: "agents"
         case .phone: "phone"
         case .service: "service"
+        case let .step(id): id
         }
     }
 
-    /// The frame that sets it, for Fix….
-    package var frame: WizardFrame {
-        switch self {
-        case .voice, .work: .models
-        case .phone: .phone
-        case .service: .finish
+    /// The frame that sets it, for Fix…; `nil` for a step no frame sets (the main window's
+    /// checklist mends it).
+    package var frame: WizardFrame? {
+        switch step {
+        case "voice", "agents", "local": .models
+        case "phone": .phone
+        case "owner", "pin": .aboutYou
+        case "migrate": .migrate
+        default: nil
         }
+    }
+
+    /// The rows for `plan`: the four, then every other required step not done, then the
+    /// local models when this run puts something on this Mac and they are not done.
+    package static func rows(_ plan: SetupPlan?, local: Bool) -> [CheckRow] {
+        let known = Set(fixed.map(\.step))
+        var extra = (plan?.remaining ?? []).map(\.id).filter { !known.contains($0) }
+        if local, let step = plan?.step("local"), step.kind != .done, !extra.contains("local") { extra.append("local") }
+        return fixed + extra.map(CheckRow.step)
     }
 }
 
@@ -478,20 +543,23 @@ package enum CheckRow: String, CaseIterable, Identifiable, Sendable {
 package enum WizardEnding: Equatable, Sendable {
     /// Something required is still being checked or set up.
     case checking
-    /// Every required step is done.
+    /// Every required step is done, and the number rings this Mac.
     case ready
     /// Everything is, but the phone, left for later — and what waits for it.
     case nearlyReady
+    /// Everything is set up, but the number still rings its old address: no call arrives.
+    case notPointed
 }
 
 package enum CheckingRules {
-    /// The ending, from the plan: ready when it is; nearly ready when all that is left was
-    /// left for later — as the plan says (SEAM: `deferred`), or, from a CLI that cannot
-    /// defer, when the phone was left for later in this run and nothing else required but
-    /// what waits on the phone is left.
-    package static func ending(_ plan: SetupPlan?, phoneLater: Bool) -> WizardEnding {
+    /// The ending, from the plan: ready when it is — unless Twilio says the number rings
+    /// elsewhere (`pointed` false); nearly ready when all that is left was left for later —
+    /// as the plan says (SEAM: `deferred`), or, from a CLI that cannot defer, when the phone
+    /// was left for later in this run and nothing else required but what waits on the phone
+    /// is left.
+    package static func ending(_ plan: SetupPlan?, phoneLater: Bool, pointed: Bool? = nil) -> WizardEnding {
         guard let plan else { return .checking }
-        if plan.ready { return .ready }
+        if plan.ready { return pointed == false ? .notPointed : .ready }
         if plan.speaksOfDeferring { return plan.nearlyReady ? .nearlyReady : .checking }
         guard phoneLater else { return .checking }
         let left = plan.remaining.filter { $0.id != "phone" }
@@ -515,6 +583,14 @@ package enum CheckingRules {
     package static func serviceInstallable(_ plan: SetupPlan?) -> Bool {
         guard let step = plan?.step("service") else { return false }
         return step.kind == .needed || step.kind == .failed
+    }
+
+    /// Checking starts this Mac's work and the service by itself only in a first run, and
+    /// never what the owner stopped; a review starts nothing without a click.
+    package static func startsByItself(_ step: LocalStep, mode: SetupWizardMode, approved: Bool,
+                                       stopped: Set<LocalStep>) -> Bool {
+        guard !stopped.contains(step) else { return false }
+        return mode == .firstRun || approved
     }
 }
 

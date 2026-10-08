@@ -50,15 +50,22 @@ struct WizardPage<Content: View, Leading: View, Trailing: View>: View {
                     .frame(maxWidth: 460)
                     .padding(.top, 2)
             }
-            .padding(.top, hero ? 120 : 24)
+            .padding(.top, hero ? 120 : 20)
             .padding(.horizontal, 40)
 
-            // In a stack of its own, so an empty frame still takes the room.
-            VStack(spacing: 0) { content }
-                .frame(maxWidth: WizardMetrics.column)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .padding(.top, 16)
-                .padding(.horizontal, 24)
+            // In a stack of its own, so an empty frame still takes the room; a short one sits a
+            // third of the way down what is left, rather than leaving the lower half empty or
+            // floating apart from its title.
+            VStack(spacing: 0) {
+                if !hero { Spacer(minLength: 0) }
+                content
+                Spacer(minLength: 0)
+                if !hero { Spacer(minLength: 0) }
+            }
+            .frame(maxWidth: WizardMetrics.column)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.top, 14)
+            .padding(.horizontal, 24)
 
             HStack(spacing: 10) {
                 leading
@@ -111,6 +118,19 @@ enum WizardPaths {
     }
 }
 
+/// Why the primary button is not on yet, at the leading edge of the button row.
+struct WaitingCaption: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 /// Where the run is: a dot per frame, the current one in the accent colour and wider.
 struct StepDots: View {
     let index: Int
@@ -121,7 +141,7 @@ struct StepDots: View {
             ForEach(1...max(count, 1), id: \.self) { dot in
                 Capsule()
                     .fill(dot == index ? AnyShapeStyle(.tint) : dot < index
-                        ? AnyShapeStyle(.secondary) : AnyShapeStyle(.quaternary))
+                        ? AnyShapeStyle(.tint.opacity(0.4)) : AnyShapeStyle(.quaternary))
                     .frame(width: dot == index ? 18 : 6, height: 6)
             }
         }
@@ -148,7 +168,7 @@ struct WizardSection<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(title)
                     .font(.headline)
@@ -166,7 +186,7 @@ struct WizardSection<Content: View>: View {
             }
             content
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quinary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }

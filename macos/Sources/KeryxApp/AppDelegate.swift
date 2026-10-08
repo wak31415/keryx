@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var openMainWindow: (() -> Void)?
     /// Opens the setup wizard in a mode and brings the app forward; handed over as
     /// `openMainWindow` is.
-    var openSetupWindow: ((SetupWizardMode) -> Void)?
+    var openSetupWindow: ((SetupEntry) -> Void)?
     private var launchedAtLogin = false
     /// The wizard has opened by itself this launch; it does so once at most.
     private var setupOpenedAtLaunch = false
@@ -60,17 +60,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Once, after launch: opens the setup wizard while the plan says Keryx is not ready
-    /// for a first call — not at a login launch, which opens no window, and not once the
-    /// owner has ticked "Don't show at launch".
+    /// Once, after launch, until setup has been seen through: opens the setup wizard while
+    /// the plan says Keryx is not ready for a first call — not at a login launch, which opens
+    /// no window, and not once the owner has ticked "Don't show this again".
     private func openSetupIfNeeded() async {
-        guard !launchedAtLogin, !setupOpenedAtLaunch, !SetupLaunch.isHidden(), model.client != nil else { return }
+        guard !launchedAtLogin, !setupOpenedAtLaunch, !SetupLaunch.isHidden(), !SetupLaunch.completedOnce(),
+              model.client != nil else { return }
         await model.refresh(.setupPlan)
         guard SetupLaunch.shouldOpen(plan: model.setupPlan.value, hidden: SetupLaunch.isHidden(),
-                                     alreadyOpened: setupOpenedAtLaunch) else { return }
+                                     alreadyOpened: setupOpenedAtLaunch,
+                                     completedOnce: SetupLaunch.completedOnce()) else { return }
         setupOpenedAtLaunch = true
         Log.app.info("Opening the setup wizard: setup is not finished")
-        openSetupWindow?(.firstRun)
+        openSetupWindow?(.launch)
     }
 
     /// Finds Keryx and starts the status poll, then reads what the menu lists that the poll

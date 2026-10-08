@@ -25,6 +25,12 @@ package final class SetupWizard {
     package var voiceWordsModel: String?
     /// The service install was asked for by Checking, once, this run.
     package var serviceAsked = false
+    /// What the owner stopped this run (a download, a server start): never started again
+    /// by itself, only by Start Again.
+    package var stopped: Set<LocalStep> = []
+    /// In review, the owner clicked to finish what this Mac still needs: Checking may take
+    /// the next steps by itself from then on.
+    package var localApproved = false
 
     package init(mode: SetupWizardMode = .firstRun, path: [WizardFrame] = [.welcome], opening: UUID = UUID()) {
         self.mode = mode
@@ -46,6 +52,8 @@ package final class SetupWizard {
         workModel = nil
         voiceWordsModel = nil
         serviceAsked = false
+        stopped = []
+        localApproved = false
     }
 
     /// On to the next frame that shows, as things are now; false when there is none.

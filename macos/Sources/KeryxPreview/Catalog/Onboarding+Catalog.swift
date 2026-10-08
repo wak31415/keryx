@@ -25,6 +25,15 @@ extension ScreenCatalog {
                 RootView().environment(AppModel.preview(client: PreviewClient(
                     status: .success(PreviewData.statusMigration))))
             },
+            Entry("onboarding-migration-moving", size: windowSize) {
+                RootView().environment({
+                    let model = AppModel.preview(client: PreviewClient(
+                        status: .success(PreviewData.statusMigration),
+                        migration: .holding([.step(step: "move", message: "Moving Keryx's files.")])))
+                    model.migrate()
+                    return model
+                }())
+            },
         ]
     }
 }

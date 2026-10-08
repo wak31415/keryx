@@ -111,7 +111,7 @@ package struct ProjectContextSheet: View {
             case let .running(activity)?:
                 VStack(alignment: .leading, spacing: 6) {
                     StatusLine(tone: .working, text: activity.message)
-                    if let detail = activity.detail {
+                    if let detail = activity.detail.map(Self.progress) {
                         Text(detail)
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
@@ -142,7 +142,7 @@ package struct ProjectContextSheet: View {
                         Toggle(isOn: Binding { kept[project.name] ?? true } set: { kept[project.name] = $0 }) {
                             Text(project.name).font(.callout.weight(.semibold))
                             if project.addsProject {
-                                Text("New: Keryx will know it too")
+                                Text("New to Keryx")
                             }
                         }
                         .toggleStyle(.checkbox)
@@ -184,6 +184,13 @@ package struct ProjectContextSheet: View {
                 ForEach(result.problems) { StatusLine(tone: .problem, text: $0.message) }
             }
         }
+    }
+
+    /// The agent's progress as a person reads it: "[tool] Read README.md" → "Reading README.md".
+    static func progress(_ detail: String) -> String {
+        var line = detail.hasPrefix("[tool] ") ? String(detail.dropFirst("[tool] ".count)) : detail
+        if line.hasPrefix("Read ") { line = "Reading " + line.dropFirst("Read ".count) }
+        return line
     }
 
     /// "Kept 2 briefs and 1 thing about you."

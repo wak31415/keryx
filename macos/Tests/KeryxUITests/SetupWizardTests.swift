@@ -45,20 +45,24 @@ import KeryxTestSupport
 
     // MARK: - Sequencing
 
-    @Test func aNewMacWalksSixFrames() {
-        #expect(walk(.firstRun, fresh) == [.welcome, .aboutYou, .models, .pin, .phone, .finish])
+    @Test func aNewMacWalksFiveFrames() {
+        #expect(walk(.firstRun, fresh) == [.welcome, .aboutYou, .models, .phone, .finish])
+        #expect(WizardFlow.questions(mode: .firstRun, facts: WizardFacts(plan: fresh)) == 3)
     }
 
     @Test func theMigrationComesFirstOnlyWhileFilesAreStillToMove() {
-        #expect(walk(.firstRun, migrating) == [.welcome, .migrate, .aboutYou, .models, .pin, .phone, .finish])
+        #expect(walk(.firstRun, migrating) == [.welcome, .migrate, .aboutYou, .models, .phone, .finish])
         #expect(walk(.review, migrating).contains(.migrate))
         #expect(!walk(.review, fresh).contains(.migrate), "review shows it only when it is needed")
         #expect(!walk(.firstRun, with(migrating, ["migrate"], .done)).contains(.migrate))
     }
 
     @Test func firstRunSkipsAFrameWithNothingLeft() {
-        // The owner and the PIN are done part way.
+        // The owner and the PIN are done part way: About You has nothing left.
         #expect(walk(.firstRun, partway) == [.welcome, .models, .phone, .finish])
+        // About You asks while either is left.
+        #expect(walk(.firstRun, with(partway, ["pin"], .needed)).contains(.aboutYou))
+        #expect(walk(.firstRun, with(partway, ["owner"], .needed)).contains(.aboutYou))
         // Models needs both its steps done to be skipped.
         let voiceDone = with(partway, ["voice"], .done)
         #expect(walk(.firstRun, voiceDone).contains(.models))
@@ -72,8 +76,8 @@ import KeryxTestSupport
     }
 
     @Test func reviewShowsEveryFramePrefilled() {
-        #expect(walk(.review, ready) == [.welcome, .aboutYou, .models, .pin, .phone, .finish])
-        #expect(walk(.review, partway) == [.welcome, .aboutYou, .models, .pin, .phone, .finish])
+        #expect(walk(.review, ready) == [.welcome, .aboutYou, .models, .phone, .finish])
+        #expect(walk(.review, partway) == [.welcome, .aboutYou, .models, .phone, .finish])
     }
 
     @Test func theDotStripCountsOnlyTheFramesThisRunShows() {
@@ -154,19 +158,30 @@ import KeryxTestSupport
         #expect(SetupLaunch.isHidden(in: defaults))
     }
 
-    @Test func theMenuOpensItInReviewAndTheChecklistInFirstRun() {
+    @Test func onceSeenThroughItNeverOpensByItselfAgain() {
+        // Was ready, then a sign-in expired: the plan is not ready, and still nothing opens.
+        var notReady = with(ready, ["agents"], .needed)
+        notReady.ready = false
+        #expect(SetupLaunch.shouldOpen(plan: notReady, hidden: false, alreadyOpened: false))
+        #expect(!SetupLaunch.shouldOpen(plan: notReady, hidden: false, alreadyOpened: false, completedOnce: true))
+        let defaults = UserDefaults(suiteName: "SetupWizardTests-\(UUID().uuidString)")!
+        #expect(!SetupLaunch.completedOnce(in: defaults))
+        SetupLaunch.markCompleted(in: defaults)
+        #expect(SetupLaunch.completedOnce(in: defaults))
+    }
+
+    @Test func eachEntryOpensItInItsMode() {
+        #expect(SetupEntry.menu.mode == .review)
+        #expect(SetupEntry.checklist.mode == .firstRun)
+        #expect(SetupEntry.launch.mode == .firstRun)
         let model = AppModel.preview()
         let before = model.wizardOpening.id
-        var opened = false
-        let actions = MenuActions(openWindow: {}, openSession: { _ in }, quit: {}, openSetup: {
-            model.openSetupWizard(.review)
-            opened = true
-        })
-        actions.openSetup()
-        #expect(opened && model.wizardOpening.mode == .review && model.wizardOpening.id != before)
-        model.openSetupWizard(.firstRun)
-        #expect(model.wizardOpening.mode == .firstRun)
-        #expect(KeryxWindowID.setup == "setup")
+        SetupLaunch.open(.menu, model: model)
+        #expect(model.wizardOpening.mode == .review && model.wizardOpening.id != before)
+        let review = model.wizardOpening.id
+        SetupLaunch.open(.checklist, model: model)
+        #expect(model.wizardOpening.mode == .firstRun && model.wizardOpening.id != review,
+                "a second opening starts the window again at Welcome")
     }
 
     // MARK: - About You
@@ -386,6 +401,32 @@ import KeryxTestSupport
 
     // MARK: - The PIN and the phone
 
+    @Test func thePinIsTypedHereOnlyWhenThereIsNoneThatWorks() {
+        #expect(PinRules.asksForDigits(PreviewData.pinNone))
+        #expect(!PinRules.asksForDigits(PreviewData.pinFile), "a working PIN changes through the sheet")
+        #expect(!PinRules.asksForDigits(PreviewData.pinEnvironment))
+        #expect(!PinRules.asksForDigits(nil))
+        #expect(PinRules.answered(PreviewData.pinNone, choice: .now, first: "482915", second: "482915"))
+        #expect(!PinRules.answered(PreviewData.pinNone, choice: .now, first: "482915", second: "48291"))
+        #expect(!PinRules.answered(PreviewData.pinNone, choice: .now, first: "123456", second: "123456"), "a run")
+        #expect(PinRules.answered(PreviewData.pinNone, choice: .firstCall, first: "", second: ""))
+        #expect(PinRules.answered(PreviewData.pinFile, choice: .now, first: "", second: ""))
+        #expect(PinRules.writes(PreviewData.pinNone, choice: .firstCall, stepDone: false) == [.mark("pin")])
+        #expect(PinRules.writes(PreviewData.pinNone, choice: .firstCall, stepDone: true).isEmpty)
+        #expect(PinRules.writes(PreviewData.pinNone, choice: .now, stepDone: false).isEmpty)
+        #expect(PinRules.savesDigits(PreviewData.pinNone, choice: .now))
+        #expect(!PinRules.savesDigits(PreviewData.pinFile, choice: .now))
+    }
+
+    @Test func aPinTypedHereGoesOnStdinNeverArgv() async throws {
+        let (model, fake) = Self.model()
+        _ = await model.setPin("482915", replace: false)
+        let request = try #require(fake.requests.last)
+        #expect(Self.written(fake).last == ["pin", "set", "--stdin", "--json"])
+        #expect(!request.arguments.joined().contains("482915"))
+        #expect(request.stdin == Data("482915\n482915\n".utf8))
+    }
+
     @Test func thePinLeftToTheFirstCallIsSetupMark() async throws {
         let (model, fake) = Self.model()
         _ = await WizardWrite.apply([.mark("pin")], with: model)
@@ -446,7 +487,66 @@ import KeryxTestSupport
     @Test func aFailedRowFixesOnTheFrameThatSetsIt() {
         #expect(CheckRow.voice.frame == .models && CheckRow.work.frame == .models)
         #expect(CheckRow.phone.frame == .phone)
-        #expect(LocalStep.downloadSpeech.row == .voice && LocalStep.startServer.row == .work)
+        #expect(CheckRow.step("owner").frame == .aboutYou && CheckRow.step("pin").frame == .aboutYou)
+        #expect(CheckRow.step("local").frame == .models && CheckRow.step("migrate").frame == .migrate)
+        #expect(CheckRow.step("issues").frame == nil, "the main window's checklist mends it")
+        let both = LocalIntent(voiceHere: true, workHere: true, model: "m")
+        let voiceOnly = LocalIntent(voiceHere: true, workHere: false, model: "m")
+        #expect(LocalStep.downloadSpeech.row(both) == .voice && LocalStep.startServer.row(both) == .work)
+        #expect(LocalStep.download("m").row(both) == .work && LocalStep.download("m").row(voiceOnly) == .voice)
+    }
+
+    @Test func checkingListsEveryStepThePlanStillHoldsOpen() {
+        // Only the owner's details left, as today's CLI holds a blank name: a row of its own.
+        var ownerLeft = with(ready, ["owner"], .needed)
+        ownerLeft.ready = false
+        #expect(CheckRow.rows(ownerLeft, local: false) == [.voice, .work, .phone, .service, .step("owner")])
+        #expect(CheckingRules.ending(ownerLeft, phoneLater: false) == .checking)
+        #expect(WizardWording.checkRow(.step("owner"), plan: ownerLeft) == "Your Details")
+        // The PIN, a migration, and the local models when this run puts something here.
+        var several = with(migrating, ["pin"], .needed)
+        several = with(several, ["local"], .optional)
+        let rows = CheckRow.rows(several, local: true)
+        #expect(rows.contains(.step("migrate")) && rows.contains(.step("pin")) && rows.contains(.step("owner")))
+        #expect(rows.last == .step("local"))
+        #expect(!CheckRow.rows(several, local: false).contains(.step("local")))
+        #expect(CheckRow.rows(ready, local: false) == CheckRow.fixed)
+    }
+
+    @Test func aRowsWhySaysTitlesNeverKeys() {
+        let titles = Wording.titles(PreviewData.config)
+        let owner = WizardWording.why(fresh.step("owner"), titles: titles) ?? ""
+        #expect(!owner.contains("ALLOWED_CALLERS"), "\(owner)")
+        let twilio = SetupStep(id: "phone", title: "Phone", required: true, state: "needed",
+                               why: "Twilio credentials: missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN.",
+                               blockedBy: [], walked: false, checks: [], fix: nil)
+        let said = WizardWording.why(twilio, titles: titles) ?? ""
+        #expect(!said.contains("TWILIO_ACCOUNT_SID") && !said.contains("TWILIO_AUTH_TOKEN"), "\(said)")
+    }
+
+    @Test func whatTheOwnerStoppedNeverStartsByItself() {
+        let step = LocalStep.download("gemma-4-12b")
+        #expect(CheckingRules.startsByItself(step, mode: .firstRun, approved: false, stopped: []))
+        #expect(!CheckingRules.startsByItself(step, mode: .firstRun, approved: false, stopped: [step]))
+        #expect(CheckingRules.startsByItself(.downloadSpeech, mode: .firstRun, approved: false, stopped: [step]))
+        // A review starts nothing without the owner's click.
+        #expect(!CheckingRules.startsByItself(step, mode: .review, approved: false, stopped: []))
+        #expect(CheckingRules.startsByItself(step, mode: .review, approved: true, stopped: []))
+        #expect(!CheckingRules.startsByItself(step, mode: .review, approved: true, stopped: [step]))
+        let wizard = SetupWizard()
+        wizard.stopped = [step]
+        wizard.localApproved = true
+        wizard.start(WizardOpening(mode: .firstRun))
+        #expect(wizard.stopped.isEmpty && !wizard.localApproved, "a new run forgets them")
+    }
+
+    @Test func readyNeedsTheNumberToRingThisMac() {
+        #expect(CheckingRules.ending(ready, phoneLater: false, pointed: true) == .ready)
+        #expect(CheckingRules.ending(ready, phoneLater: false, pointed: false) == .notPointed)
+        #expect(CheckingRules.ending(ready, phoneLater: false, pointed: nil) == .ready, "not asked: not held back")
+        #expect(WizardWording.notPointed(number: "+15550001111")
+            == "Everything is set up, but your number still rings its old address. Point it at this Mac "
+            + "from Phone in the sidebar, then ring +1 555 000 1111.")
     }
 
     // MARK: - Words
@@ -454,6 +554,8 @@ import KeryxTestSupport
     @Test func welcomeSaysHowFarThereIsToGo() {
         #expect(WizardWording.welcome(mode: .firstRun, resuming: false, left: 6, frames: 6, assistant: "Lyra")
             .hasSuffix("Six short steps and you're set."))
+        #expect(WizardWording.welcome(mode: .firstRun, resuming: false, left: 6, frames: 3, assistant: "Lyra")
+            .hasSuffix("Three short steps and you're set."))
         #expect(WizardWording.welcome(mode: .firstRun, resuming: true, left: 3, frames: 4, assistant: "Lyra")
             == "Pick up where you left off. Three things are still to set.")
         #expect(WizardWording.welcome(mode: .firstRun, resuming: true, left: 1, frames: 2, assistant: "Lyra")
@@ -466,7 +568,7 @@ import KeryxTestSupport
     @Test func theMoveIsSaidInAFewLinesWithoutAPath() {
         let lines = WizardWording.moveSummary(PreviewData.migrationPlan)
         #expect(lines == ["9 files and folders move to Keryx's folders.",
-                          "The background service stops while they move, and starts again after.",
+                          "Keryx stops while they move, and starts again after.",
                           "The Jarvis folder is renamed aside. Nothing is deleted."])
         #expect(lines.allSatisfy { !$0.contains("/") })
         #expect(WizardWording.moveSummary(PreviewData.migrationPlanNothing) == ["Nothing is left to move."])
@@ -474,8 +576,8 @@ import KeryxTestSupport
     }
 
     @Test func readyNamesTheNumberAndThePinStillToChoose() {
-        #expect(WizardWording.ready("Lyra", number: "+15550100", pinSet: true)
-            == "Lyra can take your first call. Ring +15550100 from your phone. Lyra will say hello and ask a little about you.")
+        #expect(WizardWording.ready("Lyra", number: "+15550100100", pinSet: true)
+            == "Lyra can take your first call. Ring +1 555 010 0100 from your phone. Lyra will say hello and ask a little about you.")
         #expect(WizardWording.ready("Lyra", number: nil, pinSet: false).hasSuffix("and ask you to choose a PIN."))
     }
 
@@ -485,10 +587,65 @@ import KeryxTestSupport
                    "wizard-move-files-conflict", "wizard-move-files-moving", "wizard-move-files-failed",
                    "wizard-about-you", "wizard-about-you-review", "wizard-models", "wizard-models-this-mac-voice",
                    "wizard-models-this-mac-both", "wizard-models-voice-model", "wizard-models-elsewhere",
-                   "wizard-pin", "wizard-phone", "wizard-checking", "wizard-checking-failed", "wizard-ready",
+                   "wizard-about-you-pin-set", "wizard-about-you-pin-started-with", "wizard-loading",
+                   "wizard-needs-updating", "wizard-not-pointed", "wizard-checking-stopped", "wizard-checking-review",
+                   "wizard-checking-details-left", "wizard-phone-installing-tunnel", "onboarding-migration-moving",
+                   "wizard-phone", "wizard-checking", "wizard-checking-failed", "wizard-ready",
                    "wizard-nearly-ready", "wizard-profile", "wizard-projects-draft"] {
             #expect(ids.contains(id), "missing \(id)")
         }
+    }
+
+    // MARK: - Words the owner reads
+
+    @Test func numbersAreShownGroupedWhereTheGroupingIsCertain() {
+        #expect(PhoneDisplay.format("+15550001111") == "+1 555 000 1111")
+        #expect(PhoneDisplay.format("+447700900123") == "+44 7700 900123")
+        #expect(PhoneDisplay.format("+4930123456") == "+4930123456", "unsure: as saved")
+        #expect(CallerNumbers.normalised(PhoneDisplay.format("+15550001111")) == "+15550001111", "and back")
+    }
+
+    @Test func theChecklistSpeaksTheWizardsWords() throws {
+        let doctor = PreviewData.doctor
+        let service = try #require(doctor.checks.first { $0.name == "service manager" })
+        #expect(ChecklistWording.title(service) == "Runs in the Background")
+        #expect(ChecklistWording.detail(service) == "Keryx isn't running in the background yet")
+        let twilio = try #require(doctor.checks.first { $0.name == "Twilio credentials" })
+        #expect(ChecklistWording.title(twilio) == "Twilio Account" && ChecklistWording.detail(twilio) == "Not connected")
+        let host = try #require(doctor.checks.first { $0.name == "PUBLIC_HOST" })
+        #expect(ChecklistWording.title(host) == "Address for Calls" && ChecklistWording.detail(host) == "Not set")
+        let tunnel = try #require(doctor.checks.first { $0.name == "tunnel" })
+        #expect(ChecklistWording.title(tunnel) == "Cloudflare Tunnel" && ChecklistWording.detail(tunnel) == "Not installed")
+        #expect(doctor.checks.allSatisfy { !ChecklistWording.detail($0).contains("this machine") })
+        #expect(FixAction("phone:tunnel")?.action(SetupContext(phoneTunnel: PreviewData.phoneTunnel)).title == "Fix…")
+    }
+
+    @Test func theSheetsSayWhatAPersonReads() {
+        #expect(ProfileSheet.note("What you say here is sent to the realtime provider at the top of every call.")
+            == "What you say here is sent to the voice provider at the top of every call.")
+        #expect(MemoryText.lines("# What Lyra knows\n\n## Standing facts\n\n- Works nights.\nPlain.")
+            == [.heading("What Lyra knows", level: 1), .heading("Standing facts", level: 2), .item("Works nights."),
+                .plain("Plain.")])
+        #expect(ProjectContextSheet.progress("[tool] Read README.md") == "Reading README.md")
+        #expect(ProjectContextSheet.progress("[tool] Grep TODO") == "Grep TODO")
+        #expect(MigrationSections.said(StreamFailure("The migration stopped before it finished. Migrating again picks "
+            + "up where it stopped.", detail: "x")).message
+            == "The move stopped before it finished. Try Again picks up where it stopped.")
+        #expect(WizardWording.signedIn("stored subscription login", agent: "Claude") == "Signed in on your Claude plan")
+        #expect(WizardWording.signedIn("ANTHROPIC_API_KEY (API key)", agent: "Claude") == "Signed in with an API key")
+        #expect(PhoneSteps.tunnelName("cloudflared") == "Cloudflare Tunnel")
+        #expect(PhoneSteps.shortURL("https://demo.twilio.com/welcome/voice/") == "demo.twilio.com/welcome/voice/")
+    }
+
+    @Test func aDisabledContinueSaysWhy() {
+        let state = ModelsFrame.FrameState(voice: .openai, work: .claude, workModel: nil, wordsModel: nil,
+                                           voiceAnswered: false, workAnswered: false, voiceFolded: false,
+                                           workFolded: false)
+        #expect(ModelsFrame.waiting(state) == "Add a key and sign in to continue")
+        var models = state
+        models.voice = .thisMac
+        models.work = .thisMac
+        #expect(ModelsFrame.waiting(models) == "Choose a model to continue", "said once")
     }
 
     // MARK: - Helpers

@@ -99,7 +99,7 @@ private struct MenuBarMenu: View {
             },
             quit: { NSApp.terminate(nil) },
             openSetup: {
-                delegate.model.openSetupWizard(.review)
+                SetupLaunch.open(.menu, model: delegate.model)
                 open(KeryxWindow.setup)
             }))
     }
@@ -125,8 +125,8 @@ private struct MenuBarLabel: View {
                     openWindow(id: KeryxWindow.main)
                     NSApp.activate()
                 }
-                delegate.openSetupWindow = { mode in
-                    delegate.model.openSetupWizard(mode)
+                delegate.openSetupWindow = { entry in
+                    SetupLaunch.open(entry, model: delegate.model)
                     openWindow(id: KeryxWindow.setup)
                     NSApp.activate()
                 }

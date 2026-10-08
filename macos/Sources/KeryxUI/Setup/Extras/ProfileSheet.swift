@@ -76,11 +76,12 @@ package struct ProfileSheet: View {
 
     @ViewBuilder private func ask(_ questions: ProfileQuestions) -> some View {
         Section {
-            Text(questions.note)
+            Text(Self.note(questions.note))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let question = questions.question("replace") {
-                Toggle(question.prompt, isOn: $replace)
+            if questions.question("replace") != nil {
+                Toggle("\(questions.assistant) already remembers a few things about you. Replace them with what you say here?",
+                       isOn: $replace)
             }
         }
         if let question = questions.question("uses") {
@@ -125,13 +126,11 @@ package struct ProfileSheet: View {
         if let text = preview.text {
             Section("What \(questions?.assistant ?? "the assistant") Will Remember") {
                 ScrollView {
-                    Text(text)
-                        .font(.callout.monospaced())
-                        .textSelection(.enabled)
+                    MemoryText(text)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 220)
-                Text("\(preview.chars) of \(preview.maxChars) characters a call reads.")
+                Text("\(preview.chars.formatted()) of \(preview.maxChars.formatted()) characters; every call reads it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -154,6 +153,11 @@ package struct ProfileSheet: View {
                 StatusLine(tone: .ok, text: "Nothing changed: what \(questions?.assistant ?? "the assistant") remembers is kept.")
             }
         }
+    }
+
+    /// The CLI's privacy note, with the provider named as the owner knows it.
+    static func note(_ text: String) -> String {
+        text.replacingOccurrences(of: "the realtime provider", with: "the voice provider")
     }
 
     // MARK: - Buttons
@@ -214,6 +218,53 @@ package struct ProfileSheet: View {
             case let .success(found): result = found
             case let .failure(error): failure = error
             }
+        }
+    }
+}
+
+/// The memory as a person reads it: its headings as headings and its facts as a list, with
+/// no Markdown markers left in sight.
+struct MemoryText: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(Self.lines(text).enumerated()), id: \.offset) { _, line in
+                switch line {
+                case let .heading(words, level):
+                    Text(words)
+                        .font(level == 1 ? .headline : .subheadline.weight(.semibold))
+                        .padding(.top, level == 1 ? 0 : 4)
+                case let .item(words):
+                    Text("•  " + words).font(.callout)
+                case let .plain(words):
+                    Text(words).font(.callout)
+                }
+            }
+        }
+        .textSelection(.enabled)
+    }
+
+    enum Line: Equatable {
+        case heading(String, level: Int)
+        case item(String)
+        case plain(String)
+    }
+
+    static func lines(_ text: String) -> [Line] {
+        text.split(separator: "\n").compactMap { raw in
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { return nil }
+            if line.hasPrefix("#") {
+                let level = line.prefix { $0 == "#" }.count
+                return .heading(line.dropFirst(level).trimmingCharacters(in: .whitespaces), level: level)
+            }
+            if line.hasPrefix("- ") || line.hasPrefix("* ") { return .item(String(line.dropFirst(2))) }
+            return .plain(line)
         }
     }
 }

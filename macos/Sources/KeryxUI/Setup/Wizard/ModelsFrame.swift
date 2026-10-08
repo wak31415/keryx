@@ -50,6 +50,10 @@ package struct ModelsFrame: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+        } leading: {
+            if !state.voiceAnswered || !state.workAnswered {
+                WaitingCaption(text: Self.waiting(state))
+            }
         } trailing: {
             if saving { ProgressView().controlSize(.small) }
             Button("Back") { wizard.back() }
@@ -67,6 +71,30 @@ package struct ModelsFrame: View {
             SignInSheet(kind: provider)
         }
         .task { await model.refresh(.voice, .models, .doctor, .config) }
+    }
+
+    /// Why Continue is not on yet, for the button row's leading edge.
+    static func waiting(_ state: FrameState) -> String {
+        var wanted: [String] = []
+        if !state.voiceAnswered {
+            let voice: String = switch state.voice {
+            case .openai: "add a key"
+            case .thisMac: "choose a model"
+            case .elsewhere: "check the voice server"
+            }
+            wanted.append(voice)
+        }
+        if !state.workAnswered {
+            let work: String = switch state.work {
+            case .claude, .codex: "sign in"
+            case .thisMac: "choose a model"
+            case .elsewhere: "check the model server"
+            }
+            wanted.append(work)
+        }
+        var seen: Set<String> = []
+        let said = wanted.filter { seen.insert($0).inserted }
+        return Wording.capitalised(Wording.list(said)) + " to continue"
     }
 
     // MARK: - Where things stand
@@ -159,6 +187,11 @@ package struct ModelsFrame: View {
             HStack {
                 StatusLine(tone: saved ? .ok : .none, text: saved ? "OpenAI API key saved" : "No OpenAI API key yet")
                 Spacer()
+                if !saved, let page = WizardWording.keyPage("OPENAI_API_KEY") {
+                    Link("Get a Key", destination: page)
+                        .font(.callout)
+                        .foregroundStyle(.tint)
+                }
                 Button(saved ? "Change Key…" : "Add Key…") {
                     secret = SecretRequest(key: "OPENAI_API_KEY", title: row?.displayTitle ?? "OpenAI API key",
                                            replacing: saved)
@@ -190,22 +223,38 @@ package struct ModelsFrame: View {
                 }
                 column("Thinks") { thinks(state, facts: facts) }
                 column("Speaks") {
-                    OptionMenu(key: "VOICE_SERVER_TTS", title: "Speaks", current: speaks ?? here?.tts ?? "") { speaks = $0 }
-                }
-                column("In the voice") {
-                    OptionMenu(key: "VOICE_SERVER_VOICE", title: "Voice", current: speaksIn ?? here?.voice ?? "") {
-                        speaksIn = $0
+                    HStack(spacing: 6) {
+                        OptionMenu(key: "VOICE_SERVER_TTS", title: "Speaks", current: speaks ?? here?.tts ?? "") {
+                            speaks = $0
+                        }
+                        OptionMenu(key: "VOICE_SERVER_VOICE", title: "Voice", current: speaksIn ?? here?.voice ?? "") {
+                            speaksIn = $0
+                        }
                     }
                 }
             }
-            let words = state.wordsModel.flatMap { name in report?.models.first { $0.name == name } }
-            Text(([report?.hardware].compactMap { $0 }.map { WizardWording.machine($0) + "." }
-                  + [words.map(WizardWording.download), pipelineCaption(.here, fallback: "")])
-                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " "))
+            Text(voiceCaption(state, facts: facts, report: report, assistant: assistant))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// Under the voice's three models: this Mac, what the words model downloads (said here
+    /// only when the work's section does not say it), and how the words are shared.
+    private func voiceCaption(_ state: FrameState, facts: WizardFacts, report: ModelsReport?, assistant: String) -> String {
+        var parts: [String] = []
+        if let hardware = report?.hardware { parts.append(WizardWording.machine(hardware) + ".") }
+        let ownModel = ModelsRules.voiceWordsIsAControl(report, facts: facts)
+        if state.work != .thisMac || ownModel,
+           let words = state.wordsModel.flatMap({ name in report?.models.first { $0.name == name } }) {
+            parts.append(WizardWording.download(words))
+        }
+        if state.work == .thisMac, !ownModel || (state.wordsModel ?? "").isEmpty {
+            parts.append(WizardWording.sharedWords(tight: ModelsRules.tight(report) || report?.voiceLlmSeparate == false,
+                                                   assistant: assistant))
+        }
+        return parts.joined(separator: " ")
     }
 
     /// The voice's "Thinks" model: its own pop-up once the CLI has a setting for it (SEAM:
@@ -220,18 +269,13 @@ package struct ModelsFrame: View {
                 ForEach(fitting) { Text($0.title).tag($0.name) }
             }
             .labelsHidden()
-            if state.wordsModel?.isEmpty ?? true {
-                Text(WizardWording.sharedWords(tight: report?.voiceLlmSeparate == false,
-                                               assistant: WizardWording.assistant(facts)))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: 150, alignment: .leading)
-            }
         } else if state.work == .thisMac {
-            Text(WizardWording.sameAsWork)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .padding(.vertical, 3)
+            // Today's shared behaviour: the work's model, said as a menu that cannot change.
+            Picker("Thinks", selection: .constant("")) {
+                Text(WizardWording.sameAsWork).tag("")
+            }
+            .labelsHidden()
+            .disabled(true)
         } else {
             Picker("Thinks", selection: Binding { state.wordsModel ?? "" } set: { wordsModel = $0 }) {
                 ForEach(fitting) { Text($0.title).tag($0.name) }
@@ -300,7 +344,7 @@ package struct ModelsFrame: View {
                 how
             } else { nil }
             HStack {
-                StatusLine(tone: .ok, text: how.map { "Signed in · \(Wording.capitalised($0))" } ?? "Signed in to \(name)")
+                StatusLine(tone: .ok, text: WizardWording.signedIn(how, agent: name))
                 Spacer()
                 Button("Sign In Again…") { signingIn = provider }
                     .controlSize(.regular)
@@ -331,6 +375,11 @@ package struct ModelsFrame: View {
                     Button("Sign In…") { signingIn = provider }
                         .controlSize(.regular)
                 } else {
+                    if let key = ModelsRules.keyFor(place), let page = WizardWording.keyPage(key) {
+                        Link("Get a Key", destination: page)
+                            .font(.callout)
+                            .foregroundStyle(.tint)
+                    }
                     Button("Add Key…") { askKey(place, row: keyRow) }
                         .controlSize(.regular)
                 }
@@ -349,31 +398,42 @@ package struct ModelsFrame: View {
         let fitting = ModelsRules.fitting(report)
         let chosen = state.workModel.flatMap { name in report?.models.first { $0.name == name } }
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Picker("Model", selection: Binding { state.workModel ?? "" } set: { workModel = $0 }) {
                     ForEach(fitting) { entry in
-                        Text(Self.label(entry)).tag(entry.name)
+                        Text(entry.title).tag(entry.name)
                     }
                 }
                 .labelsHidden()
-                .frame(maxWidth: 230)
-                if let chosen { downloadLine(chosen) }
+                .fixedSize()
+                if let chosen {
+                    ForEach(Self.badges(chosen), id: \.self) { badge in
+                        Text(badge)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.quaternary, in: Capsule())
+                    }
+                }
                 Spacer(minLength: 0)
                 if let chosen, !chosen.downloaded, !downloading(chosen.name) {
-                    Button("Download") { model.download(chosen.name) }
-                        .controlSize(.regular)
-                        .fixedSize()
-                        .disabled(model.downloads.isBusy)
+                    Button("Download") {
+                        wizard.stopped.remove(.download(chosen.name))
+                        model.download(chosen.name)
+                    }
+                    .controlSize(.regular)
+                    .fixedSize()
+                    .disabled(model.downloads.isBusy)
                 }
             }
+            if let chosen { downloadLine(chosen) }
         }
     }
 
-    /// "Qwen3-Coder 30B · Recommended, Tested, Downloaded": the badges the catalog gives it.
-    static func label(_ entry: CatalogModel) -> String {
-        let badges = [entry.recommended ? "Recommended" : nil, entry.tested ? "Tested" : nil,
-                      entry.downloaded ? "Downloaded" : nil].compactMap { $0 }
-        return badges.isEmpty ? entry.title : "\(entry.title) · \(badges.joined(separator: ", "))"
+    /// The catalog's badges for a model: Recommended, Tested.
+    static func badges(_ entry: CatalogModel) -> [String] {
+        [entry.recommended ? "Recommended" : nil, entry.tested ? "Tested" : nil].compactMap { $0 }
     }
 
     private func downloading(_ name: String) -> Bool {
@@ -384,9 +444,18 @@ package struct ModelsFrame: View {
     @ViewBuilder private func downloadLine(_ entry: CatalogModel) -> some View {
         switch model.downloads.active[entry.name] {
         case let .running(done, total)?:
-            StatusLine(tone: .working, text: RunSteps.sizes(done: done, total: total) ?? "Downloading",
-                       fraction: total > 0 ? Double(done) / Double(total) : nil)
-                .frame(maxWidth: 170)
+            HStack(spacing: 10) {
+                StatusLine(tone: .working,
+                           text: "Downloading · \(RunSteps.sizes(done: done, total: total) ?? "")",
+                           fraction: total > 0 ? Double(done) / Double(total) : nil)
+                Button("Cancel") {
+                    wizard.stopped.insert(.download(entry.name))
+                    model.downloads.cancel(entry.name)
+                }
+                .controlSize(.regular)
+            }
+        case .cancelling?:
+            StatusLine(tone: .working, text: "Stopping…")
         case let .failed(failure)?:
             ErrorText(failure)
         default:
@@ -422,7 +491,9 @@ package struct ModelsFrame: View {
             wizard.workPlace = state.work
             wizard.workModel = state.work == .thisMac ? state.workModel : nil
             wizard.voiceWordsModel = state.voice == .thisMac && state.work != .thisMac ? state.wordsModel : nil
-            startDownloads(state)
+            // A first run starts the downloads now, to run while the rest is asked; a review
+            // starts nothing without a click.
+            if wizard.mode == .firstRun { startDownloads(state) }
             await model.refresh(.voice, .models, .doctor)
             await wizard.moveOn(model)
         }
@@ -434,7 +505,7 @@ package struct ModelsFrame: View {
         let report = model.models.value
         let wanted = state.work == .thisMac ? state.workModel : state.voice == .thisMac ? state.wordsModel : nil
         if let wanted, let entry = report?.models.first(where: { $0.name == wanted }), !entry.downloaded,
-           !model.downloads.isBusy {
+           !model.downloads.isBusy, !wizard.stopped.contains(.download(wanted)) {
             model.download(wanted)
         }
         if state.voice == .thisMac, model.voice.value?.here.modelsReady == false, model.canDownloadVoiceModels {
@@ -478,11 +549,11 @@ private struct ModelServerBranch: View {
                         OptionMenu(key: "LOCAL_AGENT_MODEL", title: "Model", current: model) { model = $0 }
                     }
                     .fixedSize()
-                    LabeledContent("Harness") {
-                        Picker("Harness", selection: $harness) {
+                    LabeledContent("Talks to it as") {
+                        Picker("Talks to it as", selection: $harness) {
                             if let row = facts.row("LOCAL_AGENT_API") {
                                 ForEach(row.choices ?? [], id: \.self) { choice in
-                                    Text(ConfigWording.choiceTitle(choice, for: row)).tag(choice)
+                                    Text(Self.harness(choice) ?? ConfigWording.choiceTitle(choice, for: row)).tag(choice)
                                 }
                             }
                         }
@@ -508,6 +579,15 @@ private struct ModelServerBranch: View {
         .sheet(isPresented: $editingKey) {
             SecretSheet(key: "LOCAL_AGENT_API_KEY", title: facts.row("LOCAL_AGENT_API_KEY")?.displayTitle ?? "API key",
                         replacing: facts.row("LOCAL_AGENT_API_KEY")?.set == true)
+        }
+    }
+
+    /// How Keryx talks to the server, in the words of whose protocol it is.
+    static func harness(_ choice: String) -> String? {
+        switch choice {
+        case "anthropic-messages": "Anthropic"
+        case "openai-responses": "OpenAI"
+        default: nil
         }
     }
 

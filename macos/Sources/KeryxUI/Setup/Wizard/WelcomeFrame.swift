@@ -17,12 +17,19 @@ package struct WelcomeFrame: View {
     package var body: some View {
         let facts = WizardFacts(model)
         let resuming = WizardFlow.resuming(mode: wizard.mode, facts: facts)
-        let frames = wizard.position(facts).count
+        let frames = WizardFlow.questions(mode: wizard.mode, facts: facts)
         let sentence = WizardWording.welcome(mode: wizard.mode, resuming: resuming,
                                              left: facts.plan?.remaining.count ?? 0, frames: frames,
                                              assistant: WizardWording.assistant(facts, status: model.status.value))
         WizardPage(symbol: .mark, title: WizardWording.welcomeTitle, sentence: sentence, position: nil, hero: true) {
-            EmptyView()
+            if wizard.mode == .firstRun, !resuming {
+                Text(WizardWording.welcomeNeeds)
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         } leading: {
             if wizard.mode == .firstRun {
                 Toggle("Don't show this again", isOn: $hiddenAtLaunch)
