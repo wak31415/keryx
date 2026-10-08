@@ -100,11 +100,13 @@ from keryx.restart.service import (
     UNSUPPORTED_HINT,
     ServiceTarget,
     candidate_target,
+    is_stopped,
     resolve_target,
     spawn_watchdog,
     watch_command,
 )
 from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
+from keryx.restart.store import REFUSED as RESTART_REFUSED
 from keryx.restart.version import loaded_version, mark_running, mark_startup_logs
 from keryx.restart.watchdog import watch
 from keryx.server import create_app
@@ -566,6 +568,11 @@ def _run_on_signals(callback) -> None:
 # --- restart ---------------------------------------------------------------
 
 
+#: Why `keryx restart` refuses while Keryx is stopped.
+STOPPED_REFUSAL = ("Keryx is stopped (`keryx service stop`), so there is nothing running to "
+                   "restart; `keryx service start` starts it")
+
+
 def _restart_store(settings: Settings) -> RestartStore:
     return RestartStore(settings.state_dir / RECORD_NAME)
 
@@ -591,6 +598,19 @@ def restart(
     if status:
         _echo_restart_status(store)
         return
+
+    # Stopped by `keryx service stop` is not a service to restart: a restart would start a
+    # Keryx the owner stopped (systemd), or ask launchd for a job it has unloaded. Said, and
+    # left on the record, where `keryx restart --status` finds it.
+    stopped = candidate_target(settings)
+    if stopped is not None and is_stopped(stopped):
+        store.save(RestartRecord(
+            requested_at=datetime.now(UTC).isoformat(), reason=reason.strip(),
+            origin_channel="cli", target=stopped.describe(), state=RESTART_REFUSED,
+            error=STOPPED_REFUSAL,
+        ))
+        typer.echo(f"the restart was refused: {STOPPED_REFUSAL}", err=True)
+        raise typer.Exit(1)
 
     # From a terminal, never from inside the unit: the installed service is the target.
     target = resolve_target(settings, from_outside=True)
@@ -1643,6 +1663,65 @@ def _install_units(
         typer.echo(json.dumps({"ok": True, "message": outcome.message}, indent=2))
     else:
         typer.echo(outcome.message)
+
+
+#: What `service stop|start` is, refused to the service.
+CONTROL_THE_SERVICES = "stop or start Keryx's services"
+ALL_UNITS_HELP = "The model servers too: every unit Keryx installs, not only itself and its tunnel."
+
+
+@service_app.command("stop")
+def service_stop(
+    every: Annotated[bool, typer.Option("--all", help=ALL_UNITS_HELP)] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Stop Keryx and its tunnel, and keep them from starting at login, without removing
+    them: `keryx service start` starts them again. A restart in flight is settled as
+    stopped by the owner first, so its watchdog rings nobody. Exit 0 stopped (or nothing to
+    stop), 1 when a unit would not stop, 2 refused."""
+    _control_units("stop", every=every, as_json=as_json)
+
+
+@service_app.command("start")
+def service_start(
+    every: Annotated[bool, typer.Option("--all", help=ALL_UNITS_HELP)] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Let Keryx and its tunnel start at login again, and start them — with --all, every
+    model server that is installed, first. Idempotent. Exit 0 running, 1 when a unit would
+    not start, 2 refused (Keryx not installed, no service manager)."""
+    _control_units("start", every=every, as_json=as_json)
+
+
+def _control_units(action: str, *, every: bool, as_json: bool) -> None:
+    """`service stop|start`: one document on stdout with --json on every path."""
+
+    def said(outcome: units.Control) -> None:
+        if as_json:
+            typer.echo(json.dumps(outcome.as_dict(), indent=2))
+            return
+        typer.echo(outcome.message, err=not outcome.ok)
+        if outcome.detail:
+            typer.echo(outcome.detail, err=True)
+        for row in outcome.units:
+            typer.echo(f"{row['kind']:<7} {row['unit']:<22} {row['state']}")
+
+    if refusal := _owner_refusal(CONTROL_THE_SERVICES):
+        said(units.Control(False, 2, refusal, None, []))
+        raise typer.Exit(2)
+
+    def refuse(message: str, *, detail: str | None = None) -> None:
+        said(units.Control(False, 1, message, detail, []))
+
+    # A stop reads nothing a migration moves, and must work whatever is left to move; a
+    # start would hand the manager a `keryx serve` that refuses to run until it has.
+    settings = _configure_readonly(refuse=refuse if as_json else None,
+                                   migrated=action == "start")
+    store = _restart_store(settings)
+    outcome = units.control(settings, action, every=every, settle=store.settle_stopped)
+    said(outcome)
+    if outcome.code != 0:
+        raise typer.Exit(outcome.code)
 
 
 @plugins_app.command("list")

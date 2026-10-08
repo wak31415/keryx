@@ -184,7 +184,20 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   the script's last error line, 2 with no checkout or service manager). `service install
   --llm|--voice` is refused, exit 2 (`{"ok": false, "message"}` with `--json`): `models
   start` and `voice use here` own those units — install, start, check, and the unit removed
-  again when the server does not come up — so none is installed bare to restart for ever
+  again when the server does not come up — so none is installed bare to restart for ever.
+  `service stop|start [--all] [--json]` (the owner's alone, exit 2 under the service; the
+  app's Quit and its launch) stop Keryx *and its tunnel* — which serves nothing else — and
+  keep them from starting at login, without removing a unit file, so no installer runs and
+  macOS raises no "Background Items Added": launchd `disable` then `bootout`, systemd
+  `disable` then `stop`, and the inverse, `enable` first (a disabled launchd job refuses
+  `bootstrap`), then `bootstrap`, or `kickstart` for one still loaded. `--all` is every unit
+  in `units.NAMES`, so a unit added there later is included; a unit not installed is left
+  alone, and starting a Keryx that is not installed is refused before anything runs. `{"ok",
+  "message", "detail", "units": [{"kind", "unit", "state"}]}`, `state` one of `running`,
+  `stopped`, `not-installed`, `failed`; exit 0, 1 when a unit failed (what the manager said,
+  redacted, in `detail`), 2 refused. A unit counts as installed when it is loaded *or* its
+  unit file is on disk, `service --json` too: a stopped launchd job is unknown to launchd,
+  and still installed
 - Models on this machine: `uv run keryx models list [--json]` (the catalog against this
   machine's GPU and memory, the recommended one marked, and the local voices; `--json` adds
   `servers`, the model and voice servers' units and whether they answer, asked on loopback
@@ -666,7 +679,7 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   `memory seed`, `setup`, `setup mark`, `setup profile --apply`, `setup project-context
   --explore|--folder|--apply`, `pin set`, `config lock|unlock`, `migrate`,
   `plugins install|remove|set`, `models use`, `voice use` (before any install, handshake or
-  save), `voice download`, `models start|stop`, `service install|uninstall`, `phone
+  save), `voice download`, `models start|stop`, `service install|uninstall|stop|start`, `phone
   webhooks --apply` (before Twilio is asked anything) — refuse
   outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
@@ -766,6 +779,14 @@ that way, and keep every failure path landing somewhere a human can find it
 `XPC_SERVICE_NAME` (launchd), never from `systemctl` being on PATH, so a hand-started copy
 refuses rather than restart the installed one. Only `keryx restart` and `doctor`, which run
 outside the unit, ask whether it is installed.
+
+A Keryx the owner stopped (`keryx service stop`) is neither half's to bring back. The stop
+settles a `pending` record as `stopped` before it boots anything out, so the watchdog — which
+acts only on `pending` — rings nobody about a service that was meant to stay down; and
+`keryx restart` refuses while `restart.service.is_stopped` (the unit file on disk, launchd
+holding it unloaded or systemd holding it disabled and inactive), leaving a `refused` record
+for `restart --status`, rather than start what the owner stopped or ask launchd to kickstart
+a job it has unloaded.
 
 "Did it load the change" is answered from `state_dir/running-version`, stamped by `mark_running()`
 at the top of `keryx serve` — *not* from `current_version()` at request time. The checkout moves

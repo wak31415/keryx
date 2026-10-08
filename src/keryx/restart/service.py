@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from keryx.config import Settings
-from keryx.config.files import HOME_ENV, XDG_HOMES
+from keryx.config.files import HOME_ENV, XDG_HOMES, xdg_home
 
 log = logging.getLogger("keryx.restart")
 
@@ -96,8 +96,36 @@ class ServiceTarget:
         """Start it again after `stop_command`."""
         if self.manager == "systemd":
             return ["systemctl", "--user", "start", self.unit]
-        plist = Path.home() / "Library" / "LaunchAgents" / f"{self.unit}.plist"
-        return ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)]
+        return ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(unit_file(self))]
+
+    def kickstart_command(self) -> list[str]:
+        """Start it if it is loaded and not running; nothing if it runs (no `-k`). systemd
+        has no loaded-but-stopped of its own, so there it is `start_command`."""
+        if self.manager == "systemd":
+            return self.start_command()
+        return ["launchctl", "kickstart", f"gui/{os.getuid()}/{self.unit}"]
+
+    def disable_command(self) -> list[str]:
+        """Keep it from starting at login — and, on launchd, from being bootstrapped at all
+        — until `enable_command`: what `keryx service stop` leaves behind it."""
+        if self.manager == "systemd":
+            return ["systemctl", "--user", "disable", self.unit]
+        return ["launchctl", "disable", f"gui/{os.getuid()}/{self.unit}"]
+
+    def enable_command(self) -> list[str]:
+        """Undo `disable_command`. A disabled launchd job refuses `bootstrap`, so this comes
+        first, before any start."""
+        if self.manager == "systemd":
+            return ["systemctl", "--user", "enable", self.unit]
+        return ["launchctl", "enable", f"gui/{os.getuid()}/{self.unit}"]
+
+
+def unit_file(target: ServiceTarget) -> Path:
+    """Where the installers write `target`'s unit: its plist in `~/Library/LaunchAgents`, or
+    its unit file under the XDG configuration directory's `systemd/user`."""
+    if target.manager == "systemd":
+        return xdg_home("config") / "systemd" / "user" / target.unit
+    return Path.home() / "Library" / "LaunchAgents" / f"{target.unit}.plist"
 
 
 def resolve_target(
@@ -221,6 +249,25 @@ def is_installed(
     if result.returncode != 0:
         return False
     return target.manager != "systemd" or result.stdout.strip() == "loaded"
+
+
+def is_stopped(
+    target: ServiceTarget, *, run: Callable[..., object] = subprocess.run
+) -> bool:
+    """Installed, but stopped and kept from starting — what `keryx service stop` leaves:
+    its unit file on disk while launchd has it unloaded, or systemd has it disabled and
+    not running. Asks; changes nothing. A probe that cannot answer is "not stopped", so a
+    restart goes on being attempted as before."""
+    if not unit_file(target).is_file():
+        return False
+    if target.manager != "systemd":
+        return not is_installed(target, run=run)
+    command = ["systemctl", "--user", "is-enabled", target.unit]
+    try:
+        result = run(command, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.stdout.strip() == "disabled" and not is_active(target, run=run)
 
 
 def is_active(

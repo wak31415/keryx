@@ -95,6 +95,9 @@ AUTH_SMOKE = "auth smoke NAME --json"
 #: The command lines the app reads as JSON lines; the pull's is the one every contract has.
 STREAMS = (PULL, VOICE_HERE, MODELS_START, VOICE_DOWNLOAD, *AUTH_LOGINS.values(), MIGRATE,
            PROJECT_CONTEXT, AUTH_SMOKE)
+#: Keryx stopped without being removed, and started again: the app's Quit, and its launch.
+SERVICE_CONTROL = ("service stop --json", "service stop --all --json", "service start --json",
+                   "service start --all --json")
 #: The command lines the app reads as one JSON document.
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
@@ -112,7 +115,7 @@ COMMANDS = {
     "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
     "migrate --json", "setup project-context --describe --json",
     "setup project-context --apply --json", "config options ASSISTANT_NAME --json",
-    "setup mark phone --json",
+    "setup mark phone --json", *SERVICE_CONTROL,
 }
 #: The command lines and streams the CLI prints that the app has yet to name. Each is
 #: checked once the contract names it; until then the cross-checks let it be missing, and
@@ -122,6 +125,7 @@ AWAITING = {
     "migrate --json", MIGRATE, "setup project-context --describe --json",
     "setup project-context --apply --json", PROJECT_CONTEXT,
     "config options ASSISTANT_NAME --json", "setup mark phone --json", AUTH_SMOKE,
+    *SERVICE_CONTROL,
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
@@ -551,7 +555,13 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     model.parent.mkdir(parents=True, exist_ok=True)
     with model.open("wb") as out:
         out.truncate(MODEL.size)
-    # The service commands: every unit installed, the tunnel stopped, the installers faked.
+    # The service commands: every unit installed, the tunnel stopped, the installers faked,
+    # and every launch agent's plist on disk for `service stop|start` to act on — whose
+    # `launchctl` is the same faked runner.
+    agents = Path.home() / "Library" / "LaunchAgents"
+    agents.mkdir(parents=True)
+    for label in units.NAMES["launchd"].values():
+        (agents / f"{label}.plist").write_text("<plist/>")
     monkeypatch.setattr(units, "status", partial(
         units.status, installed=lambda target: True,
         active=lambda target: target.unit != "dev.keryx.tunnel"))

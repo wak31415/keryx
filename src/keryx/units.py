@@ -1,6 +1,11 @@
 """`keryx service`: Keryx's four units — itself, its tunnel, the model server and the voice
-server — as the service manager finds them, and installing or removing them through the
-checkout's own installer, so the Mac app needs no terminal for either.
+server — as the service manager finds them, installing or removing them through the
+checkout's own installer, and stopping or starting them without either (`control`), so the
+Mac app needs no terminal for any of it.
+
+A unit counts as installed when its manager has it loaded *or* its unit file is on disk:
+`keryx service stop` boots a launchd job out and disables it, which leaves its plist where
+it was and launchd knowing nothing of it, and that is a stopped unit, not a missing one.
 
 The units are asked about through `restart.service`'s probes, which only ask; the installers
 are `scripts/install-launchd.sh` and `install-systemd.sh`, found by `localmodels.voice`'s
@@ -14,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from keryx.child_env import operational_env
+from keryx.child_env import operational_env, redact_known
 from keryx.config import Settings
 from keryx.localmodels import voice as voice_setup
 from keryx.localmodels.use import UNITS as SERVER_UNITS
@@ -55,6 +60,11 @@ def unit_name(settings: Settings, manager: str, kind: str) -> str:
     return NAMES[manager][kind]
 
 
+def unit_on_disk(target: ServiceTarget) -> bool:
+    """Whether `target`'s unit file is where its installer writes it."""
+    return service.unit_file(target).is_file()
+
+
 def status(
     settings: Settings,
     *,
@@ -62,7 +72,8 @@ def status(
     installed: Callable[[ServiceTarget], bool] | None = None,
     active: Callable[[ServiceTarget], bool] | None = None,
 ) -> dict[str, Any]:
-    """`keryx service --json`: each unit installed, and running. Only asks."""
+    """`keryx service --json`: each unit installed (loaded, or its file on disk), and
+    running. Only asks."""
     found = manager(settings, platform or voice_setup.PLATFORM)
     # Late-bound through the module, as `keryx.status` binds them.
     is_installed = installed or service.is_installed
@@ -73,7 +84,7 @@ def status(
             document[kind] = {"installed": False, "active": False}
             continue
         target = ServiceTarget(found, unit_name(settings, found, kind))
-        here = is_installed(target)
+        here = is_installed(target) or unit_on_disk(target)
         document[kind] = {"installed": here, "active": here and is_active(target)}
     return {"manager": found, "units": document}
 
@@ -137,3 +148,135 @@ def install(
     settings = settings or Settings()
     names = ", ".join(unit_name(settings, found, kind) for kind in kinds)
     return Outcome(OK, f"{'removed' if uninstall else 'installed'} {names}")
+
+
+# --- stopping and starting them ----------------------------------------------------------
+
+#: What `keryx service stop|start` acts on without `--all`: Keryx, and its tunnel, which
+#: serves nothing else and without which nobody can reach Keryx. `--all` adds every other
+#: unit in `NAMES` — the model servers, and whatever that table gains later.
+MAIN_KINDS = ("agent", "tunnel")
+#: A unit's state once a stop or start has been through it.
+RUNNING, STOPPED, NOT_INSTALLED, UNIT_FAILED = "running", "stopped", "not-installed", "failed"
+
+STOPPED_MAIN = "Keryx is stopped, and won't start at login until it's started again."
+STOPPED_ALL = ("Keryx and its model servers are stopped, and won't start at login until "
+               "they're started again.")
+RUNNING_MAIN = "Keryx is running."
+RUNNING_ALL = "Keryx and its model servers are running."
+SERVERS_STOPPED = ("Keryx isn't installed as a background process; its model servers are "
+                   "stopped, and won't start at login until they're started again.")
+NOTHING_TO_STOP = "Keryx isn't installed as a background process, so there's nothing to stop."
+NOT_INSTALLED_YET = "Keryx isn't installed as a background process yet."
+COULD_NOT = {"stop": "Not everything could be stopped.",
+             "start": "Not everything could be started."}
+NO_MANAGER = "There's no service manager on this machine to run Keryx with."
+
+#: `(argv)` → `(exit code, stdout, stderr)`: `run_captured`'s shape.
+Runner = Callable[[Sequence[str]], tuple[int, str, str]]
+
+
+@dataclass(frozen=True)
+class Control:
+    """How a `keryx service stop|start` ended: its exit code, and what it says."""
+
+    ok: bool
+    code: int
+    message: str
+    detail: str | None
+    units: list[dict[str, str]]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"ok": self.ok, "message": self.message, "detail": self.detail,
+                "units": self.units}
+
+
+def _steps(target: ServiceTarget, action: str, *, loaded: bool) -> list[list[str]]:
+    """The commands for one unit. A stop disables first, so a stop cut short (the app's
+    quit deadline, a shutdown) still leaves nothing to start at login; a start enables
+    first, because launchd refuses to bootstrap a disabled job."""
+    if action == "stop":
+        if target.manager == "systemd":
+            return [target.disable_command(), target.stop_command()]
+        return [target.disable_command(), *([target.stop_command()] if loaded else [])]
+    if target.manager == "systemd":
+        return [target.enable_command(), target.start_command()]
+    return [target.enable_command(),
+            target.kickstart_command() if loaded else target.start_command()]
+
+
+def control(
+    settings: Settings,
+    action: str,
+    *,
+    every: bool = False,
+    settle: Callable[[], object] | None = None,
+    platform: str | None = None,
+    run: Runner | None = None,
+    loaded: Callable[[ServiceTarget], bool] | None = None,
+    on_disk: Callable[[ServiceTarget], bool] | None = None,
+    active: Callable[[ServiceTarget], bool] | None = None,
+) -> Control:
+    """`keryx service stop|start` (`action`): Keryx and its tunnel, or with `every` every
+    unit there is, stopped and kept from starting at login, or let start and started —
+    without removing any unit file, so no installer runs and macOS asks nothing.
+
+    A unit not installed is left alone and said so; starting Keryx itself when it is not
+    is refused (2) before anything runs. `settle` is called once before a stop touches
+    anything — the restart in flight, told it was the owner. Each unit's verdict is what
+    its manager then holds (launchd: loaded or not), not only what a command exited with,
+    since launchd can refuse a bootout of a job that is going anyway. 1 when any unit
+    failed, every failure in `detail`, redacted.
+    """
+    found = manager(settings, platform or voice_setup.PLATFORM)
+    if found is None:
+        return Control(False, REFUSED, NO_MANAGER, None, [])
+    run = run or run_captured
+    is_loaded = loaded or service.is_installed
+    has_file = on_disk or unit_on_disk
+    is_running = active or service.is_active
+    kinds = [kind for kind in NAMES[found] if every or kind in MAIN_KINDS]
+    targets = {kind: ServiceTarget(found, unit_name(settings, found, kind)) for kind in kinds}
+    present = {kind: is_loaded(target) or has_file(target) for kind, target in targets.items()}
+    rows = {kind: {"kind": kind, "unit": target.unit, "state": NOT_INSTALLED}
+            for kind, target in targets.items()}
+    if not present["agent"]:
+        if action == "start":
+            for kind in kinds:  # untouched: each as it is
+                if present[kind]:
+                    rows[kind]["state"] = RUNNING if is_running(targets[kind]) else STOPPED
+            return Control(False, REFUSED, NOT_INSTALLED_YET, None, list(rows.values()))
+        if not any(present.values()):
+            return Control(True, OK, NOTHING_TO_STOP, None, list(rows.values()))
+    if action == "stop" and settle is not None:
+        settle()
+    order = kinds if action == "stop" else kinds[::-1]  # the servers up before Keryx
+    problems: list[str] = []
+    for kind in order:
+        if not present[kind]:
+            continue
+        target = targets[kind]
+        failure = None
+        for argv in _steps(target, action, loaded=is_loaded(target)):
+            code, out, err = run(argv)
+            if code != 0 and failure is None:
+                said = _last_line(err) or _last_line(out) or f"exited with {code}"
+                failure = f"{' '.join(argv)}: {said}"
+        if failure is not None and target.manager == "launchd" \
+                and is_loaded(target) == (action == "start"):
+            failure = None  # what launchd now holds is what was asked for
+        if failure is not None:
+            problems.append(failure)
+        rows[kind]["state"] = UNIT_FAILED if failure else STOPPED if action == "stop" else RUNNING
+    acted = [kind for kind in kinds if present[kind]]
+    if problems:
+        detail = redact_known("; ".join(problems), settings)
+        return Control(False, FAILED, COULD_NOT[action], detail, list(rows.values()))
+    servers = any(kind not in MAIN_KINDS for kind in acted)
+    if not present["agent"]:
+        message = SERVERS_STOPPED if servers else NOTHING_TO_STOP
+    elif action == "stop":
+        message = STOPPED_ALL if servers else STOPPED_MAIN
+    else:
+        message = RUNNING_ALL if servers else RUNNING_MAIN
+    return Control(True, OK, message, None, list(rows.values()))

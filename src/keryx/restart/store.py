@@ -23,6 +23,12 @@ log = logging.getLogger("keryx.restart")
 
 #: Where the two halves of a restart meet, under `state_dir`.
 RECORD_NAME = "restart.json"
+#: A restart the owner overtook by stopping Keryx (`keryx service stop`): no longer pending,
+#: so the watchdog rings nobody about a service that was meant to stay down.
+STOPPED = "stopped"
+STOPPED_BY_OWNER = "Keryx was stopped by its owner before it came back"
+#: A restart refused because Keryx is stopped: there is nothing running to restart.
+REFUSED = "refused"
 
 
 # --- the record that survives the restart -----------------------------------
@@ -41,7 +47,9 @@ class RestartRecord:
     #: What the process being restarted was *running* — its startup stamp, not the checkout
     #: as it stands now. The distinction is the whole point: see `mark_running`.
     version: str | None = None
-    state: str = "pending"  # "pending" until delivered, then the file is gone or "failed"
+    #: "pending" until delivered, then the file is gone or "failed" — or `STOPPED` (the owner
+    #: stopped Keryx first) or `REFUSED` (Keryx was stopped when it was asked for).
+    state: str = "pending"
     attempts: int = 0
     error: str | None = None
     #: The task whose work this restart is loading, when it is loading one. A restart that
@@ -113,6 +121,16 @@ class RestartStore:
         except OSError:
             log.exception("could not write the restart record at %s", self._path)
             return False
+
+    def settle_stopped(self) -> bool:
+        """A pending restart marked as overtaken by the owner's stop, before the stop: the
+        watchdog acts only on `pending`, and would otherwise ring them that Keryx never came
+        back. True when there was one to settle."""
+        record = self.load()
+        if record is None or record.state != "pending":
+            return False
+        record.state, record.error = STOPPED, STOPPED_BY_OWNER
+        return self.save(record)
 
     def clear(self) -> None:
         """Remove the record; a missing one is already cleared."""
