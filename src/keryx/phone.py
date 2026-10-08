@@ -22,7 +22,7 @@ or a number back. The credentials go in the client's auth and nowhere else.
 import logging
 import re
 import shutil
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -321,17 +321,21 @@ CLOUDFLARED_SYSTEM_DIRS: tuple[Path, ...] = (
 )
 #: A tunnel's config is a few lines: anything larger is not one, and is not read.
 MAX_TUNNEL_CONFIG_BYTES = 1 << 20
-#: One `key: value` line of a YAML block, an item's `- ` before it or not.
-_YAML_LINE = re.compile(r"^\s*(-\s+)?([A-Za-z][\w-]*)\s*:\s*(.*?)\s*$")
+#: A `key: value` (or `key:`) in a YAML block: a key, then a colon at the end or before a
+#: space, so a URL's `https://` is never taken for one.
+_YAML_PAIR = re.compile(r"""^(?P<key>"[^"]*"|'[^']*'|[^\s"'#-][^:]*?|-[^\s:][^:]*?)"""
+                        r"\s*:(?:\s+(?P<value>.*))?$")
 _LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 def tunnel_hostname(settings: Settings, kind: str | None) -> str | None:
-    """The public hostname the tunnel's own config names, or None: cloudflared's ingress
-    rule for Keryx's port (else its first hostname), or ngrok's reserved domain. The tunnel
-    found (`kind`) is asked first, then the other. Only reads, never the network, and never
-    raises: a config that will not read, or holds no bare hostname, is None. Only a
-    hostname ever leaves — these files can hold a tunnel's token."""
+    """The public hostname the tunnel's own config names for Keryx, or None: the hostname
+    of cloudflared's ingress rule whose service is Keryx's port on this machine, or the
+    reserved domain of the ngrok tunnel (v2) or endpoint (v3) whose upstream is. A rule or
+    tunnel for anything else — a blog on another port — is never taken, and neither is an
+    upstream's own URL; with none for Keryx's port, None. The tunnel found (`kind`) is asked
+    first, then the other. Only reads, never the network, and never raises: a config that
+    will not read is None. Only a hostname ever leaves — these files can hold a token."""
     order = sorted(TUNNEL_BINARIES, key=lambda name: name != kind)
     for name in order:
         read = _cloudflared_hostname if name == "cloudflared" else _ngrok_hostname
@@ -367,21 +371,101 @@ def _config_text(path: Path) -> str | None:
         return None
 
 
-def _yaml_lines(text: str) -> Iterator[tuple[bool, str, str]]:
-    """Each `key: value` line of a block-style YAML file: whether it starts a list item,
-    the key, and the value unquoted and without its comment. Enough for a tunnel's config,
-    which is all keys, lists of rules and scalars."""
-    for line in text.splitlines():
-        found = _YAML_LINE.match(line)
-        if found is None:
-            continue
-        item, key, value = bool(found.group(1)), found.group(2), found.group(3)
-        if value[:1] in ("'", '"'):
-            end = value.find(value[0], 1)
-            value = value[1:end] if end > 0 else ""
+def _yaml(text: str) -> Any:
+    """A block-style YAML document as dicts, lists and strings: enough for a tunnel's
+    config, which is keys, lists of rules and scalars. A flow-style value (`[…]`, `{…}`)
+    stays one string, and a line that is no part of a block raises `ValueError`."""
+    lines: list[tuple[int, str]] = []
+    for raw in text.splitlines():
+        content = _uncommented(raw).rstrip()
+        if content.strip() and content.strip() not in ("---", "..."):
+            lines.append((len(content) - len(content.lstrip(" ")), content.strip()))
+    if not lines:
+        return None
+    return _yaml_node(lines, 0, lines[0][0])[0]
+
+
+def _uncommented(line: str) -> str:
+    """`line` without its comment: a `#` at its start or after a space, outside quotes."""
+    quote = None
+    for index, char in enumerate(line):
+        if quote:
+            quote = None if char == quote else quote
+        elif char in ("'", '"'):
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index]
+    return line
+
+
+def _is_item(content: str) -> bool:
+    return content == "-" or content.startswith("- ")
+
+
+def _yaml_node(lines: list[tuple[int, str]], at: int, indent: int) -> tuple[Any, int]:
+    if _is_item(lines[at][1]):
+        return _yaml_list(lines, at, indent)
+    return _yaml_map(lines, at, indent)
+
+
+def _yaml_map(lines: list[tuple[int, str]], at: int, indent: int) -> tuple[Any, int]:
+    found: dict[str, Any] = {}
+    while at < len(lines) and lines[at][0] == indent and not _is_item(lines[at][1]):
+        pair = _YAML_PAIR.match(lines[at][1])
+        if pair is None:
+            raise ValueError("not a block mapping")
+        key, value = _scalar(pair.group("key")), pair.group("value")
+        at += 1
+        nested = at < len(lines) and (lines[at][0] > indent
+                                      or (lines[at][0] == indent and _is_item(lines[at][1])))
+        if value is None and nested:
+            found[key], at = _yaml_node(lines, at, lines[at][0])
         else:
-            value = value.split(" #", 1)[0].strip()
-        yield item, key, value
+            found[key] = None if value is None else _scalar(value)
+    return found, at
+
+
+def _yaml_list(lines: list[tuple[int, str]], at: int, indent: int) -> tuple[Any, int]:
+    found: list[Any] = []
+    while at < len(lines) and lines[at][0] == indent and _is_item(lines[at][1]):
+        rest = lines[at][1][1:].lstrip()
+        if not rest:
+            at += 1
+            nested = at < len(lines) and lines[at][0] > indent
+            item, at = _yaml_node(lines, at, lines[at][0]) if nested else (None, at)
+        elif _is_item(rest) or _YAML_PAIR.match(rest):
+            # The item's own block starts where its text does: `- key: value` is a mapping
+            # whose next keys line up under `key`.
+            column = indent + len(lines[at][1]) - len(rest)
+            lines = [*lines[:at], (column, rest), *lines[at + 1:]]
+            item, at = _yaml_node(lines, at, column)
+        else:
+            item, at = _scalar(rest), at + 1
+        found.append(item)
+    return found, at
+
+
+def _scalar(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+def _upstream_port(value: Any) -> int | None:
+    """The port a tunnel hands its traffic to on this machine — `8080`, `localhost:8080`,
+    `http://127.0.0.1:8080` — or None for anything that is not this machine."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return int(value)
+    try:
+        parts = urlparse(value if "://" in value else f"tcp://{value}")
+        port = parts.port or {"http": 80, "https": 443}.get(parts.scheme)
+    except ValueError:  # a port out of range
+        return None
+    return port if parts.hostname in _LOOPBACK else None
 
 
 def _bare(value: str) -> str | None:
@@ -391,32 +475,34 @@ def _bare(value: str) -> str | None:
 
 
 def _cloudflared_hostname(text: str, port: int) -> str | None:
-    rules: list[dict[str, str]] = []
-    for item, key, value in _yaml_lines(text):
-        if item:
-            rules.append({})
-        if rules and key in ("hostname", "service"):
-            rules[-1].setdefault(key, value)
-    named = [(host, rule.get("service", "")) for rule in rules
-             if (host := _bare(rule.get("hostname", "")))]
-    for host, service in named:
-        try:
-            target = urlparse(service)
-            if target.hostname in _LOOPBACK and target.port == port:
+    """The hostname of the ingress rule whose service is Keryx's port."""
+    config = _yaml(text)
+    rules = config.get("ingress") if isinstance(config, dict) else None
+    for rule in rules if isinstance(rules, list) else []:
+        if isinstance(rule, dict) and _upstream_port(rule.get("service")) == port:
+            if host := _bare(str(rule.get("hostname") or "")):
                 return host
-        except ValueError:
-            continue
-    return named[0][0] if named else None
+    return None
 
 
 def _ngrok_hostname(text: str, port: int) -> str | None:
-    """A reserved domain: `domain:` (or the older `hostname:`) on a tunnel, or an endpoint's
-    `url:` — an upstream's loopback url is no hostname, so it is never taken."""
-    for _item, key, value in _yaml_lines(text):
-        if key == "url":
-            value = value.removeprefix("https://")
-        elif key not in ("domain", "hostname"):
-            continue
-        if host := _bare(value):
-            return host
+    """The reserved domain of the tunnel (v2: `tunnels`, its `addr`, its `domain` or older
+    `hostname`) or endpoint (v3: `endpoints`, its `upstream.url`, its own `url`) that hands
+    its traffic to Keryx's port. An upstream's URL is where the traffic goes, never the
+    public name, so it is only ever matched against the port."""
+    config = _yaml(text)
+    if not isinstance(config, dict):
+        return None
+    tunnels = config.get("tunnels")
+    for tunnel in tunnels.values() if isinstance(tunnels, dict) else []:
+        if isinstance(tunnel, dict) and _upstream_port(tunnel.get("addr")) == port:
+            for key in ("domain", "hostname"):
+                if host := _bare(str(tunnel.get(key) or "")):
+                    return host
+    endpoints = config.get("endpoints")
+    for endpoint in endpoints if isinstance(endpoints, list) else []:
+        upstream = endpoint.get("upstream") if isinstance(endpoint, dict) else None
+        if isinstance(upstream, dict) and _upstream_port(upstream.get("url")) == port:
+            if host := _bare(str(endpoint.get("url") or "").removeprefix("https://")):
+                return host
     return None

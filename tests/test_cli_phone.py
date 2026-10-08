@@ -270,7 +270,7 @@ def test_tunnel_as_text_names_the_hostname_its_config_does(account, monkeypatch)
     monkeypatch.setattr(httpx, "get", lambda url, **kwargs: httpx.Response(502))
     config = Path.home() / ".ngrok2" / "ngrok.yml"
     config.parent.mkdir(parents=True)
-    config.write_text("tunnels:\n  keryx:\n    domain: keryx.ngrok.app\n")
+    config.write_text("tunnels:\n  keryx:\n    addr: 8080\n    domain: keryx.ngrok.app\n")
 
     result = run("tunnel")
 

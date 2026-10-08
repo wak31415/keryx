@@ -452,12 +452,28 @@ def test_cloudflareds_ingress_for_keryxs_port_is_the_hostname(settings):
     assert phone.tunnel_hostname(settings, "cloudflared") == "keryx.example.com"
 
 
-def test_without_a_rule_for_keryxs_port_the_first_hostname_is_taken(settings):
+def test_without_a_rule_for_keryxs_port_there_is_no_hostname(settings):
+    """Another rule's hostname is another site's: offered as Keryx's, the phone would be
+    pointed at it."""
     cloudflared_config("ingress:\n  - hostname: 'calls.example.org'\n"
                        "    service: http://localhost:9999\n  - service: http_status:404\n",
                        name="config.yaml")
 
-    assert phone.tunnel_hostname(settings, "cloudflared") == "calls.example.org"
+    assert phone.tunnel_hostname(settings, "cloudflared") is None
+
+
+def test_a_rule_for_keryxs_port_on_another_machine_is_not_keryx(settings):
+    cloudflared_config("ingress:\n  - hostname: nas.example.org\n"
+                       f"    service: http://192.168.1.20:{settings.port}\n")
+
+    assert phone.tunnel_hostname(settings, "cloudflared") is None
+
+
+def test_a_rule_listed_at_the_keys_own_indent_is_read(settings):
+    cloudflared_config("tunnel: keryx\ningress:\n- hostname: keryx.example.com\n"
+                       f"  service: http://localhost:{settings.port}\n- service: http_status:404\n")
+
+    assert phone.tunnel_hostname(settings, "cloudflared") == "keryx.example.com"
 
 
 @pytest.mark.parametrize("text", [
@@ -509,6 +525,77 @@ def test_a_config_too_big_to_be_one_is_not_read(settings, monkeypatch):
     assert phone.tunnel_hostname(settings, "cloudflared") is None
 
 
+def test_of_several_ngrok_tunnels_the_one_for_keryxs_port_is_taken(settings):
+    ngrok_config('version: "2"\nauthtoken: 2abcSECRETtoken\ntunnels:\n'
+                 "  blog:\n    proto: http\n    addr: 3000\n    domain: blog.ngrok.app\n"
+                 "  keryx:\n    proto: http\n    addr: localhost:8080  # the phone\n"
+                 "    hostname: keryx-old.ngrok.io\n")
+
+    assert phone.tunnel_hostname(settings, "ngrok") == "keryx-old.ngrok.io"
+
+
+def test_an_ngrok_config_with_no_tunnel_for_keryxs_port_is_none(settings):
+    ngrok_config("tunnels:\n  blog:\n    addr: 3000\n    domain: blog.ngrok.app\n")
+
+    assert phone.tunnel_hostname(settings, "ngrok") is None
+
+
+def test_an_https_upstream_is_never_taken_for_the_public_url(settings):
+    """v3: `upstream.url` is where the traffic goes. An endpoint whose upstream is
+    elsewhere is not Keryx's, and an upstream's own https URL is never its hostname."""
+    ngrok_config("version: 3\nendpoints:\n"
+                 "  - name: api\n    upstream:\n      url: https://api.example.com\n"
+                 "  - name: blog\n    url: https://blog.ngrok.dev\n"
+                 "    upstream:\n      url: 3000\n"
+                 "  - name: keryx\n    upstream:\n      url: https://localhost:8080\n"
+                 "    url: https://keryx-ada.ngrok.dev\n")
+
+    assert phone.tunnel_hostname(settings, "ngrok") == "keryx-ada.ngrok.dev"
+    ngrok_config("version: 3\nendpoints:\n"
+                 "  - name: api\n    upstream:\n      url: https://api.example.com\n")
+    assert phone.tunnel_hostname(settings, "ngrok") is None
+
+
+@pytest.mark.parametrize("text", [
+    "tunnels: {keryx: {addr: 8080, domain: keryx.ngrok.app}}\n",  # flow style: not read
+    "tunnels:\n  keryx\n    addr: 8080\n",  # not a mapping
+    "- just\n- a list\n",
+])
+def test_an_ngrok_config_of_another_shape_is_none(settings, text):
+    ngrok_config(text)
+
+    assert phone.tunnel_hostname(settings, "ngrok") is None
+
+
+def test_a_hash_inside_quotes_is_no_comment(settings):
+    ngrok_config("tunnels:\n  keryx:\n    addr: '8080'\n"
+                 "    metadata: \"#1 tunnel\"\n    domain: \"keryx.ngrok.app\" # ours\n")
+
+    assert phone.tunnel_hostname(settings, "ngrok") == "keryx.ngrok.app"
+
+
+def test_the_reader_takes_block_yaml_as_tunnels_write_it():
+    text = ("# cloudflared\ntunnel: keryx\ningress:\n  -\n    hostname: a.example.com\n"
+            "    service: http://localhost:8080\n  - - nested\n  - plain\n"
+            "  - hostname: b.example.com\nempty:\n'quoted key': \"x # y\"\n")
+
+    assert phone._yaml(text) == {
+        "tunnel": "keryx",
+        "ingress": [{"hostname": "a.example.com", "service": "http://localhost:8080"},
+                    ["nested"], "plain", {"hostname": "b.example.com"}],
+        "empty": None,
+        "quoted key": "x # y",
+    }
+
+
+def test_a_rule_with_no_service_and_a_tunnel_with_no_domain_name_nothing(settings):
+    cloudflared_config("ingress:\n  - hostname: keryx.example.com\n")
+    ngrok_config("tunnels:\n  keryx:\n    addr: 8080\n    proto: http\n")
+
+    assert phone.tunnel_hostname(settings, "cloudflared") is None
+    assert phone.tunnel_hostname(settings, "ngrok") is None
+
+
 def test_ngroks_reserved_domain_is_the_hostname(settings):
     ngrok_config('version: "2"\nauthtoken: 2abcSECRETtoken\ntunnels:\n  keryx:\n'
                  "    proto: http\n    addr: 8080\n    domain: keryx.ngrok.app\n")
@@ -533,7 +620,7 @@ def test_an_ngrok_config_with_no_reserved_domain_is_none(settings):
 
 def test_the_tunnel_found_is_asked_first_and_none_found_asks_both(settings):
     cloudflared_config(CLOUDFLARED_CONFIG.format(port=settings.port))
-    ngrok_config("tunnels:\n  keryx:\n    domain: keryx.ngrok.app\n")
+    ngrok_config("tunnels:\n  keryx:\n    addr: 8080\n    domain: keryx.ngrok.app\n")
 
     assert phone.tunnel_hostname(settings, "ngrok") == "keryx.ngrok.app"
     assert phone.tunnel_hostname(settings, "cloudflared") == "keryx.example.com"
@@ -543,7 +630,8 @@ def test_the_tunnel_found_is_asked_first_and_none_found_asks_both(settings):
 def test_the_system_wide_cloudflared_config_is_read_too(settings, tmp_path, monkeypatch):
     system = tmp_path / "etc-cloudflared"
     system.mkdir()
-    (system / "config.yml").write_text("ingress:\n  - hostname: keryx.example.net\n")
+    (system / "config.yml").write_text("ingress:\n  - hostname: keryx.example.net\n"
+                                       f"    service: http://localhost:{settings.port}\n")
     monkeypatch.setattr(phone, "CLOUDFLARED_SYSTEM_DIRS", (system,))
 
     assert phone.tunnel_hostname(settings, "cloudflared") == "keryx.example.net"

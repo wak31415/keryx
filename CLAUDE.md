@@ -88,8 +88,9 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `https://PUBLIC_HOST/health` within 3 s, null with no hostname, false with `error` for one
   that is not a hostname; `install_url`, cloudflared's download page while neither is
   installed, else null; `hostname`, the public hostname the tunnel's own config already
-  names — cloudflared's ingress rule for Keryx's port, else its first, or ngrok's reserved
-  domain — read from disk only, never the network, null when none, and nothing else of
+  names for Keryx — the hostname of cloudflared's ingress rule, or the reserved domain of
+  ngrok's tunnel (v2) or endpoint (v3), whose upstream is Keryx's port on this machine;
+  a rule for anything else, or an upstream's own URL, is never taken — read from disk only, never the network, null when none, and nothing else of
   those files ever leaves, since they can hold the tunnel's token). The numbers are the owner's own, shown to the owner, and never
   logged but as `mask_number`
 - Move a Jarvis install to Keryx — its XDG directories (`~/.config/jarvis`, …), or an older
