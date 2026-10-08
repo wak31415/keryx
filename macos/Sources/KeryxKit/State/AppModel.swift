@@ -961,9 +961,8 @@ public final class AppModel {
 
     /// Starts Keryx answering calls: its unit installed with `keryx service install` when
     /// it isn't there yet, or — already installed but stopped (`service:start`, Task N) —
-    /// started again with `keryx service start`, never `--all`: the model servers are the
-    /// other agent's to start. Then the status read once more after a moment, as after a
-    /// restart. A failure is kept in `startFailure` for the Overview to say.
+    /// started again with `keryx service start --all`, with the model and voice servers Quit
+    /// stopped. Then the status read once more after a moment, as after a restart. A failure is kept in `startFailure` for the Overview to say.
     public func startAnswering() async -> Result<ServiceResult, KeryxError> {
         if quitting { return .failure(.refused(Self.quittingRefusal)) }
         if client != nil, serviceChange == nil { startTried = true }
