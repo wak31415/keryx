@@ -338,3 +338,21 @@ async def test_with_texting_off_the_alert_is_the_call(tmp_path):
     words = spoken(harness.twilio.calls[0]["twiml"])
     assert "by text" not in words  # it must not point them at a message they will never get
     assert "Check the machine" in words
+
+
+async def test_an_owner_who_stops_keryx_as_the_alert_is_made_is_not_rung(harness):
+    """The record is still pending at the deadline, and settled by `keryx service stop`
+    in the moment before the alert is written: it is not written back, nobody is rung."""
+    harness.store.save(pending())
+
+    def stopped_meanwhile(settings):
+        harness.store.settle_stopped()
+        return None
+
+    outcome = await watch(harness.settings, store=harness.store, twilio=harness.twilio,
+                          deadline_s=10.0, poll_s=3.0, sleep=harness.clock.sleep,
+                          probe=stopped_meanwhile, clock=harness.clock)
+
+    assert outcome == REPORTED
+    assert harness.record().state == "stopped"
+    assert not harness.twilio.sms and not harness.twilio.calls

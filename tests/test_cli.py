@@ -1004,6 +1004,47 @@ def test_a_restart_of_a_job_launchd_has_never_heard_of_ends_on_record(
     assert record.state == "failed" and "exited 113" in record.error
 
 
+def test_a_stop_while_the_cli_arms_its_watchdog_stops_the_restart(
+    restart_settings, ran, monkeypatch
+):
+    calls, _ = ran
+    store = RestartStore(restart_settings.state_dir / RECORD_NAME)
+
+    def armed_as_the_owner_stops(settings, target):
+        store.settle_stopped()
+        return "detached (pid 4321)"
+
+    monkeypatch.setattr("keryx.cli._arm_watchdog", armed_as_the_owner_stops)
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1 and calls == []
+    assert "was not restarted" in result.stderr
+    record = store.load()
+    assert (record.state, record.watchdog) == ("stopped", "")
+
+
+def test_a_stop_just_before_the_cli_hands_over_stops_the_restart(
+    restart_settings, ran, monkeypatch
+):
+    calls, _ = ran
+    store = RestartStore(restart_settings.state_dir / RECORD_NAME)
+    real = RestartStore.is_pending
+
+    def stopped_first(self, requested_at, record=None):
+        current = self.load()
+        current.state = "stopped"  # another process's stop, already settled
+        self.save(current)
+        return real(self, requested_at)
+
+    monkeypatch.setattr(RestartStore, "is_pending", stopped_first)
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1 and calls == []
+    assert store.load().state == "stopped"
+
+
 def test_restart_status_with_nothing_on_record(restart_settings):
     result = runner.invoke(app, ["restart", "--status"])
 

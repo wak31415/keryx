@@ -163,10 +163,17 @@ async def _alert(
 
     # Recorded before anything is sent, and before the service can come up late: a record
     # left `pending` would have a Keryx that starts an hour from now ring them about a
-    # restart they have already been told died.
-    record.state = "failed"
-    record.error = "restarted but never confirmed it" if up else "never came back"
-    store.save(record)
+    # restart they have already been told died. Only while it is still pending, under the
+    # record's lock: an owner who stopped Keryx meanwhile has settled it, and is not rung.
+    error = "restarted but never confirmed it" if up else "never came back"
+
+    def failed(current: RestartRecord) -> None:
+        current.state, current.error = "failed", error
+
+    if not store.update_if_pending(record.requested_at, failed):
+        log.info("the restart was settled meanwhile; nobody to tell")
+        return REPORTED
+    record.state, record.error = "failed", error
 
     texted = await _text(twilio, settings, record, body)
     headline = STUCK_SPOKEN if up else DOWN_SPOKEN

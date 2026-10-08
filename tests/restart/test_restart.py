@@ -1826,3 +1826,106 @@ def test_git_that_is_not_there_is_no_version_rather_than_an_error(tmp_path, monk
     monkeypatch.setattr("keryx.restart.version.subprocess.run", no_git)
 
     assert current_version(tmp_path) is None
+
+
+# --- an owner's stop overtakes a restart ---------------------------------------------------
+
+
+class SettlingWatchSpawn(FakeWatchSpawn):
+    """The watchdog armed while `keryx service stop` settles the record in the meantime."""
+
+    def __init__(self, store: RestartStore) -> None:
+        super().__init__()
+        self.store = store
+
+    def __call__(self, plan, settings) -> int:
+        self.store.settle_stopped()
+        return super().__call__(plan, settings)
+
+
+async def test_a_stop_while_the_watchdog_is_armed_is_never_written_over(tmp_path):
+    """Arming reads the record, starts the watch, then writes the watch onto it: a stop in
+    between must win, and the restart must not be handed over at all."""
+    settings = make_settings(tmp_path)
+    store = RestartStore(settings.state_dir / "restart.json")
+    harness = Harness(settings, watch=SettlingWatchSpawn(store))
+
+    result = await harness.coordinator.request(reason="new code")
+    await harness.settle()
+
+    assert result["status"] == "restarting"
+    record = harness.record()
+    assert (record.state, record.watchdog) == ("stopped", "")
+    assert harness.spawn.commands == []  # no kickstart, no systemctl restart
+
+
+async def test_a_stop_after_arming_but_before_the_hand_over_aborts_it(tmp_path, monkeypatch):
+    harness = Harness(make_settings(tmp_path))
+    real = harness.store.is_pending
+
+    def stopped_first(requested_at, record=None):
+        # The owner's stop landing just before the last look (written here without the
+        # lock, which this process already holds; the real stop is another process).
+        record = harness.store.load()
+        record.state = "stopped"
+        harness.store.save(record)
+        return real(requested_at)
+
+    monkeypatch.setattr(harness.store, "is_pending", stopped_first)
+
+    await harness.coordinator.request()
+    await harness.settle()
+
+    assert harness.spawn.commands == []
+    assert harness.record().state == "stopped"
+
+
+async def test_a_failure_after_the_owner_stopped_keryx_leaves_the_stop_and_rings_nobody(
+    tmp_path,
+):
+    harness = Harness(make_settings(tmp_path))
+    harness.store.save(pending(state="stopped"))
+
+    await harness.coordinator._failed("launchctl exited 5")
+
+    assert harness.record().state == "stopped"
+    assert harness.twilio.calls == [] and harness.twilio.sms == []
+
+
+def test_a_change_is_made_only_to_the_pending_record_it_was_asked_for(tmp_path):
+    store = RestartStore(tmp_path / "restart.json")
+    asked = pending()
+    store.save(asked)
+
+    assert store.update_if_pending(asked.requested_at, lambda r: setattr(r, "watchdog", "w"))
+    assert store.load().watchdog == "w"
+    assert not store.update_if_pending("another time", lambda r: setattr(r, "error", "x"))
+    store.settle_stopped()
+    assert not store.update_if_pending(asked.requested_at, lambda r: setattr(r, "state", "x"))
+    assert store.load().state == "stopped"
+    assert (tmp_path / "restart.json.lock").stat().st_mode & 0o777 == 0o600
+
+
+def test_the_lock_is_one_holder_at_a_time_and_a_hung_one_is_waited_out(tmp_path):
+    from keryx.config.files import private_lock
+
+    path = tmp_path / "restart.json.lock"
+    waited: list[float] = []
+    ticks = iter(range(100))
+
+    with private_lock(path, 1.0) as first:
+        with private_lock(path, 0.2, sleep=waited.append,
+                          clock=lambda: next(ticks) / 10) as second:
+            assert (first, second) == (True, False)  # ran anyway, unheld, after the wait
+    assert waited
+    with private_lock(path, 0.0) as again:
+        assert again is True  # let go when the first block ended
+
+
+def test_a_lock_that_cannot_be_made_still_runs_the_change(tmp_path):
+    blocked = tmp_path / "file"
+    blocked.write_text("not a directory")
+    store = RestartStore(blocked / "restart.json")
+
+    with store.locked() as held:
+        assert held is False

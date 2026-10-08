@@ -573,6 +573,10 @@ STOPPED_REFUSAL = ("Keryx is stopped (`keryx service stop`), so there is nothing
                    "restart; `keryx service start` starts it")
 
 
+#: Why `keryx restart` stops before handing over: its record was settled meanwhile.
+OVERTAKEN = "Keryx was stopped while the restart was being set up, so it was not restarted"
+
+
 def _restart_store(settings: Settings) -> RestartStore:
     return RestartStore(settings.state_dir / RECORD_NAME)
 
@@ -643,22 +647,36 @@ def restart(
         typer.echo(f"could not write {store.path}: the restart would go unconfirmed")
         raise typer.Exit(1)
 
+    asked = record.requested_at
     if number:
         # The same watch the voice path arms, for the same reason: this command prints a
         # promise that keryx will call back, and nothing else would notice if it never
-        # came back to make the call.
-        record.watchdog = _arm_watchdog(settings, target)
-        store.save(record)
-        typer.echo(f"watchdog: {record.watchdog}")
+        # came back to make the call. Written only onto the record still pending: never
+        # back over a `keryx service stop` that settled it meanwhile.
+        watchdog = _arm_watchdog(settings, target)
+        if not store.update_if_pending(asked, lambda current: setattr(current, "watchdog",
+                                                                      watchdog)):
+            typer.echo(f"the restart was refused: {OVERTAKEN}", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"watchdog: {watchdog}")
 
     command = target.command()
-    typer.echo(" ".join(command))
-    code = subprocess.run(command, check=False).returncode
+    # The last look and the hand-over under the record's lock: a stop that comes now waits
+    # for the hand-over, then settles the record and stops the new process too.
+    with store.locked():
+        if not store.is_pending(asked):
+            typer.echo(f"the restart was refused: {OVERTAKEN}", err=True)
+            raise typer.Exit(1)
+        typer.echo(" ".join(command))
+        code = subprocess.run(command, check=False).returncode
     if code != 0:
-        record.state = "failed"
-        record.error = f"{command[0]} exited {code}"
-        store.save(record)
-        typer.echo(f"the restart failed: {record.error}")
+        error = f"{command[0]} exited {code}"
+
+        def failed(current: RestartRecord) -> None:
+            current.state, current.error = "failed", error
+
+        store.update_if_pending(asked, failed)
+        typer.echo(f"the restart failed: {error}")
         raise typer.Exit(1)
 
     if number:

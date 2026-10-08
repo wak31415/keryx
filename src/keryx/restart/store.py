@@ -13,11 +13,12 @@ import contextlib
 import dataclasses
 import json
 import logging
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from keryx.config.files import write_private
+from keryx.config.files import private_lock, write_private
 
 log = logging.getLogger("keryx.restart")
 
@@ -29,6 +30,12 @@ STOPPED = "stopped"
 STOPPED_BY_OWNER = "Keryx was stopped by its owner before it came back"
 #: A restart refused because Keryx is stopped: there is nothing running to restart.
 REFUSED = "refused"
+#: The lock that orders every change to a record across processes, beside it.
+LOCK_SUFFIX = ".lock"
+#: How long a change waits for the lock. Long enough for a restart command to hand over
+#: (the lock is held across it: the systemd unit's own `TimeoutStopSec` and a start), and
+#: then the change goes ahead unlocked rather than never.
+LOCK_TIMEOUT_S = 90.0
 
 
 # --- the record that survives the restart -----------------------------------
@@ -122,15 +129,52 @@ class RestartStore:
             log.exception("could not write the restart record at %s", self._path)
             return False
 
+    @contextlib.contextmanager
+    def locked(self, timeout: float = LOCK_TIMEOUT_S) -> Iterator[bool]:
+        """Hold the record's cross-process lock for the block: every change that depends on
+        what the record says now — still pending? — is made inside one. True when held; a
+        lock that cannot be had (a hung holder, a file that cannot be made) still runs the
+        block, given False: this orders writers, and must never be what stops one."""
+        with contextlib.ExitStack() as stack:
+            try:
+                lock = self._path.with_name(self._path.name + LOCK_SUFFIX)
+                held = stack.enter_context(private_lock(lock, timeout))
+            except OSError:
+                log.warning("could not lock the restart record at %s; going on unlocked",
+                            self._path)
+                held = False
+            yield held
+
+    def update_if_pending(self, requested_at: str,
+                          change: Callable[[RestartRecord], object]) -> bool:
+        """Apply `change` to the record and save it, only while it is still the pending
+        record asked for at `requested_at` — compared and written under the lock, so a stop
+        that settled it meanwhile is never written back over. False when it is not."""
+        with self.locked():
+            current = self.load()
+            if not self.is_pending(requested_at, current):
+                return False
+            change(current)
+            return self.save(current)
+
+    def is_pending(self, requested_at: str, record: RestartRecord | None = None) -> bool:
+        """Whether the record (read now, unless handed in) is the restart asked for at
+        `requested_at`, and still pending. Ask it under `locked()` to act on the answer."""
+        record = self.load() if record is None else record
+        return (record is not None and record.state == "pending"
+                and record.requested_at == requested_at)
+
     def settle_stopped(self) -> bool:
         """A pending restart marked as overtaken by the owner's stop, before the stop: the
         watchdog acts only on `pending`, and would otherwise ring them that Keryx never came
-        back. True when there was one to settle."""
-        record = self.load()
-        if record is None or record.state != "pending":
-            return False
-        record.state, record.error = STOPPED, STOPPED_BY_OWNER
-        return self.save(record)
+        back. Under the lock, so a restart that is handing over finishes first and is then
+        stopped with the rest. True when there was one to settle."""
+        with self.locked():
+            record = self.load()
+            if record is None or record.state != "pending":
+                return False
+            record.state, record.error = STOPPED, STOPPED_BY_OWNER
+            return self.save(record)
 
     def clear(self) -> None:
         """Remove the record; a missing one is already cleared."""

@@ -53,7 +53,13 @@ from keryx.restart.service import (
     spawn_watchdog,
     watch_command,
 )
-from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore, format_duration
+from keryx.restart.store import (
+    RECORD_NAME,
+    STOPPED,
+    RestartRecord,
+    RestartStore,
+    format_duration,
+)
 from keryx.restart.version import (
     loaded_version,
     startup_log_marks,
@@ -309,14 +315,30 @@ class RestartCoordinator:
         return True
 
     async def _execute(self, target: ServiceTarget) -> None:
-        """Hand the restart to the service manager; we expect to be killed doing it."""
-        await self._arm_watchdog(target)
+        """Hand the restart to the service manager; we expect to be killed doing it.
+
+        Only while its record is still the pending one: `keryx service stop` settles it as
+        `stopped`, and a restart that went ahead after that would start what the owner
+        stopped. The check and the hand-over are made under the record's lock, so a stop
+        that comes meanwhile waits for the hand-over and then stops the new process.
+        """
+        asked = await self._arm_watchdog(target)
+        if asked is None:
+            log.info("the restart is no longer pending (the owner stopped Keryx); not "
+                     "restarting")
+            return
         command = target.command()
-        log.info("restarting through %s: %s", target.manager, " ".join(command))
-        try:
-            code = await self._spawn(command)
-        except Exception as exc:  # a missing binary, a refused fork
-            await self._failed(f"{type(exc).__name__}: {exc}")
+        with self._store.locked():
+            if not self._store.is_pending(asked):
+                log.info("the restart was overtaken before it was handed over; not restarting")
+                return
+            log.info("restarting through %s: %s", target.manager, " ".join(command))
+            try:
+                code = await self._spawn(command)
+            except Exception as exc:  # a missing binary, a refused fork
+                code = exc
+        if isinstance(code, Exception):
+            await self._failed(f"{type(code).__name__}: {code}")
             return
         if code and code > 0:
             await self._failed(f"{command[0]} exited {code}")
@@ -333,7 +355,7 @@ class RestartCoordinator:
         await self._sleep(EXEC_CONFIRM_S)
         await self._failed(f"{target.describe()} accepted the restart but nothing happened")
 
-    async def _arm_watchdog(self, target: ServiceTarget) -> None:
+    async def _arm_watchdog(self, target: ServiceTarget) -> str | None:
         """Start the process that notices a restart which never comes back. Never raises.
 
         Every other part of this file runs on one side of the death or the other. This is
@@ -344,12 +366,21 @@ class RestartCoordinator:
         Armed here rather than in `request()` because a deferred restart waits for the line
         to clear, and a watchdog counting down from half an hour ago would give up before
         the restart it is watching had even happened.
+
+        The record's `requested_at` when it is still the pending one, which is what the
+        hand-over checks again; None when it is not — gone, or settled by an owner's stop —
+        and then nothing is armed or written: a record written back here would undo the
+        stop, and the watchdog would ring about a Keryx that was meant to stay down.
         """
         record = self._store.load()
-        if record is None:
-            return
-        record.watchdog = await asyncio.to_thread(self._arm, target)
-        self._store.save(record)
+        if record is None or record.state != "pending":
+            return None
+        watchdog = await asyncio.to_thread(self._arm, target)
+        if not self._store.update_if_pending(
+            record.requested_at, lambda current: setattr(current, "watchdog", watchdog)
+        ):
+            return None
+        return record.requested_at
 
     def _arm(self, target: ServiceTarget) -> str:
         """Start the watchdog; the string is what `keryx restart --status` reads back."""
@@ -374,10 +405,14 @@ class RestartCoordinator:
         on the phone Keryx would be ringing.
         """
         log.error("the restart failed: %s", error)
-        record = self._store.load() or RestartRecord()
-        record.state = "failed"
-        record.error = error
-        self._store.save(record)
+        with self._store.locked():
+            record = self._store.load() or RestartRecord()
+            if record.state == STOPPED:
+                log.info("the owner stopped Keryx meanwhile: the failure is theirs to ignore")
+                return
+            record.state = "failed"
+            record.error = error
+            self._store.save(record)
         spoken = f"The restart did not go through: {error}."
         if await self._announce(spoken):
             return
