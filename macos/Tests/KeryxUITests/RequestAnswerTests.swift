@@ -121,7 +121,18 @@ import KeryxPreview
         let claudeOnly = doctor([("Claude Code agent (default)", false, "not signed in")])
         #expect(AgentSignInWording.state(.codex, doctor: claudeOnly) == .notEnabled)
         #expect(AgentSignInWording.state(.codex, doctor: nil) == .unknown)
-        #expect(AgentSignInWording.button(.notEnabled) == "Sign In…", "signing in is never refused here")
+        #expect(AgentSignInWording.button(.notEnabled) == nil, "Enable instead")
+        #expect(AgentSignInWording.button(.notInstalled) == nil, "nothing to sign in to")
+        #expect(AgentSignInWording.button(.unknown) == nil)
+    }
+
+    @Test func enablingAddsTheAgentAsTheChecklistWould() throws {
+        var row = try #require(PreviewData.config.first { $0.key == AgentSignInWording.enabledKey })
+        #expect(AgentSignInWording.enabling(.codex, row: row, fallback: "claude") == "claude,codex,local")
+        row.value = .null
+        #expect(AgentSignInWording.enabling(.codex, row: row, fallback: "claude") == "claude,codex",
+                "blank is the default agent alone, which stays")
+        #expect(AgentSignInWording.notEnabled(.codex) == "Codex wasn't enabled.")
     }
 
     @Test func anOlderCLIsDetailStillReads() {

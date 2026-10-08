@@ -134,7 +134,7 @@ public struct ConfigurationView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.top, 6)
                             }
-                            rows(group.rows, titles: titles)
+                            separatedRows(group.rows, titles: titles)
                         }
                     } label: {
                         LabeledContent("Advanced") {
@@ -190,15 +190,29 @@ public struct ConfigurationView: View {
 
     private func rows(_ rows: [ConfigRow], titles: [String: String]) -> some View {
         ForEach(rows) { row in
-            ConfigRowView(row: row, titles: titles, error: initialErrors[row.key])
-                .id(row.key)
-                .background {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.accentColor.opacity(focus == row.key ? 0.14 : 0))
-                        .padding(.horizontal, -6)
-                        .padding(.vertical, -2)
-                }
+            rowView(row, titles: titles)
         }
+    }
+
+    /// Rows inside the Advanced disclosure, where the form draws no separators of its own:
+    /// spaced and divided as the form above them is.
+    private func separatedRows(_ rows: [ConfigRow], titles: [String: String]) -> some View {
+        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+            if index > 0 { Divider() }
+            rowView(row, titles: titles)
+                .padding(.vertical, 4)
+        }
+    }
+
+    private func rowView(_ row: ConfigRow, titles: [String: String]) -> some View {
+        ConfigRowView(row: row, titles: titles, error: initialErrors[row.key])
+            .id(row.key)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.accentColor.opacity(focus == row.key ? 0.14 : 0))
+                    .padding(.horizontal, -6)
+                    .padding(.vertical, -2)
+            }
     }
 
     // MARK: - State

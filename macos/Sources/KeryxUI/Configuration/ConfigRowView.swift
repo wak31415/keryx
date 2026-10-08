@@ -51,7 +51,7 @@ struct ConfigRowView: View {
             Text(row.displayTitle)
             if !row.description.isEmpty {
                 Text(ConfigWording.isPIN(row) ? PinWording.rowDescription
-                    : ConfigWording.described(row.description, titles: titles))
+                    : ConfigWording.described(ConfigDescriptions.text(row), titles: titles))
                     .lineLimit(2)
                     .truncationMode(.tail)
                     .fixedSize(horizontal: false, vertical: true)
@@ -59,12 +59,15 @@ struct ConfigRowView: View {
             if ConfigWording.hasMenu(row), let note = OptionWording.note(model.options[row.key], titles: titles) {
                 Text(note)
                     .lineLimit(2)
-                    .help(note)
+                    .help(OptionWording.noteHelp(model.options[row.key]) ?? note)
             }
             if let problem {
                 Text(problem)
                     .problemStyle()
                     .textSelection(.enabled)
+                if invalid == nil, let details = error.flatMap(ConfigWording.errorDetails) {
+                    DetailsDisclosure(details)
+                }
             }
         }
         // The whole description, and the key the owner types at `keryx config set`.
@@ -179,8 +182,8 @@ struct ConfigRowView: View {
             Button("Remove…") { reset() }
                 .accessibilityLabel("Remove \(row.displayTitle)")
         }
-        Button(row.set ? "Change…" : "Set…") { editingSecret = true }
-            .accessibilityLabel(row.set ? "Change \(row.displayTitle)" : "Set \(row.displayTitle)")
+        Button(row.set ? "Change…" : "Add…") { editingSecret = true }
+            .accessibilityLabel(row.set ? "Change \(row.displayTitle)" : "Add \(row.displayTitle)")
     }
 
     // MARK: - The PIN

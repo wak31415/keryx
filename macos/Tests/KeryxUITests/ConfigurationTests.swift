@@ -55,11 +55,14 @@ import KeryxPreview
 
     @Test func aRefusalNamesTheSettingByItsTitle() {
         let silence = row("VAD_SILENCE_MS", title: "Silence before a turn ends (ms)")
+        // The app's own sentence; what Keryx said is under Show Details.
         #expect(ConfigWording.errorText("VAD_SILENCE_MS Input should be at most 10000", for: silence)
-            == "Silence before a turn ends (ms): input should be at most 10000.")
-        #expect(ConfigWording.errorText("the store is locked", for: silence) == "The store is locked.")
-        #expect(ConfigWording.errorText("VAD_SILENCE_MS Input should be at most 10000", for: row("VAD_SILENCE_MS"))
-            == "VAD_SILENCE_MS Input should be at most 10000.", "no title: the CLI's sentence as written")
+            == "Silence before a turn ends (ms) wasn't saved.")
+        let refusal = KeryxError.failed(command: "keryx config set", exitCode: 1, message: "the store is locked")
+        #expect(ConfigWording.errorText(refusal, for: silence) == "Silence before a turn ends (ms) wasn't saved.")
+        #expect(ConfigWording.errorDetails(refusal) == "the store is locked")
+        let older = KeryxError.failed(command: "keryx config set", exitCode: 2, message: "No such command 'set'.")
+        #expect(ConfigWording.errorText(older, for: silence) == KeryxError.olderKeryx)
     }
 
     @Test func validationSaysWhatToDo() {
@@ -162,6 +165,9 @@ import KeryxPreview
         #expect(!ConfigWording.offersWrites(pin), "no Reset to Default: the PIN sheet is its one write")
         #expect(ConfigWording.offersWrites(row("OPENAI_API_KEY", source: "secrets.toml", secret: true)))
         #expect(!ConfigWording.offersWrites(row("PUBLIC_HOST", source: "environment")))
+        let slack = PreviewData.config.first { $0.key == "SLACK_BOT_TOKEN" }
+        #expect(slack.map(ConfigWording.managedInIntegrations) == true)
+        #expect(slack.map(ConfigWording.offersWrites) == false, "no Reset to Default: its card is its one door")
         #expect(ConfigWording.filter([pin, row("DATA_DIR")], by: "pin").map(\.key) == ["KERYX_PIN"])
         #expect(PreviewData.config.contains { ConfigWording.isPIN($0) && $0.secret && $0.set })
     }
@@ -225,5 +231,29 @@ import KeryxPreview
                    "configuration-system", "window-configuration"] {
             #expect(ids.contains(id), "missing \(id)")
         }
+    }
+}
+
+/// The app's own descriptions for the settings the CLI describes for a terminal.
+@Suite struct ConfigDescriptionTests {
+    @Test func noDescriptionUnderATitleNamesACommandOrAFolderVariable() {
+        let titles = Wording.titles(PreviewData.config)
+        for row in PreviewData.config where !ConfigWording.isPIN(row) {
+            let said = ConfigWording.described(ConfigDescriptions.text(row), titles: titles)
+            for word in ["keryx ", "claude setup-token", "_HOME", "scripts/", "DATA_DIR", "STATE_DIR", "--"] {
+                #expect(!said.contains(word), "\(row.key): \(said)")
+            }
+        }
+    }
+
+    @Test func everyOverrideIsASettingKeryxHas() {
+        let keys = Set(PreviewData.config.map(\.key))
+        for key in ConfigDescriptions.overrides.keys { #expect(keys.contains(key), "\(key)") }
+    }
+
+    @Test func theCLIsDescriptionStaysInTheTooltip() throws {
+        let row = try #require(PreviewData.config.first { $0.key == "CODEX_API_KEY" })
+        #expect(ConfigWording.tooltip(row).contains("CODEX_HOME"))
+        #expect(!ConfigDescriptions.text(row).contains("CODEX_HOME"))
     }
 }
