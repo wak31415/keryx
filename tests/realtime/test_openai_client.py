@@ -178,6 +178,16 @@ def test_a_transcription_language_is_passed_as_a_hint():
     assert transcription == {"model": "gpt-4o-mini-transcribe", "language": "de"}
 
 
+def test_a_language_without_a_transcription_model_is_sent_alone():
+    config = SessionConfig(
+        instructions="x", tools=[], voice="", audio_format="audio/pcm",
+        transcription_model=None, transcription_language="de",
+    )
+
+    transcription = build_session_update(config)["session"]["audio"]["input"]["transcription"]
+    assert transcription == {"language": "de"}
+
+
 def test_build_session_update_for_the_local_path_omits_transcription_and_barge_in():
     config = SessionConfig(
         instructions="Local Keryx.",

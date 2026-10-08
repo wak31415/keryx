@@ -199,10 +199,14 @@ def build_session_update(config: SessionConfig, wire_format: AudioFormat | None 
         # (`Supported values are: 'near_field' and 'far_field'`, verified 2026-08-26), and
         # an absent field is how it is turned off.
         audio_input["noise_reduction"] = {"type": config.noise_reduction}
+    # The model is OpenAI's own (`Settings.voice_transcription_model` is None elsewhere);
+    # the language is a hint any Realtime server may honour, so it goes without one.
+    transcription: dict = {}
     if config.transcription_model is not None:
-        transcription = {"model": config.transcription_model}
-        if config.transcription_language:
-            transcription["language"] = config.transcription_language
+        transcription["model"] = config.transcription_model
+    if config.transcription_language:
+        transcription["language"] = config.transcription_language
+    if transcription:
         audio_input["transcription"] = transcription
 
     audio_output: dict = {"format": audio_format_block(audio_format)}

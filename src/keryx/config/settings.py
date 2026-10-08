@@ -1407,8 +1407,9 @@ class Settings(BaseSettings):
     @property
     def voice_transcription_model(self) -> str | None:
         """`OPENAI_TRANSCRIPTION_MODEL`, where the voice is OpenAI's; None anywhere else,
-        which leaves the transcription block out of `session.update` (a self-hosted voice
-        transcribes with its own speech-to-text)."""
+        which leaves the model out of `session.update`'s transcription block (a self-hosted
+        voice transcribes with its own speech-to-text). `TRANSCRIPTION_LANGUAGE` is sent to
+        every voice, a hint any Realtime server may honour."""
         endpoint = self.voice_endpoint
         if endpoint is not None and endpoint.is_openai:
             return self.openai_transcription_model

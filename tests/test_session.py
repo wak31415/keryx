@@ -26,6 +26,7 @@ from keryx.realtime.base import (
     SpeechStarted,
     Transcript,
 )
+from keryx.realtime.openai import build_session_update
 from keryx.session import (
     OPENING_MESSAGE,
     RECONNECT_MESSAGE,
@@ -146,6 +147,23 @@ async def test_a_voice_of_the_owners_own_is_sent_no_openai_transcription_or_voic
         await eventually(lambda: provider.config is not None)
 
     assert (provider.config.transcription_model, provider.config.voice) == (None, "")
+
+
+@pytest.mark.parametrize("address", ["http://127.0.0.1:8765/v1", "https://voice.example.com/v1"])
+async def test_a_voice_of_the_owners_own_still_hears_the_language_without_a_model(
+    make_session, phone, provider, settings, address
+):
+    # Here and a server elsewhere alike: the language is a hint any Realtime server may
+    # honour, where OPENAI_TRANSCRIPTION_MODEL is OpenAI's own.
+    own = settings.model_copy(update={"voice_base_url": address,
+                                      "transcription_language": "de"})
+    session = make_session(phone, provider, settings=own)
+
+    async with running(session):
+        await eventually(lambda: provider.config is not None)
+
+    update = build_session_update(provider.config)
+    assert update["session"]["audio"]["input"]["transcription"] == {"language": "de"}
 
 
 async def test_starting_a_session_never_logs_the_callers_number(
