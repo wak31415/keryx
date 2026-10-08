@@ -23,7 +23,10 @@ settings: a removed or renamed setting or command is a major bump.
   it's running, your agent sessions as timelines from what you asked to the result, local
   models to download, choose and serve, and every setting. It reads and changes Keryx
   through `keryx` commands, never shows or sets the PIN, and never answers an approval.
-  Build it from the checkout with `macos/scripts/build-app.sh`. See
+  While it is open, Keryx answers calls: it starts Keryx by itself once setup allows, and
+  Quit stops it (closing the window does not). Build it from the checkout with
+  `macos/scripts/build-app.sh`, which puts it in /Applications, signed with a local
+  identity that `macos/scripts/make-signing-identity.sh` makes once. See
   [macos/README.md](macos/README.md).
 - **`keryx status [--json]`**: whether Keryx is running and what it has to say, in one
   report that always exits 0.

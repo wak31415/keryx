@@ -362,7 +362,15 @@ remember:
   the app's own Settings) and `KeryxSnapshots` (the harness that photographs every screen).
   It runs the `keryx` CLI and nothing else (but `scripts/install-launchd.sh --llm`, to start
   the model server), so every rule above binds it without a copy: a command it needs gets a
-  `--json`, never a route or a socket, and it writes none of Keryx's files itself. It strips
+  `--json`, never a route or a socket, and it writes none of Keryx's files itself. While it
+  is open Keryx answers calls (`AppModel.keepsAnswering`, the owner's ruling): once a launch
+  it runs `keryx service install --json` when `setup plan`'s service step is reachable and
+  Keryx is not running (never before `migrate`, never beside a hand-started `serve`), and
+  Quit runs `keryx service uninstall --json` — the CLI's only stop, so it never calls
+  `launchctl` — while closing a window leaves both running: it is a regular Dock app, no
+  `LSUIElement`. The service is never shown as one ("Answering calls", "Start Keryx"). A
+  `KERYX_APP_ENVIRONMENT=inherit` run neither starts nor stops it, and the locator reads its
+  remembered copy of `dev.keryx.agent.plist` while quitting has removed the real one. It strips
   `KERYX_ACTOR` and `JARVIS_ACTOR` (`Sanitise.environment`), because it is the owner at a
   terminal and never the service. It finds Keryx the way the service runs — the folder
   chosen in its Settings, then `~/Library/LaunchAgents/dev.keryx.agent.plist`'s program,
