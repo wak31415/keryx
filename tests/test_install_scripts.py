@@ -33,6 +33,11 @@ BASH = shutil.which("bash")
 STUBS = ("systemctl", "loginctl", "launchctl", "cloudflared", "ngrok", "uv")
 #: The user `id -un` answers with in every installer run here: nobody's.
 NOBODY = "keryx-test-nobody"
+#: The first lines of the `launchctl` and `systemctl` stubs: asked what they have loaded
+#: (`lib.sh::manager_view`, read-only), each has nothing by that name — and the question,
+#: which changes nothing, is not in the calls log.
+NOTHING_LOADED = ('[ "$1" = print ] && exit 113\n'
+                  '[ "$2" = show ] && { echo LoadState=not-found; exit 0; }\n')
 #: A PATH entry nobody would choose, and a stranger's machine might still have.
 AWKWARD_DIR = '/opt/tools|x&y%z <v2> "q"\\w'
 PLACEHOLDER = re.compile(r"__[A-Z_]+__")
@@ -53,7 +58,7 @@ def machine(tmp_path):
     calls = tmp_path / "calls.log"
     for name in STUBS:
         stub = stubs / name
-        stub.write_text(f'#!/bin/sh\necho "{name} $*" >> "{calls}"\nexit 0\n')
+        stub.write_text(f'#!/bin/sh\n{NOTHING_LOADED}echo "{name} $*" >> "{calls}"\nexit 0\n')
         stub.chmod(0o755)
     # A user the user database does not know, so the account's own home — where the real
     # units are — is never read: only the scratch HOME's.
@@ -512,6 +517,7 @@ def launchctl_seeing_plists(machine, tmp_path) -> Path:
     stub = tmp_path / "bin" / "launchctl"
     stub.write_text(
         "#!/bin/sh\n"
+        f"{NOTHING_LOADED}"
         f'echo "launchctl $*" >> "{machine["calls"]}"\n'
         f'if [ "$1" = bootout ]; then ls "{agents}" >> "{seen}" 2>/dev/null; '
         f'echo "--" >> "{seen}"; fi\n'
@@ -759,3 +765,199 @@ def test_no_home_to_compare_with_is_said_before_anything(machine):
         env=machine["env"], capture_output=True, text=True, timeout=30, check=False)
 
     assert result.returncode == 1 and "keryx config path" in result.stderr
+
+
+# --- fix round 1: what the manager has loaded, and what cannot be read ---------------------
+
+#: Every bash here — and macOS's own 3.2 at /bin/bash, when there is one — runs these.
+SHELLS = list(dict.fromkeys(
+    shell for shell in (BASH, "/bin/bash") if shell and Path(shell).exists()))
+
+
+def attempt(shell, script, machine, *args) -> subprocess.CompletedProcess:
+    return subprocess.run([shell, str(machine["repo"] / "scripts" / script), *args],
+                          env=machine["env"], capture_output=True, text=True, timeout=60,
+                          check=False)
+
+
+def manager_answers(machine, name: str, answer: str) -> None:
+    """Replace the `name` stub: its read-only question answered by `answer` (shell lines),
+    everything else logged as before."""
+    stub = machine["home"].parent / "bin" / name
+    stub.write_text(f'#!/bin/sh\n{answer}\necho "{name} $*" >> "{machine["calls"]}"\nexit 0\n')
+    stub.chmod(0o755)
+
+
+def launchd_job(path: str, home: str | None) -> str:
+    environment = f"\t\tKERYX_HOME => {home}\n" if home else ""
+    text = (f"gui/501/dev.keryx.agent = {{\n\tpath = {path}\n\tinherited environment = {{\n"
+            f"\t\tKERYX_HOME => /inherited\n\t}}\n\tenvironment = {{\n"
+            f"\t\tXPC_SERVICE_NAME => dev.keryx.agent\n{environment}\t}}\n}}\n")
+    return f"if [ \"$1\" = print ]; then cat <<'JOB'\n{text}JOB\nexit 0; fi"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_job_launchd_has_loaded_for_another_home_is_refused_wherever_its_file_is(
+    machine, shell
+):
+    """The finding: a moved HOME finds no plist, and launchd still has the owner's job."""
+    manager_answers(machine, "launchctl", launchd_job("/elsewhere/dev.keryx.agent.plist",
+                                                      OTHER_HOME))
+
+    result = attempt(shell, "install-launchd.sh", machine)
+
+    assert result.returncode == 2, result.stderr
+    assert sentence(machine) in result.stderr
+    assert "rendered in /elsewhere/dev.keryx.agent.plist" in result.stderr
+    assert not machine["calls"].exists()
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_job_launchd_runs_for_this_home_is_installed_over(machine, shell):
+    manager_answers(machine, "launchctl", launchd_job("/x.plist", str(machine["keryx_home"])))
+
+    assert attempt(shell, "install-launchd.sh", machine).returncode == 0
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize(("answer", "said"), [
+    ('[ "$1" = print ] && { echo "Bad request."; exit 5; }', "the service manager's answer"),
+    (launchd_job("/gone/dev.keryx.agent.plist", None), "could not read /gone/dev.keryx.agent"),
+    ('[ "$1" = print ] && { echo "gui/501/x = {"; echo "}"; exit 0; }',
+     "the service manager's answer"),
+])
+def test_a_job_whose_home_cannot_be_told_is_refused(machine, shell, answer, said):
+    manager_answers(machine, "launchctl", answer)
+
+    result = attempt(shell, "install-launchd.sh", machine, "--uninstall")
+
+    assert result.returncode == 2 and said in result.stderr, result.stderr
+    assert "Could not tell which KERYX_HOME" in result.stderr
+    assert not machine["calls"].exists()
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_loaded_job_without_its_environment_is_judged_by_its_file(machine, shell):
+    plist = agent_plist(machine, "elsewhere", KERYX_HOME=OTHER_HOME)
+    manager_answers(machine, "launchctl", launchd_job(str(plist), None))
+
+    result = attempt(shell, "install-launchd.sh", machine)
+
+    assert result.returncode == 2 and f"rendered in {plist}" in result.stderr
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize(("environment", "theirs"), [
+    ('"KERYX_HOME=/srv/a \\"b\\""', '/srv/a "b"'),
+    ("PATH=/usr/bin KERYX_HOME=/srv/plain", "/srv/plain"),
+])
+def test_a_unit_systemd_has_loaded_from_another_xdg_directory_is_refused(
+    machine, shell, environment, theirs
+):
+    manager_answers(machine, "systemctl", (
+        'if [ "$2" = show ]; then echo LoadState=loaded; '
+        "echo FragmentPath=/real/xdg/systemd/user/keryx.service; "
+        f"echo 'Environment={environment}'; exit 0; fi"))
+
+    result = attempt(shell, "install-systemd.sh", machine, "--uninstall")
+
+    assert result.returncode == 2, result.stderr
+    assert sentence(machine, theirs) in result.stderr
+    assert "rendered in /real/xdg/systemd/user/keryx.service" in result.stderr
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("answer", [
+    '[ "$2" = show ] && exit 1',  # no user bus
+    "[ \"$2\" = show ] && { echo LoadState=loaded; echo 'Environment=\"KERYX_HOME=/a'; "
+    "exit 0; }",
+])
+def test_a_unit_systemd_cannot_say_whose_it_is_is_refused(machine, shell, answer):
+    manager_answers(machine, "systemctl", answer)
+
+    result = attempt(shell, "install-systemd.sh", machine, "--uninstall")
+
+    assert result.returncode == 2 and "could not read" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_tunnel_is_judged_by_an_agent_launchd_has_loaded(machine, shell):
+    manager_answers(machine, "launchctl", (
+        'if [ "$1" = print ] && [ "${2##*/}" = dev.keryx.agent ]; then cat <<JOB\n'
+        f"gui/501/dev.keryx.agent = {{\n\tenvironment = {{\n\t\tKERYX_HOME => {OTHER_HOME}\n"
+        "\t}\n}\nJOB\nexit 0; fi\n[ \"$1\" = print ] && exit 113"))
+    agent_plist(machine, "dev.keryx.tunnel", PATH="/usr/bin")
+
+    result = attempt(shell, "install-launchd.sh", machine, "--uninstall")
+
+    assert result.returncode == 2 and sentence(machine) in result.stderr
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("content", [
+    "<plist><dict><key>EnvironmentVariables</key><dict><key>KERYX_HOME</key>\n"
+    "<integer>7</integer></dict></dict></plist>",
+    "<plist><dict><key>EnvironmentVariables</key><dict><key>KERYX_HOME</key>\n"
+    "<string>  </string></dict></dict></plist>",
+])
+def test_a_plist_naming_keryx_home_with_no_value_to_read_is_refused(machine, shell, content):
+    plist = machine["home"] / "Library" / "LaunchAgents" / "dev.keryx.agent.plist"
+    plist.parent.mkdir(parents=True)
+    plist.write_text(content)
+
+    result = attempt(shell, "install-launchd.sh", machine)
+
+    assert result.returncode == 2 and f"could not read {plist}" in result.stderr
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_systemd_unit_naming_keryx_home_unquoted_is_refused_not_guessed(machine, shell):
+    unit = systemd_unit(machine)
+    unit.write_text("# KERYX_HOME in a comment says nothing\nEnvironment=KERYX_HOME=/a\n")
+
+    result = attempt(shell, "install-systemd.sh", machine)
+
+    assert result.returncode == 2 and f"could not read {unit}" in result.stderr
+    unit.write_text("# KERYX_HOME in a comment says nothing\n[Service]\n")
+    assert sentence(machine, f"{machine['home']}/.config/keryx") in attempt(
+        shell, "install-systemd.sh", machine).stderr  # an old template: the default's
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_unit_file_or_directory_that_cannot_be_read_is_refused(machine, shell):
+    plist = agent_plist(machine, KERYX_HOME=str(machine["keryx_home"]))
+    plist.chmod(0)
+    try:
+        result = attempt(shell, "install-launchd.sh", machine)
+        assert result.returncode == 2 and f"could not read {plist}" in result.stderr
+    finally:
+        plist.chmod(0o600)
+    plist.parent.chmod(0o600)  # no search permission: what is in it cannot be told
+    try:
+        result = attempt(shell, "install-launchd.sh", machine)
+        assert result.returncode == 2 and f"could not read {plist.parent}" in result.stderr
+    finally:
+        plist.parent.chmod(0o700)
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize(("rendered", "refused_"), [
+    ("~/.config/keryx", False), ("~", True), ("~someone/keryx", True), ("relative", True),
+])
+def test_a_rendered_tilde_is_the_accounts_home_and_relative_is_nobodys(
+    machine, tmp_path, shell, rendered, refused_
+):
+    account = tmp_path / "account"
+    plist = agent_plist(machine, KERYX_HOME=rendered)
+    result = subprocess.run(
+        [shell, "-c", f'source "{machine["repo"] / "scripts" / "lib.sh"}"\n'
+                      f'account_home() {{ printf %s "{account}"; }}\n'
+                      f'KERYX_HOME_DIR="{account}/.config/keryx"\n'
+                      f'require_own_units "{plist.parent}" Library/LaunchAgents '
+                      "dev.keryx.agent.plist dev.keryx.tunnel.plist dev.keryx.agent.plist\n"
+                      "echo reached"],
+        env={**machine["env"], "HOME": str(tmp_path / "elsewhere")},
+        capture_output=True, text=True, timeout=30, check=False)
+
+    assert (result.returncode == 2) is refused_, result.stderr
+    assert ("reached" in result.stdout) is not refused_

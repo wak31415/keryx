@@ -668,3 +668,20 @@ def test_an_install_or_removal_of_units_another_home_rendered_runs_no_installer(
     assert outcome.message == service.FOREIGN_UNITS
     if unit != "dev.keryx.tunnel":
         assert f"(in {plist})" in outcome.detail
+
+
+def test_the_installers_own_refusal_is_said_without_a_path(tmp_path):
+    """Fix round 1: only the installer saw it (its check reads what this one cannot). The
+    app leads with the message, so the installer's path-laden lines go in the detail."""
+    root = checkout(tmp_path / "checkout")
+    said = (f"These units belong to KERYX_HOME={OWNER_HOME}; this command runs with "
+            f"KERYX_HOME={ours()}.\nrendered in /x/dev.keryx.agent.plist\n")
+    script = Script(code=2, err=said)
+
+    outcome = units.install(root=root, platform="darwin", run=script)
+
+    assert outcome == units.Outcome(2, service.FOREIGN_UNITS, " ".join(said.split("\n")[:2]))
+    # Any other exit 2 (a usage error) is said as before.
+    usage = units.install(root=root, platform="darwin",
+                          run=Script(code=2, err="usage: install-launchd.sh [--llm]\n"))
+    assert usage == units.Outcome(1, "usage: install-launchd.sh [--llm]")

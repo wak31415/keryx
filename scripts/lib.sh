@@ -102,17 +102,49 @@ rendered_value() {
   fi
 }
 
+mentions_home() {
+  # mentions_home FILE — whether FILE names KERYX_HOME where a value would go: a plist's
+  # <key>KERYX_HOME</key>, a systemd unit's line that is not a comment.
+  if [[ "$1" == *.plist ]]; then
+    grep -q '<key>KERYX_HOME</key>' "$1"
+  else
+    grep -v '^[[:space:]]*[#;]' "$1" | grep -q KERYX_HOME
+  fi
+}
+
+expand_home() {
+  # expand_home VALUE — VALUE with a leading `~` read against the account's home, as
+  # `keryx.restart.service.rendered_home` reads it; as it is otherwise (and a value that is
+  # still not absolute is never this home).
+  local account
+  if [[ "$1" == "~" || "$1" == "~/"* ]]; then
+    account="$(account_home)"
+    if [[ -n "$account" ]]; then
+      printf '%s%s' "$account" "${1:1}"
+      return 0
+    fi
+  fi
+  printf '%s' "$1"
+}
+
 rendered_home() {
   # rendered_home FILE — the KERYX_HOME a unit file was rendered for, as
   # `keryx.restart.service.rendered_home` reads it: its KERYX_HOME; else its
   # XDG_CONFIG_HOME's keryx; else the default under the account's home — a unit from before
-  # either was rendered ran with that.
+  # either was rendered ran with that. Fails (1) for a file that cannot be read, or that
+  # names KERYX_HOME with no value to be read: whose that is cannot be told.
   local home config account
+  [[ -r "$1" ]] || return 1
   home="$(rendered_value "$1" KERYX_HOME)"
+  if [[ -n "${home//[[:space:]]/}" ]]; then
+    expand_home "$home"
+    return 0
+  fi
+  if mentions_home "$1"; then
+    return 1
+  fi
   config="$(rendered_value "$1" XDG_CONFIG_HOME)"
-  if [[ -n "$home" ]]; then
-    printf '%s' "$home"
-  elif [[ "$config" == /* ]]; then
+  if [[ "$config" == /* ]]; then
     printf '%s/keryx' "$config"
   else
     account="$(account_home)"
@@ -134,17 +166,102 @@ real_path() {
   printf '%s%s' "$path" "$rest"
 }
 
+manager_view() {
+  # manager_view NAME — what the account's service manager says of the unit file NAME
+  # (X.plist: launchd's job X; X.service: systemd's unit), read-only, as `keryx.restart.
+  # service.manager_owners` asks it: VIEW_STATE (loaded, none — nothing by that name, or no
+  # such manager — or unknown, when it cannot be asked), VIEW_FILE (where it loaded it
+  # from) and VIEW_HOME (the KERYX_HOME it runs it with), each empty when unsaid.
+  local name="$1" out code=0 env home
+  VIEW_STATE=none VIEW_FILE="" VIEW_HOME=""
+  if [[ "$name" == *.plist ]]; then
+    command -v launchctl >/dev/null 2>&1 || return 0
+    out="$(launchctl print "gui/$UID/${name%.plist}" 2>/dev/null)" || code=$?
+    if (( code == 113 )); then
+      return 0  # not loaded
+    elif (( code != 0 )); then
+      VIEW_STATE=unknown
+      return 0
+    fi
+    VIEW_STATE=loaded
+    VIEW_FILE="$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*path = //p' | sed -n 1p)"
+    VIEW_HOME="$(printf '%s\n' "$out" \
+      | sed -n '/^[[:space:]]*environment = {/,/^[[:space:]]*}/s/^[[:space:]]*KERYX_HOME => //p' \
+      | sed -n 1p)"
+  else
+    command -v systemctl >/dev/null 2>&1 || return 0
+    out="$(systemctl --user show -p LoadState -p FragmentPath -p Environment "$name" \
+      2>/dev/null)" || code=$?
+    if (( code != 0 )); then
+      VIEW_STATE=unknown
+      return 0
+    fi
+    [[ "$(printf '%s\n' "$out" | sed -n 's/^LoadState=//p')" == loaded ]] || return 0
+    VIEW_STATE=loaded
+    VIEW_FILE="$(printf '%s\n' "$out" | sed -n 's/^FragmentPath=//p')"
+    env="$(printf '%s\n' "$out" | sed -n 's/^Environment=//p')"
+    # "KERYX_HOME=…" quoted (its \" and \\ undone), else KERYX_HOME=… up to a space.
+    home="$(printf '%s\n' "$env" | sed -nE 's/^(.* )?"KERYX_HOME=(([^"\\]|\\.)*)".*$/\2/p' \
+      | sed -e 's/\\\(.\)/\1/g')"
+    if [[ -z "$home" ]]; then
+      home="$(printf '%s\n' "$env" | sed -nE 's/^(.* )?KERYX_HOME=([^ ]*).*$/\2/p')"
+    fi
+    VIEW_HOME="$home"
+    if [[ -z "$home" ]] && printf '%s' "$env" | grep -q KERYX_HOME; then
+      VIEW_STATE=unknown  # named, with no value to be read
+    fi
+  fi
+}
+
+refuse_foreign() {
+  # refuse_foreign THEIRS WHERE — exit 2 unless THEIRS (the KERYX_HOME a unit was rendered
+  # for, read at WHERE) is this one; a THEIRS that is not absolute is never this one.
+  require_home_dir
+  if [[ "$1" != /* || "$(real_path "$1")" != "$(real_path "$KERYX_HOME_DIR")" ]]; then
+    echo "These units belong to KERYX_HOME=$1; this command runs with KERYX_HOME=$KERYX_HOME_DIR." >&2
+    echo "rendered in $2" >&2
+    exit 2
+  fi
+}
+
+refuse_unreadable() {
+  # refuse_unreadable WHERE — exit 2: whose the units are cannot be told from WHERE, and
+  # what cannot be told is refused.
+  require_home_dir
+  echo "Could not tell which KERYX_HOME these units belong to; this command runs with KERYX_HOME=$KERYX_HOME_DIR." >&2
+  echo "could not read $1" >&2
+  exit 2
+}
+
+require_home_dir() {
+  if [[ -z "$KERYX_HOME_DIR" ]]; then
+    echo "could not ask keryx where it keeps things; run \`keryx config path\` to see why" >&2
+    exit 1
+  fi
+}
+
+judge_file() {
+  # judge_file FILE — refuse_foreign (or refuse_unreadable) for one unit file.
+  local theirs
+  if ! theirs="$(rendered_home "$1")"; then
+    refuse_unreadable "$1"
+  fi
+  refuse_foreign "$theirs" "$1"
+}
+
 require_own_units() {
   # require_own_units DIR SUBDIR AGENT TUNNEL NAME... — exit 2, saying whose they are, when
-  # a unit file NAME (dev.keryx.llm.plist, keryx.service) was rendered for another KERYX_HOME
-  # than this one, before anything is touched: a unit's name is the account's, not the
-  # home's, so installing or removing it from another KERYX_HOME — a sandbox, a test — would
-  # boot out and replace the owner's own. Each is read in DIR, where this installer writes
-  # it, and in SUBDIR of the account's own home (`account_home`), where the service manager
-  # reads it whatever HOME says. TUNNEL renders no Keryx environment and is judged by AGENT,
-  # Keryx's own unit, when that is installed. `keryx.restart.service.foreign_units` is the
-  # same check, for the commands that drive the manager themselves; there is no override.
-  local dir="$1" subdir="$2" agent="$3" tunnel="$4" home name judged where file theirs
+  # a unit NAME (dev.keryx.llm.plist, keryx.service) runs with, or was rendered for, another
+  # KERYX_HOME than this one — or whose it is cannot be told — before anything is touched: a
+  # unit's name is the account's, not the home's, so installing or removing it from another
+  # KERYX_HOME — a sandbox, a test — would boot out and replace the owner's own. The service
+  # manager is asked first what it has loaded by that name (`manager_view`), wherever its
+  # file is; then each file is read in DIR, where this installer writes it, and in SUBDIR of
+  # the account's own home (`account_home`), where the manager reads it whatever HOME says.
+  # TUNNEL renders no Keryx environment and is judged by AGENT, Keryx's own unit, when that
+  # is installed. `keryx.restart.service.foreign_units` is the same check, for the commands
+  # that drive the manager themselves; there is no override.
+  local dir="$1" subdir="$2" agent="$3" tunnel="$4" home name judged where file answer
   shift 4
   local -a dirs=("$dir")
   home="$(account_home)"
@@ -154,24 +271,37 @@ require_own_units() {
   for name in "$@"; do
     judged="$name"
     if [[ "$name" == "$tunnel" ]]; then
+      manager_view "$agent"
+      if [[ "$VIEW_STATE" != none ]]; then
+        judged="$agent"
+      fi
       for where in "${dirs[@]}"; do
-        if [[ -f "$where/$agent" ]]; then
+        if [[ -e "$where/$agent" ]]; then
           judged="$agent"
         fi
       done
     fi
+    manager_view "$judged"
+    answer="the service manager's answer about $judged"
+    case "$VIEW_STATE" in
+      unknown) refuse_unreadable "$answer" ;;
+      loaded)
+        if [[ -n "$VIEW_HOME" ]]; then
+          refuse_foreign "$(expand_home "$VIEW_HOME")" "${VIEW_FILE:-$answer}"
+        elif [[ -n "$VIEW_FILE" ]]; then
+          judge_file "$VIEW_FILE"  # gone, or unreadable: refused
+        else
+          refuse_unreadable "$answer"
+        fi
+        ;;
+    esac
     for where in "${dirs[@]}"; do
-      file="$where/$judged"
-      [[ -f "$file" ]] || continue
-      if [[ -z "$KERYX_HOME_DIR" ]]; then
-        echo "could not ask keryx where it keeps things; run \`keryx config path\` to see why" >&2
-        exit 1
+      if [[ -d "$where" && ! -x "$where" ]]; then
+        refuse_unreadable "$where"
       fi
-      theirs="$(rendered_home "$file")"
-      if [[ "$(real_path "$theirs")" != "$(real_path "$KERYX_HOME_DIR")" ]]; then
-        echo "These units belong to KERYX_HOME=$theirs; this command runs with KERYX_HOME=$KERYX_HOME_DIR." >&2
-        echo "rendered in $file" >&2
-        exit 2
+      file="$where/$judged"
+      if [[ -e "$file" || -L "$file" ]]; then
+        judge_file "$file"
       fi
     done
   done

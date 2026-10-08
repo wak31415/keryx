@@ -163,8 +163,9 @@ def install(
     """Install (or, with `uninstall`, remove) Keryx and its tunnel, or with `llm`/`voice`/
     `voice_llm` the model servers' units, through the checkout at `root`. 2 for no
     installer here — no checkout, no service manager — or units another `KERYX_HOME`
-    rendered (`owner_mismatch`, asked before the installer runs), 1 with the script's last
-    error line, 0 when done."""
+    rendered (`owner_mismatch`, asked before the installer runs, or the installer's own
+    check refusing them: exit 2 saying `KERYX_HOME`), 1 with the script's last error line, 0
+    when done."""
     chosen = {"llm": llm, "voice": voice, "voice_llm": voice_llm}
     flags = [flag for flag, kind in FLAGS.items() if chosen[kind]]
     script, problem = installer(" ".join(flags), root=root, platform=platform)
@@ -177,6 +178,11 @@ def install(
         return Outcome(REFUSED, foreign.message, foreign.detail)
     argv = [str(script), *flags, *(["--uninstall"] if uninstall else [])]
     code, out, err = run(argv)
+    if code == REFUSED and service.HOME_ENV in err:
+        # The installer's own check (`scripts/lib.sh::require_own_units`) refused: said as
+        # this one says it, the path-free sentence first and the installer's lines after.
+        lines = [line.strip() for line in err.splitlines() if line.strip()]
+        return Outcome(REFUSED, service.FOREIGN_UNITS, " ".join(lines))
     if code != 0:
         return Outcome(FAILED, _last_line(err) or f"{script.name} {' '.join(argv[1:])} exited "
                                                   f"with {code}")

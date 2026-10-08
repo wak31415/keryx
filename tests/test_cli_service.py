@@ -734,3 +734,16 @@ def test_the_model_servers_set_ups_refuse_units_another_home_rendered(machine, a
         refusal(), why("dev.keryx.voice"))
     words = runner.invoke(app, argv)
     assert words.exit_code == 2 and refusal() in words.stderr and machine.scripts == []
+
+
+def test_an_installer_that_refuses_by_itself_is_said_without_a_path(machine):
+    """Fix round 1: the app leads with `message`; the installer's own lines name paths."""
+    machine.captured = (2, "", f"These units belong to KERYX_HOME={OWNER_HOME}; this command "
+                               "runs with KERYX_HOME=/x.\nrendered in /y.plist\n")
+
+    result = runner.invoke(app, ["service", "install", "--json"])
+
+    assert result.exit_code == 2
+    document = json.loads(result.stdout)
+    assert document["message"] == refusal() and for_the_app(document["message"])
+    assert "rendered in /y.plist" in document["detail"]

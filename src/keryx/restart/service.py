@@ -141,16 +141,35 @@ FOREIGN_UNITS = ("Keryx's background services here belong to another Keryx setti
                  "so this command leaves them alone.")
 FOREIGN_UNITS_DETAIL = ("The units were rendered for KERYX_HOME={theirs} (in {unit_file}); "
                         "this command runs with KERYX_HOME={ours}.")
+#: The detail when whose they are cannot be told: a unit file that cannot be read or parsed,
+#: or a service manager that cannot be asked. Refused all the same — the guard fails closed.
+UNREADABLE_DETAIL = "could not read {unit_file}"
+#: What `launchctl print` exits with for a job it does not have loaded.
+LAUNCHD_NOT_LOADED = 113
+
+
+class UnreadableUnit(Exception):
+    """A unit file, or a service manager's answer, that does not say whose the unit is."""
+
+
+@dataclass(frozen=True)
+class Owner:
+    """Whose one unit is: the `KERYX_HOME` it runs with — None when that cannot be told —
+    and where that was read (a unit file, or the service manager's own answer)."""
+
+    home: Path | None
+    where: str
 
 
 @dataclass(frozen=True)
 class ForeignUnits:
-    """A unit file rendered for a `KERYX_HOME` (`theirs`) that is not this process's
-    (`ours`): the refusal every command that drives the service manager makes."""
+    """A unit rendered for a `KERYX_HOME` (`theirs`) that is not this process's (`ours`), or
+    one whose `KERYX_HOME` cannot be told (`theirs` None): the refusal every command that
+    drives the service manager makes. `unit_file` is where it was read."""
 
-    theirs: Path
+    theirs: Path | None
     ours: Path
-    unit_file: Path
+    unit_file: str
 
     @property
     def message(self) -> str:
@@ -158,6 +177,8 @@ class ForeignUnits:
 
     @property
     def detail(self) -> str:
+        if self.theirs is None:
+            return UNREADABLE_DETAIL.format(unit_file=self.unit_file)
         return FOREIGN_UNITS_DETAIL.format(theirs=self.theirs, ours=self.ours,
                                            unit_file=self.unit_file)
 
@@ -172,12 +193,13 @@ def account_home() -> Path:
 
 
 def unit_files(target: ServiceTarget) -> list[Path]:
-    """Every file `target`'s name could be loaded from: where this process's installer
-    writes it (`unit_file`, which follows `HOME` and `XDG_CONFIG_HOME`), and where the
-    account's service manager reads it whatever this process's environment says. A label
-    (or a user unit's name) is one per account, so a sandboxed `HOME` or `XDG_CONFIG_HOME`
-    moves the file this process would write, never the unit `launchctl` or `systemctl`
-    reaches."""
+    """The files `target`'s name could be loaded from when its manager has none loaded:
+    where this process's installer writes it (`unit_file`, which follows `HOME` and
+    `XDG_CONFIG_HOME`), and the account's default, which the manager reads whatever this
+    process's environment says. A label (or a user unit's name) is one per account, so a
+    sandboxed `HOME` or `XDG_CONFIG_HOME` moves the file this process would write, never the
+    unit `launchctl` or `systemctl` reaches; what the manager has loaded is asked of it
+    (`manager_owners`)."""
     if target.manager == "systemd":
         default = account_home() / ".config" / "systemd" / "user" / target.unit
     else:
@@ -187,58 +209,160 @@ def unit_files(target: ServiceTarget) -> list[Path]:
 
 def rendered_env(path: Path, manager: str) -> dict[str, str] | None:
     """The environment a unit file was rendered with: a plist's `EnvironmentVariables`, a
-    systemd unit's `Environment=` lines (systemd's quoting and `%%` undone). None when
-    there is no file; empty for one that cannot be read or parsed, or renders none."""
-    if not path.is_file():
-        return None
+    systemd unit's `Environment=` lines (systemd's quoting and `%%` undone). None when there
+    is no file; empty for one that renders none (a template from before they were rendered).
+    `UnreadableUnit` for one that cannot be read or parsed, or names `KERYX_HOME` with no
+    value to be read: whose that is cannot be told."""
     try:
+        if not path.is_file():
+            return None
         data = path.read_bytes()
-    except OSError:
-        return {}
+    except OSError as error:
+        raise UnreadableUnit(str(path)) from error
     if manager != "systemd":
         try:
-            variables = plistlib.loads(data).get("EnvironmentVariables")
-        except Exception:  # not a plist launchd could load either: whose it is, unsaid
-            return {}
-        if not isinstance(variables, dict):
-            return {}
+            document = plistlib.loads(data)
+        except Exception as error:  # not a plist launchd could load either
+            raise UnreadableUnit(str(path)) from error
+        variables = document.get("EnvironmentVariables", {}) if isinstance(document, dict) \
+            else None
+        if not isinstance(variables, dict) or not isinstance(
+                variables.get(HOME_ENV, ""), str):
+            raise UnreadableUnit(str(path))
         return {key: value for key, value in variables.items() if isinstance(value, str)}
     env: dict[str, str] = {}
+    mentioned = False
     for line in data.decode("utf-8", errors="replace").splitlines():
+        if line.lstrip().startswith(("#", ";")):
+            continue
+        mentioned = mentioned or HOME_ENV in line
         setting, _, assignments = line.partition("=")
         if setting.strip() != "Environment":
             continue
         try:
-            words = shlex.split(assignments)
+            env.update(_assignments(assignments))
         except ValueError:
             continue
-        for word in words:
-            name, equals, value = word.partition("=")
-            if equals:
-                env[name] = value.replace("%%", "%")
+    if mentioned and HOME_ENV not in env:
+        raise UnreadableUnit(str(path))
+    return env
+
+
+def _assignments(text: str) -> dict[str, str]:
+    """`NAME=value` words, as systemd quotes them (`%%` undone); ValueError when the quoting
+    does not close."""
+    env = {}
+    for word in shlex.split(text):
+        name, equals, value = word.partition("=")
+        if equals:
+            env[name] = value.replace("%%", "%")
     return env
 
 
 def rendered_home(env: Mapping[str, str]) -> Path:
-    """The `KERYX_HOME` a unit rendered with `env` runs with: the one it names; else the
-    one its `XDG_CONFIG_HOME` gives; else the default, under the account's home. A unit with
-    none of them — a template from before they were rendered — belongs to the default."""
-    if home := env.get(HOME_ENV, "").strip():
-        return Path(home).expanduser()
+    """The `KERYX_HOME` a unit rendered with `env` runs with: the one it names, a leading
+    `~` read against the account's home (a value that is still not absolute is never this
+    process's); else the one its `XDG_CONFIG_HOME` gives; else the default, under the
+    account's home. A unit with none of them — a template from before they were rendered —
+    belongs to the default. `UnreadableUnit` for a `KERYX_HOME` that is there and blank."""
+    if HOME_ENV in env:
+        home = env[HOME_ENV].strip()
+        if not home:
+            raise UnreadableUnit(HOME_ENV)
+        if home == "~" or home.startswith("~/"):
+            return account_home() / home[2:]
+        return Path(home)
     config = env.get(XDG_HOMES["config"][0], "").strip()
     if config and Path(config).is_absolute():
         return Path(config) / APP_NAME
     return account_home() / ".config" / APP_NAME
 
 
-def unit_owners(target: ServiceTarget) -> list[tuple[Path, Path]]:
-    """(The `KERYX_HOME` it was rendered for, the file) for each of `target`'s unit files on
-    disk (`unit_files`); empty when it has none."""
-    owners = []
+def manager_owners(
+    target: ServiceTarget, *, run: Callable[..., object] | None = None
+) -> list[Owner]:
+    """Whose `target` is, as its service manager has it loaded — read-only, and wherever
+    its file is: `systemctl --user show` (its `Environment`, drop-ins included) or
+    `launchctl print` (its `environment`, else the file at its `path`). Empty when the
+    manager has nothing loaded by that name, or there is no such manager here; an `Owner`
+    with no home when it cannot be asked or does not say — a loaded job whose file is
+    gone, a probe that timed out."""
+    run = run or subprocess.run  # late-bound, so a test's replacement is the one used
+    if target.manager == "systemd":
+        command = ["systemctl", "--user", "show", "-p", "LoadState", "-p", "FragmentPath",
+                   "-p", "Environment", target.unit]
+    else:
+        command = ["launchctl", "print", f"gui/{os.getuid()}/{target.unit}"]
+    asked = f"{target.manager}'s answer about {target.unit}"
+    try:
+        result = run(command, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S)
+    except FileNotFoundError:
+        return []  # no such manager on this machine: nothing it could have loaded
+    except (OSError, subprocess.SubprocessError):
+        return [Owner(None, asked)]
+    said = result.stdout or ""
+    if target.manager == "systemd":
+        if result.returncode != 0:
+            return [Owner(None, asked)]
+        fields = dict(line.partition("=")[::2] for line in said.splitlines())
+        if fields.get("LoadState", "").strip() != "loaded":
+            return []
+        where = fields.get("FragmentPath", "").strip() or asked
+        try:
+            return [Owner(rendered_home(_assignments(fields.get("Environment", ""))), where)]
+        except (ValueError, UnreadableUnit):
+            return [Owner(None, where)]
+    if result.returncode == LAUNCHD_NOT_LOADED:
+        return []
+    if result.returncode != 0:
+        return [Owner(None, asked)]
+    path, env = _launchd_job(said)
+    try:
+        if HOME_ENV in env:
+            return [Owner(rendered_home(env), path or asked)]
+        if path is None:
+            return [Owner(None, asked)]
+        rendered = rendered_env(Path(path), "launchd")
+        if rendered is None:  # loaded from a file that is gone: whose it is, unsaid
+            return [Owner(None, path)]
+        return [Owner(rendered_home(rendered), path)]
+    except UnreadableUnit:
+        return [Owner(None, path or asked)]
+
+
+def _launchd_job(said: str) -> tuple[str | None, dict[str, str]]:
+    """From `launchctl print`: the job's `path`, and its own `environment` block (not the
+    `inherited` or `default` one)."""
+    path, env, inside = None, {}, False
+    for line in said.splitlines():
+        stripped = line.strip()
+        if inside:
+            if stripped == "}":
+                inside = False
+            elif " => " in stripped:
+                name, _, value = stripped.partition(" => ")
+                env[name] = value
+        elif stripped == "environment = {":
+            inside = True
+        elif path is None and stripped.startswith("path = "):
+            path = stripped.removeprefix("path = ")
+    return path, env
+
+
+def unit_owners(
+    target: ServiceTarget, *, run: Callable[..., object] | None = None
+) -> list[Owner]:
+    """Whose `target` is, everywhere that can be told: as its manager has it loaded
+    (`manager_owners`), and each of its unit files on disk (`unit_files`). Empty when it is
+    neither loaded nor on disk."""
+    owners = list(manager_owners(target, run=run))
     for path in unit_files(target):
-        env = rendered_env(path, target.manager)
-        if env is not None:
-            owners.append((rendered_home(env), path))
+        try:
+            env = rendered_env(path, target.manager)
+            if env is not None:
+                owners.append(Owner(rendered_home(env), str(path)))
+        except UnreadableUnit:
+            owners.append(Owner(None, str(path)))
     return owners
 
 
@@ -247,19 +371,23 @@ def _same_directory(one: Path, other: Path) -> bool:
 
 
 def foreign_units(
-    targets: Sequence[ServiceTarget], *, home: Path | None = None
+    targets: Sequence[ServiceTarget], *, home: Path | None = None,
+    run: Callable[..., object] | None = None,
 ) -> ForeignUnits | None:
-    """The first of `targets`' unit files rendered for another `KERYX_HOME` than `home`
-    (this process's own, `keryx_home`), compared as real paths; None when every one is
-    `home`'s, or not installed. The one guard every command that drives the service manager
-    asks before running anything: unit names are global to the account, so a command run
-    with another `KERYX_HOME` — a sandbox, a test — would otherwise stop, start or replace
-    the owner's own Keryx. It only reads files."""
+    """The first of `targets` that runs, or was rendered, with another `KERYX_HOME` than
+    `home` (this process's own, `keryx_home`), compared as real paths — or whose
+    `KERYX_HOME` cannot be told, which is refused the same; None when every one is `home`'s,
+    or not installed. The one guard every command that drives the service manager asks
+    before running anything: unit names are global to the account, so a command run with
+    another `KERYX_HOME` — a sandbox, a test — would otherwise stop, start or replace the
+    owner's own Keryx. It only reads, and never raises for a file or a manager it cannot
+    read: that is a refusal."""
     ours = home or keryx_home()
     for target in targets:
-        for theirs, path in unit_owners(target):
-            if not _same_directory(theirs, ours):
-                return ForeignUnits(theirs, ours, path)
+        for owner in unit_owners(target, run=run):
+            theirs = owner.home
+            if theirs is None or not theirs.is_absolute() or not _same_directory(theirs, ours):
+                return ForeignUnits(theirs, ours, owner.where)
     return None
 
 

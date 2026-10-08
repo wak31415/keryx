@@ -84,6 +84,9 @@ def _isolated_env(monkeypatch, tmp_path):
     # The account's home, as the user database has it, is where the service manager reads
     # the owner's real units: never in a test, whose units are under its own `HOME`.
     monkeypatch.setattr("keryx.restart.service.account_home", lambda: home)
+    # Nor is the account's service manager asked what it has loaded: it would answer with
+    # the owner's real units. The tests of that probe hand it a `run` of their own.
+    monkeypatch.setattr("keryx.restart.service.manager_owners", lambda target, **_: [])
     # cloudflared's system-wide config directories are outside `HOME`: none in a test.
     monkeypatch.setattr("keryx.phone.CLOUDFLARED_SYSTEM_DIRS", ())
     # The Claude CLI's own directory is derived from `HOME` unless this moves it.

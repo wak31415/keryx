@@ -903,22 +903,29 @@ Five rulings:
   follows the environment; a unit's name does not — `dev.keryx.agent` and `keryx.service`
   are one per account. On 2026-10-08 a test of `keryx service stop|start` with a sandboxed
   `KERYX_HOME` and `XDG_*` stopped and restarted the owner's own agent and model server. So
-  `restart.service.foreign_units` (behind `units.owner_mismatch`) reads the `KERYX_HOME` each
-  installed unit file was rendered with — the plist's `EnvironmentVariables`, the unit's
-  `Environment=` — wherever this process's installer writes it *and* under the account's own
-  home from the user database (`account_home`, never `$HOME`, which a sandbox moves), and
-  compares it as a real path with this process's. A unit rendering none belongs to the
-  default home (`XDG_CONFIG_HOME/keryx` when it renders that); the tunnel, which renders no
-  Keryx environment, belongs to whoever its agent unit does. A mismatch refuses, exit 2,
+  `restart.service.foreign_units` (behind `units.owner_mismatch`) asks the manager,
+  read-only, what it has loaded by that name and with what `KERYX_HOME` (`manager_owners`:
+  `systemctl --user show` — drop-ins included — or `launchctl print`, else the file at its
+  `path`), wherever its file is; then reads the `KERYX_HOME` each unit file was rendered with
+  — the plist's `EnvironmentVariables`, the unit's `Environment=` — where this process's
+  installer writes it *and* under the account's own home from the user database
+  (`account_home`, never `$HOME`, which a sandbox moves); and compares each as a real path
+  with this process's. A leading `~` is the account's home; anything still not absolute is
+  never this home. A unit rendering none belongs to the default home (`XDG_CONFIG_HOME/keryx`
+  when it renders that); the tunnel, which renders no Keryx environment, belongs to whoever
+  its agent unit does. **What cannot be told is foreign**: a file that cannot be read or
+  parsed, one naming `KERYX_HOME` with no value to read, a manager that cannot be asked, a
+  loaded job whose file is gone — each refused, with `could not read …` as the detail. A mismatch refuses, exit 2,
   in a sentence with no path in it (the app leads with the `message`; both homes and the
   unit file are its `detail`, which a terminal prints beneath it), before anything runs — `service install|uninstall|stop|start`, `models start|stop`, `voice
   use here`, `voice llm here|shared|remote`, `restart`, the voice's `restart_service` under
   a `SERVICE_MANAGER` named outright, the setup wizard's install, and `migrate`, which judges
   Keryx's units against the home it is filling and never Jarvis's, rendered for the old one
   by definition — and `scripts/lib.sh::require_own_units` is the same check in the
-  installers. There is no `--force`: moving a home is `keryx migrate`'s job, or an uninstall
-  from the home that owns the units. The suite stands in for `account_home` (the conftest,
-  and an `id` stub for the installers), so no test reads the owner's real units.
+  installers (their exit 2 is said, by `units.install`, in the same path-free sentence). There is no `--force`: moving a home is `keryx migrate`'s job, or an uninstall
+  from the home that owns the units. The suite stands in for `account_home` and
+  `manager_owners` (the conftest; for the installers an `id` stub and `launchctl`/`systemctl`
+  stubs with nothing loaded), so no test reads or asks about the owner's real units.
 
 ## Restarts are three halves
 

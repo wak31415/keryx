@@ -2092,3 +2092,24 @@ async def test_a_unit_another_home_rendered_is_not_restarted(tmp_path):
     assert result == {"status": "unsupported", "message": FOREIGN_MESSAGE}
     assert FOREIGN_MESSAGE.rstrip(".").count(". ") == 0  # one sentence to say
     assert harness.record() is None and harness.spawn.commands == []
+
+
+async def test_a_unit_that_cannot_be_looked_at_refuses_the_restart_without_raising(
+    tmp_path, monkeypatch
+):
+    """Fix round 1: `Path.is_file` raises on EACCES. `request()` never raises; whose the
+    unit is cannot be told, and that is a refusal."""
+    harness = Harness(make_settings(tmp_path))
+    real = Path.is_file
+
+    def is_file(self):
+        if "systemd" in self.parts:
+            raise PermissionError(13, "denied")
+        return real(self)
+
+    monkeypatch.setattr(Path, "is_file", is_file)
+
+    result = await harness.coordinator.request()
+
+    assert result == {"status": "unsupported", "message": FOREIGN_MESSAGE}
+    assert harness.record() is None and harness.spawn.commands == []
