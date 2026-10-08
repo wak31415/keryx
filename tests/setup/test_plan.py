@@ -137,6 +137,18 @@ def test_a_set_up_machine_is_ready(plan_of, set_up):
     }
 
 
+def test_a_blank_owner_name_holds_neither_the_owner_nor_ready(plan_of, set_up):
+    ConfigStore().unset(["OWNER_NAME"])  # the wizard's "the owner"
+
+    plan = plan_of()
+
+    owner = steps(plan)["owner"]
+    assert (owner["state"], owner["why"], plan["ready"]) == (DONE, None, True)
+    # Still said, so the checklist can offer it: it just holds nothing back.
+    assert {"title": "Owner name", "state": "missing"}.items() <= next(
+        check for check in owner["checks"] if check["title"] == "Owner name").items()
+
+
 def test_a_service_installed_and_stopped_failed(plan_of, set_up):
     plan = plan_of(active=False)
 

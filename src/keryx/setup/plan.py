@@ -68,8 +68,9 @@ class Step:
     after: tuple[str, ...] = ()
     #: Whether a soft check that is merely missing holds the step back. Not for the voice
     #: (an OpenAI key beside a voice of your own buys web search alone), the agents (one
-    #: that is not the default only narrows what can be asked for by name), nor the local
-    #: models (a model named for an agent that is not the default).
+    #: that is not the default only narrows what can be asked for by name), the local
+    #: models (a model named for an agent that is not the default), nor the owner (a blank
+    #: name is the wizard's "the owner", and calls work; the allowlist is a hard check).
     soft_missing_counts: bool = True
     #: Whether a soft check that failed holds the step back. Most are warnings that leave
     #: calls working (a voice server over http on the LAN); the phone's webhook pointing
@@ -83,7 +84,7 @@ STEPS: tuple[Step, ...] = (
     Step("migrate", "Migration", "import", required=True),
     Step("voice", "Voice", "voice", required=True, soft_missing_counts=False),
     Step("agents", "Coding agents", "agents", required=True, soft_missing_counts=False),
-    Step("owner", "Owner", "owner", required=True),
+    Step("owner", "Owner", "owner", required=True, soft_missing_counts=False),
     Step("pin", "PIN", "owner", required=True, soft_failed_counts=True),
     Step("phone", "Phone", "phone", required=True, after=("owner",), soft_failed_counts=True),
     Step("service", "Background service", "service", required=True,
