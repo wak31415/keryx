@@ -15,6 +15,14 @@ import KeryxPreview
                       freeForm: freeForm, error: error)
     }
 
+    @Test func aServerWithNoAddressSaysSoRatherThanNotAnswering() {
+        #expect(VoiceWording.serverState(nil, address: nil)?.text == "No address set")
+        #expect(VoiceWording.serverState(nil, address: " ")?.text == "No address set")
+        #expect(VoiceWording.serverState(true, address: "http://studio.local:8000/v1")?.text == "Answering")
+        #expect(VoiceWording.serverState(false, address: "http://studio.local:8000/v1")?.text == "Not answering")
+        #expect(VoiceWording.serverState(nil, address: "http://studio.local:8000/v1") == nil, "not asked")
+    }
+
     @Test func theMenuShowsLabelsAndTheValueChosenEvenWhenTheListLacksIt() {
         let options = [ConfigOption(value: "a", label: "Alpha"), ConfigOption(value: "b", label: "Beta")]
         #expect(OptionWording.items(Self.list(options), current: "a").map(\.label) == ["Alpha", "Beta"])
@@ -62,7 +70,7 @@ import KeryxPreview
     @Test func aDetailIsShownWhenItSaysSomethingTheLabelDoesNot() {
         let kokoro = PreviewData.options["VOICE_SERVER_VOICE"]
         #expect(OptionWording.detail(of: "af_heart", in: kokoro) == "Warm, American, female")
-        let claude = PreviewData.options["SUBAGENT_MODEL"]
+        let claude = PreviewData.options["CLAUDE_MODEL"]
         #expect(OptionWording.detail(of: "claude-opus-5-5", in: claude) == nil, "“opus” under “Claude Opus”")
         let current = Self.list([ConfigOption(value: "x", label: "x", detail: "current")])
         #expect(OptionWording.detail(of: "x", in: current) == nil)

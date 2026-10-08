@@ -5,7 +5,8 @@ import SwiftUI
 /// as a Settings window lays them out: a bar of tabs along the top, and under it the chosen
 /// tab's key settings, by group, with the rest under a collapsed Advanced disclosure that
 /// remembers, tab by tab, whether it was opened. A search looks through every tab, the
-/// advanced settings too, and shows what it finds under the tabs' names. Changes go through
+/// advanced settings too, and shows what it finds under the tabs' names; a setting a screen
+/// owns (Voice's, Local Models') is found as a link to that screen, its one editor. Changes go through
 /// the CLI (`AppModel.set`, `setSecret`, `unset`); once one lands, a banner at the top
 /// offers the restart that loads it.
 public struct ConfigurationView: View {
@@ -81,7 +82,13 @@ public struct ConfigurationView: View {
     /// Does what another window asked of Configuration (`AppModel.requested`): a tab, or
     /// the PIN sheet on the PIN's tab.
     private func answer(_ request: AppRequest?) {
-        guard let request, let answer = Self.answer(request, config: model.config.value) else { return }
+        guard let request else { return }
+        // A setting a screen owns is changed there, not here.
+        if case let .setting(key) = request, let screen = ConfigWording.screen(of: key, in: model.config.value) {
+            model.request(.show(screen))
+            return
+        }
+        guard let answer = Self.answer(request, config: model.config.value) else { return }
         choose(answer.tab)
         if let key = answer.focus {
             if model.config.value?.first(where: { $0.key == key })?.advanced == true { advancedOpen.insert(answer.tab) }
@@ -163,7 +170,8 @@ public struct ConfigurationView: View {
 
     @ViewBuilder private func results(_ rows: [ConfigRow], titles: [String: String]) -> some View {
         let found = ConfigWording.results(rows, for: search)
-        if found.isEmpty {
+        let elsewhere = ConfigWording.screenResults(rows, for: search)
+        if found.isEmpty, elsewhere.isEmpty {
             ContentUnavailableView.search(text: search)
                 .frame(maxHeight: .infinity)
         } else {
@@ -180,6 +188,15 @@ public struct ConfigurationView: View {
                     if !tab.advancedRows.isEmpty {
                         Section(ConfigWording.resultTitle(tab, advanced: true)) {
                             self.rows(tab.advancedRows, titles: titles)
+                        }
+                    }
+                }
+                ForEach(elsewhere) { result in
+                    Section(result.title) {
+                        ForEach(result.rows) { row in
+                            ScreenLinkRow(row: row, link: result.link, titles: titles) {
+                                model.request(.show(result.screen))
+                            }
                         }
                     }
                 }
@@ -234,5 +251,31 @@ public struct ConfigurationView: View {
         } set: { isOpen in
             if isOpen { advancedOpen.insert(tab) } else { advancedOpen.remove(tab) }
         }
+    }
+}
+
+/// A setting a screen owns, as a search finds it: its title and description, and in place
+/// of an editor the link to the screen that has the one ("Change in Voice ›").
+private struct ScreenLinkRow: View {
+    let row: ConfigRow
+    let link: String
+    let titles: [String: String]
+    let open: () -> Void
+
+    var body: some View {
+        LabeledContent {
+            Button(link, action: open)
+                .buttonStyle(.link)
+        } label: {
+            Text(row.displayTitle)
+            if !row.description.isEmpty {
+                Text(ConfigWording.described(ConfigDescriptions.text(row), titles: titles))
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .help(ConfigWording.tooltip(row))
+        .id(row.key)
     }
 }

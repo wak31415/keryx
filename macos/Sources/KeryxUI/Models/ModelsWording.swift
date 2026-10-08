@@ -6,6 +6,8 @@ import KeryxKit
 enum ModelsAnchor {
     static let modelServer = "model-server"
     static let voiceModels = "voice-models"
+    /// The Advanced disclosure: the model servers' ports.
+    static let advanced = "models-advanced"
 }
 
 extension AppModel {

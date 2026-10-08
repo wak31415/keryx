@@ -1,5 +1,5 @@
 {
-  "key": "LLM_SERVER_MODEL",
+  "key": "AGENT_SERVER_MODEL",
   "current": "qwen3-coder-30b-a3b",
   "options": [
     {

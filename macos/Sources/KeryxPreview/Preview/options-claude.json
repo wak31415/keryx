@@ -1,5 +1,5 @@
 {
-  "key": "SUBAGENT_MODEL",
+  "key": "CLAUDE_MODEL",
   "current": "claude-opus-5-5",
   "options": [
     {

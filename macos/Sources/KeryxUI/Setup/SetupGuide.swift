@@ -80,7 +80,7 @@ struct SetupContext: Sendable {
     var tunnelDownload: URL? { FixAction.tunnelPage(phoneTunnel?.installUrl) }
 
     /// The model this Mac's model server is serving when it runs one other than the model
-    /// chosen (`LLM_SERVER_MODEL`), by its title; `nil` when it isn't running, says nothing,
+    /// chosen (`AGENT_SERVER_MODEL`), by its title; `nil` when it isn't running, says nothing,
     /// or serves the one chosen.
     var modelServerServesAnother: String? {
         guard let llm = models?.servers.llm, llm.reachable, let served = llm.servedModel, !served.isEmpty,

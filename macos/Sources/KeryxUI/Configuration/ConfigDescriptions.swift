@@ -18,11 +18,19 @@ enum ConfigDescriptions {
             "Codex on your ChatGPT plan, for a machine with no browser. Blank uses Codex's own stored sign-in.",
         "VOICE_BASE_URL":
             "A voice server of your own that speaks the OpenAI Realtime protocol, as its …/v1 address. Blank is OpenAI.",
-        "LLM_SERVER_MODEL":
-            "The model the local llama.cpp server runs: one from Local Models, or a GGUF file's path. Blank runs none.",
+        "AGENT_SERVER_MODEL":
+            "The model the local agent's llama.cpp server runs: one from Local Models, or a GGUF file's path. "
+            + "Blank runs none.",
+        "VOICE_MODE":
+            "Where a call's voice runs: OpenAI Realtime, the speech pipeline on this Mac, or a Realtime server "
+            + "elsewhere. Blank is worked out from VOICE_BASE_URL.",
+        "VOICE_LLM_MODEL":
+            "The voice LLM's model: on this Mac, one from Local Models or a GGUF file's path; on a server elsewhere, "
+            + "that server's own name for it. Not read while the voice shares the local agent's model.",
         "VOICE_SERVER_STT": "How the local voice server hears: the speech-to-text model it runs.",
         "VOICE_SERVER_TTS": "How the local voice server speaks: the text-to-speech model it runs.",
-        "VOICE_SERVER_VOICE": "The Kokoro voice the local voice server speaks in.",
+        "VOICE_SERVER_VOICE":
+            "The Kokoro voice the local voice server speaks in. A voice server elsewhere is sent it too, once it is set.",
         "VOICE_SERVER_ARGS":
             "More options for the local voice server, such as a smaller speech model or a speaking speed. "
             + "Never a key: other programs on this Mac can read them.",

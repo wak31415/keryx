@@ -84,6 +84,11 @@ import KeryxPreview
         #expect(FixAction("setting:ALLOWED_CALLERS")?.action(context).effect
             == .request(.setting(key: "ALLOWED_CALLERS")))
         #expect(FixAction("setting:VOICE_BASE_URL")?.action(context).effect == .request(.show(.voice)))
+        // A setting a screen owns opens that screen, its one editor.
+        #expect(FixAction("setting:VOICE_SERVER_ARGS")?.action(context)
+            == SetupAction(title: "Open Voice", effect: .request(.show(.voice))))
+        #expect(FixAction("setting:AGENT_SERVER_PORT")?.action(context)
+            == SetupAction(title: "Open Local Models", effect: .request(.show(.models))))
         #expect(FixAction("integration:github")?.action(context).title == "Connect GitHub…")
         #expect(FixAction("phone:webhooks")?.action(context).effect == .request(.pointHere))
         #expect(FixAction("secret:OPENAI_API_KEY")?.action(SetupContext()).title == "Add OpenAI API Key…")

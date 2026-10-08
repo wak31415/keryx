@@ -130,7 +130,7 @@ public enum PreviewData {
     /// written by hand.
     public static let optionsFixtures = [
         "options-realtime.json", "options-transcription.json", "options-voice.json",
-        "options-subagent.json", "options-codex.json", "options-local-agent.json", "options-llm-server.json",
+        "options-claude.json", "options-codex.json", "options-local-agent.json", "options-agent-server.json",
         "options-kokoro.json", "options-stt.json", "options-tts.json",
     ]
 

@@ -92,6 +92,10 @@ enum FixAction: Equatable, Sendable {
             case "LOCAL_AGENT_BASE_URL", "LOCAL_AGENT_MODEL":
                 return open("Open Local Models", .show(.models))
             default:
+                // A setting a screen owns is changed on that screen.
+                if let screen = context.row(key)?.screen.flatMap(SidebarItem.init(rawValue:)) {
+                    return open("Open \(screen.title)", .show(screen))
+                }
                 let title = context.row(key)?.displayTitle ?? named ?? FixAction.humanised(key)
                 return open("Open \(Wording.titleCase(title))", .setting(key: key))
             }
