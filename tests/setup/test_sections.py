@@ -4,7 +4,13 @@ import stat
 
 import pytest
 
-from keryx.config import Settings, pin_file, read_enrolled_pin, write_enrolled_pin
+from keryx.config import (
+    Settings,
+    env_var_name,
+    pin_file,
+    read_enrolled_pin,
+    write_enrolled_pin,
+)
 from keryx.config.store import ConfigStore
 from keryx.setup import pin as pin_flow
 from keryx.setup import sections
@@ -281,7 +287,7 @@ def test_manual_asks_each_setting_by_type_and_saves_only_changes(make_ctx):
             extra = info.json_schema_extra or {}
             if extra.get("group") != group or not info.repr:
                 continue
-            key = name.upper()
+            key = env_var_name(name)
             if key in sections.NOT_MANUAL:
                 continue
             answer = {"OPENAI_VOICE": "marin", "VAD_MODE": "server", "VAD_SILENCE_MS": "900"}
@@ -383,8 +389,8 @@ def test_manual_settings_ask_a_yes_no_a_list_and_a_map(make_ctx):
     for name, info in Settings.model_fields.items():
         extra = info.json_schema_extra or {}
         if extra.get("group") in groups and info.repr:
-            answers.append((name.upper() if name != "owner_number_explicit" else "OWNER_NUMBER",
-                            groups[extra["group"]].get(name.upper(), DEFAULT)))
+            key = env_var_name(name)
+            answers.append((key, groups[extra["group"]].get(key, DEFAULT)))
     answers.append(("may the running service change", DEFAULT))
     ctx = make_ctx(answers)
 

@@ -294,6 +294,15 @@ def test_a_voice_server_of_ones_own_is_asked_instead_of_openai(keyed):
     assert kwargs["follow_redirects"] is False
 
 
+def test_a_server_voice_with_no_address_says_so_and_offers_no_openai_model(keyed):
+    found = options_for("OPENAI_REALTIME_MODEL",
+                        keyed.model_copy(update={"voice_mode_explicit": "server"}),
+                        sources(get=FakeGet(body={})))
+
+    assert found.live is False and "no voice server address" in found.error
+    assert values(found) == [keyed.openai_realtime_model]
+
+
 def test_a_voice_server_that_does_not_answer_offers_only_the_current(keyed):
     local = keyed.model_copy(update={
         "voice_base_url": "http://127.0.0.1:8765/v1", "openai_realtime_model": "s2s",

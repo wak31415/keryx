@@ -59,7 +59,7 @@ In the Mac app: the Voice tab.
 
 | Setting | Title | In the app | Default | Service may change | What it is |
 |---|---|---|---|---|---|
-| `OPENAI_TRANSCRIPTION_MODEL` | Transcription model | advanced | `gpt-4o-mini-transcribe` | no | Transcribes what the caller says, for the call log. |
+| `OPENAI_TRANSCRIPTION_MODEL` | Transcription model | advanced | `gpt-4o-mini-transcribe` | no | Transcribes what the caller says, for the call log, on OpenAI; a voice of your own transcribes with its own speech-to-text. |
 | `VAD_MODE` | Turn detection | advanced | `semantic` | yes | How the assistant decides you have finished: `semantic` waits on whether the sentence sounds finished, so a pause to think does not cut you off; `server` is a plain silence timer of `VAD_SILENCE_MS`. |
 | `VAD_EAGERNESS` | Reply eagerness | advanced | `medium` | yes | Semantic mode only: `low` waits longest, `high` jumps in soonest, `auto` is `medium`. |
 | `VAD_SILENCE_MS` | Silence to end a turn (ms) | advanced | `1200` | yes | Server mode only: the silence, in milliseconds, that ends a turn. |
@@ -73,8 +73,8 @@ In the Mac app: the Voice screen.
 
 | Setting | Title | In the app | Default | Service may change | What it is |
 |---|---|---|---|---|---|
-| `OPENAI_REALTIME_MODEL` | Realtime model | key | `gpt-realtime-2.1` | no | The realtime speech-to-speech model a call runs on. |
-| `OPENAI_VOICE` | Assistant voice | key | `` | yes | The Realtime voice the assistant speaks in. Empty is the assistant's own (`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail to open. |
+| `OPENAI_REALTIME_MODEL` | Realtime model | key | `gpt-realtime-2.1` | no | The realtime speech-to-speech model a call runs on, on OpenAI. A voice server elsewhere is sent it too (as `?model=`); the voice pipeline here never is. |
+| `OPENAI_VOICE` | Assistant voice | key | `` | yes | The Realtime voice the assistant speaks in. Empty is the assistant's own (`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail to open. Sent to OpenAI only, and for one release to a voice server elsewhere that has no `VOICE_SERVER_VOICE`. |
 | `VOICE_MODE` | Where the voice runs | key |  | never | Where a call's voice runs: `openai` is OpenAI Realtime, `here` the speech pipeline on this machine (`VOICE_SERVER_*`), `server` a Realtime server elsewhere (`VOICE_BASE_URL`). Blank is worked out from `VOICE_BASE_URL`, as it was before this was a setting: blank is OpenAI, this machine's voice port is here, any other address a server. |
 | `VOICE_BASE_URL` | Voice server URL | key |  | never | A voice server of your own that speaks the OpenAI Realtime protocol, as its `…/v1` address (`http://127.0.0.1:8765/v1` is the one `keryx setup` installs). Blank is OpenAI. |
 | `VOICE_API_KEY` | Voice server API key | key | (secret) | never | The Bearer key for that voice server, when it checks one. |
@@ -84,7 +84,7 @@ In the Mac app: the Voice screen.
 | `VOICE_LLM_BASE_URL` | Voice LLM server URL | key |  | never | With `VOICE_LLM=remote`, the server the voice's words go to, as its `…/v1` address (`https://api.openai.com/v1` for OpenAI's). |
 | `VOICE_LLM_API_KEY` | Voice LLM API key | key | (secret) | never | The Bearer key for that server, when it checks one. Blank sends `OPENAI_API_KEY` only when the address is OpenAI's own, and no key of yours anywhere else. |
 | `VOICE_SERVER_TTS` | Text-to-speech model | key | `kokoro` | no | How the local voice server speaks: speech-to-speech's `--tts` (`kokoro`, `qwen3`, …). |
-| `VOICE_SERVER_VOICE` | Kokoro voice | key | `af_heart` | no | The Kokoro voice the local voice server speaks in (`af_heart`, `bm_george`, …; `keryx models list` shows them). |
+| `VOICE_SERVER_VOICE` | Kokoro voice | key | `af_heart` | no | The Kokoro voice the local voice server speaks in (`af_heart`, `bm_george`, …; `keryx models list` shows them). A voice server elsewhere is sent it too, once it is set. |
 | `VOICE_SERVER_ARGS` | Extra voice server flags | advanced | `` | never | More flags for `speech-to-speech serve`, as a command line — a smaller speech model (`--stt_model_name openai/whisper-base`), a TTS speed. Never a key: it is on argv. |
 
 ## Coding agents

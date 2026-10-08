@@ -20,12 +20,12 @@ from pathlib import Path
 from typing import NoReturn
 
 from keryx.config import Settings
-from keryx.endpoints import Endpoint, Probe, probe
+from keryx.endpoints import LOOPBACK_HOST, Endpoint, Probe, probe
 from keryx.localmodels import runtimes
 from keryx.localmodels.catalog import by_key
 from keryx.localmodels.download import model_path
 
-HOST = "127.0.0.1"
+HOST = LOOPBACK_HOST
 #: How many calls the voice server holds at once. Two, not its default one: a dropped socket
 #: is re-opened at once, before the server has let go of the old one, and the second call
 #: of an overlapping pair (a call-back ringing during a call) would be refused outright.

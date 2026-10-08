@@ -173,9 +173,8 @@ def is_ours(voice_base_url: str | None, port: int) -> bool:
 
 
 def mode(settings: Settings) -> str:
-    if is_ours(settings.voice_base_url, settings.voice_server_port):
-        return HERE
-    return SERVER if settings.voice_base_url else OPENAI
+    """Where the voice is: `Settings.voice_mode`, which `VOICE_MODE` says, or works out."""
+    return settings.voice_mode
 
 
 def words_model(settings: Settings) -> str | None:
@@ -197,6 +196,7 @@ def status(
     server elsewhere only when it is the voice; its speech models in the Hugging Face cache
     (`models_ready`, `speech.models_ready` unless a caller says). No key is in it."""
     where = mode(settings)
+    elsewhere = settings.voice_endpoint if where == SERVER else None
     port = settings.voice_server_port
     words = words_model(settings)
     found = program()
@@ -221,7 +221,7 @@ def status(
         },
         "needs": NEEDS_WORDS if words is None else None,
         "server": {
-            "reachable": server_reachable(settings.voice_endpoint) if where == SERVER else None,
+            "reachable": server_reachable(elsewhere) if elsewhere is not None else None,
         },
     }
 

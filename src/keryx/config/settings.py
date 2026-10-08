@@ -30,6 +30,7 @@ import re
 import secrets
 import tomllib
 from contextvars import ContextVar
+from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, Any, Literal, NamedTuple, get_args
 
@@ -71,7 +72,7 @@ from keryx.config.pin import (
     read_enrolled_pin,
     write_enrolled_pin,
 )
-from keryx.endpoints import OPENAI_BASE_URL, Endpoint
+from keryx.endpoints import LOOPBACK_HOST, OPENAI_BASE_URL, RESPONSES_API, Endpoint
 from keryx.persona import DEFAULT_NAME, DEFAULT_VOICE, PERSONAS, voice_for
 
 log = logging.getLogger("keryx.config")
@@ -363,7 +364,9 @@ class Settings(BaseSettings):
         repr=False,
     )
     openai_realtime_model: str = setting(
-        "gpt-realtime-2.1", "The realtime speech-to-speech model a call runs on.",
+        "gpt-realtime-2.1",
+        "The realtime speech-to-speech model a call runs on, on OpenAI. A voice server "
+        "elsewhere is sent it too (as `?model=`); the voice pipeline here never is.",
         title="Realtime model",
         group="voice_model", advanced=False
     )
@@ -381,14 +384,16 @@ class Settings(BaseSettings):
         "",
         "The Realtime voice the assistant speaks in. Empty is the assistant's own "
         "(`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail "
-        "to open.",
+        "to open. Sent to OpenAI only, and for one release to a voice server elsewhere that "
+        "has no `VOICE_SERVER_VOICE`.",
         title="Assistant voice",
         group="voice_model", advanced=False,
         service_writable=True,
     )
     openai_transcription_model: str = setting(
         "gpt-4o-mini-transcribe",
-        "Transcribes what the caller says, for the call log.",
+        "Transcribes what the caller says, for the call log, on OpenAI; a voice of your own "
+        "transcribes with its own speech-to-text.",
         title="Transcription model",
         group="realtime", advanced=True,
     )
@@ -562,7 +567,8 @@ class Settings(BaseSettings):
     # Where a call's audio goes (`VOICE_MODE`, `VOICE_BASE_URL`) and where its words go
     # (`VOICE_LLM`, `VOICE_LLM_BASE_URL`) are protected: pointed elsewhere, either ships
     # every call, the spoken PIN included, to whoever is there.
-    voice_mode: VoiceMode | None = setting(
+    #: The setting as stored; `voice_mode` below is the mode a call uses, this or derived.
+    voice_mode_explicit: VoiceMode | None = setting(
         None,
         "Where a call's voice runs: `openai` is OpenAI Realtime, `here` the speech pipeline on "
         "this machine (`VOICE_SERVER_*`), `server` a Realtime server elsewhere "
@@ -571,6 +577,7 @@ class Settings(BaseSettings):
         "a server.",
         title="Where the voice runs",
         group="voice_model", advanced=False,
+        validation_alias="VOICE_MODE",
     )
     voice_base_url: str | None = setting(
         None,
@@ -635,7 +642,8 @@ class Settings(BaseSettings):
     voice_server_voice: str = setting(
         "af_heart",
         "The Kokoro voice the local voice server speaks in (`af_heart`, `bm_george`, …; "
-        "`keryx models list` shows them).",
+        "`keryx models list` shows them). A voice server elsewhere is sent it too, once it "
+        "is set.",
         title="Kokoro voice",
         group="voice_model", advanced=False,
     )
@@ -1178,7 +1186,7 @@ class Settings(BaseSettings):
                 raise ValueError('must be a JSON object, like {"name": "value"}') from error
         return value
 
-    @field_validator(*OPTIONAL_STR_FIELDS, "voice_mode", mode="before")
+    @field_validator(*OPTIONAL_STR_FIELDS, "voice_mode_explicit", mode="before")
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
         """A blank value is "not set" — `env_ignore_empty` for anything passed by hand."""
@@ -1361,16 +1369,50 @@ class Settings(BaseSettings):
             return None
 
     @property
-    def voice(self) -> str:
-        """The voice a call speaks in: `OPENAI_VOICE`, else the assistant's own.
+    def voice_mode(self) -> VoiceMode:
+        """Where a call's voice runs: `VOICE_MODE`, else worked out from `VOICE_BASE_URL`
+        as it was before that was a setting — blank is OpenAI, the address of this
+        machine's voice port is here, and any other address is a server elsewhere."""
+        if self.voice_mode_explicit is not None:
+            return self.voice_mode_explicit
+        if self.voice_base_url == self.voice_here_url:
+            return "here"
+        return "server" if self.voice_base_url else "openai"
 
-        On a voice server of the owner's own the persona's voice is not sent — its names
-        (`marin`, `cedar`) are OpenAI's, and a server that does not know one speaks nothing
-        at all — so blank, which is the server's own default voice.
+    @property
+    def voice_here_url(self) -> str:
+        """The address of the voice pipeline Keryx runs here, derived from its port."""
+        return f"http://{LOOPBACK_HOST}:{self.voice_server_port}/v1"
+
+    @property
+    def voice(self) -> str:
+        """The voice a call's `session.update` asks for; blank is the server's own.
+
+        OpenAI's (`OPENAI_VOICE`, else the assistant's persona) only where the voice is
+        OpenAI's. The pipeline here speaks in `VOICE_SERVER_VOICE`, on its own command line,
+        and honours a per-session voice — so anything sent here would override it: blank. A
+        server elsewhere is sent `VOICE_SERVER_VOICE` when that was set, else `OPENAI_VOICE`
+        for one release (what it was sent before), else nothing: the persona's names
+        (`marin`, `cedar`) are OpenAI's, and a server that does not know one speaks nothing.
         """
-        if self.openai_voice:
+        endpoint = self.voice_endpoint
+        if endpoint is not None and endpoint.is_openai:
+            return self.openai_voice or voice_for(self.assistant_name)
+        if self.voice_mode == "server":
+            if "voice_server_voice" in self.model_fields_set:
+                return self.voice_server_voice
             return self.openai_voice
-        return voice_for(self.assistant_name) if self.voice_endpoint.is_openai else ""
+        return ""
+
+    @property
+    def voice_transcription_model(self) -> str | None:
+        """`OPENAI_TRANSCRIPTION_MODEL`, where the voice is OpenAI's; None anywhere else,
+        which leaves the transcription block out of `session.update` (a self-hosted voice
+        transcribes with its own speech-to-text)."""
+        endpoint = self.voice_endpoint
+        if endpoint is not None and endpoint.is_openai:
+            return self.openai_transcription_model
+        return None
 
     @property
     def openai_key(self) -> str | None:
@@ -1379,9 +1421,22 @@ class Settings(BaseSettings):
         return key if key and key != PLACEHOLDER_KEY else None
 
     @property
-    def voice_endpoint(self) -> Endpoint:
-        """Where a call's voice is: `VOICE_BASE_URL` with its own key, else OpenAI."""
-        if self.voice_base_url:
+    def voice_endpoint(self) -> Endpoint | None:
+        """Where a call's audio goes, by `voice_mode`; None for a `server` with no
+        `VOICE_BASE_URL`, which `voice_refusal` refuses.
+
+        OpenAI with `OPENAI_API_KEY`; the pipeline here on its derived loopback address with
+        no model (`?model=` is left off: it picks none); a server elsewhere at
+        `VOICE_BASE_URL`, still sent `OPENAI_REALTIME_MODEL`, since such a server may choose
+        its model by it. Both of the owner's own are sent `VOICE_API_KEY`, as they were: a
+        pipeline here given one through `VOICE_SERVER_ARGS` checks it.
+        """
+        mode = self.voice_mode
+        if mode == "here":
+            return Endpoint(self.voice_here_url, self.voice_api_key)
+        if mode == "server":
+            if not self.voice_base_url:
+                return None
             return Endpoint.parse(
                 self.voice_base_url, api_key=self.voice_api_key, model=self.openai_realtime_model
             )
@@ -1398,14 +1453,71 @@ class Settings(BaseSettings):
             model=self.local_agent_model or "",
         )
 
+    @property
+    def voice_llm_endpoint(self) -> Endpoint | None:
+        """Where the voice pipeline here asks for its words, by `VOICE_LLM`, over the
+        Responses API (`Endpoint.api`); None when the source has no address to give.
+
+        `shared` is the local agent's server, as it always was; `here` a server of the
+        voice's own on `VOICE_LLM_SERVER_PORT`, serving `VOICE_LLM_MODEL`, with no key;
+        `remote` `VOICE_LLM_BASE_URL` with `VOICE_LLM_MODEL` and `voice_llm_key`.
+        """
+        if self.voice_llm == "shared":
+            words = self.local_agent_endpoint
+        elif self.voice_llm == "here":
+            words = Endpoint(f"http://{LOOPBACK_HOST}:{self.voice_llm_server_port}/v1",
+                             model=self.voice_llm_model or "")
+        elif self.voice_llm_base_url:
+            words = Endpoint.parse(self.voice_llm_base_url, model=self.voice_llm_model or "")
+            words = replace(words, api_key=self.voice_llm_key(words))
+        else:
+            words = None
+        return None if words is None else replace(words, api=RESPONSES_API)
+
+    def voice_llm_key(self, endpoint: Endpoint) -> str | None:
+        """The key a remote voice LLM is sent: `VOICE_LLM_API_KEY`, else `OPENAI_API_KEY`
+        only when `endpoint` is OpenAI's own host, else none (the placeholder). The owner's
+        OpenAI key never goes to a server that is not OpenAI's."""
+        if self.voice_llm_api_key:
+            return self.voice_llm_api_key
+        return self.openai_key if endpoint.is_openai else None
+
     def voice_refusal(self) -> str | None:
-        """Why no call could open, in one line; None when the voice has somewhere to go."""
-        if self.voice_base_url or self.openai_key:
+        """Why no call could open, in one line; None when the voice has somewhere to go.
+
+        Each mode is refused only for its own settings, and the pipeline here for its
+        words' (`VOICE_LLM`) as well, since a pipeline with none answers a call with silence.
+        """
+        mode = self.voice_mode
+        if mode == "openai":
+            if self.openai_key:
+                return None
+            if self.voice_mode_explicit is None:
+                return (
+                    "OPENAI_API_KEY is not set and VOICE_BASE_URL names no voice server of "
+                    "your own, so no call could open — `keryx setup`"
+                )
+            return ("VOICE_MODE is openai and OPENAI_API_KEY is not set, so no call could "
+                    "open — `keryx setup`")
+        if mode == "server":
+            if self.voice_base_url:
+                return None
+            return ("VOICE_MODE is server and VOICE_BASE_URL names no server, so no call "
+                    "could open — `keryx setup`")
+        return self._voice_llm_refusal()
+
+    def _voice_llm_refusal(self) -> str | None:
+        """Why the pipeline here would have no words, in one line; None when it has some."""
+        if self.voice_llm == "here" and not self.voice_llm_model:
+            missing = "VOICE_LLM_MODEL"
+        elif self.voice_llm == "remote" and not self.voice_llm_base_url:
+            missing = "VOICE_LLM_BASE_URL"
+        elif self.voice_llm == "remote" and not self.voice_llm_model:
+            missing = "VOICE_LLM_MODEL"
+        else:
             return None
-        return (
-            "OPENAI_API_KEY is not set and VOICE_BASE_URL names no voice server of your own, "
-            "so no call could open — `keryx setup`"
-        )
+        return (f"VOICE_LLM is {self.voice_llm} and {missing} is not set, so the voice here "
+                "would have no words to answer a call with — `keryx setup`")
 
     @property
     def owner_label(self) -> str:

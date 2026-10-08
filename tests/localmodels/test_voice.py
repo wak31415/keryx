@@ -936,6 +936,13 @@ def test_status_server_asks_the_server_and_never_says_its_key(settings):
     assert voice.mode(there.model_copy(update={"voice_base_url": "http://gpu:8765/v1"})) == "server"
 
 
+def test_the_mode_is_voice_mode_once_it_is_set(settings):
+    for mode in ("openai", "here", "server"):
+        assert voice.mode(settings.model_copy(update={"voice_mode_explicit": mode})) == mode
+    nowhere = Asked().status(settings.model_copy(update={"voice_mode_explicit": "server"}))
+    assert nowhere["mode"] == "server" and nowhere["server"] == {"reachable": None}
+
+
 def test_a_server_that_answers_anything_short_of_a_server_error_is_reachable():
     calls: list[dict] = []
 

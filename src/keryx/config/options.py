@@ -352,10 +352,11 @@ _openai_realtime = _openai(
 
 
 def realtime_models(settings: Settings, sources: Sources) -> Found:
-    """OpenAI's Realtime models — or, with `VOICE_BASE_URL`, that server's, since an OpenAI
-    id offered for a server of the owner's own would leave every call silent."""
-    if settings.voice_base_url:
-        return _server(settings.voice_endpoint, sources.get, "")
+    """OpenAI's Realtime models — or, with a voice of the owner's own, that server's, since
+    an OpenAI id offered for a server of the owner's own would leave every call silent."""
+    if settings.voice_mode != "openai":
+        return _server(settings.voice_endpoint, sources.get,
+                       _no_key("There's no voice server address"))
     return _openai_realtime(settings, sources)
 
 

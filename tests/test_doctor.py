@@ -166,6 +166,34 @@ def test_a_voice_server_of_your_own_needs_no_openai_key(healthy):
     assert not has_hard_failure([key])
 
 
+def test_a_server_voice_with_no_address_fails_and_says_which_setting(healthy):
+    settings = healthy.model_copy(update={"voice_mode_explicit": "server"})
+
+    check = by_name(run_doctor_checks(settings))["voice"]
+    assert (check.ok, check.severity) == (False, "hard") and "VOICE_BASE_URL" in check.hint
+    assert check.fix == fixes.setting("VOICE_BASE_URL")
+
+
+def test_the_voice_set_to_openai_ignores_an_address_left_behind(healthy):
+    settings = healthy.model_copy(update={"voice_mode_explicit": "openai", "openai_api_key": None,
+                                          "voice_base_url": "http://127.0.0.1:8765/v1"})
+
+    checks = by_name(run_doctor_checks(settings))
+    assert "voice" not in checks and "voice server program" not in checks
+    assert checks["OPENAI_API_KEY"].severity == "hard"
+    ok, _ = _reach()
+    assert endpoint_checks(settings, ok) == []
+
+
+def test_the_voice_set_to_here_is_this_machines_pipeline_whatever_the_address(healthy):
+    settings = healthy.model_copy(update={"voice_mode_explicit": "here"})
+
+    assert "127.0.0.1:8765" in by_name(run_doctor_checks(settings))["voice"].text
+    refused, _ = _reach(realtime="no")
+    (failed,) = endpoint_checks(settings, refused)
+    assert failed.fix == "voice:here"
+
+
 def test_with_a_voice_server_of_your_own_the_openai_key_is_for_web_search(healthy):
     settings = healthy.model_copy(update={"voice_base_url": "http://127.0.0.1:8765/v1"})
 

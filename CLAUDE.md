@@ -455,17 +455,24 @@ OpenAI-compatible client describes one. Five rulings:
   host (loopback, RFC 1918, a tailnet, `.local`, a bare name) may run without a key and is
   sent `PLACEHOLDER_BEARER` where an SDK refuses none; a public one is *warned* about in
   `doctor` (`endpoints.warnings`), never refused.
-- **One voice client.** `OpenAIRealtimeClient` speaks to `Settings.voice_endpoint`, which is
-  OpenAI unless `VOICE_BASE_URL` names a server of the owner's own (Hugging Face's
-  speech-to-speech is the one `keryx setup` installs). `realtime.make_provider` is the only
+- **One voice client.** `OpenAIRealtimeClient` speaks to `Settings.voice_endpoint`, which
+  `Settings.voice_mode` chooses: `VOICE_MODE`, else worked out from `VOICE_BASE_URL` exactly
+  as before it was a setting (blank is `openai`, the loopback address of `VOICE_SERVER_PORT`
+  is `here`, anything else `server`). `here` is Hugging Face's speech-to-speech, which
+  `keryx setup` installs, at an address derived from its port; `server` is `VOICE_BASE_URL`,
+  and None without one, which `voice_refusal` refuses. `realtime.make_provider` is the only
   place one is built, for the phone and `keryx loopback` alike. Two differences are made for
   a server that is not OpenAI's, because they were measured to matter (2026-10-04): a call is
   transcoded µ-law 8 kHz ⇄ PCM16 24 kHz (`audio/codec.py`), and a note goes in as a `user`
   item marked as not the caller's — that server takes a `system` item as a *new system
   prompt*, which would wipe the voice prompt. Do not add a third without measuring it.
-  Truncate is accepted and ignored there, and that is accepted, not worked around. The
-  persona's voice is not sent to it (`Settings.voice` is blank), since a server that does
-  not know `marin` speaks nothing.
+  Truncate is accepted and ignored there, and that is accepted, not worked around. Only
+  OpenAI's own host is sent the persona's voice and `OPENAI_TRANSCRIPTION_MODEL`
+  (`Settings.voice`, `voice_transcription_model`), since a server that does not know `marin`
+  speaks nothing. The pipeline here is sent no voice — it speaks `VOICE_SERVER_VOICE` from
+  its command line, and a per-session voice would override that — and no `?model=`. A
+  server elsewhere is still sent `OPENAI_REALTIME_MODEL`, which it may choose its model by,
+  and `VOICE_SERVER_VOICE` when that was set, else `OPENAI_VOICE` for one release.
 - **Every `*_BASE_URL` is protected**, and `VOICE_SERVER_ARGS`, `VOICE_MODE` and
   `VOICE_LLM` with them. A voice address pointed elsewhere ships every call's audio, the
   spoken PIN included, to whoever is there, and a mode or a voice-LLM source can send the
@@ -477,10 +484,14 @@ OpenAI-compatible client describes one. Five rulings:
   Both bind 127.0.0.1. The voice server's words come from the local agent's model, and its key
   goes in the child's `OPENAI_API_KEY` in place of the owner's — never on argv. Setup saves
   `VOICE_BASE_URL` only after the server has answered a Realtime handshake.
-- **`OPENAI_API_KEY` is optional.** It is the voice only while `VOICE_BASE_URL` is blank
-  (`Settings.voice_refusal`, which `serve` asks); otherwise it buys the voice model's
-  `web_search` (the Responses API — no local server has a hosted search tool), which is
-  registered only when there is a key.
+- **`OPENAI_API_KEY` is optional.** It is the voice only while the voice is OpenAI's
+  (`Settings.voice_refusal`, which `serve` asks, refuses each mode for its own missing
+  setting); otherwise it buys the voice model's `web_search` (the Responses API — no local
+  server has a hosted search tool), which is registered only when there is a key. It never
+  reaches a voice LLM (`Settings.voice_llm_endpoint`, by `VOICE_LLM`) that is not OpenAI's
+  own host: `VOICE_LLM_API_KEY`, else that key on `api.openai.com` only, else the
+  placeholder (`voice_llm_key`; a test is named after it). The endpoint carries the API it
+  is asked over (`Endpoint.api`, `responses`), so a second API is a second value.
 
 ## Two names
 
@@ -497,7 +508,8 @@ other built-in persona, or any name of the owner's. Three rulings:
   threaded through it.
 - **A persona is a name and a voice.** `PERSONAS` gives each built-in its Realtime voice
   (Lyra `marin`, Jarvis `cedar`), and any other name speaks in `OPENAI_VOICE`, or `marin`.
-  `Settings.voice` is what a call uses: `OPENAI_VOICE` when set, else the persona's. A voice
+  `Settings.voice` is what a call uses: on OpenAI, `OPENAI_VOICE` when set, else the
+  persona's; on a voice of the owner's own, see "A model is an address". A voice
   the organization may not use is refused with the whole `session.update`, instructions and
   tools included, so a persona's voice is a constant that has been heard, never a guess. A
   coding agent's name is refused as an assistant's.

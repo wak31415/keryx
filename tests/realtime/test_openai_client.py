@@ -951,6 +951,12 @@ async def test_a_self_hosted_server_is_reached_without_a_key_on_its_own_address(
     assert headers == {}
 
 
+async def test_an_endpoint_with_no_model_is_reached_with_no_model_in_the_query(connect):
+    harness = await connect(endpoint=Endpoint.parse("http://127.0.0.1:8765"))
+
+    assert harness.connector.calls[0][0] == "ws://127.0.0.1:8765/v1/realtime"
+
+
 async def test_a_self_hosted_server_with_a_key_gets_it_as_a_bearer(connect):
     keyed = Endpoint.parse("https://voice.example.com/v1", api_key="vk", model=MODEL)
     harness = await connect(endpoint=keyed)

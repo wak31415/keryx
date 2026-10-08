@@ -1002,14 +1002,14 @@ def test_local_as_the_default_needs_a_server(tmp_path, every_agent_installed):
     assert served.agent_refusal() is None
 
 
-# --- the voice's own model settings (read from M2 on) ------------------------------------
+# --- the voice's own model settings ---------------------------------------------------
 
 
 def test_the_voice_model_settings_default_to_what_runs_today():
     """Nothing set is today's install: the mode worked out as before, the words shared."""
     settings = Settings(_env_file=None, openai_api_key="test")
 
-    assert settings.voice_mode is None
+    assert settings.voice_mode_explicit is None and settings.voice_mode == "openai"
     assert settings.voice_llm == "shared"
     assert (settings.voice_llm_model, settings.voice_llm_base_url,
             settings.voice_llm_api_key) == (None, None, None)
@@ -1017,10 +1017,10 @@ def test_the_voice_model_settings_default_to_what_runs_today():
 
 
 def test_a_blank_voice_mode_or_voice_llm_address_is_unset():
-    settings = Settings(_env_file=None, openai_api_key="test", voice_mode=" ",
+    settings = Settings(_env_file=None, openai_api_key="test", voice_mode_explicit=" ",
                         voice_llm_model="", voice_llm_base_url="", voice_llm_api_key="")
 
-    assert settings.voice_mode is None
+    assert settings.voice_mode_explicit is None
     assert (settings.voice_llm_model, settings.voice_llm_base_url,
             settings.voice_llm_api_key) == (None, None, None)
 
@@ -1032,7 +1032,7 @@ def test_the_voice_llms_address_is_kept_as_its_v1_root():
     assert settings.voice_llm_base_url == "https://api.openai.com/v1"
 
 
-@pytest.mark.parametrize(("field", "value"), [("voice_mode", "local"), ("voice_llm", "cloud"),
+@pytest.mark.parametrize(("field", "value"), [("VOICE_MODE", "local"), ("voice_llm", "cloud"),
                                               ("voice_llm_server_port", 0),
                                               ("voice_llm_server_port", 70000)])
 def test_a_voice_model_setting_outside_its_values_is_refused(field, value):

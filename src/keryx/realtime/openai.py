@@ -665,7 +665,10 @@ def _transcoder_for(transport: AudioFormat, wire: AudioFormat | None) -> Transco
 
 
 def realtime_url(endpoint: Endpoint) -> str:
-    """The Realtime socket of `endpoint`, with its model in the query as OpenAI wants it."""
+    """The Realtime socket of `endpoint`, with its model in the query as OpenAI wants it —
+    and no query at all for an endpoint with no model (the pipeline here, which picks none)."""
+    if not endpoint.model:
+        return endpoint.ws_url(REALTIME_PATH)
     return endpoint.ws_url(REALTIME_PATH, model=endpoint.model)
 
 
