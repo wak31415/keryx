@@ -5,6 +5,9 @@ import Foundation
 // "SEAM" where it is declared, and listed in `ContractTests.awaitingCLI`):
 //
 // - `AgentSmokeTesting` — `keryx auth smoke NAME --json`.
+// - `CatalogModel.fitsAsVoiceLlm` — `models list --json` `models[].fits_as_voice_llm`: a
+//   model as the voice's own LLM fits beside the agent's. The voice-model lists' only fit
+//   mark (`fits_with_voice_llm` is the agent's), shown once the CLI prints it.
 // - `PhoneTunnel.hostname` — `phone tunnel --json` `hostname`.
 // - `SetupStep.deferrable`, `.deferred`, `SetupMarkResult.deferred` — `setup plan --json`,
 //   and `setup mark phone|service`.

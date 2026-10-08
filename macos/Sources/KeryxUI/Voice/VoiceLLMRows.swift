@@ -23,6 +23,9 @@ struct VoiceLLMRows: View {
     /// Remove Key was chosen: Check and Use removes the stored key.
     @State private var clearing = false
     @State private var editingKey = false
+    /// The fields hold the drafts saved before (or the words in use): read once, from the
+    /// settings, when they come.
+    @State private var draftsRead: Bool
 
     init(voice: VoiceStatus, report: ModelsReport?, picked: VoiceLLMSource? = nil) {
         self.voice = voice
@@ -31,6 +34,7 @@ struct VoiceLLMRows: View {
         let remote = voice.llmSource == .remote ? voice.llm : nil
         _address = State(initialValue: remote?.url ?? "")
         _remoteModel = State(initialValue: remote?.model ?? "")
+        _draftsRead = State(initialValue: remote != nil)
     }
 
     var body: some View {
@@ -49,8 +53,10 @@ struct VoiceLLMRows: View {
             Text("LLM")
             Text(VoiceLLMWording.caption(chosen, inUse: voice.llmSource))
         }
-        // Leaving with a server elsewhere typed in commits it, as a field does on losing focus.
+        // Leaving with a server elsewhere typed in saves the drafts, as a field does on losing
+        // focus; the drafts saved before are read back.
         .onDisappear { commitRemote() }
+        .onChange(of: model.config.value == nil, initial: true) { readDrafts() }
         switch chosen {
         case .shared: sharedRows
         case .here: hereRows
@@ -258,11 +264,29 @@ struct VoiceLLMRows: View {
     }
 
     /// Return in a remote field, or leaving the screen with one typed in: Check and Use, when
-    /// Remote or Cloud is picked, both fields are filled and they are not what is in use.
+    /// Remote or Cloud is picked: the typed drafts saved, as a field is on Return or on losing
+    /// focus — only into settings the words in use don't read (`VoiceLLMWording.drafts`), so
+    /// nothing is asked of a server and no voice restarts. Check and Use stays a click.
     private func commitRemote() {
-        let chosen = picked ?? voice.llmSource
-        guard chosen == .remote, let choice = choice(.remote), !inUse(.remote), model.canChangeVoiceLLM else { return }
-        start(choice)
+        guard (picked ?? voice.llmSource) == .remote else { return }
+        let rows = model.config.value ?? []
+        let stored = { (key: String) in rows.first { $0.key == key }?.value.map(ConfigWording.editText) ?? "" }
+        let writes = VoiceLLMWording.drafts(address: address, model: remoteModel, source: voice.llmSource,
+                                            stored: (stored("VOICE_LLM_BASE_URL"), stored("VOICE_LLM_MODEL")))
+        guard !writes.isEmpty else { return }
+        Task {
+            for (key, value) in writes { _ = await model.set(key: key, to: value, restart: false) }
+        }
+    }
+
+    /// The fields from the drafts saved before, once the settings are read: the address,
+    /// and the model while it is not the one a model of its own here runs.
+    private func readDrafts() {
+        guard !draftsRead, let rows = model.config.value else { return }
+        draftsRead = true
+        let text = { (key: String) in rows.first { $0.key == key }?.value.map(ConfigWording.editText) ?? "" }
+        if address.isEmpty { address = text("VOICE_LLM_BASE_URL") }
+        if remoteModel.isEmpty, voice.llmSource != .here { remoteModel = text("VOICE_LLM_MODEL") }
     }
 
     private func start(_ choice: VoiceLLMChoice) {
@@ -356,16 +380,17 @@ struct VoiceLLMRows: View {
     }
 
     /// The models a server of its own may run: the catalog, smallest first. Which fit is the
-    /// CLI's to say (`fits_with_voice_llm`, marked in `menuTitle`); the agent's `fits` answers
-    /// another question and is never read here.
+    /// CLI's to say (`fits_as_voice_llm`, marked in `menuTitle`); the agent's `fits` and
+    /// `fits_with_voice_llm` answer another question and are never read here.
     static func choices(_ models: [CatalogModel], current: String?) -> [CatalogModel] {
         models.sorted { $0.needsGb < $1.needsGb }
     }
 
-    /// "Qwen3.5 4B — Recommended, Fits", "… — Downloaded": the CLI's recommendation, its
-    /// `fits_with_voice_llm` (no mark from a CLI without it), and whether it is on disk.
+    /// "Qwen3.5 4B — Recommended, Fits", "… — Downloaded": the CLI's recommendation, whether
+    /// it fits as the voice's LLM (`fits_as_voice_llm`; no mark from a CLI without it), and
+    /// whether it is on disk.
     static func menuTitle(_ entry: CatalogModel, recommended: String?) -> String {
-        let marks = [entry.name == recommended ? "Recommended" : nil, entry.fitsWithVoiceLlm == true ? "Fits" : nil,
+        let marks = [entry.name == recommended ? "Recommended" : nil, entry.fitsAsVoiceLlm == true ? "Fits" : nil,
                      entry.downloaded ? "Downloaded" : nil].compactMap { $0 }
         return marks.isEmpty ? entry.title : "\(entry.title) — \(marks.joined(separator: ", "))"
     }
@@ -375,7 +400,7 @@ struct VoiceLLMRows: View {
     static func hereCaption(_ entry: CatalogModel?) -> String {
         guard let entry else { return "A small model of its own answers fastest" }
         let memory = "needs about \(Formatting.gigabytes(entry.needsGb)) of memory"
-        let fit = entry.fitsWithVoiceLlm == true ? ", and fits" : entry.fitsWithVoiceLlm == false ? ", more than is free" : ""
+        let fit = entry.fitsAsVoiceLlm == true ? ", and fits" : entry.fitsAsVoiceLlm == false ? ", more than is free" : ""
         return (entry.downloaded ? "Downloaded; \(memory)" : "\(Formatting.gigabytes(entry.sizeGb)) to download; \(memory)")
             + fit
     }
@@ -403,6 +428,26 @@ struct VoiceLLMRows: View {
         case let .remote(url, name, key):
             return sameAddress(url, voice.llm?.url) && name == voice.llm?.model && key == .stored
         }
+    }
+
+    /// What leaving Remote or Cloud with typed drafts saves: each draft that differs from what
+    /// is stored, into a setting the words in use don't read — both while they are the local
+    /// agent's; the address only while a model of its own runs here (its model is
+    /// `VOICE_LLM_MODEL` too); nothing while a server elsewhere is in use, whose settings they
+    /// are (Check and Use changes those).
+    static func drafts(address: String, model: String, source: VoiceLLMSource,
+                       stored: (address: String, model: String)) -> [(key: String, value: String)] {
+        let url = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        var writes: [(key: String, value: String)] = []
+        switch source {
+        case .remote:
+            return []
+        case .shared, .here:
+            if !url.isEmpty, url != stored.address { writes.append(("VOICE_LLM_BASE_URL", url)) }
+            if source == .shared, !name.isEmpty, name != stored.model { writes.append(("VOICE_LLM_MODEL", name)) }
+        }
+        return writes
     }
 
     /// Two addresses are the same one, but for a trailing slash or `/v1`.
@@ -469,6 +514,9 @@ struct VoiceLLMRows: View {
     static func onACall(_ assistant: String?) -> String {
         "\(assistant ?? "The assistant") is on a call. Try again when it ends."
     }
+
+    /// A stopped `voice llm`, while the CLI puts back what it was replacing.
+    static let stopping = "Stopping… putting back the words the voice had"
 
     static let liveCallDetail = "Changing it restarts the voice server, which would cut the call off. "
         + "Try again when it ends."

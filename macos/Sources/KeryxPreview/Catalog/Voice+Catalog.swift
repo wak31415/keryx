@@ -145,6 +145,20 @@ extension ScreenCatalog {
                                              + "its log: /Users/you/.local/state/keryx/logs/keryx-voice-llm.err.log")),
                 ])))
             },
+            Entry("voice-here-llm-stopping", size: tall) {
+                VoiceView(mode: .here, llm: .here).environment({
+                    let model = choosingLLM(.slowToStop(Array(PreviewData.voiceLLMHereLines.prefix(2)
+                        .compactMap(VoiceLLMEvent.parse))))
+                    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+                    model.voiceLLMRun.cancel()
+                    return model
+                }())
+            },
+            // The CLI's per-row fit as the voice's LLM (not printed yet), put in by hand.
+            Entry("voice-here-llm-fits", size: tall) {
+                VoiceView(mode: .here, llm: .here).environment(AppModel.preview(client: PreviewClient(
+                    models: .success(fitsAsVoice))))
+            },
             Entry("voice-here-needs-voice-llm", size: tall) {
                 VoiceView().environment(AppModel.preview(client: PreviewClient(voice: .success(needsVoiceLLM))))
             },
@@ -205,6 +219,18 @@ extension ScreenCatalog {
         var report = PreviewData.models
         report.voiceLlmRecommended = "qwen3.5-4b"
         report.voiceLlmSeparate = true
+        return report
+    }
+
+    /// `separateModels` with `fits_as_voice_llm` as the CLI is to print it, written by hand: on
+    /// this 36 GB Mac beside Qwen3-Coder, the 4b fits as the voice's LLM, the 9b does not.
+    private static var fitsAsVoice: ModelsReport {
+        var report = separateModels
+        report.models = report.models.map { entry in
+            var entry = entry
+            entry.fitsAsVoiceLlm = entry.name == "qwen3.5-4b"
+            return entry
+        }
         return report
     }
 

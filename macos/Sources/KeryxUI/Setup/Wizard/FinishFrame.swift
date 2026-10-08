@@ -242,6 +242,8 @@ package struct FinishFrame: View {
     private func localLine(_ row: CheckRow, next: LocalStep, intent: LocalIntent) -> Line? {
         switch row {
         case .voice:
+            // Stopped part way, the CLI puts back what it was replacing: said, never a hang.
+            if model.voiceLLMRun.phase == .cancelling { return Line(tone: .working, text: VoiceLLMWording.stopping) }
             if case let .running(activity)? = model.voiceLLMRun.phase {
                 let sizes = activity.progress.flatMap { RunSteps.sizes(done: $0.done, total: $0.total) }
                 return Line(tone: .working, text: VoiceWording.running(activity.message) + (sizes.map { " · \($0)" } ?? ""),

@@ -573,9 +573,10 @@ public final class AppModel {
         await set(key: row.key, to: value)
     }
 
-    /// Sets a plain setting by its key.
-    public func set(key: String, to value: String) async -> KeryxError? {
-        await writeSetting { try await $0.set(key: key, value: value) }
+    /// Sets a plain setting by its key. `restart`: Keryx reads it, so the restart banner
+    /// shows; false for one only another server reads (a voice LLM's draft address).
+    public func set(key: String, to value: String, restart: Bool = true) async -> KeryxError? {
+        await writeSetting(restart: restart) { try await $0.set(key: key, value: value) }
     }
 
     /// Chooses one of a setting's options (`config options`): an option whose value is
@@ -1319,9 +1320,9 @@ public final class AppModel {
     static let speechModelsDownloading =
         "The speech models are still downloading. Set it up again once they're in."
 
-    private func writeSetting(_ write: (KeryxClient) async throws -> Void) async -> KeryxError? {
+    private func writeSetting(restart: Bool = true, _ write: (KeryxClient) async throws -> Void) async -> KeryxError? {
         if let error = await perform(write, writing: .setting) { return error }
-        configNeedsRestart = true
+        if restart { configNeedsRestart = true }
         await refresh(.config)
         return nil
     }

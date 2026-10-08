@@ -457,7 +457,7 @@ package enum ModelsRules {
     }
 
     /// The models the voice's own LLM may be, for Thinks: the catalog smallest first, which
-    /// fit said by the CLI's `fits_with_voice_llm` in each title — never the agent's `fits`.
+    /// fit said by the CLI's `fits_as_voice_llm` in each title — never the agent's fields.
     package static func voiceChoices(_ models: ModelsReport?) -> [CatalogModel] {
         (models?.models ?? []).sorted { $0.needsGb < $1.needsGb }
     }

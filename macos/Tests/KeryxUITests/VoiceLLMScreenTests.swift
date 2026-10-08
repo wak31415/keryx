@@ -31,26 +31,59 @@ import KeryxPreview
             == "Same as Local Agent stays in use until you choose Use This Model")
     }
 
-    @Test func aModelOfItsOwnIsMarkedByTheCLIsFitNeverTheAgents() {
+    @Test func aVoiceModelIsMarkedOnlyByItsOwnFitAsTheVoicesLLM() {
         let models = PreviewData.models.models
         let choices = VoiceLLMWording.choices(models, current: nil)
-        // The catalog, smallest first: whether each fits is said by `fits_with_voice_llm`.
         #expect(choices.count == models.count)
         #expect(choices.map(\.needsGb) == choices.map(\.needsGb).sorted())
-        // qwen3.8-27b fits as the agent's (`fits`), but not beside a voice of its own.
-        let big = models.first { $0.name == "qwen3.8-27b" }!
-        #expect(big.fits && big.fitsWithVoiceLlm == false)
-        #expect(VoiceLLMWording.menuTitle(big, recommended: nil) == "Qwen3.8 27B")
-        #expect(VoiceLLMWording.hereCaption(big).hasSuffix(", more than is free"))
+        // `fits` and `fits_with_voice_llm` are the agent's: neither marks a voice model.
         let small = models.first { $0.name == "qwen3.5-4b" }!
-        #expect(VoiceLLMWording.menuTitle(small, recommended: "qwen3.5-4b") == "Qwen3.5 4B — Recommended, Fits")
-        #expect(VoiceLLMWording.hereCaption(small).hasSuffix(", and fits"))
-        // An older CLI says nothing of it: no mark at all, rather than a wrong one.
-        var older = small
-        older.fitsWithVoiceLlm = nil
-        #expect(VoiceLLMWording.menuTitle(older, recommended: nil) == "Qwen3.5 4B")
-        #expect(!VoiceLLMWording.hereCaption(older).contains("fit"))
+        #expect(small.fits && small.fitsWithVoiceLlm == true && small.fitsAsVoiceLlm == nil)
+        #expect(VoiceLLMWording.menuTitle(small, recommended: "qwen3.5-4b") == "Qwen3.5 4B — Recommended")
+        #expect(!VoiceLLMWording.hereCaption(small).contains("fit"))
+        // `fits_as_voice_llm`, once the CLI prints it, lights it up (the catalog's hand-edited
+        // `voice-here-llm-fits`).
+        var fits = small
+        fits.fitsAsVoiceLlm = true
+        #expect(VoiceLLMWording.menuTitle(fits, recommended: nil) == "Qwen3.5 4B — Fits")
+        #expect(VoiceLLMWording.hereCaption(fits).hasSuffix(", and fits"))
+        fits.fitsAsVoiceLlm = false
+        #expect(VoiceLLMWording.menuTitle(fits, recommended: nil) == "Qwen3.5 4B")
+        #expect(VoiceLLMWording.hereCaption(fits).hasSuffix(", more than is free"))
         #expect(VoiceLLMWording.hereCaption(nil) == "A small model of its own answers fastest")
+        #expect(Set(ScreenCatalog.entries().map(\.id)).contains("voice-here-llm-fits"))
+    }
+
+    @Test func leavingRemoteSavesOnlyDraftsTheWordsInUseDontRead() {
+        let none = (address: "", model: "")
+        // Shared: both are unread, both saved.
+        #expect(VoiceLLMWording.drafts(address: " https://api.openai.com/v1 ", model: "gpt-5-mini", source: .shared,
+                                       stored: none).map(\.key) == ["VOICE_LLM_BASE_URL", "VOICE_LLM_MODEL"])
+        // A model of its own here: its model is `VOICE_LLM_MODEL`, so only the address.
+        #expect(VoiceLLMWording.drafts(address: "http://box:11434", model: "qwen3:4b", source: .here,
+                                       stored: none).map(\.key) == ["VOICE_LLM_BASE_URL"])
+        // A server elsewhere in use: they are its settings; Check and Use changes them.
+        #expect(VoiceLLMWording.drafts(address: "http://box:11434", model: "m", source: .remote, stored: none).isEmpty)
+        // Unchanged, or blank: nothing.
+        #expect(VoiceLLMWording.drafts(address: "http://box:11434", model: "", source: .shared,
+                                       stored: ("http://box:11434", "")).isEmpty)
+    }
+
+    @Test func aStoppedVoiceLLMChoiceSaysStoppingUntilItEnds() async {
+        let model = AppModel.preview(client: PreviewClient(voiceLLM: .slowToStop([
+            .step(step: "download", message: "Downloading Qwen3.5 4B for the voice LLM (2.7 GB)")])))
+        #expect(model.chooseVoiceLLM(.here(model: "qwen3.5-4b")))
+        for _ in 0..<500 where model.voiceLLMRun.lastStep != "download" { try? await Task.sleep(for: .milliseconds(10)) }
+        #expect(model.voiceLLMRun.lastStep == "download")
+        model.voiceLLMRun.cancel()
+        #expect(model.voiceLLMRun.phase == .cancelling)
+        guard case let .running(progress)? = RunDisplay.of(model.voiceLLMRun) else {
+            Issue.record("not shown as running")
+            return
+        }
+        #expect(progress.stopping, "Stopping…, its Cancel disabled")
+        #expect(model.voiceLLMBusy && !model.canChangeVoiceLLM, "nothing else starts meanwhile")
+        #expect(VoiceLLMWording.stopping.hasPrefix("Stopping…"))
     }
 
     @Test func theWorkBesideAVoiceOfItsOwnIsOfferedWhatLeavesRoomForIt() {
