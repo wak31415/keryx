@@ -2062,3 +2062,15 @@ async def test_waiting_for_the_lock_never_stops_the_event_loop(tmp_path):
     assert result["status"] == "failed"
     assert ticks == 30  # the loop kept turning while the write waited
     assert harness.record() is None and harness.spawn.commands == []
+
+
+async def test_a_restart_held_for_a_call_that_the_owner_stops_meanwhile_never_happens(harness):
+    """Deferred until the line clears, and the owner stops Keryx in the meantime: by the
+    time it would go ahead, its record is no longer pending, and nothing is armed or run."""
+    harness.store.save(pending())
+    harness.store.settle_stopped()
+
+    await harness.coordinator._execute(ServiceTarget("systemd", "keryx.service"))
+
+    assert harness.spawn.commands == [] and harness.watch.plans == []
+    assert harness.record().state == "stopped"
