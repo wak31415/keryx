@@ -767,8 +767,15 @@ public final class AppModel {
         tunnelInstall.start(client.installCloudflared(brew: brew)) { [weak self] in
             guard let self else { return false }
             await refresh(.phoneTunnel, .setupPlan, .doctor)
-            return phoneTunnel.value?.kind != nil
+            return phoneTunnel.value?.kind != nil || client.cloudflaredInstalled()
         }
+    }
+
+    /// Cloudflare Tunnel is installed where Homebrew puts it, but Keryx's own PATH does not
+    /// reach it: the tunnel reads as missing to Keryx though the install worked.
+    public var tunnelOutsideKeryxPath: Bool {
+        guard phoneTunnel.value?.kind == nil, let client else { return false }
+        return client.cloudflaredInstalled()
     }
 
     // MARK: - Phone

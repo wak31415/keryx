@@ -365,6 +365,7 @@ public struct PreviewClient: KeryxClient {
     public func phoneTunnel() async throws -> PhoneTunnel { try phoneTunnelReply.get() }
 
     public func homebrew() -> String? { homebrewPath }
+    public func cloudflaredInstalled() -> Bool { (try? phoneTunnelReply.get().kind) != nil }
 
     /// Homebrew's first lines, then it holds until stopped.
     public func installCloudflared(brew: String) -> StoppableStream<String> {

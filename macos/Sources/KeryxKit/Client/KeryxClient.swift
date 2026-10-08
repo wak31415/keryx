@@ -101,6 +101,9 @@ public protocol KeryxClient: Sendable {
     /// that is not Keryx's, and only after the owner has clicked for it. Whether it worked is
     /// read afterwards (`phone tunnel`): Homebrew's exit is not a line. `stop()` stops it.
     func installCloudflared(brew: String) -> StoppableStream<String>
+    /// `cloudflared` is in one of the folders `brew` is looked for in: what an install
+    /// is checked by, besides `phone tunnel`, which looks only on Keryx's own PATH.
+    func cloudflaredInstalled() -> Bool
 
     /// The Twilio account's numbers. Twilio refusing is the report's `error`.
     func phoneNumbers() async throws -> PhoneNumbers

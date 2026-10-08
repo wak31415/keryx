@@ -357,7 +357,8 @@ remember:
   `KeryxUI` (the screens and the menu), `KeryxApp` (the shell: the window, the menu bar item,
   the app's own Settings) and `KeryxSnapshots` (the harness that photographs every screen).
   It runs the `keryx` CLI and nothing else (but `scripts/install-launchd.sh --llm`, to start
-  the model server), so every rule above binds it without a copy: a command it needs gets a
+  the model server, and `brew install cloudflared` — the owner's Homebrew, only on their
+  click in the setup wizard's Phone Line, its output kept for Show Details), so every rule above binds it without a copy: a command it needs gets a
   `--json`, never a route or a socket, and it writes none of Keryx's files itself. It strips
   `KERYX_ACTOR` and `JARVIS_ACTOR` (`Sanitise.environment`), because it is the owner at a
   terminal and never the service. It finds Keryx the way the service runs — the folder

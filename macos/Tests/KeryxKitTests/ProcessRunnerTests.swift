@@ -116,6 +116,14 @@ import Testing
         #expect(got == ["done"])
     }
 
+    @Test func aStreamThatMergesStderrReadsItInOrder() async throws {
+        var got: [String] = []
+        for try await line in runner.lines(.init(executable: "/bin/sh",
+            arguments: ["-c", "echo '==> Fetching'; echo 'Error: no bottle' >&2; echo after"], timeout: nil,
+            mergesStderr: true)) { got.append(line) }
+        #expect(got == ["==> Fetching", "Error: no bottle", "after"])
+    }
+
     @Test func streamsLinesAndCancellationKillsTheChild() async throws {
         var got: [String] = []
         for try await line in runner.lines(.init(executable: "/bin/sh",

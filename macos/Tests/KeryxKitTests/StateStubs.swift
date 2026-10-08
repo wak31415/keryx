@@ -78,6 +78,7 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         }
         var projectResult: Result<ProjectContextResult, KeryxError> = .success(PreviewClient.projectsKept)
         var homebrew: String?
+        var cloudflaredInstalled = false
         var brewInstall: @Sendable () -> StoppableStream<String> = {
             StoppableStream(AsyncThrowingStream { $0.finish() })
         }
@@ -242,6 +243,7 @@ final class StubClient: KeryxClient, @unchecked Sendable {
     }
     func tools() async throws -> ToolsReport { try answer("tools") { $0.tools } }
     func homebrew() -> String? { lock.withLock { replies.homebrew } }
+    func cloudflaredInstalled() -> Bool { lock.withLock { replies.cloudflaredInstalled } }
     func installCloudflared(brew: String) -> StoppableStream<String> {
         let make = lock.withLock {
             recorded.append("brew install cloudflared")

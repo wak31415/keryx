@@ -216,6 +216,34 @@ import KeryxPreview
         let onPath = CLIClient(location: .fixture, runner: FakeRunner(),
                                files: FakeFileSystem(executables: ["/opt/homebrew/bin/brew", "/Users/you/.local/bin/brew"]))
         #expect(onPath.homebrew() == "/Users/you/.local/bin/brew", "the PATH Keryx runs with comes first")
+        // A relative PATH entry is never a place to run brew from.
+        var relative = KeryxLocation.fixture
+        relative.environment["PATH"] = "bin:/usr/bin"
+        let skipped = CLIClient(location: relative, runner: FakeRunner(),
+                                files: FakeFileSystem(executables: ["bin/brew", "/usr/local/bin/brew"]))
+        #expect(skipped.homebrew() == "/usr/local/bin/brew")
+    }
+
+    @Test func whatBrewInstalledIsFoundWhereBrewWasFound() {
+        // brew from Homebrew's own folder, not on Keryx's PATH: cloudflared is found beside it.
+        let client = CLIClient(location: .fixture, runner: FakeRunner(),
+                               files: FakeFileSystem(executables: ["/opt/homebrew/bin/brew", "/opt/homebrew/bin/cloudflared"]))
+        #expect(client.homebrew() == "/opt/homebrew/bin/brew")
+        #expect(client.cloudflaredInstalled())
+        #expect(!CLIClient(location: .fixture, runner: FakeRunner(), files: FakeFileSystem()).cloudflaredInstalled())
+    }
+
+    @Test func anInstallThatWorkedOutsideKeryxsPathReadsAsWorked() async {
+        let client = StubClient {
+            $0.homebrew = "/opt/homebrew/bin/brew"
+            $0.cloudflaredInstalled = true
+            $0.phoneTunnel = .success(PreviewData.phoneTunnelUnset)
+        }
+        let model = AppModel.stubbed(client)
+        model.installTunnel()
+        await model.tunnelInstall.settled()
+        #expect(model.tunnelInstall.phase == .finished)
+        #expect(model.tunnelOutsideKeryxPath, "and the frame says why Keryx doesn't see it")
     }
 
     @Test func installingTheTunnelIsBrewInstallCloudflaredAndNothingElse() async throws {
@@ -228,6 +256,7 @@ import KeryxPreview
         #expect(request.executable == "/opt/homebrew/bin/brew")
         #expect(request.arguments == ["install", "cloudflared"])
         #expect(request.environment["KERYX_ACTOR"] == nil && request.timeout == nil)
+        #expect(request.mergesStderr, "Homebrew says its errors on stderr")
         #expect(lines == ["==> Fetching cloudflared", "🍺  cloudflared was installed"], "blank lines dropped")
         #expect(CommandLog.describe(executable: request.executable, arguments: request.arguments) == "brew …")
     }
@@ -238,9 +267,15 @@ import KeryxPreview
         await install.settled()
         #expect(install.phase == .finished)
         let failed = ProgramInstall()
-        failed.start(StoppableStream(AsyncThrowingStream { $0.yield("Error: no bottle"); $0.finish() })) { false }
+        // As the runner hands it over with stderr merged: Homebrew's error after its progress.
+        failed.start(StoppableStream(AsyncThrowingStream {
+            $0.yield("==> Fetching cloudflared")
+            $0.yield("Error: no bottle available")
+            $0.finish()
+        })) { false }
         await failed.settled()
-        #expect(failed.phase == .failed(StreamFailure(ProgramInstall.didNotInstall, detail: "Error: no bottle")))
+        #expect(failed.phase == .failed(StreamFailure(ProgramInstall.didNotInstall,
+                                                      detail: "==> Fetching cloudflared\nError: no bottle available")))
     }
 
     @Test func aCancelledInstallLeavesNothingAndQuittingStopsIt() async throws {

@@ -263,13 +263,27 @@ public struct CLIClient: KeryxClient {
         try await decode(["phone", "tunnel", "--json"])
     }
 
-    /// Homebrew's own places, after the PATH Keryx runs with.
-    static let homebrewPlaces = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+    /// Homebrew's own folders, after the PATH Keryx runs with.
+    static let homebrewFolders = ["/opt/homebrew/bin", "/usr/local/bin"]
 
-    public func homebrew() -> String? {
-        let path = (location.environment["PATH"] ?? "").split(separator: ":").map { String($0) + "/brew" }
-        return (path + Self.homebrewPlaces).first { files.isExecutableFile(atPath: $0) }
+    /// Where a Homebrew program is looked for, in order: the PATH Keryx runs with (absolute
+    /// folders only), then Homebrew's own folders. The one order for finding `brew` and for
+    /// finding what it installed, so an install that worked is never read as one that did not.
+    func homebrewFolders() -> [String] {
+        let path = (location.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+            .filter { $0.hasPrefix("/") }
+        var seen: Set<String> = []
+        return (path + Self.homebrewFolders).filter { seen.insert($0).inserted }
     }
+
+    /// `name` in the first of `homebrewFolders` that has it, as an absolute path.
+    func homebrewProgram(_ name: String) -> String? {
+        homebrewFolders().map { $0 + "/" + name }.first { files.isExecutableFile(atPath: $0) }
+    }
+
+    public func homebrew() -> String? { homebrewProgram("brew") }
+
+    public func cloudflaredInstalled() -> Bool { homebrewProgram("cloudflared") != nil }
 
     /// Run as the owner's Homebrew, in `/`, with Keryx's own environment (no actor
     /// variables); never a shell. No timeout: a first install fetches its bottles.
@@ -277,7 +291,7 @@ public struct CLIClient: KeryxClient {
         let request = CommandRequest(executable: brew, arguments: ["install", "cloudflared"],
                                      environment: Sanitise.environment(location.environment)
                                          .merging(["HOMEBREW_NO_ENV_HINTS": "1"]) { $1 },
-                                     workingDirectory: "/", stdin: nil, timeout: nil)
+                                     workingDirectory: "/", stdin: nil, timeout: nil, mergesStderr: true)
         let lines = runner.lines(request)
         let stream = AsyncThrowingStream<String, Error> { continuation in
             let task = Task {

@@ -128,7 +128,8 @@ Refresh (⌘R) reads everything again.
   enforces the rules about who may change what.
 - **It writes no Keryx file itself.** Every change is a `keryx` command. The one exception
   is starting the model server, which runs the checkout's `scripts/install-launchd.sh
-  --llm`.
+  --llm`. The one program it installs that is not Keryx's is Cloudflare Tunnel, with
+  `brew install cloudflared`, only when Homebrew is on this Mac and only on a click.
 - **It never sets or shows the PIN.** `keryx setup`, which it opens in Terminal, is the only
   way to change one from the keyboard.
 - **It never answers an approval.** Only the phone's keypad can. The app can pause the
