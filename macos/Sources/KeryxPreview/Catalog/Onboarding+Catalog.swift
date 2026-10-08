@@ -9,7 +9,7 @@ extension ScreenCatalog {
     /// Where the locator looked, on a Mac without Keryx.
     private static let notFound = LocateFailure(lookedAt: [
         "No Keryx folder has been chosen in the app.",
-        "There is no ~/Library/LaunchAgents/dev.keryx.agent.plist, so the service is not installed.",
+        "There is no ~/Library/LaunchAgents/dev.keryx.agent.plist, so Keryx has not run in the background here yet.",
         "Your login shell (zsh) has no keryx on its PATH.",
     ])
 

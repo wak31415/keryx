@@ -66,21 +66,18 @@ struct SetupStepPage: View {
     let context: SetupContext
     /// Another button's work is under way.
     let busy: Bool
-    /// The service is being installed.
-    let installing: Bool
     let perform: (SetupAction) -> Void
 
     @Environment(AppModel.self) private var model
     /// What Keryx checked: open from the start when a check failed, since that is the why.
     @State private var detailsOpen: Bool
 
-    init(step: SetupStep, plan: SetupPlan, context: SetupContext, busy: Bool, installing: Bool,
+    init(step: SetupStep, plan: SetupPlan, context: SetupContext, busy: Bool,
          perform: @escaping (SetupAction) -> Void) {
         self.step = step
         self.plan = plan
         self.context = context
         self.busy = busy
-        self.installing = installing
         self.perform = perform
         _detailsOpen = State(initialValue: step.kind == .failed)
     }
@@ -130,7 +127,7 @@ struct SetupStepPage: View {
                     Section {
                         DisclosureGroup(isExpanded: $detailsOpen) {
                             ForEach(Array(step.checks.enumerated()), id: \.offset) { _, check in
-                                CheckLine(title: check.title, state: check.state, detail: check.detail,
+                                CheckLine(title: CheckWording.title(check.title), state: check.state, detail: check.detail,
                                           titles: Wording.titles(context.config),
                                           action: checkAction(check, besides: actions),
                                           disabled: actions.waiting, perform: perform)
@@ -188,8 +185,10 @@ struct SetupStepPage: View {
                     Button(action.title) { perform(action) }
                         .disabled(actions.waiting || disabled(action))
                 }
-                if installing {
+                // Keryx starting, by itself or from Start Keryx, from whichever window.
+                if model.serviceChange == .installing {
                     ProgressView().controlSize(.small)
+                    Text("Starting Keryx…").foregroundStyle(.secondary)
                 }
             }
             .controlSize(.large)
@@ -227,7 +226,7 @@ struct SetupStepPage: View {
 
     private func disabled(_ action: SetupAction) -> Bool {
         switch action.effect {
-        case .installService: busy
+        case .startKeryx: busy
         case .startModelServer: !model.canStartModelServer
         case .downloadVoiceModels: !model.canDownloadVoiceModels
         case .mark: busy

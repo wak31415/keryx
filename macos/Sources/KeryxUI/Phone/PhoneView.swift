@@ -221,7 +221,7 @@ private struct PhoneForm: View {
                 LabeledContent {
                     DotText(line: service)
                 } label: {
-                    Text("Runs as a service")
+                    Text("Runs in the background")
                     if let hint = service.hint { Text(hint) }
                 }
             } else if let error = model.phoneTunnel.error, !model.phoneTunnel.isLoading {

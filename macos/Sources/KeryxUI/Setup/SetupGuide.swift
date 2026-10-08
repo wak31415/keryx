@@ -16,8 +16,9 @@ struct SetupAction: Equatable, Identifiable, Sendable {
         case secret(key: String, title: String, replacing: Bool)
         /// `keryx setup mark STEP`: an optional step skipped, or the PIN left to the first call.
         case mark(String)
-        /// `keryx service install`, after a confirmation.
-        case installService
+        /// Keryx started answering calls (`AppModel.startAnswering`), with no question: the app
+        /// keeps it running while it is open.
+        case startKeryx
         /// `keryx models start`, followed here.
         case startModelServer
         /// `keryx voice download`, followed on Local Models.
@@ -198,7 +199,7 @@ enum SetupGuide {
             actions = SetupActions(primary: fix, others: rest)
         }
         if step.kind == .blocked, let first = blockers(of: step, in: plan).first {
-            let go = SetupAction(title: "Go to \(Wording.titleCase(first.title))", effect: .go(.step(first.id)))
+            let go = SetupAction(title: "Go to \(SetupWording.title(first))", effect: .go(.step(first.id)))
             actions = SetupActions(primary: go, others: [actions.primary].compactMap { $0 } + actions.others,
                                    waiting: true)
         }
@@ -243,9 +244,7 @@ enum SetupGuide {
             return SetupActions(primary: open("Open Phone", .show(.phone)))
         case "service":
             if done { return SetupActions() }
-            let installed = context.service?.units.agent.installed == true
-            return SetupActions(primary: SetupAction(title: installed ? "Start Service…" : "Install Service…",
-                                                     effect: .installService))
+            return SetupActions(primary: SetupAction(title: "Start Keryx", effect: .startKeryx))
         case "local":
             return local(context)
         case "google":

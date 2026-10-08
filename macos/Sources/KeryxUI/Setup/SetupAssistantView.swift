@@ -5,8 +5,8 @@ import SwiftUI
 /// The Setup Assistant: the steps to a first working call, one page at a time, in the
 /// window with id `KeryxWindowID.setup`. A renderer of `keryx setup plan`: the list of steps
 /// with their states, the page of the one chosen with the button that settles it, and Back,
-/// Skip and Continue. What a step's button does happens here (a secret, `setup mark`, the
-/// service, the model server) or in the main window, asked through `AppModel.request`.
+/// Skip and Continue. What a step's button does happens here (a secret, `setup mark`,
+/// starting Keryx, the model server) or in the main window, asked through `AppModel.request`.
 ///
 /// The plan is read again whenever the window becomes key — the owner may have finished a
 /// step in the main window — and after everything done here.
@@ -22,8 +22,6 @@ public struct SetupAssistantView: View {
     @AppStorage(SetupLaunch.hiddenKey) private var hiddenAtLaunch = false
     @State private var page: SetupPage?
     @State private var secret: SecretRequest?
-    @State private var confirmingInstall = false
-    @State private var installing = false
     @State private var marking = false
     @State private var failure: KeryxError?
     /// The plan's reload under way, and whether another was asked for meanwhile: a change
@@ -34,9 +32,8 @@ public struct SetupAssistantView: View {
     public init() {}
 
     /// Opened at `page`, for the catalog.
-    package init(page: SetupPage?, installing: Bool = false) {
+    package init(page: SetupPage?) {
         _page = State(initialValue: page)
-        _installing = State(initialValue: installing)
     }
 
     public var body: some View {
@@ -52,13 +49,6 @@ public struct SetupAssistantView: View {
             .onChange(of: model.config.value) { reloadPlan() }
             .sheet(item: $secret, onDismiss: reloadPlan) { request in
                 SecretSheet(key: request.key, title: request.title, replacing: request.replacing)
-            }
-            .confirmationDialog(ServiceWording.Change.install.question, isPresented: $confirmingInstall) {
-                Button(ServiceWording.Change.install.button) { installService() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text(ServiceWording.Change.install.message(
-                    assistant: Wording.assistant(model.status.value) ?? "the assistant", liveCalls: 0))
             }
             .errorAlert($failure)
     }
@@ -92,7 +82,7 @@ public struct SetupAssistantView: View {
                 case let .step(id):
                     if let step = plan.step(id) {
                         SetupStepPage(step: step, plan: plan, context: context, busy: busy,
-                                      installing: installing, perform: perform)
+                                      perform: perform)
                             .id(id)
                     }
                 case .finish:
@@ -153,9 +143,9 @@ public struct SetupAssistantView: View {
 
     // MARK: - Actions
 
-    /// Something is under way that another button must not start beside: here, or Keryx's
-    /// service being installed or uninstalled from any window.
-    private var busy: Bool { installing || marking || model.serviceChange != nil }
+    /// Something is under way that another button must not start beside: here, or Keryx
+    /// starting or stopping, by itself or from any window.
+    private var busy: Bool { marking || model.serviceChange != nil }
 
     private func perform(_ action: SetupAction) {
         switch action.effect {
@@ -166,8 +156,8 @@ public struct SetupAssistantView: View {
             secret = SecretRequest(key: key, title: title, replacing: replacing)
         case let .mark(id):
             mark(id)
-        case .installService:
-            confirmingInstall = true
+        case .startKeryx:
+            startKeryx()
         case .startModelServer:
             model.runModelServer()
         case .downloadVoiceModels:
@@ -197,12 +187,9 @@ public struct SetupAssistantView: View {
         }
     }
 
-    private func installService() {
-        installing = true
+    private func startKeryx() {
         Task {
-            let answer = await model.installService()
-            installing = false
-            if case let .failure(error) = answer { failure = error }
+            if case let .failure(error) = await model.startAnswering() { failure = error }
         }
     }
 

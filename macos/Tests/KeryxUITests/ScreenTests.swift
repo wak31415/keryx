@@ -41,10 +41,10 @@ import KeryxPreview
     @Test func aServicesLabelIsSaidAsWhatItIs() {
         let raw = "dev.keryx.agent is not installed — Keryx cannot restart itself, and nothing restarts it if it dies"
         let said = CheckWording.detail(raw)
-        #expect(said.text == "The background service isn't installed — Keryx cannot restart itself, and nothing "
+        #expect(said.text == "Keryx isn't answering calls yet — Keryx cannot restart itself, and nothing "
             + "restarts it if it dies")
         #expect(said.raw == raw, "the label under Show Details")
-        #expect(CheckWording.detail("keryx.service is not installed").text == "The background service isn't installed")
+        #expect(CheckWording.detail("keryx.service is not installed").text == "Keryx isn't answering calls yet")
         #expect(CheckWording.detail("llama-server is not installed").raw == nil, "a program is not a service")
     }
 

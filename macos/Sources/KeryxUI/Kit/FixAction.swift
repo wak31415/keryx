@@ -21,8 +21,9 @@ enum FixAction: Equatable, Sendable {
     case integration(String)
     /// `pin`: the PIN sheet.
     case pin
-    /// `service:install`: Keryx's background service, installed (or started) after a question.
-    case installService
+    /// `service:install`: Keryx started answering calls. The app starts it by itself once
+    /// setup allows; the button is for a start that failed, and asks nothing first.
+    case startKeryx
     /// `models:start`: the local model server, started.
     case startModelServer
     /// `models:choose`: a local model to choose (and download), on Local Models.
@@ -42,7 +43,7 @@ enum FixAction: Equatable, Sendable {
 
     /// The ids that take no argument, as the CLI spells them (`fixes.ACTIONS`).
     static let screens: [String: FixAction] = [
-        "pin": .pin, "service:install": .installService, "models:start": .startModelServer,
+        "pin": .pin, "service:install": .startKeryx, "models:start": .startModelServer,
         "models:choose": .chooseModel, "voice:here": .voiceHere, "voice:download": .voiceDownload,
         "phone:account": .phoneAccount, "phone:webhooks": .phoneWebhooks, "phone:tunnel": .phoneTunnel,
         "migrate": .migrate,
@@ -106,9 +107,8 @@ enum FixAction: Equatable, Sendable {
             return open("Connect \(Wording.titleCase(title))…", .connect(integration: id))
         case .pin:
             return open(context.pin?.set == true ? "Change PIN…" : "Set PIN…", .setPin)
-        case .installService:
-            let installed = context.service?.units.agent.installed == true
-            return SetupAction(title: installed ? "Start Service…" : "Install Service…", effect: .installService)
+        case .startKeryx:
+            return SetupAction(title: "Start Keryx", effect: .startKeryx)
         case .startModelServer:
             // Running another model: started again, on the one chosen.
             let restart = context.modelServerServesAnother != nil
