@@ -4,7 +4,7 @@ import Testing
 import KeryxPreview
 @testable import KeryxUI
 
-/// Every request the Setup Assistant can make is answered by a screen of the main window:
+/// Every request the setup wizard can make is answered by a screen of the main window:
 /// the table the screens share (`RequestAnswer`), and each screen's own reading of it.
 @MainActor @Suite struct RequestAnswerTests {
     /// One of each request, every provider and every section included.
@@ -56,18 +56,18 @@ import KeryxPreview
         }
     }
 
-    @Test func googleSignInsAndConnectsAreIntegrations() {
+    @Test func googleSignInsAndConnectsAreIntegrations() throws {
         let cards = PreviewData.integrations.integrations
         #expect(IntegrationsWording.answer(.signIn(.gmail), cards: nil) == .open(.signIn(.gmail)),
                 "a sheet needs no cards")
         #expect(IntegrationsWording.answer(.signIn(.googleWorkspace), cards: cards)
             == .open(.signIn(.googleWorkspace)))
         #expect(IntegrationsWording.answer(.connect(integration: "google"), cards: nil) == .wait)
-        let google = cards.first { $0.id == "google" }!
+        let google = try #require(cards.first { $0.id == "google" })
         #expect(IntegrationsWording.answer(.connect(integration: "google"), cards: cards) == .connect(google))
         // Its own Connect: Google's is the sign-in, GitHub's the question about issue reports.
         #expect(IntegrationsWording.connect(google) == .signIn(.googleWorkspace))
-        let github = cards.first { $0.id == "github" }!
+        let github = try #require(cards.first { $0.id == "github" })
         #expect(IntegrationsWording.connect(github) == .issueReports)
         #expect(IntegrationsWording.answer(.connect(integration: "nothing"), cards: cards) == .unknown)
         #expect(IntegrationsWording.answer(.connect(integration: "google"), cards: []) == .unknown)

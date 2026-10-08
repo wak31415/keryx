@@ -10,6 +10,13 @@ set -euo pipefail
 
 SCRIPTS=$(cd "$(dirname "$0")" && pwd)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/keryx-script-tests.XXXXXX")
+# Every build-app.sh this runs installs, if it ever got that far, into a folder of the test's
+# own: never /Applications, whatever an argument-parsing bug would let through.
+export KERYX_APP_DESTINATION="$WORK/never"
+# The identity script's temporary folders, too, so the check that none is left behind looks
+# only at this run's, never the shared temporary directory.
+SIGNING_TMP="$WORK/tmp"
+mkdir -p "$SIGNING_TMP"
 KEYCHAINS=()
 cleanup() {
   for chain in "${KEYCHAINS[@]+"${KEYCHAINS[@]}"}"; do
@@ -145,6 +152,8 @@ check "a destination that is not a folder is not made" test ! -e "$WORK/missing"
 # --- the command line, before anything is built ----------------------------------------
 
 echo "build-app.sh arguments"
+check "every build-app.sh here installs into the test's own folder" \
+  test "${KERYX_APP_DESTINATION:-}" = "$WORK/never"
 "$SCRIPTS/build-app.sh" --bogus >/dev/null 2>&1
 check "an unknown argument exits 2 before building" test $? -eq 2
 check "--help names --no-install" grep -q -- "--no-install" <("$SCRIPTS/build-app.sh" --help)
@@ -159,7 +168,7 @@ KEYCHAINS+=("$CHAIN")
 security unlock-keychain -p test "$CHAIN"
 
 # Answering no with the trust step on: it says what the trust is, and changes nothing.
-echo n | KEYCHAIN="$CHAIN" "$SCRIPTS/make-signing-identity.sh" >"$WORK/out" 2>&1
+echo n | TMPDIR="$SIGNING_TMP" KEYCHAIN="$CHAIN" "$SCRIPTS/make-signing-identity.sh" >"$WORK/out" 2>&1
 check "answering no exits 1" test $? -eq 1
 check "answering no adds nothing" sh -c "! security find-identity -p codesigning '$CHAIN' | grep -q 'Keryx Local Signing'"
 check "the question says the trust is for every keychain" grep -q "every keychain" "$WORK/out"
@@ -171,7 +180,7 @@ check "the question gives the commands by hand" grep -q "security delete-identit
   -keyout "$WORK/decoy.key" -out "$WORK/decoy.pem" 2>/dev/null
 security import "$WORK/decoy.pem" -k "$CHAIN" >/dev/null
 
-KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --yes >"$WORK/out" 2>&1
+TMPDIR="$SIGNING_TMP" KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --yes >"$WORK/out" 2>&1
 check "--yes adds it without asking" test $? -eq 0
 check "--yes adds a code-signing identity of that name" \
   sh -c "security find-identity -p codesigning '$CHAIN' | grep -q '\"Keryx Local Signing\"'"
@@ -188,30 +197,30 @@ check "its certificate is self-signed" \
   test "$(/usr/bin/openssl x509 -in "$WORK/cert.pem" -noout -subject | sed 's/^subject= *//')" = \
   "$(/usr/bin/openssl x509 -in "$WORK/cert.pem" -noout -issuer | sed 's/^issuer= *//')"
 
-KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --yes >"$WORK/out" 2>&1
+TMPDIR="$SIGNING_TMP" KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --yes >"$WORK/out" 2>&1
 check "running it again succeeds" test $? -eq 0
 check "running it again says there is nothing to do" grep -q "nothing to do" "$WORK/out"
 check "running it again adds no second identity" \
   test "$(security find-identity -p codesigning "$CHAIN" | grep -c '"Keryx Local Signing"')" -eq 1
 check "your keychain search list is unchanged" test "$(security list-keychains -d user)" = "$searchlist_before"
-check "no temporary key is left behind" sh -c "! ls -d '${TMPDIR:-/tmp}'/keryx-signing.* >/dev/null 2>&1"
+check "no temporary key is left behind" sh -c "! ls -d '$SIGNING_TMP'/keryx-signing.* >/dev/null 2>&1"
 
 # Untrusted, so a build would sign ad hoc and say why.
 check "a build would not sign with an untrusted identity" test "$(choose_identity "$CHAIN" 2>"$WORK/err")" = -
 check "and says it is not trusted" grep -q "not trusted" "$WORK/err"
 
 # --remove: asks, then takes the identity away; the decoy stays.
-echo n | KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --remove >"$WORK/out" 2>&1
+echo n | TMPDIR="$SIGNING_TMP" KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --remove >"$WORK/out" 2>&1
 check "--remove answered no exits 1" test $? -eq 1
 check "--remove answered no keeps it" \
   sh -c "security find-identity -p codesigning '$CHAIN' | grep -q '\"Keryx Local Signing\"'"
-KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --remove --yes >"$WORK/out" 2>&1
+TMPDIR="$SIGNING_TMP" KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --remove --yes >"$WORK/out" 2>&1
 check "--remove --yes succeeds" test $? -eq 0
 check "--remove --yes takes the identity away" \
   sh -c "! security find-identity -p codesigning '$CHAIN' | grep -q '\"Keryx Local Signing\"'"
 check "--remove leaves a certificate of another name" \
   sh -c "security find-certificate -c 'Keryx Local Signing Old' '$CHAIN' >/dev/null"
-KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --remove --yes >"$WORK/out" 2>&1
+TMPDIR="$SIGNING_TMP" KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --remove --yes >"$WORK/out" 2>&1
 check "--remove with nothing there says so" grep -q "nothing to do" "$WORK/out"
 
 echo "$PASSED passed, $FAILED failed"

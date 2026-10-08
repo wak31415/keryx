@@ -1335,5 +1335,8 @@
    "plugin:",
    "integration:"
   ]
+ },
+ "constants": {
+  "speech_gb": 3.0
  }
 }

@@ -66,7 +66,7 @@ import KeryxTestSupport
             return .init(exitCode: 0, stdout: Data(), stderr: Data())
         }
         let model = AppModel(locator: PreviewLocator(), makeClient: { CLIClient(location: $0, runner: fake) },
-                             preferences: Preferences(), timing: AppModel.Timing(poll: nil))
+                             preferences: Preferences(defaults: TestDefaults.fresh()), timing: AppModel.Timing(poll: nil))
         return (model, fake)
     }
 
@@ -92,11 +92,18 @@ import KeryxTestSupport
         CFRunLoopRunInMode(.defaultMode, seconds, false)
     }
 
-    static func pump() async {
-        for _ in 0..<20 {
+    /// Lets SwiftUI catch up until `condition` holds — the run loop turned between looks,
+    /// since a hosted window's updates are driven by it — rather than for a fixed time: the
+    /// main actor is shared with every suite that renders views, and a busy one is slow.
+    static func until(timeout: Duration = .seconds(180), _ condition: () -> Bool) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while clock.now < deadline {
+            if condition() { return true }
             await Task.yield()
             Self.spinRunLoopOnce(0.01)
         }
+        return condition()
     }
 
     static func firstEditableTextField(in view: NSView) -> NSTextField? {
@@ -117,17 +124,21 @@ import KeryxTestSupport
         return field
     }
 
+    static func saved(_ fake: FakeRunner) -> Bool {
+        fake.requests.contains { $0.arguments.suffix(4) == ["config", "set", "OWNER_NAME", "Ada"] }
+    }
+
     @Test func typingThenSwitchingConfigurationTabsStillSaves() async throws {
         let (model, fake) = Self.makeModel()
         await model.start()
         let host = Self.host(ConfigurationView().environment(model))
-        await Self.pump()
+        #expect(await Self.until { model.config.value != nil && Self.firstEditableTextField(in: host) != nil },
+                "the General tab's fields")
 
         _ = try Self.typeIntoOwnerName(in: host, "Ada")
         model.request(.configure(tab: "voice"))
-        await Self.pump()
 
-        #expect(fake.requests.contains { $0.arguments.suffix(4) == ["config", "set", "OWNER_NAME", "Ada"] },
+        #expect(await Self.until { Self.saved(fake) },
                "expected a config set for the field typed into before the tab switched")
     }
 
@@ -136,14 +147,14 @@ import KeryxTestSupport
         await model.start()
         model.selection = .configuration
         let host = Self.host(RootView().environment(model))
-        await Self.pump()
+        #expect(await Self.until { model.config.value != nil && Self.firstEditableTextField(in: host) != nil },
+                "the General tab's fields")
 
         _ = try Self.typeIntoOwnerName(in: host, "Ada")
         // As the menu bar's Open … would: no AppRequest, just the selection itself.
         model.selection = .voice
-        await Self.pump()
 
-        #expect(fake.requests.contains { $0.arguments.suffix(4) == ["config", "set", "OWNER_NAME", "Ada"] },
+        #expect(await Self.until { Self.saved(fake) },
                "expected a config set for the field typed into before the section changed")
     }
 }
