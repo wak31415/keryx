@@ -3223,8 +3223,9 @@ def phone_webhooks(
 def phone_tunnel(
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
 ) -> None:
-    """The tunnel that puts this machine in front of Twilio: its program, its service, and
-    whether Keryx answers at https://PUBLIC_HOST/health. Only reads."""
+    """The tunnel that puts this machine in front of Twilio: its program, its service,
+    whether Keryx answers at https://PUBLIC_HOST/health, and the hostname the tunnel's own
+    config names. Only reads."""
     report = phone.tunnel_report(_configure_readonly())
     if as_json:
         typer.echo(json.dumps(report, indent=2))
@@ -3233,6 +3234,8 @@ def phone_tunnel(
     if report["install_url"]:
         typer.echo(f"get cloudflared from {report['install_url']} (or `brew install cloudflared`)")
     typer.echo(f"its service: {'installed' if report['unit_installed'] else 'not installed'}")
+    if report["hostname"]:
+        typer.echo(f"its config names: {report['hostname']}")
     host = report["public_host"]
     if report["error"]:
         typer.echo(report["error"])

@@ -510,8 +510,13 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
         requested_at=now.isoformat(), state="failed", error="launchctl exited 5",
     ))
 
-    # The phone: a Twilio account that answers. The tunnel's hostname answers nothing.
+    # The phone: a Twilio account that answers. The tunnel's hostname answers nothing, and
+    # cloudflared's own config names it.
     monkeypatch.setattr(phone, "rest_admin", TwilioAccount())
+    tunnel_config = Path.home() / ".cloudflared" / "config.yml"
+    tunnel_config.parent.mkdir(parents=True)
+    tunnel_config.write_text("ingress:\n  - hostname: keryx.example.com\n"
+                             f"    service: http://localhost:{settings.port}\n")
     # A plugin on, for the plugin commands to change and turn off.
     plugins.install(settings, "check_billing")
     # An ssh host cluster_stats could ask, its master up: `ssh` itself is never run.
@@ -626,6 +631,8 @@ def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
     assert voice_status["here"]["program"] == S2S
     assert voice_status["here"]["words_model"] == MODEL.key
     assert voice_server["saved"]["VOICE_BASE_URL"] == f"{VOICE_SERVER}/v1"
+    tunnel = json.loads(runner.invoke(app, ["phone", "tunnel", "--json"]).stdout)
+    assert tunnel["hostname"] == "keryx.example.com"
 
 
 # --- the stream: models pull --json ------------------------------------------------------

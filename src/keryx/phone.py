@@ -9,8 +9,9 @@ and tells) and `keryx phone`, whose `--json` the Mac app reads:
 - `apply_webhooks` — the write. It is the one write either makes to anything outside the
   machine, and both make it only after the owner has seen both addresses and said yes, at
   the terminal or in the app; `keryx phone webhooks --apply` is the owner's alone;
-- `tunnel_report` — which tunnel this machine has, its unit, and whether Keryx answers
-  through `PUBLIC_HOST`.
+- `tunnel_report` — which tunnel this machine has, its unit, whether Keryx answers
+  through `PUBLIC_HOST`, and the public hostname the tunnel's own config already names
+  (`tunnel_hostname`), for the app to offer as `PUBLIC_HOST`.
 
 A phone number here is the owner's own, shown to the owner; in a log line it is only ever
 `mask_number`'s shape. A failure is one sentence of cause — a status code or an exception's
@@ -21,12 +22,15 @@ or a number back. The credentials go in the client's auth and nowhere else.
 import logging
 import re
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from keryx.config import Settings
+from keryx.config.files import xdg_home
 from keryx.config.options import TIMEOUT_S
 from keryx.doctor import STATUS_PATH, TUNNEL_BINARIES, VOICE_PATH
 from keryx.logging_util import mask_number
@@ -305,4 +309,114 @@ def tunnel_report(
         "reachable": reachable,
         "error": bad,
         "install_url": CLOUDFLARED_DOWNLOADS if binary is None else None,
+        "hostname": tunnel_hostname(settings, kind),
     }
+
+
+# --- the hostname the tunnel already knows -----------------------------------------------
+
+#: Where cloudflared looks for its config outside `HOME`, as cloudflared itself does.
+CLOUDFLARED_SYSTEM_DIRS: tuple[Path, ...] = (
+    Path("/etc/cloudflared"), Path("/usr/local/etc/cloudflared"),
+)
+#: A tunnel's config is a few lines: anything larger is not one, and is not read.
+MAX_TUNNEL_CONFIG_BYTES = 1 << 20
+#: One `key: value` line of a YAML block, an item's `- ` before it or not.
+_YAML_LINE = re.compile(r"^\s*(-\s+)?([A-Za-z][\w-]*)\s*:\s*(.*?)\s*$")
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def tunnel_hostname(settings: Settings, kind: str | None) -> str | None:
+    """The public hostname the tunnel's own config names, or None: cloudflared's ingress
+    rule for Keryx's port (else its first hostname), or ngrok's reserved domain. The tunnel
+    found (`kind`) is asked first, then the other. Only reads, never the network, and never
+    raises: a config that will not read, or holds no bare hostname, is None. Only a
+    hostname ever leaves — these files can hold a tunnel's token."""
+    order = sorted(TUNNEL_BINARIES, key=lambda name: name != kind)
+    for name in order:
+        read = _cloudflared_hostname if name == "cloudflared" else _ngrok_hostname
+        for path in _tunnel_configs(name):
+            try:
+                text = _config_text(path)
+                found = read(text, settings.port) if text is not None else None
+            except Exception:  # never the report's failure: a hostname is only a suggestion
+                found = None
+            if found:
+                return found
+    return None
+
+
+def _tunnel_configs(name: str) -> list[Path]:
+    """Where `name` keeps its config, in the order it looks."""
+    home = Path.home()
+    if name == "cloudflared":
+        dirs = [home / ".cloudflared", home / ".cloudflare-warp", home / "cloudflare-warp",
+                *CLOUDFLARED_SYSTEM_DIRS]
+        return [folder / file for folder in dirs for file in ("config.yml", "config.yaml")]
+    return [xdg_home("config") / "ngrok" / "ngrok.yml",
+            home / "Library" / "Application Support" / "ngrok" / "ngrok.yml",
+            home / ".ngrok2" / "ngrok.yml"]
+
+
+def _config_text(path: Path) -> str | None:
+    try:
+        if not path.is_file() or path.stat().st_size > MAX_TUNNEL_CONFIG_BYTES:
+            return None
+        return path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _yaml_lines(text: str) -> Iterator[tuple[bool, str, str]]:
+    """Each `key: value` line of a block-style YAML file: whether it starts a list item,
+    the key, and the value unquoted and without its comment. Enough for a tunnel's config,
+    which is all keys, lists of rules and scalars."""
+    for line in text.splitlines():
+        found = _YAML_LINE.match(line)
+        if found is None:
+            continue
+        item, key, value = bool(found.group(1)), found.group(2), found.group(3)
+        if value[:1] in ("'", '"'):
+            end = value.find(value[0], 1)
+            value = value[1:end] if end > 0 else ""
+        else:
+            value = value.split(" #", 1)[0].strip()
+        yield item, key, value
+
+
+def _bare(value: str) -> str | None:
+    """`value` as a bare public hostname, lower-cased, or None when it is not one."""
+    host = value.strip().lower()
+    return host if host and hostname_problem(host) is None else None
+
+
+def _cloudflared_hostname(text: str, port: int) -> str | None:
+    rules: list[dict[str, str]] = []
+    for item, key, value in _yaml_lines(text):
+        if item:
+            rules.append({})
+        if rules and key in ("hostname", "service"):
+            rules[-1].setdefault(key, value)
+    named = [(host, rule.get("service", "")) for rule in rules
+             if (host := _bare(rule.get("hostname", "")))]
+    for host, service in named:
+        try:
+            target = urlparse(service)
+            if target.hostname in _LOOPBACK and target.port == port:
+                return host
+        except ValueError:
+            continue
+    return named[0][0] if named else None
+
+
+def _ngrok_hostname(text: str, port: int) -> str | None:
+    """A reserved domain: `domain:` (or the older `hostname:`) on a tunnel, or an endpoint's
+    `url:` — an upstream's loopback url is no hostname, so it is never taken."""
+    for _item, key, value in _yaml_lines(text):
+        if key == "url":
+            value = value.removeprefix("https://")
+        elif key not in ("domain", "hostname"):
+            continue
+        if host := _bare(value):
+            return host
+    return None

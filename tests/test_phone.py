@@ -352,7 +352,7 @@ def test_no_tunnel_and_no_hostname_asks_nothing(settings):
 
     assert report == {"kind": None, "binary": None, "public_host": None,
                       "unit_installed": False, "reachable": None, "error": None,
-                      "install_url": phone.CLOUDFLARED_DOWNLOADS}
+                      "install_url": phone.CLOUDFLARED_DOWNLOADS, "hostname": None}
     assert get.calls == []
 
 
@@ -412,6 +412,144 @@ def test_the_real_detection_asks_path_and_the_units(phoned, monkeypatch):
     report = phone.tunnel_report(phoned, get=FakeGet(body={"ok": True}))
 
     assert report["kind"] is None and report["unit_installed"] is True
+
+
+# --- the hostname the tunnel already knows -------------------------------------------------
+
+CLOUDFLARED_CONFIG = """\
+tunnel: 6ff42ae2-765d-4adf-8112-31c55c1551ef
+credentials-file: /Users/ada/.cloudflared/6ff42ae2.json
+
+ingress:
+  # the blog, on another port
+  - hostname: blog.example.com
+    service: http://localhost:3000
+  - hostname: "Keryx.Example.com"   # Keryx's own
+    service: http://127.0.0.1:{port}
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404
+"""
+
+
+def cloudflared_config(text: str, name: str = "config.yml"):
+    path = phone.Path.home() / ".cloudflared" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+def ngrok_config(text: str):
+    path = phone.xdg_home("config") / "ngrok" / "ngrok.yml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+def test_cloudflareds_ingress_for_keryxs_port_is_the_hostname(settings):
+    cloudflared_config(CLOUDFLARED_CONFIG.format(port=settings.port))
+
+    assert phone.tunnel_hostname(settings, "cloudflared") == "keryx.example.com"
+
+
+def test_without_a_rule_for_keryxs_port_the_first_hostname_is_taken(settings):
+    cloudflared_config("ingress:\n  - hostname: 'calls.example.org'\n"
+                       "    service: http://localhost:9999\n  - service: http_status:404\n",
+                       name="config.yaml")
+
+    assert phone.tunnel_hostname(settings, "cloudflared") == "calls.example.org"
+
+
+@pytest.mark.parametrize("text", [
+    "ingress:\n  - hostname: '*.example.com'\n    service: http://localhost:8080\n",
+    "ingress:\n  - service: http_status:404\n",
+    "tunnel: keryx\n",
+    "ingress: [{hostname: \"\x00\"}]\n",
+    "",
+])
+def test_no_bare_hostname_in_cloudflareds_config_is_none(settings, text):
+    cloudflared_config(text)
+
+    assert phone.tunnel_hostname(settings, "cloudflared") is None
+
+
+def test_a_config_that_will_not_read_is_none_and_never_raises(settings):
+    (phone.Path.home() / ".cloudflared" / "config.yml").mkdir(parents=True)  # not a file
+    ngrok_config("")
+    (phone.xdg_home("config") / "ngrok" / "ngrok.yml").write_bytes(b"domain: \xff\xfe.com\n")
+
+    assert phone.tunnel_hostname(settings, "cloudflared") is None
+    assert phone.tunnel_hostname(settings, "ngrok") is None
+
+
+def test_a_service_that_is_no_address_is_passed_over(settings):
+    cloudflared_config("ingress:\n  - hostname: odd.example.com\n"
+                       "    service: http://localhost:99999\n"
+                       "  - hostname: keryx.example.com\n"
+                       f"    service: http://localhost:{settings.port}\n")
+
+    assert phone.tunnel_hostname(settings, "cloudflared") == "keryx.example.com"
+
+
+def test_a_reader_that_fails_is_a_hostname_not_found(settings, monkeypatch):
+    cloudflared_config(CLOUDFLARED_CONFIG.format(port=settings.port))
+
+    def broken(text, port):
+        raise RuntimeError("a config nobody foresaw")
+
+    monkeypatch.setattr(phone, "_cloudflared_hostname", broken)
+
+    assert phone.tunnel_hostname(settings, "cloudflared") is None
+
+
+def test_a_config_too_big_to_be_one_is_not_read(settings, monkeypatch):
+    monkeypatch.setattr(phone, "MAX_TUNNEL_CONFIG_BYTES", 16)
+    cloudflared_config(CLOUDFLARED_CONFIG.format(port=settings.port))
+
+    assert phone.tunnel_hostname(settings, "cloudflared") is None
+
+
+def test_ngroks_reserved_domain_is_the_hostname(settings):
+    ngrok_config('version: "2"\nauthtoken: 2abcSECRETtoken\ntunnels:\n  keryx:\n'
+                 "    proto: http\n    addr: 8080\n    domain: keryx.ngrok.app\n")
+
+    assert phone.tunnel_hostname(settings, "ngrok") == "keryx.ngrok.app"
+
+
+def test_ngroks_v3_endpoint_url_is_the_hostname_and_its_upstream_is_not(settings):
+    ngrok_config("version: 3\nagent:\n  authtoken: 2abcSECRETtoken\nendpoints:\n"
+                 "  - name: keryx\n    upstream:\n      url: http://localhost:8080\n"
+                 "    url: https://keryx-ada.ngrok.dev\n")
+
+    assert phone.tunnel_hostname(settings, "ngrok") == "keryx-ada.ngrok.dev"
+
+
+def test_the_tunnel_found_is_asked_first_and_none_found_asks_both(settings):
+    cloudflared_config(CLOUDFLARED_CONFIG.format(port=settings.port))
+    ngrok_config("tunnels:\n  keryx:\n    domain: keryx.ngrok.app\n")
+
+    assert phone.tunnel_hostname(settings, "ngrok") == "keryx.ngrok.app"
+    assert phone.tunnel_hostname(settings, "cloudflared") == "keryx.example.com"
+    assert phone.tunnel_hostname(settings, None) == "keryx.example.com"
+
+
+def test_the_system_wide_cloudflared_config_is_read_too(settings, tmp_path, monkeypatch):
+    system = tmp_path / "etc-cloudflared"
+    system.mkdir()
+    (system / "config.yml").write_text("ingress:\n  - hostname: keryx.example.net\n")
+    monkeypatch.setattr(phone, "CLOUDFLARED_SYSTEM_DIRS", (system,))
+
+    assert phone.tunnel_hostname(settings, "cloudflared") == "keryx.example.net"
+
+
+def test_the_report_carries_the_hostname_the_tunnel_knows(settings):
+    cloudflared_config(CLOUDFLARED_CONFIG.format(port=settings.port))
+
+    report = phone.tunnel_report(settings, which=which("cloudflared"), get=FakeGet(),
+                                 unit_status=units_with(True))
+
+    assert report["hostname"] == "keryx.example.com"
+    assert report["public_host"] is None  # a suggestion: nothing is saved from it
 
 
 def test_the_real_admin_carries_the_credentials_in_its_auth_and_a_timeout():
