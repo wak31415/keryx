@@ -27,6 +27,9 @@ Environment="XDG_CACHE_HOME=__XDG_CACHE_HOME__"
 # Restart covers a crash and the "started before the network was up" case at boot.
 Restart=always
 RestartSec=5
+# How long Keryx has to stop before systemd kills it: on SIGTERM it closes each live
+# subagent session in turn, up to 25 s each (CLOSE_TIMEOUT_S in tasks/manager.py).
+TimeoutStopSec=60
 # STATE_DIR/logs, where `keryx restart` reads them back from.
 StandardOutput=append:__LOGS__/keryx.out.log
 StandardError=append:__LOGS__/keryx.err.log

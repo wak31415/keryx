@@ -27,16 +27,18 @@ AGENTS="$HOME/Library/LaunchAgents"
 LABELS=(dev.keryx.agent dev.keryx.tunnel)
 
 remove_agents() {
-  # remove_agents LABEL... — delete each plist, then unload its job. In that order: bootout
-  # waits for the job to exit (up to its ExitTimeOut), and an uninstall cut short there —
-  # the app's quit deadline, a shutdown — must not leave a RunAtLoad/KeepAlive plist behind
-  # to start at the next login. The bootout is asked even with no plist left, so a second
-  # run finishes what an interrupted one began.
+  # remove_agents LABEL... — delete every plist first, then unload each job. In that order:
+  # bootout waits for a job to exit (up to its ExitTimeOut), and an uninstall cut short
+  # there — the app's quit deadline, a shutdown — must not leave any RunAtLoad/KeepAlive
+  # plist behind to start at the next login, the later labels' included. The bootout is
+  # asked even with no plist left, so a second run finishes what an interrupted one began.
   for label in "$@"; do
     if [[ -f "$AGENTS/$label.plist" ]]; then
       rm -f "$AGENTS/$label.plist"
       echo "removed $label"
     fi
+  done
+  for label in "$@"; do
     launchctl bootout "gui/$UID/$label" 2>/dev/null || true
   done
 }

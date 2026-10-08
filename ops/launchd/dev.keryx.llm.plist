@@ -56,8 +56,9 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
-    <!-- A helper with nothing to save: ten seconds to exit after SIGTERM rather than
-         launchd's twenty, so stopping everything with Keryx is quick. -->
+    <!-- Ten seconds to exit after SIGTERM before launchd kills it, so stopping everything
+         with Keryx is quick: a stateless inference server, or the tunnel, holds nothing a
+         kill could lose. -->
     <key>ExitTimeOut</key>
     <integer>10</integer>
 

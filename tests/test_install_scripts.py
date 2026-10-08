@@ -388,7 +388,8 @@ def test_one_local_server_alone_and_its_removal(machine):
 
     run("install-systemd.sh", machine, "--uninstall", "--voice")
     assert not (units / "keryx-voice.service").exists()
-    assert "disable --now keryx-voice.service" in machine["calls"].read_text()
+    assert "disable keryx-voice.service" in machine["calls"].read_text()
+    assert "stop keryx-voice.service" in machine["calls"].read_text()
     assert "keryx.service" not in machine["calls"].read_text().replace("keryx-voice.service", "")
 
 
@@ -444,8 +445,9 @@ def test_an_uninstall_removes_each_plist_before_booting_it_out(machine, tmp_path
 
     at_each_bootout = seen.read_text().split("--\n")[:-1]
     assert len(at_each_bootout) == 2
+    # Both gone before the first bootout: a cut at the agent's leaves the tunnel's gone too.
     assert "dev.keryx.agent.plist" not in at_each_bootout[0]
-    assert "dev.keryx.tunnel.plist" not in at_each_bootout[1]
+    assert "dev.keryx.tunnel.plist" not in at_each_bootout[0]
     assert "removed dev.keryx.agent" in result.stdout
 
 
@@ -477,7 +479,7 @@ def test_an_install_enables_each_agent_before_bootstrapping_it(machine):
         assert mine == ["enable", "bootstrap"], (label, calls)
 
 
-def test_the_helpers_stop_fast_and_keryx_gets_launchds_default_to_close_its_sessions(machine):
+def test_the_helpers_stop_fast_and_keryx_gets_a_minute_to_close_its_sessions(machine):
     configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
 
     run("install-launchd.sh", machine)
@@ -487,6 +489,34 @@ def test_the_helpers_stop_fast_and_keryx_gets_launchds_default_to_close_its_sess
     loaded = {label: plistlib.loads((agents / f"{label}.plist").read_bytes())
               for label in ("dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.llm",
                             "dev.keryx.voice")}
-    assert "ExitTimeOut" not in loaded["dev.keryx.agent"]
+    # Explicit, not launchd's own default: above the 25 s one session's close is given.
+    assert loaded["dev.keryx.agent"]["ExitTimeOut"] == 60
     for label in ("dev.keryx.tunnel", "dev.keryx.llm", "dev.keryx.voice"):
         assert loaded[label]["ExitTimeOut"] == 10, label
+
+
+def test_the_systemd_units_stop_within_the_same_limits(machine):
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+
+    run("install-systemd.sh", machine)
+    run("install-systemd.sh", machine, "--llm", "--voice")
+
+    units = machine["home"] / ".config" / "systemd" / "user"
+    limits = {}
+    for name in ("keryx", "cloudflared", "keryx-llm", "keryx-voice"):
+        lines = (units / f"{name}.service").read_text().splitlines()
+        limits[name] = next(line for line in lines if line.startswith("TimeoutStopSec="))
+    assert limits == {"keryx": "TimeoutStopSec=60", "cloudflared": "TimeoutStopSec=10",
+                      "keryx-llm": "TimeoutStopSec=10", "keryx-voice": "TimeoutStopSec=10"}
+
+
+def test_a_systemd_uninstall_disables_every_unit_before_stopping_any(machine):
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+    run("install-systemd.sh", machine)
+    machine["calls"].write_text("")
+
+    run("install-systemd.sh", machine, "--uninstall")
+
+    verbs = [line.split()[2] for line in machine["calls"].read_text().splitlines()
+             if line.startswith("systemctl --user ") and line.split()[2] in ("disable", "stop")]
+    assert verbs == ["disable", "disable", "stop", "stop"]

@@ -15,6 +15,8 @@ ExecStart=__CLOUDFLARED__ tunnel --no-autoupdate --protocol http2 run --url http
 Environment="PATH=__PATH__"
 Restart=always
 RestartSec=5
+# Ten seconds to stop before systemd kills it: the tunnel holds nothing a kill could lose.
+TimeoutStopSec=10
 StandardOutput=append:__LOGS__/cloudflared.out.log
 StandardError=append:__LOGS__/cloudflared.err.log
 

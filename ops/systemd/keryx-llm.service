@@ -28,6 +28,9 @@ Environment="XDG_CACHE_HOME=__XDG_CACHE_HOME__"
 # Restart covers a crash and the "started before the network was up" case at boot.
 Restart=always
 RestartSec=5
+# Ten seconds to stop before systemd kills it: a stateless inference server holds
+# nothing a kill could lose.
+TimeoutStopSec=10
 # STATE_DIR/logs, beside the service's own.
 StandardOutput=append:__LOGS__/keryx-llm.out.log
 StandardError=append:__LOGS__/keryx-llm.err.log

@@ -53,8 +53,12 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
-    <!-- No ExitTimeOut: launchd's twenty seconds. On SIGTERM keryx serve closes each live
-         subagent session in turn, and a shorter limit would kill it in the middle. -->
+    <!-- How long Keryx has to exit after SIGTERM before launchd kills it: set, not left to
+         launchd's own default. On SIGTERM keryx serve closes each live subagent session in
+         turn (up to 25 seconds each, CLOSE_TIMEOUT_S in tasks/manager.py), and a kill in
+         the middle of one cuts a coding agent off mid-write. -->
+    <key>ExitTimeOut</key>
+    <integer>60</integer>
 
     <key>StandardOutPath</key>
     <string>__LOGS__/keryx.out.log</string>
