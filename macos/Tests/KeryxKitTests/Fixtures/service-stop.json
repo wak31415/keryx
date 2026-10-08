@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "message": "Keryx is stopped, and won't start at login until it's started again.",
+  "detail": null,
+  "units": [
+    {"kind": "agent", "unit": "dev.keryx.agent", "state": "stopped"},
+    {"kind": "tunnel", "unit": "dev.keryx.tunnel", "state": "stopped"}
+  ]
+}

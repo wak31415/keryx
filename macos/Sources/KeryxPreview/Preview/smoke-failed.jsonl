@@ -1,0 +1,3 @@
+{"event": "step", "step": "dispatch", "message": "Asking Claude to run a test task.", "detail": null}
+{"event": "step", "step": "answering", "message": "Claude is answering.", "detail": null}
+{"event": "done", "ok": false, "summary": "Claude ran a test task but didn't answer as asked.", "detail": "It said: something unexpected."}
