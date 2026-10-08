@@ -55,8 +55,13 @@ enum CheckWording {
     static let serviceNotInstalled = "Keryx isn't answering calls yet"
 
     /// The titles the app says otherwise: the service's checks, as what they mean to someone
-    /// who never sees the unit.
-    static let titles = ["Service manager": "Runs in the background", "Service running": "Running"]
+    /// who never sees the unit. The old names ("Service manager", "Service running") are
+    /// kept beside Task N's ("Background process", "Keryx running") for a CLI before the
+    /// rename.
+    static let titles = [
+        "Service manager": "Runs in the background", "Service running": "Running",
+        "Background process": "Runs in the background", "Keryx running": "Running",
+    ]
 
     /// A check's title as the app says it.
     static func title(_ title: String) -> String { titles[title] ?? title }

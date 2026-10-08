@@ -171,17 +171,17 @@
       "title": "Owner name"
     },
     {
-      "name": "service manager",
-      "ok": false,
-      "detail": "dev.keryx.agent is not installed \u2014 Keryx cannot restart itself, and nothing restarts it if it dies",
+      "name": "background process",
+      "ok": true,
+      "detail": "launchd dev.keryx.agent",
       "severity": "soft",
       "section": "service",
-      "unset": true,
+      "unset": false,
       "unknown": false,
-      "hint": "scripts/install-launchd.sh installs it; until then `keryx restart` and the voice's restart_service refuse",
-      "fix": "service:install",
-      "state": "missing",
-      "title": "Service manager"
+      "hint": null,
+      "fix": null,
+      "state": "ok",
+      "title": "Background process"
     },
     {
       "name": "data dir writable",

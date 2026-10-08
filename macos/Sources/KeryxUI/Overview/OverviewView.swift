@@ -394,7 +394,11 @@ enum ChecklistWording {
     static func detail(_ check: DoctorCheck) -> String {
         if !check.ok {
             switch check.name {
-            case "service manager" where check.state == "missing": return CheckWording.serviceNotInstalled
+            // "service manager" is the old name (an older CLI); Task N renamed the check
+            // to "background process", and split "missing" (never installed) from
+            // "failed" (installed, stopped) — only the former reads as never set up.
+            case "service manager", "background process":
+                if check.state == "missing" { return CheckWording.serviceNotInstalled }
             case "Twilio credentials" where check.state == "missing": return "Not connected"
             case "PUBLIC_HOST" where check.state == "missing": return "Not set"
             case "tunnel" where check.detail.contains("not installed"): return "Not installed"
