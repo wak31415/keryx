@@ -111,6 +111,14 @@ enum CheckWording {
             let rest = text[range.upperBound...]
             return (serviceNotInstalled + rest.replacingOccurrences(of: "`", with: ""), raw)
         }
+        // A stopped unit's own label ("dev.keryx.agent is installed, not running — …",
+        // Task N's `service:start`) is dropped the same way — but the rest already says
+        // plainly that Keryx is stopped, so nothing stands in for the label here; the
+        // label itself is still for Show Details alone.
+        if let range = text.range(of: #"^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+ is installed, not running — "#,
+                                  options: .regularExpression) {
+            return (String(text[range.upperBound...]).replacingOccurrences(of: "`", with: ""), raw)
+        }
         // Settings kept under their old names ("SUBAGENT_MODEL is CLAUDE_MODEL now; …"), said
         // by the titles they have now; the names are for Show Details.
         if let said = oldNames(text, titles: titles, hint: hint) { return (said, raw) }
