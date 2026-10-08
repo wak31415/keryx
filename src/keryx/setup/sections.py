@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import keryx
+from keryx import units
 from keryx.config import (
     GROUPS,
     Settings,
@@ -389,6 +390,9 @@ def run_service(ctx: SetupContext) -> None:
         return
     if not settings.public_host:
         ui.note("It runs the phone channel and its tunnel, so it needs the phone set up first.")
+        return
+    if foreign := units.owner_mismatch(settings, units.MAIN_KINDS):
+        ui.error(f"{foreign.message} ({foreign.detail})")
         return
     if not ui.confirm(f"Install it now ({name})?", default=True):
         return

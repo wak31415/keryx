@@ -4,6 +4,8 @@ import asyncio
 import importlib.metadata
 import json
 import logging
+import os
+import plistlib
 import re
 import shutil
 import stat
@@ -975,7 +977,9 @@ def test_a_restart_while_keryx_is_stopped_is_refused_and_on_record(
     monkeypatch.setattr("keryx.cli.candidate_target", lambda settings: target)
     plist = Path.home() / "Library" / "LaunchAgents" / "dev.keryx.agent.plist"
     plist.parent.mkdir(parents=True)
-    plist.write_text("<plist/>")  # on disk, and (the suite's own probe) not loaded
+    # On disk, rendered for this KERYX_HOME, and (the suite's own probe) not loaded.
+    plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {
+        "KERYX_HOME": os.environ["KERYX_HOME"]}}))
 
     result = runner.invoke(app, ["restart", "--reason", "new code"])
 
@@ -985,6 +989,28 @@ def test_a_restart_while_keryx_is_stopped_is_refused_and_on_record(
     assert (record.state, record.reason, record.watchdog) == ("refused", "new code", "")
     status = runner.invoke(app, ["restart", "--status"])
     assert "refused" in status.output and "Keryx is stopped" in status.output
+
+
+def test_a_restart_of_a_unit_another_home_rendered_is_refused_before_anything(
+    restart_settings, ran, monkeypatch
+):
+    """Its label is the account's: a kickstart from a sandbox restarts the owner's Keryx."""
+    calls, _ = ran
+    target = ServiceTarget("launchd", "dev.keryx.agent")
+    monkeypatch.setattr("keryx.cli.candidate_target", lambda settings: target)
+    monkeypatch.setattr("keryx.cli.resolve_target", lambda settings, **_: target)
+    plist = Path.home() / "Library" / "LaunchAgents" / "dev.keryx.agent.plist"
+    plist.parent.mkdir(parents=True)
+    plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {
+        "KERYX_HOME": "/Users/owner/.config/keryx"}}))
+
+    result = runner.invoke(app, ["restart", "--force"])
+
+    assert result.exit_code == 2 and calls == []
+    assert ("These units belong to KERYX_HOME=/Users/owner/.config/keryx; this command runs "
+            f"with KERYX_HOME={os.environ['KERYX_HOME']}.") in result.stderr
+    assert f"rendered in {plist}" in result.stderr
+    assert not (restart_settings.state_dir / RECORD_NAME).exists()
 
 
 def test_a_restart_of_a_job_launchd_has_never_heard_of_ends_on_record(

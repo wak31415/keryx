@@ -1,6 +1,9 @@
 """The smaller `keryx setup` sections, each against a scripted terminal and a fake world."""
 
+import os
+import plistlib
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +15,7 @@ from keryx.config import (
     write_enrolled_pin,
 )
 from keryx.config.store import ConfigStore
+from keryx.localmodels import voice
 from keryx.setup import pin as pin_flow
 from keryx.setup import sections
 from keryx.setup.sections import pin_problem
@@ -514,3 +518,26 @@ def test_a_new_pin_says_a_running_keryx_needs_a_restart(make_ctx):
     sections.run_pin(ctx)
 
     assert any("keryx restart" in line for line in ctx.ui.lines("note"))
+
+
+def test_a_service_another_home_rendered_is_not_installed_over(make_ctx, world, tmp_path,
+                                                                monkeypatch):
+    """Its labels are the account's: installing would boot the owner's own Keryx out."""
+    scripts = tmp_path / "repo" / "scripts"
+    scripts.mkdir(parents=True)
+    for name in ("install-systemd.sh", "install-launchd.sh"):
+        (scripts / name).write_text("")
+    monkeypatch.setattr(sections, "repo_root", lambda: tmp_path / "repo")
+    monkeypatch.setattr(voice, "PLATFORM", "darwin")
+    ConfigStore().set({"PUBLIC_HOST": "j.example.com"})
+    plist = Path.home() / "Library" / "LaunchAgents" / "dev.keryx.agent.plist"
+    plist.parent.mkdir(parents=True)
+    plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"KERYX_HOME": "/srv/other"}}))
+    ctx = make_ctx([])  # nothing asked
+
+    sections.run_service(ctx)
+
+    assert ctx.ui.lines("error") == [
+        "These units belong to KERYX_HOME=/srv/other; this command runs with "
+        f"KERYX_HOME={os.environ['KERYX_HOME']}. (rendered in {plist})"]
+    assert not any(call[0] == "script" for call in world.calls)

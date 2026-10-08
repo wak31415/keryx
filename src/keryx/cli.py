@@ -99,8 +99,10 @@ from keryx.restart.logscan import marks as log_marks
 from keryx.restart.service import (
     INSTALLERS,
     UNSUPPORTED_HINT,
+    ForeignUnits,
     ServiceTarget,
     candidate_target,
+    foreign_units,
     is_stopped,
     resolve_target,
     spawn_watchdog,
@@ -623,10 +625,18 @@ def restart(
         _echo_restart_status(store)
         return
 
+    # A unit another KERYX_HOME rendered is not this one's to restart: refused before
+    # anything, the record included, which is this home's and not that service's. The
+    # candidate is the unit `resolve_target` would answer with, whatever it answers.
+    stopped = candidate_target(settings)
+    if stopped is not None and (foreign := foreign_units([stopped])):
+        typer.echo(foreign.message, err=True)
+        typer.echo(foreign.detail, err=True)
+        raise typer.Exit(2)
+
     # Stopped by `keryx service stop` is not a service to restart: a restart would start a
     # Keryx the owner stopped (systemd), or ask launchd for a job it has unloaded. Said, and
     # left on the record, where `keryx restart --status` finds it.
-    stopped = candidate_target(settings)
     if stopped is not None and is_stopped(stopped):
         _restart_write(store, store.save, RestartRecord(
             requested_at=datetime.now(UTC).isoformat(), reason=reason.strip(),
@@ -1374,8 +1384,20 @@ def models_start(
     raise typer.Exit(code)
 
 
+def _foreign_servers(settings: Settings, report: server.Report) -> bool:
+    """Whether a model server's unit was rendered for another KERYX_HOME (`units.
+    owner_mismatch`): told to `report` as the refusal, before any of them is installed,
+    restarted or removed."""
+    foreign = units.owner_mismatch(settings, units.SERVER_KINDS)
+    if foreign is not None:
+        report.error(foreign.message, detail=foreign.detail)
+    return foreign is not None
+
+
 def _models_start(settings: Settings, runtime: str, report: server.StartReport, *,
                   voice_llm_unit: bool = False) -> int:
+    if _foreign_servers(settings, report):
+        return voice.REFUSED
     if runtime not in server.RUNTIMES:
         report.error(f"--runtime is {' or '.join(server.RUNTIMES)}, not {runtime}")
         return voice.REFUSED
@@ -1581,6 +1603,8 @@ def voice_use_here(
 
 
 def _voice_here(settings: Settings, name: str | None, report: voice.Report) -> int:
+    if _foreign_servers(settings, report):
+        return voice.REFUSED
     if name is not None and (problem := voice.voice_name_problem(name)):
         report.error(problem, detail=voice.VOICE_NAMES_HINT)
         return voice.REFUSED
@@ -1617,10 +1641,13 @@ def _voice_llm_stream(
 ) -> None:
     """A `voice llm` set-up told to a terminal, or as JSON lines whose first step is `first`;
     the owner's alone, refused before anything (as an event, with `--json`)."""
+    def unless_foreign(settings: Settings, report: voice_llm.Report) -> int:
+        return voice.REFUSED if _foreign_servers(settings, report) else run(settings, report)
+
     if not as_json:
         _owner_only(CHOOSE_THE_VOICE_LLM)
         try:
-            code = run(_configure_readonly(), voice_llm.TextSteps(typer.echo))
+            code = unless_foreign(_configure_readonly(), voice_llm.TextSteps(typer.echo))
         except KeyboardInterrupt:
             typer.echo(f"cancelled: {again}", err=True)
             code = pull.CANCELLED
@@ -1631,7 +1658,7 @@ def _voice_llm_stream(
         if refusal := _owner_refusal(CHOOSE_THE_VOICE_LLM):
             events.error(refusal)
             return 1
-        return run(_configure_readonly(refuse=events.error), events)
+        return unless_foreign(_configure_readonly(refuse=events.error), events)
 
     with pull.terminate_as_interrupt():
         code = events.guard(guarded)
@@ -1886,7 +1913,13 @@ def _install_units(
                             voice_llm=voice_llm_unit, uninstall=uninstall, root=repo_root(),
                             run=units.run_captured)
     if outcome.code != 0:
-        typer.echo(outcome.message, err=True)
+        if as_json and outcome.detail is not None:  # units another KERYX_HOME rendered
+            typer.echo(json.dumps({"ok": False, "message": outcome.message,
+                                   "detail": outcome.detail}, indent=2))
+        else:
+            typer.echo(outcome.message, err=True)
+            if outcome.detail:
+                typer.echo(outcome.detail, err=True)
         raise typer.Exit(outcome.code)
     if as_json:
         typer.echo(json.dumps({"ok": True, "message": outcome.message}, indent=2))
@@ -3109,6 +3142,10 @@ def migrate(
         for conflict in plan.conflicts:
             typer.echo(f"  {conflict}", err=True)
         raise typer.Exit(1)
+    if foreign := _foreign_migration(settings, units_):
+        typer.echo(foreign.message, err=True)
+        typer.echo(foreign.detail, err=True)
+        raise typer.Exit(2)
     if dry_run:
         return
     if (live := health_probe(settings)) and target is not None:
@@ -3140,6 +3177,19 @@ def _migration_units(settings: Settings, plan) -> migrate_stream.Units:
     if target is None and (pending := plan.pending_target) is not None:
         target = ServiceTarget(*pending)
     return migrate_stream.Units(target, predecessor)
+
+
+def _foreign_migration(
+    settings: Settings, units_: migrate_stream.Units
+) -> ForeignUnits | None:
+    """Keryx's own units, when another KERYX_HOME than the one this migration fills rendered
+    them (`units.owner_mismatch`): what a migration must not stop, re-render or start. Only
+    Keryx's: Jarvis's unit (`predecessor`) was rendered for the old home by definition, and
+    is retired, not judged."""
+    if units_.target is None:
+        return None
+    return units.owner_mismatch(settings, units.MAIN_KINDS,
+                                service_manager=units_.target.manager)
 
 
 def _run_migration(
@@ -3206,6 +3256,9 @@ def _migrate_stream() -> int:
             events.error(SETTINGS_UNREADABLE, detail=redact_known(summary))
             return 1
         units_ = _migration_units(settings, plan)
+        if foreign := _foreign_migration(settings, units_):
+            events.error(foreign.message, detail=foreign.detail)
+            return 2
         if (live := health_probe(settings)) and units_.target is not None:
             events.error(migrate_stream.LIVE_CALL, detail=f"{live} live call(s)")
             return 1

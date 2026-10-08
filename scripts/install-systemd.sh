@@ -50,6 +50,13 @@ if (( LLM || VOICE || VOICE_LLM )); then
   (( VOICE )) && SERVICES+=(keryx-voice)
   (( VOICE_LLM )) && SERVICES+=(keryx-voice-llm)
 fi
+# Only units this KERYX_HOME rendered: their names are the account's (scripts/lib.sh).
+UNIT_FILES=()
+for name in "${SERVICES[@]}"; do
+  UNIT_FILES+=("$name.service")
+done
+require_own_units "$UNITS" .config/systemd/user keryx.service cloudflared.service \
+  "${UNIT_FILES[@]}"
 if (( UNINSTALL )); then
   uninstall
   exit 0

@@ -49,6 +49,7 @@ from keryx.restart.logscan import errors_since, marks
 from keryx.restart.service import (
     ServiceTarget,
     WatchPlan,
+    foreign_units,
     resolve_target,
     spawn_watchdog,
     watch_command,
@@ -151,6 +152,11 @@ UNSUPPORTED_MESSAGE = (
     "you was not started by a service manager, so nothing would start it again."
 )
 ALREADY_PENDING_MESSAGE = "Tell them a restart is already scheduled for when this call ends."
+#: When the installed unit was rendered for another `KERYX_HOME` than this process's.
+FOREIGN_MESSAGE = (
+    "Tell them, in one sentence, that you cannot restart yourself because the installed "
+    "service was set up for a different configuration directory than the one you run with."
+)
 #: When the owner has stopped Keryx (`keryx service stop`) and the line is still up.
 STOPPED_MESSAGE = "Tell them Keryx is being stopped, so it was not restarted."
 #: Why a restart was abandoned when its record stayed locked.
@@ -222,6 +228,12 @@ class RestartCoordinator:
         if target is None:
             log.warning("refusing a restart: this process is not running under a service")
             return {"status": "unsupported", "message": UNSUPPORTED_MESSAGE}
+        # Only reachable with SERVICE_MANAGER named outright: under `auto` this process *is*
+        # the unit, which handed it its KERYX_HOME. A hand-started copy told `launchd` must
+        # not kickstart the owner's own.
+        if (foreign := foreign_units([target])) is not None:
+            log.warning("refusing a restart: %s", foreign.message)
+            return {"status": "unsupported", "message": FOREIGN_MESSAGE}
         if self._deferred is not None and not self._deferred.done():
             return {"status": "already_pending", "message": ALREADY_PENDING_MESSAGE}
 

@@ -16,6 +16,7 @@ break a naive render: `|` is `render`'s sed delimiter, `&` means "the whole matc
 import json
 import os
 import plistlib
+import pwd
 import re
 import shlex
 import shutil
@@ -30,6 +31,8 @@ from keryx.config.files import dump_toml
 SOURCE = Path(__file__).resolve().parents[1]
 BASH = shutil.which("bash")
 STUBS = ("systemctl", "loginctl", "launchctl", "cloudflared", "ngrok", "uv")
+#: The user `id -un` answers with in every installer run here: nobody's.
+NOBODY = "keryx-test-nobody"
 #: A PATH entry nobody would choose, and a stranger's machine might still have.
 AWKWARD_DIR = '/opt/tools|x&y%z <v2> "q"\\w'
 PLACEHOLDER = re.compile(r"__[A-Z_]+__")
@@ -52,6 +55,10 @@ def machine(tmp_path):
         stub = stubs / name
         stub.write_text(f'#!/bin/sh\necho "{name} $*" >> "{calls}"\nexit 0\n')
         stub.chmod(0o755)
+    # A user the user database does not know, so the account's own home — where the real
+    # units are — is never read: only the scratch HOME's.
+    (stubs / "id").write_text(f"#!/bin/sh\necho {NOBODY}\n")
+    (stubs / "id").chmod(0o755)
     keryx_home = tmp_path / "keryx-home"
     path = os.pathsep.join([str(stubs), AWKWARD_DIR, "/usr/bin", "/bin"])
     environment = {
@@ -604,3 +611,151 @@ def test_a_systemd_uninstall_disables_every_unit_before_stopping_any(machine):
     verbs = [line.split()[2] for line in machine["calls"].read_text().splitlines()
              if line.startswith("systemctl --user ") and line.split()[2] in ("disable", "stop")]
     assert verbs == ["disable", "disable", "stop", "stop"]
+
+
+# --- units another KERYX_HOME rendered ---------------------------------------------------------
+
+OTHER_HOME = "/Users/owner/.config/keryx"
+
+
+def refused(script: str, machine, *args: str) -> subprocess.CompletedProcess:
+    result = subprocess.run([BASH, str(machine["repo"] / "scripts" / script), *args],
+                            env=machine["env"], capture_output=True, text=True, timeout=60,
+                            check=False)
+    assert result.returncode == 2, result.stderr
+    return result
+
+
+def agent_plist(machine, label="dev.keryx.agent", **env) -> Path:
+    path = machine["home"] / "Library" / "LaunchAgents" / f"{label}.plist"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(plistlib.dumps({"Label": label, "EnvironmentVariables": env}))
+    return path
+
+
+def systemd_unit(machine, name="keryx.service", home=OTHER_HOME) -> Path:
+    path = machine["home"] / ".config" / "systemd" / "user" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'[Service]\nEnvironment="KERYX_HOME={home}"\n')
+    return path
+
+
+def sentence(machine, theirs=OTHER_HOME) -> str:
+    return (f"These units belong to KERYX_HOME={theirs}; this command runs with "
+            f"KERYX_HOME={machine['keryx_home']}.")
+
+
+@pytest.mark.parametrize("args", [[], ["--uninstall"]])
+def test_launchd_refuses_agents_another_home_rendered_before_touching_anything(machine, args):
+    """The labels are the account's: a sandbox's install would boot the owner's Keryx out."""
+    plist = agent_plist(machine, KERYX_HOME=OTHER_HOME)
+    before = plist.read_bytes()
+
+    result = refused("install-launchd.sh", machine, *args)
+
+    assert sentence(machine) in result.stderr and f"rendered in {plist}" in result.stderr
+    assert not machine["calls"].exists() and plist.read_bytes() == before
+
+
+@pytest.mark.parametrize("flags", [["--llm"], ["--voice", "--uninstall"], ["--voice-llm"]])
+def test_launchd_refuses_a_model_servers_agent_another_home_rendered(machine, flags):
+    label = {"--llm": "dev.keryx.llm", "--voice": "dev.keryx.voice",
+             "--voice-llm": "dev.keryx.voice-llm"}[flags[0]]
+    agent_plist(machine, label, KERYX_HOME=OTHER_HOME)
+    agent_plist(machine, KERYX_HOME=OTHER_HOME)  # not this run's: not judged
+
+    result = refused("install-launchd.sh", machine, *flags)
+
+    assert f"{label}.plist" in result.stderr and not machine["calls"].exists()
+
+
+@pytest.mark.parametrize("args", [[], ["--uninstall"], ["--llm"]])
+def test_systemd_refuses_units_another_home_rendered_before_touching_anything(machine, args):
+    unit = systemd_unit(machine, "keryx-llm.service" if args == ["--llm"] else "keryx.service")
+
+    result = refused("install-systemd.sh", machine, *args)
+
+    assert sentence(machine) in result.stderr and f"rendered in {unit}" in result.stderr
+    assert not machine["calls"].exists()
+
+
+@pytest.mark.parametrize("script", ["install-launchd.sh", "install-systemd.sh"])
+def test_a_reinstall_from_an_awkward_home_is_its_own(machine, tmp_path, script):
+    """What the installer rendered, quoted for its file, reads back as the same home."""
+    home = tmp_path / 'home <&> "q"\\100%'
+    machine["env"]["KERYX_HOME"] = str(home)
+    machine["keryx_home"] = home
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+
+    run(script, machine)
+    run(script, machine)
+    run(script, machine, "--uninstall")
+
+
+def test_a_home_reached_through_a_symlink_is_the_same_home(machine, tmp_path):
+    run("install-launchd.sh", machine)
+    link = tmp_path / "linked-home"
+    link.symlink_to(machine["keryx_home"])
+    machine["env"]["KERYX_HOME"] = str(link)
+
+    run("install-launchd.sh", machine, "--uninstall")
+
+
+def test_the_tunnel_is_judged_by_the_agent_and_alone_by_the_default_home(machine):
+    tunnel = agent_plist(machine, "dev.keryx.tunnel", PATH="/usr/bin")  # no Keryx environment
+    agent_plist(machine, KERYX_HOME=str(machine["keryx_home"]))
+
+    run("install-launchd.sh", machine, "--uninstall")  # Keryx's own tunnel, removed
+
+    tunnel = agent_plist(machine, "dev.keryx.tunnel", PATH="/usr/bin")
+    result = refused("install-launchd.sh", machine, "--uninstall")
+    assert sentence(machine, f"{machine['home']}/.config/keryx") in result.stderr
+    assert f"rendered in {tunnel}" in result.stderr
+
+
+def test_a_unit_rendering_only_xdg_config_home_belongs_to_its_keryx(machine):
+    agent_plist(machine, XDG_CONFIG_HOME="/srv/config")
+
+    result = refused("install-launchd.sh", machine)
+
+    assert sentence(machine, "/srv/config/keryx") in result.stderr
+
+
+def test_the_accounts_own_units_are_judged_whatever_home_says(machine, tmp_path):
+    """A shell that moved HOME still reaches the account's labels."""
+    account = tmp_path / "account"
+    theirs = account / ".config" / "systemd" / "user" / "keryx.service"
+    theirs.parent.mkdir(parents=True)
+    theirs.write_text(f'Environment="KERYX_HOME={OTHER_HOME}"\n')
+    units = machine["home"] / ".config" / "systemd" / "user"
+
+    result = subprocess.run(
+        [BASH, "-c", f'source "{machine["repo"] / "scripts" / "lib.sh"}"\n'
+                     f'account_home() {{ printf %s "{account}"; }}\n'
+                     f'require_own_units "{units}" .config/systemd/user keryx.service '
+                     "cloudflared.service keryx.service cloudflared.service\necho reached"],
+        env=machine["env"], capture_output=True, text=True, timeout=30, check=False)
+
+    assert result.returncode == 2 and "reached" not in result.stdout
+    assert f"rendered in {theirs}" in result.stderr
+
+
+def test_the_account_home_is_the_user_databases(machine):
+    """`~user`, never $HOME; and nothing for a user the database does not know."""
+    assert lib(machine, "account_home") == ""  # the stub's user is nobody's
+    (machine["repo"] / "id").write_text(f"#!/bin/sh\necho {pwd.getpwuid(os.getuid()).pw_name}\n")
+    (machine["repo"] / "id").chmod(0o755)
+    machine["env"]["PATH"] = f"{machine['repo']}{os.pathsep}{machine['env']['PATH']}"
+    assert lib(machine, "account_home") == pwd.getpwuid(os.getuid()).pw_dir
+
+
+def test_no_home_to_compare_with_is_said_before_anything(machine):
+    agent_plist(machine, KERYX_HOME=OTHER_HOME)
+
+    result = subprocess.run(
+        [BASH, "-c", f'source "{machine["repo"] / "scripts" / "lib.sh"}"\nKERYX_HOME_DIR=\n'
+                     f'require_own_units "{machine["home"]}/Library/LaunchAgents" x a b '
+                     "dev.keryx.agent.plist"],
+        env=machine["env"], capture_output=True, text=True, timeout=30, check=False)
+
+    assert result.returncode == 1 and "keryx config path" in result.stderr

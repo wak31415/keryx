@@ -81,6 +81,9 @@ def _isolated_env(monkeypatch, tmp_path):
     monkeypatch.setenv("KERYX_HOME", str(tmp_path / "keryx-home"))
     for name in (*ACTOR_ENVS, LEGACY_HOME_ENV):
         monkeypatch.delenv(name, raising=False)
+    # The account's home, as the user database has it, is where the service manager reads
+    # the owner's real units: never in a test, whose units are under its own `HOME`.
+    monkeypatch.setattr("keryx.restart.service.account_home", lambda: home)
     # cloudflared's system-wide config directories are outside `HOME`: none in a test.
     monkeypatch.setattr("keryx.phone.CLOUDFLARED_SYSTEM_DIRS", ())
     # The Claude CLI's own directory is derived from `HOME` unless this moves it.

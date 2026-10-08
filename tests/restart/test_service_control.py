@@ -3,7 +3,10 @@ starting and let it start again, where its unit file is, and whether it is stopp
 service manager answered by a fake `run`."""
 
 import os
+import plistlib
+import pwd
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -137,3 +140,129 @@ def test_present_is_loaded_or_on_disk(monkeypatch):
     assert is_present(LAUNCHD) is False
     write(unit_file(LAUNCHD))
     assert is_present(LAUNCHD) is True  # booted out, its plist kept
+
+
+# --- whose units they are ------------------------------------------------------------------
+
+
+def write_plist(path, **env):
+    """A launchd plist as `install-launchd.sh` renders it, with `env` its environment."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(plistlib.dumps({"Label": path.stem, "EnvironmentVariables": env}))
+    return path
+
+
+def agents_dir():
+    return Path.home() / "Library" / "LaunchAgents"
+
+
+def test_no_unit_file_belongs_to_nobody(tmp_path):
+    assert service.foreign_units([LAUNCHD, SYSTEMD]) is None
+
+
+def test_a_plist_rendered_for_this_home_is_ours(tmp_path):
+    write_plist(agents_dir() / "dev.keryx.agent.plist", KERYX_HOME=os.environ["KERYX_HOME"])
+
+    assert service.foreign_units([LAUNCHD]) is None
+
+
+def test_a_plist_rendered_for_another_home_is_refused_in_one_sentence(tmp_path):
+    plist = write_plist(agents_dir() / "dev.keryx.agent.plist",
+                        KERYX_HOME="/Users/owner/.config/keryx")
+
+    foreign = service.foreign_units([LAUNCHD])
+
+    assert foreign is not None and foreign.unit_file == plist
+    assert foreign.message == (
+        "These units belong to KERYX_HOME=/Users/owner/.config/keryx; this command runs with "
+        f"KERYX_HOME={os.environ['KERYX_HOME']}.")
+    assert foreign.detail == f"rendered in {plist}"
+
+
+def test_homes_are_compared_as_real_paths(tmp_path, monkeypatch):
+    real = tmp_path / "real-home"
+    real.mkdir()
+    (tmp_path / "linked-home").symlink_to(real)
+    monkeypatch.setenv("KERYX_HOME", str(tmp_path / "linked-home"))
+    write_plist(agents_dir() / "dev.keryx.agent.plist", KERYX_HOME=str(real))
+
+    assert service.foreign_units([LAUNCHD]) is None
+    assert service.foreign_units([LAUNCHD], home=tmp_path / "elsewhere") is not None
+
+
+def test_the_accounts_own_units_are_judged_whatever_home_says(tmp_path, monkeypatch):
+    """A sandbox moves `HOME`; launchd still reads the account's LaunchAgents, and the
+    label is the same one."""
+    account = tmp_path / "account"
+    monkeypatch.setattr(service, "account_home", lambda: account)
+    plist = write_plist(account / "Library" / "LaunchAgents" / "dev.keryx.agent.plist",
+                        KERYX_HOME=str(account / ".config" / "keryx"))
+
+    foreign = service.foreign_units([LAUNCHD])
+
+    assert foreign is not None and foreign.unit_file == plist
+    assert service.unit_files(LAUNCHD) == [unit_file(LAUNCHD), plist]
+
+
+def test_a_systemd_unit_is_read_as_systemd_unquotes_it(tmp_path, monkeypatch):
+    home = tmp_path / 'odd "dir"\\100%'
+    monkeypatch.setenv("KERYX_HOME", str(home))
+    path = unit_file(SYSTEMD)
+    path.parent.mkdir(parents=True)
+    quoted = str(home).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    path.write_text("[Service]\n"
+                    'Environment="PATH=/usr/bin"\n'
+                    f'Environment="KERYX_HOME={quoted}"\n'
+                    "Environment=broken\"quote\n"
+                    "Environment=NO_VALUE\n")
+
+    assert service.rendered_env(path, "systemd")["KERYX_HOME"] == str(home)
+    assert service.foreign_units([SYSTEMD]) is None
+    # The account's default location, when XDG_CONFIG_HOME moved the installer's.
+    assert service.unit_files(SYSTEMD)[-1] == (
+        service.account_home() / ".config" / "systemd" / "user" / "keryx.service")
+
+
+def test_a_unit_that_renders_no_home_belongs_to_the_default_one(tmp_path, monkeypatch):
+    """A template from before KERYX_HOME was rendered: its service ran with the default."""
+    write_plist(agents_dir() / "dev.keryx.agent.plist", PATH="/usr/bin")
+    default = service.account_home() / ".config" / "keryx"
+
+    assert service.foreign_units([LAUNCHD]).theirs == default
+    monkeypatch.setenv("KERYX_HOME", str(default))
+    assert service.foreign_units([LAUNCHD]) is None
+
+
+def test_a_rendered_xdg_config_home_says_where_the_default_home_was(tmp_path):
+    write_plist(agents_dir() / "dev.keryx.agent.plist", XDG_CONFIG_HOME="/srv/config")
+
+    assert service.foreign_units([LAUNCHD]).theirs.as_posix() == "/srv/config/keryx"
+
+
+@pytest.mark.parametrize("content", [
+    b"not a plist", b"<plist><array/></plist>",
+    plistlib.dumps({"EnvironmentVariables": "KERYX_HOME=/x"}),
+])
+def test_a_plist_that_says_nothing_belongs_to_the_default_home(content, tmp_path):
+    path = agents_dir() / "dev.keryx.agent.plist"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+
+    assert service.rendered_env(path, "launchd") == {}
+    assert service.foreign_units([LAUNCHD]).theirs == service.account_home() / ".config" / "keryx"
+
+
+def test_an_unreadable_unit_file_belongs_to_the_default_home(tmp_path, monkeypatch):
+    path = write_plist(agents_dir() / "dev.keryx.agent.plist", KERYX_HOME="/x")
+    monkeypatch.setattr(type(path), "read_bytes", lambda self: (_ for _ in ()).throw(
+        PermissionError(13, "denied")))
+
+    assert service.rendered_env(path, "launchd") == {}
+
+
+def test_the_account_home_comes_from_the_user_database(monkeypatch):
+    """Read here and nowhere else in the suite: the conftest stands in for it everywhere."""
+    monkeypatch.undo()  # the suite's stand-in, and the rest of its isolation, for this read
+    assert service.account_home() == Path(pwd.getpwuid(os.getuid()).pw_dir)
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: (_ for _ in ()).throw(KeyError(uid)))
+    assert service.account_home() == Path.home()

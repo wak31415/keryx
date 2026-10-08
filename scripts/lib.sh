@@ -78,6 +78,105 @@ require_paths() {
   fi
 }
 
+account_home() {
+  # account_home — the account's own home directory, from the user database (`~user`) rather
+  # than $HOME: where launchd and systemd's user manager read the units, whatever this shell
+  # has moved HOME to. Empty when the user database does not say.
+  local user home
+  user="$(id -un 2>/dev/null)" || return 0
+  [[ "$user" =~ ^[A-Za-z0-9._-]+$ ]] || return 0
+  home="$(eval "printf '%s' ~$user")"  # a bare word, checked above: tilde expansion only
+  if [[ "$home" == /* ]]; then
+    printf '%s' "$home"
+  fi
+}
+
+rendered_value() {
+  # rendered_value FILE NAME — NAME as a unit file was rendered with it, its quoting undone:
+  # a plist's <key>NAME</key> then <string>…</string>, a systemd unit's Environment="NAME=…".
+  if [[ "$1" == *.plist ]]; then
+    sed -n "/<key>$2<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;q;}" "$1" \
+      | sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g'
+  else
+    sed -n "s/^Environment=\"$2=\(.*\)\"\$/\1/p" "$1" | sed -e 's/\\\(.\)/\1/g' -e 's/%%/%/g'
+  fi
+}
+
+rendered_home() {
+  # rendered_home FILE — the KERYX_HOME a unit file was rendered for, as
+  # `keryx.restart.service.rendered_home` reads it: its KERYX_HOME; else its
+  # XDG_CONFIG_HOME's keryx; else the default under the account's home — a unit from before
+  # either was rendered ran with that.
+  local home config account
+  home="$(rendered_value "$1" KERYX_HOME)"
+  config="$(rendered_value "$1" XDG_CONFIG_HOME)"
+  if [[ -n "$home" ]]; then
+    printf '%s' "$home"
+  elif [[ "$config" == /* ]]; then
+    printf '%s/keryx' "$config"
+  else
+    account="$(account_home)"
+    printf '%s/.config/keryx' "${account:-$HOME}"
+  fi
+}
+
+real_path() {
+  # real_path PATH — PATH with the symlinks in as much of it as exists resolved, so two
+  # spellings of one directory compare equal (os.path.realpath's answer).
+  local path="${1%/}" rest=""
+  while [[ -n "$path" && ! -d "$path" ]]; do
+    rest="/${path##*/}$rest"
+    path="${path%/*}"
+  done
+  if [[ -n "$path" ]]; then
+    path="$(cd "$path" && pwd -P)"
+  fi
+  printf '%s%s' "$path" "$rest"
+}
+
+require_own_units() {
+  # require_own_units DIR SUBDIR AGENT TUNNEL NAME... — exit 2, saying whose they are, when
+  # a unit file NAME (dev.keryx.llm.plist, keryx.service) was rendered for another KERYX_HOME
+  # than this one, before anything is touched: a unit's name is the account's, not the
+  # home's, so installing or removing it from another KERYX_HOME — a sandbox, a test — would
+  # boot out and replace the owner's own. Each is read in DIR, where this installer writes
+  # it, and in SUBDIR of the account's own home (`account_home`), where the service manager
+  # reads it whatever HOME says. TUNNEL renders no Keryx environment and is judged by AGENT,
+  # Keryx's own unit, when that is installed. `keryx.restart.service.foreign_units` is the
+  # same check, for the commands that drive the manager themselves; there is no override.
+  local dir="$1" subdir="$2" agent="$3" tunnel="$4" home name judged where file theirs
+  shift 4
+  local -a dirs=("$dir")
+  home="$(account_home)"
+  if [[ -n "$home" && "$home/$subdir" != "$dir" ]]; then
+    dirs+=("$home/$subdir")
+  fi
+  for name in "$@"; do
+    judged="$name"
+    if [[ "$name" == "$tunnel" ]]; then
+      for where in "${dirs[@]}"; do
+        if [[ -f "$where/$agent" ]]; then
+          judged="$agent"
+        fi
+      done
+    fi
+    for where in "${dirs[@]}"; do
+      file="$where/$judged"
+      [[ -f "$file" ]] || continue
+      if [[ -z "$KERYX_HOME_DIR" ]]; then
+        echo "could not ask keryx where it keeps things; run \`keryx config path\` to see why" >&2
+        exit 1
+      fi
+      theirs="$(rendered_home "$file")"
+      if [[ "$(real_path "$theirs")" != "$(real_path "$KERYX_HOME_DIR")" ]]; then
+        echo "These units belong to KERYX_HOME=$theirs; this command runs with KERYX_HOME=$KERYX_HOME_DIR." >&2
+        echo "rendered in $file" >&2
+        exit 2
+      fi
+    done
+  done
+}
+
 parse_install_args() {
   # parse_install_args "$@" — sets UNINSTALL=1 for `--uninstall`, LLM=1 for `--llm`,
   # VOICE=1 for `--voice` and VOICE_LLM=1 for `--voice-llm`, in any order; exits 2 on

@@ -1,6 +1,10 @@
 """`keryx service`: the five units as the service manager finds them, and installing or
 removing them through the checkout's installer — every manager and script faked."""
 
+import os
+import plistlib
+from pathlib import Path
+
 import pytest
 
 from keryx import units
@@ -559,3 +563,107 @@ def test_the_start_order_puts_what_is_read_from_first():
         "llm", "voice_llm", "voice", "tunnel", "agent"]
     assert units.start_order(["agent", "tunnel"]) == ["tunnel", "agent"]
     assert units.start_order(["agent", "voice"]) == ["voice", "agent"]  # its LLMs not asked
+
+
+# --- units another KERYX_HOME rendered --------------------------------------------------------
+
+OWNER_HOME = "/Users/owner/.config/keryx"
+
+
+def rendered(unit, home=OWNER_HOME, *, manager="launchd"):
+    """`unit`'s file as its installer renders it, for `home` (None: no KERYX_HOME at all)."""
+    env = {"PATH": "/usr/bin", **({"KERYX_HOME": home} if home else {})}
+    if manager == "launchd":
+        path = Path.home() / "Library" / "LaunchAgents" / f"{unit}.plist"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(plistlib.dumps({"Label": unit, "EnvironmentVariables": env}))
+    else:
+        path = Path(os.environ["XDG_CONFIG_HOME"]) / "systemd" / "user" / unit
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("[Service]\n" + "".join(f'Environment="{name}={value}"\n'
+                                                 for name, value in env.items()))
+    return path
+
+
+def ours():
+    return os.environ["KERYX_HOME"]
+
+
+@pytest.mark.parametrize("action", ["stop", "start"])
+@pytest.mark.parametrize("manager", ["launchd", "systemd"])
+def test_a_stop_or_start_of_units_another_home_rendered_runs_nothing(manager, action):
+    """The incident: a sandboxed KERYX_HOME stopped and started the owner's own Keryx,
+    because a label is the account's, not the home's. Refused before the settle, too."""
+    name = "dev.keryx.agent" if manager == "launchd" else "keryx.service"
+    plist = rendered(name, manager=manager)
+    fake = Manager(manager, loaded={name})
+    settled = []
+
+    outcome = fake.control(action, settle=lambda: settled.append(1))
+
+    assert (outcome.ok, outcome.code, outcome.units) == (False, 2, [])
+    assert outcome.message == (f"These units belong to KERYX_HOME={OWNER_HOME}; this command "
+                               f"runs with KERYX_HOME={ours()}.")
+    assert outcome.detail == f"rendered in {plist}"
+    assert fake.commands == [] and settled == []
+
+
+def test_units_this_home_rendered_are_driven_as_ever():
+    rendered("dev.keryx.agent", ours())
+    rendered("dev.keryx.tunnel", None)  # the tunnel renders no Keryx environment
+    fake = Manager(loaded=MAIN)
+
+    assert fake.control("stop").ok and fake.verbs("dev.keryx.agent") == ["disable", "bootout"]
+
+
+def test_the_tunnel_belongs_to_whoever_its_agent_unit_does():
+    rendered("dev.keryx.tunnel", None)
+    rendered("dev.keryx.agent")
+    settings = Settings()
+
+    assert units.owner_mismatch(settings, ["tunnel"], platform="darwin").theirs == Path(
+        OWNER_HOME)
+    rendered("dev.keryx.agent", ours())
+    assert units.owner_mismatch(settings, ["tunnel"], platform="darwin") is None
+
+
+def test_a_tunnel_installed_alone_belongs_to_the_default_home(monkeypatch):
+    rendered("dev.keryx.tunnel", None)
+    default = Path.home() / ".config" / "keryx"
+
+    assert units.owner_mismatch(Settings(), ["tunnel"], platform="darwin").theirs == default
+    monkeypatch.setenv("KERYX_HOME", str(default))
+    assert units.owner_mismatch(Settings(), ["tunnel"], platform="darwin") is None
+
+
+def test_only_the_units_a_command_drives_are_judged():
+    rendered("dev.keryx.llm")
+    fake = Manager(loaded=MAIN)
+
+    assert fake.control("stop").ok
+    assert fake.control("stop", every=True).code == 2
+    assert units.owner_mismatch(Settings(service_manager="none"), units.KINDS) is None
+
+
+@pytest.mark.parametrize(("kwargs", "unit"), [
+    ({}, "dev.keryx.agent"),
+    ({"uninstall": True}, "dev.keryx.tunnel"),
+    ({"llm": True, "uninstall": True}, "dev.keryx.llm"),
+    ({"voice": True}, "dev.keryx.voice"),
+    ({"voice_llm": True, "uninstall": True}, "dev.keryx.voice-llm"),
+])
+def test_an_install_or_removal_of_units_another_home_rendered_runs_no_installer(
+    tmp_path, kwargs, unit
+):
+    root, script = checkout(tmp_path / "checkout"), Script()
+    if unit == "dev.keryx.tunnel":
+        rendered(unit, None)  # alone: the default home's, which is not this one
+    else:
+        plist = rendered(unit)
+
+    outcome = units.install(root=root, platform="darwin", run=script, **kwargs)
+
+    assert outcome.code == 2 and script.ran == []
+    assert outcome.message.startswith("These units belong to KERYX_HOME=")
+    if unit != "dev.keryx.tunnel":
+        assert outcome.detail == f"rendered in {plist}"

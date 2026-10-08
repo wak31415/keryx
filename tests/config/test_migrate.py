@@ -22,7 +22,7 @@ from typer.testing import CliRunner
 from keryx import cli
 from keryx.config import Settings
 from keryx.config import migrate as migration
-from keryx.config.files import dump_toml, read_toml, secure_dir
+from keryx.config.files import dump_toml, keryx_home, read_toml, secure_dir
 from keryx.config.migrate import MigrationError, Service, make_plan, rewrite_task_paths, run
 from keryx.restart.service import ServiceTarget
 from keryx.setup import migrate_stream
@@ -1579,3 +1579,64 @@ def test_without_a_hook_none_is_recorded_or_rendered(machine, command):
 
     assert json.loads(pending(machine).read_text())["hook"] is False
     assert machine.plan().hook is False
+
+
+# --- a Keryx unit another KERYX_HOME rendered -------------------------------------------------
+
+
+def keryx_unit(home: str) -> Path:
+    """Keryx's systemd unit, rendered (as `install-systemd.sh` renders it) for `home`."""
+    path = Path(os.environ["XDG_CONFIG_HOME"]) / "systemd" / "user" / "keryx.service"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'[Service]\nEnvironment="KERYX_HOME={home}"\n')
+    return path
+
+
+@pytest.fixture
+def installed(monkeypatch):
+    """Keryx's unit installed and running, its manager never asked anything real."""
+    monkeypatch.setattr(cli, "resolve_target",
+                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    monkeypatch.setattr(cli, "MigratingService",
+                        lambda target: pytest.fail("nothing may be stopped"))
+
+
+@pytest.mark.parametrize("args", [["--yes"], ["--dry-run"]])
+def test_a_migration_refuses_a_keryx_unit_another_home_rendered(
+    machine, command, installed, args
+):
+    """It stops, re-renders and starts that unit: the destination's own, or nobody's."""
+    unit = keryx_unit("/srv/someone-else/keryx")
+
+    result = runner.invoke(cli.app, ["migrate", *args])
+
+    assert result.exit_code == 2 and command == []
+    assert ("These units belong to KERYX_HOME=/srv/someone-else/keryx; this command runs "
+            f"with KERYX_HOME={keryx_home()}.") in result.stderr
+    assert f"rendered in {unit}" in result.stderr
+    assert machine.legacy.is_dir()
+
+
+def test_a_migration_streamed_refuses_it_as_one_error(machine, command, installed):
+    unit = keryx_unit("/srv/someone-else/keryx")
+
+    result, events = stream()
+
+    assert result.exit_code == 2 and command == []
+    assert ends_once(events) == "error" and events[-1]["detail"] == f"rendered in {unit}"
+    assert events[-1]["message"].startswith("These units belong to KERYX_HOME=/srv/someone")
+    assert machine.legacy.is_dir()
+
+
+def test_a_keryx_unit_rendered_for_the_destination_is_migrated(machine, command, monkeypatch):
+    keryx_unit(str(keryx_home()))
+    manager = FakeManager(machine)
+    monkeypatch.setattr(cli, "resolve_target",
+                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    monkeypatch.setattr(cli, "MigratingService",
+                        lambda target: Service(target, run=manager, sleep=lambda _: None))
+
+    result = runner.invoke(cli.app, ["migrate", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert [Path(argv[0]).name for argv in command] == ["install-systemd.sh"]

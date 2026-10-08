@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
@@ -22,6 +23,7 @@ from fakes import FakeVoiceSession
 from keryx.config import Settings
 from keryx.restart.coordinator import (
     EXEC_CONFIRM_S,
+    FOREIGN_MESSAGE,
     MAX_CALLBACK_ATTEMPTS,
     RestartCoordinator,
 )
@@ -2074,3 +2076,19 @@ async def test_a_restart_held_for_a_call_that_the_owner_stops_meanwhile_never_ha
 
     assert harness.spawn.commands == [] and harness.watch.plans == []
     assert harness.record().state == "stopped"
+
+
+async def test_a_unit_another_home_rendered_is_not_restarted(tmp_path):
+    """A hand-started copy told `SERVICE_MANAGER=systemd` must not restart the owner's own
+    Keryx: the unit's name is the account's, and it was rendered for another KERYX_HOME."""
+    unit = Path(os.environ["XDG_CONFIG_HOME"]) / "systemd" / "user" / "keryx.service"
+    unit.parent.mkdir(parents=True)
+    unit.write_text('[Service]\nEnvironment="KERYX_HOME=/srv/someone-else/keryx"\n')
+    harness = Harness(make_settings(tmp_path))
+
+    result = await harness.coordinator.request()
+    await harness.settle()
+
+    assert result == {"status": "unsupported", "message": FOREIGN_MESSAGE}
+    assert FOREIGN_MESSAGE.rstrip(".").count(". ") == 0  # one sentence to say
+    assert harness.record() is None and harness.spawn.commands == []

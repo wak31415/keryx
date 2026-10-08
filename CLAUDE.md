@@ -860,7 +860,7 @@ relative one ignored as the specification says (`config/files.py::xdg_home`):
   (`models/`), a llama.cpp build Keryx installed (`llama.cpp/`), and on `feat/local-wakeword`
   the wake-word models.
 
-Four rulings:
+Five rulings:
 
 - **The PIN is in the configuration directory, not the data one.** Where the PIN is must not
   depend on a setting: at `DATA_DIR/pin`, a `DATA_DIR` pointed at an empty directory found
@@ -899,6 +899,25 @@ Four rulings:
   `KERYX_HOME` and the four `XDG_*_HOME`, and the restart watchdog's transient unit is
   handed them with `--setenv`: a user manager's environment is not the service's. A
   relative `DATA_DIR`, `STATE_DIR` or `CACHE_DIR` is refused for the same reason.
+- **A command drives only the units its own `KERYX_HOME` rendered.** Every other directory
+  follows the environment; a unit's name does not — `dev.keryx.agent` and `keryx.service`
+  are one per account. On 2026-10-08 a test of `keryx service stop|start` with a sandboxed
+  `KERYX_HOME` and `XDG_*` stopped and restarted the owner's own agent and model server. So
+  `restart.service.foreign_units` (behind `units.owner_mismatch`) reads the `KERYX_HOME` each
+  installed unit file was rendered with — the plist's `EnvironmentVariables`, the unit's
+  `Environment=` — wherever this process's installer writes it *and* under the account's own
+  home from the user database (`account_home`, never `$HOME`, which a sandbox moves), and
+  compares it as a real path with this process's. A unit rendering none belongs to the
+  default home (`XDG_CONFIG_HOME/keryx` when it renders that); the tunnel, which renders no
+  Keryx environment, belongs to whoever its agent unit does. A mismatch refuses, exit 2,
+  before anything runs — `service install|uninstall|stop|start`, `models start|stop`, `voice
+  use here`, `voice llm here|shared|remote`, `restart`, the voice's `restart_service` under
+  a `SERVICE_MANAGER` named outright, the setup wizard's install, and `migrate`, which judges
+  Keryx's units against the home it is filling and never Jarvis's, rendered for the old one
+  by definition — and `scripts/lib.sh::require_own_units` is the same check in the
+  installers. There is no `--force`: moving a home is `keryx migrate`'s job, or an uninstall
+  from the home that owns the units. The suite stands in for `account_home` (the conftest,
+  and an `id` stub for the installers), so no test reads the owner's real units.
 
 ## Restarts are three halves
 
@@ -913,7 +932,9 @@ that way, and keep every failure path landing somewhere a human can find it
 *process*: `SERVICE_MANAGER=auto` resolves from its own cgroup (systemd) or
 `XPC_SERVICE_NAME` (launchd), never from `systemctl` being on PATH, so a hand-started copy
 refuses rather than restart the installed one. Only `keryx restart` and `doctor`, which run
-outside the unit, ask whether it is installed.
+outside the unit, ask whether it is installed. Neither half restarts a unit another
+`KERYX_HOME` rendered (see "Storage follows XDG"): `keryx restart` refuses before it writes a
+record, and `request()` answers `unsupported`.
 
 A Keryx the owner stopped (`keryx service stop`) is neither half's to bring back. Every
 write to `restart.json` is made under a cross-process `flock` beside it

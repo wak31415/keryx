@@ -17,16 +17,19 @@ systemd, the job label launchd hands it on macOS.
 
 import logging
 import os
+import plistlib
+import pwd
 import re
+import shlex
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from keryx.config import Settings
-from keryx.config.files import HOME_ENV, XDG_HOMES, xdg_home
+from keryx.config.files import APP_NAME, HOME_ENV, XDG_HOMES, keryx_home, xdg_home
 
 log = logging.getLogger("keryx.restart")
 
@@ -126,6 +129,133 @@ def unit_file(target: ServiceTarget) -> Path:
     if target.manager == "systemd":
         return xdg_home("config") / "systemd" / "user" / target.unit
     return Path.home() / "Library" / "LaunchAgents" / f"{target.unit}.plist"
+
+
+# --- whose units they are ----------------------------------------------------------------
+
+#: What every command that drives Keryx's units says when they were rendered for another
+#: configuration directory. Paths, never another variable: only `KERYX_HOME` says whose.
+FOREIGN_UNITS = ("These units belong to KERYX_HOME={theirs}; this command runs with "
+                 "KERYX_HOME={ours}.")
+
+
+@dataclass(frozen=True)
+class ForeignUnits:
+    """A unit file rendered for a `KERYX_HOME` (`theirs`) that is not this process's
+    (`ours`): the refusal every command that drives the service manager makes."""
+
+    theirs: Path
+    ours: Path
+    unit_file: Path
+
+    @property
+    def message(self) -> str:
+        return FOREIGN_UNITS.format(theirs=self.theirs, ours=self.ours)
+
+    @property
+    def detail(self) -> str:
+        return f"rendered in {self.unit_file}"
+
+
+def account_home() -> Path:
+    """The account's own home directory, from the user database rather than `$HOME`: where
+    the user's service manager finds its units, whatever a shell has moved `HOME` to."""
+    try:
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except KeyError:  # an account the user database does not list: `$HOME` is all there is
+        return Path.home()
+
+
+def unit_files(target: ServiceTarget) -> list[Path]:
+    """Every file `target`'s name could be loaded from: where this process's installer
+    writes it (`unit_file`, which follows `HOME` and `XDG_CONFIG_HOME`), and where the
+    account's service manager reads it whatever this process's environment says. A label
+    (or a user unit's name) is one per account, so a sandboxed `HOME` or `XDG_CONFIG_HOME`
+    moves the file this process would write, never the unit `launchctl` or `systemctl`
+    reaches."""
+    if target.manager == "systemd":
+        default = account_home() / ".config" / "systemd" / "user" / target.unit
+    else:
+        default = account_home() / "Library" / "LaunchAgents" / f"{target.unit}.plist"
+    return list(dict.fromkeys([unit_file(target), default]))
+
+
+def rendered_env(path: Path, manager: str) -> dict[str, str] | None:
+    """The environment a unit file was rendered with: a plist's `EnvironmentVariables`, a
+    systemd unit's `Environment=` lines (systemd's quoting and `%%` undone). None when
+    there is no file; empty for one that cannot be read or parsed, or renders none."""
+    if not path.is_file():
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return {}
+    if manager != "systemd":
+        try:
+            variables = plistlib.loads(data).get("EnvironmentVariables")
+        except Exception:  # not a plist launchd could load either: whose it is, unsaid
+            return {}
+        if not isinstance(variables, dict):
+            return {}
+        return {key: value for key, value in variables.items() if isinstance(value, str)}
+    env: dict[str, str] = {}
+    for line in data.decode("utf-8", errors="replace").splitlines():
+        setting, _, assignments = line.partition("=")
+        if setting.strip() != "Environment":
+            continue
+        try:
+            words = shlex.split(assignments)
+        except ValueError:
+            continue
+        for word in words:
+            name, equals, value = word.partition("=")
+            if equals:
+                env[name] = value.replace("%%", "%")
+    return env
+
+
+def rendered_home(env: Mapping[str, str]) -> Path:
+    """The `KERYX_HOME` a unit rendered with `env` runs with: the one it names; else the
+    one its `XDG_CONFIG_HOME` gives; else the default, under the account's home. A unit with
+    none of them — a template from before they were rendered — belongs to the default."""
+    if home := env.get(HOME_ENV, "").strip():
+        return Path(home).expanduser()
+    config = env.get(XDG_HOMES["config"][0], "").strip()
+    if config and Path(config).is_absolute():
+        return Path(config) / APP_NAME
+    return account_home() / ".config" / APP_NAME
+
+
+def unit_owners(target: ServiceTarget) -> list[tuple[Path, Path]]:
+    """(The `KERYX_HOME` it was rendered for, the file) for each of `target`'s unit files on
+    disk (`unit_files`); empty when it has none."""
+    owners = []
+    for path in unit_files(target):
+        env = rendered_env(path, target.manager)
+        if env is not None:
+            owners.append((rendered_home(env), path))
+    return owners
+
+
+def _same_directory(one: Path, other: Path) -> bool:
+    return os.path.realpath(one) == os.path.realpath(other)
+
+
+def foreign_units(
+    targets: Sequence[ServiceTarget], *, home: Path | None = None
+) -> ForeignUnits | None:
+    """The first of `targets`' unit files rendered for another `KERYX_HOME` than `home`
+    (this process's own, `keryx_home`), compared as real paths; None when every one is
+    `home`'s, or not installed. The one guard every command that drives the service manager
+    asks before running anything: unit names are global to the account, so a command run
+    with another `KERYX_HOME` — a sandbox, a test — would otherwise stop, start or replace
+    the owner's own Keryx. It only reads files."""
+    ours = home or keryx_home()
+    for target in targets:
+        for theirs, path in unit_owners(target):
+            if not _same_directory(theirs, ours):
+                return ForeignUnits(theirs, ours, path)
+    return None
 
 
 def resolve_target(

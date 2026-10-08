@@ -4,6 +4,7 @@ command line the Mac app runs — every service manager, installer and server fa
 import asyncio
 import json
 import os
+import plistlib
 import signal
 from pathlib import Path
 
@@ -205,11 +206,13 @@ def test_the_help_points_the_model_servers_elsewhere():
 # --- keryx service stop|start --------------------------------------------------------------
 
 
-def on_disk(*labels):
+def on_disk(*labels, home=None):
+    """Each label's plist, as `install-launchd.sh` renders it for `home` (this KERYX_HOME)."""
     agents = Path.home() / "Library" / "LaunchAgents"
     agents.mkdir(parents=True, exist_ok=True)
+    env = {"KERYX_HOME": home or os.environ["KERYX_HOME"]}
     for label in labels:
-        (agents / f"{label}.plist").write_text("<plist/>")
+        (agents / f"{label}.plist").write_bytes(plistlib.dumps({"EnvironmentVariables": env}))
 
 
 def test_service_stop_json_keeps_the_plists_and_disables_them(machine):
@@ -641,3 +644,83 @@ def test_a_server_that_never_comes_up_leaves_no_unit_behind(machine, tmp_path):
                                [installer(tmp_path), "--llm", "--uninstall"]]
     assert "its service was removed" in events_of(result)[-1]["message"]
     assert "keryx-llm.err.log" in events_of(result)[-1]["detail"]
+
+
+# --- units another KERYX_HOME rendered -------------------------------------------------------
+
+OWNER_HOME = "/Users/owner/.config/keryx"
+
+
+def refusal() -> str:
+    return (f"These units belong to KERYX_HOME={OWNER_HOME}; this command runs with "
+            f"KERYX_HOME={os.environ['KERYX_HOME']}.")
+
+
+def plist(label: str) -> str:
+    return str(Path.home() / "Library" / "LaunchAgents" / f"{label}.plist")
+
+
+@pytest.mark.parametrize("argv", [["service", "stop"], ["service", "start"],
+                                  ["service", "stop", "--all"], ["service", "start", "--all"]])
+def test_service_stop_and_start_refuse_units_another_home_rendered(machine, argv):
+    """The incident: a sandbox's `service stop|start` drove the owner's own Keryx."""
+    machine.installed = {"dev.keryx.agent", "dev.keryx.tunnel"}
+    on_disk("dev.keryx.agent", "dev.keryx.tunnel", home=OWNER_HOME)
+
+    result = runner.invoke(app, [*argv, "--json"])
+
+    assert result.exit_code == 2 and machine.scripts == []
+    assert json.loads(result.stdout) == {"ok": False, "message": refusal(),
+                                         "detail": f"rendered in {plist('dev.keryx.agent')}",
+                                         "units": []}
+    words = runner.invoke(app, argv)
+    assert words.exit_code == 2 and refusal() in words.stderr and machine.scripts == []
+
+
+def test_a_stop_refused_settles_no_restart(machine, tmp_path):
+    on_disk("dev.keryx.agent", home=OWNER_HOME)
+
+    assert runner.invoke(app, ["service", "stop", "--json"]).exit_code == 2
+    assert not (Settings().state_dir / "restart.json").exists()
+
+
+@pytest.mark.parametrize(("argv", "label"), [
+    (["service", "install"], "dev.keryx.agent"),
+    (["service", "uninstall"], "dev.keryx.agent"),
+    (["service", "uninstall", "--llm"], "dev.keryx.llm"),
+    (["service", "uninstall", "--voice"], "dev.keryx.voice"),
+    (["service", "uninstall", "--voice-llm"], "dev.keryx.voice-llm"),
+    (["models", "stop"], "dev.keryx.llm"),
+])
+def test_installs_and_removals_refuse_units_another_home_rendered(machine, argv, label):
+    on_disk(label, home=OWNER_HOME)
+
+    result = runner.invoke(app, [*argv, "--json"])
+
+    assert result.exit_code == 2 and machine.scripts == []
+    assert json.loads(result.stdout) == {"ok": False, "message": refusal(),
+                                         "detail": f"rendered in {plist(label)}"}
+    words = runner.invoke(app, argv)
+    assert words.exit_code == 2 and machine.scripts == [] and words.stdout == ""
+    assert refusal() in words.stderr and plist(label) in words.stderr
+
+
+@pytest.mark.parametrize("argv", [
+    ["models", "start"], ["models", "start", "--voice-llm"], ["voice", "use", "here"],
+    ["voice", "llm", "here", "gemma-3-4b"], ["voice", "llm", "shared"],
+    ["voice", "llm", "remote", "http://gpu-box:11434", "--model", "m"],
+])
+def test_the_model_servers_set_ups_refuse_units_another_home_rendered(machine, argv):
+    """Refused before anything is downloaded, installed, restarted or removed — whichever
+    model server's unit it is: these may touch any of them."""
+    on_disk("dev.keryx.voice", home=OWNER_HOME)
+
+    result = runner.invoke(app, [*argv, "--json"])
+
+    assert result.exit_code == 2 and machine.scripts == []
+    events = events_of(result)
+    assert [event["event"] for event in events] == ["error"]
+    assert (events[0]["message"], events[0]["detail"]) == (
+        refusal(), f"rendered in {plist('dev.keryx.voice')}")
+    words = runner.invoke(app, argv)
+    assert words.exit_code == 2 and refusal() in words.stderr and machine.scripts == []

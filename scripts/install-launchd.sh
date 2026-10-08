@@ -58,6 +58,13 @@ if (( LLM || VOICE || VOICE_LLM )); then
   (( VOICE )) && LABELS+=(dev.keryx.voice)
   (( VOICE_LLM )) && LABELS+=(dev.keryx.voice-llm)
 fi
+# Only units this KERYX_HOME rendered: their labels are the account's (scripts/lib.sh).
+PLISTS=()
+for label in "${LABELS[@]}"; do
+  PLISTS+=("$label.plist")
+done
+require_own_units "$AGENTS" Library/LaunchAgents dev.keryx.agent.plist dev.keryx.tunnel.plist \
+  "${PLISTS[@]}"
 if (( UNINSTALL )); then
   remove_agents "${LABELS[@]}"
   exit 0

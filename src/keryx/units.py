@@ -63,6 +63,29 @@ def unit_name(settings: Settings, manager: str, kind: str) -> str:
     return NAMES[manager][kind]
 
 
+def owner_mismatch(
+    settings: Settings, kinds: Sequence[str], *, service_manager: str | None = None,
+    platform: str | None = None,
+) -> service.ForeignUnits | None:
+    """Whether any of the `kinds` units was rendered for another `KERYX_HOME` than this
+    process's (`service.foreign_units`): asked before anything drives `launchctl` or
+    `systemctl`, by every command that does, under `service_manager` (this machine's,
+    `manager`, by default); None with no manager. The tunnel renders no Keryx environment
+    of its own, and belongs to whichever Keryx its agent unit does: it is judged by that
+    unit, or as the default home's when it is installed alone."""
+    found = service_manager or manager(settings, platform or voice_setup.PLATFORM)
+    if found is None:
+        return None
+    agent = ServiceTarget(found, unit_name(settings, found, "agent"))
+    targets = []
+    for kind in kinds:
+        if kind == "tunnel" and service.unit_owners(agent):
+            targets.append(agent)
+        else:
+            targets.append(ServiceTarget(found, unit_name(settings, found, kind)))
+    return service.foreign_units(targets)
+
+
 def unit_on_disk(target: ServiceTarget) -> bool:
     """Whether `target`'s unit file is where its installer writes it."""
     return service.unit_file(target).is_file()
@@ -97,10 +120,12 @@ def status(
 
 @dataclass(frozen=True)
 class Outcome:
-    """How an install or removal ended: its exit code, and what to say about it."""
+    """How an install or removal ended: its exit code, and what to say about it — with a
+    `detail` only on a refusal of units another `KERYX_HOME` rendered (`owner_mismatch`)."""
 
     code: int
     message: str
+    detail: str | None = None
 
 
 def run_captured(argv: Sequence[str]) -> tuple[int, str, str]:
@@ -137,21 +162,24 @@ def install(
 ) -> Outcome:
     """Install (or, with `uninstall`, remove) Keryx and its tunnel, or with `llm`/`voice`/
     `voice_llm` the model servers' units, through the checkout at `root`. 2 for no
-    installer here — no checkout, no service manager — 1 with the script's last error
-    line, 0 when done."""
+    installer here — no checkout, no service manager — or units another `KERYX_HOME`
+    rendered (`owner_mismatch`, asked before the installer runs), 1 with the script's last
+    error line, 0 when done."""
     chosen = {"llm": llm, "voice": voice, "voice_llm": voice_llm}
     flags = [flag for flag, kind in FLAGS.items() if chosen[kind]]
     script, problem = installer(" ".join(flags), root=root, platform=platform)
     if script is None:
         return Outcome(REFUSED, problem or "no installer")
+    kinds = [FLAGS[flag] for flag in flags] or list(MAIN_KINDS)
+    found = "launchd" if script.name == "install-launchd.sh" else "systemd"
+    settings = settings or Settings()
+    if foreign := owner_mismatch(settings, kinds, service_manager=found):
+        return Outcome(REFUSED, foreign.message, foreign.detail)
     argv = [str(script), *flags, *(["--uninstall"] if uninstall else [])]
     code, out, err = run(argv)
     if code != 0:
         return Outcome(FAILED, _last_line(err) or f"{script.name} {' '.join(argv[1:])} exited "
                                                   f"with {code}")
-    kinds = [FLAGS[flag] for flag in flags] or ["agent", "tunnel"]
-    found = "launchd" if script.name == "install-launchd.sh" else "systemd"
-    settings = settings or Settings()
     names = ", ".join(unit_name(settings, found, kind) for kind in kinds)
     return Outcome(OK, f"{'removed' if uninstall else 'installed'} {names}")
 
@@ -162,6 +190,8 @@ def install(
 #: serves nothing else and without which nobody can reach Keryx. `--all` adds every other
 #: unit in `NAMES` — the model servers, and whatever that table gains later.
 MAIN_KINDS = ("agent", "tunnel")
+#: The model servers' units: every other one in `KINDS`.
+SERVER_KINDS = tuple(kind for kind in KINDS if kind not in MAIN_KINDS)
 #: The server units that read from another, and the ones they read from: the voice's words
 #: come from the voice LLM's own server, or the model server's.
 STARTS_AFTER = {"voice": ("llm", "voice_llm")}
@@ -254,8 +284,10 @@ def control(
     unit there is, stopped and kept from starting at login, or let start and started —
     without removing any unit file, so no installer runs and macOS asks nothing.
 
-    A stop calls `settle` first of all — the restart in flight, told it was the owner —
-    before any probe or early return; when it answers `SETTLE_LOCKED` the units are
+    Units another `KERYX_HOME` rendered (`owner_mismatch`) are refused (2) before anything
+    else, `settle` included: nothing is stopped, so no restart is settled. Otherwise a stop
+    calls `settle` first of all — the restart in flight, told it was the owner — before any
+    probe or other early return; when it answers `SETTLE_LOCKED` the units are
     stopped all the same, and the stop is reported failed (`NOT_SETTLED`). Then two passes
     over the units installed: every one disabled (a start: enabled), and only then each
     stopped (bootout) or started
@@ -269,8 +301,12 @@ def control(
     (`launchctl print-disabled`, `systemctl is-enabled`) does not show it. 1 when any unit
     failed, every failure in `detail`, redacted.
     """
-    settled = settle() if action == "stop" and settle is not None else None
     found = manager(settings, platform or voice_setup.PLATFORM)
+    kinds = [kind for kind in NAMES[found] if every or kind in MAIN_KINDS] if found else []
+    if found is not None and (foreign := owner_mismatch(settings, kinds,
+                                                        service_manager=found)):
+        return Control(False, REFUSED, foreign.message, foreign.detail, [])
+    settled = settle() if action == "stop" and settle is not None else None
     if found is None:
         return Control(False, REFUSED, NO_MANAGER, None, [])
     run = run or run_captured
@@ -278,7 +314,6 @@ def control(
     has_file = on_disk or unit_on_disk
     is_running = active or service.is_active
     is_enabled = enabled or service.is_enabled
-    kinds = [kind for kind in NAMES[found] if every or kind in MAIN_KINDS]
     targets = {kind: ServiceTarget(found, unit_name(settings, found, kind)) for kind in kinds}
     present = {kind: is_loaded(target) or has_file(target) for kind, target in targets.items()}
     rows = {kind: {"kind": kind, "unit": target.unit, "state": NOT_INSTALLED}

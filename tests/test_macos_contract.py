@@ -24,6 +24,8 @@ httpx's own transport, faked, answering on loopback only).
 
 import asyncio
 import json
+import os
+import plistlib
 import sys
 from datetime import UTC, datetime
 from functools import partial
@@ -568,12 +570,13 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     with model.open("wb") as out:
         out.truncate(MODEL.size)
     # The service commands: every unit installed, the tunnel stopped, the installers faked,
-    # and every launch agent's plist on disk for `service stop|start` to act on — whose
-    # `launchctl` is the same faked runner.
+    # and every launch agent's plist on disk, rendered for this KERYX_HOME, for `service
+    # stop|start` to act on — whose `launchctl` is the same faked runner.
     agents = Path.home() / "Library" / "LaunchAgents"
     agents.mkdir(parents=True)
+    rendered = plistlib.dumps({"EnvironmentVariables": {"KERYX_HOME": os.environ["KERYX_HOME"]}})
     for label in units.NAMES["launchd"].values():
-        (agents / f"{label}.plist").write_text("<plist/>")
+        (agents / f"{label}.plist").write_bytes(rendered)
     monkeypatch.setattr(units, "status", partial(
         units.status, installed=lambda target: True,
         active=lambda target: target.unit != "dev.keryx.tunnel"))
