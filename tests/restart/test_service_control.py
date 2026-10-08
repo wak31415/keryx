@@ -181,7 +181,7 @@ def test_a_plist_rendered_for_another_home_is_refused_in_one_sentence(tmp_path):
     foreign = service.foreign_units([LAUNCHD])
 
     assert foreign is not None and foreign.unit_file == str(plist)
-    assert foreign.message == ("Keryx's background services here belong to another Keryx "
+    assert foreign.message == ("Keryx's background processes here belong to another Keryx "
                                "settings folder, so this command leaves them alone.")
     assert for_the_app(foreign.message)
     assert foreign.detail == (

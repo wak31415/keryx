@@ -137,7 +137,7 @@ def unit_file(target: ServiceTarget) -> Path:
 #: configuration directory: a sentence for a person, with no path in it (the Mac app leads
 #: with it), and the paths in `FOREIGN_UNITS_DETAIL` — only `KERYX_HOME`, never another
 #: variable — which a terminal prints beneath it.
-FOREIGN_UNITS = ("Keryx's background services here belong to another Keryx settings folder, "
+FOREIGN_UNITS = ("Keryx's background processes here belong to another Keryx settings folder, "
                  "so this command leaves them alone.")
 FOREIGN_UNITS_DETAIL = ("The units were rendered for KERYX_HOME={theirs} (in {unit_file}); "
                         "this command runs with KERYX_HOME={ours}.")

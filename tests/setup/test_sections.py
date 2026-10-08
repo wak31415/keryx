@@ -538,7 +538,7 @@ def test_a_service_another_home_rendered_is_not_installed_over(make_ctx, world, 
     sections.run_service(ctx)
 
     assert ctx.ui.lines("error") == [
-        "Keryx's background services here belong to another Keryx settings folder, so this "
+        "Keryx's background processes here belong to another Keryx settings folder, so this "
         f"command leaves them alone. The units were rendered for KERYX_HOME=/srv/other (in "
         f"{plist}); this command runs with KERYX_HOME={os.environ['KERYX_HOME']}."]
     assert not any(call[0] == "script" for call in world.calls)
