@@ -21,8 +21,9 @@ enum FixAction: Equatable, Sendable {
     case integration(String)
     /// `pin`: the PIN sheet.
     case pin
-    /// `service:install`: Keryx started answering calls. The app starts it by itself once
-    /// setup allows; the button is for a start that failed, and asks nothing first.
+    /// `service:install` (not installed yet) or `service:start` (installed but stopped,
+    /// Task N): Keryx started answering calls. The app starts it by itself once setup
+    /// allows; the button is for a start that failed, and asks nothing first.
     case startKeryx
     /// `models:start`: the local model server, started.
     case startModelServer
@@ -46,7 +47,7 @@ enum FixAction: Equatable, Sendable {
 
     /// The ids that take no argument, as the CLI spells them (`fixes.ACTIONS`).
     static let screens: [String: FixAction] = [
-        "pin": .pin, "service:install": .startKeryx, "models:start": .startModelServer,
+        "pin": .pin, "service:install": .startKeryx, "service:start": .startKeryx, "models:start": .startModelServer,
         "models:choose": .chooseModel, "voice:here": .voiceHere, "voice:download": .voiceDownload,
         "voice:llm": .voiceLLM,
         "phone:account": .phoneAccount, "phone:webhooks": .phoneWebhooks, "phone:tunnel": .phoneTunnel,

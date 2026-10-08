@@ -1,27 +1,20 @@
 import Foundation
 
 // SEAMS: what the setup wizard is built to use once the CLI has it, and does without until
-// then. Each is one small protocol here, or one optional field on a document model (marked
-// "SEAM" where it is declared, and listed in `ContractTests.awaitingCLI`):
-//
-// - `AgentSmokeTesting` — `keryx auth smoke NAME --json`.
-// - `CatalogModel.fitsAsVoiceLlm` — `models list --json` `models[].fits_as_voice_llm`: a
-//   model as the voice's own LLM fits beside the agent's. The voice-model lists' only fit
-//   mark (`fits_with_voice_llm` is the agent's), shown once the CLI prints it.
-// - `PhoneTunnel.hostname` — `phone tunnel --json` `hostname`.
-// - `SetupStep.deferrable`, `.deferred`, `SetupMarkResult.deferred` — `setup plan --json`,
-//   and `setup mark phone|service`.
-// - `config options ASSISTANT_NAME` — the `ASSISTANT_NAME` row's `has_options`, already read.
-//
-// No `KeryxClient` adopts `AgentSmokeTesting` yet: it says how its command is run once the
-// CLI prints it, and the contract names the command in the same change.
+// then — each one small protocol here, or one optional field on a document model, listed in
+// `ContractTests.awaitingCLI` until the contract names it. `awaitingCLI` is empty today:
+// `AgentSmokeTesting` (`CLIClient` now adopts it), `PhoneTunnel.hostname`, `SetupStep.
+// deferrable`/`.deferred`, `SetupMarkResult.deferred`, `config options ASSISTANT_NAME`'s
+// `has_options`, `VoiceStatus.pipelines`, `ModelsReport.recommended` and its siblings, and
+// `CatalogModel.fitsAsVoiceLlm` are all in the contract now, and `models start --voice-llm`
+// has had its client method (`CLIClient.startVoiceLLMServer`) since before this list was
+// last true — nothing here is still waiting on the CLI.
 
-/// SEAM: a coding agent asked to run a test task, as a stream (Task L: `keryx auth smoke
-/// NAME --json`, NAME `claude`, `codex` or `local`: `step`, then `done {ok, summary,
-/// detail}`, `error` or `cancelled`), so the wizard can show it running. A `done` that did
-/// not pass exits 1 and is still the ending (the contract's `done` exit is `[0, 1]`). Until
-/// a client adopts it, whether an agent is ready is the doctor's sign-in check. A
-/// `CLIClient` adopts it with `events(["auth", "smoke", name, "--json"])`.
+/// A coding agent asked to run a test task, as a stream (Task L: `keryx auth smoke NAME
+/// --json`, NAME `claude`, `codex` or `local`: `step`, then `done {ok, summary, detail}`,
+/// `error` or `cancelled`), so the wizard can show it running. A `done` that did not pass
+/// exits 1 and is still the ending (the contract's `done` exit is `[0, 1]`). `CLIClient`
+/// adopts it with `events(["auth", "smoke", name, "--json"])`.
 public protocol AgentSmokeTesting: KeryxClient {
     func smokeTest(_ agent: String) -> AgentSmokeStream
 }

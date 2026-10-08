@@ -10,6 +10,8 @@
       "why": "OpenAI API key: not set.",
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "fix": "secret:OPENAI_API_KEY",
       "checks": [
         {
@@ -28,6 +30,8 @@
       "why": "Claude Code agent (default): not signed in.",
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "fix": "signin:claude",
       "checks": [
         {
@@ -52,6 +56,8 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "fix": null,
       "checks": [
         {
@@ -76,6 +82,8 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "fix": null,
       "checks": [
         {
@@ -96,6 +104,8 @@
         "owner"
       ],
       "walked": false,
+      "deferrable": true,
+      "deferred": false,
       "fix": "phone:account",
       "checks": [
         {
@@ -136,16 +146,18 @@
         "agents"
       ],
       "walked": false,
+      "deferrable": true,
+      "deferred": false,
       "fix": null,
       "checks": [
         {
-          "title": "Service manager",
+          "title": "Background process",
           "state": "ok",
           "detail": "launchd dev.keryx.agent",
           "fix": null
         },
         {
-          "title": "Service running",
+          "title": "Keryx running",
           "state": "ok",
           "detail": "running",
           "fix": null
@@ -160,6 +172,8 @@
       "why": null,
       "blocked_by": [],
       "walked": true,
+      "deferrable": false,
+      "deferred": false,
       "fix": null,
       "checks": [
         {
@@ -178,6 +192,8 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "fix": null,
       "checks": [
         {
@@ -196,6 +212,8 @@
       "why": "Email answers: on, but not signed in to Gmail.",
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "fix": "signin:gmail",
       "checks": [
         {
@@ -238,6 +256,8 @@
       "why": "Off until you choose: Keryx can file its own bug reports and your ideas.",
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "fix": null,
       "checks": [
         {
@@ -256,6 +276,8 @@
       "why": "Memory: nothing remembered yet.",
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "fix": null,
       "checks": [
         {
@@ -274,6 +296,8 @@
       "why": "Projects root: the projects folder does not exist.",
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "fix": "setting:PROJECTS_ROOT",
       "checks": [
         {

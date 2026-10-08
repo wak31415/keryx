@@ -134,7 +134,7 @@ import KeryxPreview
     @Test func anUnknownSubcommandOrVerbIsAValue() {
         Self.check(["restore", "--dry-run"], logs: "keryx …", hiding: ["restore", "--dry-run"])
         Self.check(["migrate", "--dry-run"], logs: "keryx migrate …", hiding: ["--dry-run"])
-        Self.check(["setup", "--all"], logs: "keryx setup …", hiding: ["--all"])
+        Self.check(["setup", "--mystery"], logs: "keryx setup …", hiding: ["--mystery"])
         Self.check(["config", "get", "PIN"], logs: "keryx config …", hiding: ["get", "PIN"])
         // A verb is only a verb second: a model named like one is still a value.
         Self.check(["models", "pull", "list"], logs: "keryx models pull …", hiding: [" list"])
@@ -165,6 +165,8 @@ import KeryxPreview
         Self.check(["service", "--json"], logs: "keryx service --json", hiding: [])
         Self.check(["service", "uninstall", "--llm", "--voice", "--json"],
                    logs: "keryx service uninstall --llm --voice --json", hiding: [])
+        Self.check(["service", "stop", "--all", "--json"], logs: "keryx service stop --all --json", hiding: [])
+        Self.check(["service", "start", "--all", "--json"], logs: "keryx service start --all --json", hiding: [])
         Self.check(["models", "stop", "--json"], logs: "keryx models stop --json", hiding: [])
         Self.check(["voice", "download", "--json"], logs: "keryx voice download --json", hiding: [])
         Self.check(["integrations", "--json"], logs: "keryx integrations --json", hiding: [])

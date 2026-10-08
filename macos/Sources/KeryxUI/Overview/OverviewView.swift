@@ -390,11 +390,14 @@ enum ChecklistWording {
     }
 
     /// What was found, said plainly where the wizard says it; anything else as the doctor
-    /// says it, "this machine" said as "this Mac".
+    /// says it, "this machine" said as "this Mac". The "background process" check's own
+    /// two ways to fail (`missing`: never installed; `failed`, Task N: installed, not
+    /// running) are wording, never a unit's name — `CheckWording.detail` is what reads
+    /// the raw detail and strips it, keeping the full original behind Show Details, so
+    /// that stays true here too rather than being duplicated or short-circuited.
     static func detail(_ check: DoctorCheck) -> String {
         if !check.ok {
             switch check.name {
-            case "service manager" where check.state == "missing": return CheckWording.serviceNotInstalled
             case "Twilio credentials" where check.state == "missing": return "Not connected"
             case "PUBLIC_HOST" where check.state == "missing": return "Not set"
             case "tunnel" where check.detail.contains("not installed"): return "Not installed"

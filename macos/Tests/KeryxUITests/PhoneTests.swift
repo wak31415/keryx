@@ -189,6 +189,21 @@ import KeryxPreview
         #expect(line.hint == "Started outside this app")
     }
 
+    /// A relaunch into a Keryx the owner stopped (`keryx service stop`, Task N) says so
+    /// quietly, never as an error, and only until it starts again.
+    @Test func stoppedByTheOwnerIsSaidQuietlyUntilStarted() {
+        var stopped = Self.notInstalled
+        stopped.service.installed = true
+        stopped.restart.state = "stopped"
+        let waiting = ServiceWording.answering(stopped, step: .start, change: nil, failure: nil)
+        #expect(waiting.hint == "Keryx was stopped by its owner")
+        #expect(waiting.tone != .error, "quiet, never an error")
+        var running = stopped
+        running.service.active = true
+        let answeringNow = ServiceWording.answering(running, step: .running, change: nil, failure: nil)
+        #expect(answeringNow.hint == nil, "gone once it answers again")
+    }
+
     @Test func quittingAsksWhileKeryxStarts() {
         let alone = Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
                                       changingService: .installing)

@@ -130,17 +130,13 @@ COMMANDS = {
 #: checked once the contract names it; until then the cross-checks let it be missing, and
 #: nothing more — a contract that names what the CLI does not print still fails them.
 AWAITING: set[str] = {
-    "config options ASSISTANT_NAME --json", "setup mark phone --json",
-    "service uninstall --voice-llm --json", AUTH_SMOKE, *SERVICE_CONTROL,
+    *VOICE_LLMS,
 }
 #: Keys a command prints that the app has yet to name, by path, with the types the
 #: contract will give them: checked here until it does, and by the contract once it does.
-AWAITING_KEYS: dict[str, dict[str, dict[str, str]]] = {
-    "models list --json": {"models[]": {"fits_as_voice_llm": "boolean"}},
-}
-#: The fix ids the CLI can send that the app has yet to name: `service:start`, for a Keryx
-#: `keryx service stop` stopped (`doctor`'s "installed, not running").
-AWAITING_FIX_IDS = {"service:start"}
+AWAITING_KEYS: dict[str, dict[str, dict[str, str]]] = {}
+#: The fix ids the CLI can send that the app has yet to name.
+AWAITING_FIX_IDS: set[str] = set()
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
 STDIN = {"pin set --json": "482915\n482915\n", "config verify KEY --json": "sk-typed\n"}

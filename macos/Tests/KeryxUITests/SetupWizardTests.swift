@@ -616,7 +616,8 @@ import KeryxTestSupport
     }
 
     @Test func setUpLaterIsRecordedOnlyWhereTheCLICanDefer() {
-        #expect(PhoneSteps.later(WizardFacts(plan: fresh)).isEmpty, "today: this run remembers it")
+        let notDeferrable = with(fresh, ["phone"], .blocked, deferrable: false)
+        #expect(PhoneSteps.later(WizardFacts(plan: notDeferrable)).isEmpty, "an older CLI that cannot defer")
         let deferrable = with(fresh, ["phone"], .blocked, deferrable: true)
         #expect(PhoneSteps.later(WizardFacts(plan: deferrable)) == [.mark("phone")])
     }
@@ -627,8 +628,15 @@ import KeryxTestSupport
         #expect(CheckingRules.ending(ready, phoneLater: false) == .ready)
         #expect(CheckingRules.ending(fresh, phoneLater: true) == .checking)
         #expect(CheckingRules.ending(nil, phoneLater: true) == .checking)
-        // Today: the phone left in this run, and the service waiting only for it.
-        var phoneLeft = with(ready, ["phone"], .needed)
+        // An older CLI that cannot speak of deferring at all (`deferrable`/`deferred` on
+        // every step still nil) falls back to `phoneLater`: the phone left in this run,
+        // and the service waiting only for it.
+        var legacy = ready
+        for index in legacy.steps.indices {
+            legacy.steps[index].deferrable = nil
+            legacy.steps[index].deferred = nil
+        }
+        var phoneLeft = with(legacy, ["phone"], .needed)
         phoneLeft = with(phoneLeft, ["service"], .blocked)
         if let index = phoneLeft.steps.firstIndex(where: { $0.id == "service" }) { phoneLeft.steps[index].blockedBy = ["phone"] }
         phoneLeft.ready = false
@@ -809,15 +817,41 @@ import KeryxTestSupport
         #expect(CallerNumbers.normalised(PhoneDisplay.format("+15550001111")) == "+15550001111", "and back")
     }
 
+    /// The background-process check's own two ways to fail, in the real CLI's shapes.
+    /// `ChecklistWording.detail` itself no longer strips the unit label — it hands the
+    /// raw detail on unchanged, and `CheckWording.detail` (what `CheckLine` actually
+    /// renders through) is what strips it, keeping the full original behind Show
+    /// Details rather than discarding it.
+    static var backgroundProcessMissing: DoctorCheck {
+        DoctorCheck(name: "background process",
+                   detail: "dev.keryx.agent is not installed — Keryx cannot restart itself, "
+                       + "and nothing restarts it if it dies",
+                   severity: "soft", section: "service", state: "missing", ok: false, unset: true,
+                   title: "Background process")
+    }
+
+    static var backgroundProcessFailed: DoctorCheck {
+        DoctorCheck(name: "background process",
+                   detail: "dev.keryx.agent is installed, not running — Keryx is stopped, and does "
+                       + "not start at login until it is started again",
+                   severity: "soft", section: "service", state: "failed", ok: false, unset: false,
+                   title: "Background process")
+    }
+
     @Test func theChecklistSpeaksTheWizardsWords() throws {
         let doctor = PreviewData.doctor
-        let service = try #require(doctor.checks.first { $0.name == "service manager" })
-        #expect(ChecklistWording.title(service) == "Runs in the background")
-        var failing = service
-        failing.state = "failed"
-        #expect(ChecklistWording.detail(failing) != "Keryx isn't answering calls yet",
-                "a real failure keeps what it says")
-        #expect(ChecklistWording.detail(service) == "Keryx isn't answering calls yet")
+        let missing = Self.backgroundProcessMissing
+        #expect(ChecklistWording.title(missing) == "Runs in the background")
+        let missingLine = CheckWording.detail(ChecklistWording.detail(missing))
+        #expect(missingLine.text
+            == "Keryx isn't answering calls yet — Keryx cannot restart itself, and nothing restarts it if it dies")
+        #expect(missingLine.raw == missing.detail, "the raw detail stays behind Show Details")
+
+        let failed = Self.backgroundProcessFailed
+        let failedLine = CheckWording.detail(ChecklistWording.detail(failed))
+        #expect(failedLine.text == "Keryx is stopped, and does not start at login until it is started again")
+        #expect(failedLine.raw == failed.detail, "a real failure's raw detail stays behind Show Details too")
+
         let twilio = try #require(doctor.checks.first { $0.name == "Twilio credentials" })
         #expect(ChecklistWording.title(twilio) == "Twilio Account" && ChecklistWording.detail(twilio) == "Not connected")
         let host = try #require(doctor.checks.first { $0.name == "PUBLIC_HOST" })
@@ -826,6 +860,33 @@ import KeryxTestSupport
         #expect(ChecklistWording.title(tunnel) == "Cloudflare Tunnel" && ChecklistWording.detail(tunnel) == "Not installed")
         #expect(doctor.checks.allSatisfy { !ChecklistWording.detail($0).contains("this machine") })
         #expect(FixAction("phone:tunnel")?.action(SetupContext(phoneTunnel: PreviewData.phoneTunnel)).title == "Fix…")
+    }
+
+    /// The owner's rule is absolute: no unit label (`dev.keryx.*`) and no "service"
+    /// wording reaches a checklist line, even briefly — for either of the
+    /// background-process check's two ways to fail. Show Details (`.raw`, checked
+    /// above) is the only place either may appear.
+    @Test func theChecklistLineNeverNamesAUnitOrSaysService() {
+        for check in [Self.backgroundProcessMissing, Self.backgroundProcessFailed] {
+            let title = ChecklistWording.title(check)
+            let line = CheckWording.detail(ChecklistWording.detail(check))
+            for text in [title, line.text] {
+                #expect(!text.lowercased().contains("dev.keryx"), "\(check.state): \(text)")
+                #expect(!text.lowercased().contains("service"), "\(check.state): \(text)")
+            }
+        }
+    }
+
+    /// The Overview's header ("Answering calls: Yes", from `status`) and its Setup
+    /// Checklist (from `doctor`'s checks) must never disagree about whether Keryx is
+    /// running: a unit `status` says is installed and active is not something the
+    /// checklist can still call missing.
+    @Test func theChecklistNeverContradictsAWholeStatus() throws {
+        let status = PreviewData.status
+        #expect(status.service.installed && status.service.active, "the shared status fixture runs")
+        let service = try #require(PreviewData.doctor.checks.first { ["service manager", "background process"].contains($0.name) })
+        #expect(service.ok, "doctor must agree with status: the unit is running")
+        #expect(ChecklistWording.detail(service) != CheckWording.serviceNotInstalled)
     }
 
     @Test func theSheetsSayWhatAPersonReads() {

@@ -81,6 +81,7 @@ import KeryxPreview
         .of("memory --json", MemoryDocument.self, ["memory.json"]),
         .of("config options KEY --json", ConfigOptions.self,
             PreviewData.optionsFixtures + ["options-realtime-fallback.json"]),
+        .of("config options ASSISTANT_NAME --json", ConfigOptions.self, ["options-assistant-name.json"]),
         .of("voice --json", VoiceStatus.self,
             ["voice.json", "voice-here.json", "voice-server.json", "voice-needs-model.json",
              "voice-here-own-llm.json"]),
@@ -90,6 +91,7 @@ import KeryxPreview
         .of("setup plan --json", SetupPlan.self,
             ["setup-plan.json", "setup-plan-partway.json", "setup-plan-ready.json"]),
         .of("setup mark STEP --json", SetupMarkResult.self, ["fixture:setup-mark.json"]),
+        .of("setup mark phone --json", SetupMarkResult.self, ["fixture:setup-mark-phone.json"]),
         .of("pin --json", PinStatus.self, ["pin.json", "pin-file.json", "pin-locked.json", "pin-environment.json"]),
         .of("pin set --json", PinSetResult.self, ["fixture:pin-set.json"]),
         .of("config verify KEY --json", VerifyResult.self,
@@ -102,6 +104,11 @@ import KeryxPreview
         .of("service --json", ServiceReport.self, ["service.json"]),
         .of("service install --json", ServiceResult.self, ["fixture:service-install.json"]),
         .of("service uninstall --json", ServiceResult.self, ["fixture:service-uninstall.json"]),
+        .of("service uninstall --voice-llm --json", ServiceResult.self, ["fixture:service-uninstall-voice-llm.json"]),
+        .of("service stop --json", ServiceControlResult.self, ["fixture:service-stop.json"]),
+        .of("service stop --all --json", ServiceControlResult.self, ["fixture:service-stop-all.json"]),
+        .of("service start --json", ServiceControlResult.self, ["fixture:service-start.json"]),
+        .of("service start --all --json", ServiceControlResult.self, ["fixture:service-start-all.json"]),
         .of("models stop --json", ServiceResult.self, ["fixture:models-stop.json"]),
         .of("integrations --json", IntegrationsReport.self, ["integrations.json"]),
         .of("auth logout gmail --json", SignOutResult.self, ["fixture:auth-logout-gmail.json"]),
@@ -148,11 +155,7 @@ import KeryxPreview
     /// SEAMS: properties the app decodes, as optionals, that the CLI does not print yet
     /// (`Seams.swift`). Left out of the walk until it does; once a fixture holds one, the
     /// test below says to move it into the contract.
-    static let awaitingCLI: Set<String> = [
-        "CatalogModel.fitsAsVoiceLlm",
-        "PhoneTunnel.hostname",
-        "SetupStep.deferrable", "SetupStep.deferred", "SetupMarkResult.deferred",
-    ]
+    static let awaitingCLI: Set<String> = []
 
     /// A preview document (`Sources/KeryxPreview/Preview`), or `fixture:NAME` from this target's.
     static func data(_ name: String) throws -> Data {
@@ -519,6 +522,8 @@ import KeryxPreview
         .of("migrate --yes --json", MigrationDone.self, [PreviewData.migrateLines, PreviewData.migrateConflictLines]),
         .of("setup project-context --json", ProjectDraft.self,
             [PreviewData.projectDraftLines, PreviewData.projectDraftFailedLines]),
+        .of("auth smoke NAME --json", AgentSmoked.self,
+            [PreviewData.smokePassedLines, PreviewData.smokeFailedLines]),
     ]
 
     @Test(arguments: eventStreams)

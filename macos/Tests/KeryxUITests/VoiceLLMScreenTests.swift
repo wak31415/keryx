@@ -37,8 +37,11 @@ import KeryxPreview
         #expect(choices.count == models.count)
         #expect(choices.map(\.needsGb) == choices.map(\.needsGb).sorted())
         // `fits` and `fits_with_voice_llm` are the agent's: neither marks a voice model.
-        let small = models.first { $0.name == "qwen3.5-4b" }!
-        #expect(small.fits && small.fitsWithVoiceLlm == true && small.fitsAsVoiceLlm == nil)
+        // `fits_as_voice_llm` now comes from the fixture too (the CLI prints it for real);
+        // an older CLI that never sent it is nil, which still marks nothing.
+        var small = models.first { $0.name == "qwen3.5-4b" }!
+        #expect(small.fits && small.fitsWithVoiceLlm == true)
+        small.fitsAsVoiceLlm = nil
         #expect(VoiceLLMWording.menuTitle(small, recommended: "qwen3.5-4b") == "Qwen3.5 4B — Recommended")
         #expect(!VoiceLLMWording.hereCaption(small).contains("fit"))
         // `fits_as_voice_llm`, once the CLI prints it, lights it up (the catalog's hand-edited

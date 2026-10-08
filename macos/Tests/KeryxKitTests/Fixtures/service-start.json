@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "message": "Keryx is running.",
+  "detail": null,
+  "units": [
+    {"kind": "agent", "unit": "dev.keryx.agent", "state": "running"},
+    {"kind": "tunnel", "unit": "dev.keryx.tunnel", "state": "running"}
+  ]
+}

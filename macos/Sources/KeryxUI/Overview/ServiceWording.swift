@@ -47,7 +47,12 @@ enum ServiceWording {
         }
         switch step {
         case .start:
-            return Answering(tone: .inactive, text: "No", help: "\(unit) is not running", offersStart: true)
+            // Relaunched into a Keryx the owner stopped (`keryx service stop`, Task N):
+            // said quietly, never as an error, and gone as soon as it starts (the `s.active`
+            // branch above returns first, once it has).
+            let hint = status.restart.state == "stopped" ? "Keryx was stopped by its owner" : nil
+            return Answering(tone: .inactive, text: "No", hint: hint, help: "\(unit) is not running",
+                             offersStart: true)
         case .waitingForSetup:
             return Answering(tone: .inactive, text: "Not yet", hint: "Keryx starts once setup is finished",
                              help: "\(unit) starts once setup is finished")

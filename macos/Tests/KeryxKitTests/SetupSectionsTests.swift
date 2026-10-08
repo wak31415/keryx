@@ -180,7 +180,13 @@ import KeryxPreview
 
     @Test func aPlanThatCanDeferIsNearlyReadyWhenAllThatIsLeftWasDeferred() {
         var plan = PreviewData.setupPlanReady
-        #expect(!plan.speaksOfDeferring && !plan.nearlyReady, "today's CLI says nothing of deferring")
+        // The shared fixture now speaks of deferring (Task L has landed); start from an
+        // older CLI's shape (neither key printed) before building the scenario by hand.
+        for index in plan.steps.indices {
+            plan.steps[index].deferrable = nil
+            plan.steps[index].deferred = nil
+        }
+        #expect(!plan.speaksOfDeferring && !plan.nearlyReady, "an older CLI says nothing of deferring")
         plan.ready = false
         for index in plan.steps.indices {
             plan.steps[index].deferrable = ["phone", "service"].contains(plan.steps[index].id)
@@ -297,7 +303,7 @@ import KeryxPreview
 
     @Test func theAgentsTestRunsOnlyWhereTheClientCan() {
         let model = AppModel.stubbed(StubClient())
-        #expect(!model.smokeTest("claude"), "no client runs auth smoke yet")
+        #expect(!model.smokeTest("claude"), "StubClient does not adopt AgentSmokeTesting")
         #expect(model.smokeRun.phase == nil)
     }
 

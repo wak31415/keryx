@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "message": "Keryx and its model servers are stopped, and won't start at login until they're started again.",
+  "detail": null,
+  "units": [
+    {"kind": "agent", "unit": "dev.keryx.agent", "state": "stopped"},
+    {"kind": "tunnel", "unit": "dev.keryx.tunnel", "state": "stopped"},
+    {"kind": "llm", "unit": "dev.keryx.llm", "state": "stopped"},
+    {"kind": "voice", "unit": "dev.keryx.voice", "state": "stopped"},
+    {"kind": "voice_llm", "unit": "dev.keryx.voice-llm", "state": "not-installed"}
+  ]
+}

@@ -230,9 +230,8 @@ public final class AppModel {
     public let migrationRun: StreamRun<MigrationDone>
     /// An agent reading the projects for their briefs (`keryx setup project-context`).
     public let projectDraftRun: StreamRun<ProjectDraft>
-    /// SEAM: a coding agent's test task (`keryx auth smoke NAME`), once a client can run it.
-    /// Held here, not by a screen, so going back and forth never starts a second (paid) run,
-    /// and quitting stops it.
+    /// A coding agent's test task (`keryx auth smoke NAME`). Held here, not by a screen, so
+    /// going back and forth never starts a second (paid) run, and quitting stops it.
     public let smokeRun: StreamRun<AgentSmoked>
     /// Cloudflare Tunnel installed with Homebrew, after a click.
     public let tunnelInstall: ProgramInstall
@@ -813,8 +812,9 @@ public final class AppModel {
         return answer
     }
 
-    /// SEAM: runs `agent`'s test task, once, in `smokeRun`: false — starting nothing — when
-    /// the client cannot (no `auth smoke` yet), or one has run or is running.
+    /// Runs `agent`'s test task, once, in `smokeRun`: false — starting nothing — when the
+    /// client does not adopt `AgentSmokeTesting` (a preview or a test double that does not
+    /// need it), or one has run or is running.
     @discardableResult
     public func smokeTest(_ agent: String) -> Bool {
         guard smokeRun.phase == nil, let client = client as? AgentSmokeTesting else { return false }
@@ -872,18 +872,31 @@ public final class AppModel {
 
     // MARK: - Service
 
-    /// Installs Keryx and its tunnel as services, then reads the units and the status again.
-    /// Refused while an install or uninstall is already under way, from whichever window.
+    /// Installs Keryx and its tunnel as services, then reads the units, the status, the
+    /// plan and the doctor again — on a failure too, so the checklist never keeps showing
+    /// what a start already changed. Refused while an install or uninstall is already
+    /// under way, from whichever window.
     public func installService() async -> Result<ServiceResult, KeryxError> {
-        await changeService(.installing, reread: [.service, .status, .setupPlan]) {
+        await changeService(.installing, reread: [.service, .status, .setupPlan, .doctor]) {
             try await $0.installService()
         }
     }
 
     /// Removes Keryx and its tunnel; refused as `installService` is.
     public func uninstallService() async -> Result<ServiceResult, KeryxError> {
-        await changeService(.uninstalling, reread: [.service, .status, .models, .voice, .setupPlan]) {
+        await changeService(.uninstalling, reread: [.service, .status, .models, .voice, .setupPlan, .doctor]) {
             try await $0.uninstallService()
+        }
+    }
+
+    /// Starts every installed unit again (`keryx service start --all`, Task N): Keryx's own
+    /// is already there, only stopped, and the model servers started with it — a Mac
+    /// stopped by `stopAnswering`'s `service stop --all` had them running too. Refused as
+    /// `installService` is.
+    private func startService() async -> Result<ServiceResult, KeryxError> {
+        await changeService(.installing, reread: [.service, .status, .setupPlan, .doctor]) {
+            let result = try await $0.startService(all: true)
+            return ServiceResult(ok: result.ok, message: result.message)
         }
     }
 
@@ -909,15 +922,17 @@ public final class AppModel {
         guard let step = plan.step("service") else { return .unknown }
         switch step.kind {
         case .needed?, .done?: return .start
-        // Installed but stopped: the CLI fails the step on its "service running" check, and
-        // the fix is the start. Failed for anything else (a security check), it waits.
-        case .failed?: return step.fix == Self.startFix ? .start : .waitingForSetup
+        // Installed but stopped: the CLI fails the step on its "Background process" check
+        // (`service:start`, Task N), or says nothing is installed yet (`service:install`).
+        // Failed for anything else (a security check), it waits.
+        case .failed?: return step.fix.map(Self.startFixes.contains) == true ? .start : .waitingForSetup
         default: return .waitingForSetup
         }
     }
 
-    /// The fix id (`keryx/fixes.py`) that is Keryx's unit started.
-    nonisolated static let startFix = "service:install"
+    /// The fix ids (`keryx/fixes.py`) that mean Keryx's unit should be started: not
+    /// installed yet, or installed and stopped (`keryx service stop`, Task N).
+    nonisolated static let startFixes: Set<String> = ["service:install", "service:start"]
 
     /// Starts Keryx when setup allows and it isn't running, once a launch; does nothing
     /// unless `keepsAnswering`. Reads the plan and the status first, so it decides on what is
@@ -944,13 +959,14 @@ public final class AppModel {
         _ = await startAnswering()
     }
 
-    /// Starts Keryx answering calls: its unit installed (or, installed, started again) with
-    /// `keryx service install`, then the status read once more after a moment, as after a
-    /// restart. A failure is kept in `startFailure` for the Overview to say.
+    /// Starts Keryx answering calls: its unit installed with `keryx service install` when
+    /// it isn't there yet, or — already installed but stopped (`service:start`, Task N) —
+    /// started again with `keryx service start --all`, with the model and voice servers Quit
+    /// stopped. Then the status read once more after a moment, as after a restart. A failure is kept in `startFailure` for the Overview to say.
     public func startAnswering() async -> Result<ServiceResult, KeryxError> {
         if quitting { return .failure(.refused(Self.quittingRefusal)) }
         if client != nil, serviceChange == nil { startTried = true }
-        let answer = await installService()
+        let answer = await (agentUnitPresent ? startService() : installService())
         switch answer {
         case .success:
             startFailure = nil
@@ -980,40 +996,80 @@ public final class AppModel {
 
     static let quittingRefusal = "Keryx is quitting."
 
-    /// Whether quitting now stops Keryx answering calls: kept answering, and its unit is
-    /// installed (or being installed).
+    /// Whether quitting says it stops Keryx *answering calls*: kept answering, and its own
+    /// unit is installed (or being installed) — words only. A model server or the voice can
+    /// be running with the agent's own unit not installed yet (This Mac's Set Up…, before
+    /// the service step), and quitting stops those too without ever having "answered calls"
+    /// to say so about; see `quitRunsServiceStop`.
     public var quitStopsAnswering: Bool {
         guard keepsAnswering, client != nil else { return false }
         return serviceChange == .installing || service.value?.units.agent.installed == true
             || status.value?.service.installed == true
     }
 
-    /// Stops Keryx answering calls, as the app quits: its unit removed with `keryx service
-    /// uninstall`, which is the CLI's only way to stop it (the next launch installs it
-    /// again). An install still finishing is waited for first, briefly. Nothing unless
-    /// `keepsAnswering`, and nothing when no unit is installed — a Keryx started by hand is
-    /// not the app's to stop. Reads nothing after: the app is going.
+    /// Whether quitting runs `keryx service stop --all` at all: whenever the app keeps
+    /// Keryx answering, whatever is or isn't installed. The CLI itself says there was
+    /// nothing to stop when there wasn't ("Keryx isn't installed as a background process
+    /// yet."), so there is no gate to read first — the old one (`quitStopsAnswering`,
+    /// the agent's own unit) left a Mac with only a model server or the voice installed
+    /// running them past Quit and again at the next login.
+    public var quitRunsServiceStop: Bool {
+        keepsAnswering && client != nil
+    }
+
+    /// Stops Keryx answering calls, as the app quits: every unit it runs — the main unit,
+    /// the model server, the voice server and the voice LLM — stopped and kept from
+    /// starting at login with `keryx service stop --all` (Task N), never removed: the unit
+    /// files stay, so macOS asks nothing, and the next launch only starts them again. An
+    /// install still finishing is waited for first, briefly. Nothing unless `keepsAnswering`.
+    ///
+    /// Run `detached`: its own process group, never listed in `ChildRegistry`, so the
+    /// teardown this very method is part of can never be what kills it. This method gives
+    /// up *waiting* for an answer after `detachedStopBound` rather than cutting the stop
+    /// short — the CLI finishes stopping every unit on its own, past the app's own exit if
+    /// it must, which is the only way to honour both "every unit, whatever its own
+    /// `ExitTimeOut`" and "Quit must not hang."
     @discardableResult
     public func stopAnswering() async -> KeryxError? {
-        guard keepsAnswering, client != nil else { return nil }
+        guard keepsAnswering, let client else { return nil }
         let deadline = ContinuousClock.now + .seconds(5)
         while serviceChange != nil, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(50))
         }
-        await refresh(.service)
-        let installed = service.value?.units.agent.installed ?? status.value?.service.installed ?? false
-        guard installed else { return nil }
-        if case let .failure(error) = await changeService(.uninstalling, reread: [], Self.stopUnits) {
-            return error
+        guard serviceChange == nil else { return .refused(Self.serviceBusy) }
+        serviceChange = .uninstalling
+        defer { serviceChange = nil }
+        let outcome = await Self.raced(within: Self.detachedStopBound) {
+            await self.answer { _ in try await client.stopService(all: true, detached: true) }
         }
-        return nil
+        guard case let .failure(error)? = outcome else { return nil }
+        return error
     }
 
-    /// How Quit stops Keryx's units — the one place to change when the CLI has a stop that
-    /// keeps them installed (`keryx service stop --all`, asked for): today it is `keryx
-    /// service uninstall`, its only stop, and launch installs them again.
-    private static let stopUnits: @MainActor (KeryxClient) async throws -> ServiceResult = {
-        try await $0.uninstallService()
+    /// How long `stopAnswering` waits for `service stop --all`'s own answer before giving
+    /// up on it (never on the stop itself, which goes on without the app).
+    static let detachedStopBound: Duration = .seconds(10)
+
+    /// Whether Keryx's own unit is there, loaded or on disk, from the last read: what
+    /// `startAnswering` reads to choose `service start` over `service install`.
+    private var agentUnitPresent: Bool {
+        service.value?.units.agent.installed ?? status.value?.service.installed ?? false
+    }
+
+    /// `work`, or `nil` if `bound` passes first — without cancelling it: a detached stop
+    /// must go on whether or not anything is still here to read its answer.
+    private static func raced<T>(within bound: Duration, _ work: @escaping () async -> T) async -> T? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+            let box = RaceBox()
+            Task {
+                let value = await work()
+                if box.settle() { continuation.resume(returning: value) }
+            }
+            Task {
+                try? await Task.sleep(for: bound)
+                if box.settle() { continuation.resume(returning: nil) }
+            }
+        }
     }
 
     /// One service change at a time, run in `serviceTask` so quitting can stop it.
@@ -1027,7 +1083,9 @@ public final class AppModel {
         let answer = await task.value
         serviceTask = nil
         serviceChange = nil
-        if case .success = answer { await refresh(reread) }
+        // Re-read on a failure too (not only a success): the checklist must never keep
+        // showing what a start already changed, whichever way it ended.
+        await refresh(reread)
         return answer
     }
 
@@ -1350,6 +1408,21 @@ public final class AppModel {
         } catch {
             return Self.keryxError(error)
         }
+    }
+}
+
+/// Lets exactly one of two racing sides claim the win: `settle()` answers `true` once,
+/// `false` for every call after. `@unchecked Sendable`: its only state is behind `lock`.
+private final class RaceBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+
+    func settle() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !done else { return false }
+        done = true
+        return true
     }
 }
 

@@ -404,6 +404,23 @@ public struct PreviewClient: KeryxClient {
         return ServiceResult(ok: true, message: "removed dev.keryx.agent, dev.keryx.tunnel")
     }
 
+    public func stopService(all: Bool, detached: Bool = false) async throws -> ServiceControlResult {
+        try check()
+        return ServiceControlResult(
+            ok: true, message: all ? "Keryx and its model servers are stopped, and won't start at login until "
+                + "they're started again." : "Keryx is stopped, and won't start at login until it's started again.",
+            units: [ServiceControlUnit(kind: "agent", unit: "dev.keryx.agent", state: "stopped"),
+                    ServiceControlUnit(kind: "tunnel", unit: "dev.keryx.tunnel", state: "stopped")])
+    }
+
+    public func startService(all: Bool) async throws -> ServiceControlResult {
+        try check()
+        return ServiceControlResult(
+            ok: true, message: all ? "Keryx and its model servers are running." : "Keryx is running.",
+            units: [ServiceControlUnit(kind: "agent", unit: "dev.keryx.agent", state: "running"),
+                    ServiceControlUnit(kind: "tunnel", unit: "dev.keryx.tunnel", state: "running")])
+    }
+
     public func startModelServer(runtime: String?) -> ModelServerStream {
         Self.stream(modelServerScript, replay: PreviewData.modelsStartLines)
     }

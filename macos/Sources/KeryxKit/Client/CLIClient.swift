@@ -6,7 +6,7 @@ import Foundation
 /// secret only ever travels on stdin. Nothing here logs an argument, the environment, stdin
 /// or output. A command whose caller was cancelled throws `CancellationError`, whatever the
 /// child it stopped said on the way out.
-public struct CLIClient: KeryxClient {
+public struct CLIClient: KeryxClient, AgentSmokeTesting {
     static let migrationMarker = "keryx cannot do that yet:"
     static let restartReason = "from the Mac app"
 
@@ -355,6 +355,31 @@ public struct CLIClient: KeryxClient {
         try await decode(["service", "uninstall", "--json"], timeout: Self.installerTimeout)
     }
 
+    /// Every exit (0 ok, 1 a unit failed, 2 refused) prints the same document, so every one
+    /// is decoded; `ok: false` is then thrown as a failure, same as any other command's.
+    public func stopService(all: Bool, detached: Bool = false) async throws -> ServiceControlResult {
+        let subcommand = ["service", "stop"] + (all ? ["--all"] : []) + ["--json"]
+        let result: ServiceControlResult = try await decode(subcommand, acceptedExitCodes: [0, 1, 2],
+                                                             timeout: Self.installerTimeout, detached: detached)
+        guard result.ok else { throw Self.serviceFailure(subcommand, result) }
+        return result
+    }
+
+    public func startService(all: Bool) async throws -> ServiceControlResult {
+        let subcommand = ["service", "start"] + (all ? ["--all"] : []) + ["--json"]
+        let result: ServiceControlResult = try await decode(subcommand, acceptedExitCodes: [0, 1, 2],
+                                                             timeout: Self.installerTimeout)
+        guard result.ok else { throw Self.serviceFailure(subcommand, result) }
+        return result
+    }
+
+    /// A `service stop|start` reply that said `ok: false`, as a failure: `detail` (the
+    /// manager's own last line, redacted) under Show Details when there is one, else the
+    /// reply's own `message`.
+    static func serviceFailure(_ subcommand: [String], _ result: ServiceControlResult) -> KeryxError {
+        .failed(command: Self.name(subcommand), exitCode: 1, message: result.detail ?? result.message)
+    }
+
     /// Ends normally only after `done`, `error` or `cancelled`, as `pull` does; no timeout,
     /// since installing llama.cpp and loading a model can take minutes.
     public func startModelServer(runtime: String?) -> ModelServerStream {
@@ -394,6 +419,12 @@ public struct CLIClient: KeryxClient {
 
     public func signOut(_ provider: SignInProvider) async throws -> SignOutResult {
         try await decode(["auth", "logout", provider.rawValue, "--json"])
+    }
+
+    /// Ends normally only after `done`, `error` or `cancelled`, as `pull` does. No timeout:
+    /// a real task on a coding agent can take a while.
+    public func smokeTest(_ agent: String) -> AgentSmokeStream {
+        events(["auth", "smoke", agent, "--json"])
     }
 
     public func integrations() async throws -> IntegrationsReport {
@@ -513,7 +544,7 @@ public struct CLIClient: KeryxClient {
     // MARK: - Running
 
     private func request(
-        _ subcommand: [String], stdin: Data? = nil, timeout: Duration? = .seconds(30)
+        _ subcommand: [String], stdin: Data? = nil, timeout: Duration? = .seconds(30), detached: Bool = false
     ) -> CommandRequest {
         CommandRequest(
             executable: location.executable,
@@ -521,15 +552,17 @@ public struct CLIClient: KeryxClient {
             environment: Sanitise.environment(location.environment),
             workingDirectory: location.runDirectory,
             stdin: stdin,
-            timeout: timeout)
+            timeout: timeout,
+            detached: detached)
     }
 
     private func decode<T: Decodable>(
         _ subcommand: [String], acceptedExitCodes: Set<Int32> = [0], timeout: Duration = .seconds(30),
-        stdin: Data? = nil
+        stdin: Data? = nil, detached: Bool = false
     ) async throws -> T {
         let command = Self.name(subcommand)
-        let result = try await run(request(subcommand, stdin: stdin, timeout: timeout), command: command)
+        let result = try await run(request(subcommand, stdin: stdin, timeout: timeout, detached: detached),
+                                   command: command)
         if !acceptedExitCodes.contains(result.exitCode) {
             try check(result, command: command) // throws: every exit but 0 is a failure
         }

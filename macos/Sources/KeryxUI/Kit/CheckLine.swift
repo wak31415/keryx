@@ -55,8 +55,13 @@ enum CheckWording {
     static let serviceNotInstalled = "Keryx isn't answering calls yet"
 
     /// The titles the app says otherwise: the service's checks, as what they mean to someone
-    /// who never sees the unit.
-    static let titles = ["Service manager": "Runs in the background", "Service running": "Running"]
+    /// who never sees the unit. The old names ("Service manager", "Service running") are
+    /// kept beside Task N's ("Background process", "Keryx running") for a CLI before the
+    /// rename.
+    static let titles = [
+        "Service manager": "Runs in the background", "Service running": "Running",
+        "Background process": "Runs in the background", "Keryx running": "Running",
+    ]
 
     /// The doctor's "old setting names" detail ("A is B now; C is D now") as a sentence: the
     /// settings by their titles, and where they are — in Keryx's settings, where a change
@@ -105,6 +110,14 @@ enum CheckWording {
         if let range = text.range(of: #"^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+ is not installed"#, options: .regularExpression) {
             let rest = text[range.upperBound...]
             return (serviceNotInstalled + rest.replacingOccurrences(of: "`", with: ""), raw)
+        }
+        // A stopped unit's own label ("dev.keryx.agent is installed, not running — …",
+        // Task N's `service:start`) is dropped the same way — but the rest already says
+        // plainly that Keryx is stopped, so nothing stands in for the label here; the
+        // label itself is still for Show Details alone.
+        if let range = text.range(of: #"^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+ is installed, not running — "#,
+                                  options: .regularExpression) {
+            return (String(text[range.upperBound...]).replacingOccurrences(of: "`", with: ""), raw)
         }
         // Settings kept under their old names ("SUBAGENT_MODEL is CLAUDE_MODEL now; …"), said
         // by the titles they have now; the names are for Show Details.

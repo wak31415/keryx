@@ -45,9 +45,8 @@ public struct CatalogModel: Codable, Sendable, Equatable, Identifiable {
     /// As the agent's model, it leaves room for the voice here with a model of its own and
     /// the speech models, as the CLI works it out; `nil` from a CLI older than it.
     public var fitsWithVoiceLlm: Bool?
-    /// SEAM (`models list --json` `models[].fits_as_voice_llm`, not printed yet): as the
-    /// voice's own LLM, it fits beside the agent's model and the speech models. `nil` from a
-    /// CLI without it: no voice-model list says anything of fit until it does.
+    /// As the voice's own LLM, it fits beside the agent's model and the speech models.
+    /// `nil` from a CLI without it: no voice-model list says anything of fit until it does.
     public var fitsAsVoiceLlm: Bool?
 
     public var id: String { name }

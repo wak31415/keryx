@@ -1,0 +1,20 @@
+{
+  "key": "ASSISTANT_NAME",
+  "current": "Lyra",
+  "options": [
+    {
+      "value": "Lyra",
+      "label": "Lyra",
+      "detail": "Keryx's default · the Marin voice"
+    },
+    {
+      "value": "Jarvis",
+      "label": "Jarvis",
+      "detail": "The Cedar voice"
+    }
+  ],
+  "source": "builtin",
+  "live": false,
+  "free_form": true,
+  "error": null
+}

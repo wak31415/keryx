@@ -10,6 +10,8 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "checks": [
         {
           "title": "OpenAI API key",
@@ -28,6 +30,8 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "checks": [
         {
           "title": "Coding agents",
@@ -52,6 +56,8 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "checks": [
         {
           "title": "Allowed callers",
@@ -76,6 +82,8 @@
       "why": null,
       "blocked_by": [],
       "walked": true,
+      "deferrable": false,
+      "deferred": false,
       "checks": [
         {
           "title": "PIN",
@@ -94,6 +102,8 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "deferrable": true,
+      "deferred": false,
       "checks": [
         {
           "title": "Twilio credentials",
@@ -130,11 +140,19 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "deferrable": true,
+      "deferred": false,
       "checks": [
         {
-          "title": "Service manager",
+          "title": "Background process",
           "state": "ok",
-          "detail": "launchd: dev.keryx.agent installed and running",
+          "detail": "launchd dev.keryx.agent",
+          "fix": null
+        },
+        {
+          "title": "Keryx running",
+          "state": "ok",
+          "detail": "running",
           "fix": null
         }
       ],
@@ -148,6 +166,8 @@
       "why": null,
       "blocked_by": [],
       "walked": true,
+      "deferrable": false,
+      "deferred": false,
       "checks": [
         {
           "title": "Local models",
@@ -166,6 +186,8 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "checks": [
         {
           "title": "Google for agents",
@@ -184,6 +206,8 @@
       "why": null,
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "checks": [
         {
           "title": "Slack",
@@ -226,6 +250,8 @@
       "why": "Off until you choose: Keryx can file its own bug reports and your ideas.",
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "checks": [
         {
           "title": "Issue reports",
@@ -244,6 +270,8 @@
       "why": "Memory: nothing remembered yet.",
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "checks": [
         {
           "title": "Memory",
@@ -262,6 +290,8 @@
       "why": "Optional: an agent can write a short brief of each of your projects.",
       "blocked_by": [],
       "walked": false,
+      "deferrable": false,
+      "deferred": false,
       "checks": [
         {
           "title": "Projects root",
