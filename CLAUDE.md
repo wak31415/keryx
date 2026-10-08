@@ -235,7 +235,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   nothing else there, by a copy beside it and two renames; signed with "Keryx Local Signing"
   when it is trusted in the login keychain, else ad hoc with a warning; never run without
   `--no-install` from a test or a subagent), `macos/scripts/make-signing-identity.sh
-  [--yes]` (the owner's, once: that identity, made and trusted for code signing; `KEYCHAIN`
+  [--yes] [--remove]` (the owner's, once: that identity, made and trusted for code signing in
+  the user trust domain — codesign refuses it untrusted; `--remove` undoes both; `KEYCHAIN`
   and `KERYX_SIGNING_TRUST=0` are for tests), `macos/scripts/snapshots.sh [--offscreen]`
   (every screen, light and dark, into `macos/build/snapshots/`), and
   `swift macos/scripts/make-icon.swift` from the repository root (the two `.icns` in
@@ -366,8 +367,9 @@ remember:
   is open Keryx answers calls (`AppModel.keepsAnswering`, the owner's ruling): once a launch
   it runs `keryx service install --json` when `setup plan`'s service step is reachable and
   Keryx is not running (never before `migrate`, never beside a hand-started `serve`), and
-  Quit runs `keryx service uninstall --json` — the CLI's only stop, so it never calls
-  `launchctl` — while closing a window leaves both running: it is a regular Dock app, no
+  Quit runs `keryx service uninstall --json` — the CLI's only stop until a `service stop`
+  exists (`AppModel.stopUnits` is the seam), so it never calls `launchctl`; a logout lets the
+  units go untouched — while closing a window leaves both running: it is a regular Dock app, no
   `LSUIElement`. The service is never shown as one ("Answering calls", "Start Keryx"). A
   `KERYX_APP_ENVIRONMENT=inherit` run neither starts nor stops it, and the locator reads its
   remembered copy of `dev.keryx.agent.plist` while quitting has removed the real one. It strips

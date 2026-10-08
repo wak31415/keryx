@@ -13,8 +13,9 @@ public enum AppLifecycle {
     public static let quitsWhenLastWindowCloses = false
 
     /// Whether the quit Apple event `event` is the session ending — log out, restart or shut
-    /// down — when quitting asks nothing: nobody is there to answer, and a question would
-    /// hold the logout up. Keryx is stopped all the same.
+    /// down — when quitting asks nothing and does not stop Keryx: nobody is there to answer,
+    /// launchd ends the session's agents itself, and neither a question nor an uninstall may
+    /// hold the logout up. The agents stay installed, so they load again at the next login.
     public static func isSessionEnding(_ event: NSAppleEventDescriptor?) -> Bool {
         guard let event, event.eventID == AEEventID(kAEQuitApplication),
               let reason = event.attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason))?.enumCodeValue

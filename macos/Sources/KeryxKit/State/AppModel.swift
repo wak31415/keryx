@@ -738,12 +738,18 @@ public final class AppModel {
         if status.health.reachable { return .running }
         guard let plan else { return .unknown }
         if let migrate = plan.step("migrate"), migrate.kind != .done { return .waitingForSetup }
-        switch plan.step("service")?.kind {
+        guard let step = plan.step("service") else { return .unknown }
+        switch step.kind {
         case .needed?, .done?: return .start
-        case nil: return .unknown
+        // Installed but stopped: the CLI fails the step on its "service running" check, and
+        // the fix is the start. Failed for anything else (a security check), it waits.
+        case .failed?: return step.fix == Self.startFix ? .start : .waitingForSetup
         default: return .waitingForSetup
         }
     }
+
+    /// The fix id (`keryx/fixes.py`) that is Keryx's unit started.
+    nonisolated static let startFix = "service:install"
 
     /// Starts Keryx when setup allows and it isn't running, once a launch; does nothing
     /// unless `keepsAnswering`. Reads the plan and the status first, so it decides on what is
@@ -829,10 +835,17 @@ public final class AppModel {
         await refresh(.service)
         let installed = service.value?.units.agent.installed ?? status.value?.service.installed ?? false
         guard installed else { return nil }
-        if case let .failure(error) = await changeService(.uninstalling, reread: [], { try await $0.uninstallService() }) {
+        if case let .failure(error) = await changeService(.uninstalling, reread: [], Self.stopUnits) {
             return error
         }
         return nil
+    }
+
+    /// How Quit stops Keryx's units — the one place to change when the CLI has a stop that
+    /// keeps them installed (`keryx service stop --all`, asked for): today it is `keryx
+    /// service uninstall`, its only stop, and launch installs them again.
+    private static let stopUnits: @MainActor (KeryxClient) async throws -> ServiceResult = {
+        try await $0.uninstallService()
     }
 
     /// One service change at a time, run in `serviceTask` so quitting can stop it.
@@ -1030,7 +1043,7 @@ public final class AppModel {
         serviceTask?.cancel()
     }
 
-    static let serviceBusy = "Keryx's service is already being installed or uninstalled. Wait for that to finish."
+    static let serviceBusy = "Keryx is already starting or stopping. Wait for that to finish."
     static let modelServerStopping = "The model server is already stopping."
     static let modelServerInUse =
         "The model server can't be stopped while it is starting or while the voice is being set up on it."

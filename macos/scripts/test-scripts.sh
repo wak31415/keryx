@@ -66,6 +66,9 @@ check "an untrusted identity signs ad hoc" test "$(identity "$untrusted" "")" = 
 check "an untrusted identity says it is not trusted" grep -q "not trusted" "$WORK/err"
 check "no identity signs ad hoc" test "$(identity "" "")" = -
 check "no identity names the script that makes one" grep -q "make-signing-identity.sh" "$WORK/err"
+check "no login keychain (over ssh) signs ad hoc" \
+  test "$(PATH="$STUB:$PATH" choose_identity "" 2>"$WORK/err")" = -
+check "no login keychain says so" grep -q "no login keychain" "$WORK/err"
 check "another identity, even one with a longer name, is never chosen" \
   test "$(identity "$other" "$other")" = -
 
@@ -155,15 +158,30 @@ security create-keychain -p test "$CHAIN"
 KEYCHAINS+=("$CHAIN")
 security unlock-keychain -p test "$CHAIN"
 
-echo n | KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" >"$WORK/out" 2>&1
+# Answering no with the trust step on: it says what the trust is, and changes nothing.
+echo n | KEYCHAIN="$CHAIN" "$SCRIPTS/make-signing-identity.sh" >"$WORK/out" 2>&1
 check "answering no exits 1" test $? -eq 1
 check "answering no adds nothing" sh -c "! security find-identity -p codesigning '$CHAIN' | grep -q 'Keryx Local Signing'"
+check "the question says the trust is for every keychain" grep -q "every keychain" "$WORK/out"
+check "the question says how to undo it" grep -q -- "--remove" "$WORK/out"
+check "the question gives the commands by hand" grep -q "security delete-identity -Z" "$WORK/out"
+
+# A certificate whose name contains the identity's, there first: never the one chosen.
+/usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=Keryx Local Signing Old" \
+  -keyout "$WORK/decoy.key" -out "$WORK/decoy.pem" 2>/dev/null
+security import "$WORK/decoy.pem" -k "$CHAIN" >/dev/null
 
 KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --yes >"$WORK/out" 2>&1
 check "--yes adds it without asking" test $? -eq 0
 check "--yes adds a code-signing identity of that name" \
   sh -c "security find-identity -p codesigning '$CHAIN' | grep -q '\"Keryx Local Signing\"'"
-security find-certificate -c "Keryx Local Signing" -p "$CHAIN" >"$WORK/cert.pem"
+# shellcheck source=macos/scripts/make-signing-identity.sh
+hash=$(source "$SCRIPTS/make-signing-identity.sh" && identity_hash "$CHAIN" "Keryx Local Signing")
+(source "$SCRIPTS/make-signing-identity.sh" && certificate_pem "$CHAIN" "$hash") >"$WORK/cert.pem"
+check "the certificate is chosen by its SHA-1, not the one whose name contains it" \
+  test "$(/usr/bin/openssl x509 -in "$WORK/cert.pem" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')" = "$hash"
+check "its subject is exactly the identity's" \
+  grep -q "CN *= *Keryx Local Signing$" <(/usr/bin/openssl x509 -in "$WORK/cert.pem" -noout -subject)
 check "its certificate is for code signing" \
   sh -c "/usr/bin/openssl x509 -in '$WORK/cert.pem' -noout -text | grep -A1 'Extended Key Usage' | grep -q 'Code Signing'"
 check "its certificate is self-signed" \
@@ -181,6 +199,20 @@ check "no temporary key is left behind" sh -c "! ls -d '${TMPDIR:-/tmp}'/keryx-s
 # Untrusted, so a build would sign ad hoc and say why.
 check "a build would not sign with an untrusted identity" test "$(choose_identity "$CHAIN" 2>"$WORK/err")" = -
 check "and says it is not trusted" grep -q "not trusted" "$WORK/err"
+
+# --remove: asks, then takes the identity away; the decoy stays.
+echo n | KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --remove >"$WORK/out" 2>&1
+check "--remove answered no exits 1" test $? -eq 1
+check "--remove answered no keeps it" \
+  sh -c "security find-identity -p codesigning '$CHAIN' | grep -q '\"Keryx Local Signing\"'"
+KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --remove --yes >"$WORK/out" 2>&1
+check "--remove --yes succeeds" test $? -eq 0
+check "--remove --yes takes the identity away" \
+  sh -c "! security find-identity -p codesigning '$CHAIN' | grep -q '\"Keryx Local Signing\"'"
+check "--remove leaves a certificate of another name" \
+  sh -c "security find-certificate -c 'Keryx Local Signing Old' '$CHAIN' >/dev/null"
+KEYCHAIN="$CHAIN" KERYX_SIGNING_TRUST=0 "$SCRIPTS/make-signing-identity.sh" --remove --yes >"$WORK/out" 2>&1
+check "--remove with nothing there says so" grep -q "nothing to do" "$WORK/out"
 
 echo "$PASSED passed, $FAILED failed"
 ((FAILED == 0))

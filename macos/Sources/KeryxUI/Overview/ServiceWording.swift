@@ -42,8 +42,8 @@ enum ServiceWording {
                              help: "Keryx answers, but not as \(unit): it was started by hand.")
         }
         if let failure {
-            return Answering(tone: .error, text: "No", hint: Self.couldNotStart(failure),
-                             help: failure.message, offersStart: true)
+            return Answering(tone: .error, text: "No", hint: "Keryx couldn't start.",
+                             help: failure.details ?? failure.message, offersStart: true)
         }
         switch step {
         case .start:
@@ -54,13 +54,6 @@ enum ServiceWording {
         case .unknown, .running:
             return Answering(tone: .inactive, text: "No", help: "\(unit) is not running")
         }
-    }
-
-    /// The line under "No" when the start failed: Keryx's own sentence when it is fit to
-    /// show, else only that it could not start (the tooltip has the rest).
-    static func couldNotStart(_ failure: KeryxError) -> String {
-        let message = failure.message
-        return AppFacing.isFit(message) ? "Keryx couldn't start: \(Wording.sentence(message))" : "Keryx couldn't start."
     }
 
     /// The tunnel's unit in a word.

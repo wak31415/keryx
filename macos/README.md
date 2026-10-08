@@ -30,14 +30,14 @@ like the service.
 
 It then puts the bundle in /Applications, where the Finder, Spotlight and Launchpad find it,
 and touches nothing there but `/Applications/Keryx.app`. The new bundle is copied in beside
-the old one under a temporary name and its signature checked; the old one is renamed aside,
+the old one, into a temporary folder of its own (`mktemp`), and its signature checked; the old one is renamed aside,
 the new one renamed into place, and only then is the old one deleted, so a failure part way
 leaves the old app where it was. An app called Keryx.app that is not Keryx (another bundle
 identifier) is refused. If Keryx is running, quit it and open it again to run the new build.
 
 **Signing.** Each build is signed with **Keryx Local Signing**, a self-signed code-signing
 identity in your login keychain, when there is one and it is trusted for code signing; else
-ad hoc, with a warning. An ad-hoc signature is different on every build, and macOS ties
+ad hoc, with a warning (and over ssh, where there is no login keychain). An ad-hoc signature is different on every build, and macOS ties
 Open at Login and its background approval to the signature, so after each ad-hoc build they
 must be turned off and on again. With the identity every build has the same designated
 requirement, and they stay as they were.
@@ -45,12 +45,15 @@ requirement, and they stay as they were.
 `make-signing-identity.sh` makes the identity, once. It says what it is about to do and
 asks first (`--yes` skips the question). It makes a key and a ten-year certificate for code
 signing with `/usr/bin/openssl` in a private temporary folder, imports both into the login
-keychain with the key usable by `/usr/bin/codesign`, and trusts the certificate for code
-signing only (`security add-trusted-cert -p codeSign`), which macOS asks your password for.
-The temporary files are deleted. Run again, it changes nothing. The first build after it
-asks whether codesign may use the key: choose Always Allow. The certificate is trusted on
-this Mac only, for code signing, and its key never leaves your keychain; to remove it,
-delete "Keryx Local Signing" in Keychain Access.
+keychain with the key non-extractable and usable by `/usr/bin/codesign`, and trusts the
+certificate, chosen by its SHA-1, for code signing only (`security add-trusted-cert -p
+codeSign`). The trust is needed: `codesign` refuses an untrusted self-signed identity ("no
+identity found"). It is a setting of your user account's trust domain, so it applies to
+every keychain, and macOS asks your password for it. The temporary files are deleted. Run
+again, it changes nothing. The first build after it asks whether codesign may use the key:
+choose Always Allow. `make-signing-identity.sh --remove` undoes it, the trust and then the
+identity; by hand, that is `security remove-trusted-cert` on the certificate, then
+`security delete-identity -Z SHA-1` in the login keychain.
 
 `test.sh` runs `test-scripts.sh` first, which tests both scripts in a temporary folder:
 which identity a build chooses (against a stand-in `security`), how Keryx.app is replaced
@@ -87,9 +90,14 @@ agent `dev.keryx.agent` and the tunnel's, is the app's to manage, and never show
   the app opens then. The local model and voice servers are left as they are. Quitting asks
   first, "Quit Keryx?", saying that the assistant stops answering until Keryx is opened
   again, until you tick "Don't ask again"; with a call in progress it always asks, since
-  quitting ends the call. At a log out, restart or shut down it asks nothing and stops
-  Keryx all the same. A stop that takes longer than 30 seconds is cut short, and the app
-  quits anyway.
+  quitting ends the call. A stop that takes longer than 30 seconds is cut short, and the
+  app quits anyway. Quitting while a restart is pending (waiting for a call to end) stops
+  Keryx before it restarts: `restart.json` stays pending until the next launch starts Keryx,
+  whose start is taken as the restart, and confirmed with the usual call-back.
+- **Logging out, restarting or shutting down** quits the app without asking and without
+  stopping Keryx: launchd ends the session's agents itself, and an uninstall would only hold
+  the logout up. The agents stay installed, so they load again at the next login, with or
+  without the app.
 
 Since quitting removes the agent's plist, which is where the app finds Keryx, the app keeps
 a copy of the last one it read (in its own preferences) and reads that while the plist is

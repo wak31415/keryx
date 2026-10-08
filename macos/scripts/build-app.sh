@@ -9,8 +9,8 @@
 # rebuild. Without it, ad hoc, with a warning.
 #
 # Installing touches /Applications/Keryx.app and nothing else there: the new bundle is
-# copied beside it under a temporary name and checked, the old one renamed aside, the new
-# one renamed into place, and only then the old one deleted. A failed rename puts the old
+# copied beside it into a temporary folder (mktemp) and checked, the old one renamed aside,
+# the new one renamed into place, and only then the old one deleted. A failed rename puts the old
 # one back. An app of that name that is not Keryx (another bundle identifier) is refused.
 #
 # The icon is one of two committed files, chosen for the macOS this builds on: on 26 and
@@ -41,7 +41,8 @@ signing_keychain() {
   if [[ -n ${KEYCHAIN:-} ]]; then
     echo "$KEYCHAIN"
   else
-    security login-keychain | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//'
+    # Nothing over ssh, where there is no login keychain to name: then ad hoc.
+    { security login-keychain 2>/dev/null || true; } | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//'
   fi
 }
 
@@ -49,6 +50,11 @@ signing_keychain() {
 # it and codesign may use it, else `-` (ad hoc) and a warning on stderr that says why.
 choose_identity() {
   local keychain=$1 hash
+  if [[ -z $keychain ]]; then
+    echo "warning: no login keychain (over ssh?); signing ad hoc." >&2
+    echo -
+    return 0
+  fi
   hash=$(security find-identity -v -p codesigning "$keychain" 2>/dev/null |
     awk -v name="\"$SIGNING_IDENTITY\"" 'index($0, name) { print $2; exit }')
   if [[ -n $hash ]]; then
@@ -72,11 +78,11 @@ bundle_id() {
 }
 
 # Puts the bundle `app` at `destination`/Keryx.app, replacing the one there, and touches
-# nothing else in `destination` but its own temporary names beside it.
+# nothing else in `destination` but a temporary folder of its own beside it (mktemp's), which
+# holds the new copy until it is renamed into place and the old one until it is deleted.
 install_app() {
   local app=$1 destination=${2%/}
   local target="$destination/Keryx.app"
-  local staged="$destination/.Keryx.app.new.$$" old="$destination/.Keryx.app.old.$$"
   if [[ ! -d $destination ]]; then
     echo "error: $destination is not a folder" >&2
     return 1
@@ -90,24 +96,26 @@ install_app() {
     fi
   fi
 
-  ditto "$app" "$staged"
-  if ! codesign --verify --strict "$staged"; then
-    rm -rf "$staged"
+  local work
+  work=$(mktemp -d "$destination/.Keryx.app.XXXXXX")
+  local staged="$work/Keryx.app" old="$work/previous.app"
+  if ! ditto "$app" "$staged" || ! codesign --verify --strict "$staged"; then
+    rm -rf "$work"
     echo "error: the copy in $destination did not verify; $target is unchanged" >&2
     return 1
   fi
   if [[ -e $target || -L $target ]] && ! mv "$target" "$old"; then
-    rm -rf "$staged"
+    rm -rf "$work"
     echo "error: could not move the old Keryx.app aside; it is unchanged" >&2
     return 1
   fi
   if ! mv "$staged" "$target"; then
-    rm -rf "$staged"
     if [[ -e $old || -L $old ]]; then mv "$old" "$target"; fi
+    rm -rf "$work"
     echo "error: could not move the new Keryx.app into $destination; the old one is back" >&2
     return 1
   fi
-  rm -rf "$old"
+  rm -rf "$work"
 }
 
 usage() {

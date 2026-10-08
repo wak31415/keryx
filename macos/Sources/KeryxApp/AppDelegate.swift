@@ -150,7 +150,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let stopping = model.quitStopsAnswering
         guard stopping || model.isBusy || children.count > 0 || !model.writes.isEmpty else { return .terminateNow }
         let sessionEnding = AppLifecycle.isSessionEnding(NSAppleEventManager.shared().currentAppleEvent)
-        Task { await quit(children, stopping: stopping, asking: !sessionEnding) }
+        // At a log out, restart or shut down launchd tears the GUI domain down by itself, so
+        // the units are let go rather than the reply held for an uninstall.
+        Task { await quit(children, stopping: stopping && !sessionEnding, asking: !sessionEnding) }
         return .terminateLater
     }
 
@@ -158,7 +160,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// still going — the long runs, a write that outlived its moment, a call in progress — or,
     /// when it stops Keryx answering, until the owner says not to ask again; and on a yes
     /// stops every child, waits for each group to go, and stops Keryx (`stopping`). At a log
-    /// out, restart or shut down it asks nothing (`asking` false).
+    /// out, restart or shut down it asks nothing (`asking` false) and stops nothing of Keryx's
+    /// (`stopping` false): launchd ends the session's agents itself.
     private func quit(_ children: ChildRegistry, stopping: Bool, asking: Bool) async {
         let downloads = model.downloads
         let setup = model.voiceSetup

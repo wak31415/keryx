@@ -27,14 +27,19 @@ import KeryxPreview
         return status
     }
 
-    /// The ready plan with the service step in `state`.
-    static func plan(service state: String) -> SetupPlan {
+    /// The ready plan with the service step in `state`, and `fix` as its fix.
+    static func plan(service state: String, fix: String? = nil) -> SetupPlan {
         var plan = PreviewData.setupPlanReady
         let index = plan.steps.firstIndex { $0.id == "service" }!
         plan.steps[index].state = state
+        plan.steps[index].fix = fix
         plan.ready = state == "done"
         return plan
     }
+
+    /// The plan the CLI prints for a unit installed but not running: the step fails on its
+    /// "service running" check, whose fix is the start.
+    static var stoppedPlan: SetupPlan { plan(service: "failed", fix: "service:install") }
 
     /// `plan` with a migration still to run in front of every step.
     static func migrating(_ plan: SetupPlan) -> SetupPlan {
@@ -72,8 +77,8 @@ import KeryxPreview
 
     @Test func setupThatHasReachedTheServiceStepStartsKeryx() {
         #expect(AppModel.answeringStep(plan: Self.plan(service: "needed"), status: Self.notInstalled) == .start)
-        #expect(AppModel.answeringStep(plan: Self.plan(service: "needed"), status: Self.stopped) == .start,
-                "installed but stopped is started too")
+        #expect(AppModel.answeringStep(plan: Self.stoppedPlan, status: Self.stopped) == .start,
+                "installed but stopped is started too, as the CLI says it: failed, fixed by a start")
         #expect(AppModel.answeringStep(plan: Self.plan(service: "done"), status: Self.stopped) == .start,
                 "a plan read before it stopped")
     }
@@ -83,6 +88,8 @@ import KeryxPreview
             #expect(AppModel.answeringStep(plan: Self.plan(service: state), status: Self.notInstalled) == .waitingForSetup,
                     "service \(state)")
         }
+        #expect(AppModel.answeringStep(plan: Self.plan(service: "failed", fix: "secret:OPENAI_API_KEY"),
+                                       status: Self.stopped) == .waitingForSetup, "failed for something a start can't mend")
         #expect(AppModel.answeringStep(plan: PreviewData.setupPlan, status: Self.notInstalled) == .waitingForSetup,
                 "a fresh Mac: the phone, the voice and the agents are left")
         #expect(AppModel.answeringStep(plan: Self.migrating(Self.plan(service: "needed")), status: Self.notInstalled)
@@ -130,6 +137,18 @@ import KeryxPreview
         let plan = calls.firstIndex(of: "setup plan") ?? .max
         #expect(plan < calls.firstIndex(of: "service install")!, "the plan is read before anything starts")
         #expect(model.startFailure == nil)
+    }
+
+    @Test func launchStartsAStoppedUnitAgain() async {
+        let client = StubClient {
+            $0.status = .success(Self.stopped)
+            $0.setupPlan = .success(Self.stoppedPlan)
+        }
+        let model = makeModel(client: client)
+        await model.start()
+        defer { model.stop() }
+        await model.ensureAnswering()
+        #expect(installs(client) == 1)
     }
 
     @Test func nothingStartsUnlessTheModelKeepsKeryxAnswering() async {

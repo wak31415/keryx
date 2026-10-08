@@ -42,11 +42,11 @@ enum ConfigDescriptions {
         "APPROVAL_BASH_ALLOW":
             "The only shell commands a keypad digit may ever run, matched word for word; only git push and git "
             + "commit may carry arguments. Widening this list widens exactly what a phone keypad can run.",
-        "CLOUDFLARE_TUNNEL": "The Cloudflare tunnel the background service runs.",
+        "CLOUDFLARE_TUNNEL": "The Cloudflare tunnel that runs beside Keryx in the background.",
         "SERVICE_MANAGER":
             "What restarts Keryx when it asks to be restarted: auto is launchd or systemd, but only while Keryx "
             + "runs under it; none refuses.",
-        "SERVICE_UNIT": "The background service's launchd label or systemd unit; blank is the one Keryx installs.",
+        "SERVICE_UNIT": "The launchd label or systemd unit Keryx runs as in the background; blank is the one Keryx installs.",
         "REPORT_SECRET": "Signs the report links texted to you; blank makes one and keeps it with Keryx's data.",
         "LOG_LEVEL": "How much Keryx's log says.",
         "PROJECTS_ROOT":
