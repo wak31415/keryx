@@ -213,8 +213,11 @@ def test_service_stop_json_keeps_the_plists_and_disables_them(machine):
                   {"kind": "tunnel", "unit": "dev.keryx.tunnel", "state": "stopped"}],
     }
     uid = os.getuid()
-    assert machine.scripts[:2] == [["launchctl", "disable", f"gui/{uid}/dev.keryx.agent"],
-                                   ["launchctl", "bootout", f"gui/{uid}/dev.keryx.agent"]]
+    # Both disabled before either is booted out.
+    assert machine.scripts == [["launchctl", "disable", f"gui/{uid}/dev.keryx.agent"],
+                               ["launchctl", "disable", f"gui/{uid}/dev.keryx.tunnel"],
+                               ["launchctl", "bootout", f"gui/{uid}/dev.keryx.agent"],
+                               ["launchctl", "bootout", f"gui/{uid}/dev.keryx.tunnel"]]
     assert not any("dev.keryx.llm" in argv[-1] for argv in machine.scripts)
     assert (Path.home() / "Library" / "LaunchAgents" / "dev.keryx.agent.plist").exists()
 
@@ -280,7 +283,7 @@ def test_service_start_all_json_starts_what_is_installed(machine):
     assert {row["kind"]: row["state"] for row in document["units"]} == {
         "agent": "running", "tunnel": "running", "llm": "not-installed", "voice": "running"}
     verbs = [argv[1] for argv in machine.scripts]
-    assert verbs == ["enable", "bootstrap"] * 3
+    assert verbs == ["enable"] * 3 + ["bootstrap"] * 3
 
 
 def test_service_start_with_nothing_installed_is_refused(machine):

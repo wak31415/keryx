@@ -9,7 +9,14 @@ from types import SimpleNamespace
 import pytest
 
 from keryx.restart import service
-from keryx.restart.service import ServiceTarget, is_installed, is_stopped, unit_file
+from keryx.restart.service import (
+    ServiceTarget,
+    is_enabled,
+    is_installed,
+    is_present,
+    is_stopped,
+    unit_file,
+)
 
 LAUNCHD = ServiceTarget("launchd", "dev.keryx.agent")
 SYSTEMD = ServiceTarget("systemd", "keryx.service")
@@ -90,3 +97,43 @@ def test_a_probe_that_cannot_answer_is_not_stopped():
     run = answering(**{"is-enabled": subprocess.TimeoutExpired("systemctl", 5)})
 
     assert is_stopped(SYSTEMD, run=run) is False
+
+
+DISABLED_LIST = """disabled services = {
+\t"com.apple.example" => enabled
+\t"dev.keryx.agent" => disabled
+\t"dev.keryx.tunnel" => true
+\t"dev.keryx.llm" => false
+}
+"""
+
+
+@pytest.mark.parametrize(("label", "enabled"), [
+    ("dev.keryx.agent", False), ("dev.keryx.tunnel", False),  # older macOS: `true`
+    ("dev.keryx.llm", True), ("dev.keryx.voice", True),  # not listed: the default
+])
+def test_launchds_disabled_list_says_whether_a_job_is_enabled(label, enabled):
+    run = answering(**{"print-disabled": (0, DISABLED_LIST)})
+
+    assert is_enabled(ServiceTarget("launchd", label), run=run) is enabled
+
+
+@pytest.mark.parametrize(("answer", "enabled"), [
+    ((0, "enabled\n"), True), ((1, "disabled\n"), False), ((0, "static\n"), None),
+    (subprocess.TimeoutExpired("systemctl", 5), None),
+])
+def test_systemds_is_enabled_says_it_or_none(answer, enabled):
+    assert is_enabled(SYSTEMD, run=answering(**{"is-enabled": answer})) is enabled
+
+
+def test_a_launchd_list_that_cannot_be_read_says_nothing():
+    assert is_enabled(LAUNCHD, run=answering(**{"print-disabled": (1, "")})) is None
+
+
+def test_present_is_loaded_or_on_disk(monkeypatch):
+    monkeypatch.setattr(service, "is_installed", lambda target, **_: target is SYSTEMD)
+
+    assert is_present(SYSTEMD) is True  # loaded
+    assert is_present(LAUNCHD) is False
+    write(unit_file(LAUNCHD))
+    assert is_present(LAUNCHD) is True  # booted out, its plist kept

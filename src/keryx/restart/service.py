@@ -262,12 +262,50 @@ def is_stopped(
         return False
     if target.manager != "systemd":
         return not is_installed(target, run=run)
-    command = ["systemctl", "--user", "is-enabled", target.unit]
+    return _enablement(target, run) is False and not is_active(target, run=run)
+
+
+def is_present(target: ServiceTarget) -> bool:
+    """Installed, as `doctor`, `keryx status` and the setup plan mean it: the manager has
+    it loaded, or its unit file is where its installer put it — a job `keryx service stop`
+    booted out is still installed, only stopped. `is_installed` keeps meaning loaded, for
+    `keryx restart` and `keryx migrate`, which act on the job itself."""
+    return is_installed(target) or unit_file(target).is_file()
+
+
+def is_enabled(
+    target: ServiceTarget, *, run: Callable[..., object] = subprocess.run
+) -> bool | None:
+    """Whether the unit may start at login (and, on launchd, be bootstrapped): launchd's
+    `print-disabled` list, systemd's `is-enabled`. None when it cannot be told. Asks;
+    changes nothing."""
+    return _enablement(target, run)
+
+
+#: One line of `launchctl print-disabled`: `"dev.keryx.agent" => disabled` (older macOS
+#: says `=> true` for disabled, `=> false` for enabled).
+_DISABLED_LINE = re.compile(r'^\s*"(?P<label>[^"]+)"\s*=>\s*(?P<state>\w+)', re.M)
+
+
+def _enablement(target: ServiceTarget, run: Callable[..., object]) -> bool | None:
+    if target.manager == "systemd":
+        command = ["systemctl", "--user", "is-enabled", target.unit]
+    else:
+        command = ["launchctl", "print-disabled", f"gui/{os.getuid()}"]
     try:
         result = run(command, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError):
-        return False
-    return result.stdout.strip() == "disabled" and not is_active(target, run=run)
+        return None
+    said = result.stdout or ""
+    if target.manager == "systemd":
+        state = said.strip()
+        return True if state.startswith("enabled") else False if state == "disabled" else None
+    if result.returncode != 0:
+        return None
+    for line in _DISABLED_LINE.finditer(said):
+        if line.group("label") == target.unit:
+            return line.group("state") not in ("disabled", "true")
+    return True  # not listed: launchd's default, and the installers set no `Disabled`
 
 
 def is_active(

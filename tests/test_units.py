@@ -169,13 +169,18 @@ class Manager:
         self.loaded, self.on_disk = set(loaded), set(on_disk) | set(loaded)
         self.refuse = dict(refuse)  # verb -> (code, stderr)
         self.commands: list[list[str]] = []
+        self.disabled: set[str] = set()
 
     def run(self, argv):
         self.commands.append(list(argv))
         verb, unit = argv[2 if argv[0] == "systemctl" else 1], argv[-1].rsplit("/", 1)[-1]
         if verb in self.refuse:
             return (*self.refuse[verb][:1], "", self.refuse[verb][1])
-        if verb == "bootout":
+        if verb == "disable":
+            self.disabled.add(unit)
+        elif verb == "enable":
+            self.disabled.discard(unit)
+        elif verb == "bootout":
             self.loaded.discard(unit)
         elif verb == "bootstrap":
             self.loaded.add(unit.removesuffix(".plist"))
@@ -192,6 +197,7 @@ class Manager:
             loaded=lambda target: target.unit in self.loaded,
             on_disk=lambda target: target.unit in self.on_disk,
             active=lambda target: target.unit in self.loaded,
+            enabled=lambda target: target.unit not in self.disabled,
         )
 
 
@@ -214,6 +220,7 @@ def test_stop_disables_then_boots_out_keryx_and_its_tunnel():
     # Disabled first: a stop cut short still leaves nothing to start at login.
     assert launchd.verbs("dev.keryx.agent") == ["disable", "bootout"]
     assert launchd.verbs("dev.keryx.llm") == []  # only with --all
+    assert launchd.disabled == set(MAIN)
     assert launchd.loaded == {"dev.keryx.llm"}
 
 
@@ -417,3 +424,78 @@ def test_status_counts_a_unit_on_disk_as_installed_though_it_is_unloaded(tmp_pat
 
     assert document["units"]["agent"] == {"installed": True, "active": False}
     assert document["units"]["tunnel"] == {"installed": False, "active": False}
+
+
+def test_every_unit_is_disabled_before_any_is_stopped():
+    """A bootout waits on the job; the app's quit deadline can cut it short there, and by
+    then nothing may still be set to start at login."""
+    launchd = Manager(loaded=EVERY)
+
+    launchd.control("stop", every=True)
+
+    verbs = [argv[1] for argv in launchd.commands]
+    assert verbs == ["disable"] * 4 + ["bootout"] * 4
+
+
+def test_every_unit_is_enabled_before_any_is_started():
+    systemd = Manager("systemd", on_disk={"keryx.service", "cloudflared.service",
+                                          "keryx-llm.service"})
+
+    systemd.control("start", every=True)
+
+    assert [argv[2] for argv in systemd.commands] == ["enable"] * 3 + ["start"] * 3
+
+
+def test_a_failed_disable_is_a_failure_though_the_bootout_went_through():
+    launchd = Manager(loaded=MAIN, refuse={"disable": (1, "Could not disable")})
+
+    outcome = launchd.control("stop")
+
+    assert (outcome.ok, outcome.code) == (False, 1)
+    assert states(outcome) == {"dev.keryx.agent": "failed", "dev.keryx.tunnel": "failed"}
+    assert "Could not disable" in outcome.detail
+    assert launchd.loaded == set()  # still stopped now: only login is not secured
+
+
+def test_a_failed_disable_that_launchd_lists_as_disabled_is_none():
+    launchd = Manager(loaded=MAIN, refuse={"disable": (1, "already disabled")})
+    launchd.disabled = set(MAIN)  # `print-disabled` says so
+
+    assert launchd.control("stop").ok
+
+
+def test_a_failed_enable_starts_nothing_and_says_so():
+    launchd = Manager(on_disk=MAIN, refuse={"enable": (1, "Could not enable")})
+    launchd.disabled = set(MAIN)
+
+    outcome = launchd.control("start")
+
+    assert (outcome.ok, outcome.code) == (False, 1)
+    assert [argv[1] for argv in launchd.commands] == ["enable", "enable"]
+    assert launchd.loaded == set()
+
+
+def test_a_bootout_refused_while_the_job_stays_is_a_failure():
+    launchd = Manager(loaded=MAIN, refuse={"bootout": (5, "Boot-out failed")})
+
+    outcome = launchd.control("stop")
+
+    assert not outcome.ok and launchd.disabled == set(MAIN)
+
+
+@pytest.mark.parametrize("manager", ["none", "launchd"])
+def test_a_stop_settles_the_restart_before_anything_else(manager):
+    """Before the manager is found, before any probe, and on the paths that return early:
+    no service manager, nothing installed."""
+    settled = []
+
+    def probe(target):
+        assert settled, "probed before the restart was settled"
+        return False
+
+    outcome = units.control(Settings(service_manager=manager), "stop", platform="darwin",
+                            settle=lambda: settled.append(True), run=probe, loaded=probe,
+                            on_disk=probe)
+
+    assert settled == [True]
+    assert outcome.units == [] if manager == "none" else outcome.ok

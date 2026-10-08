@@ -189,9 +189,13 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `service stop|start [--all] [--json]` (the owner's alone, exit 2 under the service; the
   app's Quit and its launch) stop Keryx *and its tunnel* — which serves nothing else — and
   keep them from starting at login, without removing a unit file, so no installer runs and
-  macOS raises no "Background Items Added": launchd `disable` then `bootout`, systemd
-  `disable` then `stop`, and the inverse, `enable` first (a disabled launchd job refuses
-  `bootstrap`), then `bootstrap`, or `kickstart` for one still loaded. `--all` is every unit
+  macOS raises no "Background Items Added": a pending restart is settled first of all,
+  then *every* unit is disabled (launchd `disable`, systemd `disable`) before any is
+  stopped (`bootout`, `stop`), so a stop cut short in its slow half still starts nothing at
+  login; a start is the inverse, every unit enabled first (a disabled launchd job refuses
+  `bootstrap`), then `bootstrap`, or `kickstart` for one still loaded. A failed bootout,
+  bootstrap or kickstart is forgiven only while launchd holds what was asked, a failed
+  disable or enable only while `print-disabled` / `is-enabled` shows it. `--all` is every unit
   in `units.NAMES`, so a unit added there later is included; a unit not installed is left
   alone, and starting a Keryx that is not installed is refused before anything runs. `{"ok",
   "message", "detail", "units": [{"kind", "unit", "state"}]}`, `state` one of `running`,

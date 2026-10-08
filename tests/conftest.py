@@ -137,6 +137,7 @@ def _outside_any_service(monkeypatch):
     """
     monkeypatch.setattr("keryx.restart.service.runs_under", lambda target, **_: False)
     monkeypatch.setattr("keryx.restart.service.is_installed", lambda target, **_: False)
+    monkeypatch.setattr("keryx.restart.service.is_enabled", lambda target, **_: None)
 
 
 @pytest.fixture

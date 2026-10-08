@@ -191,18 +191,18 @@ class Control:
                 "units": self.units}
 
 
-def _steps(target: ServiceTarget, action: str, *, loaded: bool) -> list[list[str]]:
-    """The commands for one unit. A stop disables first, so a stop cut short (the app's
-    quit deadline, a shutdown) still leaves nothing to start at login; a start enables
-    first, because launchd refuses to bootstrap a disabled job."""
+def _enablement_command(target: ServiceTarget, action: str) -> list[str]:
+    return target.disable_command() if action == "stop" else target.enable_command()
+
+
+def _run_command(target: ServiceTarget, action: str, *, loaded: bool) -> list[str] | None:
+    """The command that stops or starts one unit, once its enablement is set; None for a
+    launchd job already unloaded, which has nothing to stop."""
     if action == "stop":
-        if target.manager == "systemd":
-            return [target.disable_command(), target.stop_command()]
-        return [target.disable_command(), *([target.stop_command()] if loaded else [])]
+        return target.stop_command() if loaded or target.manager == "systemd" else None
     if target.manager == "systemd":
-        return [target.enable_command(), target.start_command()]
-    return [target.enable_command(),
-            target.kickstart_command() if loaded else target.start_command()]
+        return target.start_command()
+    return target.kickstart_command() if loaded else target.start_command()
 
 
 def control(
@@ -216,18 +216,27 @@ def control(
     loaded: Callable[[ServiceTarget], bool] | None = None,
     on_disk: Callable[[ServiceTarget], bool] | None = None,
     active: Callable[[ServiceTarget], bool] | None = None,
+    enabled: Callable[[ServiceTarget], bool | None] | None = None,
 ) -> Control:
     """`keryx service stop|start` (`action`): Keryx and its tunnel, or with `every` every
     unit there is, stopped and kept from starting at login, or let start and started —
     without removing any unit file, so no installer runs and macOS asks nothing.
 
+    A stop calls `settle` first of all — the restart in flight, told it was the owner —
+    before any probe or early return. Then two passes over the units installed: every one
+    disabled (a start: enabled), and only then each stopped (bootout) or started
+    (bootstrap, kickstart). So a stop cut short in its slow half, a bootout waiting on
+    Keryx, has already kept every unit from starting at login.
+
     A unit not installed is left alone and said so; starting Keryx itself when it is not
-    is refused (2) before anything runs. `settle` is called once before a stop touches
-    anything — the restart in flight, told it was the owner. Each unit's verdict is what
-    its manager then holds (launchd: loaded or not), not only what a command exited with,
-    since launchd can refuse a bootout of a job that is going anyway. 1 when any unit
+    is refused (2) before anything runs. A failed bootout, bootstrap or kickstart counts
+    only while launchd does not hold what was asked (it can refuse a bootout of a job that
+    is going anyway); a failed disable or enable only while the manager's own list
+    (`launchctl print-disabled`, `systemctl is-enabled`) does not show it. 1 when any unit
     failed, every failure in `detail`, redacted.
     """
+    if action == "stop" and settle is not None:
+        settle()
     found = manager(settings, platform or voice_setup.PLATFORM)
     if found is None:
         return Control(False, REFUSED, NO_MANAGER, None, [])
@@ -235,6 +244,7 @@ def control(
     is_loaded = loaded or service.is_installed
     has_file = on_disk or unit_on_disk
     is_running = active or service.is_active
+    is_enabled = enabled or service.is_enabled
     kinds = [kind for kind in NAMES[found] if every or kind in MAIN_KINDS]
     targets = {kind: ServiceTarget(found, unit_name(settings, found, kind)) for kind in kinds}
     present = {kind: is_loaded(target) or has_file(target) for kind, target in targets.items()}
@@ -248,31 +258,36 @@ def control(
             return Control(False, REFUSED, NOT_INSTALLED_YET, None, list(rows.values()))
         if not any(present.values()):
             return Control(True, OK, NOTHING_TO_STOP, None, list(rows.values()))
-    if action == "stop" and settle is not None:
-        settle()
-    order = kinds if action == "stop" else kinds[::-1]  # the servers up before Keryx
-    problems: list[str] = []
-    for kind in order:
-        if not present[kind]:
-            continue
+    # Stopped Keryx first, then what it uses; started the other way round.
+    acting = [kind for kind in (kinds if action == "stop" else kinds[::-1]) if present[kind]]
+    failures: dict[str, str] = {}
+
+    def attempt(kind: str, argv: list[str], *, holds: Callable[[], bool]) -> None:
+        code, out, err = run(argv)
+        if code != 0 and not holds():
+            said = _last_line(err) or _last_line(out) or f"exited with {code}"
+            failures.setdefault(kind, f"{' '.join(argv)}: {said}")
+
+    wanted = action == "start"
+    for kind in acting:
         target = targets[kind]
-        failure = None
-        for argv in _steps(target, action, loaded=is_loaded(target)):
-            code, out, err = run(argv)
-            if code != 0 and failure is None:
-                said = _last_line(err) or _last_line(out) or f"exited with {code}"
-                failure = f"{' '.join(argv)}: {said}"
-        if failure is not None and target.manager == "launchd" \
-                and is_loaded(target) == (action == "start"):
-            failure = None  # what launchd now holds is what was asked for
-        if failure is not None:
-            problems.append(failure)
-        rows[kind]["state"] = UNIT_FAILED if failure else STOPPED if action == "stop" else RUNNING
-    acted = [kind for kind in kinds if present[kind]]
-    if problems:
-        detail = redact_known("; ".join(problems), settings)
+        attempt(kind, _enablement_command(target, action),
+                holds=lambda target=target: is_enabled(target) is wanted)
+    for kind in acting:
+        target = targets[kind]
+        argv = _run_command(target, action, loaded=is_loaded(target))
+        if argv is None or (wanted and kind in failures):
+            continue  # nothing loaded to stop; or a job launchd will not let start
+        attempt(kind, argv, holds=lambda target=target: target.manager == "launchd"
+                and is_loaded(target) is wanted)
+    for kind in acting:
+        rows[kind]["state"] = (UNIT_FAILED if kind in failures
+                               else STOPPED if action == "stop" else RUNNING)
+    if failures:
+        detail = redact_known("; ".join(failures[kind] for kind in acting
+                                        if kind in failures), settings)
         return Control(False, FAILED, COULD_NOT[action], detail, list(rows.values()))
-    servers = any(kind not in MAIN_KINDS for kind in acted)
+    servers = any(kind not in MAIN_KINDS for kind in acting)
     if not present["agent"]:
         message = SERVERS_STOPPED if servers else NOTHING_TO_STOP
     elif action == "stop":
