@@ -148,9 +148,21 @@ def by_key(key: str) -> ModelEntry | None:
     return next((entry for entry in MODELS if entry.key == key), None)
 
 
-def fits(entry: ModelEntry, hardware: Hardware, *, reserve_gb: float = 0.0) -> bool:
-    """Whether `entry` fits what `hardware` can give a model, less `reserve_gb`."""
-    return entry.memory_gb + reserve_gb <= hardware.model_memory_gb
+def budget(agent_gb: float, *, voice_llm_gb: float = 0.0, voice_here: bool = False) -> float:
+    """What the models on this machine need together, in GB: the agent's model (0 when it
+    runs elsewhere), the voice's own LLM while it runs here (`VOICE_LLM=here`; 0 when the
+    voice's words are the agent's, or come from elsewhere) and, while the voice is here, its
+    speech models (`VOICE_SERVER_GB`). The one sum every fit is judged by: `fits`,
+    `recommend` and the owner's rule for a voice LLM (`voice_llm_pick`)."""
+    return agent_gb + voice_llm_gb + (VOICE_SERVER_GB if voice_here else 0.0)
+
+
+def fits(entry: ModelEntry, hardware: Hardware, *, voice_here: bool = False,
+         voice_llm_gb: float = 0.0) -> bool:
+    """Whether `entry`, as the agent's model, fits what `hardware` can give a model beside
+    the voice's own LLM and speech models (`budget`)."""
+    need = budget(entry.memory_gb, voice_llm_gb=voice_llm_gb, voice_here=voice_here)
+    return need <= hardware.model_memory_gb
 
 
 #: The models a voice LLM of the voice's own is offered first, the one most worth having
@@ -162,23 +174,27 @@ VOICE_LLM_MODELS: tuple[str, ...] = ("qwen3.5-9b", "qwen3.5-4b")
 def voice_llm_pick(hardware: Hardware, *, agent_gb: float | None) -> ModelEntry | None:
     """The owner's rule for a new install (D2): the first of `VOICE_LLM_MODELS` that fits
     beside the agent's model (`agent_gb`, 0 when none runs here) and the speech models —
-    agent + voice LLM + `VOICE_SERVER_GB` within what `hardware` gives a model — or None,
-    which keeps the voice on the local agent's model (`VOICE_LLM=shared`). None too when the
-    agent's model runs here and its size cannot be told (`agent_gb` None): the voice is not
-    given a second model that may not fit."""
+    `budget` within what `hardware` gives a model — or None, which keeps the voice on the
+    local agent's model (`VOICE_LLM=shared`). None too when the agent's model runs here and
+    its size cannot be told (`agent_gb` None): the voice is not given a second model that
+    may not fit."""
     if agent_gb is None:
         return None
     for key in VOICE_LLM_MODELS:
         entry = by_key(key)
         assert entry is not None, key  # the list names catalog models only
-        if agent_gb + entry.memory_gb + VOICE_SERVER_GB <= hardware.model_memory_gb:
+        need = budget(agent_gb, voice_llm_gb=entry.memory_gb, voice_here=True)
+        if need <= hardware.model_memory_gb:
             return entry
     return None
 
 
-def recommend(hardware: Hardware, *, reserve_gb: float = 0.0) -> ModelEntry | None:
-    """The tested model when it fits, else the largest that does; None when nothing does."""
-    fitting = [entry for entry in MODELS if fits(entry, hardware, reserve_gb=reserve_gb)]
+def recommend(hardware: Hardware, *, voice_here: bool = False,
+              voice_llm_gb: float = 0.0) -> ModelEntry | None:
+    """The agent's model for `hardware` beside what the voice takes here (`fits`): the tested
+    model when it fits, else the largest that does; None when nothing does."""
+    fitting = [entry for entry in MODELS
+               if fits(entry, hardware, voice_here=voice_here, voice_llm_gb=voice_llm_gb)]
     tested = [entry for entry in fitting if entry.tested]
     return (tested or fitting or [None])[0]
 

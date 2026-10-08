@@ -36,8 +36,9 @@ class Log:
 class FakeMachine:
     def __init__(self, log: Log, *, s2s=None, free=500 * 10**9, script_code=0,
                  ports=None, server_problem=None, realtime=None, words=True,
-                 ready=True) -> None:
+                 ready=True, live=None) -> None:
         self.log, self.s2s, self.free, self.script_code = log, s2s, free, script_code
+        self.live = live
         self.ports, self.server_problem, self.realtime = ports or {}, server_problem, realtime
         self.words, self.ready = words, ready
 
@@ -60,6 +61,10 @@ class FakeMachine:
         if isinstance(self.server_problem, BaseException):
             raise self.server_problem
         return self.server_problem
+
+    def live_calls(self, settings) -> int | None:
+        self.log.lines.append(("live_calls",))
+        return self.live
 
     def words_up(self, endpoint: Endpoint | None) -> bool:
         self.log.lines.append(("words", endpoint.base_url if endpoint else None))
@@ -1248,3 +1253,34 @@ def test_only_a_units_installer_is_timed_never_a_download(monkeypatch):
     assert asked == {"/repo/scripts/install-systemd.sh": True,
                      "/repo/scripts/install-systemd.sh timeout": voice.INSTALL_TIMEOUT_S,
                      "uv": False, "uv timeout": None}
+
+
+# --- a live call is never cut off -----------------------------------------------------------
+
+
+def test_here_over_a_voice_here_with_a_live_call_is_refused_before_anything(settings, root):
+    log = Log()
+    here_ = settings.model_copy(update={**WORDS, "voice_mode_explicit": "here"})
+
+    code, saved = run_here(here_, FakeMachine(log, s2s="/b/s2s", live=1), log, root)
+
+    assert code == 1 and saved == []
+    assert log.kinds() == ["live_calls", "error"]
+    assert log.of("error") == [(voice.LIVE_CALL, "1 live call(s)", None)]
+
+
+@pytest.mark.parametrize(("mode", "live"), [("openai", 2), ("here", 0), ("here", None)])
+def test_here_goes_on_when_no_call_could_be_cut_off(settings, root, mode, live):
+    log = Log()
+    chosen = settings.model_copy(update={**WORDS, "voice_mode_explicit": mode})
+
+    code, _saved = run_here(chosen, FakeMachine(log, s2s="/b/s2s", live=live), log, root)
+
+    assert code == 0
+    assert (("live_calls",) in log.lines) is (mode == "here")
+
+
+def test_the_machine_asks_keryx_how_many_calls_are_live(monkeypatch, settings):
+    monkeypatch.setattr("keryx.restart.health.health_probe", lambda settings: 4)
+
+    assert voice.machine().live_calls(settings) == 4

@@ -14,6 +14,7 @@ settings say should be served, `served_model` what the running server says it se
 
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -21,6 +22,8 @@ import httpx
 from keryx.config import Settings
 from keryx.endpoints import Endpoint
 from keryx.localmodels import catalog, runtimes
+from keryx.localmodels.catalog import ModelEntry
+from keryx.localmodels.hardware import Hardware
 from keryx.localmodels.servers import HOST, free_port_avoiding
 from keryx.restart import service
 from keryx.restart.service import ServiceTarget
@@ -85,6 +88,75 @@ def agent_memory_gb(settings: Settings) -> float | None:
         return 0.0
     entry = next((e for e in catalog.MODELS if e.ollama == settings.local_agent_model), None)
     return entry.memory_gb if entry is not None else None
+
+
+def voice_llm_memory_gb(settings: Settings) -> float | None:
+    """The memory the voice's own LLM takes on this machine: its catalog figure while it
+    runs here (`VOICE_LLM=here` with a model named), 0 while the voice's words are the local
+    agent's (counted as the agent's) or come from elsewhere, and None for a GGUF of your own,
+    whose size Keryx cannot tell."""
+    if settings.voice_llm != "here" or not settings.voice_llm_model:
+        return 0.0
+    entry = catalog.by_key(settings.voice_llm_model)
+    return entry.memory_gb if entry is not None else None
+
+
+@dataclass(frozen=True)
+class Recommendations:
+    """What `keryx models list --json` recommends for this machine, so the Mac app never
+    works out a fit itself. Every figure is `catalog.budget`'s sum.
+
+    - `recommended`: the agent's model as things stand — the speech models reserved while the
+      voice is here (`Settings.voice_mode`), and the voice's own LLM while it runs here.
+    - `with_local_voice`: the same with the voice here, whether or not it is yet.
+    - `voice_llm`: the voice LLM the owner's rule (D2) gives a voice here: the one already
+      chosen to run here, else `catalog.voice_llm_pick` beside the agent's model — the one
+      running here, or, with none here, `with_local_voice`. None is `shared`.
+
+    The agent's model comes first and the voice's from what remains, as `keryx setup` asks
+    them: the voice's own model is never what keeps the tested model off a machine, unless
+    it is one the owner already chose. A GGUF of the owner's own as the voice's is not
+    counted, since it cannot be sized.
+    """
+
+    hardware: Hardware
+    recommended: ModelEntry | None
+    with_local_voice: ModelEntry | None
+    voice_llm: str | None
+    #: The memory the voice's own LLM already chosen takes, or None when there is none.
+    chosen_gb: float | None
+
+    @property
+    def voice_llm_separate(self) -> bool:
+        """Whether the voice here has a model of its own (D2 applied), not the agent's."""
+        return self.voice_llm is not None
+
+    def fits_with_voice_llm(self, entry: ModelEntry) -> bool:
+        """Whether `entry`, as the agent's model, leaves room for the voice here and a model
+        of its own: the one already chosen, else whichever the owner's rule would pick."""
+        if self.chosen_gb is not None:
+            return catalog.fits(entry, self.hardware, voice_here=True,
+                                voice_llm_gb=self.chosen_gb)
+        return catalog.voice_llm_pick(self.hardware, agent_gb=entry.memory_gb) is not None
+
+
+def recommendations(settings: Settings, hardware: Hardware) -> Recommendations:
+    """`Recommendations` for `hardware`, as `settings` describe the voice and the agent."""
+    own = settings.voice_llm == "here" and bool(settings.voice_llm_model)
+    chosen_gb = (voice_llm_memory_gb(settings) or 0.0) if own else None
+    reserved = chosen_gb or 0.0
+    recommended = catalog.recommend(hardware, voice_here=settings.voice_mode == "here",
+                                    voice_llm_gb=reserved)
+    with_voice = catalog.recommend(hardware, voice_here=True, voice_llm_gb=reserved)
+    if own:
+        voice_llm: str | None = settings.voice_llm_model
+    else:
+        agent = agent_memory_gb(settings)
+        if agent == 0.0:  # no agent's model here yet: the one this machine would be given
+            agent = with_voice.memory_gb if with_voice is not None else 0.0
+        pick = catalog.voice_llm_pick(hardware, agent_gb=agent)
+        voice_llm = pick.key if pick is not None else None
+    return Recommendations(hardware, recommended, with_voice, voice_llm, chosen_gb)
 
 
 def enable_local(settings: Settings, *, default: bool) -> dict[str, Any]:

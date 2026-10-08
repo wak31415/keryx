@@ -40,6 +40,7 @@ class Machine:
         self.wait: object = None
         self.pulls: list[str] = []
         self.listed = Probe(True, ("gpt-5-mini",))
+        self.live: int | None = None
         self.asked: list[tuple[str, str | None]] = []
 
     def run(self, argv) -> int:
@@ -77,6 +78,8 @@ def machine(monkeypatch, tmp_path, every_agent_installed):
     monkeypatch.setattr(servers, "free_port", lambda port: port)
     monkeypatch.setattr(runtimes, "llama_server", lambda cache_dir, **_: "/usr/bin/llama-server")
     monkeypatch.setattr(hardware, "detect", lambda: MAC_8)
+    # Keryx's live calls, never the running service's own: none is live unless a test says.
+    monkeypatch.setattr(voice, "live_calls", lambda settings: found.live)
     monkeypatch.setattr(hardware, "free_bytes", lambda path: 10**12)
 
     def wait_for(endpoint, kind, timeout):
@@ -537,3 +540,23 @@ def test_voice_llm_shared_puts_the_old_words_back_when_the_voice_does_not_answer
     assert events[-1]["message"].endswith("it answers on the ones it had.")
     assert ConfigStore().stored()["VOICE_LLM"] == "here"
     assert machine.flags() == [["--voice"], ["--voice"]] and "voice_llm" in machine.units
+
+
+@pytest.mark.parametrize("command", [
+    ["voice", "llm", "here", SMALL.key, "--json"], ["voice", "llm", "shared", "--json"],
+    ["voice", "llm", "remote", "https://api.openai.com/v1", "--model", "gpt-5-mini", "--json"],
+])
+def test_voice_llm_is_refused_while_a_call_is_live_on_the_voice_here(machine, command):
+    from keryx.localmodels import voice_llm
+
+    ConfigStore().set({**WORDS, "VOICE_MODE": "here"})
+    before = ConfigStore().stored()
+    machine.units.add("voice")
+    machine.live = 1
+
+    result = runner.invoke(app, command)
+
+    [event] = ends_once(result, "error", 1)
+    assert (event["message"], event["detail"]) == (voice_llm.LIVE_CALL, "1 live call(s)")
+    assert machine.scripts == [] and machine.asked == [] and machine.pulls == []
+    assert ConfigStore().stored() == before

@@ -48,7 +48,12 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `doctor.app_facing` — and what a terminal runs, or where a thing is on disk, is its
   `hint`, which `keryx doctor` prints after the detail. `fix` is the app's button for it: one
   id from the closed set in `keryx/fixes.py`, or null; the plan's steps and their checks
-  carry it too, a step's being its first problem's)
+  carry it too, a step's being its first problem's. Each voice mode is checked for its own
+  settings — `server` its address, `here` its words (`voice_llm_refusal`), whose own
+  model on disk and server answering are `voice LLM model` / `voice LLM server`, fix
+  `voice:llm` — and two soft ones, section `settings`, name what a later release stops
+  reading: a setting said only under its old name, and `OPENAI_VOICE` still sent to a server
+  elsewhere)
 - Whether it is running, and what it has to say: `uv run keryx status [--json]` (a report,
   so it always exits 0, a `keryx migrate` still to run included; `--json` is the document
   the Mac app's menu bar polls — `keryx/status.py`, schema 1, every part `ok`/`error` with
@@ -214,7 +219,11 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Models on this machine: `uv run keryx models list [--json]` (the catalog against this
   machine's GPU and memory, the recommended one marked, and the local voices; `--json` adds
   `servers`, the model and voice servers' units and whether they answer, asked on loopback
-  only, and `served_model`, the model the running server names — `model` is the setting),
+  only, and `served_model`, the model the running server names — `model` is the setting —
+  and the recommendations the app reads instead of working out a fit
+  (`use.recommendations`): `recommended`, `recommended_with_local_voice`,
+  `voice_llm_recommended` and `voice_llm_separate` beside each model's `fits_with_voice_llm`;
+  see "A model is an address"),
   `models pull NAME [--json]` (resumable, checksummed, into `CACHE_DIR/models`; a copy in
   the Hugging Face cache is linked instead; `--json` is JSON lines — `progress`, then
   exactly one of `done`, `adopted`, `error`, `cancelled` on every path, a refusal included —
@@ -285,7 +294,12 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   before the old unit is retired, and when it does not answer the old words are put back,
   the voice restarted onto them, and a voice that answers on neither has its unit removed.
   `voice_restart_needed` is only a voice here with no server running, which takes the words
-  when it starts. `models start --voice-llm [--json]`
+  when it starts. Nor is a call cut off: while a voice server runs here, `voice llm here|
+  shared|remote` and `voice use here` (and the wizard's voice here) refuse, exit 1, before
+  anything is touched while Keryx has a call live (`Probes.live_calls`,
+  `restart.health.health_probe`, as `keryx restart` and `migrate` ask; None, Keryx not
+  answering, goes on). A Cancel puts the old voice LLM's settings and unit back together
+  with a second Cancel held off (`voice.cancel_held_off`), without waiting for it to load. `models start --voice-llm [--json]`
   is `here`'s unit, wait and check alone, for `VOICE_LLM_MODEL` as it is (nothing saved; the
   `models start` stream). `voice --json` adds `llm` (`source`, `model`, `url`, `reachable`,
   `unit_installed`) and `pipelines` (`VOICE_PIPELINE`'s values per mode), and `needs` is
@@ -401,13 +415,15 @@ remember:
   plan`/`mark`: the wizard's `section_statuses` cut into the app's steps), and `guides/*.md`,
   which the wizard renders and the wiki links, so each set of instructions is written once.
 - **localmodels** — `localmodels/` is the model on this machine: `hardware` (the GPU, the
-  memory, the disk), `catalog` (the models offered, with verified files and checksums, what
-  fits, the recommendation, the Kokoro voices), `download`, `runtimes` (finding or installing
+  memory, the disk), `catalog` (the models offered, with verified files and checksums, the
+  memory budget and what fits it, the recommendation, the owner's rule for a voice LLM, the
+  Kokoro voices), `download`, `runtimes` (finding or installing
   llama.cpp and speech-to-speech, both pinned), `servers` (each server's command line from
   the settings, `free_port`, `wait_for`), `pull` (`keryx models pull`'s steps, told as a
   progress bar or as JSON lines; its `EventLines` is any stream that ends exactly once), `use`
   (the settings that make a model the local agent's — `llama_values`, `enable_local`, which
-  the wizard and `keryx models use` both save — and the servers' status), `server` (the
+  the wizard and `keryx models use` both save — what each model here takes, the
+  recommendations `models list --json` gives, and the servers' status), `server` (the
   model server's steps — llama.cpp installed when missing, its `--llm` unit, the wait for
   it, or Ollama's pull — which the wizard and `keryx models start` both run) and `voice` (the
   voice's three places, its status, and the steps that set each up, which the wizard and
@@ -586,9 +602,16 @@ OpenAI-compatible client describes one. Five rulings:
   model of the voice's own (`VOICE_LLM_MODELS`) when agent + voice LLM + `VOICE_SERVER_GB`
   fit in `model_memory_gb`, else `shared`; an agent's model here that cannot be sized
   (`use.agent_memory_gb` None) is `shared`. It is written only by a first local-voice set-up
-  (`voice_llm.first_set_up`: `VOICE_LLM` from the default, the voice not here yet), never
-  by a migration; `VOICE_LLM`'s default stays `shared`, so an existing install is unchanged,
-  and a `VOICE_LLM` anyone set is never changed.
+  (`voice_llm.first_set_up`: `VOICE_LLM` from the default, the voice not here yet) or by the
+  wizard, which asks it as its own question before the voice with the rule's choice as the
+  default and the local agent's model always offered, and applies the answer through
+  `voice llm here|shared`'s own code; never by a migration. `VOICE_LLM`'s default stays
+  `shared`, so an existing install is unchanged, and a `VOICE_LLM` anyone set is never
+  changed. **Every fit is one sum, `catalog.budget`**: the agent's model, the voice's own
+  LLM while `VOICE_LLM=here`, and the speech models while `voice_mode` is here — never the
+  loopback address — which `fits`, `recommend`, the rule and the wizard all read. The agent's
+  model is chosen first and the voice's from what it leaves, so a voice LLM still to be
+  chosen never keeps the tested model off a machine; one already chosen is reserved.
 - **`OPENAI_API_KEY` is optional.** It is the voice only while the voice is OpenAI's
   (`Settings.voice_refusal`, which `serve` asks, refuses each mode for its own missing
   setting); otherwise it buys the voice model's `web_search` (the Responses API — no local
@@ -631,7 +654,9 @@ other built-in persona, or any name of the owner's. Three rulings:
   never created: a write of the setting (or a `lock`/`unlock` of it) gives an old key that
   is there the same value, an unset removes both, and a store without one never gains it,
   so a build running behind still reads the owner's value. `[service_writable]` entries
-  are read by the current name, and the current name's wins where both are there.
+  are read by the current name, and the current name's wins where both are there. `doctor`
+  names a setting still said only under its old name, in the store or the environment
+  ("old setting names", soft); one kept in step beside its new name is not one.
 
 ## Trust has three levels
 

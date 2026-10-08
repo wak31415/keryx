@@ -14,7 +14,9 @@ a broken promise to the app's decoder — and this module is the only place it i
 - The rest are screens of their own (`ACTIONS`): the PIN, the background service
   installed or (`service:start`, after `keryx service stop`) started again, the
   model server started or a model chosen, the voice here or its speech models downloaded,
-  the Twilio account, its webhooks, the tunnel, and the migration from Jarvis.
+  the voice's own LLM brought up (`voice:llm`: its model chosen and downloaded, its server
+  started — `keryx voice llm here MODEL`, `keryx models start --voice-llm`), the Twilio
+  account, its webhooks, the tunnel, and the migration from Jarvis.
 """
 
 from keryx.config import env_var_name, field_for
@@ -25,7 +27,7 @@ SIGNINS = ("claude", "codex", "gmail", "google-workspace")
 #: The ids that take no argument.
 ACTIONS = frozenset({
     "pin", "service:install", "service:start", "models:start", "models:choose", "voice:here",
-    "voice:download", "phone:account", "phone:webhooks", "phone:tunnel", "migrate",
+    "voice:download", "voice:llm", "phone:account", "phone:webhooks", "phone:tunnel", "migrate",
 })
 #: The ids that take an argument, `signin:` aside (its arguments are `SIGNINS`).
 PREFIXES = ("secret:", "setting:", "plugin:", "integration:")

@@ -576,6 +576,8 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
         active=lambda target: target.unit != "dev.keryx.tunnel"))
     monkeypatch.setattr(units, "run_captured", lambda argv: (0, "loaded\n", ""))
     monkeypatch.setattr(voice, "PLATFORM", "darwin")
+    # No call is live: a switch of the voice may restart the voice server here.
+    monkeypatch.setattr(voice, "live_calls", lambda settings: None)
     installers = tmp_path / "checkout" / "scripts"  # `keryx.cli.repo_root`, the suite's own
     installers.mkdir(parents=True)
     for name in ("install-launchd.sh", "install-systemd.sh"):
@@ -633,9 +635,36 @@ def test_a_command_the_contract_awaits_already_prints_one_document(seeded):
         assert isinstance(json.loads(result.stdout), dict | list), command
 
 
+def _voice_status_is_real(document: dict) -> None:
+    assert document["llm"]["model"] == MODEL.key and document["llm"]["url"]
+    assert document["llm"]["reachable"] is True
+
+
+def _recommendations_are_real(document: dict) -> None:
+    # A 64 GB Mac (48 for models): the tested model, and the 9b beside it (25 + 9 + 3).
+    assert document["recommended"] == MODEL.key
+    assert document["recommended_with_local_voice"] == MODEL.key
+    assert document["voice_llm_recommended"] == "qwen3.5-9b"
+    assert document["voice_llm_separate"] is True
+
+
+#: What makes each awaited command's values real ones — not only nulls, which any `|null`
+#: meets — as (the machine it is asked on, or None for the seed's, and the check).
+AWAITING_REAL = {
+    "voice --json": (None, _voice_status_is_real),
+    "models list --json": (Hardware("metal", "Apple silicon", 0.0, 64.0),
+                           _recommendations_are_real),
+}
+
+
 @pytest.mark.parametrize("command", sorted(AWAITING_KEYS))
-def test_keys_the_contract_awaits_are_already_printed_with_their_types(command, seeded):
+def test_keys_the_contract_awaits_are_already_printed_with_their_types(
+    command, seeded, monkeypatch
+):
     """Until the app names them, they are checked here, so they are ready when it does."""
+    machine, real = AWAITING_REAL[command]
+    if machine is not None:
+        monkeypatch.setattr(hardware, "detect", lambda: machine)
     result = runner.invoke(app, argv(command))
 
     assert result.exit_code == 0, result.output
@@ -645,9 +674,7 @@ def test_keys_the_contract_awaits_are_already_printed_with_their_types(command, 
                 for node in nodes_at(document, path)
                 for problem in key_problems(node, keys)]
     assert not problems, f"{command}: {problems}"
-    # Real values, not only nulls that any `|null` meets.
-    assert document["llm"]["model"] == MODEL.key and document["llm"]["url"]
-    assert document["llm"]["reachable"] is True
+    real(document)
 
 
 def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):

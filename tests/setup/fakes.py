@@ -213,6 +213,10 @@ class FakeWorld:
     #: Whether the voice's speech models are in the cache, and what fetching them says.
     speech_ready: bool = True
     fetched: str | None = None
+    #: How many calls the running Keryx has live (None: it is not answering).
+    live: int | None = None
+    #: The model the voice LLM's own server says it serves, once started.
+    serving: str | None = None
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
@@ -290,6 +294,14 @@ class FakeWorld:
             fetch_speech=lambda python, repos, progress: self.calls.append(
                 ("fetch", [repo.id for repo in repos])) or self.fetched,
             models_ready=lambda settings: self.speech_ready,
+            live_calls=lambda settings: self.calls.append(("live_calls",)) or self.live,
+            served=lambda url: self.calls.append(("served", url)) or (True, self.serving),
+            which=lambda name: None,
+            download_llama_cpp=lambda cache, machine, progress: "/cache/llama-server",
+            pull=lambda settings, name, report: self.calls.append(("pull", name)) or 0,
+            models=lambda endpoint: self.models,
+            remote_models=lambda endpoint: self.calls.append(("models", endpoint.base_url))
+            or self.models,
         )
 
     def _download(self, url, dest, *, size, sha256, progress):

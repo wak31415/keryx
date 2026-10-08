@@ -1315,6 +1315,22 @@ FIXED = [
     (_slack_unconnected, "send_to_slack", "integration:slack"),
     (_with(issue_reporting=True, keryx_checkout=Path("/nowhere")), "issue reports",
      "setting:KERYX_CHECKOUT"),
+    (_with(voice_mode_explicit="here", voice_llm="here"), "voice", "voice:llm"),
+    (_with(voice_mode_explicit="here", voice_llm="remote"), "voice",
+     "setting:VOICE_LLM_BASE_URL"),
+    (_with(voice_mode_explicit="here", voice_llm="remote",
+           voice_llm_base_url="http://gpu-box:8000/v1"), "voice", "setting:VOICE_LLM_MODEL"),
+    (lambda h: run_doctor_checks(_own_voice_llm(h)), "voice LLM model", "voice:llm"),
+    (lambda h: run_doctor_checks(_own_voice_llm(h), reach=_reach(ok=False)[0]),
+     "voice LLM server", "voice:llm"),
+    (lambda h: run_doctor_checks(_remote_voice_llm(h), reach=_reach(ok=False)[0]),
+     "voice LLM server", "setting:VOICE_LLM_BASE_URL"),
+    (lambda h: run_doctor_checks(_remote_voice_llm(h), reach=_reach(models=("other",))[0]),
+     "voice LLM server", "setting:VOICE_LLM_MODEL"),
+    (lambda h: run_doctor_checks(h, store=_stored_under({"SUBAGENT_MODEL": "opus"})),
+     "old setting names", "setting:CLAUDE_MODEL"),
+    (_with(voice_mode_explicit="server", voice_base_url="http://gpu-box:8765/v1",
+           openai_voice="cedar"), "voice server's voice", "setting:VOICE_SERVER_VOICE"),
 ]
 
 
@@ -1491,3 +1507,207 @@ def test_the_service_checks_are_titled_in_the_apps_words(healthy):
 
     assert (check_title(check.name), check.section) == ("Background process", "service")
     assert check_title(RUNNING_CHECK) == "Keryx running"
+
+
+# --- the voice's words: a mode without its settings, and the voice LLM's own server --------
+
+VOICE_LLM = "qwen3.5-4b"
+
+
+def _own_voice_llm(healthy, **update):
+    """The voice here, with a voice LLM of its own on this machine."""
+    return healthy.model_copy(update={"voice_mode_explicit": "here", "voice_llm": "here",
+                                      "voice_llm_model": VOICE_LLM, **update})
+
+
+def _remote_voice_llm(healthy, **update):
+    return healthy.model_copy(update={
+        "voice_mode_explicit": "here", "voice_llm": "remote",
+        "voice_llm_base_url": "http://gpu-box:8000/v1", "voice_llm_model": "small", **update})
+
+
+def _on_disk(settings, monkeypatch, *, llama="/usr/local/bin/llama-server"):
+    from keryx.localmodels import runtimes
+    from keryx.localmodels.catalog import by_key
+    from keryx.localmodels.download import model_path
+
+    path = model_path(settings.cache_dir, by_key(VOICE_LLM))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"gguf")
+    monkeypatch.setattr(runtimes, "llama_server", lambda cache: llama)
+
+
+def _stored_under(values):
+    from keryx.config.files import dump_toml, write_private
+
+    store = ConfigStore()
+    write_private(store.config_path, dump_toml(values))
+    return store
+
+
+@pytest.mark.parametrize(("update", "missing", "fix"), [
+    ({"voice_llm": "here"}, "VOICE_LLM_MODEL", "voice:llm"),
+    ({"voice_llm": "remote"}, "VOICE_LLM_BASE_URL", "setting:VOICE_LLM_BASE_URL"),
+    ({"voice_llm": "remote", "voice_llm_base_url": "http://gpu-box:8000/v1"},
+     "VOICE_LLM_MODEL", "setting:VOICE_LLM_MODEL"),
+])
+def test_a_voice_here_whose_words_have_no_setting_fails_and_says_which(
+    healthy, update, missing, fix
+):
+    settings = healthy.model_copy(update={"voice_mode_explicit": "here", **update})
+
+    check = by_name(run_doctor_checks(settings))["voice"]
+
+    assert (check.ok, check.severity, check.state) == (False, "hard", "missing")
+    assert missing in check.hint and check.fix == fix
+    assert "words" in check.detail
+
+
+def test_a_voice_here_whose_words_are_set_or_shared_passes(healthy):
+    for settings in (_own_voice_llm(healthy), _remote_voice_llm(healthy),
+                     healthy.model_copy(update={"voice_mode_explicit": "here"})):
+        assert by_name(run_doctor_checks(settings))["voice"].ok
+
+
+def test_the_voices_own_model_must_be_on_disk_with_llama_cpp_to_serve_it(
+    healthy, monkeypatch
+):
+    settings = _own_voice_llm(healthy)
+
+    missing = by_name(run_doctor_checks(settings))["voice LLM model"]
+    assert (missing.ok, missing.severity, missing.fix) == (False, "hard", "voice:llm")
+    assert VOICE_LLM in missing.hint
+
+    _on_disk(settings, monkeypatch, llama=None)
+    no_runtime = by_name(run_doctor_checks(settings))["voice LLM model"]
+    assert (no_runtime.ok, no_runtime.fix) == (False, "voice:llm")
+    assert "models start --voice-llm" in no_runtime.hint
+
+    _on_disk(settings, monkeypatch)
+    ready = by_name(run_doctor_checks(settings))["voice LLM model"]
+    assert ready.ok and "Qwen3.5 4B" in ready.detail
+
+
+def test_no_voice_llm_check_while_its_words_are_not_its_own_here(healthy):
+    """Shared is the local agent's server, checked as that; with the voice elsewhere,
+    nothing reads the voice LLM at all."""
+    reach, asked = _reach()
+    for settings in (healthy.model_copy(update={"voice_mode_explicit": "here"}),
+                     healthy.model_copy(update={"voice_llm": "here",
+                                                "voice_llm_model": VOICE_LLM})):
+        names = by_name(run_doctor_checks(settings, reach=reach))
+        assert "voice LLM model" not in names and "voice LLM server" not in names
+    assert "http://127.0.0.1:8091/v1" not in asked
+
+
+def test_the_voices_own_server_down_is_brought_up_from_the_app(healthy):
+    reach, asked = _reach(ok=False, problem="could not reach 127.0.0.1 (ConnectError)")
+
+    check = by_name(endpoint_checks(_own_voice_llm(healthy), reach))["voice LLM server"]
+
+    assert (check.ok, check.severity, check.fix) == (False, "hard", "voice:llm")
+    assert "ConnectError" in check.hint and asked == ["http://127.0.0.1:8091/v1"]
+
+
+def test_the_voices_own_server_serving_another_model_is_brought_up_again(healthy):
+    reach, _ = _reach(models=("qwen3-coder",))
+
+    check = by_name(endpoint_checks(_own_voice_llm(healthy), reach))["voice LLM server"]
+
+    assert (check.ok, check.fix) == (False, "voice:llm") and "qwen3-coder" in check.hint
+
+
+def test_the_voices_own_server_serving_its_model_passes(healthy):
+    reach, _ = _reach(models=(VOICE_LLM,))
+
+    check = by_name(endpoint_checks(_own_voice_llm(healthy), reach))["voice LLM server"]
+
+    assert check.ok and "127.0.0.1:8091" in check.detail
+
+
+def test_a_remote_voice_llm_is_asked_with_its_key_and_readdressed_when_it_fails(healthy):
+    reach, asked = _reach(models=("small",))
+    settings = _remote_voice_llm(healthy, voice_llm_api_key="sk-voice")
+
+    assert by_name(endpoint_checks(settings, reach))["voice LLM server"].ok
+    assert asked == ["http://gpu-box:8000/v1"]
+    # Without `reach` — the wizard — nothing is asked.
+    assert "voice LLM server" not in by_name(endpoint_checks(settings))
+
+
+def test_a_public_remote_voice_llm_with_no_key_is_warned_about(healthy):
+    settings = _remote_voice_llm(healthy, voice_llm_base_url="http://words.example.com/v1")
+
+    warned = {check.fix: check for check in endpoint_checks(settings)
+              if check.name == "voice LLM server"}
+
+    assert set(warned) == {"secret:VOICE_LLM_API_KEY", "setting:VOICE_LLM_BASE_URL"}
+    assert all((c.ok, c.severity) == (False, "soft") for c in warned.values())
+
+
+# --- names a setting had before ---------------------------------------------------------
+
+
+def test_a_setting_stored_only_under_its_old_name_is_named_with_its_new_one(healthy):
+    store = _stored_under({"SUBAGENT_MODEL": "opus", "LLM_SERVER_PORT": 8095})
+
+    check = by_name(run_doctor_checks(healthy, store=store))["old setting names"]
+
+    assert (check.ok, check.severity, check.section) == (False, "soft", "settings")
+    assert "SUBAGENT_MODEL is CLAUDE_MODEL now" in check.detail
+    assert "LLM_SERVER_PORT is AGENT_SERVER_PORT now" in check.detail
+    assert "keryx config set" in check.hint
+    assert check.fix == "setting:CLAUDE_MODEL"
+
+
+def test_an_old_name_kept_in_step_beside_the_new_one_is_fine(healthy):
+    """A write keeps an old name already stored in step, for a build running behind: with
+    the new name there too, nothing is still said under the old one."""
+    store = _stored_under({"SUBAGENT_MODEL": "opus", "CLAUDE_MODEL": "opus"})
+
+    check = by_name(run_doctor_checks(healthy, store=store))["old setting names"]
+
+    assert check.ok and check.detail == "none"
+
+
+def test_an_old_name_in_the_environment_is_renamed_there(healthy, monkeypatch):
+    monkeypatch.setenv("LLM_SERVER_MODEL", "gpt-oss-20b")
+
+    check = by_name(run_doctor_checks(healthy))["old setting names"]
+
+    assert (check.ok, check.fix) == (False, None)  # the app cannot edit an environment
+    assert "LLM_SERVER_MODEL is AGENT_SERVER_MODEL now" in check.detail
+    assert "environment" in check.hint
+
+    monkeypatch.setenv("AGENT_SERVER_MODEL", "gpt-oss-20b")  # the new name wins, read alone
+    assert by_name(run_doctor_checks(healthy))["old setting names"].ok
+
+
+# --- the voice a server elsewhere is sent ---------------------------------------------------
+
+
+def _server_voice(healthy, **update):
+    return healthy.model_copy(update={"voice_mode_explicit": "server",
+                                      "voice_base_url": "http://gpu-box:8765/v1", **update})
+
+
+def test_a_server_elsewhere_still_sent_openai_voice_is_told_to_use_its_own_setting(healthy):
+    check = by_name(run_doctor_checks(_server_voice(healthy, openai_voice="cedar")))[
+        "voice server's voice"]
+
+    assert (check.ok, check.severity, check.section) == (False, "soft", "settings")
+    assert "VOICE_SERVER_VOICE" in check.detail and "OPENAI_VOICE" in check.detail
+    assert check.fix == "setting:VOICE_SERVER_VOICE"
+
+
+def test_a_server_elsewhere_with_its_own_voice_or_none_is_fine(healthy):
+    own = by_name(run_doctor_checks(_server_voice(
+        healthy, openai_voice="cedar", voice_server_voice="bm_george")))["voice server's voice"]
+    assert own.ok and "bm_george" in own.detail
+    server_own = by_name(run_doctor_checks(_server_voice(healthy)))["voice server's voice"]
+    assert server_own.ok
+    # Only a server elsewhere is sent either: OpenAI's voice and the pipeline here are not.
+    for settings in (healthy.model_copy(update={"openai_voice": "cedar"}),
+                     healthy.model_copy(update={"voice_mode_explicit": "here",
+                                                "openai_voice": "cedar"})):
+        assert "voice server's voice" not in by_name(run_doctor_checks(settings))
