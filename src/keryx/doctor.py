@@ -789,7 +789,7 @@ def service_manager_check(settings: Settings) -> Check:
             hint = f"{INSTALLERS[candidate.manager]} installs it; until then {refused}"
             fix = "service:install"
         return Check(
-            "service manager",
+            "background process",
             False,
             f"{why} — Keryx cannot restart itself, and nothing restarts it if it dies",
             severity="soft",
@@ -803,7 +803,7 @@ def service_manager_check(settings: Settings) -> Check:
         # `current_version` is decoration and degrades quietly; say so once, here, rather
         # than leave someone wondering why every restart reports an unknown version.
         detail += " — but no git on PATH, so versions will report as unknown"
-    return Check("service manager", True, detail, severity="soft", section="service")
+    return Check("background process", True, detail, severity="soft", section="service")
 
 
 def _data_dir_check(settings: Settings) -> Check:

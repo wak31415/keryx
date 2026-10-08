@@ -432,7 +432,7 @@ def test_a_pin_file_that_is_not_a_pin_is_reported_as_the_dead_end_it_is(healthy)
 
 
 def test_an_installed_service_is_reported(healthy):
-    check = by_name(run_doctor_checks(healthy))["service manager"]
+    check = by_name(run_doctor_checks(healthy))["background process"]
 
     assert check.ok is True
     assert check.text.split()[0] in {"systemd", "launchd"}
@@ -442,7 +442,7 @@ def test_a_service_manager_with_nothing_installed_is_not_a_tick(healthy, monkeyp
     """`systemctl` on PATH used to be enough for a ✅ naming a unit that did not exist."""
     monkeypatch.setattr("keryx.restart.service.is_installed", lambda target: False)
 
-    check = by_name(run_doctor_checks(healthy))["service manager"]
+    check = by_name(run_doctor_checks(healthy))["background process"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "not installed" in check.text
@@ -454,7 +454,7 @@ def test_nothing_supervising_the_process_is_a_warning_that_says_what_is_lost(hea
     """`SERVICE_MANAGER=none` is a supported way to run; the consequence is just silent."""
     settings = healthy.model_copy(update={"service_manager": "none"})
 
-    check = by_name(run_doctor_checks(settings))["service manager"]
+    check = by_name(run_doctor_checks(settings))["background process"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "restart_service" in check.text
@@ -463,7 +463,7 @@ def test_nothing_supervising_the_process_is_a_warning_that_says_what_is_lost(hea
 def test_no_service_manager_at_all_says_so_rather_than_naming_a_unit(healthy, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: None)
 
-    check = by_name(run_doctor_checks(healthy))["service manager"]
+    check = by_name(run_doctor_checks(healthy))["background process"]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert check.text.startswith("no service manager on this machine")
@@ -473,7 +473,7 @@ def test_a_missing_git_is_reported_next_to_the_service_manager(healthy, monkeypa
     """Version reporting degrades quietly without it, which is worth saying once."""
     monkeypatch.setattr("shutil.which", lambda name: None if name == "git" else f"/bin/{name}")
 
-    check = by_name(run_doctor_checks(healthy))["service manager"]
+    check = by_name(run_doctor_checks(healthy))["background process"]
 
     assert check.ok is True
     assert "no git on PATH" in check.text
@@ -1239,7 +1239,7 @@ FIXED = [
     (_with(pin=None), "PIN", "pin"),
     (_pin_file_broken, "PIN", "pin"),
     (_with(owner_name=None), "owner name", "setting:OWNER_NAME"),
-    (_with(service_manager="none"), "service manager", "setting:SERVICE_MANAGER"),
+    (_with(service_manager="none"), "background process", "setting:SERVICE_MANAGER"),
     (_secret_in_config, "config.toml", "secret:TWILIO_AUTH_TOKEN"),
     (_google_signed_out, "Google for agents", "signin:google-workspace"),
     (_with(google_workspace_mcp=True, google_oauth_client_id=None,
@@ -1271,7 +1271,7 @@ def test_a_check_that_is_fine_has_nothing_to_mend(healthy):
 def test_a_service_not_installed_is_installed_from_the_app(healthy, monkeypatch):
     monkeypatch.setattr("keryx.restart.service.is_installed", lambda target: False)
 
-    check = by_name(run_doctor_checks(healthy))["service manager"]
+    check = by_name(run_doctor_checks(healthy))["background process"]
 
     assert check.fix == "service:install" and "install-" in check.hint
 
@@ -1416,3 +1416,13 @@ def test_the_terminal_still_reads_the_command_after_the_detail(healthy):
     )
     assert "keryx auth login gmail" in check.hint
     assert Check("a", True, hint="only a hint").text == "only a hint"
+
+
+def test_the_service_checks_are_titled_in_the_apps_words(healthy):
+    from keryx.doctor import check_title
+    from keryx.setup.plan import RUNNING_CHECK
+
+    check = by_name(run_doctor_checks(healthy))["background process"]
+
+    assert (check_title(check.name), check.section) == ("Background process", "service")
+    assert check_title(RUNNING_CHECK) == "Keryx running"

@@ -61,7 +61,7 @@ MARKS = {DONE: "✓", NEEDED: "○", FAILED: "✗", BLOCKED: "…", OPTIONAL: "�
 #: The PIN check's name in `doctor`, which the `pin` step takes from the owner section.
 PIN_CHECK = "PIN"
 #: The check `service` adds: is the installed unit running?
-RUNNING_CHECK = "service running"
+RUNNING_CHECK = "Keryx running"
 
 
 @dataclass(frozen=True)

@@ -92,7 +92,7 @@ def set_up(make_ctx, monkeypatch, signed_in):
                         if name == "cloudflared" else None)
     monkeypatch.setattr(
         "keryx.doctor.service_manager_check",
-        lambda settings: Check("service manager", True, "launchd dev.keryx.agent",
+        lambda settings: Check("background process", True, "launchd dev.keryx.agent",
                                severity="soft", section="service"),
     )
 
@@ -137,7 +137,7 @@ def test_a_set_up_machine_is_ready(plan_of, set_up):
     assert {key: states(plan)[key] for key in REQUIRED} == dict.fromkeys(REQUIRED, DONE)
     assert plan["ready"] is True
     assert steps(plan)["service"]["checks"][-1] == {
-        "title": "Service running", "state": "ok", "detail": "running", "fix": None
+        "title": "Keryx running", "state": "ok", "detail": "running", "fix": None
     }
 
 
@@ -158,7 +158,7 @@ def test_a_service_installed_and_stopped_failed(plan_of, set_up):
 
     service = steps(plan)["service"]
     assert service["state"] == FAILED and plan["ready"] is False
-    assert service["why"] == "Service running: installed, but not running."
+    assert service["why"] == "Keryx running: installed, but not running."
     assert service["fix"] == service["checks"][-1]["fix"] == "service:install"
 
 
@@ -587,7 +587,7 @@ def test_the_service_is_asked_from_outside_whether_it_runs(monkeypatch, make_ctx
 COMMAND_DETAILS = [
     ("model server", "llama-server is not installed — `keryx setup` installs it"),
     ("Codex agent", "not installed — uv sync --extra codex"),
-    ("service manager", "dev.keryx.agent is not installed (scripts/install-launchd.sh) — "
+    ("background process", "dev.keryx.agent is not installed (scripts/install-launchd.sh) — "
      "`keryx restart` and the voice's restart_service refuse"),
     ("send_to_slack", "off (optional) — `keryx setup` → Plugins, or `keryx plugins install "
      "send_to_slack`"),
