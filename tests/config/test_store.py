@@ -606,3 +606,16 @@ def test_an_override_never_creates_an_old_name(store):
     store.lock("CLAUDE_MODEL")
 
     assert read_toml(store.config_path)["service_writable"] == {"CLAUDE_MODEL": False}
+
+
+@pytest.mark.parametrize("named", ["CLAUDE_MODEL", "SUBAGENT_MODEL"])
+def test_import_env_keeps_a_setting_the_store_has_under_its_old_name(store, tmp_path, named):
+    """The store's value has been the one in use, whichever name it is stored under."""
+    write_private(store.config_path, dump_toml({"SUBAGENT_MODEL": "claude-sonnet-5"}, ""))
+    env = write_env(tmp_path, f"{named}=claude-haiku-5\n")
+
+    report = store.import_env(env)
+
+    assert report.kept == ["CLAUDE_MODEL"] and report.imported == []
+    assert read_toml(store.config_path) == {"SUBAGENT_MODEL": "claude-sonnet-5"}
+    assert load().claude_model == "claude-sonnet-5"

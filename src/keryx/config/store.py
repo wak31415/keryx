@@ -444,7 +444,8 @@ class ConfigStore:
         path = path.resolve()
         parsed = _read_env(path)
         report = ImportReport(unknown=parsed.unknown)
-        stored = self.stored()
+        # By the current name: a value stored under an old one (`SUBAGENT_MODEL`) is there.
+        stored = {canonical_key(key) for key in self.stored()}
         for key, value in parsed.cleaned.items():
             if key in stored:
                 report.kept.append(key)
