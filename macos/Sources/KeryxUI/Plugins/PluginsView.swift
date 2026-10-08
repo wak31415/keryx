@@ -39,7 +39,7 @@ public struct PluginsView: View {
                                        set: { drafts[plugin.name] = $0 }),
                         turnOn: { turnOn(plugin) },
                         askOff: { turningOff = plugin },
-                        save: { values in save(plugin, values) },
+                        save: { values, title in save(plugin, values, title: title) },
                         marked: marked == plugin.name)
                     .id(plugin.name)
                 }
@@ -102,19 +102,27 @@ public struct PluginsView: View {
         perform(plugin, .off) { await model.removePlugin(plugin.name) }
     }
 
-    private func save(_ plugin: Plugin, _ values: PluginValues) {
-        perform(plugin, .settings) { await model.setPlugin(plugin.name, values: values) }
+    /// `title`: the field's own, when this save goes with no row left to show a refusal on
+    /// (the window-level banner, named for it, rather than this card's own `failures`).
+    private func save(_ plugin: Plugin, _ values: PluginValues, title: String? = nil) {
+        perform(plugin, .settings, title: title) { await model.setPlugin(plugin.name, values: values) }
     }
 
-    /// Runs `work` for the card, with its spinner up; a failure is said under it.
-    private func perform(_ plugin: Plugin, _ change: PluginChange,
+    /// Runs `work` for the card, with its spinner up; a failure is said under it — or, with
+    /// `title`, on the model's window-level banner instead, since the row that asked for it
+    /// is already gone.
+    private func perform(_ plugin: Plugin, _ change: PluginChange, title: String? = nil,
                          _ work: @escaping @MainActor () async -> Result<PluginResult, KeryxError>) {
         let name = plugin.name
         working.insert(name)
         failures[name] = nil
         Task {
             if case let .failure(error) = await work() {
-                failures[name] = PluginsWording.failure(error, change, plugin: plugin)
+                if let title {
+                    model.reportSettingSaveFailure(title: title, error: error)
+                } else {
+                    failures[name] = PluginsWording.failure(error, change, plugin: plugin)
+                }
             }
             working.remove(name)
         }

@@ -13,7 +13,9 @@ struct PluginCard: View {
     @Binding var draft: PluginDraft
     let turnOn: () -> Void
     let askOff: () -> Void
-    let save: (PluginValues) -> Void
+    /// `title`: the field's own, when this save goes with no row left to show a refusal on
+    /// (the window-level banner, named for it); `nil` for the card's own inline failure.
+    let save: (PluginValues, String?) -> Void
     /// Asked for by another window: tinted a moment.
     var marked = false
 
@@ -111,26 +113,34 @@ struct PluginCard: View {
             ClusterTableRows(field: field, table: draft.clusters ?? PluginsWording.table(field.value),
                              hosts: model.sshHosts.value, keepsOne: plugin.installed, disabled: working) { table in
                 if plugin.installed {
-                    save(PluginValues(clusters: table))
+                    save(PluginValues(clusters: table), nil)
                 } else {
                     draft.clusters = table
                 }
             }
         } else {
             PluginFieldRow(field: field, value: draft.settings[field.key] ?? PluginsWording.text(field.value),
-                           problem: problems[field.key], disabled: working) { commit(field, $0) }
+                           problem: problems[field.key], disabled: working) { commit(field, $0, onDisappear: $1) }
         }
     }
 
-    private func commit(_ field: PluginField, _ typed: String) {
+    /// `onDisappear`: the field was saved as its row went (a section switch tore it down
+    /// before a blur could commit it), so there is no row left here to show a refusal on —
+    /// it goes to the model's window-level banner, named for this field, instead of
+    /// `problems`/`failures`.
+    private func commit(_ field: PluginField, _ typed: String, onDisappear: Bool) {
         switch PluginsWording.parse(typed, as: field.kind) {
         case let .failure(problem):
-            problems[field.key] = problem.message
+            if onDisappear {
+                model.reportSettingSaveFailure(title: field.title, sentence: problem.message)
+            } else {
+                problems[field.key] = problem.message
+            }
         case let .success(value):
             problems[field.key] = nil
             if plugin.installed {
                 guard value != PluginsWording.text(field.value) else { return }
-                save(PluginValues(settings: [field.key: value]))
+                save(PluginValues(settings: [field.key: value]), onDisappear ? field.title : nil)
             } else {
                 draft.settings[field.key] = value == PluginsWording.text(field.value) ? nil : value
             }

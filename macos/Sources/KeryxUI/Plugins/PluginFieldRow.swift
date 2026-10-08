@@ -12,7 +12,10 @@ struct PluginFieldRow: View {
     let value: String
     let problem: String?
     let disabled: Bool
-    let commit: (String) -> Void
+    /// The typed value, and whether it was sent because the row was already gone (a
+    /// section switch), rather than Return or a blur — the caller has no row left to show
+    /// a refusal on then, and shows it as a window-level banner instead.
+    let commit: (String, Bool) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -29,9 +32,9 @@ struct PluginFieldRow: View {
     @ViewBuilder private var editor: some View {
         switch field.kind {
         case .bool:
-            Toggle(field.title, isOn: Binding(get: { value == "true" }, set: { commit($0 ? "true" : "false") }))
+            Toggle(field.title, isOn: Binding(get: { value == "true" }, set: { commit($0 ? "true" : "false", false) }))
         case .choice:
-            Picker(field.title, selection: Binding(get: { value }, set: { commit($0) })) {
+            Picker(field.title, selection: Binding(get: { value }, set: { commit($0, false) })) {
                 // A value the file holds that is not a choice still shows, as itself.
                 if !(field.choices ?? []).contains(value) { Text(value).tag(value) }
                 ForEach(field.choices ?? [], id: \.self) { choice in
@@ -45,18 +48,19 @@ struct PluginFieldRow: View {
     }
 }
 
-/// A text field that hands on what was typed when Return is pressed or it loses focus, and
-/// follows the value it was given when that changes underneath it.
+/// A text field that hands on what was typed when Return is pressed, it loses focus, or it
+/// disappears (a Plugins section switch tears it down before a blur could), and follows the
+/// value it was given when that changes underneath it.
 private struct CommittingField: View {
     let title: String
     let value: String
     let numeric: Bool
-    let commit: (String) -> Void
+    let commit: (String, Bool) -> Void
 
     @State private var text: String
     @FocusState private var focused: Bool
 
-    init(title: String, value: String, numeric: Bool, commit: @escaping (String) -> Void) {
+    init(title: String, value: String, numeric: Bool, commit: @escaping (String, Bool) -> Void) {
         self.title = title
         self.value = value
         self.numeric = numeric
@@ -68,18 +72,19 @@ private struct CommittingField: View {
         TextField(title, text: $text, prompt: Text(numeric ? "0" : "Not set"))
             .multilineTextAlignment(numeric ? .trailing : .leading)
             .focused($focused)
-            .onSubmit(send)
+            .onSubmit { send(onDisappear: false) }
             .onChange(of: focused) { _, now in
-                if !now { send() }
+                if !now { send(onDisappear: false) }
             }
+            .onDisappear { send(onDisappear: true) }
             .onChange(of: value) { _, now in
                 if !focused { text = now }
             }
     }
 
-    private func send() {
+    private func send(onDisappear: Bool) {
         guard text != value else { return }
-        commit(text)
+        commit(text, onDisappear)
     }
 }
 

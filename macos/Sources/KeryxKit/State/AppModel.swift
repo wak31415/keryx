@@ -117,6 +117,29 @@ public final class AppModel {
     /// a moment to finish, and names if they have not.
     public private(set) var writes: [UUID: Write] = [:]
 
+    /// A setting's save that failed after its own row had already gone — a Configuration
+    /// tab switch, a sidebar section, or a programmatic `selection` change tears a row down
+    /// as it commits what was typed, before the write answers, so there is no row left to
+    /// show the error on. Shown as a banner over the whole window instead; replaced by the
+    /// next one, and `nil` once there is none or it is dismissed.
+    public package(set) var settingSaveFailure: StreamFailure?
+
+    /// Records `title`'s save as failed with `error`, for the window-level banner.
+    package func reportSettingSaveFailure(title: String, error: KeryxError) {
+        reportSettingSaveFailure(title: title, sentence: error.message, details: error.details)
+    }
+
+    /// Records `title`'s save as failed with a local sentence (a number field's text that
+    /// is not one), rather than a `KeryxError` the CLI refused.
+    package func reportSettingSaveFailure(title: String, sentence: String, details: String? = nil) {
+        settingSaveFailure = StreamFailure("Couldn't save \(title): \(sentence)", detail: details)
+    }
+
+    /// Dismisses the save-failure banner.
+    public func dismissSettingSaveFailure() {
+        settingSaveFailure = nil
+    }
+
     /// A short write to Keryx, as quitting names it.
     public enum Write: Sendable, Equatable, Hashable, CaseIterable {
         case setting, pin, webhooks, voice, model, setupStep, plugin, signOut, modelServerStop, restart
@@ -430,17 +453,25 @@ public final class AppModel {
         }
     }
 
+    /// How many times each part has been asked for, so two overlapping reads of the same
+    /// part can be told apart: bumped when one starts, and the result is kept only when it
+    /// is still the latest one asked for — an older read that finishes last is dropped
+    /// rather than overwriting what a newer one already stored.
+    @ObservationIgnored private var sequences: [AnyKeyPath: Int] = [:]
+
     private func load<Value: Sendable>(
         _ path: ReferenceWritableKeyPath<AppModel, Loadable<Value>>, _ current: Int,
         _ fetch: @Sendable () async throws -> Value
     ) async {
         self[keyPath: path].begin()
+        let sequence = (sequences[path] ?? 0) + 1
+        sequences[path] = sequence
         do {
             let value = try await fetch()
-            guard current == generation else { return }
+            guard current == generation, sequences[path] == sequence else { return }
             self[keyPath: path].succeed(value)
         } catch {
-            guard current == generation else { return }
+            guard current == generation, sequences[path] == sequence else { return }
             settle(error) { self[keyPath: path].fail($0) } stopped: {
                 self[keyPath: path].isLoading = false
             }
