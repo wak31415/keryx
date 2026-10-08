@@ -24,7 +24,7 @@ from typing import Any
 
 from keryx.agents.base import RunResult
 from keryx.agents.registry import BACKENDS
-from keryx.child_env import redact_known
+from keryx.child_env import known_secrets, redact_known
 from keryx.config import Settings
 from keryx.localmodels.pull import EventLines
 from keryx.projects import MAX_BRIEF_CHARS, MAX_BRIEFS_CHARS, discover_projects, summaries_dir
@@ -128,6 +128,23 @@ def draft_summary(label: str, draft: Draft) -> str:
     return f"{label} drafted {' and '.join(parts)} for you to check."
 
 
+def redacted(draft: Draft, settings: Settings) -> Draft:
+    """`draft` with every credential Keryx knows of taken out of each string in it: what the
+    agent read can quote a key, and the draft is shown, then written as briefs and memory.
+    A project whose name held one is left out whole — its name is its file's."""
+    secrets = known_secrets(settings)
+
+    def clean(text: str) -> str:
+        return redact_known(text, settings, secrets=secrets)
+
+    return Draft(
+        facts=[clean(fact) for fact in draft.facts],
+        projects=[(name, clean(path), clean(summary))
+                  for name, path, summary in draft.projects if clean(name) == name],
+        dropped=[name for name in draft.dropped if clean(name) == name],
+    )
+
+
 def folders_for(explore: bool, named: list[str]) -> tuple[list[Path] | None, str | None]:
     """Where to look — home when exploring, else the folders named — or None and why not:
     one of the two, never both and never neither, as the wizard assumes no answer."""
@@ -170,7 +187,7 @@ def stream(
         return 1
     events.step("reading", f"Reading what {label} wrote.")
     try:
-        draft = parse_draft(result.final_text)
+        draft = redacted(parse_draft(result.final_text), settings)
     except ValueError as exc:
         events.error(f"{label}'s answer could not be read.", detail=str(exc))
         return 1

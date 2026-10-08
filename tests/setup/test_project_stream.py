@@ -406,3 +406,34 @@ def test_without_json_what_was_kept_is_a_line(home):
 
     assert kept.exit_code == 0 and "1 project summaries kept, 0 facts added" in kept.stdout
     assert refused.exit_code == 1 and "facts:" in refused.stderr
+
+
+def test_a_credential_in_the_draft_is_redacted_and_what_is_kept_is_the_redacted_text(
+    home, monkeypatch, tmp_path
+):
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "thesis").mkdir(parents=True)
+    monkeypatch.setattr("keryx.setup.agents.run_task", Agent(RunResult(ok=True, final_text=answer(
+        [{"name": "thesis", "path": str(elsewhere / "thesis"),
+          "summary": f"Uses the key {SECRET} for its runs."},
+         {"name": SECRET, "path": str(elsewhere), "summary": "Named after a key."}],
+        [f"Keeps {SECRET} in a note."],
+    ))))
+
+    result, events = draft_stream("--folder", str(elsewhere))
+
+    assert result.exit_code == 0, result.output
+    assert SECRET not in result.stdout
+    done = events[-1]
+    assert [project["name"] for project in done["projects"]] == ["thesis"]
+    assert "[redacted]" in done["projects"][0]["summary"]
+    assert "[redacted]" in done["facts"][0]
+
+    kept, outcome = keep({"folders": done["folders"], "projects": done["projects"],
+                          "facts": done["facts"]})
+
+    assert kept.exit_code == 0, kept.output
+    brief = (summaries(home) / "thesis.md").read_text()
+    assert SECRET not in brief and "[redacted]" in brief
+    memory = read_memory(home.data_dir)
+    assert SECRET not in memory and "Keeps [redacted] in a note." in memory
