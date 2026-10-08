@@ -109,6 +109,23 @@ def d2_choice(settings: Settings, hardware: Hardware) -> ModelEntry | None:
     return catalog.voice_llm_pick(hardware, agent_gb=agent_memory_gb(settings))
 
 
+def fits_as_voice_llm(
+    entry: ModelEntry, hardware: Hardware, *, agent_gb: float | None
+) -> bool:
+    """Whether `entry` fits as the voice's own LLM beside the agent's model that runs here
+    (`agent_gb`; 0 when the agent's work is not here, the chosen model's memory when it is,
+    None when it runs here at a size Keryx cannot tell) and the speech models.
+
+    `catalog.fits`'s own sum (`catalog.budget`, `voice_here=True`) is what `voice_llm_pick`
+    judges every candidate by inside `d2_choice`'s own call — `entry`'s memory plus
+    `agent_gb` plus the speech share either way, addition being the same sum whichever
+    name holds which term — so a voice-model list built from this and what
+    `voice_llm_recommended` names can never disagree.
+    """
+    return agent_gb is not None and catalog.fits(entry, hardware, voice_here=True,
+                                                 voice_llm_gb=agent_gb)
+
+
 @dataclass(frozen=True)
 class Recommendations:
     """What `keryx models list --json` recommends for this machine, so the Mac app never

@@ -111,6 +111,7 @@ COMMANDS = {
     "config list --json", "config options KEY --json", "approvals --json", "memory --json",
     "voice --json", "voice use openai --json", "voice use server URL --json",
     "service --json", "service install --json", "service uninstall --json",
+    "service uninstall --voice-llm --json",
     "models stop --json",
     "setup plan --json", "setup mark STEP --json", "pin --json", "pin set --json",
     "config verify KEY --json",
@@ -128,11 +129,13 @@ COMMANDS = {
 #: nothing more — a contract that names what the CLI does not print still fails them.
 AWAITING: set[str] = {
     "config options ASSISTANT_NAME --json", "setup mark phone --json",
-    AUTH_SMOKE, *SERVICE_CONTROL,
+    "service uninstall --voice-llm --json", AUTH_SMOKE, *SERVICE_CONTROL,
 }
 #: Keys a command prints that the app has yet to name, by path, with the types the
 #: contract will give them: checked here until it does, and by the contract once it does.
-AWAITING_KEYS: dict[str, dict[str, dict[str, str]]] = {}
+AWAITING_KEYS: dict[str, dict[str, dict[str, str]]] = {
+    "models list --json": {"models[]": {"fits_as_voice_llm": "boolean"}},
+}
 #: The fix ids the CLI can send that the app has yet to name: `service:start`, for a Keryx
 #: `keryx service stop` stopped (`doctor`'s "installed, not running").
 AWAITING_FIX_IDS = {"service:start"}
@@ -635,43 +638,9 @@ def test_a_command_the_contract_awaits_already_prints_one_document(seeded):
         assert isinstance(json.loads(result.stdout), dict | list), command
 
 
-def _voice_status_is_real(document: dict) -> None:
-    assert document["llm"]["model"] == MODEL.key and document["llm"]["url"]
-    assert document["llm"]["reachable"] is True
-
-
-def _with_a_voice_llm_of_its_own() -> None:
-    ConfigStore().set({"VOICE_LLM": "here", "VOICE_LLM_MODEL": "qwen3.5-9b"})
-
-
-def _recommendations_are_real(document: dict) -> None:
-    # A 64 GB Mac (48 for models), the voice here with the 9b of its own: the tested model
-    # fits beside it (25 + 9 + 3).
-    assert document["recommended"] == MODEL.key
-    assert document["recommended_with_local_voice"] == MODEL.key
-    assert document["voice_llm_recommended"] == "qwen3.5-9b"
-    assert document["voice_llm_separate"] is True
-
-
-#: What makes each awaited command's values real ones — not only nulls, which any `|null`
-#: meets — as (the machine it is asked on, or None for the seed's, what is stored on top of
-#: the seed first, and the check).
-AWAITING_REAL = {
-    "voice --json": (None, lambda: None, _voice_status_is_real),
-    "models list --json": (Hardware("metal", "Apple silicon", 0.0, 64.0),
-                           _with_a_voice_llm_of_its_own, _recommendations_are_real),
-}
-
-
 @pytest.mark.parametrize("command", sorted(AWAITING_KEYS))
-def test_keys_the_contract_awaits_are_already_printed_with_their_types(
-    command, seeded, monkeypatch
-):
+def test_keys_the_contract_awaits_are_already_printed_with_their_types(command, seeded):
     """Until the app names them, they are checked here, so they are ready when it does."""
-    machine, stored, real = AWAITING_REAL[command]
-    if machine is not None:
-        monkeypatch.setattr(hardware, "detect", lambda: machine)
-    stored()
     result = runner.invoke(app, argv(command))
 
     assert result.exit_code == 0, result.output
@@ -681,11 +650,25 @@ def test_keys_the_contract_awaits_are_already_printed_with_their_types(
                 for node in nodes_at(document, path)
                 for problem in key_problems(node, keys)]
     assert not problems, f"{command}: {problems}"
-    real(document)
+
+
+#: `models[].fits_with_voice_llm` for the seed's machine (36 GB, 27 for models) and agent
+#: (the tested model, 25 GB, running here): only what leaves room for the speech models and
+#: a voice LLM of its own fits beside it (`use.Recommendations.fits_with_voice_llm`).
+FITS_WITH_VOICE_LLM = {
+    "gpt-oss-120b": False, "qwen3.6-35b-a3b": False, "qwen3-coder-30b-a3b": False,
+    "qwen3.8-27b": False, "gpt-oss-20b": True, "gemma-4-12b": True, "qwen3.5-9b": True,
+    "qwen3.5-4b": True,
+}
 
 
 def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
-    """A null meets any `|null`, so the seed must make the nullable values worth checking."""
+    """A null meets any `|null`, so the seed must make the nullable values worth checking.
+
+    These also carry the real-value checks `AWAITING_KEYS` used to make while `voice --json`
+    and `models list --json`'s recommendation keys awaited the contract: it only checks
+    types now that the contract names them, so the values stay checked here.
+    """
     models = json.loads(runner.invoke(app, ["models", "list", "--json"]).stdout)
     tasks = json.loads(runner.invoke(app, ["tasks", "list", "--json"]).stdout)["tasks"]
     report = json.loads(runner.invoke(app, ["status", "--json"]).stdout)
@@ -709,6 +692,20 @@ def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
     assert voice_server["saved"]["VOICE_BASE_URL"] == f"{VOICE_SERVER}/v1"
     tunnel = json.loads(runner.invoke(app, ["phone", "tunnel", "--json"]).stdout)
     assert tunnel["hostname"] == "keryx.example.com"
+    # The voice's words: shared with the agent's model, running here and answering.
+    assert voice_status["pipelines"] == {"openai": ["speech-to-speech"],
+                                         "here": ["three-model"], "server": ["speech-to-speech"]}
+    assert voice_status["llm"] == {"source": "shared", "model": MODEL.key,
+                                   "url": "http://127.0.0.1:8090/v1", "reachable": True,
+                                   "unit_installed": True}
+    # The recommendations: the agent's model alone fills the seed's machine (27 GB for
+    # models, the tested model 25 GB), so there is no room for a voice LLM of its own.
+    assert models["recommended"] == "qwen3.8-27b"
+    assert models["recommended_with_local_voice"] == "qwen3.8-27b"
+    assert models["voice_llm_recommended"] is None
+    assert models["voice_llm_separate"] is False
+    assert {row["name"]: row["fits_with_voice_llm"] for row in models["models"]} == \
+        FITS_WITH_VOICE_LLM
 
 
 # --- the stream: models pull --json ------------------------------------------------------

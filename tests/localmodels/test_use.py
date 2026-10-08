@@ -405,6 +405,18 @@ def test_the_rule_is_one_function_beside_the_agents_model_running_here(settings)
     assert use.d2_choice(coder, RTX_5090) is None  # 25 + 6 + 3 = 34 > 31.8
 
 
+def test_fits_as_voice_llm_shares_d2_choices_own_arithmetic():
+    """Every model `d2_choice` would (or would not) pick, by the same sum, so a voice-model
+    list built from it and `voice_llm_recommended` can never disagree."""
+    nine, small = by_key("qwen3.5-9b"), by_key("qwen3.5-4b")
+    assert use.fits_as_voice_llm(nine, RTX_5090, agent_gb=0) is True  # 0 + 9 + 3
+    assert use.fits_as_voice_llm(nine, MAC[48], agent_gb=25) is False  # 25 + 9 + 3 = 37 > 36
+    assert use.fits_as_voice_llm(small, MAC[48], agent_gb=25) is True  # 25 + 6 + 3 = 34
+    assert use.fits_as_voice_llm(small, RTX_5090, agent_gb=25) is False  # 34 > 31.8
+    # Unknown agent size (a GGUF of the owner's own, running here): never a safe pick.
+    assert use.fits_as_voice_llm(small, MAC[64], agent_gb=None) is False
+
+
 def test_a_5090_with_the_agent_elsewhere_gives_the_voice_the_9b_and_the_agent_what_is_left(
     settings,
 ):

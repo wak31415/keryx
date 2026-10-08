@@ -589,6 +589,11 @@ def test_models_list_recommends_exactly_the_voice_llm_voice_use_here_brings_up(
     stored = ConfigStore().stored()
     assert told["voice_llm_recommended"] == stored.get("VOICE_LLM_MODEL") == brought_up
     assert told["voice_llm_separate"] is (stored["VOICE_LLM"] == "here")
+    if brought_up is not None:
+        # What it recommends is also what the voice-model list itself says fits beside the
+        # agent (use.fits_as_voice_llm), so the two can never disagree.
+        row = next(row for row in told["models"] if row["name"] == brought_up)
+        assert row["fits_as_voice_llm"] is True
     # And the agent's model it recommends beside that fits with it and the speech models.
     pair = by_key(told["recommended_with_local_voice"])
     voice_gb = by_key(brought_up).memory_gb if brought_up else 0.0

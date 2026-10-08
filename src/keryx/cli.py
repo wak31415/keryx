@@ -1198,6 +1198,7 @@ def models_list(
     advice = use.recommendations(settings, machine, first_set_up=first)
     voice_here = settings.voice_mode == "here"
     reserved = advice.chosen_gb
+    agent_gb = use.agent_memory_gb(settings)
     rows = [
         {
             "name": entry.key,
@@ -1206,6 +1207,7 @@ def models_list(
             "needs_gb": entry.memory_gb,
             "fits": catalog.fits(entry, machine, voice_here=voice_here, voice_llm_gb=reserved),
             "fits_with_voice_llm": advice.fits_with_voice_llm(entry),
+            "fits_as_voice_llm": use.fits_as_voice_llm(entry, machine, agent_gb=agent_gb),
             "downloaded": download.is_downloaded(settings.cache_dir, entry),
             "recommended": entry is advice.recommended,
             "tested": entry.tested,

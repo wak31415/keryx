@@ -115,7 +115,10 @@ a voice is set up here, exactly what `keryx voice use here` would bring up now �
 none of its own), `voice_llm_separate` (whether it has one), `recommended_with_local_voice`
 (the agent's model that fits beside that one and the speech models, so the two always fit
 together), and on each model `fits_with_voice_llm` (whether, as the agent's model, it leaves
-room for that voice model — or, with none, for any the rule would pick). `keryx models pull NAME --json`
+room for that voice model — or, with none, for any the rule would pick) and
+`fits_as_voice_llm` (whether, as the voice's own model instead, it fits beside the agent's
+real model here and the speech models — the same sum `voice_llm_recommended` is picked by,
+so the two can never disagree). `keryx models pull NAME --json`
 prints JSON lines: `{"event": "progress", "done": …, "total": …}`, then exactly one of
 `done` (with its `path`), `adopted` (`path` and `from`), `error` (`message`) or `cancelled` —
 a refusal before the download included. A SIGTERM or SIGINT cancels it with exit 130, and
