@@ -17,20 +17,50 @@ def never(*args, **kwargs):
 # --- llama_values ------------------------------------------------------------------------
 
 
+def test_the_agents_port_steps_past_the_voice_llms_and_the_voice_servers(settings):
+    """Free now is not free: the voice LLM's server (8091) and the voice server may not be
+    running yet, and two servers set to one port both fail to bind."""
+    settings.agent_server_port = 8091
+    settings.voice_server_port = 8092
+    asked: list[int] = []
+
+    values = use.llama_values(settings, CODER.key, CODER.key,
+                              free_port=lambda port: asked.append(port) or port)
+
+    assert values["AGENT_SERVER_PORT"] == 8093
+    assert values["LOCAL_AGENT_BASE_URL"] == "http://127.0.0.1:8093/v1"
+    assert asked == [8091, 8092, 8093]
+
+
+def test_the_voice_llms_port_steps_past_the_agents_and_the_voice_servers(settings):
+    settings.agent_server_port, settings.voice_server_port = 8091, 8092
+
+    assert use.voice_llm_port(settings, free_port=lambda port: port) == 8093
+    settings.agent_server_port = 8090
+    assert use.voice_llm_port(settings, free_port=lambda port: port) == 8091
+
+
+def test_a_search_with_no_port_left_but_taken_ones_says_so():
+    from keryx.localmodels.servers import free_port_avoiding
+
+    with pytest.raises(OSError, match="no free port from 8091"):
+        free_port_avoiding(lambda port: 8091, 8091, {8091})
+
+
 def test_a_first_model_is_served_on_a_port_found_free(settings):
     asked: list[int] = []
 
     def free_port(preferred: int) -> int:
         asked.append(preferred)
-        return 8091
+        return 8092  # 8090 is another program's; 8091 is the voice LLM's, so never offered
 
     values = use.llama_values(settings, CODER.key, CODER.key, free_port=free_port)
 
     assert asked == [8090]
     assert values == {
         "AGENT_SERVER_MODEL": CODER.key,
-        "AGENT_SERVER_PORT": 8091,
-        "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8091/v1",
+        "AGENT_SERVER_PORT": 8092,
+        "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8092/v1",
         "LOCAL_AGENT_MODEL": CODER.key,
         "LOCAL_AGENT_API_KEY": None,
         "LOCAL_AGENT_API": "anthropic-messages",

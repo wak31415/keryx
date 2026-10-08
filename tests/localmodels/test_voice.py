@@ -65,6 +65,10 @@ class FakeMachine:
         self.log.lines.append(("words", endpoint.base_url if endpoint else None))
         return self.words
 
+    def voice_llm_up(self, endpoint: Endpoint | None) -> bool:
+        self.log.lines.append(("voice_llm", endpoint.base_url if endpoint else None))
+        return self.words
+
     #: speech-to-speech's own Python, and what fetching the speech models says.
     python: str | None = "/tools/s2s/bin/python"
     fetched: str | None = None
@@ -480,21 +484,24 @@ def test_here_refuses_while_its_words_server_does_not_answer(settings, root):
 
 
 @pytest.mark.parametrize(("values", "asked", "said"), [
-    ({"voice_llm": "here", "voice_llm_model": "qwen3.5-4b"}, "http://127.0.0.1:8091/v1",
-     voice.NO_VOICE_LLM_SERVER),
+    ({"voice_llm": "here", "voice_llm_model": "qwen3.5-4b"},
+     ("voice_llm", "http://127.0.0.1:8091/v1"), voice.NO_VOICE_LLM_SERVER),
     ({"voice_llm": "remote", "voice_llm_base_url": "http://gpu-box:11434/v1",
-      "voice_llm_model": "qwen3:4b"}, "http://gpu-box:11434/v1", voice.NO_REMOTE_VOICE_LLM),
+      "voice_llm_model": "qwen3:4b"}, ("words", "http://gpu-box:11434/v1"),
+     voice.NO_REMOTE_VOICE_LLM),
 ])
 def test_here_asks_the_voice_llm_it_takes_its_words_from(settings, root, values, asked, said):
     """No local agent is needed when the voice LLM is not the agent's: it is that server
-    that has to answer before anything is installed."""
+    that has to answer before anything is installed — the voice's own one serving its own
+    model (`voice_llm_up`), not merely answering on its port."""
     log = Log()
 
     code, saved = run_here(settings.model_copy(update=values), FakeMachine(log, words=False),
                            log, root)
 
     assert code == voice.REFUSED and saved == []
-    assert log.lines[0] == ("words", asked)
+    assert log.lines[0] == asked
+    asked = asked[1]
     assert log.of("error") == [(said, asked, None)]
 
 
@@ -521,7 +528,7 @@ def test_a_voice_llm_here_goes_ahead_without_a_local_agent(settings, root):
     code, _saved = run_here(settings.model_copy(update=values), FakeMachine(log), log, root)
 
     assert code == voice.OK
-    assert log.lines[0] == ("words", "http://127.0.0.1:8091/v1")
+    assert log.lines[0] == ("voice_llm", "http://127.0.0.1:8091/v1")
 
 
 def test_the_voice_says_whose_words_it_takes(settings):
@@ -530,6 +537,37 @@ def test_the_voice_says_whose_words_it_takes(settings):
                                       "voice_llm_model": "qwen3.5-4b"})
     assert voice.words_model(own) == "qwen3.5-4b"
     assert voice.words_model(settings.model_copy(update={"voice_llm": "here"})) is None
+
+
+def test_the_voice_llms_own_server_is_up_only_serving_its_own_model(monkeypatch):
+    """The agent's model server on the voice LLM's port answers too: it is not the voice's."""
+    from keryx.localmodels import use
+
+    served = {"http://127.0.0.1:8091/v1": (True, "qwen3.5-4b"),
+              "http://127.0.0.1:8092/v1": (True, "qwen3-coder-30b-a3b"),
+              "http://127.0.0.1:8093/v1": (False, None)}
+    monkeypatch.setattr(use, "probe", lambda url: served[url])
+
+    def at(port, model="qwen3.5-4b"):
+        return Endpoint(f"http://127.0.0.1:{port}/v1", model=model)
+
+    assert voice.voice_llm_up(at(8091)) is True
+    assert voice.voice_llm_up(at(8092)) is False  # another model answers there
+    assert voice.voice_llm_up(at(8093)) is False
+    assert voice.voice_llm_up(Endpoint("http://gpu-box:11434/v1", model="m")) is False
+    assert voice.voice_llm_up(None) is False
+    assert voice.machine().voice_llm_up is voice.voice_llm_up
+
+
+def test_the_voice_servers_port_steps_past_the_model_servers(settings, root):
+    """A free port is not a port nobody is set to: the model servers may not be up yet."""
+    log = Log()
+    words = settings.model_copy(update={**WORDS, "voice_server_port": 8090})
+
+    _code, saved = run_here(words, FakeMachine(log), log, root)
+
+    assert saved[0]["VOICE_SERVER_PORT"] == 8092  # past the agent's 8090, the voice LLM's 8091
+    assert log.of("free_port") == [(8090,), (8091,), (8092,)]
 
 
 def test_the_voice_llms_unit_is_removed_when_its_start_is_stopped(root):

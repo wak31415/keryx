@@ -488,6 +488,53 @@ def test_the_voice_llm_server_is_served_whatever_the_source_says(settings, monke
     assert became
 
 
+@pytest.mark.parametrize(("ports", "named"), [
+    ({"agent_server_port": 8091}, "the agent's model server"),
+    ({"voice_server_port": 8091}, "the voice server"),
+    ({"agent_server_port": 8091, "voice_server_port": 8091},
+     "the agent's model server and the voice server"),
+])
+def test_the_voice_llm_server_refuses_another_servers_port_before_anything(
+        settings, monkeypatch, ports, named):
+    from wording import for_the_app
+
+    for name, value in ports.items():
+        setattr(settings, name, value)
+    settings.voice_llm_model = SMALL.key
+    monkeypatch.setattr(runtimes, "llama_server",
+                        lambda cache: pytest.fail("refused before llama.cpp is looked for"))
+
+    with pytest.raises(ServerConfigError) as refused:
+        serve("voice-llm", settings, execvpe=lambda *args: pytest.fail("never exec'd"))
+
+    said = str(refused.value)
+    assert said == servers.port_clash(settings)
+    assert said == (f"The voice LLM's server and {named} are both set to port 8091: give the "
+                    "voice LLM a port of its own.")
+    assert for_the_app(said)
+
+
+def test_ports_of_their_own_are_no_clash(settings):
+    assert servers.port_clash(settings) is None  # 8090, 8765 and 8091 by default
+
+
+def test_the_voice_server_asks_its_own_voice_llm_which_model_it_serves(settings, monkeypatch):
+    """With `VOICE_LLM=here` the voice server waits for its own server serving its model,
+    not for anything answering on the port."""
+    from keryx.localmodels import use
+
+    settings.voice_llm, settings.voice_llm_model = "here", "qwen3.5-4b"
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: "/bin/s2s")
+    answers = iter([(True, "qwen3-coder-30b-a3b"), (True, "qwen3.5-4b")])
+    monkeypatch.setattr(use, "probe", lambda url: next(answers))
+    clock, became = Clock(), []
+
+    serve("voice", settings, execvpe=lambda path, argv, env: became.append(argv),
+          sleep=clock.sleep, clock=lambda: clock.now)
+
+    assert became and clock.slept == [servers.WORDS_POLL_S]
+
+
 def test_no_llama_server_is_no_voice_llm_server(settings, monkeypatch):
     monkeypatch.setattr(runtimes, "llama_server", lambda cache: None)
     with pytest.raises(ServerConfigError, match="llama-server is not installed"):

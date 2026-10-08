@@ -505,7 +505,11 @@ OpenAI-compatible client describes one. Five rulings:
   the owner's — never on argv. Setup saves `VOICE_BASE_URL` only after the server has
   answered a Realtime handshake. `units.KINDS` (with `localmodels.use.UNITS`) is the one list
   of units; `service install` refuses each model server's, which the command that starts and
-  checks it installs.
+  checks it installs. The three ports are kept apart, since a free port may be one a server
+  not yet running is set to: each search steps past the other two
+  (`servers.free_port_avoiding`), the voice LLM's server and its installer refuse a port
+  another is set to (`servers.port_clash`), and that server is up only serving its own model
+  (`voice.voice_llm_up`), never because something answers on its port.
 - **`OPENAI_API_KEY` is optional.** It is the voice only while the voice is OpenAI's
   (`Settings.voice_refusal`, which `serve` asks, refuses each mode for its own missing
   setting); otherwise it buys the voice model's `web_search` (the Responses API — no local

@@ -50,6 +50,7 @@ fi
 
 if (( LLM || VOICE || VOICE_LLM )); then
   # The local model servers: no tunnel, no public host. `keryx models serve` reads the rest.
+  (( VOICE_LLM )) && require_own_voice_llm_port
   require_command UV uv "https://docs.astral.sh/uv/"
   make_dirs "$AGENTS"
   for label in "${LABELS[@]}"; do

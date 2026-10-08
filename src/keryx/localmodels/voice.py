@@ -72,7 +72,7 @@ NO_WORDS_SERVER = "The local model server isn't running: start it first."
 #: …and, while the voice LLM is not the agent's, for the one it names: none named, a
 #: server of its own here that is not running, or one elsewhere that does not answer.
 NO_VOICE_LLM = "Choose the voice LLM first: the voice server takes its words from it."
-NO_VOICE_LLM_SERVER = "The voice LLM's server isn't running: start it first."
+NO_VOICE_LLM_SERVER = "The voice LLM's own server isn't serving its model: start it first."
 NO_REMOTE_VOICE_LLM = "The voice LLM's server isn't answering: check its address."
 #: Said of a unit removed rather than left restarting a server that did not come up.
 REMOVED = "its service was removed, so it does not restart in a loop"
@@ -109,6 +109,7 @@ class Probes(Protocol):
     wait_for_server: Callable[[Endpoint, str, float], str | None]
     realtime_problem: Callable[[Endpoint], str | None]
     words_up: Callable[[Endpoint | None], bool]
+    voice_llm_up: Callable[[Endpoint | None], bool]
     speech_python: Callable[[], str | None]
     fetch_speech: Callable[[str, list[speech.Repo], Callable[[int, int | None], None]],
                            str | None]
@@ -244,6 +245,16 @@ def words_up(endpoint: Endpoint | None) -> bool:
     return server_reachable(endpoint)
 
 
+def voice_llm_up(endpoint: Endpoint | None) -> bool:
+    """Whether the voice LLM's own server here answers serving `endpoint.model`
+    (`VOICE_LLM_MODEL`), as `keryx models start` checks the agent's: on loopback through
+    `use.probe`, so an answer from another server on its port is not taken for it."""
+    if endpoint is None or not endpoint.is_loopback:
+        return False
+    up, served = use.probe(endpoint.base_url)
+    return up and served == endpoint.model
+
+
 def server_reachable(endpoint: Endpoint, *, get: Callable[..., httpx.Response] | None = None
                      ) -> bool:
     """Whether a voice server elsewhere answers `GET {base}/models` with its key, within
@@ -359,7 +370,9 @@ def here(
                         "others, so it is kept.",
                         detail="`keryx models list` shows the listed ones")
         if not is_ours(settings.voice_base_url, port):
-            port = probes.free_port(port)
+            port = servers.free_port_avoiding(
+                probes.free_port, port,
+                {settings.agent_server_port, settings.voice_llm_server_port})
         if not save({"VOICE_SERVER_VOICE": voice, "VOICE_SERVER_PORT": port}):
             return FAILED
     endpoint = Endpoint.parse(f"http://{HOST}:{port}")
@@ -397,7 +410,9 @@ def _have_words(settings: Settings, probes: Probes, report: Report, *, no_words:
             report.error(NO_VOICE_LLM, detail=settings.voice_llm_refusal())
         return False
     assert endpoint is not None  # it names a model
-    if probes.words_up(endpoint):
+    # The voice's own server must be serving its model, not merely answering on its port.
+    up = probes.voice_llm_up if settings.voice_llm == "here" else probes.words_up
+    if up(endpoint):
         return True
     if shared:
         report.error(NO_WORDS_SERVER)
@@ -689,6 +704,7 @@ class Machine:
     wait_for_server: Callable[[Endpoint, str, float], str | None]
     realtime_problem: Callable[[Endpoint], str | None]
     words_up: Callable[[Endpoint | None], bool]
+    voice_llm_up: Callable[[Endpoint | None], bool]
     speech_python: Callable[[], str | None]
     fetch_speech: Callable[[str, list[speech.Repo], Callable[[int, int | None], None]],
                            str | None]
@@ -701,7 +717,8 @@ def machine() -> Machine:
         speech_to_speech=runtimes.speech_to_speech, free_bytes=hardware.free_bytes,
         run_script=run_detached, free_port=servers.free_port,
         wait_for_server=servers.wait_for, realtime_problem=_realtime_problem,
-        words_up=words_up, speech_python=runtimes.speech_to_speech_python,
+        words_up=words_up, voice_llm_up=voice_llm_up,
+        speech_python=runtimes.speech_to_speech_python,
         fetch_speech=speech.fetch, models_ready=speech.models_ready,
     )
 

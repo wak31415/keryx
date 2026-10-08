@@ -427,6 +427,25 @@ def test_the_voice_llms_own_unit_runs_keryx_models_serve_voice_llm_under_systemd
     assert "disable --now keryx-voice-llm.service" in machine["calls"].read_text()
 
 
+@pytest.mark.parametrize("script", ["install-systemd.sh", "install-launchd.sh"])
+def test_the_voice_llms_unit_is_refused_on_another_servers_port(machine, script):
+    configure(machine, AGENT_SERVER_PORT=8091)  # the voice LLM's own default
+
+    result = subprocess.run(
+        [BASH, str(machine["repo"] / "scripts" / script), "--voice-llm"],
+        env=machine["env"], capture_output=True, text=True, timeout=60, check=False,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr.strip().splitlines()[-1] == (
+        "The voice LLM's server and the agent's model server are both set to port 8091: give "
+        "the voice LLM a port of its own.")
+    assert not machine["calls"].exists() or "ctl" not in machine["calls"].read_text()
+    home = machine["home"]
+    assert not (home / "Library" / "LaunchAgents").exists()
+    assert not (home / ".config" / "systemd").exists()
+
+
 def test_the_voice_server_starts_after_either_model_server_it_may_take_its_words_from():
     text = (SOURCE / "ops" / "systemd" / "keryx-voice.service").read_text()
     assert "After=keryx-llm.service keryx-voice-llm.service" in text

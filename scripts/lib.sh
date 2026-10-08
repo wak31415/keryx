@@ -97,6 +97,21 @@ parse_install_args() {
   done
 }
 
+require_own_voice_llm_port() {
+  # require_own_voice_llm_port — exit 1, saying so, when VOICE_LLM_SERVER_PORT is the port of
+  # the agent's model server or the voice server: two servers on one port both fail to bind
+  # and restart for ever. Nothing is installed first. (`servers.port_clash` says it the same.)
+  local port others=()
+  port="$(config_value VOICE_LLM_SERVER_PORT)" || exit 1
+  [[ "$port" == "$(config_value AGENT_SERVER_PORT)" ]] && others+=("the agent's model server")
+  [[ "$port" == "$(config_value VOICE_SERVER_PORT)" ]] && others+=("the voice server")
+  (( ${#others[@]} )) || return 0
+  local names="${others[0]}"
+  (( ${#others[@]} > 1 )) && names="$names and ${others[1]}"
+  echo "The voice LLM's server and $names are both set to port $port: give the voice LLM a port of its own." >&2
+  exit 1
+}
+
 require_command() {
   # require_command VAR NAME HINT — sets VAR to NAME's absolute path, or explains and exits.
   #

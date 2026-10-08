@@ -21,7 +21,7 @@ import shlex
 import socket
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from functools import partial
 from pathlib import Path
 from typing import NoReturn
@@ -117,6 +117,20 @@ def llm_argv(
     ]
 
 
+def port_clash(settings: Settings) -> str | None:
+    """Why the voice LLM's own server cannot have its port, in a sentence for a person; None
+    when no other server of Keryx's is set to it. Two servers on one port both fail to bind
+    and restart for ever, and a check could take the one for the other."""
+    port = settings.voice_llm_server_port
+    others = [name for name, theirs in (("the agent's model server", settings.agent_server_port),
+                                        ("the voice server", settings.voice_server_port))
+              if theirs == port]
+    if not others:
+        return None
+    return (f"The voice LLM's server and {' and '.join(others)} are both set to port {port}: "
+            "give the voice LLM a port of its own.")
+
+
 def voice_llm_argv(settings: Settings, binary: str) -> list[str]:
     """`llama-server` serving `VOICE_LLM_MODEL` on `VOICE_LLM_SERVER_PORT`: the agent's
     command line with the voice's model and port."""
@@ -177,6 +191,8 @@ def serve(
     for words, again and again under KeepAlive, until llama.cpp had loaded its model. The
     voice LLM's own server asks only for its model, whatever `VOICE_LLM` says: it is started,
     and seen to answer, before that is saved."""
+    if kind == "voice-llm" and (clash := port_clash(settings)):
+        raise ServerConfigError(clash)
     if kind in ("llm", "voice-llm"):
         binary = runtimes.llama_server(settings.cache_dir)
         if binary is None:
@@ -191,7 +207,11 @@ def serve(
             )
         argv, env = voice_argv(settings, binary)
         if words_up is None:
-            from keryx.localmodels.voice import words_up  # it imports this module
+            from keryx.localmodels import voice  # it imports this module
+
+            # The voice's own server is asked which model it serves: on a port of its own, an
+            # answer from anything else there is not its words.
+            words_up = voice.voice_llm_up if settings.voice_llm == "here" else voice.words_up
         name, hint = WORDS_SERVERS[settings.voice_llm]
         wait_for_words(words(settings), up=words_up, sleep=sleep, clock=clock,
                        name=name, hint=hint)
@@ -225,6 +245,21 @@ def wait_for_words(
                   "the voice server", file=sys.stderr, flush=True)
             said = True
         sleep(WORDS_POLL_S)
+
+
+def free_port_avoiding(
+    free_port: Callable[[int], int], preferred: int, taken: Collection[int]
+) -> int:
+    """`free_port` from `preferred` up, stepping past `taken`: the ports Keryx's other servers
+    are set to, which may be free now only because those servers are not running yet."""
+    port = free_port(preferred)
+    for _ in range(len(taken)):
+        if port not in taken:
+            break
+        port = free_port(port + 1)
+    if port in taken:
+        raise OSError(f"no free port from {preferred} up")
+    return port
 
 
 def free_port(preferred: int, *, tries: int = 100) -> int:

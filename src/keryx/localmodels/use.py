@@ -21,7 +21,7 @@ import httpx
 from keryx.config import Settings
 from keryx.endpoints import Endpoint
 from keryx.localmodels import runtimes
-from keryx.localmodels.servers import HOST
+from keryx.localmodels.servers import HOST, free_port_avoiding
 from keryx.restart import service
 from keryx.restart.service import ServiceTarget
 
@@ -49,11 +49,13 @@ def llama_values(
     `alias`, and point the local agent at it.
 
     The port is kept when the model server is already ours — the port is taken by itself —
-    and otherwise asked for, from `AGENT_SERVER_PORT` up, so it never lands on another's.
+    and otherwise asked for, from `AGENT_SERVER_PORT` up, so it never lands on another's,
+    nor on the voice LLM's or the voice server's, which may not be running yet.
     """
     port = settings.agent_server_port
     if not settings.agent_server_model:
-        port = free_port(port)
+        port = free_port_avoiding(free_port, port, {settings.voice_llm_server_port,
+                                                    settings.voice_server_port})
     return {
         "AGENT_SERVER_MODEL": model,
         "AGENT_SERVER_PORT": port,
@@ -61,6 +63,13 @@ def llama_values(
         "LOCAL_AGENT_MODEL": alias,
         **messages_harness(),
     }
+
+
+def voice_llm_port(settings: Settings, *, free_port: Callable[[int], int]) -> int:
+    """A port for the voice LLM's own server, from `VOICE_LLM_SERVER_PORT` up, never the
+    agent's model server's or the voice server's, whether or not they are running."""
+    return free_port_avoiding(free_port, settings.voice_llm_server_port,
+                              {settings.agent_server_port, settings.voice_server_port})
 
 
 def enable_local(settings: Settings, *, default: bool) -> dict[str, Any]:

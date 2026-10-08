@@ -284,6 +284,8 @@ class FakeWorld:
             or kind in self.units,
             words_up=lambda endpoint: self.calls.append(
                 ("words", endpoint.base_url if endpoint else None)) or self.words,
+            voice_llm_up=lambda endpoint: self.calls.append(
+                ("voice_llm", endpoint.base_url if endpoint else None)) or self.words,
             speech_python=lambda: "/tools/s2s/bin/python",
             fetch_speech=lambda python, repos, progress: self.calls.append(
                 ("fetch", [repo.id for repo in repos])) or self.fetched,
