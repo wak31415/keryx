@@ -9,8 +9,9 @@ loopback address of `VOICE_SERVER_PORT`) and a server elsewhere (`server`).
 models when they are not in the cache (as `download` does, through the same steps), save its
 voice and port, install its unit, wait for it to answer a Realtime handshake, and only then
 save it as the voice — a `VOICE_BASE_URL` that does not answer is a phone that rings and
-says nothing. It refuses while the local model server, which the voice server takes its
-words from, does not answer: on 2026-10-07 a voice server installed without one crash-looped
+says nothing. It refuses while the voice LLM's server (`Settings.voice_llm_endpoint`: the
+local agent's, the voice's own, or one elsewhere), which the voice server takes its words
+from, does not answer: on 2026-10-07 a voice server installed without one crash-looped
 under launchd's KeepAlive on its first request for words. And a server that does not come
 up, or whose start is cancelled, has its unit removed before anything else is said, so no
 unit is ever left restarting in a loop (`removed_if_stopped`, which `keryx models start`
@@ -68,6 +69,11 @@ NO_WORDS_HINT = "`keryx models use NAME` sets one up"
 NO_CHECKOUT = "Keryx's service installer is not in this copy of Keryx."
 #: What `here` says, refusing, while the server its words come from does not answer.
 NO_WORDS_SERVER = "The local model server isn't running: start it first."
+#: …and, while the voice LLM is not the agent's, for the one it names: none named, a
+#: server of its own here that is not running, or one elsewhere that does not answer.
+NO_VOICE_LLM = "Choose the voice LLM first: the voice server takes its words from it."
+NO_VOICE_LLM_SERVER = "The voice LLM's own server isn't serving its model: start it first."
+NO_REMOTE_VOICE_LLM = "The voice LLM's server isn't answering: check its address."
 #: Said of a unit removed rather than left restarting a server that did not come up.
 REMOVED = "its service was removed, so it does not restart in a loop"
 #: Keryx's own installers, the only commands `run_detached` gives a deadline: a few
@@ -103,6 +109,7 @@ class Probes(Protocol):
     wait_for_server: Callable[[Endpoint, str, float], str | None]
     realtime_problem: Callable[[Endpoint], str | None]
     words_up: Callable[[Endpoint | None], bool]
+    voice_llm_up: Callable[[Endpoint | None], bool]
     speech_python: Callable[[], str | None]
     fetch_speech: Callable[[str, list[speech.Repo], Callable[[int, int | None], None]],
                            str | None]
@@ -173,14 +180,14 @@ def is_ours(voice_base_url: str | None, port: int) -> bool:
 
 
 def mode(settings: Settings) -> str:
-    if is_ours(settings.voice_base_url, settings.voice_server_port):
-        return HERE
-    return SERVER if settings.voice_base_url else OPENAI
+    """Where the voice is: `Settings.voice_mode`, which `VOICE_MODE` says, or works out."""
+    return settings.voice_mode
 
 
 def words_model(settings: Settings) -> str | None:
-    """The local agent's model, which the voice server here takes its words from."""
-    endpoint = settings.local_agent_endpoint
+    """The voice LLM's model (`Settings.voice_llm_endpoint`), which the voice server here
+    takes its words from: the local agent's while `VOICE_LLM` is shared."""
+    endpoint = settings.voice_llm_endpoint
     return endpoint.model if endpoint is not None and endpoint.model else None
 
 
@@ -197,6 +204,7 @@ def status(
     server elsewhere only when it is the voice; its speech models in the Hugging Face cache
     (`models_ready`, `speech.models_ready` unless a caller says). No key is in it."""
     where = mode(settings)
+    elsewhere = settings.voice_endpoint if where == SERVER else None
     port = settings.voice_server_port
     words = words_model(settings)
     found = program()
@@ -221,13 +229,13 @@ def status(
         },
         "needs": NEEDS_WORDS if words is None else None,
         "server": {
-            "reachable": server_reachable(settings.voice_endpoint) if where == SERVER else None,
+            "reachable": server_reachable(elsewhere) if elsewhere is not None else None,
         },
     }
 
 
 def words_up(endpoint: Endpoint | None) -> bool:
-    """Whether the server the voice server takes its words from (the local agent's) answers:
+    """Whether the server the voice server takes its words from (the voice LLM's) answers:
     one on this machine through `use.probe`, on loopback and never through a proxy; one
     elsewhere as a voice server elsewhere is asked, with its key."""
     if endpoint is None:
@@ -235,6 +243,16 @@ def words_up(endpoint: Endpoint | None) -> bool:
     if endpoint.is_loopback:
         return use.probe(endpoint.base_url)[0]
     return server_reachable(endpoint)
+
+
+def voice_llm_up(endpoint: Endpoint | None) -> bool:
+    """Whether the voice LLM's own server here answers serving `endpoint.model`
+    (`VOICE_LLM_MODEL`), as `keryx models start` checks the agent's: on loopback through
+    `use.probe`, so an answer from another server on its port is not taken for it."""
+    if endpoint is None or not endpoint.is_loopback:
+        return False
+    up, served = use.probe(endpoint.base_url)
+    return up and served == endpoint.model
 
 
 def server_reachable(endpoint: Endpoint, *, get: Callable[..., httpx.Response] | None = None
@@ -319,16 +337,12 @@ def here(
     download (a Kokoro voice is one of their files); `save` stores values as
     whoever is running this and says why when it cannot (False). `root` is the checkout
     whose `scripts/` installs the unit. 2 for what refuses it before anything is tried —
-    no local model for the words, or none answering, no installer for the unit — 1 for
+    no voice LLM for the words, or none answering, no installer for the unit — 1 for
     anything that stopped it, 0 once the server answered and was saved as the voice. A
     half-done install is left for the next run to finish; a unit whose server did not come
     up, or whose start was cancelled, is not, and a download that stopped installs none.
     """
-    if words_model(settings) is None:
-        report.error(no_words, detail=NO_WORDS_HINT)
-        return REFUSED
-    if not probes.words_up(settings.local_agent_endpoint):
-        report.error(NO_WORDS_SERVER)
+    if not _have_words(settings, probes, report, no_words=no_words):
         return REFUSED
     script, problem = installer("--voice", root=root, platform=platform)
     if script is None:
@@ -356,7 +370,9 @@ def here(
                         "others, so it is kept.",
                         detail="`keryx models list` shows the listed ones")
         if not is_ours(settings.voice_base_url, port):
-            port = probes.free_port(port)
+            port = servers.free_port_avoiding(
+                probes.free_port, port,
+                {settings.agent_server_port, settings.voice_llm_server_port})
         if not save({"VOICE_SERVER_VOICE": voice, "VOICE_SERVER_PORT": port}):
             return FAILED
     endpoint = Endpoint.parse(f"http://{HOST}:{port}")
@@ -379,6 +395,32 @@ def here(
         return FAILED
     report.done(endpoint.base_url)
     return OK
+
+
+def _have_words(settings: Settings, probes: Probes, report: Report, *, no_words: str) -> bool:
+    """Whether the voice LLM (`Settings.voice_llm_endpoint`) is named and answers; False once
+    the report has been told which it is not. The local agent's, while it is shared, is
+    said as it always was (`no_words`, `NO_WORDS_SERVER`)."""
+    shared = settings.voice_llm == "shared"
+    endpoint = settings.voice_llm_endpoint
+    if words_model(settings) is None:
+        if shared:
+            report.error(no_words, detail=NO_WORDS_HINT)
+        else:
+            report.error(NO_VOICE_LLM, detail=settings.voice_llm_refusal())
+        return False
+    assert endpoint is not None  # it names a model
+    # The voice's own server must be serving its model, not merely answering on its port.
+    up = probes.voice_llm_up if settings.voice_llm == "here" else probes.words_up
+    if up(endpoint):
+        return True
+    if shared:
+        report.error(NO_WORDS_SERVER)
+    elif settings.voice_llm == "here":
+        report.error(NO_VOICE_LLM_SERVER, detail=endpoint.base_url)
+    else:
+        report.error(NO_REMOTE_VOICE_LLM, detail=endpoint.base_url)
+    return False
 
 
 def have_speech_to_speech(
@@ -496,7 +538,8 @@ def install_unit_step(
 
 
 #: What each unit's server is called in a sentence.
-SERVERS = {"--llm": "The model server", "--voice": "The voice server"}
+SERVERS = {"--llm": "The model server", "--voice": "The voice server",
+           "--voice-llm": "The voice LLM server"}
 
 
 def warn_removed(report: Steps, flag: str, said: str) -> None:
@@ -539,7 +582,8 @@ def remove_unit(
     flag: str, run_script: Callable[[Sequence[str]], int], *, root: Path,
     platform: str | None = None,
 ) -> str:
-    """Remove the `flag` unit ("--llm" or "--voice"); what became of it, in a clause.
+    """Remove the `flag` unit ("--llm", "--voice" or "--voice-llm"); what became of it, in
+    a clause.
 
     Cancel (SIGTERM, SIGINT) is held off while the uninstaller runs and lands once it has
     finished: a second Cancel arriving now would kill it halfway and keep the very unit it
@@ -660,6 +704,7 @@ class Machine:
     wait_for_server: Callable[[Endpoint, str, float], str | None]
     realtime_problem: Callable[[Endpoint], str | None]
     words_up: Callable[[Endpoint | None], bool]
+    voice_llm_up: Callable[[Endpoint | None], bool]
     speech_python: Callable[[], str | None]
     fetch_speech: Callable[[str, list[speech.Repo], Callable[[int, int | None], None]],
                            str | None]
@@ -672,7 +717,8 @@ def machine() -> Machine:
         speech_to_speech=runtimes.speech_to_speech, free_bytes=hardware.free_bytes,
         run_script=run_detached, free_port=servers.free_port,
         wait_for_server=servers.wait_for, realtime_problem=_realtime_problem,
-        words_up=words_up, speech_python=runtimes.speech_to_speech_python,
+        words_up=words_up, voice_llm_up=voice_llm_up,
+        speech_python=runtimes.speech_to_speech_python,
         fetch_speech=speech.fetch, models_ready=speech.models_ready,
     )
 

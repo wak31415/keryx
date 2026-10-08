@@ -12,7 +12,7 @@ from keryx.config.settings import Settings, env_var_name, field_title, setting
 ACRONYMS = frozenset({
     "OpenAI", "API", "PIN", "Twilio", "URL", "SMS", "Slack", "Gmail", "Google", "Codex",
     "Claude", "Realtime", "VAD", "MCP", "GGUF", "Kokoro", "llama.cpp", "Ollama", "ID", "USD",
-    "TTS", "STT", "SSH", "macOS", "SID",
+    "TTS", "STT", "SSH", "macOS", "SID", "LLM",
 })
 #: Proper nouns that are not acronyms: capitalised mid-title because they are names.
 PROPER_NOUNS = frozenset({"Anthropic", "Cloudflare", "GitHub", "Keryx", "OAuth"})
@@ -22,7 +22,7 @@ NAMED = {
     "OPENAI_REALTIME_MODEL": "Realtime model",
     "ASSISTANT_NAME": "Assistant name",
     "SUBAGENT_MAX_BUDGET_USD": "Budget per task (USD)",
-    "LLM_SERVER_PORT": "Model server port",
+    "AGENT_SERVER_PORT": "Agent model server port",
     "AGENTS_ENABLED": "Enabled agents",
     "APPROVAL_ESCALATE_SECONDS": "Ring after (seconds)",
     # The label Twilio's console uses, which the owner copies the value from.

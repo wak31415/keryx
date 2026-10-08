@@ -84,7 +84,7 @@ import KeryxPreview
         #expect(MenuState.idle.headline == "Keryx is running")
         #expect(MenuState.working(2).headline == "Keryx is running")
         #expect(MenuState.stopped.headline == "Keryx is stopped")
-        #expect(MenuState.notInstalled.headline == "Keryx isn't running in the background yet")
+        #expect(MenuState.notInstalled.headline == "Keryx isn't running")
         #expect(MenuState.needsMigration.headline == "Keryx needs to move its files")
         #expect(MenuState.notFound.headline == "Keryx isn't on this Mac")
         #expect(MenuState.locating.headline == "Looking for Keryx…")

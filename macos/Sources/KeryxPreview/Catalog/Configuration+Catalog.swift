@@ -4,8 +4,8 @@ import SwiftUI
 
 extension ScreenCatalog {
     /// The Configuration screen: its first tab, each tab in turn, the Advanced disclosure
-    /// open on a tab of one group and on one of several, a search within one tab and across
-    /// several, a write the CLI refused, a change waiting on a restart, the secret sheet, the
+    /// open on a tab of one group and on one of several, a search within one tab, across
+    /// several and finding the settings Voice and Local Models own, a write the CLI refused, a change waiting on a restart, the secret sheet, the
     /// option menus, and the whole window around it.
     @MainActor static var configurationEntries: [Entry] {
         let screen = CGSize(width: 760, height: 900)
@@ -25,6 +25,9 @@ extension ScreenCatalog {
             },
             Entry("configuration-search-tabs", size: CGSize(width: 760, height: 1100)) {
                 ConfigurationView(search: "key").environment(AppModel.preview())
+            },
+            Entry("configuration-search-screens", size: CGSize(width: 760, height: 1000)) {
+                ConfigurationView(search: "server port").environment(AppModel.preview())
             },
             Entry("configuration-search-none", size: CGSize(width: 760, height: 460)) {
                 ConfigurationView(search: "nothing like it").environment(AppModel.preview())
@@ -80,8 +83,10 @@ extension ScreenCatalog {
     /// One entry per tab, by its id: `configuration-general` … `configuration-system`.
     @MainActor private static func tabEntries(size: CGSize) -> [Entry] {
         var seen: [String] = []
-        for row in PreviewData.config.sorted(by: { $0.tabOrder < $1.tabOrder }) where !seen.contains(row.tab) {
-            seen.append(row.tab)
+        // A row a screen owns is on no tab.
+        let placed = PreviewData.config.compactMap { row in row.tab.map { ($0, row.tabOrder ?? 0) } }
+        for (tab, _) in placed.sorted(by: { $0.1 < $1.1 }) where !seen.contains(tab) {
+            seen.append(tab)
         }
         return seen.map { tab in
             Entry("configuration-\(tab)", size: size) {

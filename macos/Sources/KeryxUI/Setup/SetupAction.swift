@@ -9,8 +9,9 @@ struct SetupAction: Equatable, Identifiable, Sendable {
         case request(AppRequest)
         /// The secret sheet for `key`, where the button is.
         case secret(key: String, title: String, replacing: Bool)
-        /// `keryx service install`, after a confirmation.
-        case installService
+        /// Keryx started answering calls (`AppModel.startAnswering`), with no question: the app
+        /// keeps it running while it is open.
+        case startKeryx
         /// `keryx models start`, followed here.
         case startModelServer
         /// `keryx voice download`, followed on Local Models.
@@ -60,7 +61,7 @@ struct SetupContext: Sendable {
     var tunnelDownload: URL? { FixAction.tunnelPage(phoneTunnel?.installUrl) }
 
     /// The model this Mac's model server is serving when it runs one other than the model
-    /// chosen (`LLM_SERVER_MODEL`), by its title; `nil` when it isn't running, says nothing,
+    /// chosen (`AGENT_SERVER_MODEL`), by its title; `nil` when it isn't running, says nothing,
     /// or serves the one chosen.
     var modelServerServesAnother: String? {
         guard let llm = models?.servers.llm, llm.reachable, let served = llm.servedModel, !served.isEmpty,

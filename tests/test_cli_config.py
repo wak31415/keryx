@@ -49,6 +49,23 @@ def test_get_shell_prints_lines_a_shell_can_eval(home):
     assert output == "PROJECTS='{\"a b\": \"/x y\"}'\nPUBLIC_HOST=''\n"
 
 
+def test_a_renamed_setting_answers_to_its_old_name_and_is_saved_under_the_new(home):
+    result = run("config", "set", "SUBAGENT_MODEL", "claude-sonnet-5")
+
+    assert result.exit_code == 0, result.output
+    assert "CLAUDE_MODEL saved to config.toml" in result.output
+    assert read_toml(home.config_path) == {"CLAUDE_MODEL": "claude-sonnet-5"}
+    assert run("config", "get", "SUBAGENT_MODEL").output == "claude-sonnet-5\n"
+    assert run("config", "get", "LLM_SERVER_PORT").output == "8090\n"
+    assert run("config", "get", "--shell", "LLM_SERVER_PORT").output == "AGENT_SERVER_PORT=8090\n"
+
+
+def test_options_answers_to_a_renamed_settings_old_name(home, option_sources):
+    document = json.loads(run("config", "options", "SUBAGENT_MODEL", "--json").stdout)
+
+    assert document["key"] == "CLAUDE_MODEL"
+
+
 def test_a_secret_on_the_command_line_is_refused_and_not_written(home):
     result = run("config", "set", "OPENAI_API_KEY", "sk-leak")
 
@@ -198,18 +215,38 @@ def test_list_json_carries_each_settings_tab_and_whether_it_is_advanced(home):
     by_key = {row["key"]: row for row in rows}
 
     for row in rows:
-        assert isinstance(row["tab"], str) and isinstance(row["tab_title"], str)
-        assert isinstance(row["tab_order"], int) and isinstance(row["advanced"], bool)
+        if row["screen"] is None:
+            assert isinstance(row["tab"], str) and isinstance(row["tab_title"], str)
+            assert isinstance(row["tab_order"], int)
+        assert isinstance(row["advanced"], bool)
     owner = by_key["OWNER_NAME"]
     assert (owner["tab"], owner["tab_title"], owner["tab_order"]) == ("general", "General", 0)
-    assert (by_key["DEMO_MODE"]["tab"], by_key["DEMO_MODE"]["tab_order"]) == ("system", 7)
-    assert by_key["LLM_SERVER_PORT"]["tab_title"] == "Local Models"
+    assert (by_key["DEMO_MODE"]["tab"], by_key["DEMO_MODE"]["tab_order"]) == ("system", 6)
+    assert by_key["LOCAL_AGENT_MODEL"]["tab_title"] == "Agents"
+    assert by_key["VAD_THRESHOLD"]["tab_title"] == "Voice"
     assert (by_key["OPENAI_API_KEY"]["advanced"], by_key["VAD_THRESHOLD"]["advanced"]) == (
         False, True
     )
     # The rows of one tab all agree on its title and its place.
-    tabs = {(row["tab"], row["tab_title"], row["tab_order"]) for row in rows}
-    assert len(tabs) == 8 == len({tab for tab, _, _ in tabs})
+    tabs = {(row["tab"], row["tab_title"], row["tab_order"]) for row in rows
+            if row["screen"] is None}
+    assert len(tabs) == 7 == len({tab for tab, _, _ in tabs})
+
+
+def test_list_json_puts_a_screen_owned_setting_on_its_screen_and_no_tab(home):
+    """The Voice screen and the Local Models screen are each the one editor of their
+    settings, so Configuration shows those rows nowhere but in a search's jump row."""
+    rows = json.loads(run("config", "list", "--json").output)
+    by_key = {row["key"]: row for row in rows}
+
+    assert {row["screen"] for row in rows} == {None, "voice", "models"}
+    for key, screen in (("VOICE_SERVER_STT", "voice"), ("VOICE_LLM", "voice"),
+                        ("OPENAI_REALTIME_MODEL", "voice"), ("AGENT_SERVER_MODEL", "models"),
+                        ("VOICE_LLM_SERVER_PORT", "models")):
+        row = by_key[key]
+        assert row["screen"] == screen, key
+        assert (row["tab"], row["tab_title"], row["tab_order"]) == (None, None, None), key
+    assert by_key["OPENAI_API_KEY"]["screen"] is None
 
 
 def test_list_as_a_table_still_shows_the_keys(home):
@@ -758,10 +795,10 @@ OPTION_FIELDS = ["key", "current", "options", "source", "live", "free_form", "er
     ("key", "source", "live"),
     [
         ("OPENAI_REALTIME_MODEL", "openai", True),
-        ("SUBAGENT_MODEL", "builtin", False),
+        ("CLAUDE_MODEL", "builtin", False),
         ("CODEX_MODEL", "codex", True),
         ("LOCAL_AGENT_MODEL", "builtin", False),
-        ("LLM_SERVER_MODEL", "catalog", False),
+        ("AGENT_SERVER_MODEL", "catalog", False),
         ("OPENAI_VOICE", "builtin", False),
     ],
 )
@@ -793,7 +830,7 @@ def test_options_never_prints_a_key(home, option_sources):
     run("config", "set", "OPENAI_API_KEY", "--stdin", input="sk-live-openai")
     run("config", "set", "ANTHROPIC_API_KEY", "--stdin", input="sk-ant-live")
 
-    for key in ("OPENAI_REALTIME_MODEL", "SUBAGENT_MODEL"):
+    for key in ("OPENAI_REALTIME_MODEL", "CLAUDE_MODEL"):
         for flags in (["--json"], []):
             result = run("config", "options", key, *flags)
             assert result.exit_code == 0
@@ -807,7 +844,7 @@ def test_options_never_prints_a_key(home, option_sources):
 def test_options_falls_back_and_still_exits_0(home, option_sources):
     run("config", "set", "ANTHROPIC_API_KEY", "--stdin", input="sk-ant-live")
 
-    result = run("config", "options", "SUBAGENT_MODEL", "--json")
+    result = run("config", "options", "CLAUDE_MODEL", "--json")
 
     assert result.exit_code == 0
     document = json.loads(result.stdout)
@@ -816,7 +853,7 @@ def test_options_falls_back_and_still_exits_0(home, option_sources):
 
 
 def test_options_as_text_is_one_option_a_line_the_error_first(home, option_sources):
-    lines = run("config", "options", "SUBAGENT_MODEL").output.splitlines()
+    lines = run("config", "options", "CLAUDE_MODEL").output.splitlines()
 
     assert lines[0] == (
         "There's no Anthropic API key, so Keryx can't ask which models exist."

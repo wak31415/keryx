@@ -53,7 +53,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   the Mac app's menu bar polls — `keryx/status.py`, schema 1, every part `ok`/`error` with
   its fields present either way)
 - Settings: `uv run keryx config list [--json] [--group G]` (`--json` gives each row its
-  `title` and `group_title`, the Mac app's `tab`, `tab_title` and `tab_order` and whether
+  `title` and `group_title`, the Mac app's `tab`, `tab_title` and `tab_order` — all three
+  null for a row whose group an app screen owns, which names that `screen` — and whether
   it is `advanced`, its `type` — `keryx/config/types.py` — and a choice's
   `choices`, and `has_options`; the table keeps the keys, which are what is typed),
   `config options KEY [--json]` (the models or voices a setting can take, read live from
@@ -228,10 +229,16 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `configure`, `unit`, `start`), `progress` while it downloads, then exactly one of `done`,
   `error`, `cancelled`; exit 2 for a refusal before anything is tried, 1 for what stopped
   it, 130 for a SIGTERM)
-- The Mac app (`macos/`): `macos/scripts/test.sh` (the Swift tests; it adds the Command Line
-  Tools' Testing framework path only when they are the developer directory),
-  `macos/scripts/build-app.sh [--install]` (`macos/build/Keryx.app`, signed ad hoc;
-  `--install` replaces `/Applications/Keryx.app`), `macos/scripts/snapshots.sh [--offscreen]
+- The Mac app (`macos/`): `macos/scripts/test.sh` (`test-scripts.sh`, the scripts' tests in a
+  temporary folder, then the Swift tests; it adds the Command Line Tools' Testing framework
+  path only when they are the developer directory), `macos/scripts/build-app.sh
+  [--no-install]` (builds `macos/build/Keryx.app` and replaces `/Applications/Keryx.app`, and
+  nothing else there, by a copy beside it and two renames; signed with "Keryx Local Signing"
+  when it is trusted in the login keychain, else ad hoc with a warning; never run without
+  `--no-install` from a test or a subagent), `macos/scripts/make-signing-identity.sh
+  [--yes] [--remove]` (the owner's, once: that identity, made and trusted for code signing in
+  the user trust domain — codesign refuses it untrusted; `--remove` undoes both; `KEYCHAIN`
+  and `KERYX_SIGNING_TRUST=0` are for tests), `macos/scripts/snapshots.sh [--offscreen]
   [--only PREFIX]` (every screen, or those whose id starts with PREFIX, light and dark, into
   `macos/build/snapshots/`), and
   `swift macos/scripts/make-icon.swift` from the repository root (the two `.icns` in
@@ -312,7 +319,9 @@ remember:
   a `description`, a `title`, a `group`, `advanced` and a default `service_writable`,
   declared with `setting(...)`; the title is the sentence-case name the Mac app shows in
   place of the key, `TABS` is the one table of the app's tabs and the groups each holds,
-  and `advanced` puts a field under its tab's "Advanced" disclosure),
+  `SCREEN_OF_GROUP` the groups an app screen owns instead (the Voice screen's
+  `voice_model`, the Local Models screen's `model_servers`: each setting has exactly one
+  editor), and `advanced` puts a field under its tab's or screen's "Advanced" disclosure),
   `store` (`KERYX_HOME/config.toml` and `secrets.toml`, the only writer of either),
   `permissions` (what the running service may change; `PROTECTED_KEYS`), `pin`
   (`KERYX_HOME/pin`), `files` (the XDG directories, the modes and atomic writes), `migrate`
@@ -359,7 +368,16 @@ remember:
   It runs the `keryx` CLI and nothing else (but `scripts/install-launchd.sh --llm`, to start
   the model server, and `brew install cloudflared` — the owner's Homebrew, only on their
   click in the setup wizard's Phone Line, its output kept for Show Details), so every rule above binds it without a copy: a command it needs gets a
-  `--json`, never a route or a socket, and it writes none of Keryx's files itself. It strips
+  `--json`, never a route or a socket, and it writes none of Keryx's files itself. While it
+  is open Keryx answers calls (`AppModel.keepsAnswering`, the owner's ruling): once a launch
+  it runs `keryx service install --json` when `setup plan`'s service step is reachable and
+  Keryx is not running (never before `migrate`, never beside a hand-started `serve`), and
+  Quit runs `keryx service uninstall --json` — the CLI's only stop until a `service stop`
+  exists (`AppModel.stopUnits` is the seam), so it never calls `launchctl`; a logout lets the
+  units go untouched — while closing a window leaves both running: it is a regular Dock app, no
+  `LSUIElement`. The service is never shown as one ("Answering calls", "Start Keryx"). A
+  `KERYX_APP_ENVIRONMENT=inherit` run neither starts nor stops it, and the locator reads its
+  remembered copy of `dev.keryx.agent.plist` while quitting has removed the real one. It strips
   `KERYX_ACTOR` and `JARVIS_ACTOR` (`Sanitise.environment`), because it is the owner at a
   terminal and never the service. It finds Keryx the way the service runs — the folder
   chosen in its Settings, then `~/Library/LaunchAgents/dev.keryx.agent.plist`'s program,
@@ -454,30 +472,54 @@ OpenAI-compatible client describes one. Five rulings:
   host (loopback, RFC 1918, a tailnet, `.local`, a bare name) may run without a key and is
   sent `PLACEHOLDER_BEARER` where an SDK refuses none; a public one is *warned* about in
   `doctor` (`endpoints.warnings`), never refused.
-- **One voice client.** `OpenAIRealtimeClient` speaks to `Settings.voice_endpoint`, which is
-  OpenAI unless `VOICE_BASE_URL` names a server of the owner's own (Hugging Face's
-  speech-to-speech is the one `keryx setup` installs). `realtime.make_provider` is the only
+- **One voice client.** `OpenAIRealtimeClient` speaks to `Settings.voice_endpoint`, which
+  `Settings.voice_mode` chooses: `VOICE_MODE`, else worked out from `VOICE_BASE_URL` exactly
+  as before it was a setting (blank is `openai`, the loopback address of `VOICE_SERVER_PORT`
+  is `here`, anything else `server`). `here` is Hugging Face's speech-to-speech, which
+  `keryx setup` installs, at an address derived from its port; `server` is `VOICE_BASE_URL`,
+  and None without one, which `voice_refusal` refuses. `realtime.make_provider` is the only
   place one is built, for the phone and `keryx loopback` alike. Two differences are made for
   a server that is not OpenAI's, because they were measured to matter (2026-10-04): a call is
   transcoded µ-law 8 kHz ⇄ PCM16 24 kHz (`audio/codec.py`), and a note goes in as a `user`
   item marked as not the caller's — that server takes a `system` item as a *new system
   prompt*, which would wipe the voice prompt. Do not add a third without measuring it.
-  Truncate is accepted and ignored there, and that is accepted, not worked around. The
-  persona's voice is not sent to it (`Settings.voice` is blank), since a server that does
-  not know `marin` speaks nothing.
-- **Every `*_BASE_URL` is protected**, and `VOICE_SERVER_ARGS` with them. A voice address
-  pointed elsewhere ships every call's audio, the spoken PIN included, to whoever is there;
-  a flag could bind the unauthenticated voice server beyond 127.0.0.1.
-- **The servers on this machine are the settings' to describe.** The `keryx-llm` and
-  `keryx-voice` units run `keryx models serve llm|voice`, which builds the command line from
-  `LLM_SERVER_*` / `VOICE_SERVER_*` and `exec`s it, so no unit holds a model, a port or a voice.
-  Both bind 127.0.0.1. The voice server's words come from the local agent's model, and its key
-  goes in the child's `OPENAI_API_KEY` in place of the owner's — never on argv. Setup saves
-  `VOICE_BASE_URL` only after the server has answered a Realtime handshake.
-- **`OPENAI_API_KEY` is optional.** It is the voice only while `VOICE_BASE_URL` is blank
-  (`Settings.voice_refusal`, which `serve` asks); otherwise it buys the voice model's
-  `web_search` (the Responses API — no local server has a hosted search tool), which is
-  registered only when there is a key.
+  Truncate is accepted and ignored there, and that is accepted, not worked around. Only
+  OpenAI's own host is sent the persona's voice and `OPENAI_TRANSCRIPTION_MODEL`
+  (`Settings.voice`, `voice_transcription_model`), since a server that does not know `marin`
+  speaks nothing. The pipeline here is sent no voice — it speaks `VOICE_SERVER_VOICE` from
+  its command line, and a per-session voice would override that — and no `?model=`. A
+  server elsewhere is still sent `OPENAI_REALTIME_MODEL`, which it may choose its model by,
+  and `VOICE_SERVER_VOICE` when that was set, else `OPENAI_VOICE` for one release.
+- **Every `*_BASE_URL` is protected**, and `VOICE_SERVER_ARGS`, `VOICE_MODE` and
+  `VOICE_LLM` with them. A voice address pointed elsewhere ships every call's audio, the
+  spoken PIN included, to whoever is there, and a mode or a voice-LLM source can send the
+  same audio or the same words elsewhere without an address changing; a flag could bind the
+  unauthenticated voice server beyond 127.0.0.1.
+- **The servers on this machine are the settings' to describe.** The `keryx-llm`,
+  `keryx-voice` and `keryx-voice-llm` units run `keryx models serve llm|voice|voice-llm`,
+  which builds the command line from `AGENT_SERVER_*` / `VOICE_SERVER_*` / `VOICE_LLM_*` and
+  `exec`s it, so no unit holds a model, a port or a voice. All bind 127.0.0.1; the two
+  llama.cpp ones are one `llm_argv` with a model and a port passed in. The voice server's
+  words come from the voice LLM (`Settings.voice_llm_endpoint`, by `VOICE_LLM`: the local
+  agent's while `shared`, which is byte-identical to before it was a setting, its own unit's
+  with `here`, an address with `remote`), and it waits for that server, and `voice use here`
+  refuses while it does not answer. Its key goes in the child's `OPENAI_API_KEY` in place of
+  the owner's — never on argv. Setup saves `VOICE_BASE_URL` only after the server has
+  answered a Realtime handshake. `units.KINDS` (with `localmodels.use.UNITS`) is the one list
+  of units; `service install` refuses each model server's, which the command that starts and
+  checks it installs. The three ports are kept apart, since a free port may be one a server
+  not yet running is set to: each search steps past the other two
+  (`servers.free_port_avoiding`), the voice LLM's server and its installer refuse a port
+  another is set to (`servers.port_clash`), and that server is up only serving its own model
+  (`voice.voice_llm_up`), never because something answers on its port.
+- **`OPENAI_API_KEY` is optional.** It is the voice only while the voice is OpenAI's
+  (`Settings.voice_refusal`, which `serve` asks, refuses each mode for its own missing
+  setting); otherwise it buys the voice model's `web_search` (the Responses API — no local
+  server has a hosted search tool), which is registered only when there is a key. It never
+  reaches a voice LLM (`Settings.voice_llm_endpoint`, by `VOICE_LLM`) that is not OpenAI's
+  own host: `VOICE_LLM_API_KEY`, else that key on `api.openai.com` only, else the
+  placeholder (`voice_llm_key`; a test is named after it). The endpoint carries the API it
+  is asked over (`Endpoint.api`, `responses`), so a second API is a second value.
 
 ## Two names
 
@@ -494,7 +536,8 @@ other built-in persona, or any name of the owner's. Three rulings:
   threaded through it.
 - **A persona is a name and a voice.** `PERSONAS` gives each built-in its Realtime voice
   (Lyra `marin`, Jarvis `cedar`), and any other name speaks in `OPENAI_VOICE`, or `marin`.
-  `Settings.voice` is what a call uses: `OPENAI_VOICE` when set, else the persona's. A voice
+  `Settings.voice` is what a call uses: on OpenAI, `OPENAI_VOICE` when set, else the
+  persona's; on a voice of the owner's own, see "A model is an address". A voice
   the organization may not use is refused with the whole `session.update`, instructions and
   tools included, so a persona's voice is a constant that has been heard, never a guess. A
   coding agent's name is refused as an assistant's.
@@ -504,8 +547,14 @@ other built-in persona, or any name of the owner's. Three rulings:
   `JARVIS_CHECKOUT` are read under the new names, a `.jarvis-brief.md` still describes a
   project without a `.keryx-brief.md`, and a `jarvis` command says to run `keryx migrate`. A
   `JARVIS_HOME` is never followed: `serve` refuses until it is renamed. The same holds for a setting renamed later:
-  its old name is an alias (`FAKE_AGENTS` → `DEMO_MODE`), `canonical_key` turns it into the
-  current one wherever a rule is asked, and nothing is ever stored under it.
+  its old name is an alias (`FAKE_AGENTS` → `DEMO_MODE`; `SUBAGENT_MODEL` → `CLAUDE_MODEL`,
+  `LLM_SERVER_MODEL`/`_PORT` → `AGENT_SERVER_MODEL`/`_PORT`), `canonical_key` turns it into
+  the current one wherever a rule is asked, and the store writes under the current name.
+  The old name is read, and kept in step where it is already stored, for one release;
+  never created: a write of the setting (or a `lock`/`unlock` of it) gives an old key that
+  is there the same value, an unset removes both, and a store without one never gains it,
+  so a build running behind still reads the owner's value. `[service_writable]` entries
+  are read by the current name, and the current name's wins where both are there.
 
 ## Trust has three levels
 

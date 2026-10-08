@@ -319,10 +319,11 @@ import KeryxTestSupport
         var report = PreviewData.models
         report.voiceLlmSeparate = true
         report.voiceLlmRecommended = "qwen3.5-4b"
-        #expect(!ModelsRules.voiceWordsIsAControl(report, facts: facts), "no setting to write it to yet")
-        let withRow = WizardFacts(plan: fresh, config: PreviewData.config + [Self.row("VOICE_LLM_MODEL"),
-                                                                           Self.row("VOICE_LLM")])
-        #expect(ModelsRules.voiceWordsIsAControl(report, facts: withRow))
+        // M1 has the settings (`VOICE_LLM`, `VOICE_LLM_MODEL`); the models list's rule is still awaited.
+        #expect(facts.row("VOICE_LLM_MODEL") != nil)
+        #expect(ModelsRules.voiceWordsIsAControl(report, facts: facts))
+        let without = WizardFacts(plan: fresh, config: PreviewData.config.filter { $0.key != "VOICE_LLM_MODEL" })
+        #expect(!ModelsRules.voiceWordsIsAControl(report, facts: without), "no setting to write it to")
         #expect(ModelsRules.voiceWordsModel(report) == "qwen3.5-4b")
         report.voiceLlmSeparate = false
         #expect(ModelsRules.voiceWordsModel(report) == nil, "shared: the work's")
@@ -348,13 +349,7 @@ import KeryxTestSupport
         let writes = ModelsRules.writes(ModelsChoice(voice: .openai, work: .elsewhere, serverModel: "gpt-oss-20b"),
                                         facts: facts, voice: PreviewData.voice, models: PreviewData.models)
         #expect(writes == [.set("LOCAL_AGENT_MODEL", "gpt-oss-20b"), .set("AGENT_BACKEND", "local"),
-                           .set("AGENTS_ENABLED", ""), .unset("LLM_SERVER_MODEL")])
-        // Once the CLI calls it AGENT_SERVER_MODEL, that is the key cleared.
-        var renamed = PreviewData.config
-        if let index = renamed.firstIndex(where: { $0.key == "LLM_SERVER_MODEL" }) { renamed[index].key = "AGENT_SERVER_MODEL" }
-        #expect(ModelsRules.writes(ModelsChoice(voice: .openai, work: .elsewhere),
-                                   facts: WizardFacts(plan: fresh, config: renamed), voice: PreviewData.voice,
-                                   models: PreviewData.models).last == .unset("AGENT_SERVER_MODEL"))
+                           .set("AGENTS_ENABLED", ""), .unset("AGENT_SERVER_MODEL")])
     }
 
     @Test func theVoicesOwnModelIsWrittenWhenTheCLIHasTheSetting() {
@@ -372,10 +367,10 @@ import KeryxTestSupport
     @Test func modelsWritesThroughTheVoiceAndConfigCommands() async throws {
         let (model, fake) = Self.model()
         _ = await WizardWrite.apply([.voiceOpenAI, .set("AGENT_BACKEND", "codex"), .set("AGENTS_ENABLED", ""),
-                                     .unset("LLM_SERVER_MODEL")], with: model)
+                                     .unset("AGENT_SERVER_MODEL")], with: model)
         #expect(Self.written(fake) == [
             ["voice", "use", "openai", "--json"], ["config", "set", "AGENT_BACKEND", "codex"],
-            ["config", "set", "AGENTS_ENABLED", ""], ["config", "unset", "LLM_SERVER_MODEL"],
+            ["config", "set", "AGENTS_ENABLED", ""], ["config", "unset", "AGENT_SERVER_MODEL"],
         ])
     }
 
@@ -716,12 +711,12 @@ import KeryxTestSupport
     @Test func theChecklistSpeaksTheWizardsWords() throws {
         let doctor = PreviewData.doctor
         let service = try #require(doctor.checks.first { $0.name == "service manager" })
-        #expect(ChecklistWording.title(service) == "Runs in the Background")
+        #expect(ChecklistWording.title(service) == "Runs in the background")
         var failing = service
         failing.state = "failed"
-        #expect(ChecklistWording.detail(failing) != "Keryx isn't running in the background yet",
+        #expect(ChecklistWording.detail(failing) != "Keryx isn't answering calls yet",
                 "a real failure keeps what it says")
-        #expect(ChecklistWording.detail(service) == "Keryx isn't running in the background yet")
+        #expect(ChecklistWording.detail(service) == "Keryx isn't answering calls yet")
         let twilio = try #require(doctor.checks.first { $0.name == "Twilio credentials" })
         #expect(ChecklistWording.title(twilio) == "Twilio Account" && ChecklistWording.detail(twilio) == "Not connected")
         let host = try #require(doctor.checks.first { $0.name == "PUBLIC_HOST" })
@@ -753,7 +748,7 @@ import KeryxTestSupport
         #expect(PhoneWording.label(PreviewData.phoneNumbers.numbers[0]) == "Office · +1 555 000 1111")
         #expect(WizardWording.sharedWords(tight: false, assistant: "Lyra")
             == "Lyra thinks with the work model, so answers come a little slower.")
-        #expect(FixAction("service:install")?.action(SetupContext()).title == "Install…")
+        #expect(FixAction("service:install")?.action(SetupContext()).title == "Start Keryx")
     }
 
     @Test func aDisabledContinueSaysWhy() {

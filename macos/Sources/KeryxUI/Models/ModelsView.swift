@@ -4,15 +4,24 @@ import SwiftUI
 
 /// The Local Models screen: what this Mac can run, the model the local agent uses, the
 /// model server that runs it (started and checked by `keryx models start`), the voice's
-/// speech models, and every model in the catalog to download or choose.
+/// speech models, every model in the catalog to download or choose, and under Advanced the
+/// model servers' ports.
 public struct ModelsView: View {
     @Environment(AppModel.self) private var model
     @State private var choosing: CatalogModel?
     /// What was asked to be shown (`AppModel.modelsSpotlight`): a model is marked a moment,
     /// a section only scrolled to.
     @State private var marked: String?
+    /// Whether the Advanced disclosure (the model servers' ports) starts open.
+    private let advancedOpen: Bool
 
-    public init() {}
+    public init() {
+        self.init(advancedOpen: false)
+    }
+
+    package init(advancedOpen: Bool) {
+        self.advancedOpen = advancedOpen
+    }
 
     /// This screen answers `request` (`RequestAnswer`): shown at what is left to do here.
     static func answers(_ request: AppRequest) -> Bool {
@@ -28,6 +37,8 @@ public struct ModelsView: View {
                     ModelServerSection(report: report)
                     VoiceModelsSection(report: report)
                     CatalogSection(report: report, marked: marked) { choosing = $0 }
+                    ScreenAdvancedSection(screen: .models, open: advancedOpen)
+                        .id(ModelsAnchor.advanced)
                 }
                 .formStyle(.grouped)
                 .onChange(of: model.modelsSpotlight, initial: true) { _, anchor in
@@ -47,6 +58,8 @@ public struct ModelsView: View {
         .task {
             await model.refresh(.models)
             if model.voice.value == nil { await model.refresh(.voice) }
+            // Advanced's ports.
+            if model.config.value == nil { await model.refresh(.config) }
         }
         .sheet(item: $choosing) { UseModelSheet(entry: $0) }
     }

@@ -109,13 +109,13 @@ package enum PinWording {
             return Banner(symbol: "lock.fill", tone: .ok, title: "Set in the Environment",
                           text: "The PIN is set in the environment Keryx runs in, and it wins over a PIN set here. "
                               + "Change it there, or remove it there to set one here.",
-                          terminal: "KERYX_PIN, in the environment of Keryx's service")
+                          terminal: "KERYX_PIN, in the environment Keryx runs in (its launch agent's)")
         case .environment(usable: false):
             return Banner(symbol: "lock.trianglebadge.exclamationmark", tone: .blocked,
                           title: "The Environment's PIN Doesn't Work",
                           text: "The PIN set in the environment Keryx runs in isn't 6 to 8 digits, so the phone can't "
                               + "use it and Keryx won't start with it. Fix it there, or remove it there to set one here.",
-                          terminal: "KERYX_PIN, in the environment of Keryx's service")
+                          terminal: "KERYX_PIN, in the environment Keryx runs in (its launch agent's)")
         case .jarvis:
             return Banner(symbol: "shippingbox", tone: .attention, title: "Still Where Jarvis Kept It",
                           text: "The PIN is still where Jarvis kept it. Once Keryx's files have moved, it can be "

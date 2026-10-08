@@ -139,17 +139,17 @@ import KeryxPreview
     }
 
     @Test func configRowNamesItselfForAPerson() throws {
-        let row = try decodeConfigRow(#""title": "Model server port", "group_title": "Local and self-hosted models","#)
-        #expect(row.displayTitle == "Model server port")
-        #expect(row.displayGroupTitle == "Local and self-hosted models")
+        let row = try decodeConfigRow(#""title": "Agent model server port", "group_title": "Model servers on this machine","#)
+        #expect(row.displayTitle == "Agent model server port")
+        #expect(row.displayGroupTitle == "Model servers on this machine")
     }
 
     @Test func configRowFromAnOlderCLIFallsBackToTheKeyAndGroup() throws {
         let row = try decodeConfigRow("")
         #expect(row.title == nil)
         #expect(row.groupTitle == nil)
-        #expect(row.displayTitle == "LLM_SERVER_PORT")
-        #expect(row.displayGroupTitle == "Local Models")
+        #expect(row.displayTitle == "AGENT_SERVER_PORT")
+        #expect(row.displayGroupTitle == "Model servers on this machine")
         #expect(ConfigRow.title(ofGroup: "storage") == "Storage")
     }
 
@@ -178,7 +178,7 @@ import KeryxPreview
 
     private func decodeConfigRow(_ titles: String) throws -> ConfigRow {
         let json = """
-        {"key": "LLM_SERVER_PORT", "group": "local", \(titles) "description": "The port.",
+        {"key": "AGENT_SERVER_PORT", "group": "model_servers", \(titles) "description": "The port.",
          "source": "default", "type": "int", "required": false, "set": false, "secret": false,
          "service_writable": true, "protected": false, "value": 8090, "choices": null}
         """

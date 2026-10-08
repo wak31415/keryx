@@ -66,7 +66,7 @@ package enum WizardWording {
         if plan.service.stops != nil {
             lines.append("Keryx stops while they move, and starts again after.")
         } else if !plan.service.retires.isEmpty || plan.service.installs != nil {
-            lines.append("Keryx is set to run in the background in Jarvis's place.")
+            lines.append("Keryx answers calls in Jarvis's place.")
         }
         if plan.retire != nil {
             lines.append("The Jarvis folder is renamed aside. Nothing is deleted.")
@@ -243,7 +243,7 @@ package enum WizardWording {
     package static func nearlyReady(serviceWaits: Bool) -> String {
         serviceWaits
             ? "Everything but the phone is set up. Connect Twilio from the Phone section when you have an account, "
-                + "and Keryx starts running in the background."
+                + "and Keryx starts answering calls."
             : "Everything but the phone is set up. Connect Twilio from the Phone section when you have an account."
     }
 
@@ -260,7 +260,7 @@ package enum WizardWording {
         case .voice: "Voice"
         case .work: "Work"
         case .phone: "Phone"
-        case .service: "Runs in the Background"
+        case .service: answeringCalls
         case let .step(id):
             switch id {
             case "owner": "Your Details"
@@ -283,7 +283,12 @@ package enum WizardWording {
         return Wording.sentence(Wording.capitalised(CheckWording.detail(why, titles: titles).text))
     }
 
-    package static let serviceSentence = "Keryx runs in the background, starts at login and restarts if it stops."
+    /// The service step and the Overview's group for it: said as what it is for, the unit
+    /// itself kept out of sight.
+    package static let answeringCalls = "Answering Calls"
+    package static func serviceSentence(_ assistant: String) -> String {
+        "While Keryx is open, \(assistant) answers your calls."
+    }
     package static let whenever = "Whenever You Like"
 }
 

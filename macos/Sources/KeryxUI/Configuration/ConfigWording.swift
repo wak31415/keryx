@@ -167,7 +167,8 @@ enum ConfigWording {
     /// settings are read.
     /// For a setting asked for by its key (`.setting`), the tab it is on and the key to
     /// show there (`focus`) — `nil` until the settings are read (`config`), and the first tab
-    /// for a key they do not list.
+    /// for a key they do not list or put on no tab (one a screen owns, which
+    /// `ConfigurationView` sends to that screen before asking here).
     static func answer(_ request: AppRequest, pinTab: String?,
                        config: [ConfigRow]? = nil) -> (tab: String, sheet: ConfigurationSheet?, focus: String?)? {
         switch RequestAnswer.of(request) {
@@ -175,8 +176,10 @@ enum ConfigWording {
             return (tab ?? pinTab ?? "general", sheet, nil)
         case let .setting(key):
             guard let config else { return nil }
-            guard let row = config.first(where: { $0.key == key }) else { return (config.first?.tab ?? "general", nil, nil) }
-            return (row.tab, nil, key)
+            guard let row = config.first(where: { $0.key == key }), let tab = row.tab else {
+                return (config.lazy.compactMap(\.tab).first ?? "general", nil, nil)
+            }
+            return (tab, nil, key)
         default:
             return nil
         }

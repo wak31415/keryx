@@ -199,10 +199,14 @@ def build_session_update(config: SessionConfig, wire_format: AudioFormat | None 
         # (`Supported values are: 'near_field' and 'far_field'`, verified 2026-08-26), and
         # an absent field is how it is turned off.
         audio_input["noise_reduction"] = {"type": config.noise_reduction}
+    # The model is OpenAI's own (`Settings.voice_transcription_model` is None elsewhere);
+    # the language is a hint any Realtime server may honour, so it goes without one.
+    transcription: dict = {}
     if config.transcription_model is not None:
-        transcription = {"model": config.transcription_model}
-        if config.transcription_language:
-            transcription["language"] = config.transcription_language
+        transcription["model"] = config.transcription_model
+    if config.transcription_language:
+        transcription["language"] = config.transcription_language
+    if transcription:
         audio_input["transcription"] = transcription
 
     audio_output: dict = {"format": audio_format_block(audio_format)}
@@ -665,7 +669,10 @@ def _transcoder_for(transport: AudioFormat, wire: AudioFormat | None) -> Transco
 
 
 def realtime_url(endpoint: Endpoint) -> str:
-    """The Realtime socket of `endpoint`, with its model in the query as OpenAI wants it."""
+    """The Realtime socket of `endpoint`, with its model in the query as OpenAI wants it —
+    and no query at all for an endpoint with no model (the pipeline here, which picks none)."""
+    if not endpoint.model:
+        return endpoint.ws_url(REALTIME_PATH)
     return endpoint.ws_url(REALTIME_PATH, model=endpoint.model)
 
 

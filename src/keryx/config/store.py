@@ -50,6 +50,7 @@ from keryx.config.settings import (
     field_advanced,
     field_for,
     field_group,
+    field_screen,
     field_tab,
     field_title,
     is_secret,
@@ -128,6 +129,11 @@ def validate(values: Mapping[str, Any]) -> dict[str, Any]:
     return {key: dumped[name] for name, key in fields.items()}
 
 
+def _older_names(name: str, *tables: Mapping[str, Any]) -> list[str]:
+    """The field's older names (`SUBAGENT_MODEL`) that any of `tables` already holds."""
+    return [older for older in env_var_names(name)[1:] if any(older in t for t in tables)]
+
+
 def default_value(key: str) -> Any:
     """What `key` is when nothing sets it, in the same JSON shape the store keeps."""
     name = field_for(key)
@@ -190,11 +196,18 @@ class ConfigStore:
         return values
 
     def overrides(self) -> dict[str, bool]:
-        """The owner's `lock`/`unlock` decisions: `{KEY: may the service write it}`."""
+        """The owner's `lock`/`unlock` decisions: `{KEY: may the service write it}`.
+
+        By the current name, whichever name a decision was recorded under (`SUBAGENT_MODEL`
+        before 2026-10-07); where both are there, the current name's wins.
+        """
         table = self._config().get("service_writable", {})
-        return {str(key): bool(value) for key, value in table.items()} if isinstance(
-            table, dict
-        ) else {}
+        if not isinstance(table, dict):
+            return {}
+        entries = sorted(table.items(), key=lambda item: str(item[0]).strip().upper() == (
+            canonical_key(str(item[0]))
+        ))
+        return {canonical_key(str(key)): bool(value) for key, value in entries}
 
     def secrets_in_config(self) -> list[str]:
         """Secrets somebody put in `config.toml` by hand, where a bug report would paste them."""
@@ -220,12 +233,14 @@ class ConfigStore:
         if name is None:
             raise ConfigError(f"there is no setting called {key}")
         key = env_var_name(name)
-        if any(os.environ.get(each, "").strip() for each in env_var_names(name)):
+        names = env_var_names(name)
+        if any(os.environ.get(each, "").strip() for each in names):
             return FROM_ENV
         if key not in NOT_STORED:
-            if key in self._secrets():
+            # Under an older name too (`SUBAGENT_MODEL`), which is read until it is rewritten.
+            if any(each in self._secrets() for each in names):
                 return FROM_SECRETS
-            if key in self._config():
+            if any(each in self._config() for each in names):
                 return FROM_CONFIG
         if key == "KERYX_PIN" and settings is not None and pin_file(settings.config_dir).exists():
             return FROM_PIN_FILE
@@ -246,6 +261,7 @@ class ConfigStore:
             secret = is_secret(name)
             source = self.source_of(key, settings)
             kind, choices = field_type(name)
+            # A group an app screen owns sits on no tab: all three are null for it.
             tab = field_tab(name)
             rows.append(
                 {
@@ -254,8 +270,9 @@ class ConfigStore:
                     "group": field_group(name),
                     "group_title": GROUPS[field_group(name)],
                     "tab": tab,
-                    "tab_title": TABS[tab].title,
-                    "tab_order": tab_order[tab],
+                    "tab_title": TABS[tab].title if tab is not None else None,
+                    "tab_order": tab_order[tab] if tab is not None else None,
+                    "screen": field_screen(name),
                     "advanced": field_advanced(name),
                     "description": info.description or "",
                     "required": info.is_required(),
@@ -311,7 +328,7 @@ class ConfigStore:
         Returns the ones that were actually there.
         """
         wanted = [canonical_key(key) for key in keys]
-        present = set(self.stored())
+        present = {canonical_key(key) for key in self.stored()}
         self.set({key: None for key in wanted}, actor=actor)
         return [key for key in wanted if key in present]
 
@@ -328,11 +345,14 @@ class ConfigStore:
 
     def _override(self, key: str, writable: bool) -> None:
         key = canonical_key(key)
-        if field_for(key) is None or key in NOT_STORED:
+        name = field_for(key)
+        if name is None or key in NOT_STORED:
             raise ConfigError(f"there is no setting called {key}")
         config = self._config()
         table = config.setdefault("service_writable", {})
         table[key] = writable
+        for older in _older_names(name, table):  # kept in step, as `_write` keeps values
+            table[older] = writable
         write_private(self.config_path, dump_toml(config, CONFIG_HEADER))
 
     def mark_walked(self, section: str, walked: bool = True) -> None:
@@ -388,11 +408,16 @@ class ConfigStore:
             name = field_for(key)
             assert name is not None
             home, other = (secrets, config) if is_secret(name) else (config, secrets)
-            other.pop(key, None)
-            if value is None:
-                home.pop(key, None)
-            else:
-                home[key] = value
+            # An older name already stored (`LLM_SERVER_MODEL`) is what a build running
+            # behind reads, so it is kept in step for the release it is read in: the same
+            # value, or gone with the current one. Never created where it is not there.
+            keys = [key, *_older_names(name, config, secrets)]
+            for each in keys:
+                other.pop(each, None)
+                if value is None:
+                    home.pop(each, None)
+                else:
+                    home[each] = value
         if secrets != before[1]:
             write_private(self.secrets_path, dump_toml(secrets, SECRETS_HEADER))
         if config != before[0]:
@@ -419,7 +444,8 @@ class ConfigStore:
         path = path.resolve()
         parsed = _read_env(path)
         report = ImportReport(unknown=parsed.unknown)
-        stored = self.stored()
+        # By the current name: a value stored under an old one (`SUBAGENT_MODEL`) is there.
+        stored = {canonical_key(key) for key in self.stored()}
         for key, value in parsed.cleaned.items():
             if key in stored:
                 report.kept.append(key)

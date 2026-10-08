@@ -6,6 +6,9 @@ public enum Quitting {
     public struct Question: Equatable, Sendable {
         public let message: String
         public let detail: String
+        /// Whether it may carry "Don't ask again": only the plain "Quit Keryx?", never one
+        /// that names something under way or a call in progress.
+        public var suppressible = false
     }
 
     /// Quitting while Jarvis's files move: refused, said why.
@@ -14,16 +17,22 @@ public enum Quitting {
         + "Keryx stopped and its files half moved."
 
     /// The question for what is under way — a model download, a voice setup, a model
-    /// server start, a speech model download, a sign-in, Keryx's service being installed or
-    /// uninstalled, any of them together; `nil` when none is and the app can just quit.
+    /// server start, a speech model download, a sign-in, Keryx starting or stopping, any of
+    /// them together; `nil` when none is and the app can just quit.
     /// `signingIn`: what a sign-in under way signs in to ("Claude"), and `signInDetail` what
     /// stopping it does. `assistant`: the assistant's name ("Lyra"). `writing`: the short
     /// writes still going after the moment quitting gave them (`AppModel.writing`).
+    ///
+    /// `stopsAnswering`: quitting stops Keryx answering calls (`AppModel.quitStopsAnswering`),
+    /// which every question then says; with nothing else under way it is asked only while
+    /// `liveCalls` are in progress, which quitting ends, or when `confirm` (the owner has not
+    /// ticked "Don't ask again").
     public static func question(downloading: Bool, settingUpVoice: Bool, startingModelServer: Bool = false,
                                 downloadingVoiceModels: Bool = false, signingIn: String? = nil,
                                 signInDetail: String? = nil, assistant: String?,
                                 changingService: AppModel.ServiceChange? = nil,
-                                writing: [AppModel.Write] = []) -> Question? {
+                                writing: [AppModel.Write] = [], stopsAnswering: Bool = false,
+                                liveCalls: Int = 0, confirm: Bool = false) -> Question? {
         // What is under way, as a clause; what quitting does to it alone; and how it comes
         // back, said beside the others.
         var under: [(clause: String, alone: String, again: String)] = []
@@ -52,14 +61,14 @@ public enum Quitting {
                           "the sign-in to \(signingIn) can be started again later"))
         }
         if let changingService {
-            // Quitting stops the installer (its whole process group); stopped part way, it
-            // may leave the service half done.
-            let (doing, verb, button) = switch changingService {
-            case .installing: ("Keryx's service is being installed", "install", "Install…")
-            case .uninstalling: ("Keryx's service is being uninstalled", "uninstall", "Uninstall…")
+            // Quitting stops the installer (its whole process group); the next launch starts
+            // Keryx again, and quitting stops it whatever state the start was left in.
+            switch changingService {
+            case .installing:
+                under.append(("Keryx is starting", "It stops part way.", "Keryx stops starting"))
+            case .uninstalling:
+                under.append(("Keryx is stopping", "Quitting finishes stopping it.", "Keryx finishes stopping"))
             }
-            under.append((doing, "It stops, and may be left part done. \(button) in the Overview runs it again.",
-                          "the service's \(verb) may be left part done (\(button) in the Overview runs it again)"))
         }
         if !writing.isEmpty {
             // Cut short, a write can leave its change half made (one webhook of two).
@@ -69,15 +78,42 @@ public enum Quitting {
             under.append((list(writing.map(\.clause), comma: false), alone,
                           "a change cut short may be left half made"))
         }
-        guard let first = under.first else { return nil }
+        // What quitting does to calls, said after whatever else is under way.
+        let calls = stopsAnswering ? answering(assistant, liveCalls: liveCalls) : nil
+        let detail = { (text: String) in [text, calls].compactMap { $0 }.joined(separator: " ") }
+        guard let first = under.first else {
+            guard stopsAnswering, let calls else { return nil }
+            if liveCalls > 0 {
+                let message = liveCalls == 1 ? "1 call is in progress." : "\(liveCalls) calls are in progress."
+                return Question(message: message + " Quit anyway?", detail: calls)
+            }
+            guard confirm else { return nil }
+            return Question(message: "Quit Keryx?", detail: calls + " " + closeInstead, suppressible: true)
+        }
         guard under.count > 1 else {
-            return Question(message: sentence(first.clause) + ". Quit anyway?", detail: first.alone)
+            return Question(message: sentence(first.clause) + ". Quit anyway?", detail: detail(first.alone))
         }
         let doing = list(under.map(\.clause), comma: false)
         let again = list(under.map(\.again), comma: true)
         return Question(message: sentence(doing) + ". Quit anyway?",
-                        detail: (under.count == 2 ? "Both stop. " : "They all stop. ") + sentence(again) + ".")
+                        detail: detail((under.count == 2 ? "Both stop. " : "They all stop. ") + sentence(again) + "."))
     }
+
+    /// "Lyra stops answering calls until you open Keryx again.", with the calls in progress
+    /// it ends first.
+    public static func answering(_ assistant: String?, liveCalls: Int = 0) -> String {
+        let name = (assistant?.isEmpty == false ? assistant : nil) ?? "The assistant"
+        let ends = switch liveCalls {
+        case 0: ""
+        case 1: "The call in progress ends, and "
+        default: "The \(liveCalls) calls in progress end, and "
+        }
+        let who = ends.isEmpty ? name : (assistant?.isEmpty == false ? name : "the assistant")
+        return ends + "\(who) stops answering calls until you open Keryx again."
+    }
+
+    /// What the plain question adds: closing the window is how to keep answering.
+    public static let closeInstead = "To keep answering, close the window instead."
 
     /// "a and b", "a, b and c"; with `comma`, a comma before the "and" too, for clauses
     /// long enough to want one.

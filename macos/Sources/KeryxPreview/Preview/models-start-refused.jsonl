@@ -1,1 +1,1 @@
-{"event": "error", "message": "Choose and download a model first.", "detail": "LLM_SERVER_MODEL is not set \u2014 `keryx setup` picks one"}
+{"event": "error", "message": "Choose and download a model first.", "detail": "AGENT_SERVER_MODEL is not set \u2014 `keryx setup` picks one"}

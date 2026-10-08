@@ -140,7 +140,7 @@ def _agent_here(ctx: SetupContext, machine: Hardware, *, reserve_gb: float) -> N
             assert own is not None
             model, alias = own, own.rsplit("/", 1)[-1].removesuffix(".gguf")
         values = llama_values(settings, model, alias, free_port=ctx.probes.free_port)
-    llama_before = bool(settings.llm_server_model)
+    llama_before = bool(settings.agent_server_model)
     if not ctx.save(values):
         return
     if runtime == "ollama":
@@ -225,7 +225,7 @@ def _pick_model(
                 "elsewhere, will.")
         if not allow_file:
             return None, None
-    current = settings.llm_server_model
+    current = settings.agent_server_model
     default = current if catalog.by_key(current or "") else (best.key if best else OWN_FILE)
     pick = ui.select("Which model?", choices, default=default)
     if pick != OWN_FILE:
@@ -296,7 +296,7 @@ def _agent_elsewhere(ctx: SetupContext) -> None:
     api = ui.select("Which API does it speak?", list(API_CHOICES),
                     default=settings.local_agent_api)
     if ctx.save({"LOCAL_AGENT_BASE_URL": endpoint.base_url, "LOCAL_AGENT_API_KEY": key or None,
-                 "LOCAL_AGENT_MODEL": model, "LOCAL_AGENT_API": api, "LLM_SERVER_MODEL": None}):
+                 "LOCAL_AGENT_MODEL": model, "LOCAL_AGENT_API": api, "AGENT_SERVER_MODEL": None}):
         _use_local(ctx)
 
 
@@ -327,7 +327,7 @@ def _agent_off(ctx: SetupContext) -> None:
     ctx.save({"AGENT_BACKEND": backend,
               "AGENTS_ENABLED": ",".join(enabled) if len(enabled) > 1 else "",
               "LOCAL_AGENT_BASE_URL": None, "LOCAL_AGENT_MODEL": None})
-    if settings.llm_server_model:
+    if settings.agent_server_model:
         ctx.ui.note("The model server is still installed: scripts/install-systemd.sh --llm "
                     "--uninstall removes it.")
 

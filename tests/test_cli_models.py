@@ -112,19 +112,19 @@ def test_serve_becomes_the_server_or_says_why_not(models_settings, monkeypatch):
     assert served == ["llm"]
 
     def refuse(kind, settings):
-        raise servers.ServerConfigError("LLM_SERVER_MODEL is not set")
+        raise servers.ServerConfigError("AGENT_SERVER_MODEL is not set")
 
     monkeypatch.setattr(servers, "serve", refuse)
     result = runner.invoke(app, ["models", "serve", "llm"])
     assert result.exit_code == 2
-    assert "cannot start the llm server: LLM_SERVER_MODEL is not set" in result.output
+    assert "cannot start the llm server: AGENT_SERVER_MODEL is not set" in result.output
 
 
 # --- models list --json: the servers ------------------------------------------------------
 
 
 def test_list_json_says_which_servers_are_set_up_and_answering(models_settings, monkeypatch):
-    models_settings.llm_server_model = CODER.key
+    models_settings.agent_server_model = CODER.key
     models_settings.local_agent_base_url = "http://127.0.0.1:8090/v1"
     models_settings.local_agent_model = CODER.key
     models_settings.agents_enabled = ["claude", "local"]
@@ -425,8 +425,8 @@ def test_use_makes_a_downloaded_model_the_local_agents(models_settings, download
     assert result.exit_code == 0, result.output
     document = json.loads(result.stdout)
     assert document["saved"] == {
-        "LLM_SERVER_MODEL": CODER.key,
-        "LLM_SERVER_PORT": 8090,
+        "AGENT_SERVER_MODEL": CODER.key,
+        "AGENT_SERVER_PORT": 8090,
         "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1",
         "LOCAL_AGENT_MODEL": CODER.key,
         "LOCAL_AGENT_API_KEY": None,
@@ -437,7 +437,7 @@ def test_use_makes_a_downloaded_model_the_local_agents(models_settings, download
     assert document["llama_server"] == "/opt/homebrew/bin/llama-server"
     assert document["restart_needed"] is True
     stored = ConfigStore().stored()
-    assert stored["LLM_SERVER_MODEL"] == CODER.key
+    assert stored["AGENT_SERVER_MODEL"] == CODER.key
     assert stored["AGENTS_ENABLED"] == ["claude", "local"]
 
 
@@ -455,7 +455,7 @@ def test_use_says_what_it_saved_and_what_comes_next(models_settings, downloaded,
     result = runner.invoke(app, ["models", "use", CODER.key])
 
     assert result.exit_code == 0, result.output
-    assert "LLM_SERVER_MODEL saved to config.toml" in result.stdout
+    assert "AGENT_SERVER_MODEL saved to config.toml" in result.stdout
     assert "LOCAL_AGENT_API_KEY unset" in result.stdout
     assert "next: start it with `keryx models start`, then `keryx restart`" in result.stdout
     assert "install-launchd.sh" not in result.stdout

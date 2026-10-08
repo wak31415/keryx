@@ -26,7 +26,7 @@ VOICE_SERVER_DOWNLOAD_GB = 3.0
 class ModelEntry:
     """One downloadable model."""
 
-    #: Its name everywhere in Keryx — `LLM_SERVER_MODEL`, and the id the server serves it as.
+    #: Its name everywhere in Keryx — `AGENT_SERVER_MODEL`, and the id the server serves it as.
     key: str
     title: str
     repo: str

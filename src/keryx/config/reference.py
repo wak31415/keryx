@@ -12,6 +12,8 @@ from keryx.config.files import XDG_HOMES
 from keryx.config.permissions import PROTECTED_KEYS
 from keryx.config.settings import (
     GROUPS,
+    SCREEN_OF_GROUP,
+    SCREENS,
     TAB_OF_GROUP,
     TABS,
     Settings,
@@ -64,14 +66,23 @@ only those marked *yes* below, until you say otherwise with `keryx config unlock
 every setting that is a line of defence (who may call, the approval allowlist, filing
 issues in public, spending caps, deletion, the network, the debug switches). Nothing unlocks them.
 
-**In the Mac app** the settings are on eight tabs, and each section below names its own:
+**In the Mac app** most settings are on the Configuration screen's {count} tabs, and each
+section below names its own:
 {tabs}.
+The voice's models and this machine's model servers are on screens of their own instead:
+{screens}.
+Each is the one place its settings are changed, and Configuration's search still finds
+them and takes you there.
 A tab opens on its *key* settings — what you set to get a first call working, or change
 from time to time, how long your calls and tasks are kept and how many tasks a day may
 run included — and keeps the rest under an *Advanced* disclosure: tuning and internals,
 such as turn-detection numbers, server addresses, ports, timeouts, per-task caps, folders,
 unit names, the log level and the debug switches.
 """
+
+
+#: How many tabs there are, as the intro says it.
+_NUMBERS = {5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
 
 
 def _default(value: Any) -> str:
@@ -93,12 +104,16 @@ def _cell(text: str) -> str:
 def render() -> str:
     """The whole of `docs/configuration.md`."""
     tabs = ", ".join(tab.title for tab in TABS.values())
-    lines = [INTRO.format(tabs=tabs)]
+    screens = " and ".join(f"the {title} screen" for title in SCREENS.values())
+    lines = [INTRO.format(count=_NUMBERS[len(TABS)], tabs=tabs, screens=screens)]
     for group, title in GROUPS.items():
         names = [name for name in Settings.model_fields if field_group(name) == group]
-        tab = TABS[TAB_OF_GROUP[group]].title
+        if group in SCREEN_OF_GROUP:
+            place = f"the {SCREENS[SCREEN_OF_GROUP[group]]} screen"
+        else:
+            place = f"the {TABS[TAB_OF_GROUP[group]].title} tab"
         lines += [
-            f"## {title}", "", f"In the Mac app: the {tab} tab.", "",
+            f"## {title}", "", f"In the Mac app: {place}.", "",
             HEADER, "|---|---|---|---|---|---|",
         ]
         for name in names:

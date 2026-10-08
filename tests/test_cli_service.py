@@ -79,8 +79,8 @@ def machine(monkeypatch, tmp_path):
 
 
 def chosen() -> Settings:
-    """LLM_SERVER_MODEL chosen (as `keryx models use` saves it) and downloaded."""
-    ConfigStore().set({"LLM_SERVER_MODEL": CODER.key, "LOCAL_AGENT_BASE_URL": URL,
+    """AGENT_SERVER_MODEL chosen (as `keryx models use` saves it) and downloaded."""
+    ConfigStore().set({"AGENT_SERVER_MODEL": CODER.key, "LOCAL_AGENT_BASE_URL": URL,
                        "LOCAL_AGENT_MODEL": CODER.key})
     settings = Settings()
     path = download.model_path(settings.cache_dir, CODER)
@@ -108,7 +108,16 @@ def test_service_json_is_every_unit_installed_and_running(machine):
         "tunnel": {"installed": False, "active": False},
         "llm": {"installed": True, "active": True},
         "voice": {"installed": False, "active": False},
+        "voice_llm": {"installed": False, "active": False},
     }}
+
+
+def test_service_json_reports_the_voice_llms_unit(machine):
+    machine.installed = {"dev.keryx.voice-llm"}
+
+    document = json.loads(runner.invoke(app, ["service", "--json"]).stdout)
+
+    assert document["units"]["voice_llm"] == {"installed": True, "active": True}
 
 
 def test_service_in_words(machine):
@@ -127,6 +136,8 @@ def test_service_in_words(machine):
     (["service", "uninstall", "--voice"], ["--voice", "--uninstall"], "removed dev.keryx.voice"),
     (["service", "uninstall", "--llm", "--voice"], ["--llm", "--voice", "--uninstall"],
      "removed dev.keryx.llm, dev.keryx.voice"),
+    (["service", "uninstall", "--voice-llm"], ["--voice-llm", "--uninstall"],
+     "removed dev.keryx.voice-llm"),
     (["models", "stop"], ["--llm", "--uninstall"], "removed dev.keryx.llm"),
 ])
 def test_installs_run_the_checkouts_installer(machine, tmp_path, argv, flags, said):
@@ -163,6 +174,7 @@ def test_no_checkout_is_exit_2(machine, monkeypatch, tmp_path):
     (["--llm"], ["keryx models start"]),
     (["--voice"], ["keryx voice use here"]),
     (["--llm", "--voice"], ["keryx models start", "keryx voice use here"]),
+    (["--voice-llm"], ["keryx voice llm here MODEL"]),
 ])
 def test_a_model_servers_unit_is_not_installed_bare(machine, flags, named):
     """`models start` and `voice use here` own those units: install, start, check, and the
@@ -185,6 +197,7 @@ def test_the_help_points_the_model_servers_elsewhere():
 
     assert result.exit_code == 0
     assert "keryx models start" in result.stdout and "keryx voice use here" in result.stdout
+    assert "keryx voice llm here" in result.stdout
 
 
 @pytest.mark.parametrize("argv", [["service", "install"], ["service", "uninstall", "--llm"],
@@ -244,7 +257,7 @@ def test_start_installs_llama_cpp_when_it_is_missing_and_tells_the_download(
 
 
 def test_start_with_ollama_saves_the_local_agent_once_ollama_lists_it(machine, monkeypatch):
-    ConfigStore().set({"LLM_SERVER_MODEL": OLLAMA_MODEL.key})
+    ConfigStore().set({"AGENT_SERVER_MODEL": OLLAMA_MODEL.key})
     machine.ollama = "/usr/local/bin/ollama"
     monkeypatch.setattr("keryx.endpoints.probe",
                         lambda endpoint, **_: Probe(True, (OLLAMA_MODEL.ollama,)))
@@ -256,7 +269,7 @@ def test_start_with_ollama_saves_the_local_agent_once_ollama_lists_it(machine, m
                                      "served_model": OLLAMA_MODEL.ollama}
     settings = Settings()
     assert settings.local_agent_model == OLLAMA_MODEL.ollama
-    assert settings.llm_server_model is None
+    assert settings.agent_server_model is None
     assert machine.scripts == [["ollama", "pull", OLLAMA_MODEL.ollama]]
 
 
@@ -324,7 +337,7 @@ def _not_chosen(monkeypatch, machine, tmp_path):
 
 
 def _not_downloaded(monkeypatch, machine, tmp_path):
-    ConfigStore().set({"LLM_SERVER_MODEL": CODER.key})
+    ConfigStore().set({"AGENT_SERVER_MODEL": CODER.key})
 
 
 def _no_checkout(monkeypatch, machine, tmp_path):

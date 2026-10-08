@@ -7,8 +7,8 @@ extension ScreenCatalog {
     /// download under way and one that failed, the Use This Model sheet before and after,
     /// a Mac with no local agent yet, the model server stopped, starting (llama.cpp
     /// downloading, then loading), stopping, failed and refused, the speech models
-    /// downloading, failed and downloaded, the recommended model shown from Voice, a list
-    /// that failed to load, and the whole window around it.
+    /// downloading, failed and downloaded, the recommended model shown from Voice, the
+    /// Advanced ports open, a list that failed to load, and the whole window around it.
     @MainActor static var modelsEntries: [Entry] {
         let screen = CGSize(width: 720, height: 900)
         // Tall enough for every section down to the catalog's first rows.
@@ -116,6 +116,10 @@ extension ScreenCatalog {
                     model.modelsSpotlight = "qwen3-coder-30b-a3b"
                     return model
                 }())
+            },
+            // The whole screen: Advanced is at its foot, under the catalog.
+            Entry("models-advanced", size: CGSize(width: 720, height: 1800)) {
+                ModelsView(advancedOpen: true).environment(AppModel.preview())
             },
             Entry("models-error", size: CGSize(width: 720, height: 420)) {
                 ModelsView().environment(AppModel.preview(client: PreviewClient(

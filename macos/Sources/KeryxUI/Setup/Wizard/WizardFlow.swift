@@ -396,14 +396,6 @@ package struct ModelsChoice: Equatable, Sendable {
     }
 }
 
-/// The settings' keys that were renamed: the name the CLI lists, so the wizard writes the
-/// one this Keryx knows.
-package enum WizardKeys {
-    /// `AGENT_SERVER_MODEL`, once `LLM_SERVER_MODEL` was renamed to it.
-    package static func agentServerModel(_ facts: WizardFacts) -> String {
-        facts.row("AGENT_SERVER_MODEL") != nil ? "AGENT_SERVER_MODEL" : "LLM_SERVER_MODEL"
-    }
-}
 
 /// The rules of the Models frame: what each section's defaults are, and when it is answered.
 package enum ModelsRules {
@@ -511,8 +503,8 @@ package enum ModelsRules {
             if facts.text("AGENT_BACKEND") != "local" {
                 writes += [.set("AGENT_BACKEND", "local"), .set("AGENTS_ENABLED", "")]
             }
-            let server = WizardKeys.agentServerModel(facts)
-            if facts.row(server)?.set == true { writes.append(.unset(server)) }
+            // This Mac's model server serves nothing once the work is elsewhere.
+            if facts.row("AGENT_SERVER_MODEL")?.set == true { writes.append(.unset("AGENT_SERVER_MODEL")) }
         }
         return writes
     }

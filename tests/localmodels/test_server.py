@@ -129,7 +129,7 @@ def test_a_release_download_that_fails_is_a_sentence(tmp_path):
 
 def test_the_unit_is_installed_and_the_server_waited_for(tmp_path):
     log, root = Recorder(), checkout(tmp_path / "checkout")
-    settings = Settings(llm_server_port=8091)
+    settings = Settings(agent_server_port=8091)
 
     ok = server.serve_here(settings, log, run_script=log.script(0), wait_for_server=log.wait(),
                            root=root, platform="darwin")
@@ -265,7 +265,7 @@ def test_ollama_pulls_the_catalog_model_and_is_pointed_at():
     assert server.pull_into_ollama(ENTRY, log.script(1)) == "ollama pull did not finish"
     assert server.ollama_values(ENTRY) == {
         "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:11434/v1", "LOCAL_AGENT_MODEL": ENTRY.ollama,
-        "LLM_SERVER_MODEL": None, "LOCAL_AGENT_API_KEY": None,
+        "AGENT_SERVER_MODEL": None, "LOCAL_AGENT_API_KEY": None,
         "LOCAL_AGENT_API": "anthropic-messages",
     }
 
@@ -344,10 +344,10 @@ class Machine:
 
 @pytest.fixture
 def chosen(tmp_path):
-    """LLM_SERVER_MODEL chosen and downloaded (a sparse file the catalog's size)."""
+    """AGENT_SERVER_MODEL chosen and downloaded (a sparse file the catalog's size)."""
     from keryx.localmodels.download import model_path
 
-    settings = Settings(llm_server_model=CODER.key)
+    settings = Settings(agent_server_model=CODER.key)
     path = model_path(settings.cache_dir, CODER)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as out:
@@ -387,7 +387,7 @@ def test_a_chosen_model_is_served_and_checked(chosen, tmp_path):
 def test_no_model_chosen_or_downloaded_is_refused_before_anything(model, tmp_path):
     log = Run()
 
-    code = start(Settings(llm_server_model=model), Machine(log), log, tmp_path)
+    code = start(Settings(agent_server_model=model), Machine(log), log, tmp_path)
 
     assert code == 2
     [(kind, message, detail, where)] = log.lines
@@ -501,7 +501,7 @@ def test_a_unit_that_cannot_be_removed_says_so(chosen, tmp_path):
 
 def test_ollama_pulls_checks_and_only_then_saves(tmp_path):
     log, saved = Run(), {}
-    settings = Settings(llm_server_model=ENTRY.key)  # Ollama pulls its own copy
+    settings = Settings(agent_server_model=ENTRY.key)  # Ollama pulls its own copy
     machine = Machine(log, ollama="/usr/local/bin/ollama", listed=[ENTRY.ollama])
 
     code = start(settings, machine, log, tmp_path, runtime="ollama", saved=saved)
@@ -524,7 +524,7 @@ def test_ollama_that_cannot_serve_it_saves_nothing(tmp_path, model, ollama, code
     log, saved = Run(), {}
     machine = Machine(log, ollama=ollama, codes=codes, listed=listed)
 
-    assert start(Settings(llm_server_model=model), machine, log, tmp_path, runtime="ollama",
+    assert start(Settings(agent_server_model=model), machine, log, tmp_path, runtime="ollama",
                  saved=saved) == code
     assert saved == {} and endings(log)[0][1].startswith(says)
 
@@ -533,7 +533,7 @@ def test_ollama_whose_settings_are_refused_ends_without_done(tmp_path):
     log = Run()
     machine = Machine(log, ollama="/o", listed=[ENTRY.ollama])
 
-    assert start(Settings(llm_server_model=ENTRY.key), machine, log, tmp_path,
+    assert start(Settings(agent_server_model=ENTRY.key), machine, log, tmp_path,
                  runtime="ollama", saved=None) == 1
     assert not log.of("done")
 
@@ -613,7 +613,7 @@ def test_ollama_over_an_installed_llama_server_removes_its_unit(tmp_path):
     log, saved = Run(), {}
     machine = Machine(log, ollama="/o", listed=[ENTRY.ollama], unit=True)
 
-    code = start(Settings(llm_server_model=ENTRY.key), machine, log, tmp_path,
+    code = start(Settings(agent_server_model=ENTRY.key), machine, log, tmp_path,
                  runtime="ollama", saved=saved)
 
     assert code == 0 and saved == server.ollama_values(ENTRY)
@@ -628,7 +628,7 @@ def test_ollama_whose_old_unit_will_not_go_says_so_and_still_ends_done(tmp_path)
     machine = Machine(log, ollama="/o", listed=[ENTRY.ollama], unit=True,
                       codes={"install-launchd.sh": 3})
 
-    assert start(Settings(llm_server_model=ENTRY.key), machine, log, tmp_path,
+    assert start(Settings(agent_server_model=ENTRY.key), machine, log, tmp_path,
                  runtime="ollama", saved={}) == 0
     assert any("could not be removed" in line[0] for line in log.of("warn"))
     assert any("install-launchd.sh" in detail for _, detail in log.details)

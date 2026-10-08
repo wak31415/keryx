@@ -3,6 +3,15 @@ import KeryxKit
 
 /// How the Voice screen names the ways the assistant can speak, and what each is doing.
 @MainActor enum VoiceWording {
+    /// The server elsewhere's line, once it is the voice: answering or not — or, with no
+    /// address saved (`VOICE_MODE=server` alone), that none is set, never "not answering";
+    /// nothing when it was not asked.
+    static func serverState(_ reachable: Bool?, address: String?) -> (tone: StatusDot.Tone, text: String)? {
+        if (address ?? "").trimmingCharacters(in: .whitespaces).isEmpty { return (.warning, "No address set") }
+        guard let reachable else { return nil }
+        return reachable ? (.ok, "Answering") : (.error, "Not answering")
+    }
+
     /// "How Lyra Speaks"; "How the Assistant Speaks" before anything has named it.
     static func sectionTitle(_ assistant: String?) -> String {
         guard let assistant, !assistant.isEmpty else { return "How the Assistant Speaks" }

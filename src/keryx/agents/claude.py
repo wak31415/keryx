@@ -180,7 +180,7 @@ def resolve_model(name: str | None, settings: Settings) -> str:
     """A spoken alias (`opus`, `sonnet`, …) or full model id as the id to run."""
     alias = (name or "").strip()
     if not alias:
-        return settings.subagent_model
+        return settings.claude_model
     return CLAUDE_MODELS.get(alias.lower(), alias)
 
 

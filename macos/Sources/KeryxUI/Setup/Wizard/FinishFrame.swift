@@ -2,7 +2,7 @@ import KeryxKit
 import SwiftUI
 
 /// Checking, then You're Ready in place. Checking lists the voice, the work, the phone and
-/// the background service, then every other step the plan still holds open — nothing it waits
+/// answering calls, then every other step the plan still holds open — nothing it waits
 /// for is ever off the list — each with Fix… to the frame that sets it. It finishes what
 /// Models chose for this Mac (`LocalWork`): in a first run by itself, step after step; in a
 /// review only after a click. What the owner stops (Cancel on a row, or elsewhere) is never
@@ -176,7 +176,7 @@ package struct FinishFrame: View {
         case .phone:
             return facts.text("TWILIO_NUMBER").map { "Answers on \(PhoneDisplay.format($0))." } ?? "Connected."
         case .service:
-            return WizardWording.serviceSentence
+            return WizardWording.serviceSentence(WizardWording.assistant(facts, status: model.status.value))
         case .step:
             return "Done."
         }
@@ -206,24 +206,25 @@ package struct FinishFrame: View {
     }
 
     private func serviceLine(_ step: SetupStep?, plan: SetupPlan?) -> Line {
-        if installing { return Line(tone: .working, text: "Setting Keryx to run in the background…") }
+        let sentence = WizardWording.serviceSentence(WizardWording.assistant(WizardFacts(model), status: model.status.value))
+        if installing || model.serviceChange == .installing { return Line(tone: .working, text: "Starting Keryx…") }
         if let installFailure {
-            let failure = installFailure.said("Keryx couldn't be set to run in the background.")
+            let failure = installFailure.said("Keryx couldn't start answering calls.")
             return Line(tone: .problem, text: failure.message, failure: failure,
                         action: ("Try Again", { install() }))
         }
         switch step?.kind {
         case .done?:
-            return Line(tone: .ok, text: WizardWording.serviceSentence)
+            return Line(tone: .ok, text: sentence)
         case .blocked?:
             return Line(tone: .none, text: "After \(waiting(step, plan: plan)) \(waitVerb(step, plan: plan)) ready.")
         default:
             // In a review, or once asked: only on a click.
             if wizard.mode == .review || wizard.serviceAsked {
-                return Line(tone: .none, text: "Keryx isn't running in the background yet.",
-                            action: ("Install…", { install() }))
+                return Line(tone: .none, text: "Keryx isn't answering calls yet.",
+                            action: ("Start Keryx", { install() }))
             }
-            return Line(tone: .none, text: WizardWording.serviceSentence)
+            return Line(tone: .none, text: sentence)
         }
     }
 
@@ -384,7 +385,7 @@ package struct FinishFrame: View {
         installFailure = nil
         Task {
             defer { installing = false }
-            if case let .failure(error) = await model.installService() { installFailure = error }
+            if case let .failure(error) = await model.startAnswering() { installFailure = error }
         }
     }
 

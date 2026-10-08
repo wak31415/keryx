@@ -29,16 +29,31 @@ import KeryxPreview
         #expect(ConfigWording.tabs(rows).map(\.id) == ["b", "a"])
     }
 
-    @Test func theFixtureMakesTheEightTabsInOrder() {
+    @Test func theFixtureMakesTheSevenTabsInOrder() {
         let tabs = ConfigWording.tabs(PreviewData.config)
-        #expect(tabs.map(\.id) == ["general", "voice", "agents", "local", "phone", "approvals", "integrations", "system"])
-        #expect(tabs.map(\.title) == ["General", "Voice", "Agents", "Local Models", "Phone", "Approvals",
-                                      "Integrations", "System"])
-        #expect(tabs.map(\.symbol) == ["gearshape", "waveform", "cpu", "desktopcomputer", "phone",
+        #expect(tabs.map(\.id) == ["general", "voice", "agents", "phone", "approvals", "integrations", "system"])
+        #expect(tabs.map(\.title) == ["General", "Voice", "Agents", "Phone", "Approvals", "Integrations", "System"])
+        #expect(tabs.map(\.symbol) == ["gearshape", "waveform", "cpu", "phone",
                                        "checkmark.shield", "puzzlepiece.extension", "wrench.and.screwdriver"])
         #expect(tabs.allSatisfy { !$0.keyRows.isEmpty })
-        #expect(tabs.reduce(0) { $0 + $1.rows.count } == PreviewData.config.count, "every row on one tab")
+        let onScreens = PreviewData.config.filter { $0.screen != nil }
+        #expect(tabs.reduce(0) { $0 + $1.rows.count } + onScreens.count == PreviewData.config.count,
+                "every row on one tab, or on a screen")
         #expect(ConfigWording.symbol(ofTab: "storage") == "ellipsis.circle")
+        #expect(ConfigWording.symbol(ofTab: "local") == "ellipsis.circle", "the Local Models tab is gone")
+    }
+
+    @Test func aRowAScreenOwnsIsOnNoTab() {
+        let tabs = ConfigWording.tabs(PreviewData.config)
+        let keys = Set(tabs.flatMap(\.rows).map(\.key))
+        for key in ["OPENAI_REALTIME_MODEL", "OPENAI_VOICE", "VOICE_MODE", "VOICE_BASE_URL", "VOICE_SERVER_STT",
+                    "VOICE_LLM", "VOICE_SERVER_ARGS", "AGENT_SERVER_MODEL", "AGENT_SERVER_PORT", "VOICE_SERVER_PORT"] {
+            #expect(!keys.contains(key), "\(key) has its editor on a screen")
+        }
+        // Its group's neighbours that no screen owns stay: the Realtime tuning, the local agent.
+        let voice = tabs.first { $0.id == "voice" }
+        #expect(voice?.advanced.map(\.group).contains("realtime") == true)
+        #expect(tabs.first { $0.id == "agents" }?.rows.contains { $0.key == "LOCAL_AGENT_MODEL" } == true)
     }
 
     @Test func aTabSplitsItsKeySettingsFromItsAdvancedOnesByGroup() {
@@ -86,14 +101,50 @@ import KeryxPreview
 
     @Test func aSearchLooksThroughEveryTabAdvancedSettingsIncluded() {
         let found = ConfigWording.results(PreviewData.config, for: "api key")
-        #expect(found.map(\.id) == ["voice", "agents", "local"])
-        let local = found.first { $0.id == "local" }
-        #expect(local?.keyRows.isEmpty == true)
-        #expect(local?.advancedRows.map(\.key) == ["VOICE_API_KEY", "LOCAL_AGENT_API_KEY"])
+        #expect(found.map(\.id) == ["voice", "agents"])
+        let agents = found.first { $0.id == "agents" }
+        #expect(agents?.advancedRows.map(\.key) == ["LOCAL_AGENT_API_KEY"])
         #expect(ConfigWording.resultTitle(found[0], advanced: false) == "Voice")
-        #expect(ConfigWording.resultTitle(local!, advanced: true) == "Local Models › Advanced")
+        #expect(ConfigWording.resultTitle(agents!, advanced: true) == "Agents › Advanced")
         #expect(ConfigWording.results(PreviewData.config, for: "nothing like it").isEmpty)
-        #expect(ConfigWording.results(PreviewData.config, for: " ").count == 8, "a blank search is every tab")
+        #expect(ConfigWording.results(PreviewData.config, for: " ").count == 7, "a blank search is every tab")
+    }
+
+    @Test func aSearchFindsARowAScreenOwnsAsTheWayThere() {
+        let found = ConfigWording.screenResults(PreviewData.config, for: "api key")
+        #expect(found.map(\.screen) == [.voice])
+        #expect(found[0].rows.map(\.key) == ["VOICE_API_KEY", "VOICE_LLM_API_KEY"])
+        #expect(found[0].title == "Voice")
+        #expect(found[0].link == "Change in Voice ›")
+        let ports = ConfigWording.screenResults(PreviewData.config, for: "server port")
+        #expect(ports.map(\.screen) == [.models])
+        #expect(ports[0].link == "Change in Local Models ›")
+        #expect(ports[0].rows.map(\.key) == ["AGENT_SERVER_PORT", "VOICE_SERVER_PORT", "VOICE_LLM_SERVER_PORT"])
+        #expect(ConfigWording.screenResults(PreviewData.config, for: "nothing like it").isEmpty)
+        // A screen this build has no section for has nowhere to send its rows.
+        let unknown = ConfigRow(key: "X_PORT", group: "x", screen: "elsewhere", description: "", source: "default",
+                                type: "int", required: false, set: false, secret: false, serviceWritable: false,
+                                protected: false, value: nil, choices: nil)
+        #expect(ConfigWording.screenResults([unknown], for: "port").isEmpty)
+    }
+
+    @Test func aSettingAScreenOwnsIsAskedForOnThatScreen() {
+        let rows = PreviewData.config
+        #expect(ConfigWording.screen(of: "VOICE_SERVER_ARGS", in: rows) == .voice)
+        #expect(ConfigWording.screen(of: "AGENT_SERVER_MODEL", in: rows) == .models)
+        #expect(ConfigWording.screen(of: "ALLOWED_CALLERS", in: rows) == nil)
+        #expect(ConfigWording.screen(of: "VOICE_SERVER_ARGS", in: nil) == nil, "before the settings are read")
+        // Asked of Configuration anyway, it shows the first tab and focuses nothing.
+        let first = rows.lazy.compactMap(\.tab).first!
+        #expect(ConfigWording.answer(.setting(key: "VOICE_SERVER_ARGS"), pinTab: nil, config: rows)! == (first, nil, nil))
+    }
+
+    @Test func eachScreenShowsItsOwnAdvancedSettings() {
+        let rows = PreviewData.config
+        #expect(ScreenAdvancedSection.rows(rows, on: .voice).map(\.key) == ["VOICE_SERVER_ARGS"])
+        #expect(ScreenAdvancedSection.rows(rows, on: .models).map(\.key)
+            == ["AGENT_SERVER_PORT", "VOICE_SERVER_PORT", "VOICE_LLM_SERVER_PORT"])
+        #expect(ScreenAdvancedSection.rows(rows, on: .phone).isEmpty)
     }
 
     @Test func thePINIsAKeySettingOnGeneral() {

@@ -14,7 +14,9 @@ import KeryxPreview
     }
 
     @Test func groupsHaveTheirTitles() {
-        let titles = ["voice": "Voice", "agents": "Coding Agents", "local": "Local Models", "phone": "Phone",
+        let titles = ["voice": "Voice", "realtime": "OpenAI Realtime tuning", "voice_model": "Voice models",
+                      "agents": "Coding Agents", "local_agent": "Local agent",
+                      "model_servers": "Model servers on this machine", "phone": "Phone",
                       "owner": "You", "projects": "Projects", "limits": "Limits", "approvals": "Approvals",
                       "plugins": "Plugins", "google": "Google", "service": "Service", "debug": "Debugging"]
         for (group, title) in titles {
@@ -32,8 +34,9 @@ import KeryxPreview
     }
 
     @Test func groupsTakeTheCLIsTitleWhenItGivesOne() {
-        let groups = ConfigWording.groups([row("LLM_SERVER_PORT", group: "local", groupTitle: "Local and self-hosted models")])
-        #expect(groups.map(\.title) == ["Local and Self-Hosted Models"], "in title case, as a section title is")
+        let groups = ConfigWording.groups([row("AGENT_SERVER_PORT", group: "model_servers",
+                                               groupTitle: "Model servers on this machine")])
+        #expect(groups.map(\.title) == ["Model Servers on This Machine"], "in title case, as a section title is")
     }
 
     @Test func searchMatchesKeyAndDescriptionIgnoringCase() {
@@ -47,9 +50,9 @@ import KeryxPreview
     }
 
     @Test func searchMatchesTheTitleToo() {
-        let rows = [row("LLM_SERVER_PORT", description: "The port.", title: "Model server port"),
+        let rows = [row("AGENT_SERVER_PORT", description: "The port.", title: "Agent model server port"),
                     row("DATA_DIR", description: "Where the memory lives", title: "Data folder")]
-        #expect(ConfigWording.filter(rows, by: "server port").map(\.key) == ["LLM_SERVER_PORT"])
+        #expect(ConfigWording.filter(rows, by: "server port").map(\.key) == ["AGENT_SERVER_PORT"])
         #expect(ConfigWording.filter(rows, by: "data_dir").map(\.key) == ["DATA_DIR"])
     }
 
@@ -148,7 +151,7 @@ import KeryxPreview
         let rows = PreviewData.config
         let callers = try #require(rows.first { $0.key == "ALLOWED_CALLERS" })
         #expect(ConfigWording.answer(.setting(key: "ALLOWED_CALLERS"), pinTab: nil, config: rows)!
-            == (callers.tab, nil, "ALLOWED_CALLERS"))
+            == (try #require(callers.tab), nil, "ALLOWED_CALLERS"))
         #expect(ConfigWording.answer(.setting(key: "ALLOWED_CALLERS"), pinTab: nil) == nil, "waits for the settings")
         #expect(ConfigWording.answer(.setting(key: "NO_SUCH_KEY"), pinTab: nil, config: rows)?.focus == nil)
     }
@@ -226,7 +229,8 @@ import KeryxPreview
         for id in ["configuration", "configuration-search", "configuration-search-tabs", "configuration-search-none",
                    "configuration-write-error", "configuration-needs-restart", "configuration-secret-sheet",
                    "configuration-voice-advanced", "configuration-system-advanced",
-                   "configuration-general", "configuration-voice", "configuration-agents", "configuration-local",
+                   "configuration-search-screens",
+                   "configuration-general", "configuration-voice", "configuration-agents",
                    "configuration-phone", "configuration-approvals", "configuration-integrations",
                    "configuration-system", "window-configuration"] {
             #expect(ids.contains(id), "missing \(id)")

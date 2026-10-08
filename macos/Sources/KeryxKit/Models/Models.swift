@@ -59,7 +59,7 @@ public struct Servers: Codable, Sendable, Equatable {
 }
 
 public struct LLMServer: Codable, Sendable, Equatable {
-    /// The model the settings name (`LLM_SERVER_MODEL`): what the server loads when it
+    /// The model the settings name (`AGENT_SERVER_MODEL`): what the server loads when it
     /// (re)starts.
     public var model: String?
     /// The model the running server says it is serving; `nil` when it is not reachable or

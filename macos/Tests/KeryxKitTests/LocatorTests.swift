@@ -539,6 +539,58 @@ import KeryxPreview
         #expect(runner.requests.first?.arguments == ["-lic", LoginShell.script])
     }
 
+    // MARK: - The plist remembered
+
+    /// Quitting the app removes the plist with the unit: the next launch finds Keryx from the
+    /// copy it last read, with the environment the service ran with.
+    @Test func aUsablePlistIsRememberedAndReadWhileItIsGone() async throws {
+        let memory = Preferences(defaults: freshDefaults())
+        var fs = FakeFileSystem()
+        let plist = try Self.fixture("agent.plist")
+        fs.files[Self.plistPath] = plist
+        fs.files["/Users/x/code/keryx/pyproject.toml"] = Self.pyproject
+        fs.executables = ["/Users/x/.local/bin/uv"]
+        let found = try await KeryxLocator(fileSystem: fs, runner: Self.shell(), home: Self.home, memory: memory)
+            .locate(preference: nil).get()
+        #expect(memory.recallLaunchAgent() == plist)
+
+        fs.files[Self.plistPath] = nil
+        let again = try await KeryxLocator(fileSystem: fs, runner: Self.shell(), home: Self.home, memory: memory)
+            .locate(preference: nil).get()
+        #expect(again == found)
+        #expect(again.environment["KERYX_HOME"] == "/Users/x/.config/keryx")
+    }
+
+    @Test func withNothingRememberedAMissingPlistStillFallsThrough() async throws {
+        let memory = Preferences(defaults: freshDefaults())
+        let failure = await KeryxLocator(fileSystem: FakeFileSystem(), runner: Self.shell(), home: Self.home,
+                                         memory: memory).locate(preference: nil).failure
+        #expect(failure?.lookedAt.contains { $0.hasPrefix("There is no ~/Library/LaunchAgents/dev.keryx.agent.plist") } == true)
+    }
+
+    @Test func aRememberedPlistWhoseCheckoutIsGoneIsNotUsed() async throws {
+        let memory = Preferences(defaults: freshDefaults())
+        memory.rememberLaunchAgent(try Self.fixture("agent.plist"))
+        // No pyproject.toml: the checkout it names was moved or deleted.
+        let result = await KeryxLocator(fileSystem: FakeFileSystem(), runner: Self.shell(), home: Self.home,
+                                        memory: memory).locate(preference: nil)
+        #expect(result.failure != nil)
+    }
+
+    @Test func anUnusablePlistIsNeitherRememberedNorReplacedByTheMemory() async throws {
+        let memory = Preferences(defaults: freshDefaults())
+        let good = try Self.fixture("agent.plist")
+        memory.rememberLaunchAgent(good)
+        var fs = FakeFileSystem()
+        fs.files[Self.plistPath] = try Self.plist(["ProgramArguments": ["/usr/bin/python3", "serve"]])
+        fs.files["/Users/x/code/keryx/pyproject.toml"] = Self.pyproject
+        fs.executables = ["/Users/x/.local/bin/uv"]
+        let result = await KeryxLocator(fileSystem: fs, runner: Self.shell(), home: Self.home, memory: memory)
+            .locate(preference: nil)
+        #expect(result.failure != nil, "the plist there says what runs, even when it is not Keryx")
+        #expect(memory.recallLaunchAgent() == good)
+    }
+
     // MARK: - Sanitise
 
     @Test func actorVariablesAreStripped() {
