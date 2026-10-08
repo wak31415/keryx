@@ -4,10 +4,11 @@ Each field is declared with `setting(...)`, which carries five things beside its
 default: a `description` (the sentence `keryx config list` prints and
 `docs/configuration.md` is generated from), a `title` (the short name a person reads in
 place of the environment name: the Mac app's label, in sentence case), a `group` (the
-section it is listed and set up under, `GROUPS`, and through it the Mac app's tab, `TABS`),
-`advanced` (whether the app shows it under its tab's "Advanced" disclosure rather than
-among the key settings), and `service_writable` (whether the running service may change it
-by default — `keryx.config.permissions` has the rest of that rule). A secret is a field
+section it is listed and set up under, `GROUPS`, and through it the Mac app's tab, `TABS`,
+or the app screen that owns it, `SCREEN_OF_GROUP`), `advanced` (whether the app shows it
+under its tab's or screen's "Advanced" disclosure rather than among the key settings), and
+`service_writable` (whether the running service may change it by default —
+`keryx.config.permissions` has the rest of that rule). A secret is a field
 declared `repr=False`; it is stored in `secrets.toml` rather than `config.toml`, and nothing
 ever prints it.
 
@@ -94,7 +95,10 @@ OPTIONAL_STR_FIELDS = (
     "local_agent_base_url",
     "local_agent_api_key",
     "local_agent_model",
-    "llm_server_model",
+    "agent_server_model",
+    "voice_llm_model",
+    "voice_llm_base_url",
+    "voice_llm_api_key",
     "anthropic_api_key",
     "claude_code_oauth_token",
     "codex_api_key",
@@ -123,13 +127,22 @@ OPTIONAL_STR_FIELDS = (
 AgentName = Literal["claude", "codex", "local"]
 #: Which harness drives the local agent, named by the API its server must speak.
 LocalAgentApi = Literal["anthropic-messages", "openai-responses"]
+#: Where a call's voice runs: OpenAI Realtime, the speech pipeline on this machine, or a
+#: Realtime server elsewhere. A new kind of voice is a new value here, never a flag on one.
+VoiceMode = Literal["openai", "here", "server"]
+#: Where the pipeline's words come from: the local agent's server, a model server of the
+#: voice's own on this machine, or a server elsewhere (a box of the owner's, or a cloud).
+VoiceLlmSource = Literal["shared", "here", "remote"]
 
 #: The sections settings are listed and set up under, in the order `keryx setup` and
 #: `docs/configuration.md` walk them.
 GROUPS: dict[str, str] = {
     "voice": "Voice",
+    "realtime": "OpenAI Realtime tuning",
+    "voice_model": "Voice models",
     "agents": "Coding agents",
-    "local": "Local and self-hosted models",
+    "local_agent": "Local agent",
+    "model_servers": "Model servers on this machine",
     "owner": "Owner, callers and PIN",
     "phone": "Phone",
     "google": "Google",
@@ -150,13 +163,13 @@ class Tab(NamedTuple):
 
 
 #: The Mac app's tabs, in the order it shows them, each holding one or more `GROUPS` as its
-#: sections. Every group is in exactly one tab. Within a tab, a field declared
-#: `advanced=False` is a key setting, shown first; the rest go under "Advanced".
+#: sections. Every group is in exactly one tab or owned by exactly one screen
+#: (`SCREEN_OF_GROUP`). Within a tab, a field declared `advanced=False` is a key setting,
+#: shown first; the rest go under "Advanced".
 TABS: dict[str, Tab] = {
     "general": Tab("General", ("owner",)),
-    "voice": Tab("Voice", ("voice",)),
-    "agents": Tab("Agents", ("agents",)),
-    "local": Tab("Local Models", ("local",)),
+    "voice": Tab("Voice", ("voice", "realtime")),
+    "agents": Tab("Agents", ("agents", "local_agent")),
     "phone": Tab("Phone", ("phone",)),
     "approvals": Tab("Approvals", ("approvals",)),
     "integrations": Tab("Integrations", ("google", "plugins", "projects")),
@@ -164,6 +177,13 @@ TABS: dict[str, Tab] = {
 }
 #: Which tab each group is in: `TABS` read the other way round.
 TAB_OF_GROUP = {group: key for key, tab in TABS.items() for group in tab.groups}
+#: The Mac app's screens that own groups of settings outright, by title: each is the one
+#: editor of its groups' settings, its key rows in place and its advanced ones under an
+#: "Advanced" disclosure of its own. Configuration shows none of them, but a search there
+#: still finds one and jumps to its screen.
+SCREENS: dict[str, str] = {"voice": "Voice", "models": "Local Models"}
+#: The groups a screen owns, which sit on no Configuration tab.
+SCREEN_OF_GROUP: dict[str, str] = {"voice_model": "voice", "model_servers": "models"}
 
 #: Keys that are never read from, or written to, the configuration files. The PIN has a
 #: store of its own (`KERYX_HOME/pin`, keryx.config.pin), written once; a copy in a TOML
@@ -345,7 +365,7 @@ class Settings(BaseSettings):
     openai_realtime_model: str = setting(
         "gpt-realtime-2.1", "The realtime speech-to-speech model a call runs on.",
         title="Realtime model",
-        group="voice", advanced=False
+        group="voice_model", advanced=False
     )
     assistant_name: str = setting(
         DEFAULT_NAME,
@@ -363,14 +383,14 @@ class Settings(BaseSettings):
         "(`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail "
         "to open.",
         title="Assistant voice",
-        group="voice", advanced=False,
+        group="voice_model", advanced=False,
         service_writable=True,
     )
     openai_transcription_model: str = setting(
         "gpt-4o-mini-transcribe",
         "Transcribes what the caller says, for the call log.",
         title="Transcription model",
-        group="voice", advanced=True,
+        group="realtime", advanced=True,
     )
     transcription_language: str = setting(
         "",
@@ -405,7 +425,7 @@ class Settings(BaseSettings):
         "sounds finished, so a pause to think does not cut you off; `server` is a plain "
         "silence timer of `VAD_SILENCE_MS`.",
         title="Turn detection",
-        group="voice", advanced=True,
+        group="realtime", advanced=True,
         service_writable=True,
     )
     vad_eagerness: Literal["low", "medium", "high", "auto"] = setting(
@@ -413,19 +433,19 @@ class Settings(BaseSettings):
         "Semantic mode only: `low` waits longest, `high` jumps in soonest, `auto` is "
         "`medium`.",
         title="Reply eagerness",
-        group="voice", advanced=True,
+        group="realtime", advanced=True,
         service_writable=True,
     )
     vad_silence_ms: int = setting(
         1200, "Server mode only: the silence, in milliseconds, that ends a turn.",
         title="Silence to end a turn (ms)",
-        group="voice", advanced=True, service_writable=True,
+        group="realtime", advanced=True, service_writable=True,
         ge=0,
     )
     vad_threshold: float = setting(
         0.5, "Server mode only: how loud counts as speech (0 to 1).",
         title="Speech threshold",
-        group="voice", advanced=True, service_writable=True,
+        group="realtime", advanced=True, service_writable=True,
         ge=0, le=1,
     )
     vad_prefix_ms: int = setting(
@@ -433,7 +453,7 @@ class Settings(BaseSettings):
         "Server mode only: audio kept from before speech was detected, so the first "
         "syllable is not clipped.",
         title="Audio before speech (ms)",
-        group="voice", advanced=True,
+        group="realtime", advanced=True,
         service_writable=True,
         ge=0,
     )
@@ -443,7 +463,7 @@ class Settings(BaseSettings):
         "for a phone and `far_field` for a microphone across the room. Mostly about "
         "barge-in: noise mistaken for speech is noise that cuts the assistant off.",
         title="Noise reduction",
-        group="voice", advanced=True,
+        group="realtime", advanced=True,
         service_writable=True,
     )
 
@@ -493,10 +513,12 @@ class Settings(BaseSettings):
         group="agents", advanced=False,
         repr=False,
     )
-    subagent_model: str = setting(
+    claude_model: str = setting(
         "claude-opus-5-5", "The model a Claude task runs on when none is named.",
         title="Claude model",
         group="agents", advanced=False, service_writable=True,
+        # `SUBAGENT_MODEL` until 2026-10-07, still read for one release.
+        validation_alias=AliasChoices("CLAUDE_MODEL", "SUBAGENT_MODEL"),
     )
     subagent_max_turns: int = setting(
         200, "Agent turns one Claude task may take.", title="Turns per task", group="agents",
@@ -535,45 +557,118 @@ class Settings(BaseSettings):
         group="agents", advanced=False, service_writable=True,
     )
 
-    # --- local and self-hosted models ------------------------------------------------------
+    # --- the voice's models: the Voice screen --------------------------------------------
 
-    # Both addresses are protected (`*_BASE_URL`): a voice address pointed elsewhere would
-    # ship every call's audio, the spoken PIN included, to whoever is there.
+    # Where a call's audio goes (`VOICE_MODE`, `VOICE_BASE_URL`) and where its words go
+    # (`VOICE_LLM`, `VOICE_LLM_BASE_URL`) are protected: pointed elsewhere, either ships
+    # every call, the spoken PIN included, to whoever is there.
+    voice_mode: VoiceMode | None = setting(
+        None,
+        "Where a call's voice runs: `openai` is OpenAI Realtime, `here` the speech pipeline on "
+        "this machine (`VOICE_SERVER_*`), `server` a Realtime server elsewhere "
+        "(`VOICE_BASE_URL`). Blank is worked out from `VOICE_BASE_URL`, as it was before this "
+        "was a setting: blank is OpenAI, this machine's voice port is here, any other address "
+        "a server.",
+        title="Where the voice runs",
+        group="voice_model", advanced=False,
+    )
     voice_base_url: str | None = setting(
         None,
         "A voice server of your own that speaks the OpenAI Realtime protocol, as its `…/v1` "
         "address (`http://127.0.0.1:8765/v1` is the one `keryx setup` installs). Blank is "
         "OpenAI.",
         title="Voice server URL",
-        group="local", advanced=True,
+        group="voice_model", advanced=False,
     )
     voice_api_key: str | None = setting(
         None,
         "The Bearer key for that voice server, when it checks one.",
         title="Voice server API key",
-        group="local", advanced=True,
+        group="voice_model", advanced=False,
         repr=False,
     )
+    voice_server_stt: str = setting(
+        "parakeet-tdt",
+        "How the local voice server hears: speech-to-speech's `--stt` (`parakeet-tdt`, "
+        "`whisper`, …).",
+        title="Speech-to-text model",
+        group="voice_model", advanced=False,
+    )
+    voice_llm: VoiceLlmSource = setting(
+        "shared",
+        "Where the words of a voice running here come from: `shared` is the local agent's "
+        "model on its server, `here` a model of the voice's own (`VOICE_LLM_MODEL`) on a "
+        "server of its own on this machine, `remote` a server elsewhere "
+        "(`VOICE_LLM_BASE_URL`) — a box of yours, or a cloud's Responses API.",
+        title="Voice LLM",
+        group="voice_model", advanced=False,
+    )
+    voice_llm_model: str | None = setting(
+        None,
+        "The voice LLM's model. With `VOICE_LLM=here`, a name from `keryx models list` or a "
+        "GGUF file's path, served under that name; with `remote`, the server's own name for "
+        "it. Not read while the voice LLM is shared.",
+        title="Voice LLM model",
+        group="voice_model", advanced=False,
+    )
+    voice_llm_base_url: str | None = setting(
+        None,
+        "With `VOICE_LLM=remote`, the server the voice's words go to, as its `…/v1` address "
+        "(`https://api.openai.com/v1` for OpenAI's).",
+        title="Voice LLM server URL",
+        group="voice_model", advanced=False,
+    )
+    voice_llm_api_key: str | None = setting(
+        None,
+        "The Bearer key for that server, when it checks one. Blank sends `OPENAI_API_KEY` "
+        "only when the address is OpenAI's own, and no key of yours anywhere else.",
+        title="Voice LLM API key",
+        group="voice_model", advanced=False,
+        repr=False,
+    )
+    voice_server_tts: str = setting(
+        "kokoro",
+        "How the local voice server speaks: speech-to-speech's `--tts` (`kokoro`, `qwen3`, …).",
+        title="Text-to-speech model",
+        group="voice_model", advanced=False,
+    )
+    voice_server_voice: str = setting(
+        "af_heart",
+        "The Kokoro voice the local voice server speaks in (`af_heart`, `bm_george`, …; "
+        "`keryx models list` shows them).",
+        title="Kokoro voice",
+        group="voice_model", advanced=False,
+    )
+    voice_server_args: str = setting(
+        "",
+        "More flags for `speech-to-speech serve`, as a command line — a smaller speech model "
+        "(`--stt_model_name openai/whisper-base`), a TTS speed. Never a key: it is on argv.",
+        title="Extra voice server flags",
+        group="voice_model", advanced=True,
+    )
+
+    # --- the local agent: Configuration › Agents -----------------------------------------
+
     local_agent_base_url: str | None = setting(
         None,
         "An inference server for the `local` agent — Ollama, llama.cpp, vLLM, LM Studio — "
         "as `http://gpu-box:11434` or its `…/v1` address. Blank is no local agent.",
         title="Local agent server URL",
-        group="local", advanced=True,
+        group="local_agent", advanced=True,
     )
     local_agent_api_key: str | None = setting(
         None,
         "The Bearer key for that server, when it checks one. The owner's Anthropic and "
         "OpenAI credentials are never sent there.",
         title="Local agent API key",
-        group="local", advanced=True,
+        group="local_agent", advanced=True,
         repr=False,
     )
     local_agent_model: str | None = setting(
         None,
         "The model a `local` task runs on, by the server's own name for it.",
         title="Local agent model",
-        group="local", advanced=False,
+        group="local_agent", advanced=False,
         service_writable=True,
     )
     local_agent_api: LocalAgentApi = setting(
@@ -581,57 +676,43 @@ class Settings(BaseSettings):
         "Which harness drives the local model: `anthropic-messages` runs it inside Claude "
         "Code, `openai-responses` inside Codex. The server must speak that API.",
         title="Local agent harness",
-        group="local", advanced=True,
+        group="local_agent", advanced=True,
         service_writable=True,
     )
 
+    # --- the model servers on this machine: the Local Models screen ----------------------
+
     # The servers `keryx setup` runs on this machine (`keryx models serve llm|voice`). Each
     # unit reads these when it starts, so a change needs `systemctl --user restart` of it.
-    llm_server_model: str | None = setting(
+    agent_server_model: str | None = setting(
         None,
-        "The model the local llama.cpp server runs: a name from `keryx models list`, or a "
-        "GGUF file's path. Blank runs none.",
-        title="Model to serve",
-        group="local", advanced=False,
+        "The model the local agent's llama.cpp server on this machine runs: a name from "
+        "`keryx models list`, or a GGUF file's path. Blank runs none.",
+        title="Agent model to serve",
+        group="model_servers", advanced=False,
+        # `LLM_SERVER_MODEL` until 2026-10-07, still read for one release.
+        validation_alias=AliasChoices("AGENT_SERVER_MODEL", "LLM_SERVER_MODEL"),
     )
-    llm_server_port: int = setting(
-        8090, "The port the local llama.cpp server binds, on 127.0.0.1.",
-        title="Model server port",
-        group="local", advanced=True,
+    agent_server_port: int = setting(
+        8090, "The port the local agent's llama.cpp server binds, on 127.0.0.1.",
+        title="Agent model server port",
+        group="model_servers", advanced=True,
         ge=1, le=65535,
+        # `LLM_SERVER_PORT` until 2026-10-07, still read for one release.
+        validation_alias=AliasChoices("AGENT_SERVER_PORT", "LLM_SERVER_PORT"),
     )
     voice_server_port: int = setting(
         8765, "The port the local voice server binds, on 127.0.0.1.",
         title="Voice server port",
-        group="local", advanced=True,
+        group="model_servers", advanced=True,
         ge=1, le=65535,
     )
-    voice_server_stt: str = setting(
-        "parakeet-tdt",
-        "How the local voice server hears: speech-to-speech's `--stt` (`parakeet-tdt`, "
-        "`whisper`, …).",
-        title="Speech-to-text model",
-        group="local", advanced=False,
-    )
-    voice_server_tts: str = setting(
-        "kokoro",
-        "How the local voice server speaks: speech-to-speech's `--tts` (`kokoro`, `qwen3`, …).",
-        title="Text-to-speech model",
-        group="local", advanced=False,
-    )
-    voice_server_voice: str = setting(
-        "af_heart",
-        "The Kokoro voice the local voice server speaks in (`af_heart`, `bm_george`, …; "
-        "`keryx models list` shows them).",
-        title="Kokoro voice",
-        group="local", advanced=False,
-    )
-    voice_server_args: str = setting(
-        "",
-        "More flags for `speech-to-speech serve`, as a command line — a smaller speech model "
-        "(`--stt_model_name openai/whisper-base`), a TTS speed. Never a key: it is on argv.",
-        title="Extra voice server flags",
-        group="local", advanced=True,
+    voice_llm_server_port: int = setting(
+        8091, "The port the voice LLM's own llama.cpp server binds, on 127.0.0.1, with "
+        "`VOICE_LLM=here`.",
+        title="Voice LLM server port",
+        group="model_servers", advanced=True,
+        ge=1, le=65535,
     )
 
     # --- owner, callers and PIN ----------------------------------------------------------
@@ -1097,7 +1178,7 @@ class Settings(BaseSettings):
                 raise ValueError('must be a JSON object, like {"name": "value"}') from error
         return value
 
-    @field_validator(*OPTIONAL_STR_FIELDS, mode="before")
+    @field_validator(*OPTIONAL_STR_FIELDS, "voice_mode", mode="before")
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
         """A blank value is "not set" — `env_ignore_empty` for anything passed by hand."""
@@ -1126,7 +1207,8 @@ class Settings(BaseSettings):
             return value
         raise ValueError(PIN_RULE)
 
-    @field_validator("voice_base_url", "local_agent_base_url", mode="after")
+    @field_validator("voice_base_url", "voice_llm_base_url", "local_agent_base_url",
+                     mode="after")
     @classmethod
     def _base_url_is_an_address(cls, value: str | None) -> str | None:
         """An `http://` or `https://` address, kept as its `…/v1` root."""
@@ -1581,9 +1663,15 @@ def field_title(name: str) -> str:
     return str(_extra(name)["title"])
 
 
-def field_tab(name: str) -> str:
-    """The `TABS` key of the tab a field is shown on in the Mac app."""
-    return TAB_OF_GROUP[field_group(name)]
+def field_tab(name: str) -> str | None:
+    """The `TABS` key of the tab a field is shown on in the Mac app; None when a screen
+    owns it (`field_screen`)."""
+    return TAB_OF_GROUP.get(field_group(name))
+
+
+def field_screen(name: str) -> str | None:
+    """The `SCREENS` key of the app screen that owns a field, or None for one on a tab."""
+    return SCREEN_OF_GROUP.get(field_group(name))
 
 
 def field_advanced(name: str) -> bool:

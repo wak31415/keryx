@@ -319,7 +319,7 @@ def test_import_env_moves_values_and_renames_the_file(store, tmp_path):
     report = store.import_env(env, today=date(2026, 9, 27))
 
     assert sorted(report.imported) == ["DATA_DIR", "OPENAI_API_KEY", "OPENAI_VOICE"]
-    assert sorted(report.defaults) == ["PORT", "SUBAGENT_MODEL"]
+    assert sorted(report.defaults) == ["CLAUDE_MODEL", "PORT"]  # its old name, read as the new
     assert report.unknown == ["WHATEVER"]
     assert read_toml(store.secrets_path) == {"OPENAI_API_KEY": "sk-live"}
     assert not env.exists()
@@ -497,3 +497,42 @@ def test_the_renamed_env_is_owner_only(store, tmp_path):
     report = store.import_env(env)
 
     assert mode(report.renamed_to) == 0o600
+
+
+# --- a renamed setting ------------------------------------------------------------------
+
+#: Each rename of 2026-10-07, the old name first: read for a release, never written.
+RENAMES = [("SUBAGENT_MODEL", "CLAUDE_MODEL", "claude-sonnet-5"),
+           ("LLM_SERVER_MODEL", "AGENT_SERVER_MODEL", "qwen3-coder-30b-a3b"),
+           ("LLM_SERVER_PORT", "AGENT_SERVER_PORT", 8099)]
+
+
+@pytest.mark.parametrize(("old", "new", "value"), RENAMES)
+def test_a_setting_set_under_its_old_name_is_stored_under_the_new_one(store, old, new, value):
+    assert store.set({old: value}) == {new: value}
+
+    assert read_toml(store.config_path) == {new: value}
+
+
+@pytest.mark.parametrize(("old", "new", "value"), RENAMES)
+def test_a_store_that_still_has_the_old_name_keeps_working(store, old, new, value):
+    write_private(store.config_path, dump_toml({old: value}, ""))
+
+    settings = load()
+
+    assert getattr(settings, field_for(new)) == value
+    assert store.source_of(old) == store.source_of(new) == "config.toml"
+
+
+@pytest.mark.parametrize(("old", "new", "value"), RENAMES)
+def test_the_next_write_moves_the_old_name_to_the_new_one(store, old, new, value):
+    """Not left behind under the new one, where an unset would bring the old value back."""
+    write_private(store.config_path, dump_toml({old: "stale" if old != "LLM_SERVER_PORT"
+                                                else 8098}, ""))
+
+    store.set({new: value})
+    assert read_toml(store.config_path) == {new: value}
+
+    store.unset([new])
+    assert read_toml(store.config_path) == {}
+    assert store.source_of(new) == FROM_DEFAULT

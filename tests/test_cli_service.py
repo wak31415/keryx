@@ -79,8 +79,8 @@ def machine(monkeypatch, tmp_path):
 
 
 def chosen() -> Settings:
-    """LLM_SERVER_MODEL chosen (as `keryx models use` saves it) and downloaded."""
-    ConfigStore().set({"LLM_SERVER_MODEL": CODER.key, "LOCAL_AGENT_BASE_URL": URL,
+    """AGENT_SERVER_MODEL chosen (as `keryx models use` saves it) and downloaded."""
+    ConfigStore().set({"AGENT_SERVER_MODEL": CODER.key, "LOCAL_AGENT_BASE_URL": URL,
                        "LOCAL_AGENT_MODEL": CODER.key})
     settings = Settings()
     path = download.model_path(settings.cache_dir, CODER)
@@ -244,7 +244,7 @@ def test_start_installs_llama_cpp_when_it_is_missing_and_tells_the_download(
 
 
 def test_start_with_ollama_saves_the_local_agent_once_ollama_lists_it(machine, monkeypatch):
-    ConfigStore().set({"LLM_SERVER_MODEL": OLLAMA_MODEL.key})
+    ConfigStore().set({"AGENT_SERVER_MODEL": OLLAMA_MODEL.key})
     machine.ollama = "/usr/local/bin/ollama"
     monkeypatch.setattr("keryx.endpoints.probe",
                         lambda endpoint, **_: Probe(True, (OLLAMA_MODEL.ollama,)))
@@ -256,7 +256,7 @@ def test_start_with_ollama_saves_the_local_agent_once_ollama_lists_it(machine, m
                                      "served_model": OLLAMA_MODEL.ollama}
     settings = Settings()
     assert settings.local_agent_model == OLLAMA_MODEL.ollama
-    assert settings.llm_server_model is None
+    assert settings.agent_server_model is None
     assert machine.scripts == [["ollama", "pull", OLLAMA_MODEL.ollama]]
 
 
@@ -324,7 +324,7 @@ def _not_chosen(monkeypatch, machine, tmp_path):
 
 
 def _not_downloaded(monkeypatch, machine, tmp_path):
-    ConfigStore().set({"LLM_SERVER_MODEL": CODER.key})
+    ConfigStore().set({"AGENT_SERVER_MODEL": CODER.key})
 
 
 def _no_checkout(monkeypatch, machine, tmp_path):

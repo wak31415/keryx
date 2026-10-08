@@ -1121,7 +1121,7 @@ def test_the_model_server_needs_its_file_and_llama_server(healthy, monkeypatch, 
     from keryx.localmodels.download import model_path
 
     entry = by_key("gpt-oss-20b")
-    settings = healthy.model_copy(update={"llm_server_model": entry.key,
+    settings = healthy.model_copy(update={"agent_server_model": entry.key,
                                           "cache_dir": tmp_path / "cache"})
     missing = by_name(run_doctor_checks(settings))["model server"]
     assert not missing.ok and "keryx models pull gpt-oss-20b" in missing.text
@@ -1315,7 +1315,7 @@ def test_the_local_servers_fixes(healthy, monkeypatch, tmp_path):
     from keryx.localmodels.download import model_path
 
     entry = by_key("gpt-oss-20b")
-    settings = healthy.model_copy(update={"llm_server_model": entry.key,
+    settings = healthy.model_copy(update={"agent_server_model": entry.key,
                                           "cache_dir": tmp_path / "cache"})
     assert by_name(run_doctor_checks(settings))["model server"].fix == "models:choose"
     path = model_path(settings.cache_dir, entry)

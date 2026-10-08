@@ -124,8 +124,8 @@ def install_llama(
 
 
 def endpoint(settings: Settings) -> Endpoint:
-    """The model server on this machine, at `LLM_SERVER_PORT`."""
-    return Endpoint.parse(f"http://{HOST}:{settings.llm_server_port}/v1")
+    """The model server on this machine, at `AGENT_SERVER_PORT`."""
+    return Endpoint.parse(f"http://{HOST}:{settings.agent_server_port}/v1")
 
 
 def log_path(settings: Settings) -> Path:
@@ -142,7 +142,7 @@ def serve_here(
     platform: str | None = None,
 ) -> bool:
     """Install the model server's unit from the checkout at `root` and wait for it to load
-    `LLM_SERVER_MODEL`; False once the report has been told why it did not."""
+    `AGENT_SERVER_MODEL`; False once the report has been told why it did not."""
     here = endpoint(settings)
     # One guard from the unit to the server answering (`voice.here`'s rule).
     with _removed_if_stopped(run_script, root=root, platform=platform):
@@ -171,7 +171,7 @@ def retire_llama(
     platform: str | None = None,
 ) -> str | None:
     """Once Ollama serves the model, the llama.cpp server's unit is removed when there is one:
-    with `LLM_SERVER_MODEL` cleared it cannot start, and its manager would start it again and
+    with `AGENT_SERVER_MODEL` cleared it cannot start, and its manager would start it again and
     again. None when there was none; else what became of it, in a clause."""
     if not installed:
         return None
@@ -200,7 +200,7 @@ def pull_into_ollama(
 def ollama_values(entry: ModelEntry) -> dict[str, Any]:
     """The settings that make Ollama's copy of `entry` the local agent's model."""
     return {"LOCAL_AGENT_BASE_URL": f"{OLLAMA_URL}/v1", "LOCAL_AGENT_MODEL": entry.ollama,
-            "LLM_SERVER_MODEL": None, **messages_harness()}
+            "AGENT_SERVER_MODEL": None, **messages_harness()}
 
 
 # --- keryx models start --------------------------------------------------------------------
@@ -216,7 +216,7 @@ def start(
     runtime: str = LLAMA,
     platform: str | None = None,
 ) -> int:
-    """Serve `LLM_SERVER_MODEL` on this machine and check that it is what is served; the
+    """Serve `AGENT_SERVER_MODEL` on this machine and check that it is what is served; the
     exit code. 2 for what refuses it before anything is tried — no model chosen and
     downloaded, no installer for the unit — 1 for what stopped it, 0 once the server
     names the chosen model. `save` (Ollama's only) stores values and says why it could not.
@@ -224,7 +224,7 @@ def start(
     platform = platform or voice.PLATFORM
     if runtime == OLLAMA:
         return _start_ollama(settings, probes, report, save=save, root=root, platform=platform)
-    if not settings.llm_server_model and on_ollama(settings):
+    if not settings.agent_server_model and on_ollama(settings):
         report.error(f"Ollama serves {settings.local_agent_model}; there is no llama.cpp "
                      "server to start.",
                      detail="`keryx models use NAME` moves the model back to llama.cpp")
@@ -260,8 +260,8 @@ def start(
 
 
 def _not_ready(settings: Settings) -> str | None:
-    """Why `LLM_SERVER_MODEL` cannot be served yet, or None: unchosen, or not on disk whole."""
-    entry = catalog.by_key(settings.llm_server_model or "")
+    """Why `AGENT_SERVER_MODEL` cannot be served yet, or None: unchosen, or not on disk whole."""
+    entry = catalog.by_key(settings.agent_server_model or "")
     if entry is not None and not download.is_downloaded(settings.cache_dir, entry):
         return f"{entry.key} is not downloaded (keryx models pull {entry.key})"
     try:
@@ -305,7 +305,7 @@ def _start_ollama(settings: Settings, probes: Probes, report: StartReport, *,
     entry = _ollama_entry(settings)
     if entry is None:
         report.error(f"{NOT_READY} Ollama runs a model from Keryx's list.",
-                     detail="LLM_SERVER_MODEL names none; `keryx models list` shows them")
+                     detail="AGENT_SERVER_MODEL names none; `keryx models list` shows them")
         return REFUSED
     with report.step("runtime", "Looking for Ollama"):
         found = probes.ollama()
@@ -347,7 +347,7 @@ def on_ollama(settings: Settings) -> bool:
 
 def _ollama_entry(settings: Settings) -> ModelEntry | None:
     """The catalog model to serve under Ollama: the chosen one, else the one it serves."""
-    entry = catalog.by_key(settings.llm_server_model or "")
+    entry = catalog.by_key(settings.agent_server_model or "")
     if entry is None and on_ollama(settings):
         entry = next((e for e in catalog.MODELS if e.ollama == settings.local_agent_model),
                      None)

@@ -50,6 +50,7 @@ from keryx.config.settings import (
     field_advanced,
     field_for,
     field_group,
+    field_screen,
     field_tab,
     field_title,
     is_secret,
@@ -220,12 +221,14 @@ class ConfigStore:
         if name is None:
             raise ConfigError(f"there is no setting called {key}")
         key = env_var_name(name)
-        if any(os.environ.get(each, "").strip() for each in env_var_names(name)):
+        names = env_var_names(name)
+        if any(os.environ.get(each, "").strip() for each in names):
             return FROM_ENV
         if key not in NOT_STORED:
-            if key in self._secrets():
+            # Under an older name too (`SUBAGENT_MODEL`), which is read until it is rewritten.
+            if any(each in self._secrets() for each in names):
                 return FROM_SECRETS
-            if key in self._config():
+            if any(each in self._config() for each in names):
                 return FROM_CONFIG
         if key == "KERYX_PIN" and settings is not None and pin_file(settings.config_dir).exists():
             return FROM_PIN_FILE
@@ -246,6 +249,7 @@ class ConfigStore:
             secret = is_secret(name)
             source = self.source_of(key, settings)
             kind, choices = field_type(name)
+            # A group an app screen owns sits on no tab: all three are null for it.
             tab = field_tab(name)
             rows.append(
                 {
@@ -254,8 +258,9 @@ class ConfigStore:
                     "group": field_group(name),
                     "group_title": GROUPS[field_group(name)],
                     "tab": tab,
-                    "tab_title": TABS[tab].title,
-                    "tab_order": tab_order[tab],
+                    "tab_title": TABS[tab].title if tab is not None else None,
+                    "tab_order": tab_order[tab] if tab is not None else None,
+                    "screen": field_screen(name),
                     "advanced": field_advanced(name),
                     "description": info.description or "",
                     "required": info.is_required(),
@@ -311,7 +316,7 @@ class ConfigStore:
         Returns the ones that were actually there.
         """
         wanted = [canonical_key(key) for key in keys]
-        present = set(self.stored())
+        present = {canonical_key(key) for key in self.stored()}
         self.set({key: None for key in wanted}, actor=actor)
         return [key for key in wanted if key in present]
 
@@ -389,6 +394,9 @@ class ConfigStore:
             assert name is not None
             home, other = (secrets, config) if is_secret(name) else (config, secrets)
             other.pop(key, None)
+            for older in env_var_names(name)[1:]:  # read until now, never written: gone
+                config.pop(older, None)
+                secrets.pop(older, None)
             if value is None:
                 home.pop(key, None)
             else:

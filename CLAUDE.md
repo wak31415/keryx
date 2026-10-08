@@ -53,7 +53,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   the Mac app's menu bar polls — `keryx/status.py`, schema 1, every part `ok`/`error` with
   its fields present either way)
 - Settings: `uv run keryx config list [--json] [--group G]` (`--json` gives each row its
-  `title` and `group_title`, the Mac app's `tab`, `tab_title` and `tab_order` and whether
+  `title` and `group_title`, the Mac app's `tab`, `tab_title` and `tab_order` — all three
+  null for a row whose group an app screen owns, which names that `screen` — and whether
   it is `advanced`, its `type` — `keryx/config/types.py` — and a choice's
   `choices`, and `has_options`; the table keeps the keys, which are what is typed),
   `config options KEY [--json]` (the models or voices a setting can take, read live from
@@ -311,7 +312,9 @@ remember:
   a `description`, a `title`, a `group`, `advanced` and a default `service_writable`,
   declared with `setting(...)`; the title is the sentence-case name the Mac app shows in
   place of the key, `TABS` is the one table of the app's tabs and the groups each holds,
-  and `advanced` puts a field under its tab's "Advanced" disclosure),
+  `SCREEN_OF_GROUP` the groups an app screen owns instead (the Voice screen's
+  `voice_model`, the Local Models screen's `model_servers`: each setting has exactly one
+  editor), and `advanced` puts a field under its tab's or screen's "Advanced" disclosure),
   `store` (`KERYX_HOME/config.toml` and `secrets.toml`, the only writer of either),
   `permissions` (what the running service may change; `PROTECTED_KEYS`), `pin`
   (`KERYX_HOME/pin`), `files` (the XDG directories, the modes and atomic writes), `migrate`
@@ -463,12 +466,14 @@ OpenAI-compatible client describes one. Five rulings:
   Truncate is accepted and ignored there, and that is accepted, not worked around. The
   persona's voice is not sent to it (`Settings.voice` is blank), since a server that does
   not know `marin` speaks nothing.
-- **Every `*_BASE_URL` is protected**, and `VOICE_SERVER_ARGS` with them. A voice address
-  pointed elsewhere ships every call's audio, the spoken PIN included, to whoever is there;
-  a flag could bind the unauthenticated voice server beyond 127.0.0.1.
+- **Every `*_BASE_URL` is protected**, and `VOICE_SERVER_ARGS`, `VOICE_MODE` and
+  `VOICE_LLM` with them. A voice address pointed elsewhere ships every call's audio, the
+  spoken PIN included, to whoever is there, and a mode or a voice-LLM source can send the
+  same audio or the same words elsewhere without an address changing; a flag could bind the
+  unauthenticated voice server beyond 127.0.0.1.
 - **The servers on this machine are the settings' to describe.** The `keryx-llm` and
   `keryx-voice` units run `keryx models serve llm|voice`, which builds the command line from
-  `LLM_SERVER_*` / `VOICE_SERVER_*` and `exec`s it, so no unit holds a model, a port or a voice.
+  `AGENT_SERVER_*` / `VOICE_SERVER_*` and `exec`s it, so no unit holds a model, a port or a voice.
   Both bind 127.0.0.1. The voice server's words come from the local agent's model, and its key
   goes in the child's `OPENAI_API_KEY` in place of the owner's — never on argv. Setup saves
   `VOICE_BASE_URL` only after the server has answered a Realtime handshake.
@@ -502,8 +507,10 @@ other built-in persona, or any name of the owner's. Three rulings:
   `JARVIS_CHECKOUT` are read under the new names, a `.jarvis-brief.md` still describes a
   project without a `.keryx-brief.md`, and a `jarvis` command says to run `keryx migrate`. A
   `JARVIS_HOME` is never followed: `serve` refuses until it is renamed. The same holds for a setting renamed later:
-  its old name is an alias (`FAKE_AGENTS` → `DEMO_MODE`), `canonical_key` turns it into the
-  current one wherever a rule is asked, and nothing is ever stored under it.
+  its old name is an alias (`FAKE_AGENTS` → `DEMO_MODE`; `SUBAGENT_MODEL` → `CLAUDE_MODEL`,
+  `LLM_SERVER_MODEL`/`_PORT` → `AGENT_SERVER_MODEL`/`_PORT`), `canonical_key` turns it into
+  the current one wherever a rule is asked, and nothing is ever stored under it: a store
+  that still holds the old name is read, and the next write of that setting removes it.
 
 ## Trust has three levels
 

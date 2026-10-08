@@ -25,12 +25,12 @@ def downloaded(settings):
     path = model_path(settings.cache_dir, CODER)
     path.parent.mkdir(parents=True)
     path.write_bytes(b"gguf")
-    settings.llm_server_model = CODER.key
+    settings.agent_server_model = CODER.key
     return path
 
 
 def test_the_model_server_serves_the_catalog_model_under_its_name(settings, downloaded):
-    settings.llm_server_port = 8091
+    settings.agent_server_port = 8091
 
     argv = llm_argv(settings, "/bin/llama-server")
 
@@ -45,18 +45,18 @@ def test_the_model_server_serves_the_catalog_model_under_its_name(settings, down
 def test_a_gguf_of_your_own_is_served_under_its_stem(settings, tmp_path):
     own = tmp_path / "my-model.Q5.gguf"
     own.write_bytes(b"gguf")
-    settings.llm_server_model = str(own)
+    settings.agent_server_model = str(own)
 
     assert llm_model(settings) == ("my-model.Q5", own, servers.DEFAULT_CONTEXT)
 
 
 @pytest.mark.parametrize(
     ("value", "says"),
-    [(None, "LLM_SERVER_MODEL is not set"), ("qwen3-coder-30b-a3b", "keryx models pull"),
+    [(None, "AGENT_SERVER_MODEL is not set"), ("qwen3-coder-30b-a3b", "keryx models pull"),
      ("/no/such.gguf", "is the path right")],
 )
 def test_what_is_missing_is_said(settings, value, says):
-    settings.llm_server_model = value
+    settings.agent_server_model = value
     with pytest.raises(ServerConfigError, match=says):
         llm_model(settings)
 

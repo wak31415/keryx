@@ -47,10 +47,10 @@ class ServerConfigError(RuntimeError):
 
 
 def llm_model(settings: Settings) -> tuple[str, Path, int]:
-    """`LLM_SERVER_MODEL` as (the id it is served as, its file, its context)."""
-    value = settings.llm_server_model
+    """`AGENT_SERVER_MODEL` as (the id it is served as, its file, its context)."""
+    value = settings.agent_server_model
     if not value:
-        raise ServerConfigError("LLM_SERVER_MODEL is not set — `keryx setup` picks one")
+        raise ServerConfigError("AGENT_SERVER_MODEL is not set — `keryx setup` picks one")
     entry = by_key(value)
     if entry is not None:
         path, alias, context = model_path(settings.cache_dir, entry), entry.key, entry.context
@@ -64,11 +64,11 @@ def llm_model(settings: Settings) -> tuple[str, Path, int]:
 
 
 def llm_argv(settings: Settings, binary: str) -> list[str]:
-    """`llama-server` serving `LLM_SERVER_MODEL` on this machine, every layer on the GPU."""
+    """`llama-server` serving `AGENT_SERVER_MODEL` on this machine, every layer on the GPU."""
     alias, path, context = llm_model(settings)
     return [
         binary, "--model", str(path), "--alias", alias,
-        "--host", HOST, "--port", str(settings.llm_server_port),
+        "--host", HOST, "--port", str(settings.agent_server_port),
         "--n-gpu-layers", "999", "--ctx-size", str(context), "--jinja",
     ]
 

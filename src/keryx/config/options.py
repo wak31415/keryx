@@ -439,7 +439,7 @@ def _codex_env(settings: Settings) -> dict[str, str]:
     return env
 
 
-#: A blank `CODEX_MODEL` is Codex choosing. `SUBAGENT_MODEL` has no such option: it is a
+#: A blank `CODEX_MODEL` is Codex choosing. `CLAUDE_MODEL` has no such option: it is a
 #: plain string with a default, and blank names no model at all.
 CODEX_DEFAULT = Option("", "Codex's default")
 
@@ -531,10 +531,10 @@ PROVIDERS: dict[str, Callable[[Settings, Sources], Found]] = {
     "OPENAI_TRANSCRIPTION_MODEL": transcription_models,
     "OPENAI_WEB_SEARCH_MODEL": web_search_models,
     "OPENAI_VOICE": realtime_voices,
-    "SUBAGENT_MODEL": claude_models,
+    "CLAUDE_MODEL": claude_models,
     "CODEX_MODEL": codex_models,
     "LOCAL_AGENT_MODEL": local_agent_models,
-    "LLM_SERVER_MODEL": served_models,
+    "AGENT_SERVER_MODEL": served_models,
     "VOICE_SERVER_VOICE": kokoro_voices,
     "VOICE_SERVER_STT": _speech("stt", VOICE_SERVER_STT),
     "VOICE_SERVER_TTS": _speech("tts", VOICE_SERVER_TTS),

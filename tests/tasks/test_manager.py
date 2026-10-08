@@ -246,7 +246,7 @@ async def test_dispatch_resolves_the_model_alias(make_harness):
     default = await dispatch(harness.manager)
 
     assert aliased.model == "claude-sonnet-5-5"
-    assert default.model == harness.settings.subagent_model
+    assert default.model == harness.settings.claude_model
 
 
 async def test_dispatch_records_the_default_agent_when_none_is_named(make_harness):

@@ -418,7 +418,7 @@ def _local_overview_check(settings: Settings) -> Check:
 def _local_server_checks(settings: Settings) -> list[Check]:
     """The servers `keryx setup` runs here: the model on disk and the programs installed."""
     checks = []
-    if settings.llm_server_model:
+    if settings.agent_server_model:
         severity: Severity = "hard" if settings.agent_backend == "local" else "soft"
         try:
             alias, path, _context = servers.llm_model(settings)
@@ -489,7 +489,7 @@ def endpoint_checks(settings: Settings, reach: EndpointReach | None = None) -> l
         for warning in warnings(agent)
     ]
     # A server Keryx runs here is started from the app; one elsewhere is only an address.
-    ours = agent.base_url in (f"http://{servers.HOST}:{settings.llm_server_port}/v1",
+    ours = agent.base_url in (f"http://{servers.HOST}:{settings.agent_server_port}/v1",
                               f"{OLLAMA_URL}/v1")
     model_fix = "models:choose" if ours else fixes.setting("LOCAL_AGENT_MODEL")
     if reach is None:

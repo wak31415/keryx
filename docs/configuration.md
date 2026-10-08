@@ -28,8 +28,13 @@ only those marked *yes* below, until you say otherwise with `keryx config unlock
 every setting that is a line of defence (who may call, the approval allowlist, filing
 issues in public, spending caps, deletion, the network, the debug switches). Nothing unlocks them.
 
-**In the Mac app** the settings are on eight tabs, and each section below names its own:
-General, Voice, Agents, Local Models, Phone, Approvals, Integrations, System.
+**In the Mac app** most settings are on the Configuration screen's seven tabs, and each
+section below names its own:
+General, Voice, Agents, Phone, Approvals, Integrations, System.
+The voice's models and this machine's model servers are on screens of their own instead:
+the Voice screen and the Local Models screen.
+Each is the one place its settings are changed, and Configuration's search still finds
+them and takes you there.
 A tab opens on its *key* settings — what you set to get a first call working, or change
 from time to time, how long your calls and tasks are kept and how many tasks a day may
 run included — and keeps the rest under an *Advanced* disclosure: tuning and internals,
@@ -43,19 +48,44 @@ In the Mac app: the Voice tab.
 | Setting | Title | In the app | Default | Service may change | What it is |
 |---|---|---|---|---|---|
 | `OPENAI_API_KEY` | OpenAI API key | key | (secret) | never | OpenAI API key with Realtime access: the voice, unless `VOICE_BASE_URL` names a server of your own, and the voice model's `web_search`. |
-| `OPENAI_REALTIME_MODEL` | Realtime model | key | `gpt-realtime-2.1` | no | The realtime speech-to-speech model a call runs on. |
 | `ASSISTANT_NAME` | Assistant name | key | `Lyra` | yes | What the assistant on the phone is called: the name it answers to and introduces itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or `marin`. |
-| `OPENAI_VOICE` | Assistant voice | key | `` | yes | The Realtime voice the assistant speaks in. Empty is the assistant's own (`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail to open. |
-| `OPENAI_TRANSCRIPTION_MODEL` | Transcription model | advanced | `gpt-4o-mini-transcribe` | no | Transcribes what the caller says, for the call log. |
 | `TRANSCRIPTION_LANGUAGE` | Transcription language | key | `` | yes | The language you speak on a call, as an ISO-639-1 code (`en`, `de`, `fr`), for the call log's transcription — which `recall` and the memory read. Empty lets the transcriber guess each turn. The voice model itself hears the audio either way. |
 | `CLOCK_FORMAT` | Clock format | key | `24h` | yes | How the voice prompt writes the time of day (`14:05` or `2:05 PM`), and so how the assistant tends to say it. |
 | `OPENAI_WEB_SEARCH_MODEL` | Web search model | advanced | `gpt-6-luna` | no | Answers the voice model's own `web_search` tool, through the Responses API (the Realtime API has no hosted search tool). |
+
+## OpenAI Realtime tuning
+
+In the Mac app: the Voice tab.
+
+| Setting | Title | In the app | Default | Service may change | What it is |
+|---|---|---|---|---|---|
+| `OPENAI_TRANSCRIPTION_MODEL` | Transcription model | advanced | `gpt-4o-mini-transcribe` | no | Transcribes what the caller says, for the call log. |
 | `VAD_MODE` | Turn detection | advanced | `semantic` | yes | How the assistant decides you have finished: `semantic` waits on whether the sentence sounds finished, so a pause to think does not cut you off; `server` is a plain silence timer of `VAD_SILENCE_MS`. |
 | `VAD_EAGERNESS` | Reply eagerness | advanced | `medium` | yes | Semantic mode only: `low` waits longest, `high` jumps in soonest, `auto` is `medium`. |
 | `VAD_SILENCE_MS` | Silence to end a turn (ms) | advanced | `1200` | yes | Server mode only: the silence, in milliseconds, that ends a turn. |
 | `VAD_THRESHOLD` | Speech threshold | advanced | `0.5` | yes | Server mode only: how loud counts as speech (0 to 1). |
 | `VAD_PREFIX_MS` | Audio before speech (ms) | advanced | `300` | yes | Server mode only: audio kept from before speech was detected, so the first syllable is not clipped. |
 | `NOISE_REDUCTION` | Noise reduction | advanced | `auto` | yes | Background-noise suppression on what the model hears; `auto` picks `near_field` for a phone and `far_field` for a microphone across the room. Mostly about barge-in: noise mistaken for speech is noise that cuts the assistant off. |
+
+## Voice models
+
+In the Mac app: the Voice screen.
+
+| Setting | Title | In the app | Default | Service may change | What it is |
+|---|---|---|---|---|---|
+| `OPENAI_REALTIME_MODEL` | Realtime model | key | `gpt-realtime-2.1` | no | The realtime speech-to-speech model a call runs on. |
+| `OPENAI_VOICE` | Assistant voice | key | `` | yes | The Realtime voice the assistant speaks in. Empty is the assistant's own (`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail to open. |
+| `VOICE_MODE` | Where the voice runs | key |  | never | Where a call's voice runs: `openai` is OpenAI Realtime, `here` the speech pipeline on this machine (`VOICE_SERVER_*`), `server` a Realtime server elsewhere (`VOICE_BASE_URL`). Blank is worked out from `VOICE_BASE_URL`, as it was before this was a setting: blank is OpenAI, this machine's voice port is here, any other address a server. |
+| `VOICE_BASE_URL` | Voice server URL | key |  | never | A voice server of your own that speaks the OpenAI Realtime protocol, as its `…/v1` address (`http://127.0.0.1:8765/v1` is the one `keryx setup` installs). Blank is OpenAI. |
+| `VOICE_API_KEY` | Voice server API key | key | (secret) | never | The Bearer key for that voice server, when it checks one. |
+| `VOICE_SERVER_STT` | Speech-to-text model | key | `parakeet-tdt` | no | How the local voice server hears: speech-to-speech's `--stt` (`parakeet-tdt`, `whisper`, …). |
+| `VOICE_LLM` | Voice LLM | key | `shared` | never | Where the words of a voice running here come from: `shared` is the local agent's model on its server, `here` a model of the voice's own (`VOICE_LLM_MODEL`) on a server of its own on this machine, `remote` a server elsewhere (`VOICE_LLM_BASE_URL`) — a box of yours, or a cloud's Responses API. |
+| `VOICE_LLM_MODEL` | Voice LLM model | key |  | no | The voice LLM's model. With `VOICE_LLM=here`, a name from `keryx models list` or a GGUF file's path, served under that name; with `remote`, the server's own name for it. Not read while the voice LLM is shared. |
+| `VOICE_LLM_BASE_URL` | Voice LLM server URL | key |  | never | With `VOICE_LLM=remote`, the server the voice's words go to, as its `…/v1` address (`https://api.openai.com/v1` for OpenAI's). |
+| `VOICE_LLM_API_KEY` | Voice LLM API key | key | (secret) | never | The Bearer key for that server, when it checks one. Blank sends `OPENAI_API_KEY` only when the address is OpenAI's own, and no key of yours anywhere else. |
+| `VOICE_SERVER_TTS` | Text-to-speech model | key | `kokoro` | no | How the local voice server speaks: speech-to-speech's `--tts` (`kokoro`, `qwen3`, …). |
+| `VOICE_SERVER_VOICE` | Kokoro voice | key | `af_heart` | no | The Kokoro voice the local voice server speaks in (`af_heart`, `bm_george`, …; `keryx models list` shows them). |
+| `VOICE_SERVER_ARGS` | Extra voice server flags | advanced | `` | never | More flags for `speech-to-speech serve`, as a command line — a smaller speech model (`--stt_model_name openai/whisper-base`), a TTS speed. Never a key: it is on argv. |
 
 ## Coding agents
 
@@ -68,32 +98,34 @@ In the Mac app: the Agents tab.
 | `SUBAGENT_TIMEOUT_S` | Time limit per task (seconds) | advanced | `10800` | yes | The longest one subagent run may take, on any agent, in seconds; 0 is no limit. |
 | `ANTHROPIC_API_KEY` | Anthropic API key | key | (secret) | never | Claude, paid per token. Set, it wins over the subscription. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Claude subscription token | key | (secret) | never | Claude on your subscription, for a machine with no browser: the token `claude setup-token` prints. Blank uses the stored `claude` login. |
-| `SUBAGENT_MODEL` | Claude model | key | `claude-opus-5-5` | yes | The model a Claude task runs on when none is named. |
+| `CLAUDE_MODEL` | Claude model | key | `claude-opus-5-5` | yes | The model a Claude task runs on when none is named. |
 | `SUBAGENT_MAX_TURNS` | Turns per task | advanced | `200` | no | Agent turns one Claude task may take. |
 | `SUBAGENT_MAX_BUDGET_USD` | Budget per task (USD) | advanced | `10` | never | Dollars one Claude task may spend: a runaway cap. On a subscription it is the SDK's estimate of what the task would have cost, not a charge. |
 | `CODEX_API_KEY` | Codex API key | key | (secret) | never | Codex, paid per token. Keryx logs in with it once, into its own `CODEX_HOME`; `OPENAI_API_KEY` is never used for Codex. |
 | `CODEX_ACCESS_TOKEN` | Codex subscription token | key | (secret) | never | Codex on your ChatGPT plan, for a machine with no browser. Blank uses the stored `codex login`. |
 | `CODEX_MODEL` | Codex model | key |  | yes | The model a Codex task runs on; blank is Codex's own default. |
 
-## Local and self-hosted models
+## Local agent
 
-In the Mac app: the Local Models tab.
+In the Mac app: the Agents tab.
 
 | Setting | Title | In the app | Default | Service may change | What it is |
 |---|---|---|---|---|---|
-| `VOICE_BASE_URL` | Voice server URL | advanced |  | never | A voice server of your own that speaks the OpenAI Realtime protocol, as its `…/v1` address (`http://127.0.0.1:8765/v1` is the one `keryx setup` installs). Blank is OpenAI. |
-| `VOICE_API_KEY` | Voice server API key | advanced | (secret) | never | The Bearer key for that voice server, when it checks one. |
 | `LOCAL_AGENT_BASE_URL` | Local agent server URL | advanced |  | never | An inference server for the `local` agent — Ollama, llama.cpp, vLLM, LM Studio — as `http://gpu-box:11434` or its `…/v1` address. Blank is no local agent. |
 | `LOCAL_AGENT_API_KEY` | Local agent API key | advanced | (secret) | never | The Bearer key for that server, when it checks one. The owner's Anthropic and OpenAI credentials are never sent there. |
 | `LOCAL_AGENT_MODEL` | Local agent model | key |  | yes | The model a `local` task runs on, by the server's own name for it. |
 | `LOCAL_AGENT_API` | Local agent harness | advanced | `anthropic-messages` | yes | Which harness drives the local model: `anthropic-messages` runs it inside Claude Code, `openai-responses` inside Codex. The server must speak that API. |
-| `LLM_SERVER_MODEL` | Model to serve | key |  | no | The model the local llama.cpp server runs: a name from `keryx models list`, or a GGUF file's path. Blank runs none. |
-| `LLM_SERVER_PORT` | Model server port | advanced | `8090` | no | The port the local llama.cpp server binds, on 127.0.0.1. |
+
+## Model servers on this machine
+
+In the Mac app: the Local Models screen.
+
+| Setting | Title | In the app | Default | Service may change | What it is |
+|---|---|---|---|---|---|
+| `AGENT_SERVER_MODEL` | Agent model to serve | key |  | no | The model the local agent's llama.cpp server on this machine runs: a name from `keryx models list`, or a GGUF file's path. Blank runs none. |
+| `AGENT_SERVER_PORT` | Agent model server port | advanced | `8090` | no | The port the local agent's llama.cpp server binds, on 127.0.0.1. |
 | `VOICE_SERVER_PORT` | Voice server port | advanced | `8765` | no | The port the local voice server binds, on 127.0.0.1. |
-| `VOICE_SERVER_STT` | Speech-to-text model | key | `parakeet-tdt` | no | How the local voice server hears: speech-to-speech's `--stt` (`parakeet-tdt`, `whisper`, …). |
-| `VOICE_SERVER_TTS` | Text-to-speech model | key | `kokoro` | no | How the local voice server speaks: speech-to-speech's `--tts` (`kokoro`, `qwen3`, …). |
-| `VOICE_SERVER_VOICE` | Kokoro voice | key | `af_heart` | no | The Kokoro voice the local voice server speaks in (`af_heart`, `bm_george`, …; `keryx models list` shows them). |
-| `VOICE_SERVER_ARGS` | Extra voice server flags | advanced | `` | never | More flags for `speech-to-speech serve`, as a command line — a smaller speech model (`--stt_model_name openai/whisper-base`), a TTS speed. Never a key: it is on argv. |
+| `VOICE_LLM_SERVER_PORT` | Voice LLM server port | advanced | `8091` | no | The port the voice LLM's own llama.cpp server binds, on 127.0.0.1, with `VOICE_LLM=here`. |
 
 ## Owner, callers and PIN
 

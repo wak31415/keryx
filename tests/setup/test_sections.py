@@ -274,16 +274,18 @@ def test_recommended_keeps_every_default_and_says_what_the_service_may_change(ma
 
 
 def test_manual_asks_each_setting_by_type_and_saves_only_changes(make_ctx):
-    answers = [("sensible default", "manual"), ("Which groups", ["voice"])]
-    for name, info in Settings.model_fields.items():
-        extra = info.json_schema_extra or {}
-        if extra.get("group") != "voice" or not info.repr:
-            continue
-        key = name.upper()
-        if key in sections.NOT_MANUAL:
-            continue
-        answer = {"OPENAI_VOICE": "marin", "VAD_MODE": "server", "VAD_SILENCE_MS": "900"}
-        answers.append((key, answer.get(key, DEFAULT)))
+    groups = ["voice_model", "realtime"]
+    answers = [("sensible default", "manual"), ("Which groups", groups)]
+    for group in groups:
+        for name, info in Settings.model_fields.items():
+            extra = info.json_schema_extra or {}
+            if extra.get("group") != group or not info.repr:
+                continue
+            key = name.upper()
+            if key in sections.NOT_MANUAL:
+                continue
+            answer = {"OPENAI_VOICE": "marin", "VAD_MODE": "server", "VAD_SILENCE_MS": "900"}
+            answers.append((key, answer.get(key, DEFAULT)))
     answers.append(("may the running service change", DEFAULT))
     ctx = make_ctx(answers)
 

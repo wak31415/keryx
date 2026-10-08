@@ -215,7 +215,7 @@ saying so is welcome.
 |---|---|
 | `VOICE_BASE_URL`, `VOICE_API_KEY` | a voice server of your own; blank is OpenAI |
 | `LOCAL_AGENT_BASE_URL`, `LOCAL_AGENT_API_KEY`, `LOCAL_AGENT_MODEL`, `LOCAL_AGENT_API` | the `local` agent's server, key, model and harness |
-| `LLM_SERVER_MODEL`, `LLM_SERVER_PORT` | the model `keryx-llm` serves here, and its port |
+| `AGENT_SERVER_MODEL`, `AGENT_SERVER_PORT` | the model `keryx-llm` serves here, and its port |
 | `VOICE_SERVER_PORT`, `VOICE_SERVER_STT`, `VOICE_SERVER_TTS`, `VOICE_SERVER_VOICE`, `VOICE_SERVER_ARGS` | the voice server `keryx-voice` runs here |
 
 All of them are in [configuration.md](configuration.md), under "Local and self-hosted models".

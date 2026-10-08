@@ -28,8 +28,8 @@ def test_a_first_model_is_served_on_a_port_found_free(settings):
 
     assert asked == [8090]
     assert values == {
-        "LLM_SERVER_MODEL": CODER.key,
-        "LLM_SERVER_PORT": 8091,
+        "AGENT_SERVER_MODEL": CODER.key,
+        "AGENT_SERVER_PORT": 8091,
         "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8091/v1",
         "LOCAL_AGENT_MODEL": CODER.key,
         "LOCAL_AGENT_API_KEY": None,
@@ -39,13 +39,13 @@ def test_a_first_model_is_served_on_a_port_found_free(settings):
 
 def test_a_model_server_already_ours_keeps_its_port(settings):
     """Its own port is taken by itself: asking would move it for nothing."""
-    settings.llm_server_model = "gpt-oss-20b"
-    settings.llm_server_port = 8095
+    settings.agent_server_model = "gpt-oss-20b"
+    settings.agent_server_port = 8095
 
     values = use.llama_values(settings, "/models/mine.gguf", "mine", free_port=never)
 
-    assert values["LLM_SERVER_PORT"] == 8095
-    assert values["LLM_SERVER_MODEL"] == "/models/mine.gguf"
+    assert values["AGENT_SERVER_PORT"] == 8095
+    assert values["AGENT_SERVER_MODEL"] == "/models/mine.gguf"
     assert values["LOCAL_AGENT_BASE_URL"] == "http://127.0.0.1:8095/v1"
     assert values["LOCAL_AGENT_MODEL"] == "mine"
 
@@ -90,7 +90,7 @@ def test_with_nothing_set_up_every_server_is_absent_and_nothing_is_asked(setting
 
 
 def test_a_model_server_and_a_voice_here_are_asked_whether_they_answer(settings):
-    settings.llm_server_model = CODER.key
+    settings.agent_server_model = CODER.key
     settings.voice_base_url = "http://127.0.0.1:8765/v1"
     settings.local_agent_base_url = "http://127.0.0.1:8090/v1"
     settings.local_agent_model = CODER.key
@@ -199,7 +199,7 @@ def test_an_address_that_is_not_one_is_not_reachable():
 
 def test_a_model_server_that_is_up_but_not_serving_its_model_says_so(settings):
     """The setting says which model ought to be served; `served_model` is what is."""
-    settings.llm_server_model = CODER.key
+    settings.agent_server_model = CODER.key
 
     status = use.server_status(settings, installed=lambda kind: True,
                                probe=lambda url: (True, None), which=lambda name: None)

@@ -46,14 +46,14 @@ def llama_values(
     `alias`, and point the local agent at it.
 
     The port is kept when the model server is already ours — the port is taken by itself —
-    and otherwise asked for, from `LLM_SERVER_PORT` up, so it never lands on another's.
+    and otherwise asked for, from `AGENT_SERVER_PORT` up, so it never lands on another's.
     """
-    port = settings.llm_server_port
-    if not settings.llm_server_model:
+    port = settings.agent_server_port
+    if not settings.agent_server_model:
         port = free_port(port)
     return {
-        "LLM_SERVER_MODEL": model,
-        "LLM_SERVER_PORT": port,
+        "AGENT_SERVER_MODEL": model,
+        "AGENT_SERVER_PORT": port,
         "LOCAL_AGENT_BASE_URL": f"http://{HOST}:{port}/v1",
         "LOCAL_AGENT_MODEL": alias,
         **messages_harness(),
@@ -80,14 +80,14 @@ def server_status(
     """The model server, the voice server and the local agent, as the settings describe
     them and as the machine finds them. `installed` is asked "llm" or "voice"; `probe` is
     asked a `…/v1` address, and only when the settings name one. No key is in it."""
-    model = settings.llm_server_model
-    llm_url = f"http://{HOST}:{settings.llm_server_port}/v1" if model else None
+    model = settings.agent_server_model
+    llm_url = f"http://{HOST}:{settings.agent_server_port}/v1" if model else None
     llm_up, served = probe(llm_url) if llm_url else (False, None)
     voice_url = settings.voice_base_url or None
     return {
         "llm": {
             "model": model,
-            "port": settings.llm_server_port,
+            "port": settings.agent_server_port,
             "url": llm_url,
             "binary": runtimes.llama_server(settings.cache_dir, lookup=which),
             "unit_installed": installed("llm"),
