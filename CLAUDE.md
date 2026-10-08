@@ -201,8 +201,11 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   "message", "detail", "units": [{"kind", "unit", "state"}]}`, `state` one of `running`,
   `stopped`, `not-installed`, `failed`; exit 0, 1 when a unit failed (what the manager said,
   redacted, in `detail`), 2 refused. A unit counts as installed when it is loaded *or* its
-  unit file is on disk, `service --json` too: a stopped launchd job is unknown to launchd,
-  and still installed
+  unit file is on disk (`restart.service.is_present`), in `service --json`, `status
+  --json`, `doctor` and the setup plan alike: a stopped launchd job is unknown to launchd,
+  and still installed — `doctor`'s "Background process" says "installed, not running",
+  failed, fix `service:start`, so the app starts it rather than reinstall it.
+  `is_installed` keeps meaning loaded, for `restart` and `migrate`, which act on the job
 - Models on this machine: `uv run keryx models list [--json]` (the catalog against this
   machine's GPU and memory, the recommended one marked, and the local voices; `--json` adds
   `servers`, the model and voice servers' units and whether they answer, asked on loopback

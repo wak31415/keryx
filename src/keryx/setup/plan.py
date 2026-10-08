@@ -81,7 +81,7 @@ class Step:
     soft_missing_counts: bool = True
     #: Whether a soft check that failed holds the step back. Most are warnings that leave
     #: calls working (a voice server over http on the LAN); the phone's webhook pointing
-    #: elsewhere and a PIN file that is no PIN are not.
+    #: elsewhere, a PIN file that is no PIN and a Keryx stopped by its owner are not.
     soft_failed_counts: bool = False
     #: Why it is not done, when the wizard holds it back with no check to say so.
     offer: str = ""
@@ -99,7 +99,7 @@ STEPS: tuple[Step, ...] = (
     Step("phone", "Phone", "phone", required=True, after=("owner",), soft_failed_counts=True,
          deferrable=True),
     Step("service", "Background service", "service", required=True,
-         after=("phone", "voice", "agents"), deferrable=True),
+         after=("phone", "voice", "agents"), deferrable=True, soft_failed_counts=True),
     Step("local", "Local models", "local", soft_missing_counts=False,
          offer="Optional: the voice and the coding agent can run on this Mac."),
     Step("google", "Google", "google"),
@@ -116,9 +116,9 @@ _BY_ID = {step.id: step for step in STEPS}
 
 def _service_active(settings: Settings) -> bool:
     """Whether the installed unit is running, asked from outside as `keryx status` asks."""
-    from keryx.restart.service import is_active, resolve_target
+    from keryx.restart.service import is_active, is_present, resolve_target
 
-    target = resolve_target(settings, from_outside=True)
+    target = resolve_target(settings, from_outside=True, installed=is_present)
     return target is not None and is_active(target)
 
 

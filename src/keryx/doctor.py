@@ -64,7 +64,13 @@ from keryx.localmodels import runtimes, servers
 from keryx.localmodels.server import OLLAMA_URL
 from keryx.logging_util import mask_number
 from keryx.realtime.openai import realtime_problem
-from keryx.restart.service import INSTALLERS, candidate_target, resolve_target
+from keryx.restart.service import (
+    INSTALLERS,
+    candidate_target,
+    is_present,
+    is_stopped,
+    resolve_target,
+)
 
 Severity = Literal["hard", "soft"]
 
@@ -772,10 +778,13 @@ def service_manager_check(settings: Settings) -> Check:
 
     Asked from outside, like `keryx restart`: `doctor` runs in a terminal, never inside
     the unit, so the question is whether the unit is installed — not merely whether its
-    manager's command is on PATH, which on Linux it nearly always is.
+    manager's command is on PATH, which on Linux it nearly always is. Installed is loaded
+    *or* its unit file on disk (`is_present`): a Keryx `keryx service stop` stopped is
+    installed and not running, failed, and the app's answer is to start it, not install.
     """
     candidate = candidate_target(settings)
-    target = resolve_target(settings, from_outside=True) if candidate is not None else None
+    target = (resolve_target(settings, from_outside=True, installed=is_present)
+              if candidate is not None else None)
     if target is None:
         refused = "`keryx restart` and the voice's restart_service refuse"
         fix: str | None = None
@@ -797,6 +806,17 @@ def service_manager_check(settings: Settings) -> Check:
             unset=True,
             hint=hint,
             fix=fix,
+        )
+    if is_stopped(target):
+        return Check(
+            "background process",
+            False,
+            f"{target.unit} is installed, not running — Keryx is stopped, and does not "
+            "start at login until it is started again",
+            severity="soft",
+            section="service",
+            hint="`keryx service start` starts it",
+            fix="service:start",
         )
     detail = target.describe()
     if shutil.which("git") is None:

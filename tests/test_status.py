@@ -12,6 +12,7 @@ from keryx.app import TASK_DB_NAME
 from keryx.approvals.broker import KILL_SWITCH_NAME, STATE_DIR_NAME
 from keryx.config import Settings
 from keryx.continuity.memory import memory_path
+from keryx.restart import service
 from keryx.restart.service import ServiceTarget
 from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
 from keryx.status import StatusProbes, build_status, failed_status, format_status
@@ -282,7 +283,29 @@ def test_the_default_probes_ask_from_outside_the_unit(monkeypatch, settings):
     monkeypatch.setattr(status, "resolve_target", resolve)
 
     assert status.default_probes().target(settings) == TARGET
-    assert seen == {"from_outside": True}
+    # Installed as `service --json` and `doctor` mean it: loaded, or its unit file kept.
+    assert seen == {"from_outside": True, "installed": service.is_present}
+
+
+def test_a_keryx_its_owner_stopped_is_installed_and_not_active_as_service_says(
+    monkeypatch, settings
+):
+    """`status --json` and `service --json` agree on a booted-out job whose plist is kept."""
+    from keryx import units
+
+    target = ServiceTarget("launchd", "dev.keryx.agent")
+    plist = service.unit_file(target)
+    plist.parent.mkdir(parents=True)
+    plist.write_text("<plist/>")
+    monkeypatch.setattr(service, "candidate_target", lambda settings, **_: target)
+    monkeypatch.setattr(service, "is_active", lambda target, **_: False)
+    probes = dataclasses.replace(status.default_probes(), health=lambda settings: None)
+
+    part = build_status(settings, probes=probes)["service"]
+    agent = units.status(settings, platform="darwin")["units"]["agent"]
+
+    assert (part["installed"], part["active"]) == (True, False)
+    assert (agent["installed"], agent["active"]) == (part["installed"], part["active"])
 
 
 # --- version, restart, assistant, agents, approvals ---------------------------------------

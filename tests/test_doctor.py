@@ -450,6 +450,43 @@ def test_a_service_manager_with_nothing_installed_is_not_a_tick(healthy, monkeyp
     assert "restart_service" in check.text
 
 
+def stopped_by_the_owner(settings, monkeypatch):
+    """`keryx service stop` done: the agent's plist kept, launchd holding it unloaded."""
+    from keryx.restart.service import ServiceTarget, unit_file
+
+    monkeypatch.setattr("shutil.which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr("keryx.restart.service.is_installed", lambda target, **_: False)
+    plist = unit_file(ServiceTarget("launchd", "dev.keryx.agent"))
+    plist.parent.mkdir(parents=True, exist_ok=True)
+    plist.write_text("<plist/>")
+    return settings.model_copy(update={"service_manager": "launchd"})
+
+
+def test_a_keryx_its_owner_stopped_is_installed_not_running_and_started_not_installed(
+    healthy, monkeypatch
+):
+    settings = stopped_by_the_owner(healthy, monkeypatch)
+
+    check = by_name(run_doctor_checks(settings))["background process"]
+
+    assert (check.ok, check.state, check.severity) == (False, "failed", "soft")
+    assert check.detail.startswith("dev.keryx.agent is installed, not running")
+    assert check.fix == "service:start" and "keryx service start" in check.hint
+
+
+def test_an_auto_manager_finds_a_stopped_unit_by_its_file(healthy, monkeypatch):
+    """`auto` from outside asks whether it is installed: a plist on disk says so."""
+    from keryx.restart import service
+
+    settings = stopped_by_the_owner(healthy, monkeypatch).model_copy(
+        update={"service_manager": "auto"})
+    monkeypatch.setattr(service, "candidate_target",
+                        lambda settings, **_: service.ServiceTarget("launchd",
+                                                                    "dev.keryx.agent"))
+
+    assert by_name(run_doctor_checks(settings))["background process"].fix == "service:start"
+
+
 def test_nothing_supervising_the_process_is_a_warning_that_says_what_is_lost(healthy):
     """`SERVICE_MANAGER=none` is a supported way to run; the consequence is just silent."""
     settings = healthy.model_copy(update={"service_manager": "none"})

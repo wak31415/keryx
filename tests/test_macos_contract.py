@@ -127,6 +127,9 @@ AWAITING = {
     "config options ASSISTANT_NAME --json", "setup mark phone --json", AUTH_SMOKE,
     *SERVICE_CONTROL,
 }
+#: The fix ids the CLI can send that the app has yet to name: `service:start`, for a Keryx
+#: `keryx service stop` stopped (`doctor`'s "installed, not running").
+AWAITING_FIX_IDS = {"service:start"}
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
 STDIN = {"pin set --json": "482915\n482915\n", "config verify KEY --json": "sk-typed\n"}
@@ -589,7 +592,10 @@ def test_the_contract_names_every_stream_the_app_reads_as_json_lines():
 
 
 def test_what_awaits_the_contract_is_something_the_cli_prints():
+    from keryx import fixes
+
     assert set(AWAITING) <= COMMANDS | set(STREAMS)
+    assert AWAITING_FIX_IDS <= fixes.ACTIONS
 
 
 @pytest.mark.parametrize("command", sorted(COMMANDS))
@@ -1339,7 +1345,10 @@ def test_the_app_knows_exactly_the_fix_ids_the_cli_can_send():
     ids = contract().get("fix_ids")
     if ids is None:
         pytest.skip("the contract does not name the fix ids yet")
-    assert set(ids["actions"]) == set(fixes.ACTIONS)
+    # An id the app has yet to name may be missing from the contract, and nothing more.
+    named = set(ids["actions"])
+    assert named <= set(fixes.ACTIONS), f"not sent by the CLI: {sorted(named - fixes.ACTIONS)}"
+    assert set(fixes.ACTIONS) - AWAITING_FIX_IDS <= named
     assert set(ids["signins"]) == set(fixes.SIGNINS)
     assert set(ids["prefixes"]) == set(fixes.PREFIXES)
 

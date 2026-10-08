@@ -162,6 +162,21 @@ def test_a_service_installed_and_stopped_failed(plan_of, set_up):
     assert service["fix"] == service["checks"][-1]["fix"] == "service:install"
 
 
+def test_a_keryx_its_owner_stopped_is_failed_with_start_as_its_fix(plan_of, set_up,
+                                                                    monkeypatch):
+    stopped = Check("background process", False, "dev.keryx.agent is installed, not running",
+                    severity="soft", section="service", fix="service:start")
+    monkeypatch.setattr("keryx.doctor.service_manager_check", lambda settings: stopped)
+
+    plan = plan_of(active=False)
+
+    service = steps(plan)["service"]
+    assert (service["state"], service["fix"], plan["ready"]) == (FAILED, "service:start", False)
+    assert service["why"] == "Background process: dev.keryx.agent is installed, not running."
+    # Not "install": the running check, whose fix that is, is not added beside it.
+    assert [check["title"] for check in service["checks"]].count("Keryx running") == 0
+
+
 def test_a_pin_left_to_the_first_call_is_done(plan_of, signed_out):
     assert steps(plan_of())["pin"]["state"] == NEEDED
 
@@ -571,12 +586,15 @@ def test_the_service_is_asked_from_outside_whether_it_runs(monkeypatch, make_ctx
 
     target = ServiceTarget("launchd", "dev.keryx.agent")
     asked = []
-    monkeypatch.setattr("keryx.restart.service.resolve_target",
-                        lambda settings, from_outside: asked.append(from_outside) or target)
+    def resolve(settings, from_outside, installed):
+        asked.append((from_outside, installed.__name__))  # a stopped unit is still one
+        return target
+
+    monkeypatch.setattr("keryx.restart.service.resolve_target", resolve)
     monkeypatch.setattr("keryx.restart.service.is_active", lambda found: found is target)
 
     assert setup_plan._service_active(make_ctx([]).settings) is True
-    assert asked == [True]
+    assert asked == [(True, "is_present")]
 
     monkeypatch.setattr("keryx.restart.service.resolve_target", lambda settings, **_: None)
     assert setup_plan._service_active(make_ctx([]).settings) is False
