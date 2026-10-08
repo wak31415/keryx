@@ -237,7 +237,7 @@ def start(
     if script is None:
         voice.no_installer(report, problem)
         return REFUSED
-    if not _have_llama(settings, probes, report, platform=platform):
+    if not have_llama(settings, probes, report, platform=platform):
         return FAILED
     here = endpoint(settings)
     # The unit guarded from its install to the check, with no moment between unguarded.
@@ -271,7 +271,7 @@ def _not_ready(settings: Settings) -> str | None:
     return None
 
 
-def _have_llama(settings: Settings, probes: Probes, report: StartReport, *, platform: str
+def have_llama(settings: Settings, probes: Probes, report: StartReport, *, platform: str
                 ) -> bool:
     """llama.cpp's `llama-server` here, installed when it was missing; False once told."""
     found = probes.llama_server(settings.cache_dir)

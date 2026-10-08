@@ -20,7 +20,7 @@ import httpx
 
 from keryx.config import Settings
 from keryx.endpoints import Endpoint
-from keryx.localmodels import runtimes
+from keryx.localmodels import catalog, runtimes
 from keryx.localmodels.servers import HOST, free_port_avoiding
 from keryx.restart import service
 from keryx.restart.service import ServiceTarget
@@ -70,6 +70,21 @@ def voice_llm_port(settings: Settings, *, free_port: Callable[[int], int]) -> in
     agent's model server's or the voice server's, whether or not they are running."""
     return free_port_avoiding(free_port, settings.voice_llm_server_port,
                               {settings.agent_server_port, settings.voice_server_port})
+
+
+def agent_memory_gb(settings: Settings) -> float | None:
+    """The memory the local agent's model takes on this machine: its catalog figure while it
+    is served here (llama.cpp's `AGENT_SERVER_MODEL`, or Ollama's copy of a catalog model on
+    loopback), 0 while none is (no local agent, or one elsewhere), and None for one served
+    here whose size Keryx cannot tell (a GGUF of your own, another model on a server here)."""
+    if settings.agent_server_model:
+        entry = catalog.by_key(settings.agent_server_model)
+        return entry.memory_gb if entry is not None else None
+    agent = settings.local_agent_endpoint
+    if agent is None or not agent.is_loopback:
+        return 0.0
+    entry = next((e for e in catalog.MODELS if e.ollama == settings.local_agent_model), None)
+    return entry.memory_gb if entry is not None else None
 
 
 def enable_local(settings: Settings, *, default: bool) -> dict[str, Any]:

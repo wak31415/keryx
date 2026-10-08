@@ -51,6 +51,7 @@ In the Mac app: the Voice tab.
 | `ASSISTANT_NAME` | Assistant name | key | `Lyra` | yes | What the assistant on the phone is called: the name it answers to and introduces itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or `marin`. |
 | `TRANSCRIPTION_LANGUAGE` | Transcription language | key | `` | yes | The language you speak on a call, as an ISO-639-1 code (`en`, `de`, `fr`), for the call log's transcription — which `recall` and the memory read. Empty lets the transcriber guess each turn. The voice model itself hears the audio either way. |
 | `CLOCK_FORMAT` | Clock format | key | `24h` | yes | How the voice prompt writes the time of day (`14:05` or `2:05 PM`), and so how the assistant tends to say it. |
+| `VOICE_PIPELINE` | Voice pipeline | advanced |  | never | How a call's voice is built: `speech-to-speech`, one model that hears and speaks (OpenAI, or a Realtime server elsewhere), or `three-model`, speech-to-text, an LLM and text-to-speech (the voice here). Blank is the only one `VOICE_MODE` offers today; one it does not offer is refused. |
 | `OPENAI_WEB_SEARCH_MODEL` | Web search model | advanced | `gpt-6-luna` | no | Answers the voice model's own `web_search` tool, through the Responses API (the Realtime API has no hosted search tool). |
 
 ## OpenAI Realtime tuning

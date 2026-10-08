@@ -12,12 +12,16 @@ from wording import for_the_app
 from keryx import cli
 from keryx.cli import app
 from keryx.config.store import ConfigStore
-from keryx.localmodels import runtimes, servers, speech, use, voice
+from keryx.localmodels import hardware, runtimes, servers, speech, use, voice
+from keryx.localmodels.hardware import Hardware
 
 runner = CliRunner()
 WORDS = {"LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1",
          "LOCAL_AGENT_MODEL": "qwen3-coder-30b-a3b"}
 TERMINAL = {"done", "error", "cancelled"}
+#: A machine too small for a voice LLM of the voice's own beside anything (6 GB for models):
+#: a first `voice use here` keeps the words on the local agent's model, as before.
+SMALL = Hardware("metal", "Apple silicon", 0.0, 8.0)
 
 
 class Machine:
@@ -93,6 +97,7 @@ def machine(monkeypatch, tmp_path, every_agent_installed):
     monkeypatch.setattr("keryx.realtime.openai.realtime_problem",
                         lambda endpoint: found.realtimes.append(endpoint) or found.realtime)
     monkeypatch.setattr("keryx.localmodels.hardware.free_bytes", lambda path: 10**12)
+    monkeypatch.setattr(hardware, "detect", lambda: SMALL)
     return found
 
 
@@ -189,9 +194,10 @@ def test_use_openai_forgets_the_voice_server(machine):
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {
-        "saved": {"VOICE_BASE_URL": None, "VOICE_API_KEY": None}, "restart_needed": True,
+        "saved": {"VOICE_MODE": "openai", "VOICE_BASE_URL": None, "VOICE_API_KEY": None},
+        "restart_needed": True,
     }
-    assert ConfigStore().stored() == {}
+    assert ConfigStore().stored() == {"VOICE_MODE": "openai"}
 
 
 def test_use_openai_in_words_says_what_it_needs(machine, monkeypatch):
@@ -231,7 +237,8 @@ def test_use_server_kept_anyway_with_its_key_from_stdin(machine):
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {
-        "saved": {"VOICE_BASE_URL": "https://voice.example.com/v1", "VOICE_API_KEY": "(set)"},
+        "saved": {"VOICE_MODE": "server", "VOICE_BASE_URL": "https://voice.example.com/v1",
+                  "VOICE_API_KEY": "(set)"},
         "problem": cli.SERVER_REFUSED,
         "detail": "could not open voice.example.com's Realtime socket", "warnings": [],
         "restart_needed": True,
@@ -246,12 +253,14 @@ def test_use_server_that_answers_is_saved_with_its_warnings(machine):
 
     assert result.exit_code == 0
     document = json.loads(result.stdout)
-    assert document["saved"] == {"VOICE_BASE_URL": "http://192.168.1.20:8765/v1"}
+    assert document["saved"] == {"VOICE_MODE": "server",
+                                 "VOICE_BASE_URL": "http://192.168.1.20:8765/v1"}
     assert document["problem"] is None and document["restart_needed"] is True
     assert document["detail"] is None
     [warning] = document["warnings"]
     assert "spoken PIN" in warning
-    assert ConfigStore().stored() == {"VOICE_BASE_URL": "http://192.168.1.20:8765/v1"}
+    assert ConfigStore().stored() == {"VOICE_MODE": "server",
+                                      "VOICE_BASE_URL": "http://192.168.1.20:8765/v1"}
 
 
 def test_use_server_keeps_the_stored_key_and_asks_with_it(machine):
@@ -262,7 +271,8 @@ def test_use_server_keeps_the_stored_key_and_asks_with_it(machine):
     result = runner.invoke(app, ["voice", "use", "server", "https://voice.example.com", "--json"])
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)["saved"] == {"VOICE_BASE_URL": "https://voice.example.com/v1"}
+    assert json.loads(result.stdout)["saved"] == {"VOICE_MODE": "server",
+                                                  "VOICE_BASE_URL": "https://voice.example.com/v1"}
     assert [endpoint.api_key for endpoint in machine.realtimes] == ["vk-stored"]
     assert ConfigStore()._secrets()["VOICE_API_KEY"] == "vk-stored"
     assert "vk-stored" not in result.output
@@ -300,7 +310,8 @@ def test_use_server_clear_key_forgets_it_and_asks_without_one(machine):
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["saved"] == {
-        "VOICE_BASE_URL": "http://192.168.1.20:8765/v1", "VOICE_API_KEY": None,
+        "VOICE_MODE": "server", "VOICE_BASE_URL": "http://192.168.1.20:8765/v1",
+        "VOICE_API_KEY": None,
     }
     assert "VOICE_API_KEY" not in ConfigStore()._secrets()
     assert [endpoint.api_key for endpoint in machine.realtimes] == [None]
@@ -356,7 +367,11 @@ def test_use_here_streams_its_steps_then_done(machine):
     assert machine.scripts[1][1:] == ["--voice"]
     settings = ConfigStore().stored()
     assert settings["VOICE_SERVER_VOICE"] == "bm_george"
+    # `VOICE_MODE` says it; the loopback address too, for one release, for a build behind.
+    assert settings["VOICE_MODE"] == "here"
     assert settings["VOICE_BASE_URL"] == "http://127.0.0.1:8765/v1"
+    # A first set-up on a machine with no room for a second model keeps the agent's words.
+    assert settings["VOICE_LLM"] == "shared"
 
 
 def test_use_here_with_its_models_downloaded_goes_straight_on(machine):

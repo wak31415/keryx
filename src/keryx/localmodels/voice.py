@@ -1,9 +1,10 @@
 """The voice on a call: where it is, and setting it up — `keryx voice`, `keryx voice use …`
 and the wizard's Local models section, which share every step here.
 
-Three places a call's voice can be, as `mode` names them: OpenAI's Realtime API (`openai`,
-`VOICE_BASE_URL` blank), speech-to-speech on this machine (`here`, `VOICE_BASE_URL` the
-loopback address of `VOICE_SERVER_PORT`) and a server elsewhere (`server`).
+Three places a call's voice can be, as `mode` names them (`Settings.voice_mode`): OpenAI's
+Realtime API (`openai`), speech-to-speech on this machine (`here`) and a server elsewhere
+(`server`). Each `voice use` writes `VOICE_MODE` (`as_mode`); `here` also writes the loopback
+`VOICE_BASE_URL` for one release, so a build rolled back still finds its voice.
 
 `here` is the long one: install speech-to-speech when it is missing, download its speech
 models when they are not in the cache (as `download` does, through the same steps), save its
@@ -32,7 +33,7 @@ import re
 import signal
 import subprocess
 import sys
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,7 @@ import httpx
 
 from keryx.child_env import operational_env, redact_known
 from keryx.config import Settings
+from keryx.config.settings import PIPELINES
 from keryx.config.store import FROM_DEFAULT, ConfigStore
 from keryx.endpoints import Endpoint, warnings
 from keryx.localmodels import catalog, hardware, runtimes, servers, speech, use
@@ -60,8 +62,13 @@ VOICE_START_S = 1200.0
 #: How long a voice server elsewhere may take to say it is there, for `keryx voice`: a
 #: Realtime handshake is too slow for a poll, so its model list is asked instead.
 SERVER_REACH_S = 2.0
-#: What `needs` says while there is no local model for the voice server's words.
+#: What `needs` says while there is no local model for the voice server's words, the
+#: voice LLM shared with the local agent…
 NEEDS_WORDS = "local_agent_model"
+#: …and while the voice LLM of its own (`here`) or elsewhere (`remote`) names none.
+NEEDS_VOICE_LLM = "voice_llm"
+#: What a terminal runs to choose a voice LLM of the voice's own.
+NO_VOICE_LLM_HINT = "`keryx voice llm here MODEL` or `keryx voice llm remote URL --model M`"
 NO_WORDS = "Set up a local model first: the voice server takes its words from it."
 #: …and what a terminal runs for it.
 NO_WORDS_HINT = "`keryx models use NAME` sets one up"
@@ -191,6 +198,54 @@ def words_model(settings: Settings) -> str | None:
     return endpoint.model if endpoint is not None and endpoint.model else None
 
 
+def needs(settings: Settings) -> str | None:
+    """What the voice here lacks before it could answer a call with words: the local agent's
+    model while the voice LLM is shared (`NEEDS_WORDS`), a voice LLM while it is its own or
+    elsewhere and names none (`NEEDS_VOICE_LLM`), or None."""
+    if words_model(settings) is not None:
+        return None
+    return NEEDS_WORDS if settings.voice_llm == "shared" else NEEDS_VOICE_LLM
+
+
+def llm_status(
+    settings: Settings,
+    *,
+    installed: Callable[[str], bool],
+    words_up: Callable[[Endpoint | None], bool],
+    voice_llm_up: Callable[[Endpoint | None], bool],
+) -> dict[str, Any]:
+    """The voice LLM, as `keryx voice --json` says it: its source, its model and address,
+    whether it answers, and whether its own unit is installed. One on this machine is asked
+    on loopback only — its own server whether it serves its model — and one elsewhere only
+    while the voice is here, the one voice that asks it for words; null when not asked, or
+    there is no address. No key is in it."""
+    endpoint = settings.voice_llm_endpoint
+    source = settings.voice_llm
+    reachable: bool | None = None
+    if endpoint is not None and (endpoint.is_loopback or mode(settings) == HERE):
+        reachable = (voice_llm_up if source == "here" else words_up)(endpoint)
+    return {
+        "source": source,
+        "model": words_model(settings),
+        "url": endpoint.base_url if endpoint is not None else None,
+        "reachable": reachable,
+        "unit_installed": installed("voice_llm"),
+    }
+
+
+def words_line(document: dict[str, Any]) -> str:
+    """`keryx voice`'s line for the voice's words, from its `--json` document."""
+    llm, yes = document["llm"], {True: "yes", False: "no", None: "not asked"}
+    if llm["model"] is None:
+        if llm["source"] == "shared":
+            return f"its words: {NO_WORDS} {NO_WORDS_HINT}"
+        return f"its words: {NO_VOICE_LLM} {NO_VOICE_LLM_HINT}"
+    where = {"shared": "the local agent's model",
+             "here": "a model of its own, on its own server here",
+             "remote": "a server elsewhere"}[llm["source"]]
+    return f"its words: {llm['model']}, {where}, at {llm['url']} (answers: {yes[llm['reachable']]})"
+
+
 def status(
     settings: Settings,
     *,
@@ -199,10 +254,14 @@ def status(
     probe: Callable[[str], tuple[bool, str | None]],
     server_reachable: Callable[[Endpoint], bool],
     models_ready: Callable[[Settings], bool] | None = None,
+    llm_up: Callable[[Endpoint | None], bool] | None = None,
+    own_llm_up: Callable[[Endpoint | None], bool] | None = None,
 ) -> dict[str, Any]:
     """`keryx voice --json`. The voice server here is asked on loopback only (`probe`); a
     server elsewhere only when it is the voice; its speech models in the Hugging Face cache
-    (`models_ready`, `speech.models_ready` unless a caller says). No key is in it."""
+    (`models_ready`, `speech.models_ready` unless a caller says); the voice LLM as
+    `llm_status` asks it (`llm_up`, `own_llm_up`: `words_up`, `voice_llm_up` unless a caller
+    says); and the pipelines each mode offers (`PIPELINES`). No key is in it."""
     where = mode(settings)
     elsewhere = settings.voice_endpoint if where == SERVER else None
     port = settings.voice_server_port
@@ -227,10 +286,13 @@ def status(
             "tts": settings.voice_server_tts,
             "models_ready": (models_ready or speech.models_ready)(settings),
         },
-        "needs": NEEDS_WORDS if words is None else None,
+        "needs": needs(settings),
         "server": {
             "reachable": server_reachable(elsewhere) if elsewhere is not None else None,
         },
+        "llm": llm_status(settings, installed=installed, words_up=llm_up or words_up,
+                          voice_llm_up=own_llm_up or voice_llm_up),
+        "pipelines": {name: list(offered) for name, offered in PIPELINES.items()},
     }
 
 
@@ -283,9 +345,18 @@ def current_voice(settings: Settings, store: ConfigStore) -> str:
 # --- OpenAI, and a server elsewhere --------------------------------------------------------
 
 
-def to_openai() -> dict[str, Any]:
+def as_mode(settings: Settings, where: str) -> dict[str, Any]:
+    """What says the voice is `where` (`VOICE_MODE`), written by every `voice use`; with
+    `VOICE_PIPELINE` cleared when that mode does not offer it, which the store would refuse."""
+    values: dict[str, Any] = {"VOICE_MODE": where}
+    if settings.voice_pipeline is not None and settings.voice_pipeline not in PIPELINES[where]:
+        values["VOICE_PIPELINE"] = None
+    return values
+
+
+def to_openai(settings: Settings) -> dict[str, Any]:
     """What makes OpenAI's Realtime API the voice again."""
-    return {"VOICE_BASE_URL": None, "VOICE_API_KEY": None}
+    return {**as_mode(settings, OPENAI), "VOICE_BASE_URL": None, "VOICE_API_KEY": None}
 
 
 @dataclass(frozen=True)
@@ -297,9 +368,10 @@ class ServerCheck:
     warnings: list[str]
     problem: str | None
 
-    def values(self, *, with_key: bool = True) -> dict[str, Any]:
+    def values(self, settings: Settings, *, with_key: bool = True) -> dict[str, Any]:
         """What makes it the voice; without `with_key`, the stored key is left as it is."""
-        values: dict[str, Any] = {"VOICE_BASE_URL": self.endpoint.base_url}
+        values: dict[str, Any] = {**as_mode(settings, SERVER),
+                                  "VOICE_BASE_URL": self.endpoint.base_url}
         if with_key:
             values["VOICE_API_KEY"] = self.endpoint.api_key or None
         return values
@@ -330,6 +402,7 @@ def here(
     root: Path,
     no_words: str = NO_WORDS,
     platform: str | None = None,
+    also_save: Mapping[str, Any] | None = None,
 ) -> int:
     """Make speech-to-speech on this machine the voice; the exit code.
 
@@ -341,6 +414,7 @@ def here(
     anything that stopped it, 0 once the server answered and was saved as the voice. A
     half-done install is left for the next run to finish; a unit whose server did not come
     up, or whose start was cancelled, is not, and a download that stopped installs none.
+    `also_save` is saved with the voice, once it answers (the first set-up's `VOICE_LLM`).
     """
     if not _have_words(settings, probes, report, no_words=no_words):
         return REFUSED
@@ -391,7 +465,9 @@ def here(
         report.error(did_not_come_up("The voice server", removed), detail=f"{problem}; {removed}",
                      log=settings.state_dir / "logs" / "keryx-voice.err.log")
         return FAILED
-    if not save({"VOICE_BASE_URL": endpoint.base_url, "VOICE_API_KEY": None}):
+    # `VOICE_MODE` says it; the loopback address too, for one release, for a build behind.
+    if not save({**as_mode(settings, HERE), "VOICE_BASE_URL": endpoint.base_url,
+                 "VOICE_API_KEY": None, **(also_save or {})}):
         return FAILED
     report.done(endpoint.base_url)
     return OK

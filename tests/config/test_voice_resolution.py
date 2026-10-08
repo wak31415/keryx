@@ -321,3 +321,61 @@ def test_a_server_at_openais_own_address_keeps_openais_voice_and_transcription()
     assert settings.voice_mode == "server"
     assert settings.voice == "marin"
     assert settings.voice_transcription_model == TRANSCRIBE
+
+
+# --- VOICE_PIPELINE: what each mode offers ---------------------------------------------------
+
+
+@pytest.mark.parametrize(("values", "pipeline"), [
+    ({}, "speech-to-speech"),
+    ({"voice_base_url": HERE_URL}, "three-model"),
+    ({"voice_base_url": SERVER_URL}, "speech-to-speech"),
+    ({"voice_mode_explicit": "here", "voice_pipeline": "three-model"}, "three-model"),
+])
+def test_the_pipeline_is_the_one_set_else_the_modes_only_one(values, pipeline):
+    settings = _settings(**values)
+
+    assert settings.pipeline == pipeline and settings.voice_pipeline_problem() is None
+
+
+def test_a_blank_pipeline_is_unset():
+    assert _settings(voice_pipeline="  ").voice_pipeline is None
+
+
+@pytest.mark.parametrize(("stored", "written"), [
+    ({}, {"VOICE_PIPELINE": "three-model"}),  # openai, derived
+    ({"VOICE_MODE": "here"}, {"VOICE_PIPELINE": "speech-to-speech"}),
+    ({"VOICE_MODE": "here", "VOICE_PIPELINE": "three-model"}, {"VOICE_MODE": "server"}),
+])
+def test_a_pipeline_the_mode_does_not_offer_is_refused_when_written(stored, written):
+    from keryx.config.store import ConfigError, ConfigStore
+
+    store = ConfigStore()
+    if stored:
+        store.set(stored)
+    before = store.stored()
+
+    with pytest.raises(ConfigError, match=r"^VOICE_PIPELINE \S+ is not offered with VOICE_MODE "
+                                          r"\w+, which offers [\w-]+: choose that, or leave it "
+                                          r"blank\.$"):
+        store.set(written)
+    assert store.stored() == before
+
+
+def test_a_pipeline_the_mode_offers_is_saved():
+    from keryx.config.store import ConfigStore
+
+    store = ConfigStore()
+    store.set({"VOICE_MODE": "here", "VOICE_PIPELINE": "three-model"})
+    store.set({"VOICE_PIPELINE": None})
+
+    assert store.stored() == {"VOICE_MODE": "here"}
+
+
+def test_the_pipeline_is_the_owners_alone():
+    from keryx.config import permissions
+    from keryx.config.store import ConfigError, ConfigStore
+
+    assert "VOICE_PIPELINE" in permissions.PROTECTED_KEYS
+    with pytest.raises(ConfigError, match="VOICE_PIPELINE"):
+        ConfigStore().set({"VOICE_PIPELINE": "speech-to-speech"}, actor=permissions.SERVICE)

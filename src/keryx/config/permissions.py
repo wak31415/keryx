@@ -80,6 +80,7 @@ PROTECTED_PATTERNS = (
     # sent elsewhere by a choice of mode rather than an address.
     "VOICE_MODE",
     "VOICE_LLM",
+    "VOICE_PIPELINE",
     # Flags for the local voice server, which could bind it beyond this machine.
     "VOICE_SERVER_ARGS",
     # Development switches, every one of which turns a check off.

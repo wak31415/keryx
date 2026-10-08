@@ -56,11 +56,34 @@ uv run keryx voice                   # where the voice is, and the voice server 
 uv run keryx voice use here          # --voice bm_george; installs, starts and waits for it
 uv run keryx voice use server http://gpu-box:8765 --key-stdin   # a new key, on stdin
 uv run keryx voice use openai        # back to OpenAI's Realtime API
+
+uv run keryx voice llm here qwen3.5-4b       # the voice's own model, on its own server here
+uv run keryx voice llm remote https://api.openai.com/v1 --model gpt-5-mini  # or a box of yours
+uv run keryx voice llm shared                # the local agent's model again
+uv run keryx models start --voice-llm        # start the voice LLM's server for its model
 ```
 
 `keryx voice use here` is the wizard's local voice, step for step (the same code): it needs
 its voice LLM first, answering, for the words — the local agent's model unless `VOICE_LLM`
-says otherwise — and a clone of Keryx, for the unit's installer.
+says otherwise — and a clone of Keryx, for the unit's installer. Each `voice use` saves
+`VOICE_MODE`; `here` also saves the loopback `VOICE_BASE_URL`, for one release, so a Keryx
+rolled back still finds its voice. The first time a voice is set up here, with `VOICE_LLM`
+never chosen, Keryx chooses it: a small model of the voice's own (`qwen3.5-9b`, else
+`qwen3.5-4b`) when the agent's model, it and the speech models' 3 GB fit in what this
+machine gives models, brought up before the voice; otherwise the local agent's (`shared`).
+A `VOICE_LLM` anyone has set is never changed, and an install whose voice is already here
+keeps `shared`.
+
+`keryx voice llm here MODEL` downloads the model when it is not on disk, installs llama.cpp
+when it is missing, installs the voice LLM's unit on a port of its own, waits for it and
+checks that it serves the model — and only then saves `VOICE_LLM=here`, so the voice keeps
+its words until the new ones answer; a server that does not come up has its unit removed,
+and the model and port it was given are put back. `keryx voice llm remote URL --model M`
+saves a server elsewhere once it lists the model, asked with its key (`--key-stdin`
+replaces it, `--clear-key` forgets it) or, on OpenAI's own address, `OPENAI_API_KEY`.
+`remote` and `shared` remove the voice LLM's own unit, which would otherwise hold its model in
+memory. None of them restarts a voice server that is running: `keryx voice use here` does,
+and each says when it is needed.
 `keryx voice use server` saves a server only once it has opened a Realtime session, unless
 `--keep-anyway`. The key already saved is kept and asked with, unless `--key-stdin` replaces
 it or `--clear-key` forgets it. Either way Keryx takes the new voice up when it restarts.
@@ -102,8 +125,16 @@ terminal, `scripts/install-launchd.sh --llm` (or `install-systemd.sh`) still ins
 `keryx voice --json` is `mode` (`openai`, `here` or `server`), `base_url`, `realtime_model`,
 `voice`, `assistant`, `openai_key_set`, `here` (speech-to-speech on this machine: `installed`,
 `program`, `voice`, `port`, `unit_installed`, `reachable` — asked on loopback only — and
-`words_model`), `needs` (`local_agent_model` while there is no local model for its words) and
-`server.reachable` (asked only while a server elsewhere is the voice). `keryx voice use openai
+`words_model`, the voice LLM's), `needs` (`local_agent_model` while the voice LLM is shared
+and there is no local model, `voice_llm` while one of its own or elsewhere names none),
+`server.reachable` (asked only while a server elsewhere is the voice), `llm` (`source`,
+`model`, `url`, `reachable` — its own server whether it serves its model, one elsewhere only
+while the voice is here, else null — and `unit_installed`) and `pipelines` (what each mode
+offers `VOICE_PIPELINE`: `openai` and `server` `["speech-to-speech"]`, `here`
+`["three-model"]`). `keryx voice llm shared|here|remote … --json` and `keryx models start
+--voice-llm --json` print JSON lines as `models start --json` does; `voice llm`'s `done` is
+`source`, `model`, `url` and `voice_restart_needed`, and `models start --voice-llm`'s is
+`url` and `served_model`. `keryx voice use openai
 --json` prints `{"saved": …, "restart_needed": true}`, and `voice use server URL --json` adds
 `problem` and `warnings` — with a problem and no `--keep-anyway` it saves nothing, says
 `"saved": null`, and exits 1. A key is shown as `(set)`, never itself. `keryx voice use here

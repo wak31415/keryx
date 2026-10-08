@@ -153,6 +153,29 @@ def fits(entry: ModelEntry, hardware: Hardware, *, reserve_gb: float = 0.0) -> b
     return entry.memory_gb + reserve_gb <= hardware.model_memory_gb
 
 
+#: The models a voice LLM of the voice's own is offered first, the one most worth having
+#: first: small enough to sit beside the agent's model, and quick to answer. A model of the
+#: owner's own choosing is any other name or a GGUF path (`keryx voice llm here MODEL`).
+VOICE_LLM_MODELS: tuple[str, ...] = ("qwen3.5-9b", "qwen3.5-4b")
+
+
+def voice_llm_pick(hardware: Hardware, *, agent_gb: float | None) -> ModelEntry | None:
+    """The owner's rule for a new install (D2): the first of `VOICE_LLM_MODELS` that fits
+    beside the agent's model (`agent_gb`, 0 when none runs here) and the speech models —
+    agent + voice LLM + `VOICE_SERVER_GB` within what `hardware` gives a model — or None,
+    which keeps the voice on the local agent's model (`VOICE_LLM=shared`). None too when the
+    agent's model runs here and its size cannot be told (`agent_gb` None): the voice is not
+    given a second model that may not fit."""
+    if agent_gb is None:
+        return None
+    for key in VOICE_LLM_MODELS:
+        entry = by_key(key)
+        assert entry is not None, key  # the list names catalog models only
+        if agent_gb + entry.memory_gb + VOICE_SERVER_GB <= hardware.model_memory_gb:
+            return entry
+    return None
+
+
 def recommend(hardware: Hardware, *, reserve_gb: float = 0.0) -> ModelEntry | None:
     """The tested model when it fits, else the largest that does; None when nothing does."""
     fitting = [entry for entry in MODELS if fits(entry, hardware, reserve_gb=reserve_gb)]

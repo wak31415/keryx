@@ -177,12 +177,37 @@ def test_here_installs_saves_installs_the_unit_starts_and_only_then_is_the_voice
     assert log.of("wait") == [("realtime", "http://127.0.0.1:8765/v1",
                                voice.VOICE_READY_START_S)]
     assert voice.VOICE_READY_START_S == 180.0
+    # `VOICE_MODE` says it; the loopback address too, for a build rolled back to read.
     assert saved == [
         {"VOICE_SERVER_VOICE": "af_heart", "VOICE_SERVER_PORT": 8765},
-        {"VOICE_BASE_URL": "http://127.0.0.1:8765/v1", "VOICE_API_KEY": None},
+        {"VOICE_MODE": "here", "VOICE_BASE_URL": "http://127.0.0.1:8765/v1",
+         "VOICE_API_KEY": None},
     ]
     assert log.of("done") == [("http://127.0.0.1:8765/v1",)]
     assert log.of("error") == [] and log.of("warn") == []
+
+
+def test_here_saves_what_it_is_also_given_with_the_voice_and_only_then(settings, root):
+    """The first set-up's `VOICE_LLM`: saved with the voice once it answers, never before."""
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update=WORDS), FakeMachine(log, s2s="/b/s2s"),
+                           log, root, also_save={"VOICE_LLM": "shared"})
+
+    assert code == 0
+    assert [values.get("VOICE_LLM") for values in saved] == [None, "shared"]
+    assert saved[-1]["VOICE_MODE"] == "here"
+
+
+def test_here_that_does_not_come_up_saves_nothing_it_was_also_given(settings, root):
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update=WORDS),
+                           FakeMachine(log, s2s="/b/s2s", server_problem="no socket"), log,
+                           root, also_save={"VOICE_LLM": "shared"})
+
+    assert code == 1
+    assert all("VOICE_LLM" not in values and "VOICE_MODE" not in values for values in saved)
 
 
 def test_here_already_installed_skips_the_install(settings, root):
@@ -953,10 +978,11 @@ def test_a_server_elsewhere_is_warned_about_and_asked_for_a_session():
     assert log.of("warn") == [(check.warnings[0],)]
     assert log.of("realtime") == [("http://192.168.1.20:8765/v1", "vk")]
     assert log.kinds().index("step") < log.kinds().index("realtime")
-    assert check.values() == {"VOICE_BASE_URL": "http://192.168.1.20:8765/v1",
-                              "VOICE_API_KEY": "vk"}
+    assert check.values(Settings()) == {"VOICE_MODE": "server",
+                                        "VOICE_BASE_URL": "http://192.168.1.20:8765/v1",
+                                        "VOICE_API_KEY": "vk"}
     blank = voice.check_server("http://gpu:8765", "", probes=machine, report=Recorder(Log()))
-    assert blank.values()["VOICE_API_KEY"] is None
+    assert blank.values(Settings())["VOICE_API_KEY"] is None
 
 
 def test_an_address_with_credentials_in_it_is_refused():
@@ -966,7 +992,24 @@ def test_an_address_with_credentials_in_it_is_refused():
 
 
 def test_openai_is_no_voice_server_and_no_key_for_one():
-    assert voice.to_openai() == {"VOICE_BASE_URL": None, "VOICE_API_KEY": None}
+    assert voice.to_openai(Settings()) == {"VOICE_MODE": "openai", "VOICE_BASE_URL": None,
+                                           "VOICE_API_KEY": None}
+
+
+@pytest.mark.parametrize(("where", "pipeline", "cleared"), [
+    ("openai", "three-model", True), ("server", "three-model", True),
+    ("here", "speech-to-speech", True), ("here", "three-model", False),
+    ("openai", "speech-to-speech", False), ("openai", None, False),
+])
+def test_each_mode_clears_a_pipeline_it_does_not_offer(where, pipeline, cleared):
+    """The store refuses a `VOICE_PIPELINE` the mode does not offer, so moving the voice
+    takes one the new mode would not have along with it."""
+    values = voice.as_mode(Settings(voice_pipeline=pipeline), where)
+
+    assert values["VOICE_MODE"] == where
+    assert ("VOICE_PIPELINE" in values) is cleared
+    if cleared:
+        assert values["VOICE_PIPELINE"] is None
 
 
 # --- status --------------------------------------------------------------------------------
@@ -974,19 +1017,26 @@ def test_openai_is_no_voice_server_and_no_key_for_one():
 
 class Asked:
     def __init__(self, *, program=None, unit=False, up=False, server=True,
-                 ready=False) -> None:
+                 ready=False, llm_unit=False, words=True, own=True) -> None:
         self.program, self.unit, self.up, self.server = program, unit, up, server
-        self.ready = ready
+        self.ready, self.llm_unit, self.words, self.own = ready, llm_unit, words, own
         self.probed: list[str] = []
         self.servers: list[Endpoint] = []
+        #: The voice LLM's servers asked, as (which probe, its address).
+        self.llms: list[tuple[str, str]] = []
 
     def status(self, settings):
         return voice.status(
             settings, program=lambda: self.program,
-            installed=lambda kind: kind == "voice" and self.unit,
+            installed=lambda kind: (kind == "voice" and self.unit
+                                    or kind == "voice_llm" and self.llm_unit),
             probe=lambda url: self.probed.append(url) or (self.up, None),
             server_reachable=lambda endpoint: self.servers.append(endpoint) or self.server,
             models_ready=lambda settings: self.ready,
+            llm_up=lambda endpoint: self.llms.append(("words", endpoint.base_url))
+            or self.words,
+            own_llm_up=lambda endpoint: self.llms.append(("own", endpoint.base_url))
+            or self.own,
         )
 
 
@@ -1005,6 +1055,10 @@ def test_status_on_openai_without_a_local_model_needs_one(settings):
                  "models_ready": False},
         "needs": "local_agent_model",
         "server": {"reachable": None},
+        "llm": {"source": "shared", "model": None, "url": None, "reachable": None,
+                "unit_installed": False},
+        "pipelines": {"openai": ["speech-to-speech"], "here": ["three-model"],
+                      "server": ["speech-to-speech"]},
     }
     assert asked.servers == []  # nothing elsewhere is asked when it is not the voice
 
@@ -1024,6 +1078,52 @@ def test_status_here_is_the_voice_server_on_this_machine(settings):
                                 "tts": "kokoro", "models_ready": True}
     assert document["needs"] is None and document["server"] == {"reachable": None}
     assert asked.probed == ["http://127.0.0.1:8765/v1"]
+    assert document["llm"] == {"source": "shared", "model": "qwen3-coder-30b-a3b",
+                               "url": "http://127.0.0.1:8090/v1", "reachable": True,
+                               "unit_installed": False}
+    assert asked.llms == [("words", "http://127.0.0.1:8090/v1")]
+
+
+def test_status_says_a_voice_llm_of_its_own_and_asks_its_server_what_it_serves(settings):
+    asked = Asked(llm_unit=True, own=False)
+    own = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": "qwen3.5-4b"})
+
+    document = asked.status(own)
+
+    assert document["llm"] == {"source": "here", "model": "qwen3.5-4b",
+                               "url": "http://127.0.0.1:8091/v1", "reachable": False,
+                               "unit_installed": True}
+    assert asked.llms == [("own", "http://127.0.0.1:8091/v1")]
+    assert document["needs"] is None and document["here"]["words_model"] == "qwen3.5-4b"
+
+
+@pytest.mark.parametrize("update", [
+    {"voice_llm": "here"},
+    {"voice_llm": "remote", "voice_llm_model": "gpt-5-mini"},
+    {"voice_llm": "remote", "voice_llm_base_url": "https://api.openai.com/v1"},
+])
+def test_status_needs_a_voice_llm_while_one_of_its_own_names_none(settings, update):
+    """Not the local agent's model: the voice LLM is the voice's own, or elsewhere."""
+    document = Asked().status(settings.model_copy(update={**WORDS, **update}))
+
+    assert document["needs"] == "voice_llm"
+    assert document["llm"]["model"] is None and document["here"]["words_model"] is None
+
+
+@pytest.mark.parametrize(("mode", "asked_it"), [("openai", False), ("here", True)])
+def test_status_asks_a_voice_llm_elsewhere_only_while_the_voice_is_here(settings, mode,
+                                                                        asked_it):
+    asked = Asked(words=True)
+    there = settings.model_copy(update={
+        "voice_llm": "remote", "voice_llm_base_url": "https://api.openai.com/v1",
+        "voice_llm_model": "gpt-5-mini", "voice_mode_explicit": mode})
+
+    llm = asked.status(there)["llm"]
+
+    assert llm["source"] == "remote" and llm["url"] == "https://api.openai.com/v1"
+    assert llm["reachable"] is (True if asked_it else None)
+    assert asked.llms == ([("words", "https://api.openai.com/v1")] if asked_it else [])
+    assert "sk-test" not in str(llm)
 
 
 def test_status_server_asks_the_server_and_never_says_its_key(settings):

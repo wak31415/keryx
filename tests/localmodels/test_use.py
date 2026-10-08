@@ -334,3 +334,20 @@ def test_each_server_is_its_own_unit(platform, kind, target):
 def test_a_platform_with_no_service_manager_has_no_unit():
     assert use.unit_installed("llm", platform="win32", is_installed=never) is False
 
+
+
+# --- what the agent's model takes on this machine ------------------------------------------
+
+
+@pytest.mark.parametrize(("update", "gb"), [
+    ({}, 0.0),  # no local agent
+    ({"agent_server_model": "qwen3-coder-30b-a3b"}, 25),
+    ({"agent_server_model": "/models/own.gguf"}, None),
+    ({"local_agent_base_url": "http://gpu-box:11434/v1", "local_agent_model": "big"}, 0.0),
+    ({"local_agent_base_url": "http://127.0.0.1:11434/v1",
+      "local_agent_model": "hf.co/ggml-org/gpt-oss-20b-GGUF:MXFP4"}, 16),
+    ({"local_agent_base_url": "http://127.0.0.1:1234/v1", "local_agent_model": "lm-studio"},
+     None),
+])
+def test_the_agents_model_is_sized_only_when_it_runs_here(settings, update, gb):
+    assert use.agent_memory_gb(settings.model_copy(update=update)) == gb

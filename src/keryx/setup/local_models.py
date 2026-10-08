@@ -392,7 +392,7 @@ def _voice_elsewhere(ctx: SetupContext) -> None:
         ui.error(check.problem)
         if not ui.confirm("Keep it anyway? Calls will not open until it answers.", default=False):
             return
-    if ctx.save(check.values()):
+    if ctx.save(check.values(settings)):
         _after_voice(ctx)
 
 
@@ -403,7 +403,7 @@ def _after_voice(ctx: SetupContext) -> None:
 
 
 def _voice_to_openai(ctx: SetupContext) -> None:
-    if ctx.settings.voice_base_url and ctx.save(voice.to_openai()):
+    if ctx.settings.voice_mode != voice.OPENAI and ctx.save(voice.to_openai(ctx.settings)):
         ctx.ui.success("calls use OpenAI's Realtime API again")
         if not ctx.settings.openai_key:
             ctx.ui.note("It needs OPENAI_API_KEY: the Voice section takes it.")

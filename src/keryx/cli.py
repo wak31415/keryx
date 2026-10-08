@@ -87,6 +87,7 @@ from keryx.localmodels import (
     speech,
     use,
     voice,
+    voice_llm,
 )
 from keryx.logging_util import mask_number
 from keryx.notify.twilio_out import TwilioAdmin
@@ -157,6 +158,11 @@ voice_use_app = typer.Typer(
     help="Make OpenAI, a voice server elsewhere, or this machine the voice."
 )
 voice_app.add_typer(voice_use_app, name="use")
+voice_llm_app = typer.Typer(
+    help="Where the words of a voice running here come from: the local agent's model, a "
+    "model of the voice's own on this machine, or a server elsewhere."
+)
+voice_app.add_typer(voice_llm_app, name="llm")
 service_app = typer.Typer(
     help="Keryx's services — itself, its tunnel, the model and voice servers: whether each is "
     "installed and running, and installing or removing them."
@@ -1253,6 +1259,12 @@ def models_start(
         typer.Option("--runtime", help="llama (llama.cpp, installed when it is missing) or "
                      "ollama (its own copy of the model, pulled)."),
     ] = server.LLAMA,
+    voice_llm_unit: Annotated[
+        bool,
+        typer.Option("--voice-llm", help="The voice LLM's own server instead, for the model "
+                     "VOICE_LLM_MODEL already names (`keryx voice llm here MODEL` chooses "
+                     "one); llama.cpp only."),
+    ] = False,
     as_json: Annotated[
         bool,
         typer.Option("--json", help="Print it as JSON lines: each step, then how it ended."),
@@ -1262,12 +1274,14 @@ def models_start(
 
     llama.cpp is installed when it is missing, then the model server's unit, then Keryx
     waits for the model to load. The model comes first: `keryx models pull NAME`, then
-    `keryx models use NAME`. A server that does not come up has its unit removed.
+    `keryx models use NAME`. A server that does not come up has its unit removed. With
+    --voice-llm, the same for the voice LLM's own server; nothing is saved.
     """
     if not as_json:
         _owner_only(RUN_THE_MODEL_SERVER)
         try:
-            code = _models_start(_configure_readonly(), runtime, server.TextSteps(typer.echo))
+            code = _models_start(_configure_readonly(), runtime, server.TextSteps(typer.echo),
+                                 voice_llm_unit=voice_llm_unit)
         except KeyboardInterrupt:
             typer.echo("cancelled: `keryx models start` again picks up where this stopped",
                        err=True)
@@ -1280,17 +1294,26 @@ def models_start(
         if refusal := _owner_refusal(RUN_THE_MODEL_SERVER):
             events.error(refusal)
             return 1
-        return _models_start(_configure_readonly(refuse=events.error), runtime, events)
+        return _models_start(_configure_readonly(refuse=events.error), runtime, events,
+                             voice_llm_unit=voice_llm_unit)
 
     with pull.terminate_as_interrupt():
         code = events.guard(run)
     raise typer.Exit(code)
 
 
-def _models_start(settings: Settings, runtime: str, report: server.StartReport) -> int:
+def _models_start(settings: Settings, runtime: str, report: server.StartReport, *,
+                  voice_llm_unit: bool = False) -> int:
     if runtime not in server.RUNTIMES:
         report.error(f"--runtime is {' or '.join(server.RUNTIMES)}, not {runtime}")
         return voice.REFUSED
+    if voice_llm_unit:
+        if runtime != server.LLAMA:
+            report.error("The voice LLM's own server runs on llama.cpp only.",
+                         detail="--voice-llm takes no --runtime ollama: an Ollama of yours "
+                                "is `keryx voice llm remote http://127.0.0.1:11434 --model M`")
+            return voice.REFUSED
+        return voice_llm.start(settings, server.machine(), report, root=repo_root())
     return server.start(settings, server.machine(), report, runtime=runtime,
                         save=_saver(ConfigStore(), settings, report), root=repo_root())
 
@@ -1308,14 +1331,16 @@ def voice_command(
     ctx: typer.Context,
     as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
 ) -> None:
-    """Where the voice on a call is, and the voice server on this machine."""
+    """Where the voice on a call is, the voice server on this machine, and where its words
+    come from (the voice LLM)."""
     if ctx.invoked_subcommand is not None:
         return
     settings = _configure_readonly()
     document = voice.status(settings, program=runtimes.speech_to_speech,
                             installed=use.unit_installed, probe=use.probe,
                             server_reachable=voice.server_reachable,
-                            models_ready=speech.models_ready)
+                            models_ready=speech.models_ready, llm_up=voice.words_up,
+                            own_llm_up=voice.voice_llm_up)
     if as_json:
         typer.echo(json.dumps(document, indent=2))
         return
@@ -1333,7 +1358,7 @@ def voice_command(
     typer.echo(f"speech-to-speech here: {here['program'] or 'not installed'}; voice "
                f"{here['voice']} on port {here['port']}; unit installed: "
                f"{yes[here['unit_installed']]}; answers: {yes[here['reachable']]}")
-    typer.echo(f"its words: {here['words_model'] or f'{voice.NO_WORDS} {voice.NO_WORDS_HINT}'}")
+    typer.echo(voice.words_line(document))
     typer.echo(f"its speech: {here['stt']} to hear, {here['tts']} to speak; downloaded: "
                f"{yes[here['models_ready']]}" + ("" if here["models_ready"] else
                                                   " (keryx voice download)"))
@@ -1361,10 +1386,10 @@ def voice_use_openai(
     _owner_only(CHOOSE_THE_VOICE)
     settings = _configure_readonly()
     if as_json:
-        saved = _store_values(voice.to_openai(), echo=False)
+        saved = _store_values(voice.to_openai(settings), echo=False)
         typer.echo(json.dumps({"saved": _shown(saved), "restart_needed": True}, indent=2))
         return
-    _store_values(voice.to_openai())
+    _store_values(voice.to_openai(settings))
     typer.echo("calls use OpenAI's Realtime API again; `keryx restart` to have Keryx take it up")
     if not settings.openai_key:
         typer.echo("it needs OPENAI_API_KEY: keryx config set OPENAI_API_KEY --stdin")
@@ -1419,7 +1444,7 @@ def voice_use_server(
             typer.echo("nothing saved: calls would not open until it answers "
                        "(--keep-anyway saves it all the same)", err=True)
         raise typer.Exit(1)
-    values = check.values(with_key=key_stdin or clear_key)
+    values = check.values(settings, with_key=key_stdin or clear_key)
     if not as_json:
         _store_values(values)
         typer.echo("next: `keryx restart`, to have Keryx take it up")
@@ -1456,7 +1481,9 @@ def voice_use_here(
     """Install speech-to-speech here, start it, and make it the voice once it answers.
 
     What `keryx setup` does for a voice on this machine, through the same steps. Its words
-    come from the local agent's model, so that comes first (`keryx models use NAME`).
+    come from the voice LLM (`keryx voice llm`), which must answer first. On the first
+    set-up, with VOICE_LLM never chosen, Keryx chooses it: a small model of the voice's own,
+    brought up first, when it fits beside the agent's model, else the local agent's.
     """
     if not as_json:
         _owner_only(CHOOSE_THE_VOICE)
@@ -1486,9 +1513,140 @@ def _voice_here(settings: Settings, name: str | None, report: voice.Report) -> i
         report.error(problem, detail=voice.VOICE_NAMES_HINT)
         return voice.REFUSED
     store = ConfigStore()
+    also: dict[str, Any] = {}
+    if voice_llm.first_set_up(settings, store.source_of("VOICE_LLM", settings)):
+        # The owner's rule for a new install: the voice LLM chosen once, and brought up first.
+        machine = voice_llm.machine()
+        pick = voice_llm.first_choice(settings, machine.hardware())
+        if pick is None:
+            also = {"VOICE_LLM": "shared"}
+        else:
+            code = voice_llm.bring_up(settings, pick.key, machine,
+                                      voice_llm.Under(report, voice_llm.VOICE_STEP),
+                                      save=_saver(store, settings, report), root=repo_root())
+            if code != voice.OK:
+                return code
+            settings = _configure_readonly()
     return voice.here(settings, voice.machine(), report, save=_saver(store, settings, report),
-                      root=repo_root(),
+                      root=repo_root(), also_save=also,
                       choose_voice=lambda: name or voice.current_voice(settings, store))
+
+
+# --- keryx voice llm -------------------------------------------------------------------
+
+
+#: What `voice llm` is, refused to the service: `VOICE_LLM` is protected.
+CHOOSE_THE_VOICE_LLM = "choose the voice LLM"
+
+
+def _voice_llm_stream(
+    as_json: bool, first: str, run: Callable[[Settings, voice_llm.Report], int],
+    again: str,
+) -> None:
+    """A `voice llm` set-up told to a terminal, or as JSON lines whose first step is `first`;
+    the owner's alone, refused before anything (as an event, with `--json`)."""
+    if not as_json:
+        _owner_only(CHOOSE_THE_VOICE_LLM)
+        try:
+            code = run(_configure_readonly(), voice_llm.TextSteps(typer.echo))
+        except KeyboardInterrupt:
+            typer.echo(f"cancelled: {again}", err=True)
+            code = pull.CANCELLED
+        raise typer.Exit(code)
+    events = voice_llm.JsonSteps(typer.echo, first=first)
+
+    def guarded() -> int:
+        if refusal := _owner_refusal(CHOOSE_THE_VOICE_LLM):
+            events.error(refusal)
+            return 1
+        return run(_configure_readonly(refuse=events.error), events)
+
+    with pull.terminate_as_interrupt():
+        code = events.guard(guarded)
+    raise typer.Exit(code)
+
+
+VOICE_LLM_JSON_HELP = "Print it as JSON lines: each step, then how it ended."
+
+
+@voice_llm_app.command("shared")
+def voice_llm_shared(
+    as_json: Annotated[bool, typer.Option("--json", help=VOICE_LLM_JSON_HELP)] = False,
+) -> None:
+    """Take the voice's words from the local agent's model, as before VOICE_LLM was a
+    setting; the voice LLM's own server is removed, since nothing uses it then."""
+
+    def run(settings: Settings, report: voice_llm.Report) -> int:
+        return voice_llm.shared(settings, voice_llm.machine(), report,
+                                save=_saver(ConfigStore(), settings, report), root=repo_root())
+
+    _voice_llm_stream(as_json, "configure", run, "`keryx voice llm shared` again finishes it")
+
+
+@voice_llm_app.command("here")
+def voice_llm_here(
+    model: Annotated[str, typer.Argument(
+        help="A name from `keryx models list` (downloaded first when it is not), or a GGUF "
+             "file's path.")],
+    as_json: Annotated[bool, typer.Option("--json", help=VOICE_LLM_JSON_HELP)] = False,
+) -> None:
+    """Give the voice a model of its own, on a llama.cpp server of its own here.
+
+    The model is downloaded when it is not on disk and llama.cpp installed when it is
+    missing; then the server's unit, the wait for the model to load and a check that it
+    serves it. VOICE_LLM is saved only then, so the voice keeps its words until the new ones
+    answer, and a server that does not come up has its unit removed.
+    """
+
+    def run(settings: Settings, report: voice_llm.Report) -> int:
+        return voice_llm.here(settings, model, voice_llm.machine(), report,
+                              save=_saver(ConfigStore(), settings, report), root=repo_root())
+
+    _voice_llm_stream(as_json, voice_llm.STEPS[0], run,
+                      "the next `keryx voice llm here` picks up where this stopped")
+
+
+@voice_llm_app.command("remote")
+def voice_llm_remote(
+    url: Annotated[str, typer.Argument(
+        help="Its address: http://gpu-box:11434, https://api.openai.com/v1, or its …/v1.")],
+    model: Annotated[str, typer.Option("--model", help="The server's own name for the "
+                                                       "model.")],
+    key_stdin: Annotated[
+        bool, typer.Option("--key-stdin", help="Read its key from standard input.")
+    ] = False,
+    clear_key: Annotated[
+        bool, typer.Option("--clear-key", help="Forget the key it had, and ask without one.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help=VOICE_LLM_JSON_HELP)] = False,
+) -> None:
+    """Take the voice's words from a server elsewhere — a box of yours, or a cloud's
+    Responses API — once it lists the model.
+
+    The key it has is kept, and asked with, unless --key-stdin replaces it or --clear-key
+    forgets it; it is never on the command line. Without one, OPENAI_API_KEY is sent to
+    OpenAI's own address and to no other.
+    """
+
+    def run(settings: Settings, report: voice_llm.Report) -> int:
+        if key_stdin and clear_key:
+            report.error("Give the key on standard input, or forget it: not both.",
+                         detail="--key-stdin replaces the key and --clear-key forgets it")
+            return voice.REFUSED
+        key = settings.voice_llm_api_key
+        if key_stdin:
+            key = _read_secret_input("VOICE_LLM_API_KEY")
+            if not key:
+                report.error("There was no key on standard input.",
+                             detail="--clear-key forgets the one it has")
+                return voice.REFUSED
+        elif clear_key:
+            key = None
+        return voice_llm.remote(settings, url, model, voice_llm.machine(), report, key=key,
+                                new_key=key_stdin or clear_key,
+                                save=_saver(ConfigStore(), settings, report), root=repo_root())
+
+    _voice_llm_stream(as_json, "check", run, "`keryx voice llm remote` again finishes it")
 
 
 #: What `voice download` is, refused to the service: it installs, and fills the disk.

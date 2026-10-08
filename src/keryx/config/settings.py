@@ -134,6 +134,15 @@ VoiceMode = Literal["openai", "here", "server"]
 #: Where the pipeline's words come from: the local agent's server, a model server of the
 #: voice's own on this machine, or a server elsewhere (a box of the owner's, or a cloud).
 VoiceLlmSource = Literal["shared", "here", "remote"]
+#: How a call's voice is built: one model that hears and speaks (`speech-to-speech`), or
+#: three in a row — speech-to-text, an LLM, text-to-speech (`three-model`).
+VoicePipeline = Literal["speech-to-speech", "three-model"]
+#: The pipelines each `VoiceMode` offers, the first its default. One each today: OpenAI and a
+#: Realtime server elsewhere are one model, the pipeline here is three. A second engine is a
+#: second entry here, never a new mode; nothing is built for one yet.
+PIPELINES: dict[str, tuple[str, ...]] = {
+    "openai": ("speech-to-speech",), "here": ("three-model",), "server": ("speech-to-speech",),
+}
 
 #: The sections settings are listed and set up under, in the order `keryx setup` and
 #: `docs/configuration.md` walk them.
@@ -414,6 +423,15 @@ class Settings(BaseSettings):
         title="Clock format",
         group="voice", advanced=False,
         service_writable=True,
+    )
+    voice_pipeline: VoicePipeline | None = setting(
+        None,
+        "How a call's voice is built: `speech-to-speech`, one model that hears and speaks "
+        "(OpenAI, or a Realtime server elsewhere), or `three-model`, speech-to-text, an LLM "
+        "and text-to-speech (the voice here). Blank is the only one `VOICE_MODE` offers "
+        "today; one it does not offer is refused.",
+        title="Voice pipeline",
+        group="voice", advanced=True,
     )
     openai_web_search_model: str = setting(
         "gpt-6-luna",
@@ -1186,7 +1204,8 @@ class Settings(BaseSettings):
                 raise ValueError('must be a JSON object, like {"name": "value"}') from error
         return value
 
-    @field_validator(*OPTIONAL_STR_FIELDS, "voice_mode_explicit", mode="before")
+    @field_validator(*OPTIONAL_STR_FIELDS, "voice_mode_explicit", "voice_pipeline",
+                     mode="before")
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
         """A blank value is "not set" — `env_ignore_empty` for anything passed by hand."""
@@ -1378,6 +1397,23 @@ class Settings(BaseSettings):
         if self.voice_base_url == self.voice_here_url:
             return "here"
         return "server" if self.voice_base_url else "openai"
+
+    @property
+    def pipeline(self) -> VoicePipeline:
+        """How a call's voice is built: `VOICE_PIPELINE`, else the mode's only pipeline."""
+        if self.voice_pipeline is not None:
+            return self.voice_pipeline
+        return PIPELINES[self.voice_mode][0]  # type: ignore[return-value]
+
+    def voice_pipeline_problem(self) -> str | None:
+        """Why `VOICE_PIPELINE` cannot be, in a sentence for a person; None when the mode
+        offers it, or it is blank."""
+        offered = PIPELINES[self.voice_mode]
+        if self.voice_pipeline is None or self.voice_pipeline in offered:
+            return None
+        return (f"VOICE_PIPELINE {self.voice_pipeline} is not offered with VOICE_MODE "
+                f"{self.voice_mode}, which offers {' or '.join(offered)}: choose that, or "
+                "leave it blank.")
 
     @property
     def voice_here_url(self) -> str:

@@ -397,8 +397,13 @@ class ConfigStore:
         """
         merged = {key: value for key, value in self.stored().items() if key not in NOT_STORED}
         merged.update(cleaned)
-        validate({key: value for key, value in merged.items()
-                  if value is not None and field_for(key) is not None})
+        whole = {key: value for key, value in merged.items()
+                 if value is not None and field_for(key) is not None}
+        validate(whole)
+        # A rule across settings, refused when written rather than at the next start.
+        probe = _Probe(**{field_for(key): value for key, value in whole.items()})
+        if problem := probe.voice_pipeline_problem():
+            raise ConfigError(problem)
 
     def _write(self, cleaned: Mapping[str, Any]) -> None:
         """Put each key in the file its kind belongs in, and out of the other one."""

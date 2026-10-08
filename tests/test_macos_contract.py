@@ -90,9 +90,15 @@ VOICE_DOWNLOAD = "voice download --json"
 MIGRATE = "migrate --yes --json"
 #: The project-context draft: `--explore` or `--folder PATH` is added to it.
 PROJECT_CONTEXT = "setup project-context --json"
+#: Where the voice's words come from, each its own stream, and the voice LLM's start.
+VOICE_LLM_SHARED = "voice llm shared --json"
+VOICE_LLM_HERE = "voice llm here NAME --json"
+VOICE_LLM_REMOTE = "voice llm remote URL --json"
+VOICE_LLM_START = "models start --voice-llm --json"
+VOICE_LLMS = (VOICE_LLM_SHARED, VOICE_LLM_HERE, VOICE_LLM_REMOTE, VOICE_LLM_START)
 #: The command lines the app reads as JSON lines; the pull's is the one every contract has.
 STREAMS = (PULL, VOICE_HERE, MODELS_START, VOICE_DOWNLOAD, *AUTH_LOGINS.values(), MIGRATE,
-           PROJECT_CONTEXT)
+           PROJECT_CONTEXT, *VOICE_LLMS)
 #: The command lines the app reads as one JSON document.
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
@@ -117,7 +123,17 @@ COMMANDS = {
 AWAITING = {
     "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
     "migrate --json", MIGRATE, "setup project-context --describe --json",
-    "setup project-context --apply --json", PROJECT_CONTEXT,
+    "setup project-context --apply --json", PROJECT_CONTEXT, *VOICE_LLMS,
+}
+#: Keys a command prints that the app has yet to name, by path, with the types the
+#: contract will give them: checked here until it does, and by the contract once it does.
+AWAITING_KEYS = {
+    "voice --json": {
+        "": {"llm": "object", "pipelines": "object"},
+        "llm": {"source": "string", "model": "string|null", "url": "string|null",
+                "reachable": "boolean|null", "unit_installed": "boolean"},
+        "pipelines": {"openai": "array", "here": "array", "server": "array"},
+    },
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
@@ -599,6 +615,23 @@ def test_a_command_the_contract_awaits_already_prints_one_document(command, seed
 
     assert result.exit_code == 0, result.output
     assert isinstance(json.loads(result.stdout), dict | list)
+
+
+@pytest.mark.parametrize("command", sorted(AWAITING_KEYS))
+def test_keys_the_contract_awaits_are_already_printed_with_their_types(command, seeded):
+    """Until the app names them, they are checked here, so they are ready when it does."""
+    result = runner.invoke(app, argv(command))
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    problems = [f"{path or 'the document'} {problem}"
+                for path, keys in AWAITING_KEYS[command].items()
+                for node in nodes_at(document, path)
+                for problem in key_problems(node, keys)]
+    assert not problems, f"{command}: {problems}"
+    # Real values, not only nulls that any `|null` meets.
+    assert document["llm"]["model"] == MODEL.key and document["llm"]["url"]
+    assert document["llm"]["reachable"] is True
 
 
 def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
@@ -1227,6 +1260,108 @@ def test_a_draft_ends_once_whatever_the_contract_says(
     if PROJECT_CONTEXT in contract()["streams"]:
         keeps_its_promise(contract()["streams"][PROJECT_CONTEXT], events, ending,
                           result.exit_code)
+
+
+# --- the streams: voice llm shared|here|remote --json, models start --voice-llm --json -----
+
+#: A small model the voice LLM's own server runs in the seed.
+VOICE_LLM_MODEL = catalog.by_key("qwen3.5-4b")
+
+
+def _llm_ours(monkeypatch, settings, scripts):
+    """The voice LLM's own server on disk, which comes up serving what it was given."""
+    model = download.model_path(settings.cache_dir, VOICE_LLM_MODEL)
+    model.parent.mkdir(parents=True, exist_ok=True)
+    with model.open("wb") as out:
+        out.truncate(VOICE_LLM_MODEL.size)
+    monkeypatch.setattr(use, "probe", lambda url: (True, VOICE_LLM_MODEL.key))
+
+
+def _llm_done(monkeypatch, settings, scripts):
+    _llm_ours(monkeypatch, settings, scripts)
+
+
+def _llm_failed(monkeypatch, settings, scripts):
+    """Its server does not come up, the one elsewhere does not answer, and — for `shared`,
+    which starts nothing — the choice cannot be saved."""
+    from keryx.config.store import ConfigError
+
+    _llm_ours(monkeypatch, settings, scripts)
+    monkeypatch.setattr(servers, "wait_for", lambda endpoint, kind, timeout: "no answer")
+    monkeypatch.setattr("keryx.endpoints.probe",
+                        lambda endpoint, get: endpoints_probe(False, problem="no answer"))
+    real = ConfigStore.set
+
+    def refuse_the_source(self, values, **kwargs):
+        if "VOICE_LLM" in values:
+            raise ConfigError("VOICE_LLM could not be saved")
+        return real(self, values, **kwargs)
+
+    monkeypatch.setattr(ConfigStore, "set", refuse_the_source)
+
+
+def _llm_refused(monkeypatch, settings, scripts):
+    return {VOICE_LLM_SHARED: (["voice", "llm", "shared", "--json"], {
+                "VOICE_MODE": "here", "LOCAL_AGENT_BASE_URL": None, "LOCAL_AGENT_MODEL": None}),
+            VOICE_LLM_HERE: (["voice", "llm", "here", "no-such-model", "--json"], {}),
+            VOICE_LLM_REMOTE: (["voice", "llm", "remote", "ftp://nowhere", "--model", "m",
+                                "--json"], {}),
+            VOICE_LLM_START: (None, {"VOICE_LLM_MODEL": None})}
+
+
+def _llm_cancelled(monkeypatch, settings, scripts):
+    _llm_ours(monkeypatch, settings, scripts)
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+    monkeypatch.setattr(voice, "run_detached", interrupted)
+    monkeypatch.setattr("keryx.endpoints.probe", interrupted)
+
+
+def endpoints_probe(ok, models=(), problem=None):
+    from keryx.endpoints import Probe
+
+    return Probe(ok, tuple(models), problem)
+
+
+#: Each way a voice LLM stream ends: how to arrange it, its ending and its exit code.
+VOICE_LLM_ENDS = [(_llm_done, "done", 0), (_llm_failed, "error", 1),
+                  (_llm_refused, "error", 2), (_llm_cancelled, "cancelled", 130)]
+
+
+def voice_llm_argv(command: str) -> list[str]:
+    words = {"NAME": VOICE_LLM_MODEL.key, "URL": "http://192.168.1.30:11434"}
+    extra = ["--model", "qwen3:4b"] if command == VOICE_LLM_REMOTE else []
+    parts = [words.get(word, word) for word in command.split()]
+    return parts[:-1] + extra + parts[-1:]
+
+
+@pytest.mark.parametrize("command", VOICE_LLMS)
+@pytest.mark.parametrize(("arrange", "ending", "code"), VOICE_LLM_ENDS)
+def test_a_voice_llm_stream_ends_once_whatever_the_contract_says(
+    seeded, monkeypatch, command, arrange, ending, code
+):
+    scripts = Scripts()
+    monkeypatch.setattr(voice, "run_detached", scripts)
+    monkeypatch.setattr(servers, "wait_for", lambda endpoint, kind, timeout: None)
+    monkeypatch.setattr("keryx.endpoints.probe",
+                        lambda endpoint, get: endpoints_probe(True, ("qwen3:4b",)))
+    ConfigStore().set({"VOICE_LLM_MODEL": VOICE_LLM_MODEL.key, "VOICE_LLM": "here"})
+    arranged = arrange(monkeypatch, seeded, scripts)
+    line = voice_llm_argv(command)
+    if isinstance(arranged, dict):
+        given, values = arranged[command]
+        line = given or line
+        if values:
+            ConfigStore().set(values)
+
+    result = runner.invoke(app, line)
+
+    events = [json.loads(each) for each in result.stdout.splitlines()]
+    assert ends_once(events) == ending and result.exit_code == code, events
+    if command in contract()["streams"]:
+        keeps_its_promise(contract()["streams"][command], events, ending, result.exit_code)
 
 
 # --- the fix ids: one vocabulary, on both sides -------------------------------------------

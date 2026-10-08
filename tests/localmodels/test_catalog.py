@@ -66,3 +66,40 @@ def test_each_persona_has_a_local_voice_and_any_other_name_the_default():
     assert persona_voice("Ada") == "af_heart"
     assert {"af_heart", "bm_george"} <= set(names)
     assert by_key("nope") is None
+
+
+# --- the voice LLM a new install runs (D2) -------------------------------------------------
+
+MAC = {gb: Hardware("metal", "Apple silicon", 0, gb) for gb in (8, 16, 36, 48, 64)}
+
+
+def test_the_voice_llm_models_are_small_catalog_models_most_worth_having_first():
+    from keryx.localmodels.catalog import VOICE_LLM_MODELS
+
+    entries = [by_key(key) for key in VOICE_LLM_MODELS]
+    assert all(entry is not None for entry in entries)
+    assert [entry.memory_gb for entry in entries] == [9, 6]
+
+
+@pytest.mark.parametrize(("machine", "agent_gb", "picked"), [
+    # qwen3-coder-30b-a3b (25 GB) beside each, with the speech models' 3 GB:
+    (MAC[64], 25, "qwen3.5-9b"),  # 25 + 9 + 3 = 37 <= 48
+    (MAC[48], 25, "qwen3.5-4b"),  # 25 + 9 + 3 = 37 > 36; 25 + 6 + 3 = 34 <= 36
+    (MAC[36], 25, None),          # 25 + 6 + 3 = 34 > 27: shared
+    (RTX_5090, 25, None),         # 34 > 31.8: shared
+    # gpt-oss-20b (16 GB): 16 + 6 + 3 = 25 <= 27; 16 + 9 + 3 = 28 > 27.
+    (MAC[36], 16, "qwen3.5-4b"),
+    # No agent's model on this machine: the voice LLM and the speech models alone.
+    (MAC[16], 0, "qwen3.5-9b"),   # 0 + 9 + 3 = 12 <= 12
+    (MAC[8], 0, None),            # 0 + 6 + 3 = 9 > 6: shared
+    # An agent's model here whose size Keryx cannot tell: never a second one beside it.
+    (MAC[64], None, None),
+])
+def test_a_new_installs_voice_llm_is_its_own_small_model_only_when_it_fits(
+    machine, agent_gb, picked
+):
+    from keryx.localmodels.catalog import voice_llm_pick
+
+    entry = voice_llm_pick(machine, agent_gb=agent_gb)
+
+    assert (entry.key if entry is not None else None) == picked

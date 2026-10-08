@@ -228,7 +228,25 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `--json` is JSON lines — a `step` before each slow one (`install`, `download`,
   `configure`, `unit`, `start`), `progress` while it downloads, then exactly one of `done`,
   `error`, `cancelled`; exit 2 for a refusal before anything is tried, 1 for what stopped
-  it, 130 for a SIGTERM)
+  it, 130 for a SIGTERM). Every `voice use` writes `VOICE_MODE`; `here` also the loopback
+  `VOICE_BASE_URL`, for one release. A first `voice use here` with `VOICE_LLM` never set
+  chooses the voice LLM by the owner's rule and brings a model of its own up first, told as
+  `step` `voice_llm` (see "A model is an address")
+- The voice's words: `uv run keryx voice llm shared | here MODEL | remote URL --model M
+  [--key-stdin | --clear-key] [--json]` (`localmodels/voice_llm.py`; the owner's alone;
+  JSON lines as `models start` — `here`'s steps `download`, `runtime`, `unit`, `start`,
+  `check`, `configure`, then `done` with `source`, `model`, `url` and
+  `voice_restart_needed`; exit 0, 1, 2, 130). `here` downloads the model, installs llama.cpp
+  and the `--voice-llm` unit on a port of its own (`use.voice_llm_port`, `servers.port_clash`)
+  and checks it serves the model before `VOICE_LLM=here` is saved: the model and port the
+  unit reads are saved first and put back when it does not come up, and its unit removed.
+  `remote` lists the server's models with the key it would be sent first; `shared` and
+  `remote` remove the voice LLM's own unit. None restarts a running voice server — `voice
+  use here` does, and `voice_restart_needed` says when. `models start --voice-llm [--json]`
+  is `here`'s unit, wait and check alone, for `VOICE_LLM_MODEL` as it is (nothing saved; the
+  `models start` stream). `voice --json` adds `llm` (`source`, `model`, `url`, `reachable`,
+  `unit_installed`) and `pipelines` (`VOICE_PIPELINE`'s values per mode), and `needs` is
+  `voice_llm` while a voice LLM of its own or elsewhere names none
 - The Mac app (`macos/`): `macos/scripts/test.sh` (`test-scripts.sh`, the scripts' tests in a
   temporary folder, then the Swift tests; it adds the Command Line Tools' Testing framework
   path only when they are the developer directory), `macos/scripts/build-app.sh
@@ -350,6 +368,8 @@ remember:
   it, or Ollama's pull — which the wizard and `keryx models start` both run) and `voice` (the
   voice's three places, its status, and the steps that set each up, which the wizard and
   `keryx voice use` both run: the wizard only asks and tells; and `keryx voice download`'s),
+  `voice_llm` (the voice LLM's three sources set up — `keryx voice llm`, `models start
+  --voice-llm`, and the first `voice use here`'s choice),
   `speech` (the Hugging Face repositories speech-to-speech fetches for each `--stt` and
   `--tts`, read from its own source and never guessed — one it cannot name is said, not
   fetched — whether they are in the cache, and the fetch) and `speech_fetch` (the script
@@ -393,7 +413,9 @@ remember:
   windows, by window id. `tests/test_macos_contract.py` holds the JSON contract — the keys
   the Swift decoders require from each command, with their JSON types, and the events,
   ending and exit codes of its streams (`models pull`, `voice use here`, `voice download`,
-  `models start` and the four `auth login NAME`, each `--json`) — so
+  `models start` and the four `auth login NAME`, each `--json`; `voice llm shared|here|
+  remote` and `models start --voice-llm` wait in `AWAITING` until the app names them, and
+  `AWAITING_KEYS` checks keys it has yet to name) — so
   renaming a field fails pytest, not the app at runtime.
 
 `logging_util.mask_number` is the only shape a phone number may take in a log line.
@@ -473,7 +495,12 @@ OpenAI-compatible client describes one. Five rulings:
 - **One voice client.** `OpenAIRealtimeClient` speaks to `Settings.voice_endpoint`, which
   `Settings.voice_mode` chooses: `VOICE_MODE`, else worked out from `VOICE_BASE_URL` exactly
   as before it was a setting (blank is `openai`, the loopback address of `VOICE_SERVER_PORT`
-  is `here`, anything else `server`). `here` is Hugging Face's speech-to-speech, which
+  is `here`, anything else `server`). Each `voice use` writes `VOICE_MODE` (`voice.as_mode`),
+  so it is explicit from the owner's next choice; `here` keeps writing the loopback
+  `VOICE_BASE_URL` for one release, which this build ignores while `VOICE_MODE=here`.
+  `VOICE_PIPELINE` names how the voice is built (`settings.PIPELINES`: one per mode today,
+  and no engine is built for a second); the store refuses one the mode does not offer, and
+  `as_mode` clears it when the mode moves. `here` is Hugging Face's speech-to-speech, which
   `keryx setup` installs, at an address derived from its port; `server` is `VOICE_BASE_URL`,
   and None without one, which `voice_refusal` refuses. `realtime.make_provider` is the only
   place one is built, for the phone and `keryx loopback` alike. Two differences are made for
@@ -488,8 +515,8 @@ OpenAI-compatible client describes one. Five rulings:
   its command line, and a per-session voice would override that — and no `?model=`. A
   server elsewhere is still sent `OPENAI_REALTIME_MODEL`, which it may choose its model by,
   and `VOICE_SERVER_VOICE` when that was set, else `OPENAI_VOICE` for one release.
-- **Every `*_BASE_URL` is protected**, and `VOICE_SERVER_ARGS`, `VOICE_MODE` and
-  `VOICE_LLM` with them. A voice address pointed elsewhere ships every call's audio, the
+- **Every `*_BASE_URL` is protected**, and `VOICE_SERVER_ARGS`, `VOICE_MODE`, `VOICE_LLM`
+  and `VOICE_PIPELINE` with them. A voice address pointed elsewhere ships every call's audio, the
   spoken PIN included, to whoever is there, and a mode or a voice-LLM source can send the
   same audio or the same words elsewhere without an address changing; a flag could bind the
   unauthenticated voice server beyond 127.0.0.1.
@@ -509,7 +536,14 @@ OpenAI-compatible client describes one. Five rulings:
   not yet running is set to: each search steps past the other two
   (`servers.free_port_avoiding`), the voice LLM's server and its installer refuse a port
   another is set to (`servers.port_clash`), and that server is up only serving its own model
-  (`voice.voice_llm_up`), never because something answers on its port.
+  (`voice.voice_llm_up`), never because something answers on its port. **A new install's
+  voice LLM is the owner's rule (D2), in one function, `catalog.voice_llm_pick`**: a small
+  model of the voice's own (`VOICE_LLM_MODELS`) when agent + voice LLM + `VOICE_SERVER_GB`
+  fit in `model_memory_gb`, else `shared`; an agent's model here that cannot be sized
+  (`use.agent_memory_gb` None) is `shared`. It is written only by a first local-voice set-up
+  (`voice_llm.first_set_up`: `VOICE_LLM` from the default, the voice not here yet), never
+  by a migration; `VOICE_LLM`'s default stays `shared`, so an existing install is unchanged,
+  and a `VOICE_LLM` anyone set is never changed.
 - **`OPENAI_API_KEY` is optional.** It is the voice only while the voice is OpenAI's
   (`Settings.voice_refusal`, which `serve` asks, refuses each mode for its own missing
   setting); otherwise it buys the voice model's `web_search` (the Responses API — no local
