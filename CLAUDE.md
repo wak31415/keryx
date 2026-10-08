@@ -445,19 +445,32 @@ remember:
   runner, the locator, the client over the CLI, the decoded models and `AppModel`),
   `KeryxUI` (the screens and the menu), `KeryxApp` (the shell: the window, the menu bar item,
   the app's own Settings) and `KeryxSnapshots` (the harness that photographs every screen).
-  It runs the `keryx` CLI and nothing else (but `scripts/install-launchd.sh --llm`, to start
-  the model server, and `brew install cloudflared` — the owner's Homebrew, only on their
-  click in the setup wizard's Phone Line, its output kept for Show Details), so every rule above binds it without a copy: a command it needs gets a
-  `--json`, never a route or a socket, and it writes none of Keryx's files itself. While it
-  is open Keryx answers calls (`AppModel.keepsAnswering`, the owner's ruling): once a launch
-  it runs `keryx service install --json` when `setup plan`'s service step is reachable and
-  Keryx is not running (never before `migrate`, never beside a hand-started `serve`), and
-  Quit runs `keryx service uninstall --json` — the CLI's only stop until a `service stop`
-  exists (`AppModel.stopUnits` is the seam), so it never calls `launchctl`; a logout lets the
-  units go untouched — while closing a window leaves both running: it is a regular Dock app, no
-  `LSUIElement`. The service is never shown as one ("Answering calls", "Start Keryx"). A
-  `KERYX_APP_ENVIRONMENT=inherit` run neither starts nor stops it, and the locator reads its
-  remembered copy of `dev.keryx.agent.plist` while quitting has removed the real one. It strips
+  It runs the `keryx` CLI and nothing else (but `brew install cloudflared` — the owner's
+  Homebrew, only on their click in the setup wizard's Phone Line, its output kept for Show
+  Details), so every rule above binds it without a copy: a command it needs gets a `--json`,
+  never a route or a socket, and it writes none of Keryx's files itself. While it is open
+  Keryx answers calls (`AppModel.keepsAnswering`, the owner's ruling), and one rule starts it,
+  whoever asks — launch, a plan read, the status poll (until a start has been tried once a
+  launch), the wizard's Checking, the checklist and the Overview's Start all go through
+  `AppModel.start(automatic:)`: only when `setup plan`'s service step is reachable and Keryx
+  is not running (`answeringStep == .start`: never before `migrate`, never beside a
+  hand-started `serve`, never while a model server's own run holds a unit), `keryx service
+  start --all --json` when the agent is installed, else `service install --json`; a second
+  caller joins the start under way. The first start of a launch waits (60 s at most,
+  "Finishing stopping…") while the last Quit's stop, whose pid it recorded in its own
+  defaults, is still running. Quit ends editing first (a focused field's save is a write it
+  waits for), then runs `keryx service stop --all --json` detached — its own process group,
+  output to two 0600 files in the app's own temporary folder, removed at the next launch if
+  the app went first — waits 10 s for the answer and quits; the CLI finishes alone. The units
+  stay installed and are only disabled, so nothing asks at the next launch; a logout lets
+  them go untouched, while closing a window leaves them running: it is a regular Dock app, no
+  `LSUIElement`. It never calls `launchctl`. The word "service" is never shown to the owner
+  ("Answering calls", "Start Keryx", "in the background"; `OwnerWordingTests` greps for it).
+  A `KERYX_APP_ENVIRONMENT=inherit` run never starts Keryx by itself; a click on a model, voice
+  or voice LLM server still acts on the real launch agents, which the CLI's foreign-units guard
+  refuses when they belong to another `KERYX_HOME`. A voice LLM's remote
+  address and model typed and not yet checked are drafts in the app's own defaults, never
+  Keryx's settings: only Check and Use writes `VOICE_LLM_*`. It strips
   `KERYX_ACTOR` and `JARVIS_ACTOR` (`Sanitise.environment`), because it is the owner at a
   terminal and never the service. It finds Keryx the way the service runs — the folder
   chosen in its Settings, then `~/Library/LaunchAgents/dev.keryx.agent.plist`'s program,
@@ -475,10 +488,12 @@ remember:
   windows, by window id. `tests/test_macos_contract.py` holds the JSON contract — the keys
   the Swift decoders require from each command, with their JSON types, and the events,
   ending and exit codes of its streams (`models pull`, `voice use here`, `voice download`,
-  `models start`, the four `auth login NAME` and `auth smoke NAME`, each `--json`; `voice llm
-  shared|here|remote` and `models start --voice-llm` wait in `AWAITING` until the app names
-  them, and `AWAITING_KEYS` checks keys it has yet to name) — so
-  renaming a field fails pytest, not the app at runtime.
+  `models start`, the four `auth login NAME` and `auth smoke NAME`, `voice llm
+  shared|here|remote` and `models start --voice-llm`, each `--json`; `AWAITING` and
+  `AWAITING_KEYS` hold what the CLI prints that the app has yet to name, empty today), and
+  the constants the app draws from a CLI figure it does not print (`constants.speech_gb`,
+  the speech models' share, is `catalog.VOICE_SERVER_GB`) — so renaming a field fails
+  pytest, not the app at runtime.
 
 `logging_util.mask_number` is the only shape a phone number may take in a log line.
 

@@ -79,10 +79,14 @@ private struct ServiceSection: View {
                                 .multilineTextAlignment(.trailing)
                                 .textSelection(.enabled)
                         }
+                        if let details = line.details {
+                            DetailsDisclosure(details)
+                                .frame(maxWidth: 320)
+                        }
                     }
                     if line.offersStart {
                         Button("Start") { start() }
-                            .disabled(model.serviceChange != nil)
+                            .disabled(model.serviceChange != nil || model.finishingPreviousStop)
                             .help("Starts Keryx answering calls")
                     }
                 }
@@ -199,13 +203,13 @@ private struct ServiceSection: View {
     /// Whether Keryx answers calls, in a word (`ServiceWording.answering`).
     private var answering: ServiceWording.Answering {
         ServiceWording.answering(status, step: model.answeringStep, change: model.serviceChange,
-                                 failure: model.startFailure)
+                                 failure: model.startFailure, finishingStop: model.finishingPreviousStop)
     }
 
     /// Start: the fallback when Keryx should be answering and isn't. The app starts it by
-    /// itself, so this asks nothing first.
+    /// itself, so this asks nothing first; it goes the one way the app starts Keryx
+    /// (`startAnswering`), joining a start already under way.
     private func start() {
-        guard model.serviceChange == nil else { return }
         Task {
             if case let .failure(error) = await model.startAnswering() { failure = error }
         }

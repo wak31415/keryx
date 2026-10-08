@@ -20,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var windowHasAppeared = false
     private var starting: Task<Void, Never>?
-    /// The app's windows open now (the main one, Settings, the Setup Assistant). The app is
+    /// The app's windows open now (the main one, Settings, the setup wizard). The app is
     /// in the Dock whether or not any is (`AppLifecycle`).
     private var openWindows: Set<AppWindow> = []
     /// Opens the main window and brings the app forward. Handed over by the menu bar label,
@@ -40,8 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model = AppModel(
             locator: KeryxLocator(runner: LoggingRunner()),
             makeClient: { location in
+                // Quit's detached stop is recorded as it is spawned, so the next launch can
+                // wait for it if it is still going (`AppModel.previousStopFinished`).
                 CLIClient(location: location,
-                          runner: LoggingRunner(prefix: location.prefixArguments))
+                          runner: LoggingRunner(ProcessRunner(onDetachedSpawn: { preferences.recordDetachedStop(pid: $0) }),
+                                                prefix: location.prefixArguments))
             },
             preferences: preferences)
         // Kept answering calls while the app runs — but never by a sandbox run, whose `keryx`
@@ -59,6 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.app.notice("KERYX_APP_ENVIRONMENT=inherit: Keryx is neither started nor stopped by this run")
         }
         TerminalLauncher.removeStaleScripts()
+        // A Quit's detached stop that outlived its app never removed its two output files.
+        ProcessRunner.removeLeftoverOutputFiles()
         NotificationCenter.default.addObserver(
             self, selector: #selector(menuDidBeginTracking(_:)),
             name: NSMenu.didBeginTrackingNotification, object: nil)
@@ -148,6 +153,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// tears the GUI domain down by itself, and nothing here would be given the time anyway.
     static let voiceLLMPutBackBound: Duration = .seconds(30)
 
+    /// How long quitting gives a field it has just ended editing to start saving what was
+    /// typed: SwiftUI hears of the focus change on a later turn of the run loop.
+    static let commitTurn: Duration = .milliseconds(150)
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Moving Jarvis's files is finished before anything else: killed part way, it would
         // leave the service stopped and the files half moved.
@@ -160,21 +169,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.runModal()
             return .terminateCancel
         }
-        let children = ChildRegistry.shared
-        // Whether `service stop --all` runs at all (always, while Keryx is kept answering —
-        // the CLI handles nothing being installed itself) is a different question from
-        // whether quitting says it stops *answering calls* (only the agent's own unit).
-        let runsStop = model.quitRunsServiceStop
-        let stopsAnswering = model.quitStopsAnswering
-        guard runsStop || model.isBusy || children.count > 0 || !model.writes.isEmpty else { return .terminateNow }
+        // Read now: the current Apple event is this quit's only while it is being handled.
         let sessionEnding = AppLifecycle.isSessionEnding(NSAppleEventManager.shared().currentAppleEvent)
-        // At a log out, restart or shut down launchd tears the GUI domain down by itself, so
-        // the units are let go rather than the reply held for a stop.
-        Task {
-            await quit(children, stopping: runsStop && !sessionEnding,
-                      stopsAnswering: stopsAnswering && !sessionEnding, asking: !sessionEnding)
+        // ⌘Q never ends editing by itself, and SwiftUI sends no `onDisappear` as the app
+        // terminates: a setting typed into a field that still has focus would be lost. Ending
+        // editing commits it (the field's focus-loss save); the save is then a write, which
+        // quitting waits for like any other.
+        if Self.endEditing() {
+            Task {
+                try? await Task.sleep(for: Self.commitTurn)
+                if self.needsQuitting {
+                    await self.quit(sessionEnding: sessionEnding)
+                } else {
+                    NSApp.reply(toApplicationShouldTerminate: true)
+                }
+            }
+            return .terminateLater
         }
+        guard needsQuitting else { return .terminateNow }
+        Task { await quit(sessionEnding: sessionEnding) }
         return .terminateLater
+    }
+
+    /// Ends editing in every window whose first responder is a field's editor: true when one
+    /// was.
+    private static func endEditing() -> Bool {
+        var ended = false
+        for window in NSApp.windows where window.firstResponder is NSText {
+            ended = window.makeFirstResponder(nil) || ended
+        }
+        return ended
+    }
+
+    /// Whether quitting has anything to ask, wait for or stop: Keryx kept answering (its
+    /// stop runs), something long under way, a child still running, a write.
+    private var needsQuitting: Bool {
+        model.quitRunsServiceStop || model.isBusy || ChildRegistry.shared.count > 0 || !model.writes.isEmpty
+    }
+
+    /// `quit(_:stopping:stopsAnswering:asking:)` for this quit. Whether `service stop --all`
+    /// runs at all (always, while Keryx is kept answering — the CLI handles nothing being
+    /// installed itself) is a different question from whether quitting says it stops
+    /// *answering calls* (only the agent's own unit). At a log out, restart or shut down
+    /// launchd tears the GUI domain down by itself, so the units are let go rather than the
+    /// reply held for a stop.
+    private func quit(sessionEnding: Bool) async {
+        await quit(ChildRegistry.shared, stopping: model.quitRunsServiceStop && !sessionEnding,
+                   stopsAnswering: model.quitStopsAnswering && !sessionEnding, asking: !sessionEnding)
     }
 
     /// Lets a short write finish first; asks while anything that quitting would cut short is

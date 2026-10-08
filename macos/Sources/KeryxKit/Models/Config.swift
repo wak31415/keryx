@@ -107,7 +107,7 @@ public struct ConfigRow: Codable, Sendable, Equatable, Identifiable {
         case "approvals": "Approvals"
         case "plugins": "Plugins"
         case "google": "Google"
-        case "service": "Service"
+        case "service": "Background process, storage and logging"
         case "debug": "Debugging"
         default: group.prefix(1).uppercased() + group.dropFirst()
         }

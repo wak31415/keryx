@@ -193,18 +193,18 @@ import KeryxPreview
         #expect(calls(client, after: mark).first == "service install")
         #expect(calls(client, after: mark).contains("service"))
         mark = client.calls.count
-        _ = await model.uninstallService()
-        #expect(calls(client, after: mark).first == "service uninstall")
-        mark = client.calls.count
         _ = await model.stopModelServer()
         #expect(calls(client, after: mark).first == "models stop")
         #expect(calls(client, after: mark).contains("models list"))
     }
 
-    @Test func installingOrUninstallingTheServiceIsBusyUntilItAnswers() async {
+    @Test func installingOrStoppingKeryxIsBusyUntilItAnswers() async {
         let gates = [OptionsGate(), OptionsGate()]
         let turn = CallCounter()
-        let client = StubClient { $0.serviceWait = { await gates[turn.next() % 2].wait() } }
+        let client = StubClient {
+            $0.serviceWait = { await gates[turn.next() % 2].wait() }
+            $0.stopServiceWait = { await gates[turn.next() % 2].wait() }
+        }
         let model = await makeModel(client: client)
         defer { model.stop() }
         let install = Task { await model.installService() }
@@ -215,11 +215,12 @@ import KeryxPreview
         _ = await install.value
         #expect(model.serviceChange == nil)
         #expect(!model.isBusy)
-        let uninstall = Task { await model.uninstallService() }
+        model.keepsAnswering = true
+        let stop = Task { await model.stopAnswering() }
         #expect(await eventually { gates[1].held == 1 })
         #expect(model.serviceChange == .uninstalling)
         gates[1].open()
-        _ = await uninstall.value
+        _ = await stop.value
         #expect(model.serviceChange == nil)
     }
 
@@ -231,9 +232,8 @@ import KeryxPreview
         let install = Task { await model.installService() }
         #expect(await eventually { gate.held == 1 })
         let mark = client.calls.count
-        // Whichever window asks (the Overview, the Setup Assistant), the model refuses.
+        // Whichever window asks (the Overview, the setup wizard), the model refuses.
         #expect(await model.installService() == .failure(.refused(AppModel.serviceBusy)))
-        #expect(await model.uninstallService() == .failure(.refused(AppModel.serviceBusy)))
         #expect(calls(client, after: mark).isEmpty, "nothing more was run")
         #expect(model.serviceChange == .installing, "the first is still the one under way")
         gate.open()

@@ -46,7 +46,7 @@ public struct ModelsView: View {
                     guard let anchor else { return }
                     spotlight(anchor, proxy: proxy)
                 }
-                // The Setup Assistant's "Choose a Model" or "Open Local Models": shown at
+                // The setup wizard's "Choose a Model" or "Open Local Models": shown at
                 // what is left to do here.
                 .onChange(of: model.requested, initial: true) { _, requested in
                     guard let requested, Self.answers(requested) else { return }

@@ -1,6 +1,7 @@
 import Foundation
 @testable import KeryxKit
 import KeryxPreview
+import KeryxTestSupport
 
 /// A `KeryxClient` whose every answer is set by the test, and which records what it was
 /// asked, in order, as the CLI subcommand it stands for.
@@ -35,8 +36,11 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         var voiceServer: Result<VoiceServerResult, KeryxError> = .success(PreviewClient.serverSaved)
         /// Awaited before each `config options` answer: a test's way to hold them.
         var optionsWait: @Sendable () async -> Void = {}
-        /// Awaited before `service install|uninstall` answers, to hold one mid-way.
+        /// Awaited before `service install|uninstall|start` answers, to hold one mid-way.
         var serviceWait: @Sendable () async -> Void = {}
+        /// Awaited before `service stop` answers: a gate of its own, so a test can hold a
+        /// start and see whether a stop ran before it was let go.
+        var stopServiceWait: @Sendable () async -> Void = {}
         /// Awaited before `models stop` answers, to hold one mid-way.
         var stopWait: @Sendable () async -> Void = {}
         var voiceHere: @Sendable (String?) -> VoiceSetupStream = { _ in
@@ -219,7 +223,7 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         return try answer("service uninstall") { $0.serviceResult }
     }
     func stopService(all: Bool, detached: Bool = false) async throws -> ServiceControlResult {
-        let wait = lock.withLock { replies.serviceWait }
+        let wait = lock.withLock { replies.stopServiceWait }
         await wait()
         try Task.checkCancellation()
         let result = try answer("service stop" + (all ? " --all" : "")) { $0.serviceControlResult }
@@ -499,18 +503,9 @@ final class OptionsGate: @unchecked Sendable {
 /// actor kept busy by the suites that render views, never a wait in the passing case.
 @MainActor
 func eventually(timeout: Duration = .seconds(180), _ condition: @MainActor () -> Bool) async -> Bool {
-    let clock = ContinuousClock()
-    let deadline = clock.now + timeout
-    while clock.now < deadline {
-        if condition() { return true }
-        try? await Task.sleep(for: .milliseconds(2))
-    }
-    return condition()
+    await Waiting.until(timeout: timeout, condition)
 }
 
 func freshDefaults() -> UserDefaults {
-    let name = "keryx-tests-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: name)!
-    defaults.removePersistentDomain(forName: name)
-    return defaults
+    TestDefaults.fresh()
 }

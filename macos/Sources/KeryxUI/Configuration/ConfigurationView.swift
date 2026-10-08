@@ -280,7 +280,7 @@ private struct ScreenLinkRow: View {
             Button(link, action: open)
                 .buttonStyle(.link)
         } label: {
-            Text(row.displayTitle)
+            Text(row.shownTitle)
             if !row.description.isEmpty {
                 Text(ConfigWording.described(ConfigDescriptions.text(row), titles: titles))
                     .lineLimit(2)

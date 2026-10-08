@@ -23,9 +23,9 @@ struct VoiceLLMRows: View {
     /// Remove Key was chosen: Check and Use removes the stored key.
     @State private var clearing = false
     @State private var editingKey = false
-    /// The fields hold the drafts saved before (or the words in use): read once, from the
-    /// settings, when they come.
-    @State private var draftsRead: Bool
+    /// The fields hold the drafts kept before (or the words in use): read once, from the
+    /// app's own preferences, as the rows appear.
+    @State private var draftsRead = false
 
     init(voice: VoiceStatus, report: ModelsReport?, picked: VoiceLLMSource? = nil) {
         self.voice = voice
@@ -34,7 +34,6 @@ struct VoiceLLMRows: View {
         let remote = voice.llmSource == .remote ? voice.llm : nil
         _address = State(initialValue: remote?.url ?? "")
         _remoteModel = State(initialValue: remote?.model ?? "")
-        _draftsRead = State(initialValue: remote != nil)
     }
 
     var body: some View {
@@ -53,10 +52,10 @@ struct VoiceLLMRows: View {
             Text("LLM")
             Text(VoiceLLMWording.caption(chosen, inUse: voice.llmSource))
         }
-        // Leaving with a server elsewhere typed in saves the drafts, as a field does on losing
-        // focus; the drafts saved before are read back.
+        // Leaving with a server elsewhere typed in keeps the drafts, as a field does on losing
+        // focus; the drafts kept before are read back.
         .onDisappear { commitRemote() }
-        .onChange(of: model.config.value == nil, initial: true) { readDrafts() }
+        .onAppear { readDrafts() }
         switch chosen {
         case .shared: sharedRows
         case .here: hereRows
@@ -69,11 +68,13 @@ struct VoiceLLMRows: View {
                 primary(chosen)
             }
         }
-        // Saved: secrets.toml has the key now, and nothing need be held here.
+        // Saved: secrets.toml has the key now, and nothing need be held here — nor a draft
+        // of what is now in use.
         .onChange(of: run.result) { _, done in
             if done != nil {
                 key = nil
                 clearing = false
+                if done?.source == VoiceLLMSource.remote.rawValue { model.keepVoiceLLMDraft(address: "", model: "") }
             }
         }
     }
@@ -263,30 +264,23 @@ struct VoiceLLMRows: View {
         return VoiceLLMWording.inUse(choice, voice: voice)
     }
 
-    /// Return in a remote field, or leaving the screen with one typed in: Check and Use, when
-    /// Remote or Cloud is picked: the typed drafts saved, as a field is on Return or on losing
-    /// focus — only into settings the words in use don't read (`VoiceLLMWording.drafts`), so
-    /// nothing is asked of a server and no voice restarts. Check and Use stays a click.
+    /// Return in a remote field, or leaving the screen with one typed in, when Remote or
+    /// Cloud is picked: the typed drafts kept, as a field is on Return or on losing focus —
+    /// in the app's own preferences, never Keryx's settings, so nothing is asked of a server,
+    /// no voice restarts, and nothing unchecked can ever be used. Check and Use stays a click,
+    /// and is the only thing that writes the settings.
     private func commitRemote() {
         guard (picked ?? voice.llmSource) == .remote else { return }
-        let rows = model.config.value ?? []
-        let stored = { (key: String) in rows.first { $0.key == key }?.value.map(ConfigWording.editText) ?? "" }
-        let writes = VoiceLLMWording.drafts(address: address, model: remoteModel, source: voice.llmSource,
-                                            stored: (stored("VOICE_LLM_BASE_URL"), stored("VOICE_LLM_MODEL")))
-        guard !writes.isEmpty else { return }
-        Task {
-            for (key, value) in writes { _ = await model.set(key: key, to: value, restart: false) }
-        }
+        model.keepVoiceLLMDraft(address: address, model: remoteModel)
     }
 
-    /// The fields from the drafts saved before, once the settings are read: the address,
-    /// and the model while it is not the one a model of its own here runs.
+    /// The fields from the drafts kept before: each draft there is, over the words in use.
     private func readDrafts() {
-        guard !draftsRead, let rows = model.config.value else { return }
+        guard !draftsRead else { return }
         draftsRead = true
-        let text = { (key: String) in rows.first { $0.key == key }?.value.map(ConfigWording.editText) ?? "" }
-        if address.isEmpty { address = text("VOICE_LLM_BASE_URL") }
-        if remoteModel.isEmpty, voice.llmSource != .here { remoteModel = text("VOICE_LLM_MODEL") }
+        let draft = model.voiceLLMDraft
+        if let kept = draft.address { address = kept }
+        if let kept = draft.model { remoteModel = kept }
     }
 
     private func start(_ choice: VoiceLLMChoice) {
@@ -428,26 +422,6 @@ struct VoiceLLMRows: View {
         case let .remote(url, name, key):
             return sameAddress(url, voice.llm?.url) && name == voice.llm?.model && key == .stored
         }
-    }
-
-    /// What leaving Remote or Cloud with typed drafts saves: each draft that differs from what
-    /// is stored, into a setting the words in use don't read — both while they are the local
-    /// agent's; the address only while a model of its own runs here (its model is
-    /// `VOICE_LLM_MODEL` too); nothing while a server elsewhere is in use, whose settings they
-    /// are (Check and Use changes those).
-    static func drafts(address: String, model: String, source: VoiceLLMSource,
-                       stored: (address: String, model: String)) -> [(key: String, value: String)] {
-        let url = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        var writes: [(key: String, value: String)] = []
-        switch source {
-        case .remote:
-            return []
-        case .shared, .here:
-            if !url.isEmpty, url != stored.address { writes.append(("VOICE_LLM_BASE_URL", url)) }
-            if source == .shared, !name.isEmpty, name != stored.model { writes.append(("VOICE_LLM_MODEL", name)) }
-        }
-        return writes
     }
 
     /// Two addresses are the same one, but for a trailing slash or `/v1`.

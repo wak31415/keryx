@@ -11,7 +11,7 @@ enum ConfigWording {
         var id: String { group }
         /// The CLI's title for the group, from its first row, else this build's own — in
         /// title case, as a section's title is.
-        var title: String { Wording.titleCase(rows.first?.displayGroupTitle ?? ConfigWording.title(ofGroup: group)) }
+        var title: String { Wording.titleCase(rows.first?.shownGroupTitle ?? ConfigWording.title(ofGroup: group)) }
     }
 
     /// A group's title when the CLI does not name it (an older CLI).
@@ -36,7 +36,7 @@ enum ConfigWording {
         let query = query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return rows }
         return rows.filter {
-            $0.displayTitle.localizedCaseInsensitiveContains(query)
+            $0.shownTitle.localizedCaseInsensitiveContains(query)
                 || $0.key.localizedCaseInsensitiveContains(query)
                 || $0.description.localizedCaseInsensitiveContains(query)
                 || ConfigDescriptions.text($0).localizedCaseInsensitiveContains(query)
@@ -61,7 +61,7 @@ enum ConfigWording {
 
     /// Why a row is read-only, naming the setting and the variable to unset.
     static func environmentHelp(_ row: ConfigRow) -> String {
-        "\(row.displayTitle) is set in the environment as \(row.key), which wins over the store"
+        "\(row.shownTitle) is set in the environment as \(row.key), which wins over the store"
     }
 
     /// What to show for a refused write: the two validation failures Keryx words for a
@@ -71,11 +71,11 @@ enum ConfigWording {
     static func errorText(_ error: KeryxError, for row: ConfigRow) -> String {
         guard let reported = error.reported else { return error.message }
         if error.isOlderKeryx { return KeryxError.olderKeryx }
-        return errorText(reported, key: row.key, title: row.displayTitle)
+        return errorText(reported, key: row.key, title: row.shownTitle)
     }
 
     static func errorText(_ message: String, for row: ConfigRow) -> String {
-        errorText(message, key: row.key, title: row.displayTitle)
+        errorText(message, key: row.key, title: row.shownTitle)
     }
 
     static func errorText(_ message: String, key: String, title: String) -> String {
@@ -221,6 +221,15 @@ enum ConfigWording {
         !writing && text != stored && text != refused
     }
 
+    /// What a field cleared and left does: back to the default when something is stored
+    /// (`config unset`, as Reset does) — never the empty text stored as the value — and
+    /// nothing when nothing is.
+    enum Cleared: Equatable { case unset, nothing }
+
+    static func cleared(_ row: ConfigRow) -> Cleared {
+        row.set ? .unset : .nothing
+    }
+
     /// Unsetting a secret throws away something Keryx cannot show again, so it is asked
     /// about first; any other setting goes back to its default in one click.
     static func resetNeedsConfirmation(_ row: ConfigRow) -> Bool {
@@ -229,7 +238,7 @@ enum ConfigWording {
 
     /// "Remove OpenAI API key?"
     static func removalTitle(_ row: ConfigRow) -> String {
-        "Remove \(row.displayTitle)?"
+        "Remove \(row.shownTitle)?"
     }
 
     static let secretRemovalMessage =
@@ -245,9 +254,12 @@ enum ConfigWording {
         }
     }
 
-    /// A row's tooltip: its whole description, then the key `keryx config set` takes.
+    /// A row's tooltip: its whole description, then the key `keryx config set` takes — the
+    /// app's own words instead (`ConfigDescriptions`) for a description that speaks of a
+    /// "service", a word the owner never reads.
     static func tooltip(_ row: ConfigRow) -> String {
-        let description = plain(row.description)
+        let written = row.description.contains(#/(?i)\bservices?\b/#) ? ConfigDescriptions.text(row) : row.description
+        let description = plain(written)
         return description.isEmpty ? row.key : description + "\n\n" + row.key
     }
 

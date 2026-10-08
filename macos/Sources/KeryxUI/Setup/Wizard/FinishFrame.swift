@@ -15,8 +15,10 @@ package struct FinishFrame: View {
 
     @Environment(AppModel.self) private var model
     @Environment(SetupWizard.self) private var wizard
-    @State private var installing = false
-    @State private var installFailure: KeryxError?
+    /// Start Keryx (or Try Again) refused before anything ran — a sandbox run, setup not
+    /// far enough yet — said on the row until the next click. A start that ran and failed
+    /// is the model's (`startFailure`), as the Overview shows it.
+    @State private var startRefusal: KeryxError?
     @State private var using = false
     @State private var useFailure: KeryxError?
     @State private var profileOpen = false
@@ -29,7 +31,7 @@ package struct FinishFrame: View {
 
     package var body: some View {
         let facts = WizardFacts(model)
-        let ending = CheckingRules.ending(facts.plan, phoneLater: wizard.phoneLater,
+        let ending = CheckingRules.ending(facts.plan,
                                           pointed: model.phoneWebhooks.value.map { $0.error == nil ? $0.matches : true })
         Group {
             if ending == .checking {
@@ -38,14 +40,18 @@ package struct FinishFrame: View {
                 ready(facts, ending: ending)
             }
         }
-        .task { await model.refresh(.setupPlan, .voice, .models, .service, .pin, .phoneWebhooks, .config) }
-        .onChange(of: nextLocal(facts), initial: true) { _, step in takeByItself(step) }
-        .onChange(of: CheckingRules.serviceInstallable(facts.plan), initial: true) { _, installable in
-            if installable, wizard.mode == .firstRun, !wizard.serviceAsked { install() }
+        .task {
+            await model.refresh(.setupPlan, .voice, .models, .service, .pin, .phoneWebhooks, .config)
+            // Keryx is started the one way the app starts it (`AppModel.ensureAnswering`): once
+            // setup allows it, never by a sandbox run, and never beside one already answering.
+            await model.ensureAnswering()
         }
+        .onChange(of: nextLocal(facts), initial: true) { _, step in takeByItself(step) }
         .onChange(of: facts.done("agents"), initial: true) { _, done in
-            // A paid run: by itself only in a first run; a review offers it as a click.
-            if done, wizard.mode == .firstRun, let agent = facts.text("AGENT_BACKEND") { model.smokeTest(agent) }
+            // A paid run: by itself only in a first run, before setup was ever seen through;
+            // a review offers it as a click.
+            if done, CheckingRules.smokeTestsByItself(mode: wizard.mode, completedOnce: SetupLaunch.completedOnce()),
+               let agent = facts.text("AGENT_BACKEND") { model.smokeTest(agent) }
         }
         .onChange(of: ending, initial: true) { _, ending in
             // Seen through: from now on a problem is the checklist's, not a window's.
@@ -134,19 +140,21 @@ package struct FinishFrame: View {
         let intent = LocalIntent.of(wizard, facts: facts, voice: model.voice.value, models: model.models.value)
         // What this Mac is doing (or was stopped from doing) for the row comes first.
         if let working = localLine(row, next: next, intent: intent) { return working }
-        if case .phone = row, CheckingRules.leftForLater(step, plan: facts.plan, phoneLater: wizard.phoneLater) {
+        if case .phone = row, CheckingRules.leftForLater(step) {
             return Line(tone: .none, text: "Set up later, from the Phone section.")
         }
         if case .service = row {
-            if CheckingRules.leftForLater(step, plan: facts.plan, phoneLater: wizard.phoneLater) {
+            if CheckingRules.leftForLater(step) {
                 return Line(tone: .none, text: "Set up later, from the Overview.")
             }
             return serviceLine(step, plan: facts.plan)
         }
         if case .work = row, step?.kind == .done {
             if let smoke = smokeLine() { return smoke }
-            // A review runs the agent's (paid) test task only on a click.
-            if wizard.mode == .review, model.client is AgentSmokeTesting, let agent = facts.text("AGENT_BACKEND") {
+            // A review (or a first run once setup was seen through) runs the agent's (paid)
+            // test task only on a click.
+            if !CheckingRules.smokeTestsByItself(mode: wizard.mode, completedOnce: SetupLaunch.completedOnce()),
+               model.client is AgentSmokeTesting, let agent = facts.text("AGENT_BACKEND") {
                 return Line(tone: .ok, text: doneText(row, facts: facts),
                             action: ("Run a Test", { model.smokeTest(agent) }))
             }
@@ -191,7 +199,7 @@ package struct FinishFrame: View {
             case "agents": "the work"
             case "owner": "your details"
             case "migrate": "the move"
-            default: plan?.step(id)?.title.lowercased() ?? id
+            default: plan?.step(id).map { WizardWording.stepTitle($0).lowercased() } ?? id
             }
         }
         return names.isEmpty ? "another step" : Wording.list(names)
@@ -207,11 +215,11 @@ package struct FinishFrame: View {
 
     private func serviceLine(_ step: SetupStep?, plan: SetupPlan?) -> Line {
         let sentence = WizardWording.serviceSentence(WizardWording.assistant(WizardFacts(model), status: model.status.value))
-        if installing || model.serviceChange == .installing { return Line(tone: .working, text: "Starting Keryx…") }
-        if let installFailure {
-            let failure = installFailure.said("Keryx couldn't start answering calls.")
-            return Line(tone: .problem, text: failure.message, failure: failure,
-                        action: ("Try Again", { install() }))
+        if model.finishingPreviousStop { return Line(tone: .working, text: ServiceWording.finishingStop) }
+        if model.serviceChange == .installing { return Line(tone: .working, text: "Starting Keryx…") }
+        if let failure = startRefusal ?? model.startFailure {
+            let said = failure.said("Keryx couldn't start answering calls.")
+            return Line(tone: .problem, text: said.message, failure: said, action: ("Try Again", { start() }))
         }
         switch step?.kind {
         case .done?:
@@ -219,12 +227,10 @@ package struct FinishFrame: View {
         case .blocked?:
             return Line(tone: .none, text: "After \(waiting(step, plan: plan)) \(waitVerb(step, plan: plan)) ready.")
         default:
-            // In a review, or once asked: only on a click.
-            if wizard.mode == .review || wizard.serviceAsked {
-                return Line(tone: .none, text: "Keryx isn't answering calls yet.",
-                            action: ("Start Keryx", { install() }))
-            }
-            return Line(tone: .none, text: sentence)
+            // The app starts it by itself, once (`AppModel.automaticStartPending`); after
+            // that, or for a run that never starts Keryx, only on a click.
+            if model.automaticStartPending { return Line(tone: .none, text: sentence) }
+            return Line(tone: .none, text: "Keryx isn't answering calls yet.", action: ("Start Keryx", { start() }))
         }
     }
 
@@ -232,8 +238,10 @@ package struct FinishFrame: View {
 
     private func nextLocal(_ facts: WizardFacts) -> LocalStep {
         let intent = LocalIntent.of(wizard, facts: facts, voice: model.voice.value, models: model.models.value)
+        // Keryx starting (`service start --all`) starts the model servers' units too: this
+        // Mac's next step waits for it, and is taken once it is done.
         let busy = model.downloads.isBusy || model.voiceDownloadRun.isBusy || model.modelServerRun.isBusy
-            || model.voiceSetup.isBusy || model.voiceLLMBusy || using
+            || model.voiceSetup.isBusy || model.voiceLLMBusy || using || model.serviceChange != nil
         return LocalWork.next(intent, models: model.models.value, voice: model.voice.value, facts: facts, busy: busy)
     }
 
@@ -416,14 +424,12 @@ package struct FinishFrame: View {
         }
     }
 
-    private func install() {
-        guard !installing else { return }
-        wizard.serviceAsked = true
-        installing = true
-        installFailure = nil
+    /// Start Keryx, and Try Again: the model's one way to start it (`startAnswering`), which
+    /// joins a start already under way rather than refusing it as busy.
+    private func start() {
+        startRefusal = nil
         Task {
-            defer { installing = false }
-            if case let .failure(error) = await model.startAnswering() { installFailure = error }
+            if case let .failure(error) = await model.startAnswering(), case .refused = error { startRefusal = error }
         }
     }
 
@@ -465,10 +471,10 @@ package struct FinishFrame: View {
                           sentence: sentence, position: wizard.position(facts)) {
             VStack(alignment: .leading, spacing: 8) {
                 let later = (facts.plan?.remaining ?? []).filter {
-                    CheckingRules.leftForLater($0, plan: facts.plan, phoneLater: wizard.phoneLater)
+                    CheckingRules.leftForLater($0)
                 }
                 if ending == .nearlyReady, !later.isEmpty {
-                    StatusLine(tone: .none, text: "Left for later: \(Wording.list(later.map { Wording.titleCase($0.title) })).")
+                    StatusLine(tone: .none, text: "Left for later: \(Wording.list(later.map(WizardWording.stepTitle))).")
                 }
                 Text(WizardWording.whenever)
                     .font(.headline)

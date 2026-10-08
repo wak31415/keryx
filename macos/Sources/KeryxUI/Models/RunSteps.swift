@@ -37,18 +37,18 @@ enum RunStage: Equatable {
     /// `keryx models start`, with llama.cpp: `runtime`, `unit`, `start`, `check`.
     static let modelServer: Order = [
         ("runtime", "Set up llama.cpp"),
-        ("unit", "Install the background service"),
+        ("unit", "Set it to start in the background"),
         ("start", "Load the model"),
         ("check", "Check the model it serves"),
     ]
 
     /// `keryx models start --runtime ollama`: `runtime`, `start`, `check`, then `unit` when a
-    /// llama.cpp service is left to remove.
+    /// llama.cpp server is left to retire.
     static let ollama: Order = [
         ("runtime", "Find Ollama"),
         ("start", "Pull the model into Ollama"),
         ("check", "Check Ollama lists it"),
-        ("unit", "Retire the llama.cpp service"),
+        ("unit", "Retire the old llama.cpp server"),
     ]
 
     /// `keryx voice use here`: `install`, `download`, `configure`, `unit`, `start`.
@@ -56,7 +56,7 @@ enum RunStage: Equatable {
         ("install", "Install the voice server"),
         ("download", "Download the speech models"),
         ("configure", "Save the voice settings"),
-        ("unit", "Install the background service"),
+        ("unit", "Set it to start in the background"),
         ("start", "Start the voice server"),
     ]
 
@@ -71,7 +71,7 @@ enum RunStage: Equatable {
     static let voiceLLMHere: Order = [
         ("download", "Download the model"),
         ("runtime", "Set up llama.cpp"),
-        ("unit", "Install the background service"),
+        ("unit", "Set it to start in the background"),
         ("start", "Load the model"),
         ("check", "Check the model it serves"),
         ("configure", "Save the voice LLM"),

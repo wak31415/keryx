@@ -18,11 +18,19 @@ import KeryxPreview
                       "agents": "Coding Agents", "local_agent": "Local agent",
                       "model_servers": "Model servers on this machine", "phone": "Phone",
                       "owner": "You", "projects": "Projects", "limits": "Limits", "approvals": "Approvals",
-                      "plugins": "Plugins", "google": "Google", "service": "Service", "debug": "Debugging"]
+                      "plugins": "Plugins", "google": "Google", "service": "Background process, storage and logging",
+                      "debug": "Debugging"]
         for (group, title) in titles {
             #expect(ConfigWording.title(ofGroup: group) == title)
         }
         #expect(ConfigWording.title(ofGroup: "storage") == "Storage")
+    }
+
+    /// Minor 4: a field cleared and left goes back to the default (`config unset`), never
+    /// stores the empty text; with nothing stored there is nothing to do.
+    @Test func aClearedFieldUnsetsRatherThanStoringNothing() {
+        #expect(ConfigWording.cleared(row("OWNER_NAME", group: "owner", source: "store", value: .string("Ada"))) == .unset)
+        #expect(ConfigWording.cleared(row("OWNER_NAME", group: "owner", source: "default", value: nil)) == .nothing)
     }
 
     @Test func groupsKeepTheOrderConfigListGives() {

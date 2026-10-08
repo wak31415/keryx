@@ -30,9 +30,12 @@ import KeryxPreview
     /// The ready plan with the service step in `state`, and `fix` as its fix.
     static func plan(service state: String, fix: String? = nil) -> SetupPlan {
         var plan = PreviewData.setupPlanReady
-        let index = plan.steps.firstIndex { $0.id == "service" }!
-        plan.steps[index].state = state
-        plan.steps[index].fix = fix
+        // The ready plan always has its service step; were it ever missing, every test
+        // using this would fail on its own expectation rather than crash the run.
+        if let index = plan.steps.firstIndex(where: { $0.id == "service" }) {
+            plan.steps[index].state = state
+            plan.steps[index].fix = fix
+        }
         plan.ready = state == "done"
         return plan
     }
@@ -224,7 +227,7 @@ import KeryxPreview
         defer { model.stop() }
         await model.ensureAnswering()
         #expect(installs(client) == 0)
-        // The phone set up in the Setup Assistant: it reads the plan again.
+        // The phone set up in the setup wizard: it reads the plan again.
         client.update { $0.setupPlan = .success(Self.plan(service: "needed")) }
         await model.refresh(.setupPlan)
         #expect(await eventually { installs(client) == 1 })
@@ -293,6 +296,170 @@ import KeryxPreview
         #expect(model.startFailure == nil)
         await model.ensureAnswering()
         #expect(installs(client) == 2)
+    }
+
+    // MARK: - One way to start it
+
+    /// Every caller — launch, a plan read (the wizard's Phone frame), the poll, Checking, the
+    /// checklist, the Overview's Start — goes through `start(automatic:)`: a second caller
+    /// while a start is under way joins it, and is never told "already starting".
+    @Test func aSecondCallerJoinsTheStartUnderWay() async throws {
+        let gate = OptionsGate()
+        let client = StubClient {
+            $0.status = .success(Self.notInstalled)
+            $0.setupPlan = .success(Self.plan(service: "needed"))
+            $0.serviceWait = { await gate.wait() }
+        }
+        let model = makeModel(client: client)
+        await model.start()
+        defer { model.stop() }
+        // The launch's automatic start is held mid-install.
+        #expect(await eventually { gate.held == 1 })
+        // The Overview's Start (or Checking's Try Again), and a plan read, meanwhile.
+        let clicked = Task { await model.startAnswering() }
+        await model.refresh(.setupPlan)
+        gate.open()
+        let answer = await clicked.value
+        #expect(answer == .success(ServiceResult(ok: true, message: "done")), "joined, never refused as busy")
+        #expect(installs(client) == 1)
+        #expect(model.startFailure == nil)
+    }
+
+    @Test func aClickGoesThroughTheSameRule() async {
+        let client = StubClient {
+            $0.status = .success(Self.notInstalled)
+            $0.setupPlan = .success(PreviewData.setupPlanPartway)
+        }
+        let model = makeModel(client: client)
+        await model.start()
+        defer { model.stop() }
+        await model.ensureAnswering()
+        // Setup has not reached the step: Start says why, and installs nothing.
+        #expect(await model.startAnswering() == .failure(.refused(AppModel.waitingForSetupRefusal)))
+        #expect(installs(client) == 0 && starts(client) == 0)
+        #expect(model.startFailure == nil, "a refusal is not a failed start")
+        // Already answering (a `keryx serve` by hand): nothing is started beside it.
+        var byHand = Self.notInstalled
+        byHand.health.reachable = true
+        client.update {
+            $0.status = .success(byHand)
+            $0.setupPlan = .success(Self.plan(service: "needed"))
+        }
+        #expect(await model.startAnswering() == .success(ServiceResult(ok: true, message: AppModel.alreadyAnswering)))
+        #expect(installs(client) == 0 && starts(client) == 0)
+    }
+
+    /// A sandbox run (`KERYX_APP_ENVIRONMENT=inherit`) never installs or starts a unit,
+    /// whichever caller asks.
+    @Test func aSandboxRunNeverStartsKeryxWhoeverAsks() async {
+        #expect(!AppModel.keepsAnswering(environment: ["KERYX_APP_ENVIRONMENT": "inherit"]))
+        #expect(AppModel.keepsAnswering(environment: [:]))
+        let client = StubClient {
+            $0.status = .success(Self.notInstalled)
+            $0.setupPlan = .success(Self.plan(service: "needed"))
+        }
+        let model = AppModel(locator: StubLocator(), makeClient: { _ in client },
+                             preferences: Preferences(defaults: freshDefaults()),
+                             timing: AppModel.Timing(poll: .milliseconds(20), afterRestart: .zero))
+        model.keepsAnswering = false
+        await model.start()                         // launch
+        defer { model.stop() }
+        await model.refresh(.setupPlan)             // a plan read: the Phone frame's
+        await model.ensureAnswering()               // Checking
+        #expect(await model.startAnswering() == .failure(.refused(AppModel.notKeptAnsweringRefusal)))
+        // A few polls.
+        let polled = client.calls.filter { $0 == "status" }.count
+        #expect(await eventually { client.calls.filter { $0 == "status" }.count >= polled + 3 })
+        #expect(installs(client) == 0 && starts(client) == 0)
+        #expect(!model.automaticStartPending)
+    }
+
+    /// I2: the automatic start is tried again on the poll until it has been tried once — a
+    /// first status read that failed (a cold `uv run` at a login launch) never leaves Keryx
+    /// stopped while the app is open.
+    @Test func thePollStartsKeryxOnceAFailedFirstReadSucceeds() async throws {
+        let client = StubClient {
+            $0.status = .failure(.timedOut(command: "keryx status"))
+            $0.setupPlan = .success(Self.plan(service: "needed"))
+        }
+        let model = AppModel(locator: StubLocator(), makeClient: { _ in client },
+                             preferences: Preferences(defaults: freshDefaults()),
+                             timing: AppModel.Timing(poll: .milliseconds(20), afterRestart: .zero))
+        model.keepsAnswering = true
+        await model.start()
+        defer { model.stop() }
+        await model.ensureAnswering()
+        #expect(installs(client) == 0, "nothing to decide on yet")
+        #expect(model.automaticStartPending)
+        client.update { $0.status = .success(Self.notInstalled) }
+        #expect(await eventually { installs(client) == 1 })
+        // Tried once: the poll does not try again, though the stub still says it isn't running.
+        let polled = client.calls.filter { $0 == "status" }.count
+        #expect(await eventually { client.calls.filter { $0 == "status" }.count >= polled + 3 })
+        #expect(installs(client) == 1)
+    }
+
+    /// Minor 1: a relaunch while the last Quit's detached stop is still running waits for it
+    /// (bounded), saying so, before it starts Keryx — never `start --all` beside the stop.
+    @Test func theFirstStartWaitsForTheLastQuitsStopStillRunning() async throws {
+        let defaults = freshDefaults()
+        let preferences = Preferences(defaults: defaults)
+        // A process that is running for the whole test: this one.
+        preferences.recordDetachedStop(pid: getpid())
+        #expect(preferences.detachedStop?.isRunning == true)
+        let client = StubClient {
+            $0.status = .success(Self.notInstalled)
+            $0.setupPlan = .success(Self.plan(service: "needed"))
+        }
+        let model = AppModel(locator: StubLocator(), makeClient: { _ in client }, preferences: preferences,
+                             timing: AppModel.Timing(poll: nil, afterRestart: .zero, previousStop: .milliseconds(600)))
+        model.keepsAnswering = true
+        await model.start()
+        defer { model.stop() }
+        #expect(await eventually { model.finishingPreviousStop })
+        #expect(installs(client) == 0, "nothing starts while the stop runs")
+        #expect(await eventually { installs(client) == 1 }, "and the start goes on once the bound has passed")
+        #expect(!model.finishingPreviousStop)
+        #expect(preferences.detachedStop == nil, "forgotten once waited for")
+    }
+
+    @Test func aStopThatHasFinishedIsNotWaitedFor() async {
+        let preferences = Preferences(defaults: freshDefaults())
+        // A pid with nothing running as it: finished long ago.
+        preferences.detachedStop = DetachedStop(pid: getpid(), started: 1)
+        #expect(preferences.detachedStop?.isRunning == false)
+        let client = StubClient {
+            $0.status = .success(Self.notInstalled)
+            $0.setupPlan = .success(Self.plan(service: "needed"))
+        }
+        let model = AppModel(locator: StubLocator(), makeClient: { _ in client }, preferences: preferences,
+                             timing: AppModel.Timing(poll: nil, afterRestart: .zero, previousStop: .seconds(60)))
+        model.keepsAnswering = true
+        await model.start()
+        defer { model.stop() }
+        await model.ensureAnswering()
+        #expect(installs(client) == 1)
+        #expect(preferences.detachedStop == nil)
+    }
+
+    /// Minor 2: one launchctl at a time — Keryx's start and the model servers' own runs never
+    /// overlap.
+    @Test func modelServerRunsWaitForKeryxsStart() async {
+        let gate = OptionsGate()
+        let client = StubClient {
+            $0.status = .success(Self.notInstalled)
+            $0.setupPlan = .success(Self.plan(service: "needed"))
+            $0.serviceWait = { await gate.wait() }
+        }
+        let model = makeModel(client: client)
+        await model.start()
+        defer { model.stop() }
+        #expect(await eventually { gate.held == 1 })
+        #expect(!model.canStartModelServer && !model.canChangeVoiceLLM)
+        #expect(!model.runModelServer())
+        gate.open()
+        #expect(await eventually { model.serviceChange == nil })
+        #expect(model.canStartModelServer)
     }
 
     // MARK: - Quitting
@@ -376,6 +543,15 @@ import KeryxPreview
         // The install finishes (the unit now installed); quitting then stops it.
         client.update { $0.service = .success(Self.units(installed: true)) }
         let stopping = Task { await model.stopAnswering() }
+        // The stop has no gate of its own (`stopServiceWait`): a quit that did not wait for
+        // the start would have run it on its first turn, while the install is still held. The
+        // main actor runs its jobs in order, so a couple of yields hand the stop that turn;
+        // anything longer — a sleep, many yields behind the other suites' rendering — eats
+        // into the 5 s quitting waits for a start.
+        await Task.yield()
+        await Task.yield()
+        #expect(!client.calls.contains("service stop --all"), "the stop waits for the start under way")
+        #expect(model.serviceChange == .installing)
         gate.open()
         #expect(await stopping.value == nil)
         // `stopping.value` is awaited above, so every call either of them made is already

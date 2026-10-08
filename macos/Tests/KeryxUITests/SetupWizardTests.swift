@@ -116,12 +116,11 @@ import KeryxTestSupport
         let wizard = SetupWizard()
         let facts = WizardFacts(plan: fresh)
         wizard.advance(facts)
-        wizard.phoneLater = true
         wizard.voicePlace = .thisMac
         let review = WizardOpening(mode: .review)
         wizard.start(review)
         #expect(wizard.path == [.welcome] && wizard.mode == .review)
-        #expect(!wizard.phoneLater && wizard.voicePlace == nil)
+        #expect(wizard.voicePlace == nil)
         wizard.advance(facts)
         wizard.start(review)
         #expect(wizard.current == .aboutYou, "the same opening again changes nothing")
@@ -152,7 +151,7 @@ import KeryxTestSupport
     }
 
     @Test func turningItOffIsRememberedInTheAppsDefaults() {
-        let defaults = UserDefaults(suiteName: "SetupWizardTests-\(UUID().uuidString)")!
+        let defaults = TestDefaults.fresh()
         #expect(!SetupLaunch.isHidden(in: defaults))
         defaults.set(true, forKey: SetupLaunch.hiddenKey)
         #expect(SetupLaunch.isHidden(in: defaults))
@@ -160,7 +159,7 @@ import KeryxTestSupport
 
     @Test func aLaunchThatFindsSetupReadyRecordsIt() {
         // Set up from a terminal, or by an earlier app: ready at launch, so recorded…
-        let defaults = UserDefaults(suiteName: "SetupWizardTests-\(UUID().uuidString)")!
+        let defaults = TestDefaults.fresh()
         #expect(!SetupLaunch.atLaunch(plan: ready, hidden: false, alreadyOpened: false, defaults: defaults))
         #expect(SetupLaunch.completedOnce(in: defaults))
         // …and a sign-in that expires later opens nothing.
@@ -168,13 +167,13 @@ import KeryxTestSupport
         expired.ready = false
         #expect(!SetupLaunch.atLaunch(plan: expired, hidden: false, alreadyOpened: false, defaults: defaults))
         // A new Mac opens it, and records nothing.
-        let fresher = UserDefaults(suiteName: "SetupWizardTests-\(UUID().uuidString)")!
+        let fresher = TestDefaults.fresh()
         #expect(SetupLaunch.atLaunch(plan: fresh, hidden: false, alreadyOpened: false, defaults: fresher))
         #expect(!SetupLaunch.completedOnce(in: fresher))
         // Nearly ready (all that is left was deferred) counts as seen through.
         var deferred = with(ready, ["phone"], .needed, deferred: true, deferrable: true)
         deferred.ready = false
-        let nearly = UserDefaults(suiteName: "SetupWizardTests-\(UUID().uuidString)")!
+        let nearly = TestDefaults.fresh()
         _ = SetupLaunch.atLaunch(plan: deferred, hidden: false, alreadyOpened: false, defaults: nearly)
         #expect(SetupLaunch.completedOnce(in: nearly))
     }
@@ -195,24 +194,32 @@ import KeryxTestSupport
         notReady.ready = false
         #expect(SetupLaunch.shouldOpen(plan: notReady, hidden: false, alreadyOpened: false))
         #expect(!SetupLaunch.shouldOpen(plan: notReady, hidden: false, alreadyOpened: false, completedOnce: true))
-        let defaults = UserDefaults(suiteName: "SetupWizardTests-\(UUID().uuidString)")!
+        let defaults = TestDefaults.fresh()
         #expect(!SetupLaunch.completedOnce(in: defaults))
         SetupLaunch.markCompleted(in: defaults)
         #expect(SetupLaunch.completedOnce(in: defaults))
     }
 
     @Test func eachEntryOpensItInItsMode() {
-        #expect(SetupEntry.menu.mode == .review)
-        #expect(SetupEntry.checklist.mode == .firstRun)
-        #expect(SetupEntry.launch.mode == .firstRun)
+        for completed in [false, true] {
+            #expect(SetupEntry.menu.mode(completedOnce: completed) == .review)
+            #expect(SetupEntry.launch.mode(completedOnce: completed) == .firstRun)
+        }
+        #expect(SetupEntry.checklist.mode(completedOnce: false) == .firstRun)
+        #expect(SetupEntry.checklist.mode(completedOnce: true) == .review,
+                "Set Up Keryx… after setup was seen through reviews, and runs no paid test by itself")
+        let defaults = TestDefaults.fresh()
         let model = AppModel.preview()
         let before = model.wizardOpening.id
-        SetupLaunch.open(.menu, model: model)
+        SetupLaunch.open(.menu, model: model, defaults: defaults)
         #expect(model.wizardOpening.mode == .review && model.wizardOpening.id != before)
         let review = model.wizardOpening.id
-        SetupLaunch.open(.checklist, model: model)
+        SetupLaunch.open(.checklist, model: model, defaults: defaults)
         #expect(model.wizardOpening.mode == .firstRun && model.wizardOpening.id != review,
                 "a second opening starts the window again at Welcome")
+        SetupLaunch.markCompleted(in: defaults)
+        SetupLaunch.open(.checklist, model: model, defaults: defaults)
+        #expect(model.wizardOpening.mode == .review)
     }
 
     // MARK: - About You
@@ -615,9 +622,7 @@ import KeryxTestSupport
         #expect(!unset.canContinue(pickedNumber: nil, typedHost: "keryx.example.com"), "no account, no Continue")
     }
 
-    @Test func setUpLaterIsRecordedOnlyWhereTheCLICanDefer() {
-        let notDeferrable = with(fresh, ["phone"], .blocked, deferrable: false)
-        #expect(PhoneSteps.later(WizardFacts(plan: notDeferrable)).isEmpty, "an older CLI that cannot defer")
+    @Test func setUpLaterIsRecordedThroughTheCLI() {
         let deferrable = with(fresh, ["phone"], .blocked, deferrable: true)
         #expect(PhoneSteps.later(WizardFacts(plan: deferrable)) == [.mark("phone")])
     }
@@ -625,36 +630,24 @@ import KeryxTestSupport
     // MARK: - Checking
 
     @Test func checkingEndsReadyNearlyReadyOrStillChecking() {
-        #expect(CheckingRules.ending(ready, phoneLater: false) == .ready)
-        #expect(CheckingRules.ending(fresh, phoneLater: true) == .checking)
-        #expect(CheckingRules.ending(nil, phoneLater: true) == .checking)
-        // An older CLI that cannot speak of deferring at all (`deferrable`/`deferred` on
-        // every step still nil) falls back to `phoneLater`: the phone left in this run,
-        // and the service waiting only for it.
-        var legacy = ready
-        for index in legacy.steps.indices {
-            legacy.steps[index].deferrable = nil
-            legacy.steps[index].deferred = nil
-        }
-        var phoneLeft = with(legacy, ["phone"], .needed)
-        phoneLeft = with(phoneLeft, ["service"], .blocked)
-        if let index = phoneLeft.steps.firstIndex(where: { $0.id == "service" }) { phoneLeft.steps[index].blockedBy = ["phone"] }
-        phoneLeft.ready = false
-        #expect(CheckingRules.ending(phoneLeft, phoneLater: true) == .nearlyReady)
-        #expect(CheckingRules.ending(phoneLeft, phoneLater: false) == .checking)
-        // SEAM: the plan says what was deferred, whatever this run remembers.
+        #expect(CheckingRules.ending(ready) == .ready)
+        #expect(CheckingRules.ending(fresh) == .checking)
+        #expect(CheckingRules.ending(nil) == .checking)
+        // The plan says what was deferred.
         var deferred = with(ready, ["phone"], .needed, deferred: true, deferrable: true)
         deferred.ready = false
-        #expect(CheckingRules.ending(deferred, phoneLater: false) == .nearlyReady)
+        #expect(CheckingRules.ending(deferred) == .nearlyReady)
+        #expect(CheckingRules.leftForLater(deferred.step("phone")))
         let notDeferred = with(deferred, ["phone"], .needed, deferred: false)
-        #expect(CheckingRules.ending(notDeferred, phoneLater: true) == .checking)
+        #expect(CheckingRules.ending(notDeferred) == .checking)
+        #expect(!CheckingRules.leftForLater(notDeferred.step("phone")))
     }
 
-    @Test func theServiceIsInstalledOnceItWaitsForNothing() {
-        #expect(!CheckingRules.serviceInstallable(fresh), "blocked")
-        #expect(CheckingRules.serviceInstallable(with(ready, ["service"], .needed)))
-        #expect(CheckingRules.serviceInstallable(with(ready, ["service"], .failed)))
-        #expect(!CheckingRules.serviceInstallable(ready))
+    @Test func thePaidTestRunsByItselfOnlyInAFirstRunBeforeSetupWasSeenThrough() {
+        #expect(CheckingRules.smokeTestsByItself(mode: .firstRun, completedOnce: false))
+        #expect(!CheckingRules.smokeTestsByItself(mode: .firstRun, completedOnce: true))
+        #expect(!CheckingRules.smokeTestsByItself(mode: .review, completedOnce: false))
+        #expect(!CheckingRules.smokeTestsByItself(mode: .review, completedOnce: true))
     }
 
     @Test func aFailedRowFixesOnTheFrameThatSetsIt() {
@@ -674,7 +667,7 @@ import KeryxTestSupport
         var ownerLeft = with(ready, ["owner"], .needed)
         ownerLeft.ready = false
         #expect(CheckRow.rows(ownerLeft, local: false) == [.voice, .work, .phone, .service, .step("owner")])
-        #expect(CheckingRules.ending(ownerLeft, phoneLater: false) == .checking)
+        #expect(CheckingRules.ending(ownerLeft) == .checking)
         #expect(WizardWording.checkRow(.step("owner"), plan: ownerLeft) == "Your Details")
         // The PIN, a migration, and the local models when this run puts something here.
         var several = with(migrating, ["pin"], .needed)
@@ -753,9 +746,9 @@ import KeryxTestSupport
     }
 
     @Test func readyNeedsTheNumberToRingThisMac() {
-        #expect(CheckingRules.ending(ready, phoneLater: false, pointed: true) == .ready)
-        #expect(CheckingRules.ending(ready, phoneLater: false, pointed: false) == .notPointed)
-        #expect(CheckingRules.ending(ready, phoneLater: false, pointed: nil) == .ready, "not asked: not held back")
+        #expect(CheckingRules.ending(ready, pointed: true) == .ready)
+        #expect(CheckingRules.ending(ready, pointed: false) == .notPointed)
+        #expect(CheckingRules.ending(ready, pointed: nil) == .ready, "not asked: not held back")
         #expect(WizardWording.notPointed(number: "+15550001111")
             == "Everything is set up, but your number still rings its old address. Point it at this Mac "
             + "from Phone in the sidebar, then ring +1 555 000 1111.")

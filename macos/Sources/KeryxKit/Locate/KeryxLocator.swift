@@ -84,7 +84,7 @@ public struct KeryxLocator: Locating {
 
         switch agent {
         case nil:
-            lookedAt.append("\(Self.environmentOverride)=inherit, so the service's launch agent was not read.")
+            lookedAt.append("\(Self.environmentOverride)=inherit, so the launch agent Keryx runs under was not read.")
         case let .failure(reason):
             lookedAt.append(reason.sentence)
         case let .success(service):

@@ -28,6 +28,13 @@ enum PluginChange { case on, off, settings }
 /// The Plugins screen's words and decisions, kept apart from the views so they can be
 /// tested.
 enum PluginsWording {
+    /// Whether a plugin field's text should be handed on: it differs from what the plugin
+    /// holds, and from the text already sent (a save in flight, or one refused) until that
+    /// is edited.
+    static func shouldCommit(_ text: String, stored: String, sent: String?) -> Bool {
+        text != stored && text != sent
+    }
+
     // MARK: State
 
     /// The dot and word beside the switch: on (installed and loading), not loading

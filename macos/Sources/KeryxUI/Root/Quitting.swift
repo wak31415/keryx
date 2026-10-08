@@ -50,7 +50,7 @@ public enum Quitting {
         }
         if startingModelServer {
             under.append(("the model server is starting",
-                          "It stops, and its service is removed. Start Model Server in Local Models starts it again.",
+                          "It stops, and won't start again by itself. Start Model Server in Local Models starts it again.",
                           "Start Model Server in Local Models starts the model server again"))
         }
         if downloadingVoiceModels {
@@ -66,7 +66,7 @@ public enum Quitting {
         }
         if startingVoiceLLMServer {
             under.append(("the voice LLM's server is starting",
-                          "It stops, and its service is removed. Start Voice LLM Server in Local Models starts it again.",
+                          "It stops, and won't start again by itself. Start Voice LLM Server in Local Models starts it again.",
                           "Start Voice LLM Server in Local Models starts the voice LLM's server again"))
         }
         if let signingIn {

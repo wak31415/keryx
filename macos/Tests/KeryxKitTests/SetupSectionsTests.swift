@@ -178,7 +178,7 @@ import KeryxPreview
 
     // MARK: - Task L's seams
 
-    @Test func aPlanThatCanDeferIsNearlyReadyWhenAllThatIsLeftWasDeferred() {
+    @Test func aPlanThatCanDeferIsNearlyReadyWhenAllThatIsLeftWasDeferred() throws {
         var plan = PreviewData.setupPlanReady
         // The shared fixture now speaks of deferring (Task L has landed); start from an
         // older CLI's shape (neither key printed) before building the scenario by hand.
@@ -192,7 +192,7 @@ import KeryxPreview
             plan.steps[index].deferrable = ["phone", "service"].contains(plan.steps[index].id)
             plan.steps[index].deferred = false
         }
-        guard let phone = plan.steps.firstIndex(where: { $0.id == "phone" }) else { return }
+        let phone = try #require(plan.steps.firstIndex(where: { $0.id == "phone" }))
         plan.steps[phone].state = "needed"
         #expect(plan.speaksOfDeferring && !plan.nearlyReady, "still to do, not left for later")
         plan.steps[phone].deferred = true

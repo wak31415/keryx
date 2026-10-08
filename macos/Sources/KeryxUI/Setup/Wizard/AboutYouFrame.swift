@@ -119,22 +119,13 @@ package struct AboutYouFrame: View {
         }
     }
 
-    /// The assistant's name: the CLI's list when it offers one (SEAM: `config options
-    /// ASSISTANT_NAME`), else a field.
+    /// The assistant's name, from the CLI's list (`config options ASSISTANT_NAME`).
     @ViewBuilder private func assistantField(_ facts: WizardFacts) -> some View {
         let problem = assistant.isEmpty ? nil : AboutYouAnswers.assistantProblem(assistant)
         VStack(alignment: .leading, spacing: 4) {
-            if facts.row("ASSISTANT_NAME")?.hasOptions == true {
-                OptionMenu(key: "ASSISTANT_NAME", title: "Assistant's name",
-                           current: assistant.isEmpty ? (facts.text("ASSISTANT_NAME") ?? "") : assistant) {
-                    assistant = $0
-                }
-            } else {
-                TextField("Assistant's name", text: $assistant,
-                          prompt: Text(facts.text("ASSISTANT_NAME") ?? "Lyra"))
-                    .textFieldStyle(.roundedBorder)
-                    .labelsHidden()
-                    .frame(maxWidth: 220, alignment: .leading)
+            OptionMenu(key: "ASSISTANT_NAME", title: "Assistant's name",
+                       current: assistant.isEmpty ? (facts.text("ASSISTANT_NAME") ?? "") : assistant) {
+                assistant = $0
             }
             if let problem {
                 Text(problem).font(.caption).foregroundStyle(.red)

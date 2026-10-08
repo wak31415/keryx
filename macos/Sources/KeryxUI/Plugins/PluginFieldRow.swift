@@ -58,6 +58,11 @@ private struct CommittingField: View {
     let commit: (String, Bool) -> Void
 
     @State private var text: String
+    /// The text last handed on, until the value it was given changes (a save that worked):
+    /// Return, then the blur and the section switch that follow, send it once — and a value
+    /// the CLI refused is not sent again on every blur until it is edited, as
+    /// `ConfigWording.shouldCommit` holds a Configuration row.
+    @State private var sent: String?
     @FocusState private var focused: Bool
 
     init(title: String, value: String, numeric: Bool, commit: @escaping (String, Bool) -> Void) {
@@ -78,12 +83,14 @@ private struct CommittingField: View {
             }
             .onDisappear { send(onDisappear: true) }
             .onChange(of: value) { _, now in
+                sent = nil
                 if !focused { text = now }
             }
     }
 
     private func send(onDisappear: Bool) {
-        guard text != value else { return }
+        guard PluginsWording.shouldCommit(text, stored: value, sent: sent) else { return }
+        sent = text
         commit(text, onDisappear)
     }
 }

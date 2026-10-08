@@ -129,9 +129,7 @@ COMMANDS = {
 #: The command lines and streams the CLI prints that the app has yet to name. Each is
 #: checked once the contract names it; until then the cross-checks let it be missing, and
 #: nothing more — a contract that names what the CLI does not print still fails them.
-AWAITING: set[str] = {
-    *VOICE_LLMS,
-}
+AWAITING: set[str] = set()
 #: Keys a command prints that the app has yet to name, by path, with the types the
 #: contract will give them: checked here until it does, and by the contract once it does.
 AWAITING_KEYS: dict[str, dict[str, dict[str, str]]] = {}
@@ -611,7 +609,8 @@ def test_what_awaits_the_contract_is_something_the_cli_prints():
 @pytest.mark.parametrize("command", sorted(COMMANDS))
 def test_every_key_the_app_needs_is_printed_with_its_type(command, seeded):
     if command not in contract()["commands"]:
-        # The cross-check above fails for it, once: a promise the app has yet to make.
+        # A command only AWAITING lets be missing; anything else fails here too.
+        assert command in AWAITING, f"the contract does not name {command}"
         pytest.skip(f"the contract does not name {command} yet")
     result = runner.invoke(app, argv(command), input=STDIN.get(command, PIPED.get(command)))
 
@@ -913,11 +912,7 @@ STARTS = [(_start_done, "done", 0, True), (_start_failed, "error", 1, True),
 
 def start_stream() -> dict:
     """The contract's promise for `models start --json`, once the app has made it."""
-    stream = contract()["streams"].get(MODELS_START)
-    if stream is None:
-        # The streams' cross-check fails for it, once: a promise the app has yet to make.
-        pytest.skip(f"the contract does not name the {MODELS_START} stream yet")
-    return stream
+    return awaited_stream(MODELS_START)
 
 
 def test_the_starts_below_reach_every_event_the_contract_names():
@@ -1026,11 +1021,7 @@ SIGN_IN_EVENTS = {"claude": {"open", "code"}, "codex": {"open"}, "gmail": {"open
 
 def sign_in_stream(name: str) -> dict:
     """The contract's promise for `auth login NAME --json`, once the app has made it."""
-    stream = contract()["streams"].get(AUTH_LOGINS[name])
-    if stream is None:
-        # The streams' cross-check fails for it, once: a promise the app has yet to make.
-        pytest.skip(f"the contract does not name the {AUTH_LOGINS[name]} stream yet")
-    return stream
+    return awaited_stream(AUTH_LOGINS[name])
 
 
 @pytest.mark.parametrize("name", sorted(SIGN_INS))
@@ -1112,11 +1103,7 @@ DOWNLOADS = [(_download_done, "done", 0, True), (_download_failed, "error", 1, T
 
 def download_stream() -> dict:
     """The contract's promise for `voice download --json`, once the app has made it."""
-    stream = contract()["streams"].get(VOICE_DOWNLOAD)
-    if stream is None:
-        # The streams' cross-check fails for it, once: a promise the app has yet to make.
-        pytest.skip(f"the contract does not name the {VOICE_DOWNLOAD} stream yet")
-    return stream
+    return awaited_stream(VOICE_DOWNLOAD)
 
 
 def test_the_downloads_below_reach_every_event_the_contract_names():
@@ -1154,12 +1141,23 @@ def test_a_speech_model_download_streams_the_events_the_app_reads_and_ends_once(
 
 
 def awaited_stream(command: str) -> dict:
-    """The contract's promise for `command`, once the app has made it."""
+    """The contract's promise for `command`. Skipped only while it is in AWAITING, which
+    lets it be missing; anything else missing fails here, never passes by unseen."""
     stream = contract()["streams"].get(command)
     if stream is None:
-        # The streams' cross-check lets it be missing while it is in AWAITING.
-        pytest.skip(f"the contract does not name the {command} stream yet")
+        if command in AWAITING:
+            pytest.skip(f"the contract does not name the {command} stream yet")
+        pytest.fail(f"the contract does not name the {command} stream")
     return stream
+
+
+def promised(command: str) -> dict | None:
+    """The contract's promise for `command` to check a run against: `None` only while it is
+    in AWAITING; a stream the contract should name and does not fails."""
+    if command in AWAITING:
+        return contract()["streams"].get(command)
+    assert command in contract()["streams"], f"the contract does not name the {command} stream"
+    return contract()["streams"][command]
 
 
 def ends_once(events: list[dict]) -> str:
@@ -1235,8 +1233,8 @@ def test_a_migration_ends_once_whatever_the_contract_says(
     events = [json.loads(line) for line in result.stdout.splitlines()]
     assert ends_once(events) == ending and result.exit_code == code, events
     assert (events[0]["event"] == "step") is stepped
-    if MIGRATE in contract()["streams"]:
-        keeps_its_promise(contract()["streams"][MIGRATE], events, ending, result.exit_code)
+    if (promise := promised(MIGRATE)) is not None:
+        keeps_its_promise(promise, events, ending, result.exit_code)
 
 
 # --- the stream: setup project-context --json --------------------------------------------
@@ -1305,8 +1303,8 @@ def test_a_draft_ends_once_whatever_the_contract_says(
     events = [json.loads(line) for line in result.stdout.splitlines()]
     assert ends_once(events) == ending and result.exit_code == code, events
     assert (events[0]["event"] == "step") is stepped
-    if PROJECT_CONTEXT in contract()["streams"]:
-        keeps_its_promise(contract()["streams"][PROJECT_CONTEXT], events, ending,
+    if (promise := promised(PROJECT_CONTEXT)) is not None:
+        keeps_its_promise(promise, events, ending,
                           result.exit_code)
 
 
@@ -1386,6 +1384,14 @@ def voice_llm_argv(command: str) -> list[str]:
 
 
 @pytest.mark.parametrize("command", VOICE_LLMS)
+def test_the_voice_llm_streams_below_reach_every_event_the_contract_names(command):
+    stream = awaited_stream(command)
+
+    assert {ending for _, ending, _ in VOICE_LLM_ENDS} == set(stream["terminal"])
+    assert set(stream["events"]) == {*stream["terminal"], "step", "progress"}
+
+
+@pytest.mark.parametrize("command", VOICE_LLMS)
 @pytest.mark.parametrize(("arrange", "ending", "code"), VOICE_LLM_ENDS)
 def test_a_voice_llm_stream_ends_once_whatever_the_contract_says(
     seeded, monkeypatch, command, arrange, ending, code
@@ -1408,8 +1414,8 @@ def test_a_voice_llm_stream_ends_once_whatever_the_contract_says(
 
     events = [json.loads(each) for each in result.stdout.splitlines()]
     assert ends_once(events) == ending and result.exit_code == code, events
-    if command in contract()["streams"]:
-        keeps_its_promise(contract()["streams"][command], events, ending, result.exit_code)
+    if (promise := promised(command)) is not None:
+        keeps_its_promise(promise, events, ending, result.exit_code)
 
 
 # --- the stream: auth smoke NAME --json --------------------------------------------------
@@ -1486,8 +1492,8 @@ def test_a_smoke_test_ends_once_whatever_the_contract_says(
     events = [json.loads(line) for line in result.stdout.splitlines()]
     assert ends_once(events) == ending and result.exit_code == code, events
     assert (events[0]["event"] == "step") is stepped
-    if AUTH_SMOKE in contract()["streams"]:
-        keeps_its_promise(contract()["streams"][AUTH_SMOKE], events, ending, result.exit_code)
+    if (promise := promised(AUTH_SMOKE)) is not None:
+        keeps_its_promise(promise, events, ending, result.exit_code)
 
 
 # --- the fix ids: one vocabulary, on both sides -------------------------------------------
@@ -1499,8 +1505,7 @@ def test_the_app_knows_exactly_the_fix_ids_the_cli_can_send():
     from keryx import fixes
 
     ids = contract().get("fix_ids")
-    if ids is None:
-        pytest.skip("the contract does not name the fix ids yet")
+    assert ids is not None, "the contract does not name the fix ids"
     # An id the app has yet to name may be missing from the contract, and nothing more.
     named = set(ids["actions"])
     assert named <= set(fixes.ACTIONS), f"not sent by the CLI: {sorted(named - fixes.ACTIONS)}"
@@ -1508,3 +1513,13 @@ def test_the_app_knows_exactly_the_fix_ids_the_cli_can_send():
     assert set(ids["signins"]) == set(fixes.SIGNINS)
     assert set(ids["prefixes"]) == set(fixes.PREFIXES)
 
+
+
+# --- the constants: what the app draws from a figure the CLI keeps ------------------------
+
+
+def test_the_speech_share_the_app_draws_is_the_one_the_cli_keeps_for_the_voice_server():
+    """Local Models' memory bar shows the speech models' share as a constant
+    (`MemoryShares.speechGigabytes`), which the CLI does not print; the contract pins it to
+    `VOICE_SERVER_GB`, and the Swift tests pin the app's to the contract's."""
+    assert contract()["constants"]["speech_gb"] == catalog.VOICE_SERVER_GB

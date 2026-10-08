@@ -1,7 +1,7 @@
 import Foundation
 
 /// Something one window asks the main window to do: show a section and, for most, open the
-/// sheet or start the setup that settles it there. The Setup Assistant asks; the screen at
+/// sheet or start the setup that settles it there. The setup wizard asks; the screen at
 /// `destination` answers.
 ///
 /// `AppModel.request(_:)` selects the destination and holds the request in

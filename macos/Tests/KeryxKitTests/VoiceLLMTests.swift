@@ -157,12 +157,16 @@ import KeryxTestSupport
         }
         let model = await VoiceLLMTests().makeModel(client: client)
         defer { model.stop() }
-        // The read the choice asks for is held: what was read before (shared) is stale.
-        client.update { $0.configWait = { await gate.wait() } }
+        // The read the choice asks for is held (the settings'), so what was read before is
+        // stale until it lands: the voice now reads its own model.
+        #expect(model.voice.value?.llmSource == .shared)
+        client.update {
+            $0.configWait = { await gate.wait() }
+            $0.voice = .success(PreviewData.voiceOwnLLM)
+        }
         #expect(model.chooseVoiceLLM(.here(model: "qwen3.5-4b")))
         await model.voiceLLMRun.settled()
         #expect(model.voiceLLMRun.result == VoiceLLMTests.chosen)
-        #expect(model.voice.value?.llmSource == .shared, "stale")
         #expect(model.voiceLLMSettling && model.voiceLLMBusy)
         // So nothing — Checking included, which reads `voiceLLMBusy` as busy — asks again.
         #expect(!model.canChangeVoiceLLM)
@@ -171,6 +175,7 @@ import KeryxTestSupport
         gate.open()
         #expect(await eventually { !model.voiceLLMSettling })
         #expect(model.canChangeVoiceLLM)
+        #expect(model.voice.value?.llmSource == .here, "read again once settled")
     }
 
     @Test func aTypedKeyIsNeverKeptForTryAgain() async {

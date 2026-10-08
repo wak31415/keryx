@@ -43,7 +43,7 @@ public struct IntegrationsView: View {
             }
             .formStyle(.grouped)
         }
-        // What another window asked of Integrations (the Setup Assistant's Connect Google…,
+        // What another window asked of Integrations (the setup wizard's Connect Google…,
         // Connect GitHub…, a Google sign-in): answered once the cards are read.
         .onChange(of: model.requested, initial: true) { answerRequest() }
         .onChange(of: model.integrations.value) { answerRequest() }

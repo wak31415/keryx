@@ -124,6 +124,35 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: files.stderr.path))
     }
 
+    /// Quit's stop is recorded as it is spawned (`onDetachedSpawn`), so the next launch can
+    /// wait for it while it runs; a run that is not detached is never handed on.
+    @Test func aDetachedRunsPidIsHandedOnAsItStarts() async throws {
+        let seen = Holder<DetachedStop>()
+        let runner = ProcessRunner(observingChild: leftovers.add,
+                                   onDetachedSpawn: { pid in if let stop = DetachedStop.of(pid: pid) { seen.set(stop) } })
+        _ = try await runner.run(.init(executable: "/bin/sh", arguments: ["-c", "sleep 0.2"], detached: true))
+        let stop = try #require(seen.value, "the pid, while its process ran")
+        #expect(!stop.isRunning, "and no longer running once it has ended")
+        let attached = Holder<DetachedStop>()
+        let plain = ProcessRunner(observingChild: leftovers.add,
+                                  onDetachedSpawn: { pid in attached.set(DetachedStop(pid: pid, started: 0)) })
+        _ = try await plain.run(.init(executable: "/usr/bin/true", timeout: .seconds(5)))
+        #expect(attached.value == nil)
+    }
+
+    /// At launch, the output files a stop that outlived its app left behind go — only those.
+    @Test func leftoverDetachedOutputFilesAreRemovedAndNothingElse() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("keryx-leftovers-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        for name in ["dev.keryx.app.A.out", "dev.keryx.app.A.err", "dev.keryx.app.notes.txt", "other.out"] {
+            try Data("x".utf8).write(to: folder.appendingPathComponent(name))
+        }
+        ProcessRunner.removeLeftoverOutputFiles(in: folder)
+        let left = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+        #expect(left == ["dev.keryx.app.notes.txt", "other.out"])
+    }
+
     @Test func aFinishedRunIsFreed() async throws {
         let probe = WeakProbe()
         let runner = ProcessRunner(observingCollector: { probe.object = $0 }, observingChild: leftovers.add)

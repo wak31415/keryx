@@ -1,7 +1,7 @@
 import KeryxKit
 
 /// What the main window does for each `AppRequest`, and on which screen: the one table every
-/// screen answers from, so no request the Setup Assistant can make goes unanswered.
+/// screen answers from, so no request the setup wizard can make goes unanswered.
 ///
 /// Each screen watches `AppModel.requested`, asks `of(_:)` what it means, does its part when
 /// the answer is its own, and calls `AppModel.didHandle(_:)`. A section that is only shown

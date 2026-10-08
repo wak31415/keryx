@@ -435,7 +435,7 @@ package enum ModelsRules {
     }
 
     /// The model the work defaults to on this Mac: the CLI's recommendation when it says
-    /// (SEAM: `recommended`, or `recommended_with_local_voice` beside a local voice), else
+    /// (`recommended`, or `recommended_with_local_voice` beside a local voice), else
     /// the catalog's recommended one that fits; the one chosen already wins.
     package static func workModel(_ models: ModelsReport?, voiceHere: Bool) -> String? {
         guard let models else { return nil }
@@ -648,36 +648,24 @@ package enum WizardEnding: Equatable, Sendable {
 
 package enum CheckingRules {
     /// The ending, from the plan: ready when it is — unless Twilio says the number rings
-    /// elsewhere (`pointed` false); nearly ready when all that is left was left for later —
-    /// as the plan says (SEAM: `deferred`), or, from a CLI that cannot defer, when the phone
-    /// was left for later in this run and nothing else required but what waits on the phone
-    /// is left.
-    package static func ending(_ plan: SetupPlan?, phoneLater: Bool, pointed: Bool? = nil) -> WizardEnding {
+    /// elsewhere (`pointed` false); nearly ready when all that is left was left for later
+    /// (the plan's `deferred`).
+    package static func ending(_ plan: SetupPlan?, pointed: Bool? = nil) -> WizardEnding {
         guard let plan else { return .checking }
         if plan.ready { return pointed == false ? .notPointed : .ready }
-        if plan.speaksOfDeferring { return plan.nearlyReady ? .nearlyReady : .checking }
-        guard phoneLater else { return .checking }
-        let left = plan.remaining.filter { $0.id != "phone" }
-        // What is left waits for the phone alone.
-        let waitsForThePhone = { (step: SetupStep) -> Bool in
-            step.kind == .blocked && step.blockedBy.allSatisfy { $0 == "phone" || plan.step($0)?.kind == .done }
-        }
-        return left.allSatisfy(waitsForThePhone) ? .nearlyReady : .checking
+        return plan.nearlyReady ? .nearlyReady : .checking
     }
 
-    /// The step was left for later: the plan says so (SEAM: `deferred`), or — from a CLI
-    /// that cannot defer — it is the phone and this run left it.
-    package static func leftForLater(_ step: SetupStep?, plan: SetupPlan?, phoneLater: Bool) -> Bool {
+    /// The step was left for later, as the plan says (`deferred`).
+    package static func leftForLater(_ step: SetupStep?) -> Bool {
         guard let step, step.kind != .done else { return false }
-        if plan?.speaksOfDeferring == true { return step.deferred == true }
-        return phoneLater && step.id == "phone"
+        return step.deferred == true
     }
 
-    /// The background service may be installed now: its step is needed (or failed), and
-    /// waits for nothing.
-    package static func serviceInstallable(_ plan: SetupPlan?) -> Bool {
-        guard let step = plan?.step("service") else { return false }
-        return step.kind == .needed || step.kind == .failed
+    /// Checking runs the agent's (paid) test task by itself only in a first run, and only
+    /// while setup has never been seen through; otherwise it is a click.
+    package static func smokeTestsByItself(mode: SetupWizardMode, completedOnce: Bool) -> Bool {
+        mode == .firstRun && !completedOnce
     }
 
     /// Reaching it records setup as seen through: ready, nearly ready, or set up but for

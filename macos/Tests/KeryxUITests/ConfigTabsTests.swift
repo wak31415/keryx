@@ -67,7 +67,7 @@ import KeryxPreview
         #expect(tab.advanced.map(\.group) == ["limits", "service", "debug"])
         #expect(tab.advancedRows.map(\.key) == ["LIMIT", "DATA", "DEMO"])
         #expect(ConfigWording.advancedCount(tab) == "3 settings")
-        #expect(ConfigWording.advancedSectionTitle(tab.advanced[1], on: tab) == "Service",
+        #expect(ConfigWording.advancedSectionTitle(tab.advanced[1], on: tab) == "Background Process, Storage and Logging",
                 "several groups on the tab: each advanced one is named")
     }
 
@@ -128,15 +128,16 @@ import KeryxPreview
         #expect(ConfigWording.screenResults([unknown], for: "port").isEmpty)
     }
 
-    @Test func aSettingAScreenOwnsIsAskedForOnThatScreen() {
+    @Test func aSettingAScreenOwnsIsAskedForOnThatScreen() throws {
         let rows = PreviewData.config
         #expect(ConfigWording.screen(of: "VOICE_SERVER_ARGS", in: rows) == .voice)
         #expect(ConfigWording.screen(of: "AGENT_SERVER_MODEL", in: rows) == .models)
         #expect(ConfigWording.screen(of: "ALLOWED_CALLERS", in: rows) == nil)
         #expect(ConfigWording.screen(of: "VOICE_SERVER_ARGS", in: nil) == nil, "before the settings are read")
         // Asked of Configuration anyway, it shows the first tab and focuses nothing.
-        let first = rows.lazy.compactMap(\.tab).first!
-        #expect(ConfigWording.answer(.setting(key: "VOICE_SERVER_ARGS"), pinTab: nil, config: rows)! == (first, nil, nil))
+        let first = try #require(rows.lazy.compactMap(\.tab).first)
+        let answer = try #require(ConfigWording.answer(.setting(key: "VOICE_SERVER_ARGS"), pinTab: nil, config: rows))
+        #expect(answer == (first, nil, nil))
     }
 
     @Test func eachScreenShowsItsOwnAdvancedSettings() {

@@ -7,6 +7,9 @@ import KeryxKit
 /// Keys named here (`OPENAI_API_KEY`) are said by their titles, as any description's are.
 enum ConfigDescriptions {
     static let overrides: [String: String] = [
+        "AGENT_BACKEND":
+            "The coding agent a task runs on when nobody names one out loud. Keryx itself may switch it only "
+            + "among AGENTS_ENABLED.",
         "AGENTS_ENABLED":
             "Every agent a task may be sent to. Keryx won't start with a default agent that isn't among them.",
         "CLAUDE_CODE_OAUTH_TOKEN":
@@ -85,4 +88,26 @@ enum ConfigDescriptions {
     static func text(_ row: ConfigRow) -> String {
         overrides[row.key] ?? row.description
     }
+
+    /// The app's own titles for the settings whose CLI title speaks of a "service": the app
+    /// never shows the word (Keryx runs in the background, as far as the owner is concerned).
+    /// The CLI's titles also make `docs/configuration.md`, so they stay as they are.
+    static let titles: [String: String] = [
+        "SERVICE_MANAGER": "Background process manager",
+        "SERVICE_UNIT": "Background process label",
+    ]
+
+    /// The same, for a group's title (System › Advanced's section).
+    static let groupTitles: [String: String] = [
+        "service": "Background process, storage and logging",
+    ]
+}
+
+extension ConfigRow {
+    /// What the setting is called on screen: the app's own title (`ConfigDescriptions.titles`)
+    /// when it has one, else the CLI's, else the key.
+    package var shownTitle: String { ConfigDescriptions.titles[key] ?? displayTitle }
+
+    /// The section the setting is shown in, as `shownTitle` is said.
+    package var shownGroupTitle: String { ConfigDescriptions.groupTitles[group] ?? displayGroupTitle }
 }

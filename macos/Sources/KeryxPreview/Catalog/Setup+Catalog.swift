@@ -181,9 +181,7 @@ extension ScreenCatalog {
             },
             Entry("wizard-ready-no-pin", size: size) { wizard(.finish, model: ready(pin: PreviewData.pinNone)) },
             Entry("wizard-nearly-ready", size: size) {
-                wizard(.finish, model: fresh(plan: nearlyReady, values: ["OPENAI_API_KEY": .string("(set)")])) {
-                    $0.phoneLater = true
-                }
+                wizard(.finish, model: fresh(plan: nearlyReady, values: ["OPENAI_API_KEY": .string("(set)")]))
             },
             // You're Ready's extras
             Entry("wizard-profile", size: sheet) {
@@ -367,7 +365,7 @@ extension ScreenCatalog {
         return plan
     }
 
-    /// Everything but the phone, and the service that waits for it.
+    /// Everything but the phone, left for later, and the service that waits for it.
     private static var nearlyReady: SetupPlan {
         var plan = PreviewData.setupPlanReady
         plan.ready = false
@@ -375,6 +373,8 @@ extension ScreenCatalog {
             if let index = plan.steps.firstIndex(where: { $0.id == id }) {
                 plan.steps[index].state = state.rawValue
                 plan.steps[index].blockedBy = blocked
+                plan.steps[index].deferrable = true
+                plan.steps[index].deferred = true
             }
         }
         return plan
