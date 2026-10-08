@@ -94,7 +94,7 @@ enum PhoneWording {
     /// One number the picker offers.
     struct NumberChoice: Equatable, Identifiable {
         let number: String
-        /// "Office · +15550001111", or the number alone when its name is the number.
+        /// "Office · +1 555 000 1111", or the number alone when its name is the number.
         let label: String
         /// Its webhooks point here already.
         let pointsHere: Bool
@@ -112,8 +112,9 @@ enum PhoneWording {
 
     static func label(_ number: PhoneNumber) -> String {
         let name = number.friendlyName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, name != number.number else { return number.number }
-        return "\(name) · \(number.number)"
+        let shown = PhoneDisplay.format(number.number)
+        guard !name.isEmpty, name != number.number else { return shown }
+        return "\(name) · \(shown)"
     }
 
     // MARK: - The webhooks

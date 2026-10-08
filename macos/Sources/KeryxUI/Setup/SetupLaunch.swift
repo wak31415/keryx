@@ -17,8 +17,9 @@ public enum KeryxWindowID {
 public enum SetupLaunch {
     /// The app's own defaults key for Welcome's "Don't show this again".
     public static let hiddenKey = "setupAssistantHiddenAtLaunch"
-    /// Set the first time Checking reaches You're Ready (or Nearly Ready), or the owner
-    /// closes the wizard from Checking.
+    /// Set the first time setup is seen to be through: Checking reaches You're Ready (or
+    /// Nearly Ready), or a launch finds the plan ready (or all but what was left for later).
+    /// Never by closing the wizard: "Don't show this again" is the way to turn it off.
     public static let completedKey = "setupCompletedOnce"
 
     /// Open the wizard now: setup has never been seen through, a plan has been read and is
@@ -30,6 +31,16 @@ public enum SetupLaunch {
         guard let plan, !hidden, !alreadyOpened, !completedOnce else { return false }
         // Everything done but what was left for later is not a reason to ask again.
         return !plan.ready && !plan.nearlyReady
+    }
+
+    /// The launch's decision, once the plan is read: a plan that is ready (or nearly) is
+    /// recorded as setup seen through — an owner set up from a terminal, or by an earlier
+    /// app — so a later problem is the checklist's; otherwise `shouldOpen`.
+    public static func atLaunch(plan: SetupPlan?, hidden: Bool, alreadyOpened: Bool,
+                                defaults: UserDefaults = .standard) -> Bool {
+        if let plan, plan.ready || plan.nearlyReady { markCompleted(in: defaults) }
+        return shouldOpen(plan: plan, hidden: hidden, alreadyOpened: alreadyOpened,
+                          completedOnce: completedOnce(in: defaults))
     }
 
     /// Whether the owner has said not to open it at launch, in `defaults`.

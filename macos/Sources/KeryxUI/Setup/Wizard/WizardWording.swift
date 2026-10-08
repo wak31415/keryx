@@ -142,7 +142,7 @@ package enum WizardWording {
     package static let threeModels = "Hear, think, speak: three models, so a small fast one can do the talking."
     package static func sharedWords(tight: Bool, assistant: String) -> String {
         tight ? "Not enough memory for two; \(assistant) will be slower to answer."
-            : "\(assistant)'s words come from the work's model."
+            : "\(assistant) thinks with the work model, so answers come a little slower."
     }
     package static let sameAsWork = "The work model"
 
@@ -220,6 +220,10 @@ package enum WizardWording {
         + "and come back from the Phone section when you have one."
     package static let tunnelMissing = "Not installed yet"
     package static let tunnelInstalled = "Cloudflare Tunnel is installed"
+    /// Under "Installing Cloudflare Tunnel…": Homebrew's own lines are for Show Details.
+    package static let tunnelInstalling = "Homebrew is downloading it. This takes a minute."
+    /// Installed where Homebrew puts it, which the PATH Keryx runs with does not reach.
+    package static let tunnelOutsidePath = "Installed, in a folder Keryx doesn't look in yet"
 
     // MARK: - Checking and Ready
 

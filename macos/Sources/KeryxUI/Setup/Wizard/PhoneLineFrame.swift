@@ -25,6 +25,8 @@ package struct PhoneLineFrame: View {
     @State private var leaving = false
     @FocusState private var hostFocused: Bool
     @State private var noDomainShown = false
+    /// Homebrew's `brew`, looked for once as the frame opens rather than on every redraw.
+    @State private var homebrew: String?
 
     package init(host: String = "") {
         _host = State(initialValue: host)
@@ -58,7 +60,7 @@ package struct PhoneLineFrame: View {
             Button(WizardWording.setUpLater) { setUpLater(facts) }
                 .disabled(leaving)
             if !steps.canContinue(pickedNumber: picked, typedHost: typedHost) {
-                WaitingCaption(text: "Finish steps 1 to 3, or set up later")
+                WaitingCaption(text: "Finish steps 1 to 3 to continue")
             }
         } trailing: {
             if leaving { ProgressView().controlSize(.small) }
@@ -77,6 +79,7 @@ package struct PhoneLineFrame: View {
         }
         .task {
             if host.isEmpty { host = facts.text("PUBLIC_HOST") ?? "" }
+            homebrew = model.homebrew
             await readPhone()
             // SEAM: the hostname the tunnel already routes here, when the CLI says it.
             if host.isEmpty, let known = model.phoneTunnel.value?.hostname { host = known }
@@ -228,14 +231,17 @@ package struct PhoneLineFrame: View {
             switch install.phase {
             case let .running(line)?:
                 HStack(spacing: 10) {
-                    StatusLine(tone: .working, text: "Installing Cloudflare Tunnel…")
+                    VStack(alignment: .leading, spacing: 2) {
+                        StatusLine(tone: .working, text: "Installing Cloudflare Tunnel…")
+                        Text(WizardWording.tunnelInstalling)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Button("Cancel") { install.cancel() }
                         .controlSize(.regular)
                 }
-                if let line {
-                    Text(line).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
-                }
+                if let line { DetailsDisclosure(line) }
             case .cancelling?:
                 StatusLine(tone: .working, text: "Stopping…")
             case let .failed(failure)?:
@@ -249,12 +255,14 @@ package struct PhoneLineFrame: View {
                 HStack(spacing: 8) {
                     if let kind = tunnel.kind {
                         StatusLine(tone: .ok, text: "\(PhoneSteps.tunnelName(kind)) is installed")
+                    } else if model.tunnelOutsideKeryxPath {
+                        StatusLine(tone: .warning, text: WizardWording.tunnelOutsidePath)
                     } else {
                         StatusLine(tone: .warning, text: WizardWording.tunnelMissing)
                     }
                     Spacer()
-                    if tunnel.kind == nil {
-                        if model.homebrew != nil {
+                    if tunnel.kind == nil, !model.tunnelOutsideKeryxPath {
+                        if homebrew != nil {
                             Button("Install Cloudflare Tunnel…") { model.installTunnel() }
                                 .controlSize(.regular)
                         } else if let page = FixAction.tunnelPage(tunnel.installUrl) {

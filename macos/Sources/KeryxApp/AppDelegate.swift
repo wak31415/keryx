@@ -67,9 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !launchedAtLogin, !setupOpenedAtLaunch, !SetupLaunch.isHidden(), !SetupLaunch.completedOnce(),
               model.client != nil else { return }
         await model.refresh(.setupPlan)
-        guard SetupLaunch.shouldOpen(plan: model.setupPlan.value, hidden: SetupLaunch.isHidden(),
-                                     alreadyOpened: setupOpenedAtLaunch,
-                                     completedOnce: SetupLaunch.completedOnce()) else { return }
+        guard SetupLaunch.atLaunch(plan: model.setupPlan.value, hidden: SetupLaunch.isHidden(),
+                                   alreadyOpened: setupOpenedAtLaunch) else { return }
         setupOpenedAtLaunch = true
         Log.app.info("Opening the setup wizard: setup is not finished")
         openSetupWindow?(.launch)

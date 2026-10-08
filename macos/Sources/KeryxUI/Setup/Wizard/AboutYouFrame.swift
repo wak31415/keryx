@@ -53,20 +53,28 @@ package struct AboutYouFrame: View {
         let answers = AboutYouAnswers(name: name, assistant: assistant, numbers: numbers)
         let numbersReady = CallerNumbers.list(numbers) != nil
         let nameReady = assistant.isEmpty || AboutYouAnswers.assistantProblem(assistant) == nil
-        let pinReady = PinRules.answered(model.pin.value, choice: pinChoice, first: first, second: second)
+        let pinReady = PinRules.answered(model.pin.value, choice: pinChoice, first: first, second: second,
+                                         folded: folded("pin", set: facts.done("pin")))
+        let numberWrong = numbers.contains { CallerNumbers.problem($0) != nil }
         WizardPage(symbol: .system("person.crop.circle"), title: WizardWording.aboutTitle,
                    sentence: WizardWording.aboutSentence, position: wizard.position(facts)) {
-            VStack(spacing: 10) {
-                nameSection(facts)
-                phoneSection(facts, assistant: who)
-                pinSection(facts, assistant: who)
-                if let failure {
-                    ErrorText(failure.said("Your details weren't saved."))
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            // A third number, or an error under each, may not fit: the sections scroll then.
+            ScrollView {
+                VStack(spacing: 10) {
+                    nameSection(facts)
+                    phoneSection(facts, assistant: who)
+                    pinSection(facts, assistant: who)
+                    if let failure {
+                        ErrorText(failure.said("Your details weren't saved."))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
+            .scrollBounceBehavior(.basedOnSize)
         } leading: {
-            if !numbersReady {
+            if numberWrong {
+                WaitingCaption(text: "Fix the number to continue")
+            } else if !numbersReady {
                 WaitingCaption(text: "Add a number to continue")
             } else if !pinReady {
                 WaitingCaption(text: "Type the PIN twice, or set it on your first call")
@@ -222,16 +230,15 @@ package struct AboutYouFrame: View {
     @ViewBuilder private func pinState(_ status: PinStatus, kind: PinWording.Kind, assistant who: String) -> some View {
         switch kind {
         case .set:
-            if wizard.mode == .firstRun {
-                FoldedSection(title: "Your PIN", summary: "A PIN is set") { changingPin = true }
-            } else {
-                WizardSection(title: "Your PIN", state: .done) {
-                    HStack {
-                        StatusLine(tone: .ok, text: "A PIN is set")
-                        Spacer()
-                        Button("Change PIN…") { changingPin = true }
-                            .controlSize(.regular)
-                    }
+            FoldedSection(title: "Your PIN", summary: "A PIN is set", changeTitle: "Change PIN…") { changingPin = true }
+        case .unusable:
+            // Not replaced inline: the sheet asks "Replace the PIN?" before it does.
+            WizardSection(title: "Your PIN") {
+                HStack {
+                    StatusLine(tone: .warning, text: "The PIN file holds no PIN")
+                    Spacer()
+                    Button("Choose PIN…") { changingPin = true }
+                        .controlSize(.regular)
                 }
             }
         case .environment(usable: true):
@@ -324,28 +331,22 @@ package struct AboutYouFrame: View {
 
     private func save(_ answers: AboutYouAnswers, facts: WizardFacts) {
         let status = model.pin.value
-        let writes = answers.writes(from: facts)
-            + PinRules.writes(status, choice: pinChoice, stepDone: facts.done("pin") && !changing.contains("pin"))
+        let pin = PinRules.save(status, choice: pinChoice, folded: folded("pin", set: facts.done("pin")),
+                                stepDone: facts.done("pin"))
         saving = true
         failure = nil
         Task {
             defer { saving = false }
-            if let error = await WizardWrite.apply(writes, with: model) {
+            switch await AboutYouSave.run(answers.writes(from: facts), pin: pin, digits: first, status: status,
+                                          model: model) {
+            case .saved:
+                forgetDigits()
+                await wizard.moveOn(model)
+            case let .failed(error):
                 failure = error
-                return
+            case let .digits(problem):
+                digitsProblem = problem
             }
-            if let status, PinRules.savesDigits(status, choice: pinChoice),
-               !(facts.done("pin") && !changing.contains("pin")) {
-                switch await model.setPin(first, replace: PinWording.replaces(status)) {
-                case .success:
-                    forgetDigits()
-                case let .failure(error):
-                    let said = PinWording.failure(error)
-                    if said.aboutTheDigits { digitsProblem = said.text } else { failure = error }
-                    return
-                }
-            }
-            await wizard.moveOn(model)
         }
     }
 }

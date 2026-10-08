@@ -28,6 +28,7 @@ public struct SetupWizardView: View {
 
     /// The catalog's: a run already at `path`'s last frame.
     package init(wizard: SetupWizard, reads: Bool = true) {
+        wizard.recordsCompletion = false
         _wizard = State(initialValue: wizard)
         fixed = true
         self.reads = reads
@@ -52,8 +53,6 @@ public struct SetupWizardView: View {
                 guard !fixed else { return }
                 // The agent's test is the wizard's: it goes with the window.
                 model.smokeRun.cancel()
-                // Closed from Checking: setup has been seen; the checklist takes it from here.
-                if wizard.current == .finish { SetupLaunch.markCompleted() }
             }
     }
 
@@ -192,6 +191,20 @@ private struct CloseButtonSwitch: NSViewRepresentable {
     }
 }
 
+/// What counts as the owner stopping a run, wherever they stopped it: it was cancelling,
+/// and now it has gone. A run that failed or finished was not stopped.
+package enum StopWatch {
+    /// The downloads that were cancelling and are gone.
+    package static func downloads(old: [String: Downloads.Phase], new: [String: Downloads.Phase]) -> Set<LocalStep> {
+        Set(old.compactMap { name, phase in phase == .cancelling && new[name] == nil ? .download(name) : nil })
+    }
+
+    package static func stopped(was cancelling: Bool, now gone: Bool) -> Bool { cancelling && gone }
+
+    /// A model server stopped while it was the voice's first part is the voice's setup.
+    package static func server(chained: Bool) -> LocalStep { chained ? .setUpVoice : .startServer }
+}
+
 private struct StopWatcher: ViewModifier {
     let wizard: SetupWizard
     @Environment(AppModel.self) private var model
@@ -199,19 +212,17 @@ private struct StopWatcher: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onChange(of: model.downloads.active) { old, new in
-                for (name, phase) in old where phase == .cancelling && new[name] == nil {
-                    wizard.stopped.insert(.download(name))
-                }
+                wizard.stopped.formUnion(StopWatch.downloads(old: old, new: new))
             }
             .onChange(of: model.voiceDownloadRun.phase) { old, new in
-                if old == .cancelling, new == nil { wizard.stopped.insert(.downloadSpeech) }
+                if StopWatch.stopped(was: old == .cancelling, now: new == nil) { wizard.stopped.insert(.downloadSpeech) }
             }
             .onChange(of: model.voiceSetup.phase) { old, new in
-                if old == .cancelling, new == nil { wizard.stopped.insert(.setUpVoice) }
+                if StopWatch.stopped(was: old == .cancelling, now: new == nil) { wizard.stopped.insert(.setUpVoice) }
             }
             .onChange(of: model.modelServerRun.phase) { old, new in
-                guard old == .cancelling, new == nil else { return }
-                wizard.stopped.insert(model.thisMacSetup?.startsServer == true ? .setUpVoice : .startServer)
+                guard StopWatch.stopped(was: old == .cancelling, now: new == nil) else { return }
+                wizard.stopped.insert(StopWatch.server(chained: model.thisMacSetup?.startsServer == true))
             }
     }
 }

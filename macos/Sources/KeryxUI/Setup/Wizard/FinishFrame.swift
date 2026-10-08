@@ -44,11 +44,12 @@ package struct FinishFrame: View {
             if installable, wizard.mode == .firstRun, !wizard.serviceAsked { install() }
         }
         .onChange(of: facts.done("agents"), initial: true) { _, done in
-            if done, let agent = facts.text("AGENT_BACKEND") { model.smokeTest(agent) }
+            // A paid run: by itself only in a first run; a review offers it as a click.
+            if done, wizard.mode == .firstRun, let agent = facts.text("AGENT_BACKEND") { model.smokeTest(agent) }
         }
         .onChange(of: ending, initial: true) { _, ending in
             // Seen through: from now on a problem is the checklist's, not a window's.
-            if ending != .checking { SetupLaunch.markCompleted() }
+            if CheckingRules.completes(ending), wizard.recordsCompletion { SetupLaunch.markCompleted() }
         }
         .sheet(isPresented: $profileOpen) { ProfileSheet() }
         .sheet(isPresented: $projectsOpen) { ProjectContextSheet() }
@@ -72,11 +73,7 @@ package struct FinishFrame: View {
             Button("Back") { wizard.back() }
                 .keyboardShortcut(.cancelAction)
                 .disabled(wizard.path.count < 2)
-            Button("Close") {
-                // Left from Checking: setup has been seen; the checklist takes it from here.
-                SetupLaunch.markCompleted()
-                close()
-            }
+            Button("Close") { close() }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
         }
@@ -146,7 +143,14 @@ package struct FinishFrame: View {
             }
             return serviceLine(step, plan: facts.plan)
         }
-        if case .work = row, step?.kind == .done, let smoke = smokeLine() { return smoke }
+        if case .work = row, step?.kind == .done {
+            if let smoke = smokeLine() { return smoke }
+            // A review runs the agent's (paid) test task only on a click.
+            if wizard.mode == .review, model.client is AgentSmokeTesting, let agent = facts.text("AGENT_BACKEND") {
+                return Line(tone: .ok, text: doneText(row, facts: facts),
+                            action: ("Run a Test", { model.smokeTest(agent) }))
+            }
+        }
         switch step?.kind {
         case .done?:
             return Line(tone: .ok, text: doneText(row, facts: facts))
@@ -283,7 +287,7 @@ package struct FinishFrame: View {
         if case let .download(name)? = downloading, LocalStep.download(name).row(intent) == row {
             return downloadLine(name)
         }
-        if let stopped = wizard.stopped.first(where: { $0.row(intent) == row }) {
+        if let stopped = CheckingRules.stopped(row, next: next, intent: intent, stopped: wizard.stopped) {
             return Line(tone: .none, text: "Stopped.", action: ("Start Again", {
                 wizard.stopped.remove(stopped)
                 take(stopped)

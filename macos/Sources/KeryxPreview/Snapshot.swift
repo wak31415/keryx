@@ -49,9 +49,6 @@ import SwiftUI
         window.appearance = appearance(dark: dark)
         window.contentView = hostingView(view, size: size, fixed: false)
         window.center()
-        // The key window of the active app, so the primary button and the traffic lights are
-        // drawn as the owner sees them, not dimmed as an inactive window's are.
-        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         settle(seconds: 1.2)

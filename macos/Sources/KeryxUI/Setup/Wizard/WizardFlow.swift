@@ -220,34 +220,69 @@ package enum PinChoice: Hashable, Sendable {
     case firstCall
 }
 
-/// The PIN's part of About You. A PIN that works is changed only through the PIN sheet (its
-/// two confirmations); a new one is typed on the frame and goes on `pin set --stdin`.
+/// What About You's Continue does with the PIN.
+package enum PinSave: Equatable, Sendable {
+    /// Nothing: a PIN is in place, one the app cannot change, or the section is folded.
+    case nothing
+    /// `setup mark pin`: whoever calls first chooses it.
+    case firstCall
+    /// `pin set --stdin`: the digits typed twice.
+    case digits
+}
+
+/// The PIN's part of About You. A PIN is typed on the frame only where there is none at
+/// all; any PIN file — even one holding no usable PIN — is changed through the PIN sheet,
+/// whose "Replace the PIN?" is the explicit yes that reopens the enrolment door.
 package enum PinRules {
-    /// The fields are offered: there is no PIN this Mac's app may not write, and none that
-    /// works — a file with no usable PIN has nothing to lose.
+    /// The fields are offered: no PIN anywhere.
     package static func asksForDigits(_ status: PinStatus?) -> Bool {
         guard let status else { return false }
-        return PinWording.canSet(status) && !PinWording.asksFirst(status)
+        return PinWording.kind(status) == .none
     }
 
-    /// The section is answered: a PIN in place (or one the app cannot change), the first
-    /// call chosen, or the same usable digits typed twice.
-    package static func answered(_ status: PinStatus?, choice: PinChoice, first: String, second: String) -> Bool {
+    /// The section is answered: shown folded (settled already), a PIN in place (or one the
+    /// app cannot change), the first call chosen, or the same usable digits typed twice.
+    package static func answered(_ status: PinStatus?, choice: PinChoice, first: String, second: String,
+                                 folded: Bool = false) -> Bool {
         guard let status else { return false }
-        guard asksForDigits(status) else { return true }
+        guard asksForDigits(status), !folded else { return true }
         return choice == .firstCall || PinWording.ready(first: first, second: second)
     }
 
-    /// What Continue writes besides the digits: leaving the PIN to the first call, unless
-    /// the plan has that already.
-    package static func writes(_ status: PinStatus?, choice: PinChoice, stepDone: Bool) -> [WizardWrite] {
-        guard asksForDigits(status), choice == .firstCall, !stepDone else { return [] }
-        return [.mark("pin")]
+    /// What Continue does. `folded`: the section is shown folded, settled as it is; only
+    /// then is a done step left alone — in a review it is open, and digits typed there are
+    /// a PIN to set, whatever the plan said. `stepDone`: the plan has the PIN settled, so
+    /// leaving it to the first call again writes nothing.
+    package static func save(_ status: PinStatus?, choice: PinChoice, folded: Bool, stepDone: Bool) -> PinSave {
+        guard asksForDigits(status), !folded else { return .nothing }
+        switch choice {
+        case .now: return .digits
+        case .firstCall: return stepDone ? .nothing : .firstCall
+        }
+    }
+}
+
+/// About You's Continue, in order: the settings, then the PIN.
+package enum AboutYouSave {
+    package enum Outcome: Equatable {
+        case saved
+        case failed(KeryxError)
+        /// The CLI refused the digits themselves: said under the fields.
+        case digits(String)
     }
 
-    /// The digits go on stdin (`pin set --stdin`): only for a first PIN chosen now.
-    package static func savesDigits(_ status: PinStatus?, choice: PinChoice) -> Bool {
-        asksForDigits(status) && choice == .now
+    @MainActor package static func run(_ writes: [WizardWrite], pin: PinSave, digits: String, status: PinStatus?,
+                                       model: AppModel) async -> Outcome {
+        var all = writes
+        if pin == .firstCall { all.append(.mark("pin")) }
+        if let error = await WizardWrite.apply(all, with: model) { return .failed(error) }
+        guard pin == .digits, let status else { return .saved }
+        switch await model.setPin(digits, replace: PinWording.replaces(status)) {
+        case .success: return .saved
+        case let .failure(error):
+            let said = PinWording.failure(error)
+            return said.aboutTheDigits ? .digits(said.text) : .failed(error)
+        }
     }
 }
 
@@ -583,6 +618,20 @@ package enum CheckingRules {
     package static func serviceInstallable(_ plan: SetupPlan?) -> Bool {
         guard let step = plan?.step("service") else { return false }
         return step.kind == .needed || step.kind == .failed
+    }
+
+    /// Reaching it records setup as seen through: ready, nearly ready, or set up but for
+    /// pointing the number. Still checking never does, however the wizard is left.
+    package static func completes(_ ending: WizardEnding) -> Bool {
+        ending != .checking
+    }
+
+    /// The step a row shows as stopped: the row's next step, when the owner stopped it.
+    /// One stopped for an earlier choice, or a step since done, shows nothing.
+    package static func stopped(_ row: CheckRow, next: LocalStep, intent: LocalIntent,
+                                stopped: Set<LocalStep>) -> LocalStep? {
+        guard stopped.contains(next), next.row(intent) == row else { return nil }
+        return next
     }
 
     /// Checking starts this Mac's work and the service by itself only in a first run, and

@@ -31,6 +31,21 @@ package final class SetupWizard {
     /// In review, the owner clicked to finish what this Mac still needs: Checking may take
     /// the next steps by itself from then on.
     package var localApproved = false
+    /// Reaching the end records setup as seen through (`SetupLaunch.completedKey`); the
+    /// catalog's runs record nothing.
+    package var recordsCompletion = true
+    /// Where the voice and the work run and on which models, as last chosen: a new choice
+    /// forgets what the owner stopped, which belonged to the old one.
+    package func choose(voice: VoicePlace, work: WorkPlace, workModel: String?, voiceWordsModel: String?) {
+        if voice != voicePlace || work != workPlace || workModel != self.workModel
+            || voiceWordsModel != self.voiceWordsModel {
+            stopped = []
+        }
+        voicePlace = voice
+        workPlace = work
+        self.workModel = workModel
+        self.voiceWordsModel = voiceWordsModel
+    }
 
     package init(mode: SetupWizardMode = .firstRun, path: [WizardFrame] = [.welcome], opening: UUID = UUID()) {
         self.mode = mode

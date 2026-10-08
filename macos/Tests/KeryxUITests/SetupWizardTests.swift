@@ -158,6 +158,37 @@ import KeryxTestSupport
         #expect(SetupLaunch.isHidden(in: defaults))
     }
 
+    @Test func aLaunchThatFindsSetupReadyRecordsIt() {
+        // Set up from a terminal, or by an earlier app: ready at launch, so recorded…
+        let defaults = UserDefaults(suiteName: "SetupWizardTests-\(UUID().uuidString)")!
+        #expect(!SetupLaunch.atLaunch(plan: ready, hidden: false, alreadyOpened: false, defaults: defaults))
+        #expect(SetupLaunch.completedOnce(in: defaults))
+        // …and a sign-in that expires later opens nothing.
+        var expired = with(ready, ["agents"], .needed)
+        expired.ready = false
+        #expect(!SetupLaunch.atLaunch(plan: expired, hidden: false, alreadyOpened: false, defaults: defaults))
+        // A new Mac opens it, and records nothing.
+        let fresher = UserDefaults(suiteName: "SetupWizardTests-\(UUID().uuidString)")!
+        #expect(SetupLaunch.atLaunch(plan: fresh, hidden: false, alreadyOpened: false, defaults: fresher))
+        #expect(!SetupLaunch.completedOnce(in: fresher))
+        // Nearly ready (all that is left was deferred) counts as seen through.
+        var deferred = with(ready, ["phone"], .needed, deferred: true, deferrable: true)
+        deferred.ready = false
+        let nearly = UserDefaults(suiteName: "SetupWizardTests-\(UUID().uuidString)")!
+        _ = SetupLaunch.atLaunch(plan: deferred, hidden: false, alreadyOpened: false, defaults: nearly)
+        #expect(SetupLaunch.completedOnce(in: nearly))
+    }
+
+    @Test func onlyReachingTheEndRecordsSetupAsSeenThrough() {
+        #expect(CheckingRules.completes(.ready) && CheckingRules.completes(.nearlyReady))
+        #expect(CheckingRules.completes(.notPointed))
+        #expect(!CheckingRules.completes(.checking), "Close on Checking, or closing the window, records nothing")
+        #expect(SetupWizard().recordsCompletion)
+        let catalog = SetupWizard()
+        _ = SetupWizardView(wizard: catalog)
+        #expect(!catalog.recordsCompletion, "the catalog's runs record nothing")
+    }
+
     @Test func onceSeenThroughItNeverOpensByItselfAgain() {
         // Was ready, then a sign-in expired: the plan is not ready, and still nothing opens.
         var notReady = with(ready, ["agents"], .needed)
@@ -401,30 +432,68 @@ import KeryxTestSupport
 
     // MARK: - The PIN and the phone
 
-    @Test func thePinIsTypedHereOnlyWhenThereIsNoneThatWorks() {
+    @Test func thePinIsTypedHereOnlyWhenThereIsNone() {
         #expect(PinRules.asksForDigits(PreviewData.pinNone))
         #expect(!PinRules.asksForDigits(PreviewData.pinFile), "a working PIN changes through the sheet")
         #expect(!PinRules.asksForDigits(PreviewData.pinEnvironment))
         #expect(!PinRules.asksForDigits(nil))
+        // A PIN file that holds no PIN still shut the enrolment door: only the sheet's yes reopens it.
+        let unusable = PinStatus(set: false, source: "file", enrolmentOpen: false, locked: false, lockedUntil: nil)
+        #expect(PinWording.kind(unusable) == .unusable)
+        #expect(!PinRules.asksForDigits(unusable))
+        #expect(PinRules.save(unusable, choice: .now, folded: false, stepDone: false) == .nothing)
         #expect(PinRules.answered(PreviewData.pinNone, choice: .now, first: "482915", second: "482915"))
         #expect(!PinRules.answered(PreviewData.pinNone, choice: .now, first: "482915", second: "48291"))
         #expect(!PinRules.answered(PreviewData.pinNone, choice: .now, first: "123456", second: "123456"), "a run")
         #expect(PinRules.answered(PreviewData.pinNone, choice: .firstCall, first: "", second: ""))
+        #expect(PinRules.answered(PreviewData.pinNone, choice: .now, first: "", second: "", folded: true))
         #expect(PinRules.answered(PreviewData.pinFile, choice: .now, first: "", second: ""))
-        #expect(PinRules.writes(PreviewData.pinNone, choice: .firstCall, stepDone: false) == [.mark("pin")])
-        #expect(PinRules.writes(PreviewData.pinNone, choice: .firstCall, stepDone: true).isEmpty)
-        #expect(PinRules.writes(PreviewData.pinNone, choice: .now, stepDone: false).isEmpty)
-        #expect(PinRules.savesDigits(PreviewData.pinNone, choice: .now))
-        #expect(!PinRules.savesDigits(PreviewData.pinFile, choice: .now))
+    }
+
+    @Test func continueDecidesThePinFromWhatIsShown() {
+        let none = PreviewData.pinNone
+        // A first run, nothing settled: the digits, or the first call.
+        #expect(PinRules.save(none, choice: .now, folded: false, stepDone: false) == .digits)
+        #expect(PinRules.save(none, choice: .firstCall, folded: false, stepDone: false) == .firstCall)
+        // Left to the first call before, shown folded: left alone.
+        #expect(PinRules.save(none, choice: .firstCall, folded: true, stepDone: true) == .nothing)
+        // A review shows it open: digits typed there are a PIN to set, whatever the plan said.
+        #expect(PinRules.save(none, choice: .now, folded: false, stepDone: true) == .digits)
+        #expect(PinRules.save(none, choice: .firstCall, folded: false, stepDone: true) == .nothing,
+                "the first call again writes nothing")
+        #expect(PinRules.save(PreviewData.pinFile, choice: .now, folded: false, stepDone: true) == .nothing)
+    }
+
+    @Test func aPinTypedInAReviewAlwaysReachesTheClient() async throws {
+        // Run Setup Wizard… on a Mac whose PIN was left to the first call: the plan has `pin`
+        // done and there is no PIN. Choose It Now, digits typed twice, Continue.
+        let (model, fake) = Self.model()
+        let decision = PinRules.save(PreviewData.pinNone, choice: .now, folded: false, stepDone: true)
+        let outcome = await AboutYouSave.run([], pin: decision, digits: "482915", status: PreviewData.pinNone,
+                                             model: model)
+        #expect(outcome == .saved)
+        let request = try #require(Self.pinSet(fake))
+        #expect(request.stdin == Data("482915\n482915\n".utf8))
+        // Leaving it to the first call marks the step; the digits never travel then.
+        let (other, marks) = Self.model()
+        _ = await AboutYouSave.run([.set("OWNER_NAME", "Ada")], pin: .firstCall, digits: "", status: PreviewData.pinNone,
+                                   model: other)
+        #expect(Self.written(marks) == [["config", "set", "OWNER_NAME", "Ada"], ["setup", "mark", "pin", "--json"]])
     }
 
     @Test func aPinTypedHereGoesOnStdinNeverArgv() async throws {
         let (model, fake) = Self.model()
         _ = await model.setPin("482915", replace: false)
-        let request = try #require(fake.requests.last)
-        #expect(Self.written(fake).last == ["pin", "set", "--stdin", "--json"])
+        let request = try #require(Self.pinSet(fake))
         #expect(!request.arguments.joined().contains("482915"))
         #expect(request.stdin == Data("482915\n482915\n".utf8))
+    }
+
+    /// The `pin set --stdin --json` the runner was asked for.
+    static func pinSet(_ fake: FakeRunner) -> CommandRequest? {
+        fake.requests.first {
+            Array($0.arguments.dropFirst(KeryxLocation.fixture.prefixArguments.count)) == ["pin", "set", "--stdin", "--json"]
+        }
     }
 
     @Test func thePinLeftToTheFirstCallIsSetupMark() async throws {
@@ -524,6 +593,45 @@ import KeryxTestSupport
         #expect(!said.contains("TWILIO_ACCOUNT_SID") && !said.contains("TWILIO_AUTH_TOKEN"), "\(said)")
     }
 
+    @Test func aStoppedStepShowsOnlyWhileItIsTheRowsNextStep() {
+        let both = LocalIntent(voiceHere: true, workHere: true, model: "gemma-4-12b")
+        let a = LocalStep.download("gemma-4-12b")
+        // Stopped, and still what the work row needs next: "Stopped", Start Again.
+        #expect(CheckingRules.stopped(.work, next: a, intent: both, stopped: [a]) == a)
+        #expect(CheckingRules.stopped(.voice, next: a, intent: both, stopped: [a]) == nil, "another row's")
+        // The owner chose model B since, or the step is done: A shows nowhere.
+        #expect(CheckingRules.stopped(.work, next: .download("qwen3.5-4b"), intent: both, stopped: [a]) == nil)
+        #expect(CheckingRules.stopped(.work, next: .done, intent: both, stopped: [a]) == nil)
+        #expect(CheckingRules.stopped(.voice, next: .setUpVoice, intent: both, stopped: [.downloadSpeech]) == nil)
+    }
+
+    @Test func aNewChoiceOnModelsForgetsWhatWasStopped() {
+        let wizard = SetupWizard()
+        wizard.choose(voice: .thisMac, work: .thisMac, workModel: "gemma-4-12b", voiceWordsModel: nil)
+        wizard.stopped = [.download("gemma-4-12b"), .downloadSpeech]
+        // Back and Continue with the same choice keeps the owner's stops.
+        wizard.choose(voice: .thisMac, work: .thisMac, workModel: "gemma-4-12b", voiceWordsModel: nil)
+        #expect(wizard.stopped.count == 2)
+        // A different model, or the voice moved to OpenAI: they belonged to the old choice.
+        wizard.choose(voice: .thisMac, work: .thisMac, workModel: "qwen3.5-4b", voiceWordsModel: nil)
+        #expect(wizard.stopped.isEmpty)
+        wizard.stopped = [.downloadSpeech]
+        wizard.choose(voice: .openai, work: .thisMac, workModel: "qwen3.5-4b", voiceWordsModel: nil)
+        #expect(wizard.stopped.isEmpty)
+    }
+
+    @Test func theWatcherCountsAStopOnlyWhenARunWasCancellingAndHasGone() {
+        let cancelling: [String: Downloads.Phase] = ["a": .cancelling, "b": .running(done: 1, total: 2)]
+        #expect(StopWatch.downloads(old: cancelling, new: ["b": .running(done: 2, total: 2)]) == [.download("a")])
+        #expect(StopWatch.downloads(old: ["a": .running(done: 1, total: 2)], new: [:]).isEmpty, "finished, not stopped")
+        #expect(StopWatch.downloads(old: ["a": .cancelling], new: ["a": .cancelling]).isEmpty, "still stopping")
+        #expect(StopWatch.downloads(old: ["a": .failed("x")], new: [:]).isEmpty)
+        #expect(StopWatch.stopped(was: true, now: true))
+        #expect(!StopWatch.stopped(was: false, now: true))
+        #expect(!StopWatch.stopped(was: true, now: false))
+        #expect(StopWatch.server(chained: true) == .setUpVoice && StopWatch.server(chained: false) == .startServer)
+    }
+
     @Test func whatTheOwnerStoppedNeverStartsByItself() {
         let step = LocalStep.download("gemma-4-12b")
         #expect(CheckingRules.startsByItself(step, mode: .firstRun, approved: false, stopped: []))
@@ -609,6 +717,10 @@ import KeryxTestSupport
         let doctor = PreviewData.doctor
         let service = try #require(doctor.checks.first { $0.name == "service manager" })
         #expect(ChecklistWording.title(service) == "Runs in the Background")
+        var failing = service
+        failing.state = "failed"
+        #expect(ChecklistWording.detail(failing) != "Keryx isn't running in the background yet",
+                "a real failure keeps what it says")
         #expect(ChecklistWording.detail(service) == "Keryx isn't running in the background yet")
         let twilio = try #require(doctor.checks.first { $0.name == "Twilio credentials" })
         #expect(ChecklistWording.title(twilio) == "Twilio Account" && ChecklistWording.detail(twilio) == "Not connected")
@@ -637,6 +749,13 @@ import KeryxTestSupport
         #expect(PhoneSteps.shortURL("https://demo.twilio.com/welcome/voice/") == "demo.twilio.com/welcome/voice/")
     }
 
+    @Test func phoneNumbersInThePickerAreGroupedToo() {
+        #expect(PhoneWording.label(PreviewData.phoneNumbers.numbers[0]) == "Office · +1 555 000 1111")
+        #expect(WizardWording.sharedWords(tight: false, assistant: "Lyra")
+            == "Lyra thinks with the work model, so answers come a little slower.")
+        #expect(FixAction("service:install")?.action(SetupContext()).title == "Install…")
+    }
+
     @Test func aDisabledContinueSaysWhy() {
         let state = ModelsFrame.FrameState(voice: .openai, work: .claude, workModel: nil, wordsModel: nil,
                                            voiceAnswered: false, workAnswered: false, voiceFolded: false,
@@ -657,6 +776,7 @@ import KeryxTestSupport
             let body: String = switch words.first {
             case "voice": #"{"saved": {}, "restart_needed": true}"#
             case "setup": #"{"id": "pin", "walked": true}"#
+            case "pin": #"{"set": true, "replaced": false, "restart_needed": true}"#
             case "config" where words.dropFirst().first == "list": "[]"
             default: "{}"
             }

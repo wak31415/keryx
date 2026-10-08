@@ -401,7 +401,7 @@ private struct SetupSection: View {
         case "issues": "Issue Reports"
         case "profile": "About You"
         case "projects": "Project Context"
-        case "service": "Background Service"
+        case "service": "In the Background"
         case "security": "Security"
         default: Wording.capitalised(section)
         }
@@ -427,7 +427,7 @@ enum ChecklistWording {
     static func detail(_ check: DoctorCheck) -> String {
         if !check.ok {
             switch check.name {
-            case "service manager": return "Keryx isn't running in the background yet"
+            case "service manager" where check.state == "missing": return "Keryx isn't running in the background yet"
             case "Twilio credentials" where check.state == "missing": return "Not connected"
             case "PUBLIC_HOST" where check.state == "missing": return "Not set"
             case "tunnel" where check.detail.contains("not installed"): return "Not installed"

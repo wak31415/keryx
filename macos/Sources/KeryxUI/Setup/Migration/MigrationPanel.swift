@@ -57,6 +57,11 @@ struct MigrationSections: View {
             }
             progress(model.migrationRun)
         }
+        // A conflict can appear only once the move starts: the plan read again says what it
+        // is, and the button becomes Check Again.
+        .onChange(of: model.migrationRun.failure) { _, failure in
+            if failure != nil { Task { await reader.read(model) } }
+        }
     }
 
     private func summary(_ plan: MigrationPlan) -> some View {

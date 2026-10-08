@@ -103,8 +103,8 @@ enum FixAction: Equatable, Sendable {
         case .pin:
             return open(context.pin?.set == true ? "Change PIN…" : "Set PIN…", .setPin)
         case .installService:
-            let installed = context.service?.units.agent.installed == true
-            return SetupAction(title: installed ? "Start Service…" : "Install Service…", effect: .installService)
+            // The status card's verb: `service install` installs and starts alike.
+            return SetupAction(title: "Install…", effect: .installService)
         case .startModelServer:
             // Running another model: started again, on the one chosen.
             let restart = context.modelServerServesAnother != nil

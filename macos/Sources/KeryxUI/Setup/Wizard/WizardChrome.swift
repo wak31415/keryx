@@ -196,6 +196,8 @@ struct WizardSection<Content: View>: View {
 struct FoldedSection: View {
     let title: String
     let summary: String
+    /// The button's words: Change, or what it opens ("Change PIN…").
+    var changeTitle = "Change"
     var change: (() -> Void)?
 
     var body: some View {
@@ -212,7 +214,7 @@ struct FoldedSection: View {
             }
             Spacer(minLength: 8)
             if let change {
-                Button("Change") { change() }
+                Button(changeTitle) { change() }
                     .controlSize(.regular)
             }
         }

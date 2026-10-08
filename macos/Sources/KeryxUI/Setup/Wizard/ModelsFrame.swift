@@ -221,9 +221,14 @@ package struct ModelsFrame: View {
                 column("Hears") {
                     OptionMenu(key: "VOICE_SERVER_STT", title: "Hears", current: hears ?? here?.stt ?? "") { hears = $0 }
                 }
+                .fixedSize()
+                // The widest: a model's title is the longest of the three.
                 column("Thinks") { thinks(state, facts: facts) }
+                    .layoutPriority(1)
+                // The voice under the model that speaks it, so Thinks has the room for a
+                // model's whole title.
                 column("Speaks") {
-                    HStack(spacing: 6) {
+                    VStack(alignment: .leading, spacing: 4) {
                         OptionMenu(key: "VOICE_SERVER_TTS", title: "Speaks", current: speaks ?? here?.tts ?? "") {
                             speaks = $0
                         }
@@ -232,6 +237,7 @@ package struct ModelsFrame: View {
                         }
                     }
                 }
+                .fixedSize()
             }
             Text(voiceCaption(state, facts: facts, report: report, assistant: assistant))
                 .font(.caption)
@@ -487,10 +493,9 @@ package struct ModelsFrame: View {
                 failure = error
                 return
             }
-            wizard.voicePlace = state.voice
-            wizard.workPlace = state.work
-            wizard.workModel = state.work == .thisMac ? state.workModel : nil
-            wizard.voiceWordsModel = state.voice == .thisMac && state.work != .thisMac ? state.wordsModel : nil
+            wizard.choose(voice: state.voice, work: state.work,
+                          workModel: state.work == .thisMac ? state.workModel : nil,
+                          voiceWordsModel: state.voice == .thisMac && state.work != .thisMac ? state.wordsModel : nil)
             // A first run starts the downloads now, to run while the rest is asked; a review
             // starts nothing without a click.
             if wizard.mode == .firstRun { startDownloads(state) }
