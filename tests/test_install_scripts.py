@@ -412,3 +412,81 @@ def test_an_unknown_installer_flag_is_refused(machine):
         env=machine["env"], capture_output=True, text=True, timeout=60, check=False,
     )
     assert result.returncode == 2 and "--llm" in result.stderr
+
+
+# --- removing the launch agents, and loading them again ------------------------------------
+
+
+def launchctl_seeing_plists(machine, tmp_path) -> Path:
+    """A `launchctl` stub that, at each `bootout`, also notes which plists are still there."""
+    seen = tmp_path / "seen.log"
+    agents = machine["home"] / "Library" / "LaunchAgents"
+    stub = tmp_path / "bin" / "launchctl"
+    stub.write_text(
+        "#!/bin/sh\n"
+        f'echo "launchctl $*" >> "{machine["calls"]}"\n'
+        f'if [ "$1" = bootout ]; then ls "{agents}" >> "{seen}" 2>/dev/null; '
+        f'echo "--" >> "{seen}"; fi\n'
+        "exit 0\n"
+    )
+    stub.chmod(0o755)
+    return seen
+
+
+def test_an_uninstall_removes_each_plist_before_booting_it_out(machine, tmp_path):
+    """bootout waits up to a job's ExitTimeOut; an uninstall cut short there must not leave
+    a RunAtLoad/KeepAlive plist behind to start at the next login."""
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+    run("install-launchd.sh", machine)
+    seen = launchctl_seeing_plists(machine, tmp_path)
+
+    result = run("install-launchd.sh", machine, "--uninstall")
+
+    at_each_bootout = seen.read_text().split("--\n")[:-1]
+    assert len(at_each_bootout) == 2
+    assert "dev.keryx.agent.plist" not in at_each_bootout[0]
+    assert "dev.keryx.tunnel.plist" not in at_each_bootout[1]
+    assert "removed dev.keryx.agent" in result.stdout
+
+
+def test_an_uninstall_cut_short_is_finished_by_the_next(machine, tmp_path):
+    """The plist gone but the job perhaps still loaded: a second run still boots it out."""
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+    machine["calls"].write_text("")
+
+    result = run("install-launchd.sh", machine, "--uninstall")
+
+    calls = machine["calls"].read_text()
+    assert "launchctl bootout gui/" in calls and "dev.keryx.agent" in calls
+    assert "removed" not in result.stdout  # nothing was on disk to remove
+
+
+def test_an_install_enables_each_agent_before_bootstrapping_it(machine):
+    """`keryx service stop` disables the job, and launchd refuses to bootstrap a disabled
+    one: an install after a stop must enable it first."""
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+
+    run("install-launchd.sh", machine)
+    run("install-launchd.sh", machine, "--llm", "--voice")
+
+    calls = [line.split()[:2] + line.split()[-1:]
+             for line in machine["calls"].read_text().splitlines()
+             if line.startswith("launchctl ") and line.split()[1] in ("enable", "bootstrap")]
+    for label in ("dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.llm", "dev.keryx.voice"):
+        mine = [call[1] for call in calls if label in call[-1]]
+        assert mine == ["enable", "bootstrap"], (label, calls)
+
+
+def test_the_helpers_stop_fast_and_keryx_gets_launchds_default_to_close_its_sessions(machine):
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+
+    run("install-launchd.sh", machine)
+    run("install-launchd.sh", machine, "--llm", "--voice")
+
+    agents = machine["home"] / "Library" / "LaunchAgents"
+    loaded = {label: plistlib.loads((agents / f"{label}.plist").read_bytes())
+              for label in ("dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.llm",
+                            "dev.keryx.voice")}
+    assert "ExitTimeOut" not in loaded["dev.keryx.agent"]
+    for label in ("dev.keryx.tunnel", "dev.keryx.llm", "dev.keryx.voice"):
+        assert loaded[label]["ExitTimeOut"] == 10, label

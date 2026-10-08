@@ -27,13 +27,26 @@ AGENTS="$HOME/Library/LaunchAgents"
 LABELS=(dev.keryx.agent dev.keryx.tunnel)
 
 remove_agents() {
-  # remove_agents LABEL... — unload and delete each one that is actually installed.
+  # remove_agents LABEL... — delete each plist, then unload its job. In that order: bootout
+  # waits for the job to exit (up to its ExitTimeOut), and an uninstall cut short there —
+  # the app's quit deadline, a shutdown — must not leave a RunAtLoad/KeepAlive plist behind
+  # to start at the next login. The bootout is asked even with no plist left, so a second
+  # run finishes what an interrupted one began.
   for label in "$@"; do
-    [[ -f "$AGENTS/$label.plist" ]] || continue
+    if [[ -f "$AGENTS/$label.plist" ]]; then
+      rm -f "$AGENTS/$label.plist"
+      echo "removed $label"
+    fi
     launchctl bootout "gui/$UID/$label" 2>/dev/null || true
-    rm -f "$AGENTS/$label.plist"
-    echo "removed $label"
   done
+}
+
+load_agent() {
+  # load_agent LABEL PLIST — (re)load one job. Enabled first: `keryx service stop` disables
+  # it, and launchd refuses to bootstrap a disabled job.
+  launchctl bootout "gui/$UID/$1" 2>/dev/null || true
+  launchctl enable "gui/$UID/$1"
+  launchctl bootstrap "gui/$UID" "$2"
 }
 
 parse_install_args "$@"
@@ -60,8 +73,7 @@ if (( LLM || VOICE )); then
       "XDG_DATA_HOME=$(xml_escape "$RESOLVED_XDG_DATA_HOME")" \
       "XDG_STATE_HOME=$(xml_escape "$RESOLVED_XDG_STATE_HOME")" \
       "XDG_CACHE_HOME=$(xml_escape "$RESOLVED_XDG_CACHE_HOME")"
-    launchctl bootout "gui/$UID/$label" 2>/dev/null || true
-    launchctl bootstrap "gui/$UID" "$plist"
+    load_agent "$label" "$plist"
     echo "loaded $label ($plist)"
   done
   exit 0
@@ -84,8 +96,7 @@ for label in "${LABELS[@]}"; do
     "XDG_STATE_HOME=$(xml_escape "$RESOLVED_XDG_STATE_HOME")" \
     "XDG_CACHE_HOME=$(xml_escape "$RESOLVED_XDG_CACHE_HOME")"
   # A previous version may still be loaded; booting it out first makes this re-runnable.
-  launchctl bootout "gui/$UID/$label" 2>/dev/null || true
-  launchctl bootstrap "gui/$UID" "$plist"
+  load_agent "$label" "$plist"
   echo "loaded $label ($plist)"
 done
 

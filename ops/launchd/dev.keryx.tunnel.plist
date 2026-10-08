@@ -32,6 +32,10 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <!-- A helper with nothing to save: ten seconds to exit after SIGTERM rather than
+         launchd's twenty, so stopping everything with Keryx is quick. -->
+    <key>ExitTimeOut</key>
+    <integer>10</integer>
 
     <key>StandardOutPath</key>
     <string>__LOGS__/ngrok.out.log</string>

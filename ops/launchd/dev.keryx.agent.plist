@@ -53,6 +53,8 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <!-- No ExitTimeOut: launchd's twenty seconds. On SIGTERM keryx serve closes each live
+         subagent session in turn, and a shorter limit would kill it in the middle. -->
 
     <key>StandardOutPath</key>
     <string>__LOGS__/keryx.out.log</string>
