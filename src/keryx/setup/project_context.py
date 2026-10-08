@@ -21,11 +21,13 @@ Accepted facts go into the memory's standing facts. The limits are the ones a ca
 import asyncio
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from keryx.agents.registry import BACKENDS
-from keryx.config import write_private
+from keryx.config import Settings, write_private
 from keryx.continuity.memory import add_standing_facts
 from keryx.projects import MAX_BRIEF_CHARS, MAX_BRIEFS_CHARS, discover_projects, summaries_dir
 from keryx.prompts import render_prompt
@@ -120,25 +122,33 @@ def _clip(text: str, limit: int) -> str:
     return text[: limit - 1].rsplit(" ", 1)[0].rstrip(",;:") + "…"
 
 
+#: What the section says first, and asks, with the agent's name in each.
+INTRO = (
+    "A call carries a short brief of each project, so Keryx knows what you mean by "
+    "name. {label} can explore your projects and draft them for you to check: it is "
+    "asked to read only and to skip anything secret, and nothing is kept until you "
+    "accept it."
+)
+QUESTION = "Let {label} explore your projects?"
+EXPLORE, FOLDERS, NO = "explore", "folders", "no"
+
+
+def choices(hint: str) -> list[Choice]:
+    """Whether to explore, `hint` saying where exploring starts from."""
+    return [
+        Choice(EXPLORE, "Yes", hint=hint),
+        Choice(FOLDERS, "Yes, only in folders I name"),
+        Choice(NO, "No"),
+    ]
+
+
 def run_section(ctx: SetupContext) -> None:
     ui, settings = ctx.ui, ctx.settings
     agent = settings.agent_backend
     label = BACKENDS[agent].spoken_name
-    ui.note(
-        "A call carries a short brief of each project, so Keryx knows what you mean by "
-        f"name. {label} can explore your projects and draft them for you to check: it is "
-        "asked to read only and to skip anything secret, and nothing is kept until you "
-        "accept it."
-    )
+    ui.note(INTRO.format(label=label))
     home = Path.home()
-    how = ui.select(
-        f"Let {label} explore your projects?",
-        [
-            Choice("explore", "Yes", hint=f"it finds them, starting from {home}"),
-            Choice("folders", "Yes, only in folders I name"),
-            Choice("no", "No"),
-        ],
-    )
+    how = ui.select(QUESTION.format(label=label), choices(f"it finds them, starting from {home}"))
     if how == "no":
         return
     folders = [home] if how == "explore" else _ask_folders(ctx)
@@ -196,11 +206,8 @@ def _inside(path: str, folders: list[Path]) -> Path | None:
 
 def _review_projects(ctx: SetupContext, draft: Draft, folders: list[Path]) -> None:
     ui, settings = ctx.ui, ctx.settings
-    known = discover_projects(settings)
-    kept = 0
-    new_projects = dict(settings.projects)
+    kept: list[tuple[str, str, str]] = []
     for name, path, summary in draft.projects:
-        inside = _inside(path, folders)
         ui.panel(f"{name} — {path or 'no path given'}", summary)
         choice = ui.select(
             f"Keep the summary of {name}?",
@@ -213,17 +220,52 @@ def _review_projects(ctx: SetupContext, draft: Draft, folders: list[Path]) -> No
             summary = _clip(ui.text("Summary", default=summary, multiline=True), MAX_BRIEF_CHARS)
             if not summary:
                 continue
+        kept.append((name, path, summary))
+    written, _ = keep_projects(settings, kept, folders, save=ctx.save)
+    if written:
+        ui.success(f"{len(written)} project summaries kept in {summaries_dir(settings)}")
+
+
+def keep_projects(
+    settings: Settings,
+    kept: list[tuple[str, str, str]],
+    folders: list[Path],
+    *,
+    save: Callable[[dict[str, Any]], bool],
+) -> tuple[list[str], list[str]]:
+    """Write each accepted `(name, path, summary)` as its project's brief, and name as a
+    project each one Keryx did not know that is inside `folders`, through `save`. The
+    names written, and the projects added."""
+    known = discover_projects(settings)
+    new_projects = dict(settings.projects)
+    written = []
+    for name, path, summary in kept:
+        inside = _inside(path, folders)
         write_private(summaries_dir(settings) / f"{name}.md", summary + "\n")
-        kept += 1
+        written.append(name)
         # Only a folder they chose to have read becomes a project by name: a path from
         # anywhere else is what a prompt injected into a README would ask for, and projects
         # widen where a keypad approval may write (`approvals.policy`).
         if name not in known and inside is not None:
             new_projects[name] = str(inside)
-    if new_projects != settings.projects:
-        ctx.save({"PROJECTS": json.dumps(new_projects)})
-    if kept:
-        ui.success(f"{kept} project summaries kept in {summaries_dir(settings)}")
+    added = [name for name in new_projects if name not in settings.projects]
+    if new_projects != settings.projects and not save({"PROJECTS": json.dumps(new_projects)}):
+        added = []
+    return written, added
+
+
+def remember_facts(settings: Settings, facts: list[str]) -> str | None:
+    """Add `facts` to the memory's standing facts; why not, in a sentence, or None."""
+    try:
+        add_standing_facts(
+            settings.data_dir,
+            owner=settings.owner_label,
+            assistant=settings.assistant_name,
+            facts=facts,
+        )
+    except ValueError as exc:
+        return str(exc)
+    return None
 
 
 def _review_facts(ctx: SetupContext, draft: Draft) -> None:
@@ -237,14 +279,7 @@ def _review_facts(ctx: SetupContext, draft: Draft) -> None:
     facts = [draft.facts[int(index)] for index in keep]
     if not facts:
         return
-    try:
-        add_standing_facts(
-            settings.data_dir,
-            owner=settings.owner_label,
-            assistant=settings.assistant_name,
-            facts=facts,
-        )
-    except ValueError as exc:
-        ui.error(str(exc))
+    if problem := remember_facts(settings, facts):
+        ui.error(problem)
         return
     ui.success(f"{len(facts)} facts added to the memory")

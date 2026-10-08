@@ -43,6 +43,7 @@ from setup.auth_fakes import (
 from typer.testing import CliRunner
 
 from keryx import phone, plugins, status, units
+from keryx.agents.base import RunResult
 from keryx.cli import app
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
@@ -87,8 +88,11 @@ AUTH_LOGINS = {name: f"auth login {name} --json"
                for name in ("claude", "codex", "gmail", "google-workspace")}
 VOICE_DOWNLOAD = "voice download --json"
 MIGRATE = "migrate --yes --json"
+#: The project-context draft: `--explore` or `--folder PATH` is added to it.
+PROJECT_CONTEXT = "setup project-context --json"
 #: The command lines the app reads as JSON lines; the pull's is the one every contract has.
-STREAMS = (PULL, VOICE_HERE, MODELS_START, VOICE_DOWNLOAD, *AUTH_LOGINS.values(), MIGRATE)
+STREAMS = (PULL, VOICE_HERE, MODELS_START, VOICE_DOWNLOAD, *AUTH_LOGINS.values(), MIGRATE,
+           PROJECT_CONTEXT)
 #: The command lines the app reads as one JSON document.
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
@@ -104,14 +108,16 @@ COMMANDS = {
     "phone numbers --json", "phone webhooks --json", "phone webhooks --apply --json",
     "phone tunnel --json", "plugins list --json", "tools --json", "plugins hosts --json",
     "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
-    "migrate --json",
+    "migrate --json", "setup project-context --describe --json",
+    "setup project-context --apply --json",
 }
 #: The command lines and streams the CLI prints that the app has yet to name. Each is
 #: checked once the contract names it; until then the cross-checks let it be missing, and
 #: nothing more — a contract that names what the CLI does not print still fails them.
 AWAITING = {
     "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
-    "migrate --json", MIGRATE,
+    "migrate --json", MIGRATE, "setup project-context --describe --json",
+    "setup project-context --apply --json", PROJECT_CONTEXT,
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
@@ -122,6 +128,9 @@ PIPED = {
     "setup profile --preview --json": json.dumps({"uses": ["coding"], "facts": ["Nights."]}),
     "setup profile --apply --json": json.dumps({"replace": True, "uses": ["coding"],
                                                 "facts": ["Works nights."]}),
+    "setup project-context --apply --json": json.dumps({
+        "folders": [], "projects": [{"name": "keryx", "path": None, "summary": "This."}],
+        "facts": ["Works nights."]}),
 }
 #: A placeholder that stands for something else in one command line: the key to check, the
 #: plugin (the seed's, installed), and for `plugins set` its setting too.
@@ -1147,3 +1156,74 @@ def test_a_migration_ends_once_whatever_the_contract_says(
     assert (events[0]["event"] == "step") is stepped
     if MIGRATE in contract()["streams"]:
         keeps_its_promise(contract()["streams"][MIGRATE], events, ending, result.exit_code)
+
+
+# --- the stream: setup project-context --json --------------------------------------------
+
+
+def _agent(result: RunResult, progress: tuple[str, ...] = ("[tool] Read README.md",)):
+    """`setup.agents.run_task`, faked: progress, then `result`."""
+
+    async def run(settings, agent, prompt, *, on_progress=None):
+        for line in progress:
+            on_progress(line)
+        return result
+
+    return run
+
+
+DRAFT = json.dumps({"facts": ["Works nights."], "projects": [
+    {"name": "keryx", "path": "", "summary": "The voice assistant."}]})
+
+
+def _draft_done(monkeypatch, settings):
+    monkeypatch.setattr("keryx.setup.agents.run_task",
+                        _agent(RunResult(ok=True, final_text=DRAFT)))
+    return ["--explore"]
+
+
+def _draft_failed(monkeypatch, settings):
+    monkeypatch.setattr("keryx.setup.agents.run_task",
+                        _agent(RunResult(ok=False, error="no answer within 900s")))
+    return ["--explore"]
+
+
+def _draft_nowhere(monkeypatch, settings):
+    return []
+
+
+def _draft_cancelled(monkeypatch, settings):
+    async def interrupted(settings, agent, prompt, *, on_progress=None):
+        raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+    monkeypatch.setattr("keryx.setup.agents.run_task", interrupted)
+    return ["--explore"]
+
+
+#: Each way the draft ends: how to arrange it (its extra argv), its ending, its exit code,
+#: and whether a step was told first.
+DRAFTS = [(_draft_done, "done", 0, True), (_draft_failed, "error", 1, True),
+          (_draft_nowhere, "error", 2, False), (_draft_cancelled, "cancelled", 130, True)]
+
+
+def test_the_drafts_below_reach_every_event_the_contract_names():
+    stream = awaited_stream(PROJECT_CONTEXT)
+
+    assert {ending for _, ending, _, _ in DRAFTS} == set(stream["terminal"])
+    assert set(stream["events"]) == {*stream["terminal"], "step"}
+
+
+@pytest.mark.parametrize(("arrange", "ending", "code", "stepped"), DRAFTS)
+def test_a_draft_ends_once_whatever_the_contract_says(
+    seeded, monkeypatch, arrange, ending, code, stepped
+):
+    extra = arrange(monkeypatch, seeded)
+
+    result = runner.invoke(app, [*PROJECT_CONTEXT.split(), *extra])
+
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert ends_once(events) == ending and result.exit_code == code, events
+    assert (events[0]["event"] == "step") is stepped
+    if PROJECT_CONTEXT in contract()["streams"]:
+        keeps_its_promise(contract()["streams"][PROJECT_CONTEXT], events, ending,
+                          result.exit_code)

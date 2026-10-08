@@ -53,7 +53,7 @@ from keryx.config.migrate import Report as MigrationReport
 from keryx.config.migrate import Service as MigratingService
 from keryx.config.migrate import run as run_migration
 from keryx.config.options import has_options, options_for
-from keryx.config.permissions import ACTOR_ENVS, SERVICE, current_actor
+from keryx.config.permissions import ACTOR_ENVS, OWNER, SERVICE, current_actor
 from keryx.config.pin import pin_file, read_enrolled_pin
 from keryx.config.settings import ConfigFileError, tolerate_broken_files
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
@@ -102,7 +102,7 @@ from keryx.restart.watchdog import watch
 from keryx.server import create_app
 from keryx.session import VoiceSession
 from keryx.setup import auth as auth_flow
-from keryx.setup import auth_stream, migrate_stream, profile
+from keryx.setup import auth_stream, migrate_stream, profile, project_stream
 from keryx.setup import pin as pin_flow
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
@@ -2284,6 +2284,107 @@ def setup_profile(
         typer.echo(outcome["text"] or outcome["status"])
     if apply and outcome["status"] == profile.REFUSED:
         raise typer.Exit(1)
+
+
+#: What `setup project-context` is, refused to the service: it dispatches, and writes.
+PROJECT_CONTEXT = "set up project context"
+
+
+@setup_app.command("project-context")
+def setup_project_context(
+    describe: Annotated[
+        bool, typer.Option("--describe", help="What the step says and asks, and what is kept.")
+    ] = False,
+    explore: Annotated[
+        bool, typer.Option("--explore", help="Let the agent find the projects, from home.")
+    ] = False,
+    folder: Annotated[
+        list[str] | None, typer.Option("--folder", help="A folder to look in (repeatable).")
+    ] = None,
+    apply: Annotated[
+        bool, typer.Option("--apply", help="Keep what stdin says was accepted of a draft.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON: a document, or with "
+                                          "--explore/--folder the draft's JSON lines.")] = False,
+) -> None:
+    """The wizard's project-context step for the Mac app, in three calls.
+
+    --describe is the question; --explore or --folder PATH runs the agent's draft (JSON lines,
+    --json only); --apply keeps what the owner accepted of it, one JSON object on stdin:
+    {"folders": […], "projects": [{"name", "path", "summary"}], "facts": […]}.
+    """
+    if sum((describe, apply, explore or bool(folder))) > 1:
+        typer.echo("pick one of --describe, --apply and --explore/--folder", err=True)
+        raise typer.Exit(2)
+    if describe:
+        document = project_stream.describe(_configure_readonly())
+        if as_json:
+            typer.echo(json.dumps(document, indent=2))
+        else:
+            offered = ", ".join(choice["value"] for choice in document["choices"])
+            typer.echo(f"{document['question']} ({offered})")
+        return
+    if apply:
+        _setup_project_context_apply(as_json)
+        return
+    if not as_json:
+        typer.echo("the draft streams for the Mac app (--json); at a terminal, `keryx setup` "
+                   "walks it", err=True)
+        raise typer.Exit(2)
+    raise typer.Exit(_project_context_stream(explore, folder or []))
+
+
+def _setup_project_context_apply(as_json: bool) -> None:
+    """`setup project-context --apply`: exit 0 kept, 1 a problem, 2 stdin not one object."""
+    _owner_only(PROJECT_CONTEXT)
+    settings = _configure_readonly()
+    kept = _read_answers()
+    store = ConfigStore()
+
+    def save(values: dict[str, Any]) -> bool:
+        try:
+            store.set(values, actor=OWNER, settings=settings)
+        except ConfigError:
+            return False
+        return True
+
+    outcome = project_stream.apply(settings, kept, save=save)
+    walked = outcome.pop("applied")
+    if walked:
+        store.mark_walked(project_stream.SECTION)
+    if as_json:
+        typer.echo(json.dumps({**outcome, "walked": walked}, indent=2))
+    else:
+        for problem in outcome["problems"]:
+            typer.echo(f"{problem['id']}: {problem['message']}", err=True)
+        typer.echo(f"{len(outcome['kept'])} project summaries kept, "
+                   f"{outcome['facts_added']} facts added")
+    if outcome["problems"]:
+        raise typer.Exit(1)
+
+
+def _project_context_stream(explore: bool, named: list[str]) -> int:
+    """`setup project-context --explore|--folder … --json`: one ending on every path.
+    Exit 0 the draft, 1 an error (the service's refusal, the agent, its answer), 2 where to
+    look not said, or not folders; 130 cancelled."""
+    events = project_stream.ProjectSteps(typer.echo)
+
+    def run() -> int:
+        if refusal := _owner_refusal(PROJECT_CONTEXT):
+            events.error(refusal)
+            return 1
+        folders, problem = project_stream.folders_for(explore, named)
+        if folders is None:
+            if problem:
+                events.error(project_stream.NOT_FOLDERS, detail=problem)
+            else:
+                events.error(project_stream.WHERE)
+            return 2
+        settings = _configure_readonly(refuse=events.error)
+        return project_stream.stream(settings, events, folders, exploring=explore)
+
+    with pull.terminate_as_interrupt():
+        return events.guard(run)
 
 
 def _interactive() -> bool:

@@ -438,9 +438,10 @@ shell, and can edit `config.toml` directly, as it can edit any of your files. Wh
 buys is that the ordinary paths refuse, and say so: the tool the voice model is given, and
 the commands a coding agent would reach for. `keryx config set` is limited to the
 service-writable keys. `config import-env`, `auth login`, `memory seed`, `setup`,
-`setup mark`, `pin set`, `migrate`, `plugins install`, `plugins remove`, `config lock|unlock`,
-`models use`, `models start|stop`, `voice use`, and `service install|uninstall` refuse the
-service outright.
+`setup mark`, `setup profile --apply`, `setup project-context` (its draft and its
+`--apply`), `pin set`, `migrate` (its `--json` plan and run too), `plugins install`,
+`plugins remove`, `config lock|unlock`, `models use`, `models start|stop`, `voice use`, and
+`service install|uninstall` refuse the service outright.
 
 ### Models of your own
 

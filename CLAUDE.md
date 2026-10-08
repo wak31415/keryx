@@ -24,7 +24,16 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   order), `setup profile --preview|--apply [--json]` (the answers, one JSON object on stdin
   — never a terminal — composed and written by the wizard's own code in `setup/profile.py`:
   `--apply` is the owner's alone, marks the section walked, and exits 1 with nothing written
-  when an answer is not one, 2 when stdin is not one JSON object)
+  when an answer is not one, 2 when stdin is not one JSON object), and the project-context
+  step in three calls (`setup/project_stream.py` over `setup/project_context.py`):
+  `setup project-context --describe [--json]` (its words, question and choices),
+  `setup project-context --explore|--folder PATH --json` (the wizard's one read-only task,
+  run as the service, as JSON lines — `dispatch`, `working` with the agent's progress
+  redacted in its `detail`, `reading` — and `done` carrying the draft; nothing is written,
+  and Cancel closes the agent's session before `cancelled` is told), and `setup
+  project-context --apply [--json]` (what the owner kept, one JSON object on stdin, written
+  as the wizard writes it: briefs, a new project only inside the folders read, facts into
+  the memory; the owner's alone, marks the section walked)
 - The phone PIN: `uv run keryx pin [--json]` (set or not, where, the enrolment door and the
   wrong-PIN lockout; never the digits), `uv run keryx pin set --stdin [--replace] [--json]`
   (the owner's alone: the new PIN twice on stdin, one per line)
@@ -644,7 +653,8 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
   commands that write what the service may not — `config import-env`, `auth login|logout`,
-  `memory seed`, `setup`, `setup mark`, `setup profile --apply`, `pin set`, `config lock|unlock`, `migrate`,
+  `memory seed`, `setup`, `setup mark`, `setup profile --apply`, `setup project-context
+  --explore|--folder|--apply`, `pin set`, `config lock|unlock`, `migrate`,
   `plugins install|remove|set`, `models use`, `voice use` (before any install, handshake or
   save), `voice download`, `models start|stop`, `service install|uninstall`, `phone
   webhooks --apply` (before Twilio is asked anything) — refuse

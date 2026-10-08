@@ -19,8 +19,9 @@ and the parsing end to end, which no amount of looking at files can.
 import asyncio
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from keryx.agents import registry
 from keryx.agents.auth import AuthMode, AuthStatus
@@ -106,9 +107,11 @@ def passed_smoke(result: RunResult) -> bool:
 
 
 async def run_task(
-    settings: Settings, agent: str, prompt: str, *, timeout_s: float = TASK_TIMEOUT_S
+    settings: Settings, agent: str, prompt: str, *, timeout_s: float = TASK_TIMEOUT_S,
+    on_progress: Callable[[str], Any] | None = None,
 ) -> RunResult:
-    """One real task on `agent`, through the runner `keryx serve` would use."""
+    """One real task on `agent`, through the runner `keryx serve` would use; `on_progress`
+    is told each line of progress the session reports (its text, and its tool calls)."""
     task = Task(
         id=None,
         kind=TaskKind.AGENT,
@@ -127,7 +130,8 @@ async def run_task(
             return RunResult(ok=False, error=str(exc))
         try:
             return await asyncio.wait_for(
-                session.run(prompt, on_progress=lambda _text: None), timeout_s
+                session.run(prompt, on_progress=on_progress or (lambda _text: None)),
+                timeout_s,
             )
         except TimeoutError:
             return RunResult(ok=False, error=f"no answer within {timeout_s:.0f}s")
