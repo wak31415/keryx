@@ -137,6 +137,11 @@ public enum PreviewData {
         lines("login-\(provider.rawValue).jsonl")
     }
 
+    /// `auth smoke NAME --json`: a run that said it's ready, and one that answered but not
+    /// as asked, each matching `setup/smoke_stream.py`'s own events.
+    public static var smokePassedLines: [String] { lines("smoke-passed.jsonl") }
+    public static var smokeFailedLines: [String] { lines("smoke-failed.jsonl") }
+
     private static func lines(_ name: String) -> [String] {
         String(decoding: data(name), as: UTF8.self)
             .split(separator: "\n", omittingEmptySubsequences: true)
@@ -151,7 +156,7 @@ public enum PreviewData {
     public static let optionsFixtures = [
         "options-realtime.json", "options-transcription.json", "options-voice.json",
         "options-claude.json", "options-codex.json", "options-local-agent.json", "options-agent-server.json",
-        "options-kokoro.json", "options-stt.json", "options-tts.json",
+        "options-kokoro.json", "options-stt.json", "options-tts.json", "options-assistant-name.json",
     ]
 
     /// The Realtime models with no OpenAI key to ask with: the built-in list and why,

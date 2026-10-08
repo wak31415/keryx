@@ -158,7 +158,9 @@ import KeryxPreview
         #expect(try decodeConfigRow(#""has_options": true,"#).hasOptions)
         let rows = PreviewData.config
         #expect(rows.first { $0.key == "OPENAI_REALTIME_MODEL" }?.hasOptions == true)
-        #expect(rows.first { $0.key == "ASSISTANT_NAME" }?.hasOptions == false)
+        // ASSISTANT_NAME has options too, since Task L (the personas); a plain free-text
+        // setting stands for one that does not.
+        #expect(rows.first { $0.key == "OWNER_NAME" }?.hasOptions == false)
     }
 
     @Test func optionsTakeAnEmptyCurrentAndANullOne() throws {

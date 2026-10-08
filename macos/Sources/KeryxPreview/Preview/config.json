@@ -63,7 +63,7 @@
     "value": "Lyra",
     "type": "string",
     "choices": null,
-    "has_options": false
+    "has_options": true
   },
   {
     "key": "OPENAI_VOICE",

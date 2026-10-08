@@ -515,7 +515,8 @@ import KeryxTestSupport
     }
 
     @Test func setUpLaterIsRecordedOnlyWhereTheCLICanDefer() {
-        #expect(PhoneSteps.later(WizardFacts(plan: fresh)).isEmpty, "today: this run remembers it")
+        let notDeferrable = with(fresh, ["phone"], .blocked, deferrable: false)
+        #expect(PhoneSteps.later(WizardFacts(plan: notDeferrable)).isEmpty, "an older CLI that cannot defer")
         let deferrable = with(fresh, ["phone"], .blocked, deferrable: true)
         #expect(PhoneSteps.later(WizardFacts(plan: deferrable)) == [.mark("phone")])
     }
@@ -526,8 +527,15 @@ import KeryxTestSupport
         #expect(CheckingRules.ending(ready, phoneLater: false) == .ready)
         #expect(CheckingRules.ending(fresh, phoneLater: true) == .checking)
         #expect(CheckingRules.ending(nil, phoneLater: true) == .checking)
-        // Today: the phone left in this run, and the service waiting only for it.
-        var phoneLeft = with(ready, ["phone"], .needed)
+        // An older CLI that cannot speak of deferring at all (`deferrable`/`deferred` on
+        // every step still nil) falls back to `phoneLater`: the phone left in this run,
+        // and the service waiting only for it.
+        var legacy = ready
+        for index in legacy.steps.indices {
+            legacy.steps[index].deferrable = nil
+            legacy.steps[index].deferred = nil
+        }
+        var phoneLeft = with(legacy, ["phone"], .needed)
         phoneLeft = with(phoneLeft, ["service"], .blocked)
         if let index = phoneLeft.steps.firstIndex(where: { $0.id == "service" }) { phoneLeft.steps[index].blockedBy = ["phone"] }
         phoneLeft.ready = false
@@ -710,7 +718,14 @@ import KeryxTestSupport
 
     @Test func theChecklistSpeaksTheWizardsWords() throws {
         let doctor = PreviewData.doctor
-        let service = try #require(doctor.checks.first { $0.name == "service manager" })
+        // The default fixture's own check is "ok" (it agrees with a Keryx that is running);
+        // this test wants the not-installed-at-all shape (Task N's "background process",
+        // state "missing") to say so.
+        let service = DoctorCheck(name: "background process",
+                                  detail: "dev.keryx.agent is not installed — Keryx cannot restart itself, "
+                                      + "and nothing restarts it if it dies",
+                                  severity: "soft", section: "service", state: "missing", ok: false, unset: true,
+                                  title: "Background process")
         #expect(ChecklistWording.title(service) == "Runs in the background")
         var failing = service
         failing.state = "failed"
@@ -725,6 +740,18 @@ import KeryxTestSupport
         #expect(ChecklistWording.title(tunnel) == "Cloudflare Tunnel" && ChecklistWording.detail(tunnel) == "Not installed")
         #expect(doctor.checks.allSatisfy { !ChecklistWording.detail($0).contains("this machine") })
         #expect(FixAction("phone:tunnel")?.action(SetupContext(phoneTunnel: PreviewData.phoneTunnel)).title == "Fix…")
+    }
+
+    /// The Overview's header ("Answering calls: Yes", from `status`) and its Setup
+    /// Checklist (from `doctor`'s checks) must never disagree about whether Keryx is
+    /// running: a unit `status` says is installed and active is not something the
+    /// checklist can still call missing.
+    @Test func theChecklistNeverContradictsAWholeStatus() throws {
+        let status = PreviewData.status
+        #expect(status.service.installed && status.service.active, "the shared status fixture runs")
+        let service = try #require(PreviewData.doctor.checks.first { ["service manager", "background process"].contains($0.name) })
+        #expect(service.ok, "doctor must agree with status: the unit is running")
+        #expect(ChecklistWording.detail(service) != CheckWording.serviceNotInstalled)
     }
 
     @Test func theSheetsSayWhatAPersonReads() {

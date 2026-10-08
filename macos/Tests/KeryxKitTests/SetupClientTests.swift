@@ -46,7 +46,7 @@ import KeryxPreview
         let (marker, marks) = Self.client(try Self.data("fixture:setup-mark.json"))
         let marked = try await marker.markSetupStep("google")
         #expect(Self.words(marks.last) == ["setup", "mark", "google", "--json"])
-        #expect(marked == SetupMarkResult(id: "google", walked: true))
+        #expect(marked == SetupMarkResult(id: "google", walked: true, deferred: false))
     }
 
     @Test func aRefusedMarkIsTheCLIsSentence() async throws {
