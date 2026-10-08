@@ -910,7 +910,8 @@ Five rulings:
   compares it as a real path with this process's. A unit rendering none belongs to the
   default home (`XDG_CONFIG_HOME/keryx` when it renders that); the tunnel, which renders no
   Keryx environment, belongs to whoever its agent unit does. A mismatch refuses, exit 2,
-  before anything runs — `service install|uninstall|stop|start`, `models start|stop`, `voice
+  in a sentence with no path in it (the app leads with the `message`; both homes and the
+  unit file are its `detail`, which a terminal prints beneath it), before anything runs — `service install|uninstall|stop|start`, `models start|stop`, `voice
   use here`, `voice llm here|shared|remote`, `restart`, the voice's `restart_service` under
   a `SERVICE_MANAGER` named outright, the setup wizard's install, and `migrate`, which judges
   Keryx's units against the home it is filling and never Jarvis's, rendered for the old one

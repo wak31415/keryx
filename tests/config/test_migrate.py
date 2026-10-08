@@ -1611,9 +1611,9 @@ def test_a_migration_refuses_a_keryx_unit_another_home_rendered(
     result = runner.invoke(cli.app, ["migrate", *args])
 
     assert result.exit_code == 2 and command == []
-    assert ("These units belong to KERYX_HOME=/srv/someone-else/keryx; this command runs "
-            f"with KERYX_HOME={keryx_home()}.") in result.stderr
-    assert f"rendered in {unit}" in result.stderr
+    assert "belong to another Keryx settings folder" in result.stderr
+    assert (f"The units were rendered for KERYX_HOME=/srv/someone-else/keryx (in {unit}); "
+            f"this command runs with KERYX_HOME={keryx_home()}.") in result.stderr
     assert machine.legacy.is_dir()
 
 
@@ -1623,8 +1623,10 @@ def test_a_migration_streamed_refuses_it_as_one_error(machine, command, installe
     result, events = stream()
 
     assert result.exit_code == 2 and command == []
-    assert ends_once(events) == "error" and events[-1]["detail"] == f"rendered in {unit}"
-    assert events[-1]["message"].startswith("These units belong to KERYX_HOME=/srv/someone")
+    assert ends_once(events) == "error" and f"(in {unit})" in events[-1]["detail"]
+    assert "KERYX_HOME=/srv/someone-else/keryx" in events[-1]["detail"]
+    assert "belong to another Keryx settings folder" in events[-1]["message"]
+    assert "/" not in events[-1]["message"]
     assert machine.legacy.is_dir()
 
 

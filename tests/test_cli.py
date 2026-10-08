@@ -1007,9 +1007,9 @@ def test_a_restart_of_a_unit_another_home_rendered_is_refused_before_anything(
     result = runner.invoke(app, ["restart", "--force"])
 
     assert result.exit_code == 2 and calls == []
-    assert ("These units belong to KERYX_HOME=/Users/owner/.config/keryx; this command runs "
-            f"with KERYX_HOME={os.environ['KERYX_HOME']}.") in result.stderr
-    assert f"rendered in {plist}" in result.stderr
+    assert "belong to another Keryx settings folder" in result.stderr
+    assert (f"The units were rendered for KERYX_HOME=/Users/owner/.config/keryx (in {plist}); "
+            f"this command runs with KERYX_HOME={os.environ['KERYX_HOME']}.") in result.stderr
     assert not (restart_settings.state_dir / RECORD_NAME).exists()
 
 

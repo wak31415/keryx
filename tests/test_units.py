@@ -9,6 +9,7 @@ import pytest
 
 from keryx import units
 from keryx.config import Settings
+from keryx.restart import service
 from keryx.restart.service import ServiceTarget
 
 
@@ -602,9 +603,9 @@ def test_a_stop_or_start_of_units_another_home_rendered_runs_nothing(manager, ac
     outcome = fake.control(action, settle=lambda: settled.append(1))
 
     assert (outcome.ok, outcome.code, outcome.units) == (False, 2, [])
-    assert outcome.message == (f"These units belong to KERYX_HOME={OWNER_HOME}; this command "
-                               f"runs with KERYX_HOME={ours()}.")
-    assert outcome.detail == f"rendered in {plist}"
+    assert outcome.message == service.FOREIGN_UNITS
+    assert outcome.detail == (f"The units were rendered for KERYX_HOME={OWNER_HOME} (in "
+                              f"{plist}); this command runs with KERYX_HOME={ours()}.")
     assert fake.commands == [] and settled == []
 
 
@@ -664,6 +665,6 @@ def test_an_install_or_removal_of_units_another_home_rendered_runs_no_installer(
     outcome = units.install(root=root, platform="darwin", run=script, **kwargs)
 
     assert outcome.code == 2 and script.ran == []
-    assert outcome.message.startswith("These units belong to KERYX_HOME=")
+    assert outcome.message == service.FOREIGN_UNITS
     if unit != "dev.keryx.tunnel":
-        assert outcome.detail == f"rendered in {plist}"
+        assert f"(in {plist})" in outcome.detail

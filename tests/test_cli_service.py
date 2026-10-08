@@ -18,6 +18,7 @@ from keryx.config import Settings
 from keryx.config.store import ConfigStore
 from keryx.endpoints import Probe
 from keryx.localmodels import catalog, download, runtimes, server, servers, use, voice
+from keryx.restart import service
 
 runner = CliRunner()
 CODER = catalog.by_key("qwen3-coder-30b-a3b")
@@ -652,12 +653,21 @@ OWNER_HOME = "/Users/owner/.config/keryx"
 
 
 def refusal() -> str:
-    return (f"These units belong to KERYX_HOME={OWNER_HOME}; this command runs with "
-            f"KERYX_HOME={os.environ['KERYX_HOME']}.")
+    return service.FOREIGN_UNITS
 
 
 def plist(label: str) -> str:
     return str(Path.home() / "Library" / "LaunchAgents" / f"{label}.plist")
+
+
+def why(label: str) -> str:
+    """The refusal's detail: whose the units are, in which file, and whose this run is."""
+    return (f"The units were rendered for KERYX_HOME={OWNER_HOME} (in {plist(label)}); this "
+            f"command runs with KERYX_HOME={os.environ['KERYX_HOME']}.")
+
+
+def test_the_refusal_is_a_sentence_for_a_person():
+    assert for_the_app(refusal())
 
 
 @pytest.mark.parametrize("argv", [["service", "stop"], ["service", "start"],
@@ -671,7 +681,7 @@ def test_service_stop_and_start_refuse_units_another_home_rendered(machine, argv
 
     assert result.exit_code == 2 and machine.scripts == []
     assert json.loads(result.stdout) == {"ok": False, "message": refusal(),
-                                         "detail": f"rendered in {plist('dev.keryx.agent')}",
+                                         "detail": why("dev.keryx.agent"),
                                          "units": []}
     words = runner.invoke(app, argv)
     assert words.exit_code == 2 and refusal() in words.stderr and machine.scripts == []
@@ -699,10 +709,10 @@ def test_installs_and_removals_refuse_units_another_home_rendered(machine, argv,
 
     assert result.exit_code == 2 and machine.scripts == []
     assert json.loads(result.stdout) == {"ok": False, "message": refusal(),
-                                         "detail": f"rendered in {plist(label)}"}
+                                         "detail": why(label)}
     words = runner.invoke(app, argv)
     assert words.exit_code == 2 and machine.scripts == [] and words.stdout == ""
-    assert refusal() in words.stderr and plist(label) in words.stderr
+    assert refusal() in words.stderr and why(label) in words.stderr
 
 
 @pytest.mark.parametrize("argv", [
@@ -721,6 +731,6 @@ def test_the_model_servers_set_ups_refuse_units_another_home_rendered(machine, a
     events = events_of(result)
     assert [event["event"] for event in events] == ["error"]
     assert (events[0]["message"], events[0]["detail"]) == (
-        refusal(), f"rendered in {plist('dev.keryx.voice')}")
+        refusal(), why("dev.keryx.voice"))
     words = runner.invoke(app, argv)
     assert words.exit_code == 2 and refusal() in words.stderr and machine.scripts == []

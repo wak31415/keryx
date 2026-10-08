@@ -134,9 +134,13 @@ def unit_file(target: ServiceTarget) -> Path:
 # --- whose units they are ----------------------------------------------------------------
 
 #: What every command that drives Keryx's units says when they were rendered for another
-#: configuration directory. Paths, never another variable: only `KERYX_HOME` says whose.
-FOREIGN_UNITS = ("These units belong to KERYX_HOME={theirs}; this command runs with "
-                 "KERYX_HOME={ours}.")
+#: configuration directory: a sentence for a person, with no path in it (the Mac app leads
+#: with it), and the paths in `FOREIGN_UNITS_DETAIL` — only `KERYX_HOME`, never another
+#: variable — which a terminal prints beneath it.
+FOREIGN_UNITS = ("Keryx's background services here belong to another Keryx settings folder, "
+                 "so this command leaves them alone.")
+FOREIGN_UNITS_DETAIL = ("The units were rendered for KERYX_HOME={theirs} (in {unit_file}); "
+                        "this command runs with KERYX_HOME={ours}.")
 
 
 @dataclass(frozen=True)
@@ -150,11 +154,12 @@ class ForeignUnits:
 
     @property
     def message(self) -> str:
-        return FOREIGN_UNITS.format(theirs=self.theirs, ours=self.ours)
+        return FOREIGN_UNITS
 
     @property
     def detail(self) -> str:
-        return f"rendered in {self.unit_file}"
+        return FOREIGN_UNITS_DETAIL.format(theirs=self.theirs, ours=self.ours,
+                                           unit_file=self.unit_file)
 
 
 def account_home() -> Path:

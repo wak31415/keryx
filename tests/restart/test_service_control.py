@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from wording import for_the_app
 
 from keryx.restart import service
 from keryx.restart.service import (
@@ -167,16 +168,19 @@ def test_a_plist_rendered_for_this_home_is_ours(tmp_path):
 
 
 def test_a_plist_rendered_for_another_home_is_refused_in_one_sentence(tmp_path):
+    """A sentence for a person, with no path in it; both homes and the file in the detail."""
     plist = write_plist(agents_dir() / "dev.keryx.agent.plist",
                         KERYX_HOME="/Users/owner/.config/keryx")
 
     foreign = service.foreign_units([LAUNCHD])
 
     assert foreign is not None and foreign.unit_file == plist
-    assert foreign.message == (
-        "These units belong to KERYX_HOME=/Users/owner/.config/keryx; this command runs with "
-        f"KERYX_HOME={os.environ['KERYX_HOME']}.")
-    assert foreign.detail == f"rendered in {plist}"
+    assert foreign.message == ("Keryx's background services here belong to another Keryx "
+                               "settings folder, so this command leaves them alone.")
+    assert for_the_app(foreign.message)
+    assert foreign.detail == (
+        f"The units were rendered for KERYX_HOME=/Users/owner/.config/keryx (in {plist}); "
+        f"this command runs with KERYX_HOME={os.environ['KERYX_HOME']}.")
 
 
 def test_homes_are_compared_as_real_paths(tmp_path, monkeypatch):

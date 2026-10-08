@@ -392,7 +392,7 @@ def run_service(ctx: SetupContext) -> None:
         ui.note("It runs the phone channel and its tunnel, so it needs the phone set up first.")
         return
     if foreign := units.owner_mismatch(settings, units.MAIN_KINDS):
-        ui.error(f"{foreign.message} ({foreign.detail})")
+        ui.error(f"{foreign.message} {foreign.detail}")
         return
     if not ui.confirm(f"Install it now ({name})?", default=True):
         return
