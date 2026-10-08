@@ -524,6 +524,13 @@ def test_ngroks_v3_endpoint_url_is_the_hostname_and_its_upstream_is_not(settings
     assert phone.tunnel_hostname(settings, "ngrok") == "keryx-ada.ngrok.dev"
 
 
+def test_an_ngrok_config_with_no_reserved_domain_is_none(settings):
+    ngrok_config("version: 3\nagent:\n  authtoken: 2abcSECRETtoken\nendpoints:\n"
+                 "  - name: keryx\n    upstream:\n      url: 8080\n")
+
+    assert phone.tunnel_hostname(settings, "ngrok") is None
+
+
 def test_the_tunnel_found_is_asked_first_and_none_found_asks_both(settings):
     cloudflared_config(CLOUDFLARED_CONFIG.format(port=settings.port))
     ngrok_config("tunnels:\n  keryx:\n    domain: keryx.ngrok.app\n")
