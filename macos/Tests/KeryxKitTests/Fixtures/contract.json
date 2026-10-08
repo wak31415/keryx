@@ -188,7 +188,11 @@
         "models_dir": "string",
         "models": "array",
         "voices": "array",
-        "servers": "object"
+        "servers": "object",
+        "recommended": "string|null",
+        "recommended_with_local_voice": "string|null",
+        "voice_llm_recommended": "string|null",
+        "voice_llm_separate": "boolean|null"
       },
       "hardware": {
         "accelerator": "string",
@@ -206,7 +210,8 @@
         "fits": "boolean",
         "downloaded": "boolean",
         "recommended": "boolean",
-        "tested": "boolean"
+        "tested": "boolean",
+        "fits_with_voice_llm": "boolean|null"
       },
       "voices[]": {
         "name": "string",
@@ -1193,7 +1198,8 @@
       "pin",
       "service:install",
       "voice:download",
-      "voice:here"
+      "voice:here",
+      "voice:llm"
     ],
     "signins": [
       "claude",

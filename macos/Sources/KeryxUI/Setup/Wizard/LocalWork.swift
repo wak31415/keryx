@@ -11,14 +11,17 @@ package struct LocalIntent: Equatable, Sendable {
     package var voiceHere: Bool
     /// The work runs on this Mac.
     package var workHere: Bool
-    /// The model this Mac's model server must serve: the work's, or — with the work in the
-    /// cloud and no voice model of its own — the one the voice takes its words from.
+    /// The model this Mac's model server must serve: the work's, or — from an older CLI,
+    /// with the work in the cloud — the one the voice takes its words from.
     package var model: String?
+    /// The voice's words, when Models chose them (`voice llm`); `nil` keeps them.
+    package var voiceLLM: VoiceLLMPick?
 
-    package init(voiceHere: Bool, workHere: Bool, model: String?) {
+    package init(voiceHere: Bool, workHere: Bool, model: String?, voiceLLM: VoiceLLMPick? = nil) {
         self.voiceHere = voiceHere
         self.workHere = workHere
         self.model = model
+        self.voiceLLM = voiceLLM
     }
 
     /// Nothing runs here.
@@ -31,9 +34,12 @@ package struct LocalIntent: Equatable, Sendable {
         let workPlace = wizard.workPlace ?? WorkPlace.current(facts, models: models)
         let voiceHere = voicePlace == .thisMac
         let workHere = workPlace == .thisMac
+        // A CLI with a voice LLM of its own needs no agent's model for the voice's words.
+        let ownWords = ModelsRules.voiceWordsIsAControl(facts: facts)
         let model = workHere ? (wizard.workModel ?? models?.servers.llm.model)
-            : voiceHere ? (wizard.voiceWordsModel ?? models?.servers.llm.model) : nil
-        return LocalIntent(voiceHere: voiceHere, workHere: workHere, model: model)
+            : voiceHere && !ownWords ? (wizard.voiceWordsModel ?? models?.servers.llm.model) : nil
+        return LocalIntent(voiceHere: voiceHere, workHere: workHere, model: model,
+                           voiceLLM: voiceHere && ownWords ? wizard.voiceLLM : nil)
     }
 }
 
@@ -45,6 +51,10 @@ package enum LocalStep: Hashable, Sendable {
     case use(String, defaultAgent: Bool)
     /// `voice download`.
     case downloadSpeech
+    /// `voice llm here NAME`: the voice's own model on a server of its own.
+    case voiceLLM(String)
+    /// `voice llm shared`: the voice's words from the agent's model.
+    case voiceLLMShared
     /// `voice use here`, the model server started first when it is down (`setUpThisMac`).
     case setUpVoice
     /// `models start`.
@@ -57,8 +67,10 @@ package enum LocalStep: Hashable, Sendable {
     /// voice's words come from while the work is in the cloud, the voice's.
     package func row(_ intent: LocalIntent) -> CheckRow {
         switch self {
-        case .downloadSpeech, .setUpVoice: .voice
-        case .download, .use: intent.workHere ? .work : .voice
+        case .downloadSpeech, .setUpVoice, .voiceLLM, .voiceLLMShared: .voice
+        // The voice's own model downloads for the voice's row.
+        case let .download(name): intent.workHere && name == intent.model ? .work : .voice
+        case .use: intent.workHere ? .work : .voice
         default: .work
         }
     }
@@ -78,13 +90,36 @@ package enum LocalWork {
             }
         }
         if intent.voiceHere, let voice {
+            if let step = voiceWords(intent.voiceLLM, models: models, voice: voice, facts: facts) { return step }
             if !voice.here.modelsReady { return .downloadSpeech }
             if voice.kind != .here || !voice.here.reachable { return .setUpVoice }
         }
-        if intent.workHere, let models, !intent.voiceHere,
+        // The voice's setup starts the agent's model server only while its words come from it.
+        let voiceStartsIt = intent.voiceHere && (voice?.llmSource ?? .shared) == .shared
+        if intent.workHere, let models, !voiceStartsIt,
            !models.servers.llm.reachable || models.servers.llm.servedModel != models.servers.llm.model {
             return .startServer
         }
         return .done
+    }
+
+    /// The step that brings the voice's words to what was picked, or `nil` once they are.
+    /// A model of its own is downloaded first, then served (`voice llm here`); the agent's is
+    /// asked for when the words come from elsewhere — or, before the voice is first set up
+    /// here, when the CLI's own rule would give it a model of its own instead.
+    static func voiceWords(_ pick: VoiceLLMPick?, models: ModelsReport?, voice: VoiceStatus,
+                           facts: WizardFacts) -> LocalStep? {
+        switch pick {
+        case let .own(name)?:
+            if let entry = models?.models.first(where: { $0.name == name }), !entry.downloaded { return .download(name) }
+            let serving = voice.llmSource == .here && voice.llm?.model == name && voice.llm?.reachable == true
+            return serving ? nil : .voiceLLM(name)
+        case .shared?:
+            if voice.llmSource != .shared { return .voiceLLMShared }
+            let unset = facts.row("VOICE_LLM").map { $0.source == "default" } ?? false
+            return voice.kind != .here && unset && models?.voiceLlmSeparate == true ? .voiceLLMShared : nil
+        case nil:
+            return nil
+        }
     }
 }

@@ -23,6 +23,9 @@ package final class SetupWizard {
     /// model) — or, with no voice model of its own (today), the model its words come from.
     package var workModel: String?
     package var voiceWordsModel: String?
+    /// The voice's words as chosen on Models, from a CLI with a voice LLM of its own: the
+    /// agent's model, or a model of its own here; `nil` keeps them as they are.
+    package var voiceLLM: VoiceLLMPick?
     /// The service install was asked for by Checking, once, this run.
     package var serviceAsked = false
     /// What the owner stopped this run (a download, a server start): never started again
@@ -36,15 +39,17 @@ package final class SetupWizard {
     package var recordsCompletion = true
     /// Where the voice and the work run and on which models, as last chosen: a new choice
     /// forgets what the owner stopped, which belonged to the old one.
-    package func choose(voice: VoicePlace, work: WorkPlace, workModel: String?, voiceWordsModel: String?) {
+    package func choose(voice: VoicePlace, work: WorkPlace, workModel: String?, voiceWordsModel: String?,
+                        voiceLLM: VoiceLLMPick? = nil) {
         if voice != voicePlace || work != workPlace || workModel != self.workModel
-            || voiceWordsModel != self.voiceWordsModel {
+            || voiceWordsModel != self.voiceWordsModel || voiceLLM != self.voiceLLM {
             stopped = []
         }
         voicePlace = voice
         workPlace = work
         self.workModel = workModel
         self.voiceWordsModel = voiceWordsModel
+        self.voiceLLM = voiceLLM
     }
 
     package init(mode: SetupWizardMode = .firstRun, path: [WizardFrame] = [.welcome], opening: UUID = UUID()) {
@@ -66,6 +71,7 @@ package final class SetupWizard {
         workPlace = nil
         workModel = nil
         voiceWordsModel = nil
+        voiceLLM = nil
         serviceAsked = false
         stopped = []
         localApproved = false

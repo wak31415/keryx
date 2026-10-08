@@ -5,10 +5,6 @@ import Foundation
 // "SEAM" where it is declared, and listed in `ContractTests.awaitingCLI`):
 //
 // - `AgentSmokeTesting` — `keryx auth smoke NAME --json`.
-// - `ModelsReport.recommended`, `.recommendedWithLocalVoice`, `.voiceLlmRecommended`,
-//   `.voiceLlmSeparate`, `CatalogModel.fitsWithVoiceLlm` — `models list --json`, the
-//   owner's rule applied by the CLI (Task M5).
-// - `voice:llm` — `doctor`'s fix id for the voice LLM (M5), known to `FixAction` already.
 // - `PhoneTunnel.hostname` — `phone tunnel --json` `hostname`.
 // - `SetupStep.deferrable`, `.deferred`, `SetupMarkResult.deferred` — `setup plan --json`,
 //   and `setup mark phone|service`.

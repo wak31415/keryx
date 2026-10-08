@@ -14,6 +14,8 @@ struct SetupAction: Equatable, Identifiable, Sendable {
         case startKeryx
         /// `keryx models start`, followed here.
         case startModelServer
+        /// `keryx models start --voice-llm`, followed on Local Models.
+        case startVoiceLLMServer
         /// `keryx voice download`, followed on Local Models.
         case downloadVoiceModels
         /// A page in the browser: one the app trusts (`FixAction.tunnelPage`).

@@ -101,7 +101,7 @@ extension ScreenCatalog {
                 }
             },
             Entry("wizard-models-voice-model", size: size) {
-                wizard(.models, model: fresh(models: separateVoiceModel, voiceLLMRows: true)) {
+                wizard(.models, model: fresh(models: separateVoiceModel)) {
                     $0.voicePlace = .thisMac
                     $0.workPlace = .thisMac
                 }
@@ -249,7 +249,7 @@ extension ScreenCatalog {
     /// models, the phone as far as `phone`, and scripts for the runs.
     @MainActor private static func fresh(
         plan: SetupPlan = PreviewData.setupPlan, values: [String: JSONValue] = [:], claudeSignedIn: Bool = false,
-        pin: PinStatus = PreviewData.pinNone, models: ModelsReport = PreviewData.models, voiceLLMRows: Bool = false,
+        pin: PinStatus = PreviewData.pinNone, models: ModelsReport = PreviewData.models,
         phone: PhoneState = .none, homebrew: String? = "/opt/homebrew/bin/brew", pull: PreviewClient.Pull = .replay,
         voiceDownload: PreviewClient.Script<VoiceModelsDownloaded> = .replay,
         projectDraft: PreviewClient.Script<ProjectDraft> = .replay
@@ -259,7 +259,6 @@ extension ScreenCatalog {
         set(&config, "OPENAI_API_KEY", nil)
         set(&config, "PUBLIC_HOST", nil)
         for (key, value) in values { set(&config, key, value) }
-        if voiceLLMRows { config += voiceLLMSettings }
         let numbers: PhoneNumbers
         let tunnel: PhoneTunnel
         let webhooks: PhoneWebhooks
@@ -393,8 +392,8 @@ extension ScreenCatalog {
         return doctor
     }
 
-    /// SEAM: the models list as the CLI will print it with the owner's rule applied — a
-    /// voice model of its own fits beside the agent's — written by hand.
+    /// The models list with the owner's rule giving the voice a model of its own beside the
+    /// agent's (a 48 GB Mac's pair, as M5 prints it), its values written by hand.
     private static var separateVoiceModel: ModelsReport {
         var report = PreviewData.models
         report.recommended = "qwen3-coder-30b-a3b"
@@ -402,16 +401,6 @@ extension ScreenCatalog {
         report.voiceLlmRecommended = "qwen3.5-4b"
         report.voiceLlmSeparate = true
         return report
-    }
-
-    /// SEAM: the voice's own model's settings, as `config list` will list them.
-    private static var voiceLLMSettings: [ConfigRow] {
-        ["VOICE_LLM": "shared", "VOICE_LLM_MODEL": ""].sorted { $0.key < $1.key }.map { key, value in
-            ConfigRow(key: key, group: "local", title: key == "VOICE_LLM" ? "Voice's words" : "Voice's model",
-                      description: "", source: "default", type: "string", required: false, set: false, secret: false,
-                      serviceWritable: false, protected: false, value: value.isEmpty ? nil : .string(value),
-                      choices: nil)
-        }
     }
 
     /// A Mac whose old Jarvis files must move first (`keryx setup plan` while the storage

@@ -117,6 +117,44 @@ extension ScreenCatalog {
                     return model
                 }())
             },
+            // The voice LLM's own server: running beside the agent's (the memory bar showing
+            // all three, over what this Mac gives models), starting, refused for want of a
+            // model, a model of its own being chosen from Use This Model; and the sheet's
+            // question.
+            Entry("models-voice-llm-running", size: whole) {
+                ModelsView().environment(AppModel.preview(client: PreviewClient(
+                    models: .success(ownLLM), voice: .success(PreviewData.voiceOwnLLM), service: .success(voiceLLMUnit))))
+            },
+            Entry("models-voice-llm-starting", size: whole) {
+                ModelsView().environment({
+                    let model = AppModel.preview(client: PreviewClient(
+                        models: .success(ownLLM), voice: .success(voiceLLMDown), service: .success(voiceLLMUnit),
+                        voiceLLMServer: .holding(Array(PreviewData.voiceLLMServerStartLines.prefix(3)
+                            .compactMap(ModelServerEvent.parse)))))
+                    model.runVoiceLLMServer()
+                    return model
+                }())
+            },
+            Entry("models-voice-llm-refused", size: whole) {
+                ModelsView().environment({
+                    let model = AppModel.preview(client: PreviewClient(
+                        models: .success(ownLLM), voice: .success(voiceLLMDown), service: .success(voiceLLMUnit),
+                        voiceLLMServer: .events(PreviewData.voiceLLMServerRefusedLines.compactMap(ModelServerEvent.parse))))
+                    model.runVoiceLLMServer()
+                    return model
+                }())
+            },
+            Entry("models-voice-llm-choosing", size: whole) {
+                ModelsView().environment({
+                    let model = AppModel.preview(client: PreviewClient(voiceLLM: .holding(Array(
+                        PreviewData.voiceLLMHereLines.prefix(5).compactMap(VoiceLLMEvent.parse)))))
+                    model.chooseVoiceLLM(.here(model: "qwen3.5-4b"))
+                    return model
+                }())
+            },
+            Entry("models-use-sheet-voice", size: CGSize(width: 440, height: 210)) {
+                UseModelSheet(entry: gptOss20b, purpose: .voice).environment(AppModel.preview())
+            },
             // The whole screen: Advanced is at its foot, under the catalog.
             Entry("models-advanced", size: CGSize(width: 720, height: 1800)) {
                 ModelsView(advancedOpen: true).environment(AppModel.preview())
@@ -129,6 +167,35 @@ extension ScreenCatalog {
                 RootView().environment(onModels)
             },
         ]
+    }
+
+    /// The 4b on the voice LLM's own server beside the agent's model, as the CLI says it on
+    /// a 36 GB Mac where the owner chose it: more than the Mac gives models.
+    private static var ownLLM: ModelsReport {
+        var report = PreviewData.models
+        report.voiceLlmRecommended = "qwen3.5-4b"
+        report.voiceLlmSeparate = true
+        report.models = report.models.map { entry in
+            var entry = entry
+            if entry.name == "qwen3.5-4b" { entry.downloaded = true }
+            return entry
+        }
+        return report
+    }
+
+    /// The voice LLM's own server installed and running.
+    private static var voiceLLMUnit: ServiceReport {
+        var report = PreviewData.service
+        report.units.voiceLlm?.installed = true
+        report.units.voiceLlm?.active = true
+        return report
+    }
+
+    /// …and not serving its model.
+    private static var voiceLLMDown: VoiceStatus {
+        var voice = PreviewData.voiceOwnLLM
+        voice.llm?.reachable = false
+        return voice
     }
 
     /// A model downloading Gemma 4 12B, the recommended model, with its pull doing `pull`.

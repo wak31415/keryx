@@ -217,6 +217,9 @@ public final class AppModel {
     public let modelServerRun: StreamRun<ModelServerStarted>
     /// Choosing where a voice on this Mac takes its words from (`keryx voice llm`).
     public let voiceLLMRun: StreamRun<VoiceLLMChosen>
+    /// What `voiceLLMRun` was last asked to choose, for its steps and Try Again — a typed
+    /// key never kept: it is `.stored` here once it has been sent.
+    public private(set) var voiceLLMChoice: VoiceLLMChoice?
     /// Starting the voice LLM's own server here (`keryx models start --voice-llm`).
     public let voiceLLMServerRun: StreamRun<ModelServerStarted>
     /// Downloading the voice's speech models (`keryx voice download`).
@@ -1109,10 +1112,19 @@ public final class AppModel {
     @discardableResult
     public func chooseVoiceLLM(_ choice: VoiceLLMChoice) -> Bool {
         guard canChangeVoiceLLM, let client else { return false }
-        return voiceLLMRun.start(reason: "Choosing the voice LLM", { client.chooseVoiceLLM(choice) }) { [weak self] _ in
+        let started = voiceLLMRun.start(reason: "Choosing the voice LLM", { client.chooseVoiceLLM(choice) }) {
+            [weak self] _ in
             self?.invalidateOptions()
             Task { await self?.refresh(.voice, .config, .models, .service, .setupPlan) }
         }
+        if started {
+            if case let .remote(url, name, .typed) = choice {
+                voiceLLMChoice = .remote(url: url, model: name, key: .stored)
+            } else {
+                voiceLLMChoice = choice
+            }
+        }
+        return started
     }
 
     /// Starts the voice LLM's own server on the model chosen for it (`keryx models start

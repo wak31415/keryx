@@ -108,6 +108,52 @@ extension ScreenCatalog {
                 VoiceView(mode: .here).environment(AppModel.preview(client: PreviewClient(
                     voice: .success(PreviewData.voiceNeedsModel))))
             },
+            // The voice LLM: a model of its own in use; each source picked; one being chosen,
+            // chosen, refused over a live call, and failed; and no model named for it yet.
+            Entry("voice-here-own-llm", size: tall) {
+                VoiceView().environment(AppModel.preview(client: PreviewClient(models: .success(ownLLMModels),
+                                                                               voice: .success(PreviewData.voiceOwnLLM))))
+            },
+            Entry("voice-here-llm-own-picked", size: tall) {
+                VoiceView(mode: .here, llm: .here).environment(AppModel.preview(client: PreviewClient(
+                    models: .success(separateModels))))
+            },
+            Entry("voice-here-llm-remote-picked", size: tall) {
+                VoiceView(mode: .here, llm: .remote).environment(AppModel.preview())
+            },
+            Entry("voice-here-llm-choosing", size: tall) {
+                VoiceView(mode: .here, llm: .here).environment(choosingLLM(.holding(Array(
+                    PreviewData.voiceLLMHereLines.prefix(2).compactMap(VoiceLLMEvent.parse)))))
+            },
+            Entry("voice-here-llm-chosen", size: tall) {
+                VoiceView(mode: .here, llm: .here).environment(choosingLLM(.replay))
+            },
+            Entry("voice-here-llm-live-call", size: tall) {
+                VoiceView(mode: .here, llm: .here).environment(choosingLLM(.events([
+                    .error(StreamFailure("A call is going on, and switching the voice's words restarts the voice "
+                        + "server, which would cut it off: try again once the line is clear.", detail: "1 live call(s)")),
+                ])))
+            },
+            Entry("voice-here-llm-failed", size: tall) {
+                VoiceView(mode: .here, llm: .here).environment(choosingLLM(.events([
+                    .step(step: "download", message: "Downloading Qwen3.5 4B for the voice LLM (2.7 GB)"),
+                    .step(step: "runtime", message: "llama.cpp is installed.", detail: "/opt/homebrew/bin/llama-server"),
+                    .step(step: "unit", message: "Installing the voice LLM server's service, for Qwen3.5 4B"),
+                    .step(step: "start", message: "Loading Qwen3.5 4B into llama.cpp at http://127.0.0.1:8091/v1"),
+                    .error(StreamFailure("The voice LLM server did not come up, so its service was removed.",
+                                         detail: "no answer from http://127.0.0.1:8091/v1/models within 600 s; "
+                                             + "its log: /Users/you/.local/state/keryx/logs/keryx-voice-llm.err.log")),
+                ])))
+            },
+            Entry("voice-here-needs-voice-llm", size: tall) {
+                VoiceView().environment(AppModel.preview(client: PreviewClient(voice: .success(needsVoiceLLM))))
+            },
+            Entry("voice-here-live-call", size: screen) {
+                VoiceView(mode: .here).environment(settingUp(.events([
+                    .error(StreamFailure("A call is going on, and setting up the voice here restarts its server, "
+                        + "which would cut it off: try again once the line is clear.", detail: "2 live call(s)")),
+                ])))
+            },
             Entry("voice-server", size: screen) {
                 VoiceView().environment(AppModel.preview(client: PreviewClient(voice: .success(PreviewData.voiceServer))))
             },
@@ -138,6 +184,46 @@ extension ScreenCatalog {
                 RootView().environment(onVoice)
             },
         ]
+    }
+
+    /// The models beside a voice LLM of its own: the 4b chosen and downloaded (M5's keys, as
+    /// a 36 GB Mac with the 4b chosen gives them).
+    private static var ownLLMModels: ModelsReport {
+        var report = PreviewData.models
+        report.voiceLlmRecommended = "qwen3.5-4b"
+        report.voiceLlmSeparate = true
+        report.models = report.models.map { entry in
+            var entry = entry
+            if entry.name == "qwen3.5-4b" { entry.downloaded = true }
+            return entry
+        }
+        return report
+    }
+
+    /// A Mac where the owner's rule gives the voice a model of its own: the 4b recommended.
+    private static var separateModels: ModelsReport {
+        var report = PreviewData.models
+        report.voiceLlmRecommended = "qwen3.5-4b"
+        report.voiceLlmSeparate = true
+        return report
+    }
+
+    /// The voice here with an LLM of its own and no model named for it.
+    private static var needsVoiceLLM: VoiceStatus {
+        var voice = PreviewData.voiceOwnLLM
+        voice.needs = VoiceStatus.voiceLLM
+        voice.llm = VoiceLLMStatus(source: "here", model: nil, url: "http://127.0.0.1:8091/v1", reachable: nil,
+                                   unitInstalled: false)
+        voice.here.wordsModel = nil
+        voice.here.reachable = false
+        return voice
+    }
+
+    /// The voice LLM being chosen, as `script` goes, with the 4b recommended.
+    @MainActor private static func choosingLLM(_ script: PreviewClient.Script<VoiceLLMChosen>) -> AppModel {
+        let model = AppModel.preview(client: PreviewClient(models: .success(separateModels), voiceLLM: script))
+        model.chooseVoiceLLM(.here(model: "qwen3.5-4b"))
+        return model
     }
 
     /// OpenAI Realtime in use with no key to use it with.

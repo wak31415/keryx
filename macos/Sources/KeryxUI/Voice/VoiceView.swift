@@ -17,17 +17,22 @@ public struct VoiceView: View {
     private let server: ServerSection.Start
     /// Whether the Advanced disclosure starts open (the catalog's).
     private let advancedOpen: Bool
+    /// The voice LLM's source picked when the screen appears (the catalog's).
+    private let llm: VoiceLLMSource?
 
     public init() {
         self.init(mode: nil)
     }
 
     /// `mode`: the way picked when the screen appears; `server`: the server section's state
-    /// then; `advancedOpen`: the Advanced disclosure open (the catalog's).
-    package init(mode: VoiceMode?, server: ServerSection.Start = .init(), advancedOpen: Bool = false) {
+    /// then; `advancedOpen`: the Advanced disclosure open; `llm`: the voice LLM's source
+    /// picked (the catalog's).
+    package init(mode: VoiceMode?, server: ServerSection.Start = .init(), advancedOpen: Bool = false,
+                 llm: VoiceLLMSource? = nil) {
         _picked = State(initialValue: mode)
         self.server = server
         self.advancedOpen = advancedOpen
+        self.llm = llm
     }
 
     public var body: some View {
@@ -40,7 +45,7 @@ public struct VoiceView: View {
                 ModeSection(voice: voice, chosen: Binding { chosen } set: { picked = $0 })
                 switch chosen {
                 case .openai: OpenAISection(voice: voice)
-                case .here: HereSection(voice: voice)
+                case .here: HereSection(voice: voice, llmPicked: llm)
                 case .server: ServerSection(voice: voice, start: server)
                 }
                 ScreenAdvancedSection(screen: .voice, open: advancedOpen)
@@ -81,6 +86,7 @@ private struct ModeSection: View {
                 Text("Speak through")
             }
             .pickerStyle(.radioGroup)
+            PipelineRow(voice: voice, mode: chosen)
         } header: {
             Text(VoiceWording.sectionTitle(Wording.assistant(model.status.value) ?? voice.assistant))
         } footer: {
@@ -88,6 +94,35 @@ private struct ModeSection: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// How the chosen way speaks (`voice --json` `pipelines`): a caption while it has one way, as
+/// every way has today; the pipeline set, with the way to change it, once a way has several.
+private struct PipelineRow: View {
+    let voice: VoiceStatus
+    let mode: VoiceMode
+
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let ways = voice.pipelines(for: mode) ?? []
+        if ways.count > 1 {
+            let set = model.config.value?.first { $0.key == "VOICE_PIPELINE" }
+            let current = set.flatMap { $0.value.map(ConfigWording.editText) }.flatMap { $0.isEmpty ? nil : $0 }
+                ?? ways[0]
+            LabeledContent {
+                Button(ConfigWording.changeIn(.configuration)) { model.request(.setting(key: "VOICE_PIPELINE")) }
+                    .buttonStyle(.link)
+            } label: {
+                Text("Pipeline")
+                Text(VoiceWording.pipeline(current))
+            }
+        } else if let only = ways.first {
+            Text("Pipeline: " + VoiceWording.pipeline(only) + ".")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -159,6 +194,8 @@ private struct OpenAISection: View {
 
 private struct HereSection: View {
     let voice: VoiceStatus
+    /// The voice LLM's source picked when it appears (the catalog's); `nil`: the one in use.
+    var llmPicked: VoiceLLMSource?
 
     @Environment(AppModel.self) private var model
     /// The Kokoro voice picked here, applied by the next setup; `nil`: the one set.
@@ -177,6 +214,10 @@ private struct HereSection: View {
         let serverElsewhere = model.modelServerRun.isBusy && !showing
         let downloading = model.voiceDownloadRun.isBusy
         let busy = setup.isBusy || model.modelServerRun.isBusy
+        let choosing = model.voiceLLMBusy
+        // Set Up can't run without words: a local model while they are the agent's, a model
+        // named for a voice LLM of its own.
+        let wordless = voice.needsLocalModel || voice.needsVoiceLLM
         Section {
             if voice.needsLocalModel, !showing {
                 needsModel(report)
@@ -192,38 +233,14 @@ private struct HereSection: View {
                 Text("Voice server")
                 Text(VoiceWording.hereCaption(here))
             }
-            LabeledContent {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(VoiceWording.wordsModel(here.wordsModel, models: report?.models))
-                        .foregroundStyle(here.wordsModel == nil ? .secondary : .primary)
-                        .textSelection(.enabled)
-                    if here.wordsModel != nil, let server = VoiceWording.wordsServer(report) {
-                        HStack(spacing: 6) {
-                            StatusDot(server.running ? .ok : .inactive)
-                            Text(server.text)
-                        }
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    }
-                }
-            } label: {
-                Text("Words")
-                Text("The local model that puts the replies together")
-            }
-            LabeledContent {
-                let speech = VoiceWording.speechModels(here, stt: model.options["VOICE_SERVER_STT"]?.value,
-                                                       tts: model.options["VOICE_SERVER_TTS"]?.value)
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(speech.names)
-                        .textSelection(.enabled)
-                    Text(speech.state)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-            } label: {
-                Text("Speech models")
-                Text("How it hears and speaks")
-            }
+            SettingMenuRow(key: "VOICE_SERVER_STT", title: "Speech to text", subtitle: "How it hears",
+                           current: here.stt) { await model.refresh(.voice) }
+                .disabled(busy || downloading)
+            VoiceLLMRows(voice: voice, report: report, picked: llmPicked)
+                .disabled(busy)
+            SettingMenuRow(key: "VOICE_SERVER_TTS", title: "Text to speech", subtitle: VoiceWording.speechState(here),
+                           current: here.tts) { await model.refresh(.voice) }
+                .disabled(busy || downloading)
             LabeledContent {
                 OptionMenu(key: "VOICE_SERVER_VOICE", title: "Kokoro voice", current: kokoro ?? here.voice) {
                     kokoro = $0
@@ -258,16 +275,18 @@ private struct HereSection: View {
                     Button(inUse ? "Restart Voice Server" : "Set Up…") {
                         if inUse { restart() } else { askToSetUp() }
                     }
-                    .disabled(voice.needsLocalModel || downloading || reading)
+                    .disabled(wordless || downloading || reading || choosing)
                     .help(voice.needsLocalModel ? VoiceWording.needsModelTitle
-                          : downloading ? VoiceWording.speechDownloading : "")
+                          : voice.needsVoiceLLM ? VoiceLLMWording.needsVoiceLLMTitle
+                          : downloading ? VoiceWording.speechDownloading
+                          : choosing ? VoiceWording.voiceLLMChanging : "")
                 }
             }
         } header: {
             Text(VoiceWording.title(.here))
         } footer: {
             HStack(spacing: 4) {
-                Text("Choose the words and speech models in")
+                Text("Models are downloaded, and their servers run, in")
                     .foregroundStyle(.secondary)
                 Button("Local Models") { model.show(inModels: ModelsAnchor.voiceModels) }
                     .buttonStyle(.link)
@@ -299,12 +318,13 @@ private struct HereSection: View {
         .onChange(of: model.requested, initial: true) { _, requested in
             guard let requested, VoiceView.answers(requested) else { return }
             model.didHandle(requested)
-            if !voice.needsLocalModel, !busy, !downloading { askToSetUp() }
+            if !wordless, !busy, !downloading, !choosing { askToSetUp() }
         }
         .confirmationDialog(VoiceWording.setUpQuestion, isPresented: $confirming) {
             Button("Set Up") { start(startServer: nil) }
         } message: {
-            Text(VoiceWording.setUpMessage(startsServer: report?.modelServerDown ?? false))
+            Text(VoiceWording.setUpMessage(startsServer: (report?.modelServerDown ?? false)
+                                                && model.voiceWordsAreTheAgents))
         }
     }
 

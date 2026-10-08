@@ -77,6 +77,12 @@ enum CheckWording {
             let rest = text[range.upperBound...]
             return (serviceNotInstalled + rest.replacingOccurrences(of: "`", with: ""), raw)
         }
+        // A setting kept under its old name ("SUBAGENT_MODEL is CLAUDE_MODEL now"), said by
+        // the title it has now; the names are for Show Details.
+        if let match = text.firstMatch(of: #/^([A-Z][A-Z0-9_]*) is ([A-Z][A-Z0-9_]*) now$/#),
+           let title = titles[String(match.2)] {
+            return ("“\(title)” is saved under an old name: changing it saves it under the new one", raw)
+        }
         guard AppFacing.isFit(text) else {
             // The clause before the terminal's part, when that much is fit to show.
             let clause = text.components(separatedBy: " — ").first ?? ""
@@ -122,6 +128,9 @@ struct FixPerformer: ViewModifier {
         case .startModelServer:
             model.runModelServer()
             model.show(inModels: ModelsAnchor.modelServer)
+        case .startVoiceLLMServer:
+            model.runVoiceLLMServer()
+            model.show(inModels: ModelsAnchor.voiceLLMServer)
         case .downloadVoiceModels:
             model.downloadVoiceModels()
             model.show(inModels: ModelsAnchor.voiceModels)

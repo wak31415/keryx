@@ -149,8 +149,6 @@ import KeryxPreview
     /// (`Seams.swift`). Left out of the walk until it does; once a fixture holds one, the
     /// test below says to move it into the contract.
     static let awaitingCLI: Set<String> = [
-        "ModelsReport.recommended", "ModelsReport.recommendedWithLocalVoice",
-        "ModelsReport.voiceLlmRecommended", "ModelsReport.voiceLlmSeparate", "CatalogModel.fitsWithVoiceLlm",
         "PhoneTunnel.hostname",
         "SetupStep.deferrable", "SetupStep.deferred", "SetupMarkResult.deferred",
     ]
