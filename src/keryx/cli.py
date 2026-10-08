@@ -47,10 +47,11 @@ from keryx.config import (
     secure_file,
 )
 from keryx.config import verify as credentials
-from keryx.config.files import HOME_ENV, XDG_HOMES, claude_config_dir, xdg_home
+from keryx.config.files import HOME_ENV, XDG_HOMES, xdg_home
 from keryx.config.migrate import (
     InstallFailed,
     MigrationError,
+    hook_installed,
     make_plan,
     old_target,
     retire_old_units,
@@ -2840,7 +2841,7 @@ def _run_migration(
         successor=MigratingService(target) if predecessor and target else None,
         retire=(lambda: retire_old_units(predecessor.manager)) if predecessor else list,
         fix_permissions=lambda: fix_permissions(_load_settings_optional(), ConfigStore()),
-        rerender=lambda: _rerender(target, run=run_installer),
+        rerender=lambda: _rerender(target, hook=plan.hook, run=run_installer),
         echo=echo,
         on_step=on_step,
     )
@@ -2913,14 +2914,13 @@ def _migrate_stream() -> int:
         return events.guard(run)
 
 
-#: The approval hook's file name, and what it was called before the service was Keryx: a
-#: settings file naming either has the hook installed, and the installer replaces both.
-HOOK_NAMES = ("keryx_approval.py", "jarvis_approval.py")
-
-
-def _rerender(target, *, run: Callable[[list[str]], int] | None = None) -> list[str]:
-    """Re-install what names the old paths: the service's unit, and the approval hook.
-    `run` runs each installer: `run_command`, on this terminal, unless one is given."""
+def _rerender(
+    target, *, hook: bool | None = None, run: Callable[[list[str]], int] | None = None
+) -> list[str]:
+    """Re-install what names the old paths: the service's unit, and the approval hook —
+    when `hook` says (the plan's, which a run that did not finish recorded), else when
+    Claude's settings name it now. `run` runs each installer: `run_command`, on this
+    terminal, unless one is given."""
     run = run or run_command
     done = []
     scripts = repo_root() / "scripts"
@@ -2928,12 +2928,7 @@ def _rerender(target, *, run: Callable[[list[str]], int] | None = None) -> list[
         installer = scripts / Path(INSTALLERS[target.manager]).name
         code = run([str(installer)])
         done.append(_installed(installer.name, code))
-    try:
-        hooks = (claude_config_dir() / "settings.json").read_text(encoding="utf-8")
-        hooked = any(name in hooks for name in HOOK_NAMES)
-    except OSError:
-        hooked = False
-    if hooked:
+    if hook_installed() if hook is None else hook:
         code = run([str(scripts / "install-claude-hook.sh")])
         done.append(_installed("approval hook", code))
     return done

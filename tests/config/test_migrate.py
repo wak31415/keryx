@@ -1499,3 +1499,83 @@ def test_a_marker_that_cannot_be_read_is_still_work_to_do(machine):
     plan = make_plan([])
 
     assert plan.units_pending == {} and plan.pending_target is None and not plan.empty
+
+
+def test_a_jarvis_unit_still_installed_after_retiring_keeps_the_units_pending(
+    jarvis, monkeypatch
+):
+    from keryx.restart import service as services
+
+    units = Units(jarvis)
+    # `systemctl disable` failed, as its exit code would say, and the unit is still known.
+    monkeypatch.setattr(services, "is_installed", lambda target: target.unit == "jarvis.service")
+
+    done = migration.retire_old_units("systemd", run=units)
+
+    assert done == ["jarvis.service: still installed, run it again"]
+    assert isinstance(done[0], migration.InstallFailed)
+    report = run(make_plan([]), service=None, fix_permissions=lambda: [], today=TODAY,
+                 retire=lambda: migration.retire_old_units("systemd", run=units),
+                 rerender=lambda: ["install-systemd.sh: done"])
+    assert report.units_pending is True
+    assert (jarvis.new("state") / migration.UNITS_PENDING).is_file()
+
+
+def test_a_unit_already_gone_is_retired_whatever_its_command_answers(tmp_path):
+    def refuses(argv, **kwargs):  # "Unit file jarvis.service does not exist."
+        return subprocess.CompletedProcess(argv, 1, "", "does not exist")
+
+    assert migration.retire_old_units("systemd", run=refuses) == ["jarvis.service: retired"]
+
+
+def test_a_unit_file_left_behind_is_not_retired(monkeypatch):
+    unit_dir = secure_dir(Path.home() / ".config" / "systemd" / "user")
+    monkeypatch.setattr(Path, "unlink", lambda self, missing_ok=False: None)
+    (unit_dir / "jarvis.service").write_text("[Service]\n")
+
+    done = migration.retire_old_units(
+        "systemd", run=lambda argv, **_: subprocess.CompletedProcess(argv, 0))
+
+    assert isinstance(done[0], migration.InstallFailed)
+
+
+def test_the_hook_a_killed_run_was_rendering_is_rendered_by_the_next(machine, command):
+    claude = machine.home / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_text("keryx_approval.py")
+
+    def hook_half_written():
+        # The hook's installer killed part way, its settings left without the hook's name.
+        (claude / "settings.json").write_text("{")
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        migrate(machine, rerender=hook_half_written)
+    assert json.loads(pending(machine).read_text())["hook"] is True
+    assert machine.plan().hook is True
+
+    result = runner.invoke(cli.app, ["migrate", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert [Path(argv[0]).name for argv in command] == ["install-claude-hook.sh"]
+    assert not pending(machine).exists()
+
+
+def test_a_hook_installer_that_fails_keeps_the_hook_pending(machine, command, monkeypatch):
+    claude = machine.home / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_text("keryx_approval.py")
+    monkeypatch.setattr(cli, "run_command", lambda argv: 1)
+
+    runner.invoke(cli.app, ["migrate", "--yes"])
+    (claude / "settings.json").write_text("{}")  # what it left behind names no hook
+
+    record = json.loads(pending(machine).read_text())
+    assert record["hook"] is True and machine.plan().hook is True
+
+
+def test_without_a_hook_none_is_recorded_or_rendered(machine, command):
+    migrate(machine, rerender=lambda: [migration.InstallFailed("x: exited 1")])
+
+    assert json.loads(pending(machine).read_text())["hook"] is False
+    assert machine.plan().hook is False

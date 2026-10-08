@@ -58,6 +58,7 @@ from keryx.config.files import (
     LEGACY_APP_NAME,
     LEGACY_HOME_ENV,
     LEGACY_NAMES,
+    claude_config_dir,
     default_data_dir,
     default_state_dir,
     holds_files,
@@ -225,6 +226,9 @@ class Plan:
     #: `UNITS_PENDING`'s record when a run before this one did not finish the units: the
     #: unit it was installing (`target`, or None). None when there is no such record.
     units_pending: dict[str, Any] | None = None
+    #: Whether the approval hook is re-rendered: installed now, or recorded as to be by a
+    #: run that did not finish — whose installer may have left the settings half written.
+    hook: bool = False
 
     @property
     def empty(self) -> bool:
@@ -348,9 +352,10 @@ def make_plan(
     data_dir = default_data_dir() if configured is None or unset else configured
     state_dir = _setting_dir("STATE_DIR", env, stores) or default_state_dir()
     cache_dir = _setting_dir("CACHE_DIR", env, stores) or xdg_home("cache") / "keryx"
+    pending = _pending_record(state_dir / UNITS_PENDING)
     plan = Plan(legacy, config_dir, data_dir, state_dir, cache_dir, env_files=env_files,
-                working_dirs=working, unset_data_dir=unset,
-                units_pending=_pending_record(state_dir / UNITS_PENDING))
+                working_dirs=working, unset_data_dir=unset, units_pending=pending,
+                hook=hook_installed() or (pending or {}).get("hook") is True)
 
     targets = {CONFIG: config_dir, DATA: data_dir, STATE: state_dir}
     twins = {"config": config_dir, "data": data_dir, "state": state_dir, "cache": cache_dir}
@@ -682,6 +687,8 @@ def run(
         echo(f"stopping {service.describe()}")
         service.stop()
     on_step(MOVE_PHASE)
+    # The service is stopped before the marker goes down, and that is fine: a stop is undone
+    # by this run's own start, or by the owner, and nothing has moved yet to need the units.
     for directory in (plan.config_dir, plan.data_dir, plan.state_dir):
         secure_dir(directory)
     starting = successor or service
@@ -690,6 +697,7 @@ def run(
         "written": today.isoformat(),
         "target": None if starting is None
         else {"manager": starting.target.manager, "unit": starting.target.unit},
+        "hook": plan.hook,
     }) + "\n")
     for source in dict.fromkeys(step.source.parent for step in plan.steps):
         _checkpoint(source / TASK_DB)
@@ -895,8 +903,16 @@ def old_target(target: Any) -> Any:
 def retire_old_units(manager: str, *, run: Callable[..., Any] = subprocess.run) -> list[str]:
     """Jarvis's units disabled and their files removed, now that Keryx's replace them.
 
-    Before Keryx's are installed, so two tunnels never run at once.
+    Before Keryx's are installed, so two tunnels never run at once. Each unit is judged
+    retired by what is left, never by its command's exit code: a unit already gone — a
+    second run's — answers non-zero and is retired, and one still known to its manager
+    afterwards is not, which is an `InstallFailed` line, so the units stay pending. CLAUDE.md's
+    "a negative exit is the restart working" is about `systemctl` killed inside the cgroup
+    it is restarting; `migrate` never runs inside a unit (the service may not run it), so it
+    has no part here, and a command killed part way is judged by what is left like any other.
     """
+    from keryx.restart import service as services
+
     done = []
     if manager == "systemd":
         directory = xdg_home("config") / "systemd" / "user"
@@ -913,10 +929,30 @@ def retire_old_units(manager: str, *, run: Callable[..., Any] = subprocess.run) 
     for command, path in zip(commands, files, strict=True):
         run(command, capture_output=True, text=True, check=False)
         path.unlink(missing_ok=True)
-        done.append(f"{path.name}: retired")
     if manager == "systemd":
         run(["systemctl", "--user", "daemon-reload"], capture_output=True, text=True, check=False)
+    for unit, path in zip(OLD_UNITS[manager], files, strict=True):
+        # Late-bound through the module, as `resolve_target` asks it, so a test reaches it.
+        left = services.is_installed(services.ServiceTarget(manager, unit))
+        if left or path.exists() or path.is_symlink():
+            done.append(InstallFailed(f"{path.name}: still installed, run it again"))
+        else:
+            done.append(f"{path.name}: retired")
     return done
+
+
+#: The approval hook's file name, and what it was called before the service was Keryx: a
+#: Claude settings file naming either has the hook installed, and its installer replaces both.
+HOOK_NAMES = ("keryx_approval.py", "jarvis_approval.py")
+
+
+def hook_installed() -> bool:
+    """Whether Claude Code's settings name the approval hook, whose file names the paths."""
+    try:
+        hooks = (claude_config_dir() / "settings.json").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(name in hooks for name in HOOK_NAMES)
 
 
 def _tighten(plan: Plan) -> list[str]:

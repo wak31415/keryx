@@ -723,9 +723,16 @@ Four rulings:
   (`config.migrate.UNITS_PENDING`, 0600, written atomically) goes down before the first move
   — inside Jarvis's state directory when that is about to move onto `STATE_DIR` whole, so it
   is carried there — and is removed only once Jarvis's units are retired and Keryx's and the
-  approval hook re-rendered with no installer failing (`InstallFailed`). While it is there
-  the plan is not empty: it says why, the run re-renders, and the unit it names is installed
-  even when nothing is installed to be found. Without it a run killed after the moves, or an
+  approval hook re-rendered with nothing failing (`InstallFailed`). A unit counts as retired
+  by what is left — not known to its manager, its file gone — never by its command's exit
+  code, which is non-zero for one a run before already took away; the restart's "a negative
+  exit is the restart working" has no part here, since `migrate` never runs inside a unit.
+  The marker records the unit being installed and whether the hook is to be re-rendered,
+  because a hook installer killed part way can leave Claude's settings no longer naming it.
+  While it is there the plan is not empty: it says why, the run re-renders, and the unit and
+  the hook it names are rendered even when nothing is left on disk to find them. The
+  service is stopped before the marker goes down, which is fine: the run's own start, or
+  the owner, undoes a stop. Without it a run killed after the moves, or an
   installer that failed, would leave the units naming the old paths with nothing left to do.
 - **The service resolves what its installer's terminal resolved.** The units render
   `KERYX_HOME` and the four `XDG_*_HOME`, and the restart watchdog's transient unit is
