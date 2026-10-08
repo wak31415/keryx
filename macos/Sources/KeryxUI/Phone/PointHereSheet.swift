@@ -60,9 +60,8 @@ package struct PointHereSheet: View {
                 }
                 if let error = error ?? readError {
                     Section {
-                        ErrorText(error: error, sentence: error.reported.flatMap {
-                            AppFacing.isFit($0) ? KeryxError.sentence($0) : nil
-                        })
+                        ErrorText(error.said(self.error != nil ? "The number wasn't pointed here."
+                            : "Twilio couldn't be asked where the number points."))
                     }
                 }
             }

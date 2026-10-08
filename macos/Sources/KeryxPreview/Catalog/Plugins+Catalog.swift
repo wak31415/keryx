@@ -19,8 +19,9 @@ extension ScreenCatalog {
                     integrations: .success(everyAccount), plugins: .success(allOn))))
             },
             Entry("plugins-failure", size: CGSize(width: 720, height: 520)) {
-                PluginsView(failures: ["send_to_slack": "send_to_slack was not turned on: channel_id is empty (or name "
-                    + "an mcp_server whose config has one)"])
+                PluginsView(failures: ["send_to_slack": StreamFailure(
+                    "Slack wasn't turned on.", detail: "send_to_slack was not turned on: channel_id is empty (or name "
+                        + "an mcp_server whose config has one)")])
                     .environment(AppModel.preview(client: PreviewClient(plugins: .success(slackOff))))
             },
             Entry("plugins-own-tools", size: CGSize(width: 720, height: 560)) {

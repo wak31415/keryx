@@ -28,12 +28,12 @@ public enum TerminalLauncher {
         let directory = (base as NSString).appendingPathComponent("keryx-commands")
         let files = FileManager.default
         if mkdir(directory, 0o700) != 0 && errno != EEXIST {
-            throw KeryxError.launch("Could not make \(directory) for the script for Terminal.")
+            throw KeryxError.terminal("Could not make \(directory) for the script for Terminal.")
         }
         var info = stat()
         guard lstat(directory, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid()
         else {
-            throw KeryxError.launch("\(directory) is not a folder of yours, so no script was written there.")
+            throw KeryxError.terminal("\(directory) is not a folder of yours, so no script was written there.")
         }
         try? files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory)
         return directory

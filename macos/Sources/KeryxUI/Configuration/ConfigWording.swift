@@ -39,6 +39,7 @@ enum ConfigWording {
             $0.displayTitle.localizedCaseInsensitiveContains(query)
                 || $0.key.localizedCaseInsensitiveContains(query)
                 || $0.description.localizedCaseInsensitiveContains(query)
+                || ConfigDescriptions.text($0).localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -63,12 +64,13 @@ enum ConfigWording {
         "\(row.displayTitle) is set in the environment as \(row.key), which wins over the store"
     }
 
-    /// What to show for a refused write: Keryx's own sentence, with the two validation
-    /// failures it words for a programmer ("Input should be a valid integer…") said as what
-    /// to do, and the setting it opens on ("VAD_SILENCE_MS Input should be…") named by its
-    /// title instead. Any other sentence is shown as the CLI wrote it, as a sentence.
+    /// What to show for a refused write: the two validation failures Keryx words for a
+    /// programmer ("Input should be a valid integer…") said as what to do; anything else the
+    /// app's own sentence ("Silence before a turn ends wasn't saved."), with what Keryx said
+    /// under Show Details (`KeryxError.said`).
     static func errorText(_ error: KeryxError, for row: ConfigRow) -> String {
         guard let reported = error.reported else { return error.message }
+        if error.isOlderKeryx { return KeryxError.olderKeryx }
         return errorText(reported, key: row.key, title: row.displayTitle)
     }
 
@@ -79,9 +81,21 @@ enum ConfigWording {
     static func errorText(_ message: String, key: String, title: String) -> String {
         if message.localizedCaseInsensitiveContains("valid integer") { return wholeNumber }
         if message.localizedCaseInsensitiveContains("valid number") { return number }
-        guard title != key, message.hasPrefix(key + " ") else { return Wording.sentence(message) }
-        let rest = message.dropFirst(key.count + 1)
-        return Wording.sentence("\(title): " + rest.prefix(1).lowercased() + rest.dropFirst())
+        return notSaved(title)
+    }
+
+    /// "Silence before a turn ends (ms) wasn't saved."
+    static func notSaved(_ title: String) -> String {
+        "\(title) wasn't saved."
+    }
+
+    /// What Keryx said of a refused write, for Show Details: not for a validation failure,
+    /// which `errorText` already says as what to do.
+    static func errorDetails(_ error: KeryxError) -> String? {
+        guard let reported = error.reported else { return error.details }
+        let validation = reported.localizedCaseInsensitiveContains("valid integer")
+            || reported.localizedCaseInsensitiveContains("valid number")
+        return validation ? nil : error.details
     }
 
     static let wholeNumber = "Enter a whole number."
@@ -179,10 +193,11 @@ enum ConfigWording {
         row.key == "TWILIO_AUTH_TOKEN"
     }
 
-    /// Whether the row offers any write at all — a control, Set…/Change…/Remove, or Reset
-    /// to Default. Not the environment's rows, and never the PIN.
+    /// Whether the row offers any write at all — a control, Add…/Change…/Remove, or Reset
+    /// to Default. Not the environment's rows, never the PIN, and not a secret managed in
+    /// Integrations, whose card is its one door.
     static func offersWrites(_ row: ConfigRow) -> Bool {
-        !readOnly(row) && !isPIN(row)
+        !readOnly(row) && !isPIN(row) && !managedInIntegrations(row)
     }
 
     /// Under the PIN's button: where the PIN is (`keryx pin`), else the row's own word.

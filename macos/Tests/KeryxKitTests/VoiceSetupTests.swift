@@ -173,7 +173,7 @@ import KeryxPreview
         let setup = makeSetup()
         setup.start(voice: nil, client: client(events: [], throwing: KeryxError.launch("No uv")), onFinish: {})
         await setup.settled()
-        #expect(setup.phase == .failed("No uv."))
+        #expect(setup.phase == .failed(StreamFailure("Keryx couldn't be started.", detail: "No uv")))
     }
 
     @Test func thePreviewClientReplaysTheFixtureAndStopsWhenAsked() async {

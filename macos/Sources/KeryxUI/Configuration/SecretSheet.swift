@@ -55,7 +55,7 @@ package struct SecretSheet: View {
 
     package var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(replacing ? "Change \(Wording.titleCase(title))" : "Set \(Wording.titleCase(title))")
+            Text(replacing ? "Change \(Wording.titleCase(title))" : "Add \(Wording.titleCase(title))")
                 .font(.headline)
                 .padding([.horizontal, .top], 20)
 
@@ -65,7 +65,7 @@ package struct SecretSheet: View {
                         // Return saves, but never anyway: that takes a click.
                         .onSubmit { if !savesAnyway { save() } }
                 } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 10) {
                         if checks, let said = check.said(key: key) {
                             Label {
                                 Text(said.text)
@@ -76,9 +76,7 @@ package struct SecretSheet: View {
                             .textSelection(.enabled)
                         }
                         if let error {
-                            ErrorText(error: error, sentence: error.reported.flatMap {
-                                AppFacing.isFit($0) ? ConfigWording.errorText($0, key: key, title: title) : nil
-                            })
+                            ErrorText(error.said(ConfigWording.notSaved(title)))
                         }
                         Text(footnote)
                             .foregroundStyle(.secondary)
@@ -216,7 +214,9 @@ package enum SecretCheck: Equatable, Sendable {
         case let .success(result):
             self = .problem(KeryxError.sentence(result.problem ?? "The key didn't work"))
         case let .failure(error):
-            self = .problem(error.reported.map(KeryxError.sentence) ?? error.message)
+            // What Keryx said is not the sentence: that it couldn't check is.
+            self = .problem(error.isOlderKeryx ? KeryxError.olderKeryx
+                : error.reported != nil ? "Keryx couldn't check the key." : error.message)
         }
     }
 

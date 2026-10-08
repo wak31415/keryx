@@ -231,10 +231,15 @@ package enum PinWording {
     /// taking a PIN now (one is already set, the environment's wins, it is still in
     /// `~/.jarvis`, it could not be written): said above them.
     package static func failure(_ error: KeryxError) -> (aboutTheDigits: Bool, text: String) {
-        if case let .failed(_, exitCode, message) = error, !message.isEmpty {
-            return (exitCode == 2, KeryxError.sentence(message))
+        guard case let .failed(_, exitCode, message) = error, !message.isEmpty, !error.isOlderKeryx else {
+            return (false, error.message)
         }
-        return (false, error.message)
+        // The refusals the app knows, in its own words; anything else is its sentence for
+        // the operation, with Keryx's under Show Details.
+        let known = message.lowercased()
+        if known.contains("differ") { return (true, "The two PINs differ.") }
+        if known.contains("already set") { return (false, "A PIN is already set.") }
+        return exitCode == 2 ? (true, "Keryx didn't accept that PIN.") : (false, "The PIN wasn't saved.")
     }
 
     /// What the sheet says once the PIN is saved.

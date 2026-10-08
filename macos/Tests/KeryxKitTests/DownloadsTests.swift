@@ -272,7 +272,7 @@ import KeryxPreview
         downloads.start("qwen", client: client(events: [], throwing: KeryxError.launch("No uv")),
                         onFinish: {})
         await downloads.settled()
-        #expect(downloads.active["qwen"] == .failed("No uv."))
+        #expect(downloads.active["qwen"] == .failed(StreamFailure("Keryx couldn't be started.", detail: "No uv")))
         #expect(activities.begun == 1 && activities.ended == 1)
     }
 

@@ -4,6 +4,9 @@ import SwiftUI
 /// One of a plugin's settings, edited as its type says: a text or number field (saved on
 /// Return or when it loses focus), a switch, a menu of choices, or the cluster table.
 struct PluginFieldRow: View {
+    /// Where the SSH config is, for a tooltip: the copy says "your SSH config".
+    static let sshConfigPath = "~/.ssh/config"
+
     let field: PluginField
     /// What it holds now: the plugin's file, or an off plugin's draft.
     let value: String
@@ -128,11 +131,12 @@ struct ClusterTableRows: View {
                 }
             }
             if available.isEmpty {
-                Text(hosts == nil ? "Reading the hosts in ~/.ssh/config…"
-                    : "No other host in ~/.ssh/config has a ControlMaster. Cluster stats only asks over an ssh "
+                Text(hosts == nil ? "Reading the hosts in your SSH config…"
+                    : "No other host in your SSH config has a ControlMaster. Cluster stats only asks over an ssh "
                         + "login you already have open, never one of its own.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .help(PluginFieldRow.sshConfigPath)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 LabeledContent {
@@ -155,7 +159,8 @@ struct ClusterTableRows: View {
                     }
                 } label: {
                     Text("Add a host")
-                    Text("One with a ControlMaster in ~/.ssh/config, and its GPU partition")
+                    Text("One with a ControlMaster in your SSH config, and its GPU partition")
+                        .help(PluginFieldRow.sshConfigPath)
                 }
             }
         }
@@ -178,7 +183,7 @@ struct ClusterTableRows: View {
     /// "ada@login.cluster.example.edu · signed in": whether its master is up now.
     private func sshDetail(_ alias: String) -> String {
         guard let found = hosts?.hosts.first(where: { $0.alias.lowercased() == alias }) else {
-            return "Not in ~/.ssh/config"
+            return "Not in your SSH config"
         }
         let login = found.user.isEmpty ? found.hostname : "\(found.user)@\(found.hostname)"
         return "\(login) · \(found.masterAlive ? "connection open" : "no open connection")"

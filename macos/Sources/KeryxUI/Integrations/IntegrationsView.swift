@@ -16,14 +16,14 @@ public struct IntegrationsView: View {
     /// Cards with a change under way, by id.
     @State private var working: Set<String> = []
     /// What went wrong on each card, by id, said under it.
-    @State private var failures: [String: String]
+    @State private var failures: [String: StreamFailure]
 
     public init() {
         self.init(failures: [:])
     }
 
     /// `failures`: what each card says went wrong when the screen appears (the catalog's).
-    package init(failures: [String: String]) {
+    package init(failures: [String: StreamFailure]) {
         _failures = State(initialValue: failures)
     }
 
@@ -110,12 +110,15 @@ public struct IntegrationsView: View {
         case let .disconnect(integration):
             change(integration) { await disconnect(integration) }
         case let .issueReports(integration):
-            change(integration) { await model.set(key: IntegrationsWording.issueReportsKey, to: "true")?.message }
+            change(integration) {
+                await model.set(key: IntegrationsWording.issueReportsKey, to: "true")?
+                    .said("Issue reports weren't turned on.")
+            }
         }
     }
 
     /// Runs `work` for the card, with its spinner up; what it returns is the card's failure.
-    private func change(_ integration: Integration, _ work: @escaping @MainActor () async -> String?) {
+    private func change(_ integration: Integration, _ work: @escaping @MainActor () async -> StreamFailure?) {
         let id = integration.id
         working.insert(id)
         failures[id] = nil
@@ -127,11 +130,13 @@ public struct IntegrationsView: View {
     }
 
     /// The card's settings unset in one command, then its sign-in removed; a failure stops it.
-    private func disconnect(_ integration: Integration) async -> String? {
+    private func disconnect(_ integration: Integration) async -> StreamFailure? {
         let plan = IntegrationsWording.disconnect(integration)
-        if let error = await model.unset(keys: plan.unset) { return error.message }
+        let sentence = integration.connected ? "\(integration.title) wasn't disconnected."
+            : "\(integration.title) wasn't turned off."
+        if let error = await model.unset(keys: plan.unset) { return error.said(sentence) }
         if let provider = plan.signOut, case let .failure(error) = await model.signOut(provider) {
-            return error.message
+            return error.said(sentence)
         }
         return nil
     }

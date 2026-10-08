@@ -167,12 +167,14 @@ struct SettingMenuRow: View {
             if let note = OptionWording.note(model.options[key], titles: Wording.titles(model.config.value)) {
                 Text(note)
                     .lineLimit(2)
-                    .help(note)
+                    .help(OptionWording.noteHelp(model.options[key]) ?? note)
             }
             if let error {
-                Text(ConfigWording.errorText(error.reported ?? error.message, key: key, title: title))
+                Text(error.isOlderKeryx ? KeryxError.olderKeryx
+                    : error.reported.map { ConfigWording.errorText($0, key: key, title: title) } ?? error.message)
                     .problemStyle()
                     .textSelection(.enabled)
+                if let details = ConfigWording.errorDetails(error) { DetailsDisclosure(details) }
             }
         }
     }
@@ -233,8 +235,17 @@ enum OptionWording {
             guard !list.live, let error = list.error, !error.isEmpty else { return nil }
             return "Showing the built-in list — \(continuing(Wording.named(error, titles: titles)))"
         }
+        guard loadable?.error != nil else { return nil }
+        return couldNotList
+    }
+
+    /// What the menu says when Keryx could not list its choices; why is its tooltip.
+    static let couldNotList = "Couldn't list the choices."
+
+    /// Why the choices could not be listed, for the note's tooltip.
+    static func noteHelp(_ loadable: Loadable<ConfigOptions>?) -> String? {
         guard let error = loadable?.error else { return nil }
-        return "Couldn't list the choices — \(error.reported ?? error.message)"
+        return error.details ?? error.message
     }
 
     /// A sentence carried on after a dash: its first letter lowered ("There's no…" →

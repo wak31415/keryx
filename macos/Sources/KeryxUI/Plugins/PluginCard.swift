@@ -9,7 +9,7 @@ import SwiftUI
 struct PluginCard: View {
     let plugin: Plugin
     let working: Bool
-    let failure: String?
+    let failure: StreamFailure?
     @Binding var draft: PluginDraft
     let turnOn: () -> Void
     let askOff: () -> Void
@@ -44,11 +44,12 @@ struct PluginCard: View {
                 }
             }
             if let failure {
-                Text(PluginsWording.failure(failure, plugins: model.plugins.value))
+                Text(failure.message)
                     .font(.callout)
                     .problemStyle()
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+                if let detail = failure.detail { DetailsDisclosure(detail) }
             }
         } footer: {
             if !plugin.installed, !plugin.fields.isEmpty {

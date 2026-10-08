@@ -24,7 +24,8 @@ extension ScreenCatalog {
                     config: .success(storing(switchedOn)), integrations: .success(halfConnected))))
             },
             Entry("integrations-failure", size: CGSize(width: 720, height: 560)) {
-                IntegrationsView(failures: ["google": "could not write config.toml (Permission denied)"])
+                IntegrationsView(failures: ["google": StreamFailure("Google for agents wasn't turned off.",
+                                                                     detail: "could not write config.toml (Permission denied)")])
                     .environment(AppModel.preview())
             },
             Entry("integrations-error", size: CGSize(width: 720, height: 420)) {

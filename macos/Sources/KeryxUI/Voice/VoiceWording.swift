@@ -51,10 +51,11 @@ import KeryxKit
         return ".!?…".contains(last) ? capitalised : capitalised + "."
     }
 
-    /// A refusal or failure, as a sentence with the settings it names said by their titles.
-    static func errorText(_ error: KeryxError, titles: [String: String]) -> String {
-        guard let reported = error.reported else { return error.message }
-        return sentence(Wording.named(reported, titles: titles))
+    /// A refusal or failure: the app's sentence for `operation`, with what Keryx said —
+    /// its settings named by their titles — under Show Details.
+    static func errorText(_ error: KeryxError, operation: String, titles: [String: String]) -> StreamFailure {
+        let said = error.said(operation)
+        return StreamFailure(said.message, detail: said.detail.map { Wording.named($0, titles: titles) })
     }
 
     /// What the server section does with the key: send the one typed (when it is not
@@ -80,8 +81,14 @@ import KeryxKit
 
     /// What the voice server on this Mac is doing, in a few words.
     static func hereState(_ here: HereVoice) -> String {
-        if here.reachable { return "Running at 127.0.0.1:\(here.port)" }
-        return here.installed ? "Installed, not running" : "Not installed"
+        here.reachable ? "Running at 127.0.0.1:\(here.port)" : "Not running"
+    }
+
+    /// Under the voice server's title: whether it is installed, and whether it starts at
+    /// login — the status beside it says only whether it runs.
+    static func hereCaption(_ here: HereVoice) -> String {
+        guard here.installed else { return "Not installed" }
+        return here.unitInstalled ? "Installed · starts at login" : "Installed"
     }
 
     /// A step's message, as a sentence-cased line that ends in an ellipsis while it runs.

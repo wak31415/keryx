@@ -46,31 +46,52 @@ public enum KeryxError: Error, Equatable, Sendable {
         }
     }
 
-    /// What happened, and what to do, in sentences ending in a full stop. What Keryx
-    /// printed is quoted, never reworded.
+    /// What happened, and what to do, in sentences ending in a full stop — always the
+    /// app's own words: what Keryx printed is never the sentence, only its `details`.
     public var message: String {
         switch self {
-        case let .notFound(failure):
-            return (["Looked for Keryx and didn't find it."] + failure.lookedAt.map(Self.sentence))
-                .joined(separator: " ")
-        case let .migrationRequired(sentence):
-            return Self.sentence(sentence)
+        case .notFound:
+            return "Looked for Keryx and didn't find it."
+        case .migrationRequired:
+            return "Keryx's files are still where Jarvis kept them, and move before it runs again."
         case let .liveCalls(count):
             let calls = count == 1 ? "1 call is" : "\(count) calls are"
             return "\(calls) in progress, and restarting would end \(count == 1 ? "it" : "them")."
         case let .failed(_, _, message):
-            guard !message.isEmpty else { return "Keryx stopped without saying why." }
-            // Words for a terminal (a command, a path, a traceback) are never the sentence:
-            // they are the details.
-            guard AppFacing.isFit(message) else { return "Keryx couldn't do that." }
-            return "Keryx reported: “\(message)”."
+            if message.isEmpty { return "Keryx stopped without saying why." }
+            return isOlderKeryx ? Self.olderKeryx : "Keryx couldn't do that."
         case let .decoding(command, _):
             return "This app couldn't read what \(command) printed. Update the app and Keryx to the same version."
-        case let .timedOut(command):
-            return "\(command) took too long and was stopped. Try again in a moment."
-        case let .launch(message), let .terminal(message), let .refused(message):
+        case .timedOut:
+            return "Keryx took too long to answer and was stopped. Try again in a moment."
+        case .launch:
+            return "Keryx couldn't be started."
+        case .terminal:
+            return "The command couldn't be opened in Terminal."
+        case let .refused(message):
             return Self.sentence(message)
         }
+    }
+
+    /// What every screen says when the CLI does not know the command or an option the app
+    /// asked for.
+    public static let olderKeryx = "The installed Keryx is older than this app."
+
+    /// The CLI did not know the command or an option: a Keryx from before the app's.
+    public var isOlderKeryx: Bool {
+        guard case let .failed(_, exitCode, message) = self else { return false }
+        let markers = ["No such command", "No such option", "Got unexpected extra argument", "no such option"]
+        return markers.contains(where: message.contains) || (exitCode == 2 && message.hasPrefix("Usage:"))
+    }
+
+    /// The sentence a screen says for its own operation ("Slack wasn't turned on."), and what
+    /// Keryx printed under Show Details: a refusal's own text is never the sentence. A Keryx
+    /// older than the app, a timeout or a launch failure keeps its own sentence.
+    public func said(_ operation: String) -> StreamFailure {
+        if case let .failed(_, _, message) = self, !message.isEmpty, !isOlderKeryx {
+            return StreamFailure(operation, detail: message)
+        }
+        return StreamFailure(self)
     }
 
     /// What a person might pass on but should not have to read: what Keryx printed when it
@@ -79,12 +100,18 @@ public enum KeryxError: Error, Equatable, Sendable {
     /// when the message says it all.
     public var details: String? {
         switch self {
+        case let .notFound(failure):
+            return failure.lookedAt.isEmpty ? nil : failure.lookedAt.joined(separator: "\n")
+        case let .migrationRequired(sentence), let .launch(sentence), let .terminal(sentence):
+            return sentence.isEmpty ? nil : sentence
         case let .failed(command, exitCode, message):
             if message.isEmpty { return "\(command) exited with status \(exitCode)." }
-            return AppFacing.isFit(message) ? nil : message
+            return message
         case let .decoding(command, detail):
             return detail.isEmpty ? nil : "\(command): \(detail)"
-        default:
+        case let .timedOut(command):
+            return "\(command) did not finish in time."
+        case .liveCalls, .refused:
             return nil
         }
     }
@@ -96,11 +123,14 @@ public enum KeryxError: Error, Equatable, Sendable {
         return nil
     }
 
-    /// `text` with a capital first letter and a closing full stop.
+    /// `text` with a capital first letter and a closing full stop — unless its first word is
+    /// a program's or a host's name ("llama.cpp", "studio.local:8000"), which keeps its case.
     public static func sentence(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let first = trimmed.first else { return trimmed }
-        let capitalised = first.uppercased() + trimmed.dropFirst()
+        let word = trimmed.prefix { !$0.isWhitespace && $0 != ":" && $0 != "," }
+        let named = word.trimmingCharacters(in: CharacterSet(charactersIn: ".")).contains { "-_.".contains($0) }
+        let capitalised = named ? trimmed : first.uppercased() + trimmed.dropFirst()
         return ".!?…".contains(capitalised.last!) ? capitalised : capitalised + "."
     }
 }

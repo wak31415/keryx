@@ -10,7 +10,7 @@ public struct PluginsView: View {
     /// Plugins with a change under way, by name.
     @State private var working: Set<String> = []
     /// What went wrong on each card, by name, said under it.
-    @State private var failures: [String: String]
+    @State private var failures: [String: StreamFailure]
     /// The settings of plugins that are off, until they are turned on.
     @State private var drafts: [String: PluginDraft] = [:]
     @State private var turningOff: Plugin?
@@ -22,7 +22,7 @@ public struct PluginsView: View {
     }
 
     /// `failures`: what each card says went wrong when the screen appears (the catalog's).
-    package init(failures: [String: String]) {
+    package init(failures: [String: StreamFailure]) {
         _failures = State(initialValue: failures)
     }
 
@@ -91,7 +91,7 @@ public struct PluginsView: View {
     /// Installs it with what its draft holds; the draft goes once it is on.
     private func turnOn(_ plugin: Plugin) {
         let values = drafts[plugin.name]?.values ?? PluginValues()
-        perform(plugin) {
+        perform(plugin, .on) {
             let result = await model.installPlugin(plugin.name, values: values)
             if case .success = result { drafts[plugin.name] = nil }
             return result
@@ -99,21 +99,23 @@ public struct PluginsView: View {
     }
 
     private func turnOff(_ plugin: Plugin) {
-        perform(plugin) { await model.removePlugin(plugin.name) }
+        perform(plugin, .off) { await model.removePlugin(plugin.name) }
     }
 
     private func save(_ plugin: Plugin, _ values: PluginValues) {
-        perform(plugin) { await model.setPlugin(plugin.name, values: values) }
+        perform(plugin, .settings) { await model.setPlugin(plugin.name, values: values) }
     }
 
     /// Runs `work` for the card, with its spinner up; a failure is said under it.
-    private func perform(_ plugin: Plugin,
+    private func perform(_ plugin: Plugin, _ change: PluginChange,
                          _ work: @escaping @MainActor () async -> Result<PluginResult, KeryxError>) {
         let name = plugin.name
         working.insert(name)
         failures[name] = nil
         Task {
-            if case let .failure(error) = await work() { failures[name] = error.message }
+            if case let .failure(error) = await work() {
+                failures[name] = PluginsWording.failure(error, change, plugin: plugin)
+            }
             working.remove(name)
         }
     }
@@ -164,6 +166,9 @@ package struct OwnToolsSection: View {
                         Text(refused.file)
                         Text(PluginsWording.refusal(refused.reason))
                             .textSelection(.enabled)
+                        if PluginsWording.refusal(refused.reason) == PluginsWording.couldNotLoad {
+                            DetailsDisclosure(refused.reason)
+                        }
                     }
                 }
             case let (nil, error?):

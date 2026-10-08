@@ -48,7 +48,8 @@ import KeryxPreview
         #expect(OptionWording.note(Loadable(value: Self.list([], live: false, error: "OpenAI didn't answer")))
             == "Showing the built-in list — OpenAI didn't answer")
         let failure = KeryxError.failed(command: "keryx config options", exitCode: 2, message: "No such command 'options'.")
-        #expect(OptionWording.note(Loadable(error: failure)) == "Couldn't list the choices — No such command 'options'.")
+        #expect(OptionWording.note(Loadable(error: failure)) == "Couldn't list the choices.")
+        #expect(OptionWording.noteHelp(Loadable(error: failure)) == "No such command 'options'.", "why, in its tooltip")
         #expect(OptionWording.note(nil) == nil)
         #expect(OptionWording.note(Loadable(value: PreviewData.realtimeFallback), titles: Wording.titles(PreviewData.config))
             == "Showing the built-in list — there's no OpenAI API key, so Keryx can't ask which models exist.")
@@ -98,9 +99,11 @@ import KeryxPreview
         var here = PreviewData.voiceHere.here
         #expect(VoiceWording.hereState(here) == "Running at 127.0.0.1:8765")
         here.reachable = false
-        #expect(VoiceWording.hereState(here) == "Installed, not running")
+        #expect(VoiceWording.hereState(here) == "Not running")
+        #expect(VoiceWording.hereCaption(here).hasPrefix("Installed"))
         here.installed = false
-        #expect(VoiceWording.hereState(here) == "Not installed")
+        #expect(VoiceWording.hereState(here) == "Not running")
+        #expect(VoiceWording.hereCaption(here) == "Not installed")
         #expect(VoiceWording.wordsModel(nil, models: nil) == "None yet")
         #expect(VoiceWording.wordsModel("qwen3-coder-30b-a3b", models: PreviewData.models.models) == "Qwen3-Coder 30B-A3B")
         #expect(VoiceWording.wordsModel("unknown", models: PreviewData.models.models) == "unknown")
@@ -149,9 +152,10 @@ import KeryxPreview
 
     @Test func aRefusalNamesSettingsByTheirTitles() {
         let refusal = KeryxError.failed(command: "keryx voice use", exitCode: 2, message: "VOICE_BASE_URL must start with http")
-        #expect(VoiceWording.errorText(refusal, titles: Wording.titles(PreviewData.config))
-            == "“Voice server URL” must start with http.")
-        #expect(VoiceWording.errorText(.timedOut(command: "keryx voice use"), titles: [:])
+        #expect(VoiceWording.errorText(refusal, operation: "The voice server wasn't checked.",
+                                       titles: Wording.titles(PreviewData.config))
+            == StreamFailure("The voice server wasn't checked.", detail: "“Voice server URL” must start with http"))
+        #expect(VoiceWording.errorText(.timedOut(command: "keryx voice use"), operation: "x", titles: [:]).message
             == KeryxError.timedOut(command: "keryx voice use").message)
     }
 

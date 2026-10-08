@@ -31,7 +31,9 @@ import KeryxPreview
         #expect(SecretCheck(.success(PreviewClient.verified)) == .works(detail: nil))
         #expect(SecretCheck(.success(PreviewClient.notVerified)) == .problem("OpenAI didn't accept the key (401)."))
         #expect(SecretCheck(.failure(.failed(command: "keryx config verify", exitCode: 2, message: "no check for that key")))
-            == .problem("No check for that key."))
+            == .problem("Keryx couldn't check the key."), "what Keryx said is not the sentence")
+        #expect(SecretCheck(.failure(.failed(command: "keryx config verify", exitCode: 2, message: "No such command 'verify'.")))
+            == .problem(KeryxError.olderKeryx))
         #expect(SecretCheck(.failure(.timedOut(command: "keryx config verify")))
             == .problem(KeryxError.timedOut(command: "keryx config verify").message))
     }

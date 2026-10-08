@@ -281,10 +281,15 @@ private struct ModelServerSection: View {
                 ProgressView().controlSize(.small)
                 Text("Stopping…").foregroundStyle(.secondary)
             } else if let failure {
-                Text(VoiceWording.errorText(failure, titles: Wording.titles(model.config.value)))
-                    .problemStyle()
-                    .textSelection(.enabled)
-                    .lineLimit(3)
+                let said = VoiceWording.errorText(failure, operation: "The model server didn't stop.",
+                                                  titles: Wording.titles(model.config.value))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(said.message)
+                        .problemStyle()
+                        .textSelection(.enabled)
+                        .lineLimit(3)
+                    if let detail = said.detail { DetailsDisclosure(detail) }
+                }
             } else if let cannot {
                 Text(cannot).foregroundStyle(.secondary)
             }

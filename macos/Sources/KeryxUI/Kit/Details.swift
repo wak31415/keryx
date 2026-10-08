@@ -61,24 +61,31 @@ struct DetailsDisclosure: View {
 }
 
 /// An error in a sentence, with what Keryx printed under Show Details: how every screen says
-/// a `KeryxError` inline. `title` is the bold line when there is one.
+/// a failure inline. Build it from the screen's own sentence for its operation
+/// (`KeryxError.said`), or from the error alone.
 struct ErrorText: View {
-    let error: KeryxError
-    /// The sentence to lead with instead of the error's own (a screen's own rewording).
-    var sentence: String?
+    let failure: StreamFailure
+
+    init(_ failure: StreamFailure) {
+        self.failure = failure
+    }
+
+    init(error: KeryxError) {
+        failure = StreamFailure(error)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Label {
-                Text(sentence ?? error.message)
+                Text(failure.message)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             } icon: {
                 Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
             }
-            if let details = error.details {
-                DetailsDisclosure(details)
+            if let detail = failure.detail {
+                DetailsDisclosure(detail)
             }
         }
     }

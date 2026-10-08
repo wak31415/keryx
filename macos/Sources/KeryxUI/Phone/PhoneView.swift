@@ -278,10 +278,8 @@ private struct NumberPicker: View {
                 .disabled(pending != nil)
             }
             if let error {
-                Text(error.reported.map(KeryxError.sentence) ?? error.message)
+                ErrorText(error.said("The number wasn't saved."))
                     .font(.caption)
-                    .problemStyle()
-                    .textSelection(.enabled)
             }
         }
     }

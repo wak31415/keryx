@@ -22,6 +22,9 @@ struct FieldProblem: Error, Equatable {
     var message: String
 }
 
+/// What was asked of a plugin.
+enum PluginChange { case on, off, settings }
+
 /// The Plugins screen's words and decisions, kept apart from the views so they can be
 /// tested.
 enum PluginsWording {
@@ -30,8 +33,8 @@ enum PluginsWording {
     /// The dot and word beside the switch: on (installed and loading), not loading
     /// (installed and refused), or off.
     static func status(_ plugin: Plugin) -> (tone: StatusDot.Tone, text: String) {
-        if plugin.on { return plugin.ready ? (.ok, "On") : (.warning, "On, but not ready") }
-        if plugin.installed { return (.warning, "On, but not loading") }
+        if plugin.on { return plugin.ready ? (.ok, "On") : (.warning, "Not ready") }
+        if plugin.installed { return (.warning, "Not ready") }
         return (.inactive, "Off")
     }
 
@@ -68,12 +71,15 @@ enum PluginsWording {
 
     /// A change that failed, as the card says it: the CLI names plugins by their tool
     /// (`send_to_slack`), the card by their title.
-    static func failure(_ message: String, plugins: PluginsReport?) -> String {
-        var text = message
-        for plugin in plugins?.plugins ?? [] {
-            text = text.replacingOccurrences(of: plugin.name, with: plugin.title)
+    /// What a card says when turning it on, off, or saving its settings was refused: the
+    /// app's sentence for that, with what Keryx said under Show Details.
+    static func failure(_ error: KeryxError, _ change: PluginChange, plugin: Plugin) -> StreamFailure {
+        let sentence = switch change {
+        case .on: "\(plugin.title) wasn't turned on."
+        case .off: "\(plugin.title) wasn't turned off."
+        case .settings: "\(plugin.title)'s settings weren't saved."
         }
-        return Wording.sentence(Wording.capitalised(text))
+        return error.said(sentence)
     }
 
     // MARK: Fields
@@ -160,8 +166,14 @@ enum PluginsWording {
     /// (the remedy is a button here, never a command).
     static func refusal(_ reason: String) -> String {
         let cause = reason.replacingOccurrences(of: #"\s*:?\s*`[^`]*`.*$"#, with: "", options: .regularExpression)
-        return Wording.sentence(Wording.capitalised(cause.isEmpty ? reason : cause))
+        let text = cause.isEmpty ? reason : cause
+        // An exception's own words ("ModuleNotFoundError: …") are for Show Details.
+        if text.range(of: #"^[A-Za-z_.]*(Error|Exception)\b"#, options: .regularExpression) != nil
+            || !AppFacing.isFit(text) { return couldNotLoad }
+        return Wording.sentence(Wording.capitalised(text))
     }
+
+    static let couldNotLoad = "Couldn't load."
 
     // MARK: Looks
 

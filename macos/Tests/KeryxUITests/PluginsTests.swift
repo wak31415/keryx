@@ -19,8 +19,8 @@ import KeryxPreview
 
     @Test func statusSaysOnOffOrWhyNot() {
         #expect(PluginsWording.status(plugin("send_to_slack")) == (.ok, "On"))
-        #expect(PluginsWording.status(plugin("check_email")) == (.warning, "On, but not loading"))
-        #expect(PluginsWording.status(plugin("check_billing")) == (.warning, "On, but not ready"))
+        #expect(PluginsWording.status(plugin("check_email")) == (.warning, "Not ready"))
+        #expect(PluginsWording.status(plugin("check_billing")) == (.warning, "Not ready"))
         #expect(PluginsWording.status(plugin("cluster_stats")) == (.inactive, "Off"))
         #expect(PluginsWording.detail(plugin("send_to_slack"), assistant: "Lyra") == "Lyra can use it from the next call.")
         #expect(PluginsWording.detail(plugin("check_email"), assistant: "Lyra") == "Connect Gmail in Integrations first.")
@@ -117,15 +117,19 @@ import KeryxPreview
         #expect(PluginsWording.firstSentence("No full stop here") == "No full stop here")
         #expect(PluginsWording.firstSentence("v1.2 works. Then more.") == "v1.2 works.")
         #expect(PluginsWording.refusal("not signed in to Gmail: `keryx auth login gmail`") == "Not signed in to Gmail.")
-        #expect(PluginsWording.refusal("ModuleNotFoundError: No module named 'x'")
-            == "ModuleNotFoundError: No module named 'x'.")
+        #expect(PluginsWording.refusal("ModuleNotFoundError: No module named 'x'") == "Couldn't load.")
     }
 
-    @Test func aFailureNamesThePluginByItsTitle() {
-        #expect(PluginsWording.failure("send_to_slack was not turned on: channel_id is empty",
-                                       plugins: PreviewData.plugins)
-            == "Slack was not turned on: channel_id is empty.")
-        #expect(PluginsWording.failure("could not write", plugins: nil) == "Could not write.")
+    @Test func aFailureIsTheAppsSentenceAndKeryxsWordsAreDetails() throws {
+        let slack = try #require(PreviewData.plugins.plugin("send_to_slack"))
+        let refusal = KeryxError.failed(command: "keryx plugins install", exitCode: 1,
+                                        message: "send_to_slack was not turned on: channel_id is empty")
+        #expect(PluginsWording.failure(refusal, .on, plugin: slack)
+            == StreamFailure("Slack wasn't turned on.", detail: "send_to_slack was not turned on: channel_id is empty"))
+        #expect(PluginsWording.failure(refusal, .off, plugin: slack).message == "Slack wasn't turned off.")
+        #expect(PluginsWording.failure(refusal, .settings, plugin: slack).message == "Slack's settings weren't saved.")
+        let older = KeryxError.failed(command: "keryx plugins set", exitCode: 2, message: "No such command 'set'.")
+        #expect(PluginsWording.failure(older, .settings, plugin: slack).message == KeryxError.olderKeryx)
     }
 
     @Test func turningOffAsksFirst() {

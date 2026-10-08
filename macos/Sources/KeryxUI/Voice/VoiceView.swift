@@ -121,7 +121,10 @@ private struct OpenAISection: View {
             }
             PrimaryRow(
                 inUse: voice.kind == .openai, inUseTitle: "In Use", working: saving ? "Saving…" : nil,
-                failure: failure.map { VoiceWording.errorText($0, titles: Wording.titles(model.config.value)) }
+                failure: failure.map {
+                    VoiceWording.errorText($0, operation: "OpenAI Realtime wasn't chosen.",
+                                           titles: Wording.titles(model.config.value))
+                }
             ) {
                 Button(VoiceWording.primary(.openai), action: use)
                     .disabled(saving || !voice.openaiKeySet)
@@ -183,7 +186,7 @@ private struct HereSection: View {
                 .help(here.program ?? "")
             } label: {
                 Text("Voice server")
-                if here.unitInstalled { Text("Starts at login") }
+                Text(VoiceWording.hereCaption(here))
             }
             LabeledContent {
                 VStack(alignment: .trailing, spacing: 2) {
@@ -274,10 +277,19 @@ private struct HereSection: View {
             // A refusal may be over a model server the last read thought was up.
             if case .failed = phase { Task { await model.refresh(.models) } }
         }
-        // The speech models' names, as their lists say them.
+        // The speech models' names, as their lists say them: held as a shown menu's are, so
+        // a setup that changes the settings reads them again rather than dropping them.
         .task {
             await model.loadOptions("VOICE_SERVER_STT")
             await model.loadOptions("VOICE_SERVER_TTS")
+        }
+        .onAppear {
+            model.optionsMenu("VOICE_SERVER_STT", shown: true)
+            model.optionsMenu("VOICE_SERVER_TTS", shown: true)
+        }
+        .onDisappear {
+            model.optionsMenu("VOICE_SERVER_STT", shown: false)
+            model.optionsMenu("VOICE_SERVER_TTS", shown: false)
         }
         // The Setup Assistant's "Set Up Voice on This Mac": the same question as Set Up….
         .onChange(of: model.requested, initial: true) { _, requested in
@@ -459,7 +471,10 @@ package struct ServerSection: View {
             PrimaryRow(
                 inUse: answer?.saved == nil && voice.kind == .server && trimmed == (voice.baseUrl ?? ""),
                 inUseTitle: "In Use", working: checking ? "Checking…" : nil,
-                failure: failure.map { VoiceWording.errorText($0, titles: Wording.titles(model.config.value)) },
+                failure: failure.map {
+                    VoiceWording.errorText($0, operation: "The voice server wasn't checked.",
+                                           titles: Wording.titles(model.config.value))
+                },
                 saved: answer?.saved != nil ? "Saved" : nil
             ) {
                 Button(VoiceWording.primary(.server)) { check(keepAnyway: false) }
@@ -527,7 +542,7 @@ private struct PrimaryRow<Content: View>: View {
     let inUse: Bool
     let inUseTitle: String
     let working: String?
-    let failure: String?
+    let failure: StreamFailure?
     var saved: String?
     @ViewBuilder let button: () -> Content
 
@@ -544,10 +559,13 @@ private struct PrimaryRow<Content: View>: View {
                 ProgressView().controlSize(.small)
                 Text(working).foregroundStyle(.secondary)
             } else if let failure {
-                Text(failure)
-                    .problemStyle()
-                    .textSelection(.enabled)
-                    .lineLimit(3)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(failure.message)
+                        .problemStyle()
+                        .textSelection(.enabled)
+                        .lineLimit(3)
+                    if let detail = failure.detail { DetailsDisclosure(detail) }
+                }
             } else if let saved {
                 Label(saved, systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.secondary)

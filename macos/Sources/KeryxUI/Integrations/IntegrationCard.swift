@@ -6,7 +6,7 @@ import SwiftUI
 struct IntegrationCard: View {
     let integration: Integration
     let working: Bool
-    let failure: String?
+    let failure: StreamFailure?
     let connect: () -> Void
     /// Replace a secret that is set.
     let change: (IntegrationSecret) -> Void
@@ -28,17 +28,12 @@ struct IntegrationCard: View {
                 }
             }
             if let failure {
-                Label {
-                    Text(AppFacing.isFit(failure) ? Wording.sentence(Wording.capitalised(failure))
-                        : "Keryx couldn't do that.")
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-                }
-                .font(.callout)
-                if !AppFacing.isFit(failure) { DetailsDisclosure(failure) }
+                Text(failure.message)
+                    .font(.callout)
+                    .problemStyle()
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail = failure.detail { DetailsDisclosure(detail) }
             }
         }
     }

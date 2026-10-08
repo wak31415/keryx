@@ -17,7 +17,7 @@ package struct TwilioAccountSheet: View {
     @State private var check: SecretCheck
     @State private var saving = false
     /// What went wrong saving, in sentences.
-    @State private var failure: String?
+    @State private var failure: StreamFailure?
     /// The check with Twilio under way, stopped if the sheet goes first.
     @State private var verifying: Task<Void, Never>?
 
@@ -58,11 +58,12 @@ package struct TwilioAccountSheet: View {
                         }
                         if let failure {
                             Label {
-                                Text(failure)
+                                Text(failure.message)
                                     .textSelection(.enabled)
                             } icon: {
                                 Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
                             }
+                            if let detail = failure.detail { DetailsDisclosure(detail) }
                         }
                         Text("Both are checked with Twilio before they're saved. The token is stored privately "
                             + "on this Mac; never shown again.")
