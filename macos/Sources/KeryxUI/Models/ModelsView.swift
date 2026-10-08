@@ -2,10 +2,10 @@ import AppKit
 import KeryxKit
 import SwiftUI
 
-/// The Local Models screen: what this Mac can run, the model the local agent uses, the
-/// model server that runs it (started and checked by `keryx models start`), the voice's
-/// speech models, every model in the catalog to download or choose, and under Advanced the
-/// model servers' ports.
+/// The Local Models screen: what this Mac can run and how its memory is shared, the model
+/// the local agent uses (chosen on Agents), the two model servers — the agent's (`keryx
+/// models start`) and the voice LLM's own (`--voice-llm`) — the voice's speech models, every
+/// model in the catalog to download or use, and under Advanced the servers' ports.
 public struct ModelsView: View {
     @Environment(AppModel.self) private var model
     @State private var choosing: CatalogModel?
@@ -35,6 +35,7 @@ public struct ModelsView: View {
                     ThisMacSection(report: report)
                     LocalAgentSection(report: report)
                     ModelServerSection(report: report)
+                    VoiceLLMServerSection(report: report)
                     VoiceModelsSection(report: report)
                     CatalogSection(report: report, marked: marked) { choosing = $0 }
                     ScreenAdvancedSection(screen: .models, open: advancedOpen)
@@ -58,6 +59,8 @@ public struct ModelsView: View {
         .task {
             await model.refresh(.models)
             if model.voice.value == nil { await model.refresh(.voice) }
+            // The voice LLM's own unit.
+            if model.service.value == nil { await model.refresh(.service) }
             // Advanced's ports.
             if model.config.value == nil { await model.refresh(.config) }
         }
@@ -97,6 +100,8 @@ private struct Marked: ViewModifier {
 private struct ThisMacSection: View {
     let report: ModelsReport
 
+    @Environment(AppModel.self) private var model
+
     var body: some View {
         let hardware = report.hardware
         Section("This Mac") {
@@ -107,6 +112,7 @@ private struct ThisMacSection: View {
                 Text("Memory for models")
                 Text(Self.runsOn(hardware))
             }
+            MemoryBar(shares: MemoryShares.of(report, voice: model.voice.value), available: hardware.modelMemoryGb)
             if let free = Self.freeBytes(near: report.modelsDir) {
                 LabeledContent("Free disk") {
                     Text(Formatting.bytes(free))
@@ -175,24 +181,19 @@ private struct LocalAgentSection: View {
     var body: some View {
         let agent = report.servers.localAgent
         Section("Local Agent") {
-            if let name = agent.model {
-                if agent.baseUrl != nil {
-                    // What the server has to offer, asked of it; a choice is a setting.
-                    SettingMenuRow(key: "LOCAL_AGENT_MODEL", title: "Model", current: name) {
-                        await model.refresh(.models)
-                    }
-                } else {
-                    LabeledContent("Model") {
-                        Text(title(of: name))
-                            .textSelection(.enabled)
-                    }
-                }
-                LabeledContent("Used for") {
+            // Read here; the one editor is Configuration's Agents tab.
+            LabeledContent {
+                Button(ModelsWording.changeOnAgents) { model.request(.setting(key: "LOCAL_AGENT_MODEL")) }
+                    .buttonStyle(.link)
+            } label: {
+                if let name = agent.model {
+                    Text(title(of: name))
+                        .textSelection(.enabled)
                     Text(Self.usedFor(agent))
+                } else {
+                    Text("No local model yet")
+                    Text("Download one below and choose Use This Model.")
                 }
-            } else {
-                Text("No local model yet — download one below and choose Use This Model.")
-                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -252,7 +253,7 @@ private struct ModelServerSection: View {
                 controls(report.servers)
             }
         } header: {
-            Text("Model Server")
+            Text("Agent Model Server")
         }
         .id(ModelsAnchor.modelServer)
         .confirmationDialog(stopQuestion.title, isPresented: $confirmingStop) {
@@ -309,7 +310,8 @@ private struct ModelServerSection: View {
             Spacer()
             if llm.unitInstalled || llm.reachable {
                 Button("Stop Model Server") {
-                    if model.voice.value?.kind == .here { confirmingStop = true } else { stop() }
+                    // Only while the voice on this Mac takes its words from it.
+                    if model.voice.value?.kind == .here, model.voiceWordsAreTheAgents { confirmingStop = true } else { stop() }
                 }
                 .disabled(stopping || model.stoppingModelServer || model.modelServerRun.isBusy || model.voiceSetup.isBusy)
                 .help(model.voiceSetup.isBusy ? "Wait for the voice setup to finish" : "")
@@ -370,25 +372,22 @@ private struct VoiceModelsSection: View {
         } header: {
             Text("Voice Models")
         } footer: {
-            Text("What the voice on this Mac hears and speaks with. After a change, Restart Voice Server in Voice "
-                + "loads it.")
+            Text("What the voice on this Mac hears and speaks with, chosen in Voice.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .id(ModelsAnchor.voiceModels)
+        // The speech models' names, as their lists say them.
+        .task {
+            await model.loadOptions("VOICE_SERVER_STT")
+            await model.loadOptions("VOICE_SERVER_TTS")
+        }
     }
 
     @ViewBuilder private func rows(_ voice: VoiceStatus) -> some View {
         let here = voice.here
         let run = model.voiceDownloadRun
-        let busy = run.isBusy || model.voiceSetup.isBusy
-        SettingMenuRow(key: "VOICE_SERVER_STT", title: "Speech to text", subtitle: "How it hears",
-                       current: here.stt) { await model.refresh(.voice) }
-            .disabled(busy)
-        SettingMenuRow(key: "VOICE_SERVER_TTS", title: "Text to speech", subtitle: "How it speaks",
-                       current: here.tts) { await model.refresh(.voice) }
-            .disabled(busy)
         if let display = RunDisplay.of(run), run.result == nil {
             StreamRunView(groups: [RunStepGroup(steps: RunSteps.steps(RunSteps.voiceDownload, reached: run.lastStep,
                                                                       stage: RunSteps.stage(run.phase)))],
@@ -399,13 +398,16 @@ private struct VoiceModelsSection: View {
             }
         } else {
             // Not beside a voice setup, which fetches them too — nor one waiting on its model server.
-            downloadRow(ready: here.modelsReady, settingUp: !model.canDownloadVoiceModels)
+            downloadRow(here, settingUp: !model.canDownloadVoiceModels)
         }
         voiceServerRow(voice)
     }
 
-    private func downloadRow(ready: Bool, settingUp: Bool) -> some View {
-        LabeledContent {
+    private func downloadRow(_ here: HereVoice, settingUp: Bool) -> some View {
+        let ready = here.modelsReady
+        let names = VoiceWording.speechModels(here, stt: model.options["VOICE_SERVER_STT"]?.value,
+                                              tts: model.options["VOICE_SERVER_TTS"]?.value).names
+        return LabeledContent {
             if ready {
                 Label(ModelsWording.speechModels(ready: true), systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.secondary)
@@ -420,9 +422,7 @@ private struct VoiceModelsSection: View {
             }
         } label: {
             Text("Speech models")
-            if !ready {
-                Text(ModelsWording.speechModelsNote)
-            }
+            Text(ready ? names : names + ". " + ModelsWording.speechModelsNote)
         }
     }
 

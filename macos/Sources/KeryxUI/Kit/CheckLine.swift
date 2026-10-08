@@ -20,7 +20,7 @@ struct CheckLine: View {
     var perform: (SetupAction) -> Void = { _ in }
 
     var body: some View {
-        let said = CheckWording.detail(detail, titles: titles)
+        let said = CheckWording.detail(detail, titles: titles, hint: hint)
         let terminal = state == "ok" ? said.raw : [said.raw, hint].compactMap { $0 }.joined(separator: "\n")
         LabeledContent {
             if let action, state != "ok" {
@@ -58,6 +58,35 @@ enum CheckWording {
     /// who never sees the unit.
     static let titles = ["Service manager": "Runs in the background", "Service running": "Running"]
 
+    /// The doctor's "old setting names" detail ("A is B now; C is D now") as a sentence: the
+    /// settings by their titles, and where they are — in Keryx's settings, where a change
+    /// saves them under the new name, or in the environment Keryx runs in, which only whoever
+    /// set it can change. Which is which the hint says (`config set` for a stored one, "where
+    /// Keryx's environment sets it" for one in the environment). `nil` for any other detail.
+    static func oldNames(_ text: String, titles: [String: String], hint: String?) -> String? {
+        let parts = text.components(separatedBy: "; ")
+        var names: [String] = []
+        for part in parts {
+            guard let match = part.firstMatch(of: #/^([A-Z][A-Z0-9_]*) is ([A-Z][A-Z0-9_]*) now$/#) else { return nil }
+            names.append(titles[String(match.2)].map { "“\($0)”" } ?? FixAction.humanised(String(match.2)))
+        }
+        guard !names.isEmpty else { return nil }
+        let inEnvironment = hint?.contains("environment") == true
+        let inStore = hint?.contains("config set") == true || !inEnvironment
+        let one = names.count == 1
+        let list = Wording.list(names)
+        switch (inStore, inEnvironment) {
+        case (true, false):
+            return one ? "\(list) is saved under its old name: changing it saves it under the new one"
+                : "\(list) are saved under their old names: changing each saves it under the new one"
+        case (false, true):
+            return one ? "\(list) is set under its old name in the environment Keryx runs in: rename it there"
+                : "\(list) are set under their old names in the environment Keryx runs in: rename them there"
+        default:
+            return "\(list) are set under their old names, in Keryx's settings and in the environment Keryx runs in"
+        }
+    }
+
     /// A check's title as the app says it.
     static func title(_ title: String) -> String { titles[title] ?? title }
 
@@ -66,7 +95,7 @@ enum CheckWording {
     /// never the line; a phrase for what kind of trouble it is stands in. Code formatting
     /// and a trailing exception name ("(ConnectError)") go, and a setting's key is said by
     /// its title.
-    static func detail(_ raw: String, titles: [String: String] = [:]) -> (text: String, raw: String?) {
+    static func detail(_ raw: String, titles: [String: String] = [:], hint: String? = nil) -> (text: String, raw: String?) {
         var text = raw.trimmingCharacters(in: .whitespaces)
         if let range = text.range(of: #"\s*\([A-Z][A-Za-z]*(Error|Exception|Timeout)\)$"#, options: .regularExpression) {
             text.removeSubrange(range)
@@ -77,6 +106,9 @@ enum CheckWording {
             let rest = text[range.upperBound...]
             return (serviceNotInstalled + rest.replacingOccurrences(of: "`", with: ""), raw)
         }
+        // Settings kept under their old names ("SUBAGENT_MODEL is CLAUDE_MODEL now; …"), said
+        // by the titles they have now; the names are for Show Details.
+        if let said = oldNames(text, titles: titles, hint: hint) { return (said, raw) }
         guard AppFacing.isFit(text) else {
             // The clause before the terminal's part, when that much is fit to show.
             let clause = text.components(separatedBy: " — ").first ?? ""
@@ -122,6 +154,12 @@ struct FixPerformer: ViewModifier {
         case .startModelServer:
             model.runModelServer()
             model.show(inModels: ModelsAnchor.modelServer)
+        case .startVoiceLLMServer:
+            model.runVoiceLLMServer()
+            model.show(inModels: ModelsAnchor.voiceLLMServer)
+        case let .setUpVoiceLLM(name):
+            model.chooseVoiceLLM(.here(model: name))
+            model.show(inModels: ModelsAnchor.voiceLLMServer)
         case .downloadVoiceModels:
             model.downloadVoiceModels()
             model.show(inModels: ModelsAnchor.voiceModels)

@@ -313,20 +313,66 @@ import KeryxTestSupport
         #expect(ModelsRules.tight(PreviewData.models) == false)
     }
 
-    @Test func theVoicesOwnModelIsAControlOnlyOnceTheCLIOffersIt() {
+    @Test func theVoicesOwnModelIsAControlOnceTheCLIHasAVoiceLLM() {
         let facts = WizardFacts(plan: fresh, config: PreviewData.config)
-        #expect(!ModelsRules.voiceWordsIsAControl(PreviewData.models, facts: facts), "today: shared")
+        #expect(ModelsRules.voiceWordsIsAControl(facts: facts))
+        let older = WizardFacts(plan: fresh, config: PreviewData.config.filter { $0.key != "VOICE_LLM_MODEL" })
+        #expect(!ModelsRules.voiceWordsIsAControl(facts: older), "an older CLI: the voice takes the work's model")
+    }
+
+    @Test func aFirstSetUpIsTheCLIsAndNothingIsPreselectedWhileTheVoiceLoads() {
+        let facts = WizardFacts(plan: fresh, config: PreviewData.config)
+        #expect(ModelsRules.firstSetUp(.firstRun, voice: PreviewData.voice, facts: facts))
+        // `VOICE_LLM` set by the owner (its source is not the default): no first set-up.
+        let chosen = WizardFacts(plan: fresh, config: settings(PreviewData.config, ["VOICE_LLM": .string("remote")]))
+        #expect(!ModelsRules.firstSetUp(.firstRun, voice: PreviewData.voice, facts: chosen))
+        #expect(!ModelsRules.firstSetUp(.firstRun, voice: nil, facts: facts), "not read yet")
+        // Still loading: nothing, never the recommendation.
         var report = PreviewData.models
         report.voiceLlmSeparate = true
         report.voiceLlmRecommended = "qwen3.5-4b"
-        // M1 has the settings (`VOICE_LLM`, `VOICE_LLM_MODEL`); the models list's rule is still awaited.
-        #expect(facts.row("VOICE_LLM_MODEL") != nil)
-        #expect(ModelsRules.voiceWordsIsAControl(report, facts: facts))
-        let without = WizardFacts(plan: fresh, config: PreviewData.config.filter { $0.key != "VOICE_LLM_MODEL" })
-        #expect(!ModelsRules.voiceWordsIsAControl(report, facts: without), "no setting to write it to")
-        #expect(ModelsRules.voiceWordsModel(report) == "qwen3.5-4b")
+        #expect(ModelsRules.voiceWords(report, voice: nil, firstSetUp: false, workHere: true) == nil)
+        // The rule says shared and the work is elsewhere: nothing to preselect.
         report.voiceLlmSeparate = false
-        #expect(ModelsRules.voiceWordsModel(report) == nil, "shared: the work's")
+        report.voiceLlmRecommended = nil
+        #expect(ModelsRules.voiceWords(report, voice: PreviewData.voice, firstSetUp: true, workHere: false) == nil)
+        // "The work model" is no pick once the work leaves this Mac.
+        #expect(ModelsRules.thinks(ModelsRules.sameAsWork, workHere: false) == nil)
+        #expect(ModelsRules.thinks(ModelsRules.sameAsWork, workHere: true) == ModelsRules.sameAsWork)
+        #expect(ModelsRules.thinks("qwen3.5-4b", workHere: false) == "qwen3.5-4b")
+    }
+
+    @Test func aFirstSetUpTakesTheCLIsRuleAndAReviewKeepsWhatIsSet() {
+        var report = PreviewData.models
+        report.voiceLlmSeparate = true
+        report.voiceLlmRecommended = "qwen3.5-4b"
+        // A first set-up: the CLI's pick, as it reports it.
+        #expect(ModelsRules.voiceWords(report, voice: PreviewData.voice, firstSetUp: true, workHere: true) == "qwen3.5-4b")
+        report.voiceLlmSeparate = false
+        report.voiceLlmRecommended = nil
+        #expect(ModelsRules.voiceWords(report, voice: PreviewData.voice, firstSetUp: true, workHere: true)
+            == ModelsRules.sameAsWork, "no room for two: the work's")
+        // Otherwise what is set, never the recommendation.
+        report.voiceLlmSeparate = true
+        report.voiceLlmRecommended = "qwen3.5-9b"
+        #expect(ModelsRules.voiceWords(report, voice: PreviewData.voiceHere, firstSetUp: false, workHere: true)
+            == ModelsRules.sameAsWork)
+        #expect(ModelsRules.voiceWords(report, voice: PreviewData.voiceOwnLLM, firstSetUp: false, workHere: true)
+            == "qwen3.5-4b")
+        var remote = PreviewData.voiceHere
+        remote.llm = VoiceLLMStatus(source: "remote", model: "gpt-5-mini", url: "https://api.openai.com/v1",
+                                    reachable: true, unitInstalled: false)
+        #expect(ModelsRules.voiceWords(report, voice: remote, firstSetUp: false, workHere: true) == ModelsRules.keep)
+        #expect(ModelsRules.voiceWords(report, voice: PreviewData.voiceHere, firstSetUp: false, workHere: false)
+            == ModelsRules.keep, "shared with the work in the cloud: kept")
+        // A first set-up is the first run with the voice not here yet.
+        let facts = WizardFacts(plan: fresh, config: PreviewData.config)
+        #expect(ModelsRules.firstSetUp(.firstRun, voice: PreviewData.voice, facts: facts))
+        #expect(!ModelsRules.firstSetUp(.firstRun, voice: PreviewData.voiceHere, facts: facts))
+        #expect(!ModelsRules.firstSetUp(.review, voice: PreviewData.voice, facts: facts))
+        #expect(VoiceLLMPick.of(ModelsRules.keep) == nil)
+        #expect(VoiceLLMPick.of(ModelsRules.sameAsWork) == .shared)
+        #expect(VoiceLLMPick.of("qwen3.5-4b") == .own("qwen3.5-4b"))
     }
 
     @Test func modelsWritesTheVoiceAndTheDefaultAgent() {
@@ -352,16 +398,65 @@ import KeryxTestSupport
                            .set("AGENTS_ENABLED", ""), .unset("AGENT_SERVER_MODEL")])
     }
 
-    @Test func theVoicesOwnModelIsWrittenWhenTheCLIHasTheSetting() {
+    @Test func theVoicesOwnModelIsNeverWrittenOnlyBroughtUp() {
         var report = PreviewData.models
         report.voiceLlmSeparate = true
-        let facts = WizardFacts(plan: fresh, config: PreviewData.config + [Self.row("VOICE_LLM_MODEL"), Self.row("VOICE_LLM")])
+        let facts = WizardFacts(plan: fresh, config: PreviewData.config)
+        // Saving `VOICE_LLM=here` before its server serves would leave the voice with no words.
         #expect(ModelsRules.writes(ModelsChoice(voice: .thisMac, work: .thisMac, wordsModel: "qwen3.5-4b"),
-                                   facts: facts, voice: PreviewData.voice, models: report)
-            == [.set("VOICE_LLM", "here"), .set("VOICE_LLM_MODEL", "qwen3.5-4b")])
+                                   facts: facts, voice: PreviewData.voice, models: report).isEmpty)
         #expect(ModelsRules.writes(ModelsChoice(voice: .thisMac, work: .thisMac, wordsModel: ""),
-                                   facts: facts, voice: PreviewData.voice, models: report)
-            == [.set("VOICE_LLM", "shared")])
+                                   facts: facts, voice: PreviewData.voice, models: report).isEmpty)
+    }
+
+    @Test func aVoiceModelOfItsOwnIsDownloadedThenServedBeforeTheVoice() {
+        let facts = WizardFacts(plan: fresh, config: PreviewData.config)
+        var report = PreviewData.models
+        var voice = PreviewData.voice
+        voice.here.modelsReady = true
+        let own = LocalIntent(voiceHere: true, workHere: false, model: nil, voiceLLM: .own("qwen3.5-4b"))
+        #expect(LocalWork.next(own, models: report, voice: voice, facts: facts, busy: false) == .download("qwen3.5-4b"))
+        #expect(LocalStep.download("qwen3.5-4b").row(own) == .voice)
+        let index = report.models.firstIndex { $0.name == "qwen3.5-4b" }!
+        report.models[index].downloaded = true
+        #expect(LocalWork.next(own, models: report, voice: voice, facts: facts, busy: false) == .voiceLLM("qwen3.5-4b"))
+        #expect(LocalStep.voiceLLM("qwen3.5-4b").row(own) == .voice)
+        var served = PreviewData.voiceOwnLLM
+        served.here.reachable = false
+        #expect(LocalWork.next(own, models: report, voice: served, facts: facts, busy: false) == .setUpVoice)
+        #expect(LocalWork.next(own, models: report, voice: PreviewData.voiceOwnLLM, facts: facts, busy: false) == .done)
+    }
+
+    @Test func theWorksModelForTheVoiceIsAskedForOnlyWhenTheWordsComeFromElsewhere() {
+        let facts = WizardFacts(plan: fresh, config: PreviewData.config)
+        var voice = PreviewData.voice
+        voice.here.modelsReady = true
+        let shared = LocalIntent(voiceHere: true, workHere: true, model: "qwen3-coder-30b-a3b", voiceLLM: .shared)
+        let local = WizardFacts(plan: fresh, config: settings(PreviewData.config, ["AGENT_BACKEND": .string("local")]))
+        // Already shared, and the CLI's rule would not give it one of its own: straight on.
+        #expect(LocalWork.next(shared, models: PreviewData.models, voice: voice, facts: local, busy: false) == .setUpVoice)
+        // A first set-up where the CLI would pick one of its own: shared is asked for first.
+        var separate = PreviewData.models
+        separate.voiceLlmSeparate = true
+        #expect(LocalWork.next(shared, models: separate, voice: voice, facts: local, busy: false) == .voiceLLMShared)
+        // Its own model in use: back to the work's.
+        #expect(LocalWork.next(shared, models: PreviewData.models, voice: PreviewData.voiceOwnLLM, facts: local,
+                               busy: false) == .voiceLLMShared)
+    }
+
+    @Test func theWorksServerIsStartedOnItsOwnBesideAVoiceWithItsOwnWords() {
+        let local = WizardFacts(plan: fresh, config: settings(PreviewData.config, ["AGENT_BACKEND": .string("local")]))
+        var report = PreviewData.models
+        report.servers.llm.reachable = false
+        report.models = report.models.map { entry in
+            var entry = entry
+            if entry.name == "qwen3.5-4b" { entry.downloaded = true }
+            return entry
+        }
+        let both = LocalIntent(voiceHere: true, workHere: true, model: "qwen3-coder-30b-a3b",
+                               voiceLLM: .own("qwen3.5-4b"))
+        #expect(LocalWork.next(both, models: report, voice: PreviewData.voiceOwnLLM, facts: local, busy: false)
+            == .startServer)
     }
 
     @Test func modelsWritesThroughTheVoiceAndConfigCommands() async throws {
@@ -405,9 +500,10 @@ import KeryxTestSupport
         #expect(LocalWork.next(work, models: report, voice: PreviewData.voice, facts: local, busy: false) == .startServer)
         #expect(LocalWork.next(work, models: PreviewData.models, voice: PreviewData.voice, facts: local, busy: false)
             == .done)
-        // A voice here with the work in the cloud: its words model is chosen without the default.
+        // An older CLI's voice here with the work in the cloud: its words model is chosen
+        // without the default.
         let voiceOnly = LocalIntent(voiceHere: true, workHere: false, model: "gpt-oss-20b")
-        let facts = WizardFacts(plan: fresh, config: PreviewData.config)
+        let facts = WizardFacts(plan: fresh, config: PreviewData.config.filter { $0.key != "VOICE_LLM_MODEL" })
         #expect(LocalWork.next(voiceOnly, models: PreviewData.models, voice: PreviewData.voice, facts: facts, busy: false)
             == .use("gpt-oss-20b", defaultAgent: false))
         #expect(LocalWork.next(LocalIntent(voiceHere: false, workHere: false, model: nil), models: report,
@@ -416,13 +512,18 @@ import KeryxTestSupport
 
     @Test func theRunsChoicesWinOverWhatIsSetUp() {
         let wizard = SetupWizard()
-        let facts = WizardFacts(plan: fresh, config: PreviewData.config)
-        let today = LocalIntent.of(wizard, facts: facts, voice: PreviewData.voice, models: PreviewData.models)
+        let older = WizardFacts(plan: fresh, config: PreviewData.config.filter { $0.key != "VOICE_LLM_MODEL" })
+        let today = LocalIntent.of(wizard, facts: older, voice: PreviewData.voice, models: PreviewData.models)
         #expect(today == LocalIntent(voiceHere: false, workHere: false, model: nil))
         wizard.voicePlace = .thisMac
         wizard.voiceWordsModel = "gemma-4-12b"
-        #expect(LocalIntent.of(wizard, facts: facts, voice: PreviewData.voice, models: PreviewData.models)
+        #expect(LocalIntent.of(wizard, facts: older, voice: PreviewData.voice, models: PreviewData.models)
             == LocalIntent(voiceHere: true, workHere: false, model: "gemma-4-12b"))
+        // A CLI with a voice LLM: no agent's model for the voice, only its own words.
+        let facts = WizardFacts(plan: fresh, config: PreviewData.config)
+        wizard.voiceLLM = .own("qwen3.5-4b")
+        #expect(LocalIntent.of(wizard, facts: facts, voice: PreviewData.voice, models: PreviewData.models)
+            == LocalIntent(voiceHere: true, workHere: false, model: nil, voiceLLM: .own("qwen3.5-4b")))
     }
 
     // MARK: - The PIN and the phone
@@ -796,6 +897,7 @@ import KeryxTestSupport
         for (key, value) in values {
             guard let index = config.firstIndex(where: { $0.key == key }) else { continue }
             config[index].set = true
+            config[index].source = config[index].secret ? "secrets.toml" : "config.toml"
             config[index].value = config[index].secret ? nil : value
         }
         return config

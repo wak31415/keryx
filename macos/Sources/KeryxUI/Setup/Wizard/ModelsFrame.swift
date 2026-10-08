@@ -116,10 +116,17 @@ package struct ModelsFrame: View {
         let work = workPlace ?? wizard.workPlace ?? WorkPlace.current(facts, models: model.models.value)
         let report = model.models.value
         let chosenWork = workModel ?? wizard.workModel ?? ModelsRules.workModel(report, voiceHere: voice == .thisMac)
-        // The voice's words: its own model when that is a control (SEAM), else the work's
-        // when it runs here, else the one picked for it.
-        let words: String? = if ModelsRules.voiceWordsIsAControl(report, facts: facts) {
-            wordsModel ?? ModelsRules.voiceWordsModel(report) ?? chosenWork ?? ""
+        // The voice's words: its own "Thinks" from a CLI with a voice LLM (the pick, what was
+        // chosen this run, else the owner's rule on a first set-up and what is set otherwise),
+        // else the work's when it runs here, else the one picked for it.
+        let words: String? = if ModelsRules.voiceWordsIsAControl(facts: facts) {
+            ModelsRules.thinks(
+                (wordsModel == ModelsRules.unpicked ? nil : wordsModel) ?? wizard.voiceLLM?.thinks
+                    ?? ModelsRules.voiceWords(report, voice: model.voice.value,
+                                              firstSetUp: ModelsRules.firstSetUp(wizard.mode, voice: model.voice.value,
+                                                                                 facts: facts),
+                                              workHere: work == .thisMac),
+                workHere: work == .thisMac)
         } else if work == .thisMac {
             chosenWork
         } else {
@@ -251,30 +258,41 @@ package struct ModelsFrame: View {
     private func voiceCaption(_ state: FrameState, facts: WizardFacts, report: ModelsReport?, assistant: String) -> String {
         var parts: [String] = []
         if let hardware = report?.hardware { parts.append(WizardWording.machine(hardware) + ".") }
-        let ownModel = ModelsRules.voiceWordsIsAControl(report, facts: facts)
+        let ownModel = ModelsRules.voiceWordsIsAControl(facts: facts)
         if state.work != .thisMac || ownModel,
            let words = state.wordsModel.flatMap({ name in report?.models.first { $0.name == name } }) {
             parts.append(WizardWording.download(words))
         }
-        if state.work == .thisMac, !ownModel || (state.wordsModel ?? "").isEmpty {
+        if state.work == .thisMac, !ownModel || state.wordsModel == ModelsRules.sameAsWork {
             parts.append(WizardWording.sharedWords(tight: ModelsRules.tight(report) || report?.voiceLlmSeparate == false,
                                                    assistant: assistant))
+        } else if state.wordsModel == ModelsRules.keep {
+            parts.append(WizardWording.keptWords)
         }
         return parts.joined(separator: " ")
     }
 
-    /// The voice's "Thinks" model: its own pop-up once the CLI has a setting for it (SEAM:
-    /// `VOICE_LLM_MODEL`, the owner's rule from `voice_llm_separate`); the work's model when
-    /// that runs here (today's shared behaviour); else the model its words come from.
+    /// The voice's "Thinks" model: its own pop-up once the CLI has a voice LLM of its own
+    /// (`VOICE_LLM_MODEL`) — the work's model when that runs here, a model of its own, or the
+    /// words as set when they are elsewhere; else (an older CLI) the work's model when that
+    /// runs here, else the model its words come from.
     @ViewBuilder private func thinks(_ state: FrameState, facts: WizardFacts) -> some View {
         let report = model.models.value
         let fitting = ModelsRules.fitting(report)
-        if ModelsRules.voiceWordsIsAControl(report, facts: facts) {
-            Picker("Thinks", selection: Binding { state.wordsModel ?? "" } set: { wordsModel = $0 }) {
-                Text(WizardWording.sameAsWork).tag("")
-                ForEach(fitting) { Text($0.title).tag($0.name) }
+        if ModelsRules.voiceWordsIsAControl(facts: facts) {
+            // Nothing yet: the voice still loading (never the recommendation in its place), or
+            // nothing the CLI would pick.
+            let none = model.voice.value == nil ? WizardWording.loading : WizardWording.chooseModel
+            Picker("Thinks", selection: Binding { state.wordsModel ?? ModelsRules.unpicked } set: { wordsModel = $0 }) {
+                if state.wordsModel == nil { Text(none).tag(ModelsRules.unpicked) }
+                if state.wordsModel == ModelsRules.keep { Text(WizardWording.asSetNow).tag(ModelsRules.keep) }
+                if state.work == .thisMac { Text(WizardWording.sameAsWork).tag(ModelsRules.sameAsWork) }
+                ForEach(ModelsRules.voiceChoices(report)) { entry in
+                    Text(VoiceLLMWording.menuTitle(entry, recommended: report?.voiceLlmRecommended)).tag(entry.name)
+                }
             }
             .labelsHidden()
+            .disabled(model.voice.value == nil)
         } else if state.work == .thisMac {
             // Today's shared behaviour: the work's model, said as a menu that cannot change.
             Picker("Thinks", selection: .constant("")) {
@@ -401,7 +419,9 @@ package struct ModelsFrame: View {
 
     @ViewBuilder private func localModel(_ state: FrameState) -> some View {
         let report = model.models.value
-        let fitting = ModelsRules.fitting(report)
+        // Beside a voice with a model of its own here, the models that leave room for it.
+        let ownVoice = state.voice == .thisMac && VoiceLLMPick.of(state.wordsModel).map { $0 != .shared } == true
+        let fitting = ModelsRules.fitting(report, ownVoice: ownVoice)
         let chosen = state.workModel.flatMap { name in report?.models.first { $0.name == name } }
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -493,9 +513,11 @@ package struct ModelsFrame: View {
                 failure = error
                 return
             }
+            let own = ModelsRules.voiceWordsIsAControl(facts: facts)
             wizard.choose(voice: state.voice, work: state.work,
                           workModel: state.work == .thisMac ? state.workModel : nil,
-                          voiceWordsModel: state.voice == .thisMac && state.work != .thisMac ? state.wordsModel : nil)
+                          voiceWordsModel: state.voice == .thisMac && state.work != .thisMac && !own ? state.wordsModel : nil,
+                          voiceLLM: state.voice == .thisMac && own ? VoiceLLMPick.of(state.wordsModel) : nil)
             // A first run starts the downloads now, to run while the rest is asked; a review
             // starts nothing without a click.
             if wizard.mode == .firstRun { startDownloads(state) }
@@ -508,7 +530,9 @@ package struct ModelsFrame: View {
     /// the model, and this Mac's speech models.
     private func startDownloads(_ state: FrameState) {
         let report = model.models.value
-        let wanted = state.work == .thisMac ? state.workModel : state.voice == .thisMac ? state.wordsModel : nil
+        let ownWords: String? = if case let .own(name)? = VoiceLLMPick.of(state.wordsModel) { name } else { nil }
+        let voiceModel = ModelsRules.voiceWordsIsAControl(facts: WizardFacts(model)) ? ownWords : state.wordsModel
+        let wanted = state.work == .thisMac ? state.workModel : state.voice == .thisMac ? voiceModel : nil
         if let wanted, let entry = report?.models.first(where: { $0.name == wanted }), !entry.downloaded,
            !model.downloads.isBusy, !wizard.stopped.contains(.download(wanted)) {
             model.download(wanted)

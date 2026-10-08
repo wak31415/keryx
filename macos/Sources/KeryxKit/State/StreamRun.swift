@@ -97,6 +97,10 @@ public final class StreamRun<Done: StreamDone> {
     /// The step the latest run reached, kept once it has ended — so a failure can be shown
     /// at the step it stopped on. Empty until its first step.
     public private(set) var lastStep = ""
+    /// Every step the latest run has announced, in the order it first did: a step a
+    /// command takes only sometimes (a voice server restarted, an old server restored) is
+    /// shown only once it has come.
+    public private(set) var seenSteps: [String] = []
     @ObservationIgnored private var run: UUID?
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var stream: StoppableStream<StreamEvent<Done>>?
@@ -146,6 +150,7 @@ public final class StreamRun<Done: StreamDone> {
         self.run = run
         stopping = false
         lastStep = ""
+        seenSteps = []
         input = takes
         phase = .running(Activity())
         let stream = make()
@@ -267,6 +272,7 @@ public final class StreamRun<Done: StreamDone> {
             return
         }
         lastStep = activity.step
+        if !activity.step.isEmpty, !seenSteps.contains(activity.step) { seenSteps.append(activity.step) }
         phase = .running(activity)
     }
 

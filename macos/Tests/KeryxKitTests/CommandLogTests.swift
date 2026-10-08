@@ -75,6 +75,27 @@ import KeryxPreview
                    logs: "keryx voice use server … --clear-key --json", hiding: ["studio"])
     }
 
+    @Test func theVoiceLLMLogsItsSourceButNeverItsModelAddressOrKey() {
+        Self.check(["voice", "llm", "shared", "--json"], logs: "keryx voice llm shared --json", hiding: [])
+        Self.check(["voice", "llm", "here", "qwen3.5-4b", "--json"],
+                   logs: "keryx voice llm here … --json", hiding: ["qwen3.5-4b"])
+        Self.check(["voice", "llm", "here", "--json", "--", "-odd.gguf"],
+                   logs: "keryx voice llm here --json …", hiding: ["-odd.gguf"])
+        Self.check(["voice", "llm", "remote", "https://gpu.example.com/v1", "--model=gpt-5-mini", "--key-stdin",
+                    "--json"],
+                   logs: "keryx voice llm remote … --model=… --key-stdin --json",
+                   hiding: ["gpu.example.com", "gpt-5-mini"])
+        Self.check(["voice", "llm", "remote", "http://box:11434", "--model", "qwen3:4b", "--clear-key", "--json"],
+                   logs: "keryx voice llm remote … --model … --clear-key --json", hiding: ["box", "qwen3:4b"])
+    }
+
+    @Test func theVoiceLLMServerIsLoggedWhole() {
+        Self.check(["models", "start", "--voice-llm", "--json"], logs: "keryx models start --voice-llm --json",
+                   hiding: [])
+        Self.check(["service", "uninstall", "--voice-llm", "--json"],
+                   logs: "keryx service uninstall --voice-llm --json", hiding: [])
+    }
+
     @Test func voiceUseHereLogsTheFlagButNotTheVoice() {
         Self.check(["voice", "use", "here", "--voice", "bf_emma", "--json"],
                    logs: "keryx voice use here --voice … --json", hiding: ["bf_emma", "emma"])

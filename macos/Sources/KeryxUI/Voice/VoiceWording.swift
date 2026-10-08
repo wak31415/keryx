@@ -30,7 +30,7 @@ import KeryxKit
     static func detail(_ mode: VoiceMode) -> String {
         switch mode {
         case .openai: "OpenAI hears the call and speaks the replies. Needs an OpenAI API key."
-        case .here: "A voice server on this Mac hears and speaks, and a local model finds the words."
+        case .here: "A voice server on this Mac hears and speaks, and an LLM puts the replies together."
         case .server: "A voice server you run on another machine, reached at its address."
         }
     }
@@ -151,6 +151,29 @@ import KeryxKit
                 here.modelsReady ? "Downloaded" : "Set Up downloads them")
     }
 
+    /// Under the text-to-speech model: whether the speech models are on this Mac yet.
+    static func speechState(_ here: HereVoice) -> String {
+        here.modelsReady ? "How it speaks · both speech models downloaded" : "How it speaks · Set Up downloads them"
+    }
+
+    /// Under a speech model: what it does — or, once one has been changed, when the change
+    /// takes effect: the next Restart Voice Server, or the Set Up that starts it.
+    static func speechSubtitle(_ what: String, changed: Bool, inUse: Bool) -> String {
+        guard changed else { return what }
+        return "Takes effect when you choose \(inUse ? "Restart Voice Server" : "Set Up")"
+    }
+
+    /// A way of speaking (`voice --json` `pipelines`), in a phrase.
+    static func pipeline(_ name: String) -> String {
+        switch name {
+        case "speech-to-speech": "one model hears the call and speaks the reply"
+        case "three-model": "three models, one to hear, an LLM to think and one to speak"
+        default: name.replacingOccurrences(of: "-", with: " ")
+        }
+    }
+
+    static let voiceLLMChanging = "Wait for the voice LLM to be changed"
+
     static let setUpQuestion = "Set up the voice server on this Mac?"
 
     /// What Set Up does, before it is confirmed: the model server first when it isn't
@@ -178,6 +201,10 @@ import KeryxKit
         "The voice takes its words from the model server at \(VoiceWording.address(address)). "
             + "Start it there, then try again."
     }
+
+    /// A call is live on the voice server a change would restart.
+    static let liveCallDetail = "Setting it up restarts the voice server, which would cut the call off. "
+        + "Try again when it ends."
 
     static let serverStartingElsewhere = "The model server is starting in Local Models"
     static let speechDownloading = "The speech models are downloading in Local Models"

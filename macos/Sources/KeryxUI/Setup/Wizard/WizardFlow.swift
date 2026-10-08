@@ -369,6 +369,31 @@ package enum WorkPlace: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// The voice's words, as Models' "Thinks" chooses them from a CLI with a voice LLM of its
+/// own: the agent's model (`voice llm shared`), or a model of its own on this Mac (`voice llm
+/// here NAME`).
+package enum VoiceLLMPick: Equatable, Hashable, Sendable {
+    case shared
+    case own(String)
+
+    /// "Thinks"'s value for it: "" for the agent's model, else the model's name.
+    package var thinks: String {
+        switch self {
+        case .shared: ModelsRules.sameAsWork
+        case let .own(name): name
+        }
+    }
+
+    /// The pick a "Thinks" value is: `nil` for "keep as it is".
+    package static func of(_ thinks: String?) -> VoiceLLMPick? {
+        switch thinks {
+        case nil, ModelsRules.keep?: nil
+        case ModelsRules.sameAsWork?: .shared
+        case let name?: .own(name)
+        }
+    }
+}
+
 /// What was chosen on Models: where each runs, and what was picked for it (`nil`: what is
 /// set already).
 package struct ModelsChoice: Equatable, Sendable {
@@ -377,7 +402,9 @@ package struct ModelsChoice: Equatable, Sendable {
     package var hears: String?
     package var speaks: String?
     package var speaksIn: String?
-    /// The voice's own model (SEAM), "" for the work's.
+    /// The voice's "Thinks": its own model's name, `ModelsRules.sameAsWork` for the work's,
+    /// `ModelsRules.keep` for what is set; or, from an older CLI, the model its words come
+    /// from.
     package var wordsModel: String?
     package var serverModel: String?
     package var harness: String?
@@ -420,24 +447,69 @@ package enum ModelsRules {
         return models.models.first { $0.recommended && $0.fits }?.name ?? models.models.first(where: \.fits)?.name
     }
 
-    /// The catalog models that fit, for a pop-up: the recommended first is not reordered —
-    /// the catalog's order is the CLI's.
-    package static func fitting(_ models: ModelsReport?) -> [CatalogModel] {
-        models?.models.filter(\.fits) ?? []
+    /// The catalog models that fit as the agent's, for a pop-up: the recommended first is not
+    /// reordered — the catalog's order is the CLI's. Beside a voice with a model of its own
+    /// (`ownVoice`), those that leave room for it (`fits_with_voice_llm`; `fits` from a CLI
+    /// without it).
+    package static func fitting(_ models: ModelsReport?, ownVoice: Bool = false) -> [CatalogModel] {
+        guard ownVoice else { return models?.models.filter(\.fits) ?? [] }
+        return models?.models.filter { $0.fitsWithVoiceLlm ?? $0.fits } ?? []
     }
 
-    /// The voice's "Thinks" model when it is a control of its own (SEAM: the CLI says how
-    /// it fits beside the agent's, `voice_llm_separate`): separate, the CLI's recommendation;
-    /// shared, `nil` — the work's model.
-    package static func voiceWordsModel(_ models: ModelsReport?) -> String? {
-        guard models?.voiceLlmSeparate == true else { return nil }
-        return models?.voiceLlmRecommended
+    /// The models the voice's own LLM may be, for Thinks: the catalog smallest first, which
+    /// fit said by the CLI's `fits_as_voice_llm` in each title — never the agent's fields.
+    package static func voiceChoices(_ models: ModelsReport?) -> [CatalogModel] {
+        (models?.models ?? []).sorted { $0.needsGb < $1.needsGb }
     }
 
-    /// The voice's own model is a control: the CLI says what the owner's rule makes of this
-    /// Mac (SEAM: `voice_llm_separate`) and has a setting for it (`VOICE_LLM_MODEL`).
-    package static func voiceWordsIsAControl(_ models: ModelsReport?, facts: WizardFacts) -> Bool {
-        models?.voiceLlmSeparate != nil && facts.row("VOICE_LLM_MODEL") != nil
+    /// "Thinks"'s value for the work's model.
+    package static let sameAsWork = ""
+    /// "Thinks"'s value for keeping the voice's words as they are set (a server elsewhere,
+    /// chosen in Voice).
+    package static let keep = "keep"
+
+    /// The voice's "Thinks" is a control of its own: the CLI has a voice LLM of its own
+    /// (`VOICE_LLM_MODEL`). An older CLI's voice always took the work's model.
+    package static func voiceWordsIsAControl(facts: WizardFacts) -> Bool {
+        facts.row("VOICE_LLM_MODEL") != nil
+    }
+
+    /// The pick that marks "Thinks" as nothing yet: the voice still loading, or nothing the
+    /// CLI would choose.
+    package static let unpicked = "unpicked"
+
+    /// "Thinks"'s value before the owner picks; `nil` while the voice is still being read,
+    /// and when there is nothing to preselect. A first set-up applies the owner's rule as the
+    /// CLI reports it (`voice_llm_separate`, `voice_llm_recommended`) — never worked out here;
+    /// otherwise the voice's words are kept as they are, never the recommendation.
+    package static func voiceWords(_ models: ModelsReport?, voice: VoiceStatus?, firstSetUp: Bool,
+                                   workHere: Bool) -> String? {
+        guard let voice else { return nil }
+        guard firstSetUp else {
+            switch voice.llmSource {
+            case .here: return voice.llm?.model ?? keep
+            case .shared: return workHere ? sameAsWork : keep
+            case .remote: return keep
+            }
+        }
+        if models?.voiceLlmSeparate == true, let own = models?.voiceLlmRecommended { return own }
+        // The rule says shared: the work's model, when it runs here; else the owner chooses.
+        return workHere ? sameAsWork : nil
+    }
+
+    /// Whether the Models frame is a first set-up of the voice here, as the CLI's own
+    /// `voice_llm.first_set_up` has it: the first run, the voice read and not on this Mac yet,
+    /// and `VOICE_LLM` never set (`config list` gives its source as the default). Anything
+    /// else keeps the voice's words as they are.
+    package static func firstSetUp(_ mode: SetupWizardMode, voice: VoiceStatus?, facts: WizardFacts) -> Bool {
+        guard mode == .firstRun, let voice, voice.kind != .here else { return false }
+        return facts.row("VOICE_LLM").map { $0.source == "default" } ?? true
+    }
+
+    /// "Thinks"'s value as it stands for `workHere`: the work's model is no pick once the work
+    /// is not on this Mac.
+    package static func thinks(_ value: String?, workHere: Bool) -> String? {
+        value == sameAsWork && !workHere ? nil : value
     }
 
     /// The voice's section is answered: a key that is saved, a voice server that was saved,
@@ -464,7 +536,8 @@ package enum ModelsRules {
     }
 
     /// What Models' Continue writes for the choices made: the voice put on OpenAI when it is
-    /// not; this Mac's speech models as picked, and (SEAM) the voice's own model; the default
+    /// not; this Mac's speech models as picked (the voice's own LLM is brought up by Checking,
+    /// `voice llm`, never written here); the default
     /// agent (one pick, so `AGENTS_ENABLED` is emptied with it); a model server elsewhere's
     /// model and harness, the local agent made the default, and this Mac's model server
     /// cleared. A local model here is chosen once it is downloaded (`LocalWork`), not here.
@@ -480,11 +553,6 @@ package enum ModelsRules {
                                          ("VOICE_SERVER_TTS", choice.speaks, here?.tts),
                                          ("VOICE_SERVER_VOICE", choice.speaksIn, here?.voice)] {
                 if let picked, picked != saved { writes.append(.choose(key, picked)) }
-            }
-            if voiceWordsIsAControl(models, facts: facts) {
-                let own = choice.wordsModel ?? ""
-                if facts.row("VOICE_LLM") != nil { writes.append(.set("VOICE_LLM", own.isEmpty ? "shared" : "here")) }
-                if !own.isEmpty, own != facts.text("VOICE_LLM_MODEL") { writes.append(.set("VOICE_LLM_MODEL", own)) }
             }
         case .elsewhere:
             break

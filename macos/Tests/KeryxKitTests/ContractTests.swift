@@ -82,7 +82,8 @@ import KeryxPreview
         .of("config options KEY --json", ConfigOptions.self,
             PreviewData.optionsFixtures + ["options-realtime-fallback.json"]),
         .of("voice --json", VoiceStatus.self,
-            ["voice.json", "voice-here.json", "voice-server.json", "voice-needs-model.json"]),
+            ["voice.json", "voice-here.json", "voice-server.json", "voice-needs-model.json",
+             "voice-here-own-llm.json"]),
         .of("voice use openai --json", VoiceUseResult.self, ["fixture:voice-use-openai.json"]),
         .of("voice use server URL --json", VoiceServerResult.self,
             ["fixture:voice-use-server.json", "fixture:voice-use-server-problem.json"]),
@@ -148,9 +149,7 @@ import KeryxPreview
     /// (`Seams.swift`). Left out of the walk until it does; once a fixture holds one, the
     /// test below says to move it into the contract.
     static let awaitingCLI: Set<String> = [
-        "VoiceStatus.pipelines",
-        "ModelsReport.recommended", "ModelsReport.recommendedWithLocalVoice",
-        "ModelsReport.voiceLlmRecommended", "ModelsReport.voiceLlmSeparate",
+        "CatalogModel.fitsAsVoiceLlm",
         "PhoneTunnel.hostname",
         "SetupStep.deferrable", "SetupStep.deferred", "SetupMarkResult.deferred",
     ]
@@ -503,6 +502,15 @@ import KeryxPreview
     static let eventStreams: [EventStream] = [
         .of("models start --json", ModelServerStarted.self,
             [PreviewData.modelsStartLines, PreviewData.modelsStartRefusedLines]),
+        .of("models start --voice-llm --json", ModelServerStarted.self,
+            [PreviewData.voiceLLMServerStartLines, PreviewData.voiceLLMServerRefusedLines]),
+        // A CLI a round older says no `voice_restarted`: read as false.
+        .of("voice llm here NAME --json", VoiceLLMChosen.self,
+            [PreviewData.voiceLLMHereLines, PreviewData.voiceLLMRefusedLines], sometimes: ["done.voice_restarted"]),
+        .of("voice llm shared --json", VoiceLLMChosen.self, [PreviewData.voiceLLMSharedLines],
+            sometimes: ["done.voice_restarted"]),
+        .of("voice llm remote URL --json", VoiceLLMChosen.self, [PreviewData.voiceLLMRemoteRefusedLines],
+            sometimes: ["done.voice_restarted"]),
         .of("voice download --json", VoiceModelsDownloaded.self, [PreviewData.voiceDownloadLines]),
         .of("auth login claude --json", SignedIn.self, [PreviewData.signInLines(.claude)], sometimes: ["done.stored"]),
         .of("auth login codex --json", SignedIn.self, [PreviewData.signInLines(.codex)], sometimes: ["open.code"]),

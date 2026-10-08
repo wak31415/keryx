@@ -16,6 +16,10 @@
     "voice": {
       "installed": false,
       "active": false
+    },
+    "voice_llm": {
+      "installed": false,
+      "active": false
     }
   }
 }

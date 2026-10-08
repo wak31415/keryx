@@ -17,7 +17,8 @@ public enum Quitting {
         + "Keryx stopped and its files half moved."
 
     /// The question for what is under way — a model download, a voice setup, a model
-    /// server start, a speech model download, a sign-in, Keryx starting or stopping, any of
+    /// server start, a speech model download, the voice LLM changed or its server started,
+    /// a sign-in, Keryx starting or stopping, any of
     /// them together; `nil` when none is and the app can just quit.
     /// `signingIn`: what a sign-in under way signs in to ("Claude"), and `signInDetail` what
     /// stopping it does. `assistant`: the assistant's name ("Lyra"). `writing`: the short
@@ -28,7 +29,9 @@ public enum Quitting {
     /// `liveCalls` are in progress, which quitting ends, or when `confirm` (the owner has not
     /// ticked "Don't ask again").
     public static func question(downloading: Bool, settingUpVoice: Bool, startingModelServer: Bool = false,
-                                downloadingVoiceModels: Bool = false, signingIn: String? = nil,
+                                downloadingVoiceModels: Bool = false, changingVoiceLLM: Bool = false,
+                                startingVoiceLLMServer: Bool = false,
+                                signingIn: String? = nil,
                                 signInDetail: String? = nil, assistant: String?,
                                 changingService: AppModel.ServiceChange? = nil,
                                 writing: [AppModel.Write] = [], stopsAnswering: Bool = false,
@@ -54,6 +57,17 @@ public enum Quitting {
             under.append(("the speech models are downloading",
                           "Download in Local Models picks up where it left off.",
                           "the speech models pick up where they left off"))
+        }
+        if changingVoiceLLM {
+            // Stopped part way, the CLI puts back the words the voice had; quitting waits for it.
+            under.append(("\(possessive(assistant, opening: false)) voice LLM is being changed",
+                          "It stops, and the voice is put back on the words it had. Voice changes it again.",
+                          "Voice changes the voice LLM again"))
+        }
+        if startingVoiceLLMServer {
+            under.append(("the voice LLM's server is starting",
+                          "It stops, and its service is removed. Start Voice LLM Server in Local Models starts it again.",
+                          "Start Voice LLM Server in Local Models starts the voice LLM's server again"))
         }
         if let signingIn {
             under.append(("a sign-in to \(signingIn) is still going",

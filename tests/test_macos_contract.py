@@ -127,28 +127,15 @@ COMMANDS = {
 #: checked once the contract names it; until then the cross-checks let it be missing, and
 #: nothing more — a contract that names what the CLI does not print still fails them.
 AWAITING: set[str] = {
-    *VOICE_LLMS, "config options ASSISTANT_NAME --json", "setup mark phone --json",
+    "config options ASSISTANT_NAME --json", "setup mark phone --json",
     AUTH_SMOKE, *SERVICE_CONTROL,
 }
 #: Keys a command prints that the app has yet to name, by path, with the types the
 #: contract will give them: checked here until it does, and by the contract once it does.
-AWAITING_KEYS = {
-    "voice --json": {
-        "": {"llm": "object", "pipelines": "object"},
-        "llm": {"source": "string", "model": "string|null", "url": "string|null",
-                "reachable": "boolean|null", "unit_installed": "boolean"},
-        "pipelines": {"openai": "array", "here": "array", "server": "array"},
-    },
-    "models list --json": {
-        "": {"recommended": "string|null", "recommended_with_local_voice": "string|null",
-             "voice_llm_recommended": "string|null", "voice_llm_separate": "boolean"},
-        "models[]": {"fits_with_voice_llm": "boolean"},
-    },
-}
+AWAITING_KEYS: dict[str, dict[str, dict[str, str]]] = {}
 #: The fix ids the CLI can send that the app has yet to name: `service:start`, for a Keryx
-#: `keryx service stop` stopped (`doctor`'s "installed, not running"), and `voice:llm`, the
-#: voice's own LLM brought up (`doctor`'s "voice LLM server").
-AWAITING_FIX_IDS = {"service:start", "voice:llm"}
+#: `keryx service stop` stopped (`doctor`'s "installed, not running").
+AWAITING_FIX_IDS = {"service:start"}
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
 STDIN = {"pin set --json": "482915\n482915\n", "config verify KEY --json": "sk-typed\n"}

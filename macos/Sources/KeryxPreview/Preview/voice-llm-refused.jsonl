@@ -1,0 +1,1 @@
+{"event": "error", "message": "There is no model called no-such-model.", "detail": "`keryx models list` names them; a GGUF file of your own is given by its path"}

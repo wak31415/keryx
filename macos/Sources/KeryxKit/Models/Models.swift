@@ -7,16 +7,17 @@ public struct ModelsReport: Codable, Sendable, Equatable {
     public var models: [CatalogModel]
     public var voices: [Voice]
     public var servers: Servers
-    /// SEAM (`models list --json`, not printed yet): the catalog key recommended for the
-    /// local agent on this Mac, with the owner's rule for the voice's own model applied by
-    /// the CLI. `nil` from a CLI without it: the catalog's own `recommended` flag stands in.
+    /// The catalog key recommended for the local agent on this Mac, as it is set up (the
+    /// row whose `recommended` is true); `nil` from a CLI older than it, or when none fits.
     public var recommended: String?
-    /// SEAM: the same, when the voice runs on this Mac too and takes its share of memory.
+    /// The agent's model recommended when the voice runs on this Mac too: the speech models
+    /// and the voice's own LLM reserved. It fits together with `voiceLlmRecommended`.
     public var recommendedWithLocalVoice: String?
-    /// SEAM: the small model recommended for the voice's words (`VOICE_LLM_MODEL`).
+    /// The voice's own model the owner's rule picks beside the agent's (D2), or the one
+    /// already chosen; `nil` when the voice is to share the agent's model.
     public var voiceLlmRecommended: String?
-    /// SEAM: whether the voice's words model fits beside the agent's (the owner's rule), so
-    /// it runs separately rather than sharing the agent's.
+    /// The owner's rule applied: a voice LLM of its own fits here (`voiceLlmRecommended` is
+    /// set). `nil` from a CLI older than it.
     public var voiceLlmSeparate: Bool?
 }
 
@@ -41,6 +42,13 @@ public struct CatalogModel: Codable, Sendable, Equatable, Identifiable {
     public var downloaded: Bool
     public var recommended: Bool
     public var tested: Bool
+    /// As the agent's model, it leaves room for the voice here with a model of its own and
+    /// the speech models, as the CLI works it out; `nil` from a CLI older than it.
+    public var fitsWithVoiceLlm: Bool?
+    /// SEAM (`models list --json` `models[].fits_as_voice_llm`, not printed yet): as the
+    /// voice's own LLM, it fits beside the agent's model and the speech models. `nil` from a
+    /// CLI without it: no voice-model list says anything of fit until it does.
+    public var fitsAsVoiceLlm: Bool?
 
     public var id: String { name }
 }

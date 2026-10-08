@@ -6,6 +6,8 @@ import KeryxKit
 enum ModelsAnchor {
     static let modelServer = "model-server"
     static let voiceModels = "voice-models"
+    /// The voice LLM's own server.
+    static let voiceLLMServer = "voice-llm-server"
     /// The Advanced disclosure: the model servers' ports.
     static let advanced = "models-advanced"
 }
@@ -27,23 +29,44 @@ extension AppModel {
     }
 }
 
-/// A refusal from `keryx models start` or `keryx voice use here` that is a step to take
-/// first — said as guidance with the action that takes it, never as an error.
+/// A refusal from `keryx models start`, `keryx voice use here` or `keryx voice llm` that is a
+/// step to take first, or a wait — said as guidance with the action that takes it, never as
+/// an error.
 enum LocalRefusal: Equatable {
     /// There is no local model to serve, or for the voice's words: choose (and download) one.
     case needsModel
     /// The model server the voice's words come from isn't answering: start it first.
     case needsServer
+    /// The voice has an LLM of its own (or elsewhere) with no model named: choose one.
+    case needsVoiceLLM
+    /// The voice LLM's own server isn't serving its model: start it first.
+    case needsVoiceLLMServer
+    /// A call is live on the voice server it would restart: try again once it ends.
+    case liveCall
+
+    /// The refusal `failure` is, when it is one of these: a live call by the count the CLI
+    /// gives as the detail ("1 live call(s)"), the rest by their sentences.
+    static func of(_ failure: StreamFailure) -> LocalRefusal? {
+        if let detail = failure.detail, detail.range(of: #"^\d+ live call\(s\)$"#, options: .regularExpression) != nil {
+            return .liveCall
+        }
+        return of(failure.message)
+    }
 
     /// The refusal `message` is, when it is one of these.
     static func of(_ message: String) -> LocalRefusal? {
         let text = message.lowercased()
+        if text.contains("a call is going on") { return .liveCall }
         if text.contains("set up a local model first") || text.contains("choose and download a model first") {
             return .needsModel
         }
         if text.contains("model server isn't running") || text.contains("model server is not running") {
             return .needsServer
         }
+        if text.contains("choose the voice llm first") || text.contains("choose and download the voice llm's model") {
+            return .needsVoiceLLM
+        }
+        if text.contains("voice llm's own server isn't serving") { return .needsVoiceLLMServer }
         return nil
     }
 }
@@ -95,6 +118,9 @@ enum LocalRefusal: Equatable {
     }
 
     static let speechModelsNote = "Set Up in Voice downloads them too, or download them now."
+
+    /// The local agent's one editor is Configuration's Agents tab.
+    static let changeOnAgents = "Change in Agents ›"
 
     static let serverFailed = "The model server didn't start"
     static let downloadFailed = "The speech models didn't download"

@@ -47,6 +47,9 @@ public enum PreviewData {
     public static var voiceHere: VoiceStatus { decode("voice-here.json") }
     public static var voiceServer: VoiceStatus { decode("voice-server.json") }
     public static var voiceNeedsModel: VoiceStatus { decode("voice-needs-model.json") }
+    /// The voice here with a model of its own (`VOICE_LLM=here`), captured from a sandbox;
+    /// the voice server and the voice LLM's server running, by hand.
+    public static var voiceOwnLLM: VoiceStatus { decode("voice-here-own-llm.json") }
 
     /// `voice-here.jsonl` as its individual lines: a setup's steps, written by hand (a
     /// sandbox cannot install the voice server). uv reports no sizes, so no step has any.
@@ -130,6 +133,18 @@ public enum PreviewData {
     public static var modelsStartRefusedLines: [String] { lines("models-start-refused.jsonl") }
     /// `voice download --json`: the faked run, with real sizes put in by hand.
     public static var voiceDownloadLines: [String] { lines("voice-download.jsonl") }
+    /// `voice llm here NAME --json`: the model downloaded, its server started and checked,
+    /// the choice saved and a running voice server moved onto it — written by hand in the
+    /// CLI's words (a sandbox runs no llama.cpp); and an unknown model refused (sandbox).
+    public static var voiceLLMHereLines: [String] { lines("voice-llm-here.jsonl") }
+    public static var voiceLLMRefusedLines: [String] { lines("voice-llm-refused.jsonl") }
+    /// `voice llm shared --json` and a refused `voice llm remote`, both from a sandbox.
+    public static var voiceLLMSharedLines: [String] { lines("voice-llm-shared.jsonl") }
+    public static var voiceLLMRemoteRefusedLines: [String] { lines("voice-llm-remote-refused.jsonl") }
+    /// `models start --voice-llm --json`: the voice LLM's server started (by hand, in the
+    /// CLI's words), and refused with no model chosen (sandbox).
+    public static var voiceLLMServerStartLines: [String] { lines("voice-llm-server-start.jsonl") }
+    public static var voiceLLMServerRefusedLines: [String] { lines("voice-llm-server-refused.jsonl") }
 
     /// `auth login NAME --json` signing in, from the faked runs (their one-off state and
     /// challenge replaced).

@@ -27,7 +27,8 @@ struct ThisMacProgress: View {
         let state = Self.state(withServer: model.thisMacSetup?.startsServer == true,
                                runtime: model.thisMacSetup?.runtime, server: server.phase,
                                serverStep: server.lastStep, setup: setup.phase, setupStep: setup.lastStep,
-                               setupDetail: setup.stepDetail, serverDetail: server.activity?.detail)
+                               setupSeen: setup.seenSteps, setupDetail: setup.stepDetail,
+                               serverDetail: server.activity?.detail)
         switch state.ending {
         case .running:
             StreamRunView(groups: state.groups,
@@ -35,7 +36,7 @@ struct ThisMacProgress: View {
                                                   progress: state.progress, stopping: state.stopping)),
                           cancel: { model.cancelThisMacSetup() }) { EmptyView() }
         case let .failed(failure):
-            if let refusal = LocalRefusal.of(failure.message) {
+            if let refusal = LocalRefusal.of(failure) {
                 guidance(refusal)
             } else {
                 StreamRunView(groups: state.groups, display: .failed(failure), failureTitle: VoiceWording.setupFailed,
@@ -62,6 +63,26 @@ struct ThisMacProgress: View {
         switch refusal {
         case .needsServer:
             needsServer(model.models.value?.wordsServer)
+        case .liveCall:
+            RunGuidanceRow(title: VoiceLLMWording.guidanceTitle(.liveCall, assistant: Wording.assistant(model.status.value)),
+                           message: VoiceWording.liveCallDetail) {
+                Button("Dismiss") { model.dismissThisMacSetup() }
+                Button("Try Again") { again(nil, nil) }
+            }
+        case .needsVoiceLLM:
+            RunGuidanceRow(title: VoiceLLMWording.needsVoiceLLMTitle, message: VoiceLLMWording.needsVoiceLLMDetail) {
+                Button("Dismiss") { model.dismissThisMacSetup() }
+            }
+        case .needsVoiceLLMServer:
+            RunGuidanceRow(title: VoiceLLMWording.voiceLLMServerDownTitle,
+                           message: VoiceLLMWording.voiceLLMServerDownDetail) {
+                Button("Dismiss") { model.dismissThisMacSetup() }
+                Button("Start Voice LLM Server") {
+                    model.dismissThisMacSetup()
+                    model.runVoiceLLMServer()
+                }
+                .disabled(!model.canChangeVoiceLLM)
+            }
         case .needsModel:
             let recommended = model.models.value?.models.first { $0.recommended }
             RunGuidanceRow(title: VoiceWording.needsModelTitle,
@@ -110,7 +131,7 @@ struct ThisMacProgress: View {
 
     /// It ended on a refusal that is a step to take first.
     static func refused(_ ending: State.Ending) -> Bool {
-        if case let .failed(failure) = ending { return LocalRefusal.of(failure.message) != nil }
+        if case let .failed(failure) = ending { return LocalRefusal.of(failure) != nil }
         return false
     }
 
@@ -141,10 +162,10 @@ struct ThisMacProgress: View {
     /// run is `server` (at `serverStep`); the voice setup is `setup` (at `setupStep`), and
     /// its having begun means the model server's part is done.
     static func state(withServer: Bool, runtime: String? = nil, server: StreamRun<ModelServerStarted>.Phase?,
-                      serverStep: String, setup: VoiceSetup.Phase?, setupStep: String,
+                      serverStep: String, setup: VoiceSetup.Phase?, setupStep: String, setupSeen: [String] = [],
                       setupDetail: String? = nil, serverDetail: String? = nil) -> State {
         let setupStage = RunSteps.stage(setup)
-        let voice = RunSteps.steps(RunSteps.voice, reached: setupStep, stage: setupStage)
+        let voice = RunSteps.steps(RunSteps.voice(seen: setupSeen), reached: setupStep, stage: setupStage)
         var groups = [RunStepGroup(title: withServer ? VoiceWording.voiceSteps : nil, steps: voice)]
         var message: String?
         var detail: String?
