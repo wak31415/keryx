@@ -10,7 +10,9 @@ import Foundation
 ///    environment — or, when it is the service's own checkout, with the service's (its
 ///    `KERYX_HOME` and XDG homes).
 /// 2. `~/Library/LaunchAgents/dev.keryx.agent.plist`: the service's own program, folder and
-///    environment.
+///    environment — or, while there is none, the copy of it last read (`memory`). Quitting
+///    the app removes the plist with the unit, and the next launch must still find the
+///    Keryx that installs it again, with the environment it ran with.
 /// 3. The login shell: its environment, and `command -v keryx`; then `~/.local/bin/keryx`.
 ///
 /// A checkout is optional: a `keryx` installed on its own runs with no prefix, from `/` (as
@@ -30,15 +32,19 @@ public struct KeryxLocator: Locating {
     private let runner: CommandRunner
     private let home: String
     private let environment: [String: String]
+    private let memory: LaunchAgentMemory?
 
-    /// `environment`: the app's own, `ProcessInfo`'s outside tests.
+    /// `environment`: the app's own, `ProcessInfo`'s outside tests. `memory`: where a usable
+    /// plist is kept, to be read while the plist itself is gone.
     public init(fileSystem: FileSystem = LocalFileSystem(), runner: CommandRunner = ProcessRunner(),
                 home: String = NSHomeDirectory(),
-                environment: [String: String] = ProcessInfo.processInfo.environment) {
+                environment: [String: String] = ProcessInfo.processInfo.environment,
+                memory: LaunchAgentMemory? = nil) {
         self.fileSystem = fileSystem
         self.runner = runner
         self.home = home
         self.environment = environment
+        self.memory = memory
     }
 
     /// True when the app was started with `KERYX_APP_ENVIRONMENT=inherit`.
@@ -110,12 +116,23 @@ public struct KeryxLocator: Locating {
         var sentence: String
     }
 
+    /// The plist, else the copy of it last read; a usable plist is remembered.
     private func readLaunchAgent() -> Result<LaunchAgent, Unusable> {
         let path = home + "/" + Self.agentPlist
         let name = tilde(path)
         guard let data = fileSystem.contents(atPath: path) else {
-            return .failure(Unusable(sentence: "There is no \(name), so the service is not installed."))
+            if let remembered = memory?.recallLaunchAgent(),
+               case let .success(agent) = launchAgent(from: remembered, name: name) {
+                return .success(agent)
+            }
+            return .failure(Unusable(sentence: "There is no \(name), so Keryx has not run in the background here yet."))
         }
+        let agent = launchAgent(from: data, name: name)
+        if case .success = agent { memory?.rememberLaunchAgent(data) }
+        return agent
+    }
+
+    private func launchAgent(from data: Data, name: String) -> Result<LaunchAgent, Unusable> {
         guard let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil))
             as? [String: Any]
         else {

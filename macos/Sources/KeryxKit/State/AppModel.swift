@@ -108,6 +108,20 @@ public final class AppModel {
     /// Keryx's own service is being installed or uninstalled (`installService`,
     /// `uninstallService()`), which quitting asks about.
     public private(set) var serviceChange: ServiceChange?
+    /// Whether this model keeps Keryx answering calls while the app runs: it starts Keryx's
+    /// unit once setup has reached it (`ensureAnswering`), and stops it when the app quits
+    /// (`stopAnswering`). The app sets it at launch — never for a sandbox run
+    /// (`KERYX_APP_ENVIRONMENT=inherit`), whose `keryx` would install the real launch agents.
+    public var keepsAnswering = false
+    /// Why the last start failed — the automatic one, or Start in the Overview — until one
+    /// works.
+    public private(set) var startFailure: KeryxError?
+    /// A start has been tried for the Keryx found now, the automatic one or Start in the
+    /// Overview: the automatic one is tried once a launch, and never after Start, so a start
+    /// that fails, or a unit that will not stay up, is not tried again and again.
+    @ObservationIgnored private var startTried = false
+    /// The check `ensureAnswering` runs, while it runs.
+    @ObservationIgnored private var ensuring: Task<Void, Never>?
     /// The install or uninstall under way, held so quitting can stop it (`cancelRuns`):
     /// cancelled, its runner stops the installer's whole process group.
     @ObservationIgnored private var serviceTask: Task<Result<ServiceResult, KeryxError>, Never>?
@@ -251,6 +265,8 @@ public final class AppModel {
         options = [:]
         optionsShown = [:]
         configNeedsRestart = false
+        startFailure = nil
+        startTried = false
         if !started {
             started = true
             startPolling()
@@ -269,6 +285,7 @@ public final class AppModel {
             location = Loadable(value: found, updatedAt: Date())
             client = makeClient(found)
             await refresh([.status, .doctor])
+            if keepsAnswering { checkAnswering() }
         case let .failure(failure):
             location = Loadable(error: .notFound(failure))
             client = nil
@@ -337,7 +354,10 @@ public final class AppModel {
             await load(\.approvals, current) { try await client.approvals(limit: Self.approvalsLimit) }
         case .memory: await load(\.memory, current) { try await client.memory() }
         case .voice: await load(\.voice, current) { try await client.voice() }
-        case .setupPlan: await load(\.setupPlan, current) { try await client.setupPlan() }
+        case .setupPlan:
+            await load(\.setupPlan, current) { try await client.setupPlan() }
+            // A plan that now lets Keryx start (the phone just set up) starts it.
+            if keepsAnswering, ensuring == nil, answeringStep == .start { checkAnswering() }
         case .pin: await load(\.pin, current) { try await client.pin() }
         case .service: await load(\.service, current) { try await client.service() }
         case .phoneNumbers: await load(\.phoneNumbers, current) { try await client.phoneNumbers() }
@@ -697,6 +717,105 @@ public final class AppModel {
         }
     }
 
+    // MARK: - Answering calls
+
+    /// What keeping Keryx answering calls asks for now (`answeringStep(plan:status:)`).
+    public var answeringStep: AnsweringStep {
+        Self.answeringStep(plan: setupPlan.value, status: status.value)
+    }
+
+    /// Whether Keryx should be started, from the plan and the status: `.start` only once
+    /// setup has reached the service step (not before a migration, nor while a step it waits
+    /// for — the phone, the voice, the agents — is left), only with a service manager to
+    /// start it under, and never beside a Keryx started by hand, which already answers.
+    nonisolated public static func answeringStep(plan: SetupPlan?, status: StatusReport?) -> AnsweringStep {
+        guard let status, status.storage.ok, !status.storage.migrationRequired, status.service.ok,
+              status.service.manager != nil else { return .unknown }
+        if status.service.installed && status.service.active { return .running }
+        // Answering without the unit: `keryx serve` started by hand. One Keryx at a time.
+        if status.health.reachable { return .running }
+        guard let plan else { return .unknown }
+        if let migrate = plan.step("migrate"), migrate.kind != .done { return .waitingForSetup }
+        switch plan.step("service")?.kind {
+        case .needed?, .done?: return .start
+        case nil: return .unknown
+        default: return .waitingForSetup
+        }
+    }
+
+    /// Starts Keryx when setup allows and it isn't running, once a launch; does nothing
+    /// unless `keepsAnswering`. Reads the plan and the status first, so it decides on what is
+    /// true now. A check already under way is waited for rather than run twice.
+    public func ensureAnswering() async {
+        if ensuring == nil { checkAnswering() }
+        await ensuring?.value
+    }
+
+    private func checkAnswering() {
+        guard ensuring == nil else { return }
+        ensuring = Task { [weak self] in
+            await self?.ensureOnce()
+            self?.ensuring = nil
+        }
+    }
+
+    private func ensureOnce() async {
+        guard keepsAnswering, client != nil, !startTried, serviceChange == nil else { return }
+        let current = generation
+        await refresh([.setupPlan, .status])
+        guard current == generation, keepsAnswering, !startTried, serviceChange == nil,
+              answeringStep == .start else { return }
+        _ = await startAnswering()
+    }
+
+    /// Starts Keryx answering calls: its unit installed (or, installed, started again) with
+    /// `keryx service install`, then the status read once more after a moment, as after a
+    /// restart. A failure is kept in `startFailure` for the Overview to say.
+    public func startAnswering() async -> Result<ServiceResult, KeryxError> {
+        if client != nil, serviceChange == nil { startTried = true }
+        let answer = await installService()
+        switch answer {
+        case .success:
+            startFailure = nil
+            try? await Task.sleep(for: timing.afterRestart)
+            await refresh(.status)
+        case .failure(.refused(Self.serviceBusy)):
+            break
+        case let .failure(error):
+            startFailure = error
+        }
+        return answer
+    }
+
+    /// Whether quitting now stops Keryx answering calls: kept answering, and its unit is
+    /// installed (or being installed).
+    public var quitStopsAnswering: Bool {
+        guard keepsAnswering, client != nil else { return false }
+        return serviceChange == .installing || service.value?.units.agent.installed == true
+            || status.value?.service.installed == true
+    }
+
+    /// Stops Keryx answering calls, as the app quits: its unit removed with `keryx service
+    /// uninstall`, which is the CLI's only way to stop it (the next launch installs it
+    /// again). An install still finishing is waited for first, briefly. Nothing unless
+    /// `keepsAnswering`, and nothing when no unit is installed — a Keryx started by hand is
+    /// not the app's to stop. Reads nothing after: the app is going.
+    @discardableResult
+    public func stopAnswering() async -> KeryxError? {
+        guard keepsAnswering, client != nil else { return nil }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while serviceChange != nil, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        await refresh(.service)
+        let installed = service.value?.units.agent.installed ?? status.value?.service.installed ?? false
+        guard installed else { return nil }
+        if case let .failure(error) = await changeService(.uninstalling, reread: [], { try await $0.uninstallService() }) {
+            return error
+        }
+        return nil
+    }
+
     /// One service change at a time, run in `serviceTask` so quitting can stop it.
     private func changeService(_ change: ServiceChange, reread: [Part],
                                _ action: @escaping @MainActor (KeryxClient) async throws -> ServiceResult) async
@@ -930,4 +1049,16 @@ public final class AppModel {
             return Self.keryxError(error)
         }
     }
+}
+
+/// What keeping Keryx answering calls asks for (`AppModel.answeringStep`).
+public enum AnsweringStep: Sendable, Equatable {
+    /// Not known yet: no status or plan read, or nothing here to start it under.
+    case unknown
+    /// Setup has not reached the step that starts it: a migration, or a step it waits for.
+    case waitingForSetup
+    /// It should be started.
+    case start
+    /// It answers already: its unit running, or a Keryx started by hand.
+    case running
 }
