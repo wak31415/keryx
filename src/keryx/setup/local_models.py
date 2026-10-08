@@ -8,8 +8,11 @@ then the work, so the model can be chosen knowing whether the voice will share i
   downloads it — or links a copy a Hugging Face tool already downloaded — after checking
   the disk. It runs under llama.cpp (installed if it is not here) as a user service of its
   own, or under Ollama when that is what the machine has. The voice is speech-to-speech,
-  installed as a `uv tool` with a voice chosen from Kokoro's, run as a second service whose
-  words come from the same model.
+  installed as a `uv tool` with a voice chosen from Kokoro's, run as a second service. Its
+  words come from a voice LLM, asked for first: a small model of the voice's own on a third
+  service when one fits beside the agent's (the owner's rule, `catalog.voice_llm_pick`, is
+  the default), else the agent's model. It is set up by `keryx voice llm here|shared`'s own
+  code (`keryx.localmodels.voice_llm`), before the voice that reads it.
 - **A server elsewhere.** An address and an optional key, checked by asking it for its
   models (the agent) or for a Realtime session (the voice), with `endpoints.warnings` said
   out loud.
@@ -28,9 +31,11 @@ from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 
 from keryx.agents.registry import BACKENDS
+from keryx.config import Settings
+from keryx.config.store import FROM_DEFAULT
 from keryx.endpoints import Endpoint, warnings
-from keryx.localmodels import catalog, server, voice
-from keryx.localmodels.catalog import VOICE_SERVER_GB, ModelEntry
+from keryx.localmodels import catalog, server, use, voice, voice_llm
+from keryx.localmodels.catalog import ModelEntry
 from keryx.localmodels.download import (
     DISK_MARGIN_BYTES,
     DownloadError,
@@ -43,13 +48,15 @@ from keryx.localmodels.download import (
 )
 from keryx.localmodels.hardware import Hardware
 from keryx.localmodels.runtimes import LLAMA_CPP_BUILD, which
-from keryx.localmodels.use import enable_local, llama_values
+from keryx.localmodels.use import enable_local, llama_values, voice_llm_memory_gb
 from keryx.setup.agents import passed_smoke
 from keryx.setup.context import SetupContext
 from keryx.setup.sections import repo_root
 from keryx.setup.ui import Choice
 
 HERE, ELSEWHERE, OPENAI, NONE, KEEP = "here", "elsewhere", "openai", "none", "keep"
+#: The voice's words from the local agent's model (`VOICE_LLM=shared`).
+SHARED = "shared"
 OWN_FILE = "\0file"
 API_CHOICES = (
     Choice("anthropic-messages", "Anthropic Messages API", hint="Claude Code drives it — "
@@ -70,14 +77,15 @@ def run_section(ctx: SetupContext) -> None:
     ui.note(f"This machine: {machine.describe()}; {free / 1e9:.0f} GB free for models.")
     agent = _where_agent(ctx)
     voice = _where_voice(ctx)
+    voice_here = voice == HERE or (voice == KEEP and settings.voice_mode == HERE)
     if agent == HERE:
-        _agent_here(ctx, machine, reserve_gb=VOICE_SERVER_GB if voice == HERE else 0.0)
+        _agent_here(ctx, machine, voice_here=voice_here)
     elif agent == ELSEWHERE:
         _agent_elsewhere(ctx)
     elif agent == NONE:
         _agent_off(ctx)
     if voice == HERE:
-        _voice_here(ctx)
+        _voice_here(ctx, machine)
     elif voice == ELSEWHERE:
         _voice_elsewhere(ctx)
     elif voice == OPENAI:
@@ -116,12 +124,14 @@ def _where_voice(ctx: SetupContext) -> str:
 # --- the agent ---------------------------------------------------------------------------
 
 
-def _agent_here(ctx: SetupContext, machine: Hardware, *, reserve_gb: float) -> None:
+def _agent_here(ctx: SetupContext, machine: Hardware, *, voice_here: bool) -> None:
     ui, settings = ctx.ui, ctx.settings
     runtime = _runtime(ctx, machine)
     if runtime is None:
         return
-    entry, own = _pick_model(ctx, machine, reserve_gb, allow_file=runtime == "llama")
+    entry, own = _pick_model(ctx, machine, voice_here=voice_here,
+                             voice_llm_gb=voice_llm_memory_gb(settings) or 0.0,
+                             allow_file=runtime == "llama")
     if entry is None and own is None:
         return
     if runtime == "ollama":
@@ -197,16 +207,23 @@ def _runtime(ctx: SetupContext, machine: Hardware) -> str | None:
 
 
 def _pick_model(
-    ctx: SetupContext, machine: Hardware, reserve_gb: float, *, allow_file: bool
+    ctx: SetupContext, machine: Hardware, *, voice_here: bool, voice_llm_gb: float,
+    allow_file: bool,
 ) -> tuple[ModelEntry | None, str | None]:
-    """A catalog entry, or the path of a GGUF of the owner's own; (None, None) for neither."""
+    """A catalog entry, or the path of a GGUF of the owner's own; (None, None) for neither.
+    What fits is `catalog.budget`'s: the speech models kept free while the voice is here,
+    and a voice LLM of the voice's own already chosen; one still to choose is offered from
+    what this leaves (`_voice_words`)."""
     ui, settings = ctx.ui, ctx.settings
-    best = catalog.recommend(machine, reserve_gb=reserve_gb)
-    if reserve_gb:
-        ui.note(f"{reserve_gb:.0f} GB is kept for the voice server's own models.")
+    best = catalog.recommend(machine, voice_here=voice_here, voice_llm_gb=voice_llm_gb)
+    if voice_here:
+        ui.note(f"{catalog.VOICE_SERVER_GB:.0f} GB is kept for the voice server's own models.")
+    if voice_llm_gb:
+        ui.note(f"{voice_llm_gb:.0f} GB is kept for the voice's own model, "
+                f"{settings.voice_llm_model}.")
     rows, choices = [], []
     for entry in catalog.MODELS:
-        fits = catalog.fits(entry, machine, reserve_gb=reserve_gb)
+        fits = catalog.fits(entry, machine, voice_here=voice_here, voice_llm_gb=voice_llm_gb)
         marks = [mark for mark, on in (
             ("recommended", entry is best), ("tested", entry.tested),
             ("downloaded", is_downloaded(settings.cache_dir, entry)),
@@ -371,15 +388,145 @@ class _Told:
         _after_voice(self._ctx)
 
 
-def _voice_here(ctx: SetupContext) -> None:
+class _ToldWords(_Told):
+    """The voice LLM's set-up (`keryx.localmodels.voice_llm`), told the wizard's way: its
+    slow steps behind a spinner, and where the voice's words come from once it is done."""
+
+    def step(self, step: str, message: str, *,
+             detail: str | None = None) -> AbstractContextManager[None]:
+        if step in ("runtime", "unit", "start", "check", "voice", "restore"):
+            if detail is not None:
+                message = f"{message} {detail}"
+            return self._ctx.ui.spinner(f"{message}…")
+        return super().step(step, message, detail=detail)
+
+    def done(self, source: str, model: str | None, url: str | None, *,  # type: ignore[override]
+             voice_restarted: bool, voice_restart_needed: bool) -> None:
+        if source == HERE:
+            self._ctx.ui.success(f"the voice's words come from {_title(model)}, on a server "
+                                 "of its own here")
+        else:
+            self._ctx.ui.success("the voice's words come from the local agent's model")
+
+
+def _title(model: str | None) -> str:
+    entry = catalog.by_key(model or "")
+    return entry.title if entry is not None else (model or "its model")
+
+
+def _voice_here(ctx: SetupContext, machine: Hardware) -> None:
+    words = _voice_words(ctx, machine)
+    if words is None:
+        return
+
     def choose_voice() -> str:
         return ctx.ui.select("Which voice?", [
             Choice(name, name, hint=sounds) for name, sounds in catalog.VOICES
         ], default=voice.current_voice(ctx.settings, ctx.store))
 
     voice.here(ctx.settings, ctx.probes, _Told(ctx), choose_voice=choose_voice, save=ctx.save,
-               root=repo_root(), platform=sys.platform, no_words="The voice server takes its "
-               "words from a local model, and there is none: choose one for the agent first.")
+               root=repo_root(), platform=sys.platform, also_save=words,
+               no_words="The voice server takes its words from a local model, and there is "
+               "none: choose one for the agent first.")
+
+
+def _voice_words(ctx: SetupContext, machine: Hardware) -> dict[str, str] | None:
+    """Where the voice's words come from, asked before the voice and set up first — the
+    values to save with the voice once it answers ({} for none), or None when that set-up
+    stopped, which leaves the voice as it was.
+
+    Offered from what the agent's model leaves (`catalog.budget`): the local agent's model,
+    and each catalog model that fits beside it and the speech models, the owner's rule's
+    choice (`catalog.voice_llm_pick`) first and the default. An agent's model here whose
+    size cannot be told leaves only itself, as the rule does; so does a machine with no room
+    for a second, said rather than asked. A choice already made can be kept.
+    """
+    ui, settings = ctx.ui, ctx.settings
+    agent_gb = use.agent_memory_gb(settings)
+    agent = settings.local_agent_endpoint
+    shares = agent is not None and bool(agent.model)
+    pick = catalog.voice_llm_pick(machine, agent_gb=agent_gb)
+    chosen = (ctx.store.source_of("VOICE_LLM", settings) != FROM_DEFAULT
+              and settings.voice_llm != SHARED and settings.voice_llm_refusal() is None)
+    options: list[Choice] = []
+    if chosen:
+        options.append(Choice(KEEP, f"Keep {_described(settings)}"))
+    if shares:
+        assert agent is not None
+        options.append(Choice(SHARED, "The local agent's model",
+                              hint=f"{agent.model}; it waits while a task is generating"))
+    ordered = [catalog.by_key(key) for key in catalog.VOICE_LLM_MODELS]
+    ordered += [entry for entry in catalog.MODELS if entry not in ordered]
+    for entry in ordered:
+        assert entry is not None
+        need = catalog.budget(agent_gb or 0.0, voice_llm_gb=entry.memory_gb, voice_here=True)
+        if agent_gb is None:
+            why: str | None = "the agent's model here cannot be sized"
+        elif need > machine.model_memory_gb:
+            why = f"needs {need:g} GB with the agent's and the speech models"
+        else:
+            why = None
+        options.append(Choice(
+            entry.key, f"{entry.title}, on a server of its own", hint=" · ".join(
+                mark for mark, on in (("recommended", entry is pick), ("downloaded",
+                                      is_downloaded(settings.cache_dir, entry))) if on),
+            disabled=why,
+        ))
+    enabled = [choice for choice in options if choice.disabled is None]
+    if not enabled:
+        return {}  # nothing to take words from: `voice.here` says so
+    if len(enabled) == 1 and enabled[0].value in (KEEP, SHARED):
+        if enabled[0].value == SHARED:
+            ui.note("No model of the voice's own fits beside the agent's here: its words come "
+                    "from the local agent's model.")
+        answer = enabled[0].value
+    else:
+        default = KEEP if chosen else (pick.key if pick is not None else enabled[0].value)
+        answer = ui.select("Where should the voice's words come from?", options,
+                           default=default)
+    if answer == KEEP:
+        return {}
+    if answer == SHARED:
+        return _words_shared(ctx)
+    entry = catalog.by_key(answer)
+    assert entry is not None
+    return _words_here(ctx, entry)
+
+
+def _described(settings: Settings) -> str:
+    """The voice LLM already chosen, as the option to keep it says it."""
+    if settings.voice_llm == HERE:
+        return f"{_title(settings.voice_llm_model)}, on its own server here"
+    endpoint = settings.voice_llm_endpoint
+    assert endpoint is not None  # remote, with its settings (`voice_llm_refusal`)
+    return f"{endpoint.model} at {endpoint.host}"
+
+
+def _words_shared(ctx: SetupContext) -> dict[str, str] | None:
+    """The local agent's model as the voice's words: saved with the voice when nothing has
+    to move (`VOICE_LLM` already shared, no voice LLM of its own installed), else switched
+    now by `keryx voice llm shared`'s code, which retires the one it had."""
+    settings = ctx.settings
+    if settings.voice_llm == SHARED and not ctx.probes.unit_installed("voice_llm"):
+        return {"VOICE_LLM": SHARED}
+    code = voice_llm.shared(settings, ctx.probes, _ToldWords(ctx), save=ctx.save,
+                            root=repo_root(), platform=sys.platform)
+    return {} if code == voice.OK else None
+
+
+def _words_here(ctx: SetupContext, entry: ModelEntry) -> dict[str, str] | None:
+    """`entry` on a server of the voice's own, downloaded the wizard's way first and then
+    brought up by `keryx voice llm here`'s code — which saves `VOICE_LLM=here` only once it
+    serves the model. One already serving it is left as it is."""
+    settings = ctx.settings
+    if (settings.voice_llm == HERE and settings.voice_llm_model == entry.key
+            and ctx.probes.voice_llm_up(settings.voice_llm_endpoint)):
+        return {}
+    if not _have_model(ctx, entry):
+        return None
+    code = voice_llm.here(ctx.settings, entry.key, ctx.probes, _ToldWords(ctx), save=ctx.save,
+                          root=repo_root(), platform=sys.platform)
+    return {} if code == voice.OK else None
 
 
 def _voice_elsewhere(ctx: SetupContext) -> None:

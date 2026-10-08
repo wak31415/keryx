@@ -39,8 +39,11 @@ needs neither.
 `AGENT_BACKEND` picks the one that does the work when you do not say, and `AGENTS_ENABLED`
 lists every one a task may be sent to. With more than one enabled and signed in, you can
 name it out loud — "have Codex look at the build" — and a model name picks its agent too
-("use opus" is Claude, "use terra" is Codex). A follow-up always goes back to the agent that
-started the task: a session belongs to the agent that issued it.
+("use opus" is Claude, "use terra" is Codex). Without one, each runs its own setting's model:
+`CLAUDE_MODEL` (called `SUBAGENT_MODEL` before; the old name is read for one release, and
+`keryx doctor` names it while it is the only one set), `CODEX_MODEL`, `LOCAL_AGENT_MODEL`. A
+follow-up always goes back to the agent that started the task: a session belongs to the
+agent that issued it.
 
 `uv run keryx setup` is the way in: its "Coding agents" section shows what is installed and
 signed in, asks which agents and which is the default, runs the sign-in each one is missing
@@ -103,6 +106,7 @@ checked is marked, and listed under "possible".
 | API key and stored subscription login | ✅ | ✅ | — its server's own optional key (`LOCAL_AGENT_API_KEY`) |
 | Headless subscription token | ✅ | 🟡 read from the environment; no real token run yet | — |
 | Choosing the model by name | ✅ opus, sonnet, fable, haiku | ✅ astra, sol, luna, terra | — the one `LOCAL_AGENT_MODEL` names |
+| The model when none is named (a setting) | `CLAUDE_MODEL` (`SUBAGENT_MODEL` before 2026-10-07, still read for one release) | `CODEX_MODEL` | `LOCAL_AGENT_MODEL`; served here as `AGENT_SERVER_MODEL` |
 | Wall-clock cap (`SUBAGENT_TIMEOUT_S`) | ✅ | ✅ | ✅ |
 | Turn cap and dollar cap | ✅ `SUBAGENT_MAX_TURNS`, `SUBAGENT_MAX_BUDGET_USD` | — | turn cap in Claude Code; no dollar cap |
 | Tokens recorded on the task (`keryx tasks show`, per project in `keryx tasks usage`) | ✅ | ✅ | ✅ as the server reports them |

@@ -11,6 +11,7 @@ does.
 import subprocess
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -112,6 +113,24 @@ def _headless() -> bool:
     return is_headless()
 
 
+def _download_llama_cpp(cache: Path, hardware: Hardware,
+                        progress: Callable[[int, int | None], None]) -> str:
+    """llama.cpp's release build into `cache`, as `keryx models start` downloads it."""
+    return runtimes.install_llama_cpp(cache, hardware,
+                                      get=partial(runtimes.fetch, progress=progress))
+
+
+def _pull(settings: Settings, name: str, report: Any) -> int:
+    from keryx.localmodels import pull
+
+    return pull.pull(settings, name, report)
+
+
+def _remote_models(where: Endpoint) -> Probe:
+    """A server's model list, through a proxy only when it is not on this machine."""
+    return probe(where, get=partial(httpx.get, trust_env=not where.is_loopback))
+
+
 def _rest_admin(sid: str, token: str) -> TwilioAdmin:
     from keryx import phone
 
@@ -165,6 +184,17 @@ class Probes:
     models_ready: Callable[[Settings], bool] = speech.models_ready
     #: How many calls the running Keryx has live, before the voice server here is restarted.
     live_calls: Callable[[Settings], int | None] = voice.live_calls
+    #: The rest of what the voice LLM's set-up asks (`voice_llm.Probes`, which this is too):
+    #: what a server here serves, a program on `PATH`, llama.cpp's download, a model's pull,
+    #: and a server's model list, here or elsewhere.
+    served: Callable[[str], tuple[bool, str | None]] = use.probe
+    which: Callable[[str], str | None] = runtimes.which
+    download_llama_cpp: Callable[[Path, Hardware, Callable[[int, int | None], None]], str] = (
+        _download_llama_cpp)
+    pull: Callable[[Settings, str, Any], int] = _pull
+    models: Callable[[Endpoint], Probe] = partial(probe, get=partial(httpx.get,
+                                                                     trust_env=False))
+    remote_models: Callable[[Endpoint], Probe] = _remote_models
 
 
 @dataclass

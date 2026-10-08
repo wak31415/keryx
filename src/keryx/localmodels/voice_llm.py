@@ -455,7 +455,8 @@ def _warn_if_too_big(settings: Settings, entry: ModelEntry | None, probes: Probe
     agent = use.agent_memory_gb(settings)
     if entry is None or agent is None:
         return
-    need, have = agent + entry.memory_gb + catalog.VOICE_SERVER_GB, probes.hardware()
+    need = catalog.budget(agent, voice_llm_gb=entry.memory_gb, voice_here=True)
+    have = probes.hardware()
     if need > have.model_memory_gb:
         report.warn(f"{entry.title}, the agent's model and the speech models need about "
                     f"{need:g} GB together, and this machine gives models "

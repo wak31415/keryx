@@ -5,7 +5,7 @@ another one you can reach over your network or a tailnet. Each is an address:
 
 | | Blank (the default) | Your own |
 |---|---|---|
-| The voice on a call | OpenAI's Realtime API (`OPENAI_API_KEY`) | `VOICE_BASE_URL`, any server that speaks the Realtime protocol |
+| The voice on a call | OpenAI's Realtime API (`OPENAI_API_KEY`) | `VOICE_MODE`: `here`, a pipeline on this machine, or `server`, any server at `VOICE_BASE_URL` that speaks the Realtime protocol |
 | The work a call hands off | Claude Code or Codex, on Anthropic's or OpenAI's models | `LOCAL_AGENT_BASE_URL`: the `local` agent, Claude Code or Codex driving your model |
 
 You can have either, both, or neither, and you can mix them: a local voice with Claude doing
@@ -23,9 +23,12 @@ where the voice should, and then:
   already downloaded. It runs the model under llama.cpp, installing it when it is missing,
   or under Ollama when that is what you have. Then one real task proves it works.
 - **A local voice** is Hugging Face's [speech-to-speech](https://github.com/huggingface/speech-to-speech):
-  voice activity detection, speech-to-text, your model for the words, and Kokoro for the
-  voice. Setup installs it, lets you pick a voice (Jarvis gets a British one), starts it,
-  and makes it the voice only once it has answered.
+  voice activity detection, speech-to-text, a language model for the words, and Kokoro for
+  the voice. Setup first asks where the words come from — a small model of the voice's own
+  where one fits beside the agent's, or the agent's model (see [The voice's
+  words](#the-voices-words)) — and brings that up. Then it installs the voice, lets you
+  pick one (Jarvis gets a British one), starts it, and makes it the voice only once it has
+  answered.
 - **A server elsewhere** is its address and an optional key, checked before it is kept.
 
 The servers on this machine run as user services of their own, bound to `127.0.0.1`:
@@ -35,12 +38,8 @@ launchd), installed with `scripts/install-systemd.sh --llm --voice`, and a third
 own. Each runs `keryx models serve llm|voice|voice-llm`, which reads your settings, so a
 change is a `keryx config set` and a restart of the unit.
 
-The voice's words come from its voice LLM, `VOICE_LLM`: `shared` (the default) is the local
-agent's model, as it always was; `here` is `VOICE_LLM_MODEL` on its own llama.cpp server at
-`VOICE_LLM_SERVER_PORT`, so a call never queues behind a task; `remote` is a server
-elsewhere (`VOICE_LLM_BASE_URL`, `VOICE_LLM_MODEL`, `VOICE_LLM_API_KEY`). Its key reaches the
-voice server in its environment, never on its command line, and `OPENAI_API_KEY` only when
-the address is OpenAI's own.
+The voice's words come from its voice LLM, `VOICE_LLM` — see [The voice's
+words](#the-voices-words).
 
 From the command line:
 
@@ -109,7 +108,13 @@ shows Keryx's, its tunnel's and both servers' units, installed and running.
 
 For a program driving these: `keryx models list --json` adds `servers` (the model server,
 the voice server and the local agent: whether each unit is installed, and whether a server
-on this machine answers — a server elsewhere is never asked). `keryx models pull NAME --json`
+on this machine answers — a server elsewhere is never asked), and the recommendations, so
+nothing else has to work out what fits: `recommended` (the agent's model for this machine as
+it is set up, or null), `recommended_with_local_voice` (the same with the voice here),
+`voice_llm_recommended` (the voice's own model the owner's rule gives a voice here — the one
+already chosen, else the rule's pick — or null for the agent's), `voice_llm_separate`
+(whether it has one), and on each model `fits_with_voice_llm` (whether, as the agent's
+model, it leaves room for the voice here with a model of its own). `keryx models pull NAME --json`
 prints JSON lines: `{"event": "progress", "done": …, "total": …}`, then exactly one of
 `done` (with its `path`), `adopted` (`path` and `from`), `error` (`message`) or `cancelled` —
 a refusal before the download included. A SIGTERM or SIGINT cancels it with exit 130, and
@@ -153,6 +158,57 @@ server); `voice llm`'s `done` is `source`, `model`, `url`, `voice_restarted` and
 before anything is tried (no local model, no installer, a migration still to run), 1 for what
 stopped it — the message names the server's log when it did not come up — and 130 for a
 SIGTERM, which leaves a half-done install for the next run.
+
+## The voice's words
+
+A voice here is a pipeline, and its middle is a language model: `VOICE_LLM` says which.
+
+| `VOICE_LLM` | The words come from | Settings |
+|---|---|---|
+| `shared` (the default) | the local agent's model, as before this was a setting | the local agent's |
+| `here` | a model of the voice's own, on a second llama.cpp server here: `keryx-voice-llm` (`dev.keryx.voice-llm`), running `keryx models serve voice-llm` | `VOICE_LLM_MODEL` (a name from `keryx models list`, or a GGUF's path), `VOICE_LLM_SERVER_PORT` (8091) |
+| `remote` | a server elsewhere that speaks the Responses API — a box of yours, or the cloud | `VOICE_LLM_BASE_URL`, `VOICE_LLM_MODEL`, `VOICE_LLM_API_KEY` |
+
+A model of its own means a call never queues behind a task's generation, and the voice's
+prompt stays warm in its server's cache instead of being pushed out by the agents' long
+ones. It does not make the GPU any bigger: on one GPU a running task still slows a call. A
+voice LLM in the cloud keeps the audio here and sends only the text. Its key reaches the
+voice server in its environment, never on its command line, and `OPENAI_API_KEY` only when
+the address is OpenAI's own. `VOICE_MODE` and `VOICE_LLM` are protected settings: they
+decide where the call's audio and its words go.
+
+**Memory.** Everything on this machine has to fit together in what it gives a model (a
+card's video memory, or about three quarters of a Mac's), and one sum says whether it does:
+the agent's model, plus the voice's own model while `VOICE_LLM` is `here`, plus 3 GB for the
+speech models while the voice is here. A model's figure includes its context's cache, and
+the voice's model keeps its whole context. For example, with the voice here:
+
+| Agent's model | Voice's words | Together | The smallest that holds it |
+|---|---|---:|---|
+| Qwen3-Coder 30B-A3B (25 GB) | shared | 28 GB | a 48 GB Mac, an RTX 5090 |
+| Qwen3-Coder 30B-A3B | Qwen3.5 4B (6 GB) | 34 GB | a 48 GB Mac |
+| Qwen3-Coder 30B-A3B | Qwen3.5 9B (9 GB) | 37 GB | a 64 GB Mac |
+| Qwen3-Coder 30B-A3B | gpt-oss 20B (16 GB) | 44 GB | a 64 GB Mac |
+| Qwen3-Coder 30B-A3B | the same model, on its own server | 53 GB | a 96 GB Mac |
+| gpt-oss 20B (16 GB) | Qwen3.5 4B | 25 GB | a 36 GB Mac, an RTX 5090 |
+| gpt-oss 120B (70 GB) | Qwen3.5 4B | 79 GB | a 128 GB Mac |
+| any | `remote` | the agent's + 3 GB | as without a voice LLM |
+
+**Who chooses.** The first time a voice is set up here, the owner's rule gives the voice a
+model of its own when one fits: Qwen3.5 9B, else Qwen3.5 4B, beside the agent's model and the
+speech models — else the agent's model. An agent's model here whose size Keryx cannot tell
+(a GGUF of your own) keeps the voice on it. The agent's model is chosen first and the
+voice's from what it leaves, so the voice never pushes the tested model off a machine; a
+voice model you have already chosen is reserved before the agent's is recommended.
+`keryx setup` asks it as a question of its own, with the rule's choice as the default and the
+agent's model always on offer (when there is nothing to choose, it says so); `keryx voice use
+here` applies the rule only while `VOICE_LLM` was never set. After that it is yours:
+`keryx voice llm here|shared|remote`, above.
+
+`keryx doctor` checks each voice for its own settings: a voice here whose words have no model
+(or, `remote`, no address) fails, and so do the voice's own model missing from the disk and,
+with `keryx doctor`'s network checks, its server not answering with its model — the Mac app's
+fix for those brings the voice's own model up again.
 
 ## What an address is
 
@@ -221,15 +277,18 @@ And three you will notice:
   begun about a second or two after you start talking, so the assistant stops a little later
   than on the Realtime API. After an interruption the conversation keeps the whole sentence it
   was saying, not just the part you heard.
-- **The voice is the server's.** OpenAI's voice names mean nothing there, so none is sent;
-  pick one with `VOICE_SERVER_VOICE` (`keryx models list` shows Kokoro's), or `OPENAI_VOICE`
-  for a server of your own that takes one.
+- **The voice is the server's.** OpenAI's voice names mean nothing there, so none is sent
+  to the pipeline here, which speaks `VOICE_SERVER_VOICE` (`keryx models list` shows
+  Kokoro's). A server elsewhere is sent `VOICE_SERVER_VOICE` when you set it; until then it
+  is still sent `OPENAI_VOICE`, for one release, and `keryx doctor` says to set
+  `VOICE_SERVER_VOICE` instead.
 - **No web search** unless `OPENAI_API_KEY` is still set: the assistant's `web_search` tool
   is OpenAI's Responses API.
 
-On one GPU the voice and the agent share one model; setup keeps 3 GB free for the voice's own
-speech models when it picks one. The voice server holds two calls at once, so a reconnect
-does not find its only slot still taken.
+On one GPU the voice and the agent share its memory: setup keeps 3 GB free for the voice's
+speech models, and a model of the voice's own as well, when it picks the agent's (see
+[The voice's words](#the-voices-words)). The voice server holds two calls at once, so a
+reconnect does not find its only slot still taken.
 
 The keypad PIN, approvals and call-backs are Twilio's and Keryx's, and work the same. A
 spoken PIN is heard by your speech-to-text.
@@ -262,7 +321,8 @@ saying so is welcome.
 
 | Setting | |
 |---|---|
-| `VOICE_BASE_URL`, `VOICE_API_KEY` | a voice server of your own; blank is OpenAI |
+| `VOICE_MODE` | where the voice is: `openai`, `here` or `server`; blank is worked out from `VOICE_BASE_URL`, as before it was a setting |
+| `VOICE_BASE_URL`, `VOICE_API_KEY` | a voice server elsewhere (`server`) |
 | `LOCAL_AGENT_BASE_URL`, `LOCAL_AGENT_API_KEY`, `LOCAL_AGENT_MODEL`, `LOCAL_AGENT_API` | the `local` agent's server, key, model and harness |
 | `AGENT_SERVER_MODEL`, `AGENT_SERVER_PORT` | the model `keryx-llm` serves here, and its port |
 | `VOICE_SERVER_PORT`, `VOICE_SERVER_STT`, `VOICE_SERVER_TTS`, `VOICE_SERVER_VOICE`, `VOICE_SERVER_ARGS` | the voice server `keryx-voice` runs here |
