@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build KeryxSnapshots and photograph every catalog screen into macos/build/snapshots/
-# (light and dark, plus index.html). Pass --offscreen to skip real windows.
+# (light and dark, plus index.html). Pass --offscreen to skip real windows, and
+# --only PREFIX to draw just the entries whose id starts with it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 swift build --product KeryxSnapshots
