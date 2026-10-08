@@ -68,7 +68,22 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         var signIn: @Sendable (SignInProvider, String?) -> SignInStream = { _, _ in
             SignInStream(AsyncThrowingStream { $0.finish() })
         }
+        var profile: Result<ProfileQuestions, KeryxError> = .success(PreviewData.profileQuestions)
+        var profileResult: Result<ProfileResult, KeryxError> = .success(PreviewClient.profileWritten)
+        var migrationPlan: Result<MigrationPlan, KeryxError> = .success(PreviewData.migrationPlan)
+        var migrate: @Sendable () -> MigrationStream = { MigrationStream(AsyncThrowingStream { $0.finish() }) }
+        var projectQuestion: Result<ProjectContextQuestion, KeryxError> = .success(PreviewData.projectContextQuestion)
+        var projectDraft: @Sendable (ProjectScope) -> ProjectDraftStream = { _ in
+            ProjectDraftStream(AsyncThrowingStream { $0.finish() })
+        }
+        var projectResult: Result<ProjectContextResult, KeryxError> = .success(PreviewClient.projectsKept)
+        /// The answers each `setup profile --preview|--apply` and project-context `--apply`
+        /// was handed on stdin, in order.
+        var piped: [Data] = []
     }
+
+    /// What was piped to the setup sections' commands, in order.
+    var piped: [Data] { lock.withLock { replies.piped } }
 
     init(_ configure: (inout Replies) -> Void = { _ in }) {
         configure(&replies)
@@ -222,6 +237,40 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         try answer("plugins set \(name)") { $0.plugin }
     }
     func tools() async throws -> ToolsReport { try answer("tools") { $0.tools } }
+    func profileQuestions() async throws -> ProfileQuestions { try answer("setup profile") { $0.profile } }
+    func previewProfile(_ answers: ProfileAnswers) async throws -> ProfileResult {
+        try lock.withLock { replies.piped.append(try answers.json()) }
+        return try answer("setup profile --preview") { $0.profileResult }
+    }
+    func applyProfile(_ answers: ProfileAnswers) async throws -> ProfileResult {
+        try lock.withLock { replies.piped.append(try answers.json()) }
+        return try answer("setup profile --apply") { $0.profileResult }
+    }
+    func migrationPlan() async throws -> MigrationPlan { try answer("migrate") { $0.migrationPlan } }
+    func migrate() -> MigrationStream {
+        let make = lock.withLock {
+            recorded.append("migrate --yes")
+            return replies.migrate
+        }
+        return make()
+    }
+    func projectContextQuestion() async throws -> ProjectContextQuestion {
+        try answer("setup project-context --describe") { $0.projectQuestion }
+    }
+    func draftProjectContext(_ scope: ProjectScope) -> ProjectDraftStream {
+        let make = lock.withLock {
+            switch scope {
+            case .explore: recorded.append("setup project-context --explore")
+            case let .folders(paths): recorded.append("setup project-context --folder ×\(paths.count)")
+            }
+            return replies.projectDraft
+        }
+        return make(scope)
+    }
+    func applyProjectContext(_ keep: ProjectContextKeep) async throws -> ProjectContextResult {
+        try lock.withLock { replies.piped.append(try keep.json()) }
+        return try answer("setup project-context --apply") { $0.projectResult }
+    }
     func sshHosts() async throws -> SshHostsReport { try answer("plugins hosts") { $0.sshHosts } }
 }
 

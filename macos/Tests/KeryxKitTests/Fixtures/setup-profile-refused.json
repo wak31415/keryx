@@ -1,0 +1,14 @@
+{
+  "status": "refused",
+  "written": false,
+  "text": null,
+  "chars": 0,
+  "max_chars": 4000,
+  "problems": [
+    {
+      "id": "facts",
+      "message": "That comes to 30094 characters, and a call reads 4000."
+    }
+  ],
+  "walked": true
+}

@@ -111,7 +111,8 @@ import KeryxPreview
     }
 
     @Test func anUnknownSubcommandOrVerbIsAValue() {
-        Self.check(["migrate", "--dry-run"], logs: "keryx …", hiding: ["migrate", "--dry-run"])
+        Self.check(["restore", "--dry-run"], logs: "keryx …", hiding: ["restore", "--dry-run"])
+        Self.check(["migrate", "--dry-run"], logs: "keryx migrate …", hiding: ["--dry-run"])
         Self.check(["setup", "--all"], logs: "keryx setup …", hiding: ["--all"])
         Self.check(["config", "get", "PIN"], logs: "keryx config …", hiding: ["get", "PIN"])
         // A verb is only a verb second: a model named like one is still a value.

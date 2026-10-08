@@ -1,0 +1,25 @@
+{
+  "nothing_to_do": true,
+  "directories": {
+    "config": "/Users/you/.config/keryx",
+    "data": "/Users/you/.local/share/keryx",
+    "state": "/Users/you/.local/state/keryx",
+    "cache": "/Users/you/.cache/keryx"
+  },
+  "moves": [],
+  "imports": [],
+  "task_paths_from": [],
+  "tools": [],
+  "unset_data_dir": false,
+  "pin_tunnel": false,
+  "retire": null,
+  "units_pending": null,
+  "conflicts": [],
+  "service": {
+    "stops": null,
+    "retires": [],
+    "installs": null
+  },
+  "live_calls": null,
+  "ready": false
+}

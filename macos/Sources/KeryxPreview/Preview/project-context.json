@@ -1,0 +1,31 @@
+{
+  "section": "projects",
+  "title": "Project context",
+  "agent": "claude",
+  "agent_name": "Claude",
+  "note": "A call carries a short brief of each project, so Keryx knows what you mean by name. Claude can explore your projects and draft them for you to check: it is asked to read only and to skip anything secret, and nothing is kept until you accept it.",
+  "question": "Let Claude explore your projects?",
+  "choices": [
+    {
+      "value": "explore",
+      "label": "Yes",
+      "hint": "it finds them, starting from your home folder"
+    },
+    {
+      "value": "folders",
+      "label": "Yes, only in folders I name",
+      "hint": null
+    },
+    {
+      "value": "no",
+      "label": "No",
+      "hint": null
+    }
+  ],
+  "home": "/Users/you",
+  "summaries": [],
+  "projects": [],
+  "max_brief_chars": 1500,
+  "max_briefs_chars": 6000,
+  "max_facts": 5
+}

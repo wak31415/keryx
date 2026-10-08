@@ -73,4 +73,8 @@ public struct PhoneTunnel: Codable, Sendable, Equatable {
     /// CLI names: opened only through `FixAction.tunnelDownload`'s check. Optional for an
     /// older CLI.
     public var installUrl: String?
+    /// SEAM (`phone tunnel --json` `hostname`, not printed yet): the public hostname the
+    /// tunnel's own configuration already routes here (cloudflared's ingress, ngrok's
+    /// reserved domain), to offer for `PUBLIC_HOST`. `nil` from a CLI without it.
+    public var hostname: String?
 }

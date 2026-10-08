@@ -76,6 +76,13 @@ public struct PreviewClient: KeryxClient {
     let modelServerScript: Script<ModelServerStarted>
     let voiceDownloadScript: Script<VoiceModelsDownloaded>
     let signInScript: Script<SignedIn>
+    let profileReply: Result<ProfileQuestions, KeryxError>
+    let profileResultReply: Result<ProfileResult, KeryxError>
+    let migrationPlanReply: Result<MigrationPlan, KeryxError>
+    let migrationScript: Script<MigrationDone>
+    let projectQuestionReply: Result<ProjectContextQuestion, KeryxError>
+    let projectDraftScript: Script<ProjectDraft>
+    let projectResultReply: Result<ProjectContextResult, KeryxError>
 
     public init(
         status: Result<StatusReport, KeryxError> = .success(PreviewData.status),
@@ -106,7 +113,14 @@ public struct PreviewClient: KeryxClient {
         verify: Result<VerifyResult, KeryxError> = .success(PreviewClient.verified),
         modelServer: Script<ModelServerStarted> = .replay,
         voiceDownload: Script<VoiceModelsDownloaded> = .replay,
-        signIn: Script<SignedIn> = .replay
+        signIn: Script<SignedIn> = .replay,
+        profile: Result<ProfileQuestions, KeryxError> = .success(PreviewData.profileQuestions),
+        profileResult: Result<ProfileResult, KeryxError> = .success(PreviewClient.profileWritten),
+        migrationPlan: Result<MigrationPlan, KeryxError> = .success(PreviewData.migrationPlan),
+        migration: Script<MigrationDone> = .replay,
+        projectQuestion: Result<ProjectContextQuestion, KeryxError> = .success(PreviewData.projectContextQuestion),
+        projectDraft: Script<ProjectDraft> = .replay,
+        projectResult: Result<ProjectContextResult, KeryxError> = .success(PreviewClient.projectsKept)
     ) {
         statusReply = status
         doctorReply = doctor
@@ -137,6 +151,13 @@ public struct PreviewClient: KeryxClient {
         modelServerScript = modelServer
         voiceDownloadScript = voiceDownload
         signInScript = signIn
+        profileReply = profile
+        profileResultReply = profileResult
+        migrationPlanReply = migrationPlan
+        migrationScript = migration
+        projectQuestionReply = projectQuestion
+        projectDraftScript = projectDraft
+        projectResultReply = projectResult
     }
 
     public func status() async throws -> StatusReport { try statusReply.get() }
@@ -289,6 +310,50 @@ public struct PreviewClient: KeryxClient {
     /// A key that does not, worded as the CLI words it.
     public static let notVerified = VerifyResult(
         key: "OPENAI_API_KEY", ok: false, problem: "OpenAI didn't accept the key (401).", detail: nil)
+
+    // MARK: Setup sections
+
+    public func profileQuestions() async throws -> ProfileQuestions { try profileReply.get() }
+
+    public func previewProfile(_ answers: ProfileAnswers) async throws -> ProfileResult {
+        var result = try profileResultReply.get()
+        result.written = false
+        result.walked = false
+        if result.status == "written" { result.status = "unchanged" }
+        return result
+    }
+
+    public func applyProfile(_ answers: ProfileAnswers) async throws -> ProfileResult {
+        try check()
+        return try profileResultReply.get()
+    }
+
+    public func migrationPlan() async throws -> MigrationPlan { try migrationPlanReply.get() }
+
+    public func migrate() -> MigrationStream {
+        Self.stream(migrationScript, replay: PreviewData.migrateLines)
+    }
+
+    public func projectContextQuestion() async throws -> ProjectContextQuestion { try projectQuestionReply.get() }
+
+    public func draftProjectContext(_ scope: ProjectScope) -> ProjectDraftStream {
+        Self.stream(projectDraftScript, replay: PreviewData.projectDraftLines)
+    }
+
+    public func applyProjectContext(_ keep: ProjectContextKeep) async throws -> ProjectContextResult {
+        try check()
+        return try projectResultReply.get()
+    }
+
+    /// The first memory written, as the CLI words it.
+    public static let profileWritten = ProfileResult(
+        status: "written", written: true,
+        text: "# What Lyra knows about the owner\n\n## Standing facts\n\n- Works nights.\n",
+        chars: 64, maxChars: 4000, problems: [], walked: true)
+
+    /// One brief kept and a fact added.
+    public static let projectsKept = ProjectContextResult(kept: ["keryx"], addedProjects: [], factsAdded: 1,
+                                                          problems: [], walked: true)
 
     // MARK: Phone
 

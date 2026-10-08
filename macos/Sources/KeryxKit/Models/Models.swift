@@ -7,6 +7,17 @@ public struct ModelsReport: Codable, Sendable, Equatable {
     public var models: [CatalogModel]
     public var voices: [Voice]
     public var servers: Servers
+    /// SEAM (`models list --json`, not printed yet): the catalog key recommended for the
+    /// local agent on this Mac, with the owner's rule for the voice's own model applied by
+    /// the CLI. `nil` from a CLI without it: the catalog's own `recommended` flag stands in.
+    public var recommended: String?
+    /// SEAM: the same, when the voice runs on this Mac too and takes its share of memory.
+    public var recommendedWithLocalVoice: String?
+    /// SEAM: the small model recommended for the voice's words (`VOICE_LLM_MODEL`).
+    public var voiceLlmRecommended: String?
+    /// SEAM: whether the voice's words model fits beside the agent's (the owner's rule), so
+    /// it runs separately rather than sharing the agent's.
+    public var voiceLlmSeparate: Bool?
 }
 
 /// Mirrors `dataclasses.asdict(Hardware)` from `src/keryx/localmodels/hardware.py`, plus

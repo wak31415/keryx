@@ -37,6 +37,12 @@ public struct SetupStep: Codable, Sendable, Equatable, Identifiable {
     /// The app's action for the check `why` names (`FixAction`); `nil` once done, while it
     /// waits, or when the app has nothing to offer. Optional for an older CLI.
     public var fix: String?
+    /// SEAM (`setup plan --json`, not printed yet): the step may be left for later (`setup
+    /// mark phone|service`) without holding the rest of setup back. `nil` from a CLI without
+    /// it, which refuses to mark a required step other than the PIN.
+    public var deferrable: Bool?
+    /// SEAM: the owner chose to set it up later.
+    public var deferred: Bool?
 
     /// The state, when this build knows it.
     public var kind: SetupStepState? { SetupStepState(rawValue: state) }

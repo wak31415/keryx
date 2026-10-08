@@ -16,14 +16,14 @@ public enum CommandLog {
         "models": ["list", "pull", "use", "start", "stop"],
         "config": ["list", "set", "unset", "options", "verify"],
         "voice": ["use", "download"],
-        "setup": ["plan", "mark"],
+        "setup": ["plan", "mark", "profile", "project-context"],
         "pin": ["set"],
         "phone": ["numbers", "webhooks", "tunnel"],
         "service": ["install", "uninstall"],
         "auth": ["login", "logout"],
         "integrations": [],
         "plugins": ["list", "install", "remove", "set", "hosts"],
-        "tools": [],
+        "tools": [], "migrate": [],
     ]
 
     /// The words a subcommand and verb may be followed by (`keryx voice use here`): fixed
@@ -44,13 +44,13 @@ public enum CommandLog {
     static let flags: Set<String> = [
         "--json", "--stdin", "--force", "--internal", "--limit", "--days", "--status",
         "--default-agent", "--disable", "--enable", "--llm", "--key-stdin", "--clear-key", "--keep-anyway",
-        "--voice", "--pair", "--replace", "--apply",
+        "--voice", "--pair", "--replace", "--apply", "--yes", "--preview", "--describe", "--explore",
     ]
 
     /// The flags that take a value: the flag is logged, the value never — `--set=…` when
     /// written as one word, `--set …` as two.
     static let valueFlags: Set<String> = [
-        "--set", "--cluster", "--guard", "--client-file", "--runtime",
+        "--set", "--cluster", "--guard", "--client-file", "--runtime", "--folder",
     ]
 
     static let elided = "…"

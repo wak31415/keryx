@@ -196,6 +196,52 @@ public struct CLIClient: KeryxClient {
                                 stdin: Data(lines.utf8))
     }
 
+    // MARK: - Setup sections
+
+    public func profileQuestions() async throws -> ProfileQuestions {
+        try await decode(["setup", "profile", "--json"])
+    }
+
+    public func previewProfile(_ answers: ProfileAnswers) async throws -> ProfileResult {
+        try await decode(["setup", "profile", "--preview", "--json"], stdin: try answers.json())
+    }
+
+    /// Exit 1 with a document is a refusal (`status` `refused`); without one, a failure.
+    public func applyProfile(_ answers: ProfileAnswers) async throws -> ProfileResult {
+        try await decode(["setup", "profile", "--apply", "--json"], acceptedExitCodes: [0, 1],
+                         stdin: try answers.json())
+    }
+
+    public func migrationPlan() async throws -> MigrationPlan {
+        try await decode(["migrate", "--json"], timeout: .seconds(60))
+    }
+
+    /// No timeout: stopping the service first waits up to half a minute, and moving a large
+    /// install can take longer.
+    public func migrate() -> MigrationStream {
+        events(["migrate", "--yes", "--json"])
+    }
+
+    public func projectContextQuestion() async throws -> ProjectContextQuestion {
+        try await decode(["setup", "project-context", "--describe", "--json"])
+    }
+
+    /// Each folder as `--folder=PATH`, so a path that starts with "-" is still its value.
+    public func draftProjectContext(_ scope: ProjectScope) -> ProjectDraftStream {
+        var arguments = ["setup", "project-context", "--json"]
+        switch scope {
+        case .explore: arguments.append("--explore")
+        case let .folders(paths): arguments += paths.map { "--folder=" + $0 }
+        }
+        return events(arguments)
+    }
+
+    /// Exit 1 with a document is a problem in the draft; without one, a failure.
+    public func applyProjectContext(_ keep: ProjectContextKeep) async throws -> ProjectContextResult {
+        try await decode(["setup", "project-context", "--apply", "--json"], acceptedExitCodes: [0, 1],
+                         stdin: try keep.json())
+    }
+
     // MARK: - Phone
 
     public func phoneNumbers() async throws -> PhoneNumbers {
