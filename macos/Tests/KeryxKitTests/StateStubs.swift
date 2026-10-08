@@ -49,6 +49,8 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         var verify: Result<VerifyResult, KeryxError> = .success(PreviewClient.verified)
         var service: Result<ServiceReport, KeryxError> = .success(PreviewData.service)
         var serviceResult: Result<ServiceResult, KeryxError> = .success(ServiceResult(ok: true, message: "done"))
+        var serviceControlResult: Result<ServiceControlResult, KeryxError> =
+            .success(ServiceControlResult(ok: true, message: "done"))
         var phoneNumbers: Result<PhoneNumbers, KeryxError> = .success(PreviewData.phoneNumbers)
         var phoneWebhooks: Result<PhoneWebhooks, KeryxError> = .success(PreviewData.phoneWebhooks)
         var applied: Result<WebhooksApplied, KeryxError> = .success(WebhooksApplied(applied: true,
@@ -209,6 +211,18 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         await wait()
         try Task.checkCancellation()
         return try answer("service uninstall") { $0.serviceResult }
+    }
+    func stopService(all: Bool) async throws -> ServiceControlResult {
+        let wait = lock.withLock { replies.serviceWait }
+        await wait()
+        try Task.checkCancellation()
+        return try answer("service stop" + (all ? " --all" : "")) { $0.serviceControlResult }
+    }
+    func startService(all: Bool) async throws -> ServiceControlResult {
+        let wait = lock.withLock { replies.serviceWait }
+        await wait()
+        try Task.checkCancellation()
+        return try answer("service start" + (all ? " --all" : "")) { $0.serviceControlResult }
     }
     func startModelServer(runtime: String?) -> ModelServerStream {
         let make = lock.withLock {

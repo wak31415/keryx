@@ -6,7 +6,7 @@ import Foundation
 /// secret only ever travels on stdin. Nothing here logs an argument, the environment, stdin
 /// or output. A command whose caller was cancelled throws `CancellationError`, whatever the
 /// child it stopped said on the way out.
-public struct CLIClient: KeryxClient {
+public struct CLIClient: KeryxClient, AgentSmokeTesting {
     static let migrationMarker = "keryx cannot do that yet:"
     static let restartReason = "from the Mac app"
 
@@ -324,6 +324,18 @@ public struct CLIClient: KeryxClient {
         try await decode(["service", "uninstall", "--json"], timeout: Self.installerTimeout)
     }
 
+    /// Every exit (0 ok, 1 a unit failed, 2 refused) prints the same document, so every one
+    /// is decoded rather than thrown.
+    public func stopService(all: Bool) async throws -> ServiceControlResult {
+        try await decode(["service", "stop"] + (all ? ["--all"] : []) + ["--json"],
+                         acceptedExitCodes: [0, 1, 2], timeout: Self.installerTimeout)
+    }
+
+    public func startService(all: Bool) async throws -> ServiceControlResult {
+        try await decode(["service", "start"] + (all ? ["--all"] : []) + ["--json"],
+                         acceptedExitCodes: [0, 1, 2], timeout: Self.installerTimeout)
+    }
+
     /// Ends normally only after `done`, `error` or `cancelled`, as `pull` does; no timeout,
     /// since installing llama.cpp and loading a model can take minutes.
     public func startModelServer(runtime: String?) -> ModelServerStream {
@@ -354,6 +366,12 @@ public struct CLIClient: KeryxClient {
 
     public func signOut(_ provider: SignInProvider) async throws -> SignOutResult {
         try await decode(["auth", "logout", provider.rawValue, "--json"])
+    }
+
+    /// Ends normally only after `done`, `error` or `cancelled`, as `pull` does. No timeout:
+    /// a real task on a coding agent can take a while.
+    public func smokeTest(_ agent: String) -> AgentSmokeStream {
+        events(["auth", "smoke", agent, "--json"])
     }
 
     public func integrations() async throws -> IntegrationsReport {

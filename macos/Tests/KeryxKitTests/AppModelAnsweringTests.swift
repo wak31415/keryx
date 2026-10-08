@@ -38,8 +38,8 @@ import KeryxPreview
     }
 
     /// The plan the CLI prints for a unit installed but not running: the step fails on its
-    /// "service running" check, whose fix is the start.
-    static var stoppedPlan: SetupPlan { plan(service: "failed", fix: "service:install") }
+    /// "Background process" check (Task N), whose fix is `service:start`.
+    static var stoppedPlan: SetupPlan { plan(service: "failed", fix: "service:start") }
 
     /// `plan` with a migration still to run in front of every step.
     static func migrating(_ plan: SetupPlan) -> SetupPlan {
@@ -71,6 +71,11 @@ import KeryxPreview
 
     func installs(_ client: StubClient) -> Int {
         client.calls.filter { $0 == "service install" }.count
+    }
+
+    /// `keryx service start`, no `--all`: a unit that is already there, started again.
+    func starts(_ client: StubClient) -> Int {
+        client.calls.filter { $0 == "service start" }.count
     }
 
     // MARK: - The decision
@@ -123,7 +128,7 @@ import KeryxPreview
 
     // MARK: - At launch
 
-    @Test func launchStartsKeryxOnceSetupAllowsIt() async {
+    @Test func launchStartsKeryxOnceSetupAllowsIt() async throws {
         let client = StubClient {
             $0.status = .success(Self.notInstalled)
             $0.setupPlan = .success(Self.plan(service: "needed"))
@@ -135,11 +140,13 @@ import KeryxPreview
         #expect(installs(client) == 1)
         let calls = client.calls
         let plan = calls.firstIndex(of: "setup plan") ?? .max
-        #expect(plan < calls.firstIndex(of: "service install")!, "the plan is read before anything starts")
+        let install = try #require(calls.firstIndex(of: "service install"))
+        #expect(plan < install, "the plan is read before anything starts")
         #expect(model.startFailure == nil)
     }
 
     @Test func launchStartsAStoppedUnitAgain() async {
+        // Installed but stopped (`service:start`, Task N): started again, never installed.
         let client = StubClient {
             $0.status = .success(Self.stopped)
             $0.setupPlan = .success(Self.stoppedPlan)
@@ -148,7 +155,8 @@ import KeryxPreview
         await model.start()
         defer { model.stop() }
         await model.ensureAnswering()
-        #expect(installs(client) == 1)
+        #expect(starts(client) == 1)
+        #expect(installs(client) == 0)
     }
 
     @Test func nothingStartsUnlessTheModelKeepsKeryxAnswering() async {
@@ -292,7 +300,7 @@ import KeryxPreview
         #expect(model.quitStopsAnswering)
         let mark = client.calls.count
         #expect(await model.stopAnswering() == nil)
-        #expect(Array(client.calls.dropFirst(mark)) == ["service", "service uninstall"])
+        #expect(Array(client.calls.dropFirst(mark)) == ["service", "service stop --all"])
     }
 
     @Test func quittingLeavesAKeryxStartedByHand() async {
@@ -307,7 +315,7 @@ import KeryxPreview
         defer { model.stop() }
         #expect(!model.quitStopsAnswering)
         await model.stopAnswering()
-        #expect(!client.calls.contains("service uninstall"))
+        #expect(!client.calls.contains("service stop --all"))
     }
 
     @Test func quittingStopsNothingUnlessTheModelKeepsKeryxAnswering() async {
@@ -334,7 +342,7 @@ import KeryxPreview
         #expect(client.calls.isEmpty)
     }
 
-    @Test func quittingDuringAStartWaitsForItThenStopsKeryx() async {
+    @Test func quittingDuringAStartWaitsForItThenStopsKeryx() async throws {
         let gate = OptionsGate()
         let client = StubClient {
             $0.status = .success(Self.notInstalled)
@@ -347,17 +355,21 @@ import KeryxPreview
         #expect(await eventually { gate.held == 1 })
         #expect(model.serviceChange == .installing)
         #expect(model.quitStopsAnswering, "a unit being installed is stopped too")
-        // The install finishes (the unit now installed); quitting then removes it.
+        // The install finishes (the unit now installed); quitting then stops it.
         client.update { $0.service = .success(Self.units(installed: true)) }
         let stopping = Task { await model.stopAnswering() }
         gate.open()
         #expect(await stopping.value == nil)
+        // `stopping.value` is awaited above, so every call either of them made is already
+        // recorded (no fixed point read here: both calls are on the far side of an await).
         let calls = client.calls
-        #expect(calls.firstIndex(of: "service install")! < calls.firstIndex(of: "service uninstall")!)
+        let install = try #require(calls.firstIndex(of: "service install"))
+        let stop = try #require(calls.firstIndex(of: "service stop --all"))
+        #expect(install < stop)
     }
 
     @Test func aFailedStopIsReturned() async {
-        let failure = KeryxError.failed(command: "keryx service uninstall", exitCode: 1, message: "launchctl failed")
+        let failure = KeryxError.failed(command: "keryx service stop --all", exitCode: 1, message: "launchctl failed")
         let client = StubClient {
             $0.setupPlan = .success(PreviewData.setupPlanReady)
             $0.service = .success(Self.units(installed: true))
@@ -366,7 +378,7 @@ import KeryxPreview
         await model.start()
         defer { model.stop() }
         await model.ensureAnswering()
-        client.update { $0.serviceResult = .failure(failure) }
+        client.update { $0.serviceControlResult = .failure(failure) }
         #expect(await model.stopAnswering() == failure)
     }
 }

@@ -874,6 +874,15 @@ public final class AppModel {
         }
     }
 
+    /// Starts Keryx's unit again (`keryx service start`, no `--all`): it is already there,
+    /// only stopped. Refused as `installService` is.
+    private func startService() async -> Result<ServiceResult, KeryxError> {
+        await changeService(.installing, reread: [.service, .status, .setupPlan]) {
+            let result = try await $0.startService(all: false)
+            return ServiceResult(ok: result.ok, message: result.message)
+        }
+    }
+
     // MARK: - Answering calls
 
     /// What keeping Keryx answering calls asks for now (`answeringStep(plan:status:)`).
@@ -896,15 +905,17 @@ public final class AppModel {
         guard let step = plan.step("service") else { return .unknown }
         switch step.kind {
         case .needed?, .done?: return .start
-        // Installed but stopped: the CLI fails the step on its "service running" check, and
-        // the fix is the start. Failed for anything else (a security check), it waits.
-        case .failed?: return step.fix == Self.startFix ? .start : .waitingForSetup
+        // Installed but stopped: the CLI fails the step on its "Background process" check
+        // (`service:start`, Task N), or says nothing is installed yet (`service:install`).
+        // Failed for anything else (a security check), it waits.
+        case .failed?: return step.fix.map(Self.startFixes.contains) == true ? .start : .waitingForSetup
         default: return .waitingForSetup
         }
     }
 
-    /// The fix id (`keryx/fixes.py`) that is Keryx's unit started.
-    nonisolated static let startFix = "service:install"
+    /// The fix ids (`keryx/fixes.py`) that mean Keryx's unit should be started: not
+    /// installed yet, or installed and stopped (`keryx service stop`, Task N).
+    nonisolated static let startFixes: Set<String> = ["service:install", "service:start"]
 
     /// Starts Keryx when setup allows and it isn't running, once a launch; does nothing
     /// unless `keepsAnswering`. Reads the plan and the status first, so it decides on what is
@@ -931,13 +942,15 @@ public final class AppModel {
         _ = await startAnswering()
     }
 
-    /// Starts Keryx answering calls: its unit installed (or, installed, started again) with
-    /// `keryx service install`, then the status read once more after a moment, as after a
+    /// Starts Keryx answering calls: its unit installed with `keryx service install` when
+    /// it isn't there yet, or — already installed but stopped (`service:start`, Task N) —
+    /// started again with `keryx service start`, never `--all`: the model servers are the
+    /// other agent's to start. Then the status read once more after a moment, as after a
     /// restart. A failure is kept in `startFailure` for the Overview to say.
     public func startAnswering() async -> Result<ServiceResult, KeryxError> {
         if quitting { return .failure(.refused(Self.quittingRefusal)) }
         if client != nil, serviceChange == nil { startTried = true }
-        let answer = await installService()
+        let answer = await (agentUnitPresent ? startService() : installService())
         switch answer {
         case .success:
             startFailure = nil
@@ -975,9 +988,11 @@ public final class AppModel {
             || status.value?.service.installed == true
     }
 
-    /// Stops Keryx answering calls, as the app quits: its unit removed with `keryx service
-    /// uninstall`, which is the CLI's only way to stop it (the next launch installs it
-    /// again). An install still finishing is waited for first, briefly. Nothing unless
+    /// Stops Keryx answering calls, as the app quits: every unit it runs — the main unit,
+    /// the model server, the voice server and the voice LLM — stopped and kept from
+    /// starting at login with `keryx service stop --all` (Task N), never removed: the
+    /// unit files stay, so macOS asks nothing, and the next launch only starts them again.
+    /// An install still finishing is waited for first, briefly. Nothing unless
     /// `keepsAnswering`, and nothing when no unit is installed — a Keryx started by hand is
     /// not the app's to stop. Reads nothing after: the app is going.
     @discardableResult
@@ -988,19 +1003,32 @@ public final class AppModel {
             try? await Task.sleep(for: .milliseconds(50))
         }
         await refresh(.service)
-        let installed = service.value?.units.agent.installed ?? status.value?.service.installed ?? false
-        guard installed else { return nil }
+        // An install that just finished (`serviceChange` above going nil) starts its own
+        // re-read of `.service` a moment before this one; `load`'s staleness guard (the
+        // newer of two overlapping reads of the same part wins) can discard *this* read
+        // as the older one, before the install's own read has itself landed — a window of
+        // microseconds, not of state. One more read, after it, is never stale against
+        // anything still pending.
+        if !agentUnitPresent { await refresh(.service) }
+        guard agentUnitPresent else { return nil }
         if case let .failure(error) = await changeService(.uninstalling, reread: [], Self.stopUnits) {
             return error
         }
         return nil
     }
 
-    /// How Quit stops Keryx's units — the one place to change when the CLI has a stop that
-    /// keeps them installed (`keryx service stop --all`, asked for): today it is `keryx
-    /// service uninstall`, its only stop, and launch installs them again.
+    /// Whether Keryx's own unit is there, loaded or on disk, from the last read: the one
+    /// check `startAnswering` and `stopAnswering` share.
+    private var agentUnitPresent: Bool {
+        service.value?.units.agent.installed ?? status.value?.service.installed ?? false
+    }
+
+    /// How Quit stops Keryx's units: every one it runs, kept installed (`keryx service
+    /// stop --all`, Task N) — the app's launch, or `keryx service start`, is what starts
+    /// them again.
     private static let stopUnits: @MainActor (KeryxClient) async throws -> ServiceResult = {
-        try await $0.uninstallService()
+        let result = try await $0.stopService(all: true)
+        return ServiceResult(ok: result.ok, message: result.message)
     }
 
     /// One service change at a time, run in `serviceTask` so quitting can stop it.

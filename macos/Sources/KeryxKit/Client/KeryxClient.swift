@@ -125,6 +125,15 @@ public protocol KeryxClient: Sendable {
     /// Stops and removes Keryx and its tunnel (never a model server's unit: that is
     /// `stopModelServer`'s).
     func uninstallService() async throws -> ServiceResult
+    /// Stops Keryx and its tunnel, and keeps them from starting at login, without removing
+    /// either (`keryx service stop`); with `all`, every unit Keryx installs, the model
+    /// servers included. Idempotent. The document comes back on every path, a refusal
+    /// included — never thrown as a generic failure.
+    func stopService(all: Bool) async throws -> ServiceControlResult
+    /// Lets Keryx and its tunnel start at login again, and starts them (`keryx service
+    /// start`); with `all`, every unit that is installed, the model servers first.
+    /// Idempotent.
+    func startService(all: Bool) async throws -> ServiceControlResult
     /// Runs the chosen model's server here (`keryx models start`), step by step: installs
     /// llama.cpp when missing, its unit, waits for it, checks what it serves. Stops as
     /// `pull` does. `runtime`: `llama` (the default) or `ollama`.

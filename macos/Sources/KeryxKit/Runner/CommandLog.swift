@@ -19,7 +19,7 @@ public enum CommandLog {
         "setup": ["plan", "mark", "profile", "project-context"],
         "pin": ["set"],
         "phone": ["numbers", "webhooks", "tunnel"],
-        "service": ["install", "uninstall"],
+        "service": ["install", "uninstall", "stop", "start"],
         "auth": ["login", "logout", "smoke"],
         "integrations": [],
         "plugins": ["list", "install", "remove", "set", "hosts"],
@@ -45,7 +45,7 @@ public enum CommandLog {
     static let flags: Set<String> = [
         "--json", "--stdin", "--force", "--internal", "--limit", "--days", "--status",
         "--default-agent", "--disable", "--enable", "--llm", "--key-stdin", "--clear-key", "--keep-anyway",
-        "--voice", "--pair", "--replace", "--apply", "--yes", "--preview", "--describe", "--explore",
+        "--voice", "--pair", "--replace", "--apply", "--yes", "--preview", "--describe", "--explore", "--all",
     ]
 
     /// The flags that take a value: the flag is logged, the value never — `--set=…` when
