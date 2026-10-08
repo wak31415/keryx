@@ -46,6 +46,8 @@ class Machine:
         self.python: str | None = "/tools/s2s/bin/python"
         self.fetched: object = None
         self.fetches: list = []
+        #: How many calls the running Keryx has live (None: it is not answering).
+        self.live: int | None = None
 
     def fetch(self, python, repos, progress):
         self.fetches.append((python, [repo.id for repo in repos]))
@@ -98,6 +100,8 @@ def machine(monkeypatch, tmp_path, every_agent_installed):
                         lambda endpoint: found.realtimes.append(endpoint) or found.realtime)
     monkeypatch.setattr("keryx.localmodels.hardware.free_bytes", lambda path: 10**12)
     monkeypatch.setattr(hardware, "detect", lambda: SMALL)
+    # Keryx's live calls, never the running service's own: none is live unless a test says.
+    monkeypatch.setattr(voice, "live_calls", lambda settings: found.live)
     return found
 
 
@@ -833,3 +837,20 @@ def test_download_json_ends_with_exactly_one_ending(machine, monkeypatch, arrang
     assert result.stderr == ""
     if code == 2:  # a refusal: nothing was tried
         assert machine.scripts == [] and machine.fetches == []
+
+
+@pytest.mark.parametrize("as_json", [True, False])
+def test_use_here_over_a_live_call_is_refused_before_anything(machine, as_json):
+    ConfigStore().set({**WORDS, "VOICE_BASE_URL": "http://127.0.0.1:8765/v1"})
+    before = ConfigStore().stored()
+    machine.live = 1
+
+    result = runner.invoke(app, ["voice", "use", "here", *(["--json"] if as_json else [])])
+
+    assert result.exit_code == 1
+    if as_json:
+        assert events_of(result) == [{"event": "error", "message": voice.LIVE_CALL,
+                                      "detail": "1 live call(s)"}]
+    else:
+        assert voice.LIVE_CALL in result.stderr
+    assert machine.scripts == [] and ConfigStore().stored() == before

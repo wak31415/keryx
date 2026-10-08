@@ -163,6 +163,8 @@ class Probes:
     speech_python: Callable[[], str | None] = runtimes.speech_to_speech_python
     fetch_speech: Callable[..., str | None] = speech.fetch
     models_ready: Callable[[Settings], bool] = speech.models_ready
+    #: How many calls the running Keryx has live, before the voice server here is restarted.
+    live_calls: Callable[[Settings], int | None] = voice.live_calls
 
 
 @dataclass

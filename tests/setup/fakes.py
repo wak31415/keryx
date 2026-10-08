@@ -213,6 +213,8 @@ class FakeWorld:
     #: Whether the voice's speech models are in the cache, and what fetching them says.
     speech_ready: bool = True
     fetched: str | None = None
+    #: How many calls the running Keryx has live (None: it is not answering).
+    live: int | None = None
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
@@ -290,6 +292,7 @@ class FakeWorld:
             fetch_speech=lambda python, repos, progress: self.calls.append(
                 ("fetch", [repo.id for repo in repos])) or self.fetched,
             models_ready=lambda settings: self.speech_ready,
+            live_calls=lambda settings: self.calls.append(("live_calls",)) or self.live,
         )
 
     def _download(self, url, dest, *, size, sha256, progress):

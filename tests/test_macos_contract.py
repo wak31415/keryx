@@ -583,6 +583,8 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
         active=lambda target: target.unit != "dev.keryx.tunnel"))
     monkeypatch.setattr(units, "run_captured", lambda argv: (0, "loaded\n", ""))
     monkeypatch.setattr(voice, "PLATFORM", "darwin")
+    # No call is live: a switch of the voice may restart the voice server here.
+    monkeypatch.setattr(voice, "live_calls", lambda settings: None)
     installers = tmp_path / "checkout" / "scripts"  # `keryx.cli.repo_root`, the suite's own
     installers.mkdir(parents=True)
     for name in ("install-launchd.sh", "install-systemd.sh"):

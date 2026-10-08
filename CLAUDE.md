@@ -285,7 +285,12 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   before the old unit is retired, and when it does not answer the old words are put back,
   the voice restarted onto them, and a voice that answers on neither has its unit removed.
   `voice_restart_needed` is only a voice here with no server running, which takes the words
-  when it starts. `models start --voice-llm [--json]`
+  when it starts. Nor is a call cut off: while a voice server runs here, `voice llm here|
+  shared|remote` and `voice use here` (and the wizard's voice here) refuse, exit 1, before
+  anything is touched while Keryx has a call live (`Probes.live_calls`,
+  `restart.health.health_probe`, as `keryx restart` and `migrate` ask; None, Keryx not
+  answering, goes on). A Cancel puts the old voice LLM's settings and unit back together
+  with a second Cancel held off (`voice.cancel_held_off`), without waiting for it to load. `models start --voice-llm [--json]`
   is `here`'s unit, wait and check alone, for `VOICE_LLM_MODEL` as it is (nothing saved; the
   `models start` stream). `voice --json` adds `llm` (`source`, `model`, `url`, `reachable`,
   `unit_installed`) and `pipelines` (`VOICE_PIPELINE`'s values per mode), and `needs` is

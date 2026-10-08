@@ -74,3 +74,14 @@ def test_a_download_that_stops_installs_no_voice_unit(make_ctx, world):
 
     assert ctx.ui.lines("error") == ["The voice's speech models could not be downloaded."]
     assert world.fetched in ctx.ui.lines("note") and scripts(world) == []
+
+
+def test_the_voice_here_is_not_restarted_over_a_live_call(make_ctx, world):
+    ConfigStore().set({**WORDS, "VOICE_BASE_URL": "http://127.0.0.1:8765/v1"})
+    world.s2s, world.live = "/bin/s2s", 1
+    ctx = make_ctx([("model run", "keep"), ("voice on a call", "here")])
+
+    local_models.run_section(ctx)
+
+    assert ctx.ui.lines("error") == [voice.LIVE_CALL]
+    assert scripts(world) == []

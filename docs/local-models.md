@@ -87,7 +87,9 @@ memory. A voice that works before a switch works after it, whether the switch su
 not: a voice server running here is restarted onto the new words and seen to answer before
 the old voice LLM is let go, and is put back on the old words when it does not; a failed
 switch from one model of the voice's own to another starts the old one again first. Any
-key a server echoes back is redacted from what is said.
+key a server echoes back is redacted from what is said. While a call is live on the voice
+server here, neither `keryx voice llm` nor `keryx voice use here` restarts it: each refuses
+(exit 1) before touching anything, so run it again once the line is clear.
 `keryx voice use server` saves a server only once it has opened a Realtime session, unless
 `--keep-anyway`. The key already saved is kept and asked with, unless `--key-stdin` replaces
 it or `--clear-key` forgets it. Either way Keryx takes the new voice up when it restarts.
