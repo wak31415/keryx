@@ -10,7 +10,14 @@ from pathlib import Path
 
 import pytest
 
-from keryx.config import Settings, keryx_home, pin_file, read_enrolled_pin, write_enrolled_pin
+from keryx.config import (
+    Settings,
+    keryx_home,
+    permissions,
+    pin_file,
+    read_enrolled_pin,
+    write_enrolled_pin,
+)
 from keryx.config.files import dump_toml, read_toml, write_private
 from keryx.config.settings import ConfigFileError, _TomlLayer, env_var_name, field_for
 from keryx.config.store import (
@@ -501,7 +508,7 @@ def test_the_renamed_env_is_owner_only(store, tmp_path):
 
 # --- a renamed setting ------------------------------------------------------------------
 
-#: Each rename of 2026-10-07, the old name first: read for a release, never written.
+#: Each rename of 2026-10-07, the old name first: read for a release, never created.
 RENAMES = [("SUBAGENT_MODEL", "CLAUDE_MODEL", "claude-sonnet-5"),
            ("LLM_SERVER_MODEL", "AGENT_SERVER_MODEL", "qwen3-coder-30b-a3b"),
            ("LLM_SERVER_PORT", "AGENT_SERVER_PORT", 8099)]
@@ -524,15 +531,78 @@ def test_a_store_that_still_has_the_old_name_keeps_working(store, old, new, valu
     assert store.source_of(old) == store.source_of(new) == "config.toml"
 
 
-@pytest.mark.parametrize(("old", "new", "value"), RENAMES)
-def test_the_next_write_moves_the_old_name_to_the_new_one(store, old, new, value):
-    """Not left behind under the new one, where an unset would bring the old value back."""
-    write_private(store.config_path, dump_toml({old: "stale" if old != "LLM_SERVER_PORT"
-                                                else 8098}, ""))
+#: Every alias pair, old name first, with a value each can hold: the three renames of
+#: 2026-10-07 and the two of 2026-09-29.
+ALIASES = [*RENAMES, ("JARVIS_CHECKOUT", "KERYX_CHECKOUT", "/srv/keryx"),
+           ("FAKE_AGENTS", "DEMO_MODE", True)]
+
+
+def _stale(value):
+    return {int: 8098, bool: False}.get(type(value), "/srv/stale" if str(value).startswith("/")
+                                        else "stale")
+
+
+@pytest.mark.parametrize(("old", "new", "value"), ALIASES)
+def test_an_old_name_already_stored_is_kept_in_step_with_the_new_one(store, old, new, value):
+    """An older build running behind reads only the old name: it must see the new value,
+    and an unset must not leave it holding the stale one."""
+    write_private(store.config_path, dump_toml({old: _stale(value)}, ""))
 
     store.set({new: value})
-    assert read_toml(store.config_path) == {new: value}
+    assert read_toml(store.config_path) == {old: value, new: value}
 
     store.unset([new])
     assert read_toml(store.config_path) == {}
     assert store.source_of(new) == FROM_DEFAULT
+
+
+@pytest.mark.parametrize(("old", "new", "value"), ALIASES)
+def test_a_store_without_the_old_name_never_gains_it(store, old, new, value):
+    store.set({new: value})
+    store.set({old: value})
+    store.unset([old])
+    store.set({new: value})
+
+    assert read_toml(store.config_path) == {new: value}
+
+
+@pytest.mark.parametrize(("old", "new", "writable"), [
+    ("SUBAGENT_MODEL", "CLAUDE_MODEL", False),  # a lock: CLAUDE_MODEL is writable by default
+    ("LLM_SERVER_MODEL", "AGENT_SERVER_MODEL", True),  # an unlock: it is not
+])
+def test_an_override_under_an_old_name_still_holds(store, old, new, writable):
+    write_private(store.config_path, dump_toml({"service_writable": {old: writable}}, ""))
+
+    assert store.overrides() == {new: writable}
+    assert permissions.service_writable(new, store.overrides()) is writable
+    if writable:
+        store.set({new: "qwen3-coder-30b-a3b"}, actor="service")
+    else:
+        with pytest.raises(ConfigError, match="has not unlocked"):
+            store.set({new: "claude-sonnet-5"}, actor="service")
+
+
+def test_the_current_names_override_wins_over_the_old_ones(store):
+    write_private(store.config_path, dump_toml({"service_writable": {
+        "CLAUDE_MODEL": True, "SUBAGENT_MODEL": False}}, ""))
+
+    assert store.overrides() == {"CLAUDE_MODEL": True}
+
+
+def test_an_override_is_written_under_the_new_name_and_an_old_entry_kept_in_step(store):
+    write_private(store.config_path, dump_toml({"service_writable": {
+        "SUBAGENT_MODEL": False}}, ""))
+
+    store.unlock("CLAUDE_MODEL")
+    assert read_toml(store.config_path)["service_writable"] == {
+        "SUBAGENT_MODEL": True, "CLAUDE_MODEL": True}
+
+    store.lock("SUBAGENT_MODEL")  # either name, the same rule
+    assert read_toml(store.config_path)["service_writable"] == {
+        "SUBAGENT_MODEL": False, "CLAUDE_MODEL": False}
+
+
+def test_an_override_never_creates_an_old_name(store):
+    store.lock("CLAUDE_MODEL")
+
+    assert read_toml(store.config_path)["service_writable"] == {"CLAUDE_MODEL": False}

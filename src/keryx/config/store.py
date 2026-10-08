@@ -129,6 +129,11 @@ def validate(values: Mapping[str, Any]) -> dict[str, Any]:
     return {key: dumped[name] for name, key in fields.items()}
 
 
+def _older_names(name: str, *tables: Mapping[str, Any]) -> list[str]:
+    """The field's older names (`SUBAGENT_MODEL`) that any of `tables` already holds."""
+    return [older for older in env_var_names(name)[1:] if any(older in t for t in tables)]
+
+
 def default_value(key: str) -> Any:
     """What `key` is when nothing sets it, in the same JSON shape the store keeps."""
     name = field_for(key)
@@ -191,11 +196,18 @@ class ConfigStore:
         return values
 
     def overrides(self) -> dict[str, bool]:
-        """The owner's `lock`/`unlock` decisions: `{KEY: may the service write it}`."""
+        """The owner's `lock`/`unlock` decisions: `{KEY: may the service write it}`.
+
+        By the current name, whichever name a decision was recorded under (`SUBAGENT_MODEL`
+        before 2026-10-07); where both are there, the current name's wins.
+        """
         table = self._config().get("service_writable", {})
-        return {str(key): bool(value) for key, value in table.items()} if isinstance(
-            table, dict
-        ) else {}
+        if not isinstance(table, dict):
+            return {}
+        entries = sorted(table.items(), key=lambda item: str(item[0]).strip().upper() == (
+            canonical_key(str(item[0]))
+        ))
+        return {canonical_key(str(key)): bool(value) for key, value in entries}
 
     def secrets_in_config(self) -> list[str]:
         """Secrets somebody put in `config.toml` by hand, where a bug report would paste them."""
@@ -333,11 +345,14 @@ class ConfigStore:
 
     def _override(self, key: str, writable: bool) -> None:
         key = canonical_key(key)
-        if field_for(key) is None or key in NOT_STORED:
+        name = field_for(key)
+        if name is None or key in NOT_STORED:
             raise ConfigError(f"there is no setting called {key}")
         config = self._config()
         table = config.setdefault("service_writable", {})
         table[key] = writable
+        for older in _older_names(name, table):  # kept in step, as `_write` keeps values
+            table[older] = writable
         write_private(self.config_path, dump_toml(config, CONFIG_HEADER))
 
     def mark_walked(self, section: str, walked: bool = True) -> None:
@@ -393,14 +408,16 @@ class ConfigStore:
             name = field_for(key)
             assert name is not None
             home, other = (secrets, config) if is_secret(name) else (config, secrets)
-            other.pop(key, None)
-            for older in env_var_names(name)[1:]:  # read until now, never written: gone
-                config.pop(older, None)
-                secrets.pop(older, None)
-            if value is None:
-                home.pop(key, None)
-            else:
-                home[key] = value
+            # An older name already stored (`LLM_SERVER_MODEL`) is what a build running
+            # behind reads, so it is kept in step for the release it is read in: the same
+            # value, or gone with the current one. Never created where it is not there.
+            keys = [key, *_older_names(name, config, secrets)]
+            for each in keys:
+                other.pop(each, None)
+                if value is None:
+                    home.pop(each, None)
+                else:
+                    home[each] = value
         if secrets != before[1]:
             write_private(self.secrets_path, dump_toml(secrets, SECRETS_HEADER))
         if config != before[0]:

@@ -509,8 +509,12 @@ other built-in persona, or any name of the owner's. Three rulings:
   `JARVIS_HOME` is never followed: `serve` refuses until it is renamed. The same holds for a setting renamed later:
   its old name is an alias (`FAKE_AGENTS` → `DEMO_MODE`; `SUBAGENT_MODEL` → `CLAUDE_MODEL`,
   `LLM_SERVER_MODEL`/`_PORT` → `AGENT_SERVER_MODEL`/`_PORT`), `canonical_key` turns it into
-  the current one wherever a rule is asked, and nothing is ever stored under it: a store
-  that still holds the old name is read, and the next write of that setting removes it.
+  the current one wherever a rule is asked, and the store writes under the current name.
+  The old name is read, and kept in step where it is already stored, for one release;
+  never created: a write of the setting (or a `lock`/`unlock` of it) gives an old key that
+  is there the same value, an unset removes both, and a store without one never gains it,
+  so a build running behind still reads the owner's value. `[service_writable]` entries
+  are read by the current name, and the current name's wins where both are there.
 
 ## Trust has three levels
 
