@@ -2273,7 +2273,10 @@ def setup_profile(
             typer.echo(f"{question['id']}: {question['prompt']}")
         return
     outcome = profile.apply_answers(settings, _read_answers(), write=apply)
-    walked = apply and outcome["status"] != profile.REFUSED
+    # The wizard walks the section whenever it runs to its end, a memory too long for a call
+    # included; only answers that are not answers leave it unwalked.
+    invalid = outcome.pop("invalid")
+    walked = apply and not invalid
     if walked:
         ConfigStore().mark_walked(profile.SECTION)
     if as_json:

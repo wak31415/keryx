@@ -314,6 +314,7 @@ def test_a_preview_shows_the_document_and_writes_nothing(home):
 
     assert result.exit_code == 0
     assert outcome["status"] == "written" and not outcome["written"] and not outcome["walked"]
+    assert "invalid" not in outcome
     assert "- Works nights." in outcome["text"]
     assert not memory_path(home.data_dir).exists()
     assert "profile" not in ConfigStore().walked_sections()
@@ -344,7 +345,9 @@ def test_a_memory_too_long_is_a_problem_and_nothing_is_written(home):
     result, outcome = profile_json("--apply", answers={"facts": ["x" * MAX_MEMORY_CHARS]})
 
     assert result.exit_code == 1
-    assert outcome["status"] == "refused" and not outcome["walked"]
+    # The wizard walks the section after its own length refusal, and so does this.
+    assert outcome["status"] == "refused" and outcome["walked"]
+    assert "profile" in ConfigStore().walked_sections()
     [problem] = outcome["problems"]
     assert problem["id"] == "facts" and "a call reads" in problem["message"]
     assert not memory_path(home.data_dir).exists()
@@ -364,6 +367,7 @@ def test_an_answer_that_is_not_one_is_named_and_nothing_is_written(home, answers
     assert result.exit_code == 1
     assert [problem["id"] for problem in outcome["problems"]] == [question]
     assert not memory_path(home.data_dir).exists()
+    assert not outcome["walked"] and "profile" not in ConfigStore().walked_sections()
 
 
 @pytest.mark.parametrize("stdin", ["", "[1, 2]", "{not json"])

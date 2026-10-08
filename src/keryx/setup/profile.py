@@ -309,6 +309,7 @@ def apply_answers(
     Each answer that is not one is a problem, and then nothing is written at all.
     """
     problems = _answer_problems(answers)
+    invalid = bool(problems)
     replace = answers.get("replace") is True
     facts: list[str] = []
     status = REFUSED
@@ -334,6 +335,9 @@ def apply_answers(
                     assistant=settings.assistant_name, facts=facts, force=True)
     return {
         "status": status,
+        # Answers that are not answers, as opposed to a memory too long for a call: the
+        # wizard could not have been given the first, and walks the section after the second.
+        "invalid": invalid,
         "written": write and status == WRITTEN,
         "text": text,
         "chars": len(text or ""),
