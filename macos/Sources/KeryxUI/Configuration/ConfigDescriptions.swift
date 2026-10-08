@@ -24,6 +24,18 @@ enum ConfigDescriptions {
         "VOICE_MODE":
             "Where a call's voice runs: OpenAI Realtime, the speech pipeline on this Mac, or a Realtime server "
             + "elsewhere. Blank is worked out from VOICE_BASE_URL.",
+        "VOICE_PIPELINE":
+            "How a call's voice is built: one model that hears and speaks, or three — speech to text, an LLM and "
+            + "text to speech, as on this Mac. Blank is the only one the voice's mode offers today.",
+        "LOCAL_AGENT_BASE_URL":
+            "The server a local agent's model runs on — this Mac's model server, Ollama, LM Studio or a box of "
+            + "yours — as its address. Blank is no local agent.",
+        "LOCAL_AGENT_MODEL": "The model a local agent's task runs on, by its server's own name for it.",
+        "LOCAL_AGENT_API_KEY":
+            "The key that server asks for, if it asks for one. Your Anthropic and OpenAI keys are never sent there.",
+        "LOCAL_AGENT_API":
+            "Which harness drives the local model: Claude Code (Anthropic Messages) or Codex (OpenAI Responses). "
+            + "The server must speak that API.",
         "VOICE_LLM_MODEL":
             "The voice LLM's model: on this Mac, one from Local Models or a GGUF file's path; on a server elsewhere, "
             + "that server's own name for it. Not read while the voice shares the local agent's model.",

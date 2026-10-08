@@ -1,0 +1,10 @@
+{"event": "step", "step": "download", "message": "Downloading Qwen3.5 4B for the voice LLM (2.7 GB)", "detail": null}
+{"event": "progress", "step": "download", "done": 0, "total": 2700000000}
+{"event": "progress", "step": "download", "done": 2700000000, "total": 2700000000}
+{"event": "step", "step": "runtime", "message": "llama.cpp is installed.", "detail": "/opt/homebrew/bin/llama-server"}
+{"event": "step", "step": "unit", "message": "Installing the voice LLM server's service, for Qwen3.5 4B", "detail": null}
+{"event": "step", "step": "start", "message": "Loading Qwen3.5 4B into llama.cpp at http://127.0.0.1:8091/v1", "detail": null}
+{"event": "step", "step": "check", "message": "Asking the voice LLM's server which model it serves, Qwen3.5 4B", "detail": null}
+{"event": "step", "step": "configure", "message": "Saving the voice LLM: its own server here", "detail": null}
+{"event": "step", "step": "voice", "message": "Restarting the voice server here onto its new words", "detail": null}
+{"event": "done", "source": "here", "model": "qwen3.5-4b", "url": "http://127.0.0.1:8091/v1", "voice_restarted": true, "voice_restart_needed": false}

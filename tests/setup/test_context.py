@@ -68,3 +68,25 @@ def test_a_refused_save_is_said_and_changes_nothing(make_ctx):
     assert ctx.save({"PORT": "eighty"}) is False
     assert any("PORT" in line for line in ctx.ui.lines("error"))
     assert ctx.store.stored() == {}
+
+
+def test_the_voice_llms_probes_reach_the_same_code_the_command_line_does(monkeypatch):
+    """The wizard's `Probes` is `voice_llm.Probes` too: llama.cpp's download, a model's
+    pull, and a server's models — through a proxy only for one off this machine."""
+    from keryx.endpoints import Endpoint
+    from keryx.localmodels import pull, runtimes
+    from keryx.setup import context
+
+    seen: list = []
+    monkeypatch.setattr(runtimes, "install_llama_cpp",
+                        lambda cache, machine, get: seen.append(("llama", cache)) or "/bin/ls")
+    monkeypatch.setattr(pull, "pull", lambda settings, name, report: seen.append(name) or 0)
+    monkeypatch.setattr(context, "probe",
+                        lambda where, get: seen.append(get.keywords["trust_env"]))
+    probes = context.Probes()
+
+    assert probes.download_llama_cpp("cache", None, lambda done, total: None) == "/bin/ls"
+    assert probes.pull(None, "qwen3.5-4b", None) == 0
+    probes.remote_models(Endpoint.parse("http://127.0.0.1:8091/v1"))
+    probes.remote_models(Endpoint.parse("https://api.openai.com/v1"))
+    assert seen == [("llama", "cache"), "qwen3.5-4b", False, True]

@@ -1,0 +1,2 @@
+{"event": "step", "step": "configure", "message": "Saving the voice LLM: the local agent's model", "detail": null}
+{"event": "done", "source": "shared", "model": "qwen3-coder-30b-a3b", "url": "http://127.0.0.1:8090/v1", "voice_restarted": false, "voice_restart_needed": false}

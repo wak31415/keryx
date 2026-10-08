@@ -33,6 +33,9 @@ enum FixAction: Equatable, Sendable {
     case voiceHere
     /// `voice:download`: the voice's speech models downloaded.
     case voiceDownload
+    /// `voice:llm`: the voice's own LLM brought up — its server started, on Local Models;
+    /// or, with no model chosen for it yet, Voice, where one is.
+    case voiceLLM
     /// `phone:account`: the Twilio account sheet.
     case phoneAccount
     /// `phone:webhooks`: the Twilio number pointed here, after its question.
@@ -46,6 +49,7 @@ enum FixAction: Equatable, Sendable {
     static let screens: [String: FixAction] = [
         "pin": .pin, "service:install": .startKeryx, "service:start": .startKeryx, "models:start": .startModelServer,
         "models:choose": .chooseModel, "voice:here": .voiceHere, "voice:download": .voiceDownload,
+        "voice:llm": .voiceLLM,
         "phone:account": .phoneAccount, "phone:webhooks": .phoneWebhooks, "phone:tunnel": .phoneTunnel,
         "migrate": .migrate,
     ]
@@ -120,6 +124,13 @@ enum FixAction: Equatable, Sendable {
             return open("Set Up Voice on This Mac…", .setUpVoiceHere)
         case .voiceDownload:
             return SetupAction(title: "Download Speech Models", effect: .downloadVoiceModels)
+        case .voiceLLM:
+            guard let name = context.voice?.llm?.model else { return open("Choose the Voice LLM…", .show(.voice)) }
+            // Named but not on disk: the server cannot start it; `voice llm here` fetches it first.
+            if context.models?.models.first(where: { $0.name == name })?.downloaded == false {
+                return SetupAction(title: "Download and Start Voice LLM", effect: .setUpVoiceLLM(name))
+            }
+            return SetupAction(title: "Start Voice LLM Server", effect: .startVoiceLLMServer)
         case .phoneAccount:
             return open("Connect Twilio…", .phoneAccount)
         case .phoneWebhooks:

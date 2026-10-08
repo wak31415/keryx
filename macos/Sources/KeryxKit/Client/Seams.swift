@@ -4,16 +4,14 @@ import Foundation
 // then. Each is one small protocol here, or one optional field on a document model (marked
 // "SEAM" where it is declared, and listed in `ContractTests.awaitingCLI`):
 //
-// - `VoiceStatus.pipelines` — `voice --json` `pipelines`.
-// - `ModelsReport.recommended`, `.recommendedWithLocalVoice`, `.voiceLlmRecommended`,
-//   `.voiceLlmSeparate` — `models list --json`, the owner's rule applied by the CLI.
 // - `VOICE_LLM`, `VOICE_LLM_MODEL` — settings, read from `config list` when they are there.
 //   The voice's own model server (`models start --voice-llm`) gets its client method when
 //   the CLI has it; until then `voice use here` starts what the voice needs.
 //
-// Resolved (Task L): `AgentSmokeTesting` (`CLIClient` now adopts it), `PhoneTunnel.hostname`,
-// `SetupStep.deferrable`/`.deferred`, `SetupMarkResult.deferred`, and `config options
-// ASSISTANT_NAME`'s `has_options` — all in the contract now, so none is in `awaitingCLI`.
+// `awaitingCLI` is empty: `AgentSmokeTesting` (`CLIClient` now adopts it), `PhoneTunnel.
+// hostname`, `SetupStep.deferrable`/`.deferred`, `SetupMarkResult.deferred`, `config options
+// ASSISTANT_NAME`'s `has_options`, `VoiceStatus.pipelines`, `ModelsReport.recommended` and
+// its siblings, and `CatalogModel.fitsAsVoiceLlm` are all in the contract now.
 
 /// A coding agent asked to run a test task, as a stream (Task L: `keryx auth smoke NAME
 /// --json`, NAME `claude`, `codex` or `local`: `step`, then `done {ok, summary, detail}`,

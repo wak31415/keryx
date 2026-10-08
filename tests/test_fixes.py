@@ -8,7 +8,7 @@ from keryx.integrations.accounts import INTEGRATIONS
 
 @pytest.mark.parametrize("fix", [
     None, "pin", "service:install", "models:start", "models:choose", "voice:here",
-    "voice:download", "phone:account", "phone:webhooks", "phone:tunnel", "migrate",
+    "voice:download", "voice:llm", "phone:account", "phone:webhooks", "phone:tunnel", "migrate",
     "signin:claude", "signin:codex", "signin:gmail", "signin:google-workspace",
     "secret:OPENAI_API_KEY", "secret:TWILIO_AUTH_TOKEN", "setting:OWNER_NAME",
     "setting:PUBLIC_HOST", *(f"plugin:{name}" for name in plugins.PLUGINS),

@@ -1,0 +1,1 @@
+{"event": "error", "message": "That is not an address Keryx can use.", "detail": "VOICE_LLM_BASE_URL must be an http:// or https:// address"}

@@ -74,6 +74,8 @@ public struct PreviewClient: KeryxClient {
     let sshHostsReply: Result<SshHostsReport, KeryxError>
     let verifyReply: Result<VerifyResult, KeryxError>
     let modelServerScript: Script<ModelServerStarted>
+    let voiceLLMScript: Script<VoiceLLMChosen>
+    let voiceLLMServerScript: Script<ModelServerStarted>
     let voiceDownloadScript: Script<VoiceModelsDownloaded>
     let signInScript: Script<SignedIn>
     let profileReply: Result<ProfileQuestions, KeryxError>
@@ -113,6 +115,8 @@ public struct PreviewClient: KeryxClient {
         sshHosts: Result<SshHostsReport, KeryxError> = .success(PreviewData.sshHosts),
         verify: Result<VerifyResult, KeryxError> = .success(PreviewClient.verified),
         modelServer: Script<ModelServerStarted> = .replay,
+        voiceLLM: Script<VoiceLLMChosen> = .replay,
+        voiceLLMServer: Script<ModelServerStarted> = .replay,
         voiceDownload: Script<VoiceModelsDownloaded> = .replay,
         signIn: Script<SignedIn> = .replay,
         profile: Result<ProfileQuestions, KeryxError> = .success(PreviewData.profileQuestions),
@@ -151,6 +155,8 @@ public struct PreviewClient: KeryxClient {
         sshHostsReply = sshHosts
         verifyReply = verify
         modelServerScript = modelServer
+        voiceLLMScript = voiceLLM
+        voiceLLMServerScript = voiceLLMServer
         voiceDownloadScript = voiceDownload
         signInScript = signIn
         profileReply = profile
@@ -222,6 +228,10 @@ public struct PreviewClient: KeryxClient {
                 return VoiceSetupStream(stream, stop: { _ = continuation })
             }()
         }
+    }
+
+    public func chooseVoiceLLM(_ choice: VoiceLLMChoice) -> VoiceLLMStream {
+        Self.stream(voiceLLMScript, replay: PreviewData.voiceLLMHereLines)
     }
 
     /// `events`, then the end (`finishes`) or a wait until stopped — which, as the CLI does,
@@ -418,6 +428,15 @@ public struct PreviewClient: KeryxClient {
     public func stopModelServer() async throws -> ServiceResult {
         try check()
         return ServiceResult(ok: true, message: "removed dev.keryx.llm")
+    }
+
+    public func startVoiceLLMServer() -> ModelServerStream {
+        Self.stream(voiceLLMServerScript, replay: PreviewData.voiceLLMServerStartLines)
+    }
+
+    public func stopVoiceLLMServer() async throws -> ServiceResult {
+        try check()
+        return ServiceResult(ok: true, message: "removed dev.keryx.voice-llm")
     }
 
     public func downloadVoiceModels() -> VoiceDownloadStream {

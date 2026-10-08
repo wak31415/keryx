@@ -2,7 +2,9 @@ import pytest
 
 from keryx.localmodels.catalog import (
     MODELS,
+    VOICE_SERVER_GB,
     VOICES,
+    budget,
     by_key,
     fits,
     persona_voice,
@@ -39,25 +41,77 @@ def test_ollama_pulls_the_same_file_from_hugging_face():
 
 
 @pytest.mark.parametrize(
-    ("machine", "reserve", "expected"),
+    ("machine", "voice_here", "expected"),
     [
-        (RTX_5090, 0, "qwen3-coder-30b-a3b"),  # the tested one wins when it fits
-        (RTX_5090, 3, "qwen3-coder-30b-a3b"),
-        (MAC_128, 0, "qwen3-coder-30b-a3b"),
-        (RTX_4060, 0, "qwen3.5-4b"),  # otherwise the largest that fits
-        (Hardware("cuda", "RTX 4080", 16, 64), 0, "gpt-oss-20b"),
-        (TINY, 0, None),
+        (RTX_5090, False, "qwen3-coder-30b-a3b"),  # the tested one wins when it fits
+        (RTX_5090, True, "qwen3-coder-30b-a3b"),
+        (MAC_128, False, "qwen3-coder-30b-a3b"),
+        (RTX_4060, False, "qwen3.5-4b"),  # otherwise the largest that fits
+        (Hardware("cuda", "RTX 4080", 16, 64), False, "gpt-oss-20b"),
+        (TINY, False, None),
     ],
 )
-def test_recommend(machine, reserve, expected):
-    best = recommend(machine, reserve_gb=reserve)
+def test_recommend(machine, voice_here, expected):
+    best = recommend(machine, voice_here=voice_here)
     assert (best.key if best else None) == expected
 
 
 def test_the_voice_servers_share_is_kept_free():
     tested = by_key("qwen3-coder-30b-a3b")
     tight = Hardware("cuda", "RTX 4090", 26.0, 64)
-    assert fits(tested, tight) and not fits(tested, tight, reserve_gb=3)
+    assert fits(tested, tight) and not fits(tested, tight, voice_here=True)
+
+
+# --- the budget: the agent's model, the voice's own, and the speech models ----------------
+
+#: Macs by their memory; a Mac gives a model 0.75 of it.
+MACS = [Hardware("metal", "Apple silicon", 0, gb)
+        for gb in (8, 16, 24, 32, 36, 48, 64, 96, 128)]
+CODER, GPT_20B, GPT_120B = by_key("qwen3-coder-30b-a3b"), by_key("gpt-oss-20b"), by_key(
+    "gpt-oss-120b")
+SMALL, NINE = by_key("qwen3.5-4b"), by_key("qwen3.5-9b")
+
+
+def smallest_mac(agent, voice_llm):
+    """The smallest Mac the design's table says holds `agent` and `voice_llm` (None: shared)
+    with the voice here."""
+    gb = voice_llm.memory_gb if voice_llm is not None else 0.0
+    return next(mac.ram_gb for mac in MACS
+                if fits(agent, mac, voice_here=True, voice_llm_gb=gb))
+
+
+@pytest.mark.parametrize(("agent", "voice_llm", "total", "mac", "on_a_5090"), [
+    (CODER, None, 28, 48, True),       # shared: the agent's model and the speech models
+    (CODER, SMALL, 34, 48, False),
+    (CODER, NINE, 37, 64, False),
+    (CODER, GPT_20B, 44, 64, False),
+    (CODER, CODER, 53, 96, False),     # the same model again, on a server of its own
+    (GPT_20B, SMALL, 25, 36, True),    # the design's table said 48; a 36 GB Mac gives 27
+    (GPT_120B, SMALL, 79, 128, False),
+])
+def test_the_budget_is_the_designs_memory_table(agent, voice_llm, total, mac, on_a_5090):
+    gb = voice_llm.memory_gb if voice_llm is not None else 0.0
+
+    assert budget(agent.memory_gb, voice_llm_gb=gb, voice_here=True) == total
+    assert smallest_mac(agent, voice_llm) == mac
+    assert fits(agent, RTX_5090, voice_here=True, voice_llm_gb=gb) is on_a_5090
+
+
+def test_a_voice_elsewhere_costs_nothing_here_and_its_llm_only_when_it_is_here():
+    # A remote or cloud voice LLM: the agent and the speech models, as today.
+    assert budget(25, voice_here=True) == 25 + VOICE_SERVER_GB
+    # The voice not here: no speech models, and a voice LLM only while it runs here.
+    assert budget(25) == 25
+    assert budget(25, voice_llm_gb=6) == 31
+    assert budget(0, voice_llm_gb=9, voice_here=True) == 12
+
+
+def test_recommend_reserves_the_voices_own_llm_too():
+    mac_48 = MACS[5]  # 36 GB for models
+    best = recommend(mac_48, voice_here=True, voice_llm_gb=9)
+    # The tested 25 GB model and a 9 GB voice LLM need 37: the largest that fits is next.
+    assert best.key == "qwen3.8-27b"
+    assert recommend(mac_48, voice_here=True, voice_llm_gb=6).key == CODER.key
 
 
 def test_each_persona_has_a_local_voice_and_any_other_name_the_default():

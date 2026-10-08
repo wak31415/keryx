@@ -145,6 +145,11 @@ package enum WizardWording {
             : "\(assistant) thinks with the work model, so answers come a little slower."
     }
     package static let sameAsWork = "The work model"
+    /// "Thinks" while the voice's words come from elsewhere, chosen in Voice.
+    package static let asSetNow = "As Set in Voice"
+    package static let loading = "Loading…"
+    package static let chooseModel = "Choose a Model"
+    package static let keptWords = "Its words stay as they are set in Voice."
 
     /// "Apple silicon, 36 GB": this Mac, as the models see it.
     package static func machine(_ hardware: Hardware) -> String {

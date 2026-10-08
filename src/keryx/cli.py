@@ -1183,6 +1183,10 @@ def plugins_command(
         plugins_list(as_json)
 
 
+def _key(entry: catalog.ModelEntry | None) -> str | None:
+    return entry.key if entry is not None else None
+
+
 @models_app.command("list")
 def models_list(
     as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
@@ -1190,17 +1194,22 @@ def models_list(
     """The models Keryx can download, which fit this machine, and the local voices."""
     settings = _configure_readonly()
     machine = hardware.detect()
-    reserve = catalog.VOICE_SERVER_GB if settings.voice_base_url else 0.0
-    best = catalog.recommend(machine, reserve_gb=reserve)
+    first = voice_llm.first_set_up(settings, ConfigStore().source_of("VOICE_LLM", settings))
+    advice = use.recommendations(settings, machine, first_set_up=first)
+    voice_here = settings.voice_mode == "here"
+    reserved = advice.chosen_gb
+    agent_gb = use.agent_memory_gb(settings)
     rows = [
         {
             "name": entry.key,
             "title": entry.title,
             "size_gb": entry.size_gb,
             "needs_gb": entry.memory_gb,
-            "fits": catalog.fits(entry, machine, reserve_gb=reserve),
+            "fits": catalog.fits(entry, machine, voice_here=voice_here, voice_llm_gb=reserved),
+            "fits_with_voice_llm": advice.fits_with_voice_llm(entry),
+            "fits_as_voice_llm": use.fits_as_voice_llm(entry, machine, agent_gb=agent_gb),
             "downloaded": download.is_downloaded(settings.cache_dir, entry),
-            "recommended": entry is best,
+            "recommended": entry is advice.recommended,
             "tested": entry.tested,
             "note": entry.note,
         }
@@ -1212,6 +1221,10 @@ def models_list(
                          machine.model_memory_gb},
             "models_dir": str(download.models_dir(settings.cache_dir)),
             "models": rows,
+            "recommended": _key(advice.recommended),
+            "recommended_with_local_voice": _key(advice.with_local_voice),
+            "voice_llm_recommended": advice.voice_llm,
+            "voice_llm_separate": advice.voice_llm_separate,
             "voices": [{"name": name, "sounds": sounds} for name, sounds in catalog.VOICES],
             "servers": use.server_status(settings, installed=use.unit_installed,
                                          probe=use.probe, which=runtimes.which),
@@ -1227,6 +1240,9 @@ def models_list(
         ])
         typer.echo(f"{row['name']:<22} {row['size_gb']:>5} GB  needs {row['needs_gb']:>3} GB  "
                    f"{marks}— {row['note']}")
+    words = advice.voice_llm or "the agent's model"
+    typer.echo(f"# with the voice here: {_key(advice.with_local_voice) or 'nothing fits'} for "
+               f"the agent, and the voice's words from {words}")
     typer.echo("\n# voices for the local voice server (VOICE_SERVER_VOICE)")
     for name, sounds in catalog.VOICES:
         typer.echo(f"{name:<22} {sounds}")

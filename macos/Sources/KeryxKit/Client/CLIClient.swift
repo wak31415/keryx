@@ -161,6 +161,37 @@ public struct CLIClient: KeryxClient, AgentSmokeTesting {
                       stoppedWithoutSaying: VoiceSetupEvent.stoppedWithoutSaying)
     }
 
+    /// `voice llm shared|here MODEL|remote URL --model M`, ending as `pull` does; no
+    /// timeout, since a model of its own is downloaded and loaded first. A model or an
+    /// address that starts with "-" is still a value, after `--`; a typed key goes on stdin.
+    public func chooseVoiceLLM(_ choice: VoiceLLMChoice) -> VoiceLLMStream {
+        switch choice {
+        case .shared:
+            return events(["voice", "llm", "shared", "--json"], stopGrace: Self.putBackGrace)
+        case let .here(model):
+            return events(["voice", "llm", "here"] + Self.value(model, flags: ["--json"]), stopGrace: Self.putBackGrace)
+        case let .remote(url, model, key):
+            var flags = ["--model=" + model]
+            let sent = key.toSend
+            if sent != nil { flags.append("--key-stdin") }
+            if key == .clear { flags.append("--clear-key") }
+            flags.append("--json")
+            return events(["voice", "llm", "remote"] + Self.value(url, flags: flags),
+                          stdin: sent.map { Data($0.utf8) }, stopGrace: Self.putBackGrace)
+        }
+    }
+
+    /// How long a stopped `voice llm` is given before SIGKILL: stopped part way, it puts back
+    /// the words it was replacing — the old server reinstalled, started and checked, the voice
+    /// moved back — with Cancel held off, and the usual few seconds would cut that in half.
+    public static let putBackGrace: Duration = .seconds(30)
+
+    /// `value` after `flags` — and after `--` when it starts with "-", so it is never read
+    /// as an option.
+    static func value(_ value: String, flags: [String]) -> [String] {
+        value.hasPrefix("-") ? flags + ["--", value] : [value] + flags
+    }
+
     // MARK: - Setup
 
     public func setupPlan() async throws -> SetupPlan {
@@ -349,6 +380,15 @@ public struct CLIClient: KeryxClient, AgentSmokeTesting {
         try await decode(["models", "stop", "--json"], timeout: Self.installerTimeout)
     }
 
+    /// As `startModelServer`, for the voice LLM's own server.
+    public func startVoiceLLMServer() -> ModelServerStream {
+        events(["models", "start", "--voice-llm", "--json"], stopGrace: Self.putBackGrace)
+    }
+
+    public func stopVoiceLLMServer() async throws -> ServiceResult {
+        try await decode(["service", "uninstall", "--voice-llm", "--json"], timeout: Self.installerTimeout)
+    }
+
     public func downloadVoiceModels() -> VoiceDownloadStream {
         events(["voice", "download", "--json"])
     }
@@ -444,10 +484,11 @@ public struct CLIClient: KeryxClient, AgentSmokeTesting {
 
     /// A `StreamEvent` stream: `events` with its parse, its endings and its words.
     private func events<Done: StreamDone>(
-        _ subcommand: [String], interactive: Bool = false
+        _ subcommand: [String], interactive: Bool = false, stdin: Data? = nil, stopGrace: Duration? = nil
     ) -> StoppableStream<StreamEvent<Done>> {
         events(subcommand, parse: StreamEvent<Done>.parse, concludes: { $0.isTerminal },
-               stoppedWithoutSaying: Done.stoppedWithoutSaying, interactive: interactive)
+               stoppedWithoutSaying: Done.stoppedWithoutSaying, interactive: interactive, stdin: stdin,
+               stopGrace: stopGrace)
     }
 
     /// `subcommand`'s stdout as events, which ends normally only once one that `concludes`
@@ -457,10 +498,11 @@ public struct CLIClient: KeryxClient, AgentSmokeTesting {
     private func events<Event: Sendable>(
         _ subcommand: [String], parse: @escaping @Sendable (String) -> Event?,
         concludes: @escaping @Sendable (Event) -> Bool, stoppedWithoutSaying: String,
-        interactive: Bool = false
+        interactive: Bool = false, stdin: Data? = nil, stopGrace: Duration? = nil
     ) -> StoppableStream<Event> {
         let command = Self.name(subcommand)
-        let request = request(subcommand, timeout: nil)
+        var request = request(subcommand, stdin: stdin, timeout: nil)
+        request.stopGrace = stopGrace
         let lines = interactive ? runner.interactiveLines(request) : runner.lines(request)
         let events = AsyncThrowingStream<Event, Error> { continuation in
             let task = Task {

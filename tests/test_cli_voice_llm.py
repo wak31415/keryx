@@ -40,6 +40,7 @@ class Machine:
         self.wait: object = None
         self.pulls: list[str] = []
         self.listed = Probe(True, ("gpt-5-mini",))
+        self.live: int | None = None
         self.asked: list[tuple[str, str | None]] = []
 
     def run(self, argv) -> int:
@@ -77,6 +78,8 @@ def machine(monkeypatch, tmp_path, every_agent_installed):
     monkeypatch.setattr(servers, "free_port", lambda port: port)
     monkeypatch.setattr(runtimes, "llama_server", lambda cache_dir, **_: "/usr/bin/llama-server")
     monkeypatch.setattr(hardware, "detect", lambda: MAC_8)
+    # Keryx's live calls, never the running service's own: none is live unless a test says.
+    monkeypatch.setattr(voice, "live_calls", lambda settings: found.live)
     monkeypatch.setattr(hardware, "free_bytes", lambda path: 10**12)
 
     def wait_for(endpoint, kind, timeout):
@@ -537,3 +540,64 @@ def test_voice_llm_shared_puts_the_old_words_back_when_the_voice_does_not_answer
     assert events[-1]["message"].endswith("it answers on the ones it had.")
     assert ConfigStore().stored()["VOICE_LLM"] == "here"
     assert machine.flags() == [["--voice"], ["--voice"]] and "voice_llm" in machine.units
+
+
+@pytest.mark.parametrize("command", [
+    ["voice", "llm", "here", SMALL.key, "--json"], ["voice", "llm", "shared", "--json"],
+    ["voice", "llm", "remote", "https://api.openai.com/v1", "--model", "gpt-5-mini", "--json"],
+])
+def test_voice_llm_is_refused_while_a_call_is_live_on_the_voice_here(machine, command):
+    from keryx.localmodels import voice_llm
+
+    ConfigStore().set({**WORDS, "VOICE_MODE": "here"})
+    before = ConfigStore().stored()
+    machine.units.add("voice")
+    machine.live = 1
+
+    result = runner.invoke(app, command)
+
+    [event] = ends_once(result, "error", 1)
+    assert (event["message"], event["detail"]) == (voice_llm.LIVE_CALL, "1 live call(s)")
+    assert machine.scripts == [] and machine.asked == [] and machine.pulls == []
+    assert ConfigStore().stored() == before
+
+
+# --- what the Mac app is told is what `voice use here` brings up -----------------------------
+
+AGENT_HERE = {"AGENT_SERVER_MODEL": "qwen3-coder-30b-a3b", **WORDS}
+
+
+@pytest.mark.parametrize(("machine_", "agent", "brought_up"), [
+    (Hardware("cuda", "RTX 5090", 31.8, 62.0), {}, NINE.key),       # the agent elsewhere
+    (Hardware("metal", "Apple silicon", 0.0, 48.0), {}, NINE.key),
+    (Hardware("metal", "Apple silicon", 0.0, 48.0), AGENT_HERE, SMALL.key),  # 25 + 6 + 3
+    (Hardware("metal", "Apple silicon", 0.0, 48.0),
+     {**AGENT_HERE, "AGENT_SERVER_MODEL": "gpt-oss-20b"}, NINE.key),  # 16 + 9 + 3
+    (Hardware("metal", "Apple silicon", 0.0, 36.0), AGENT_HERE, None),   # 34 > 27: shared
+])
+def test_models_list_recommends_exactly_the_voice_llm_voice_use_here_brings_up(
+    speech_ready, monkeypatch, machine_, agent, brought_up
+):
+    monkeypatch.setattr(hardware, "detect", lambda: machine_)
+    if agent:
+        ConfigStore().set(agent)
+    speech_ready.serving[WORDS["LOCAL_AGENT_BASE_URL"]] = (True, WORDS["LOCAL_AGENT_MODEL"])
+
+    told = json.loads(runner.invoke(app, ["models", "list", "--json"]).stdout)
+    ends_once(runner.invoke(app, ["voice", "use", "here", "--json"]), "done", 0)
+
+    stored = ConfigStore().stored()
+    assert told["voice_llm_recommended"] == stored.get("VOICE_LLM_MODEL") == brought_up
+    assert told["voice_llm_separate"] is (stored["VOICE_LLM"] == "here")
+    if brought_up is not None:
+        # What it recommends is also what the voice-model list itself says fits beside the
+        # agent (use.fits_as_voice_llm), so the two can never disagree.
+        row = next(row for row in told["models"] if row["name"] == brought_up)
+        assert row["fits_as_voice_llm"] is True
+    # And the agent's model it recommends beside that fits with it and the speech models.
+    pair = by_key(told["recommended_with_local_voice"])
+    voice_gb = by_key(brought_up).memory_gb if brought_up else 0.0
+    assert pair.memory_gb + voice_gb + 3 <= machine_.model_memory_gb
+    # Once chosen, it is what the app is told.
+    after = json.loads(runner.invoke(app, ["models", "list", "--json"]).stdout)
+    assert after["voice_llm_recommended"] == brought_up

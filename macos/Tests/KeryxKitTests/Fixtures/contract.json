@@ -188,7 +188,11 @@
     "models_dir": "string",
     "models": "array",
     "voices": "array",
-    "servers": "object"
+    "servers": "object",
+    "recommended": "string|null",
+    "recommended_with_local_voice": "string|null",
+    "voice_llm_recommended": "string|null",
+    "voice_llm_separate": "boolean|null"
    },
    "hardware": {
     "accelerator": "string",
@@ -206,7 +210,9 @@
     "fits": "boolean",
     "downloaded": "boolean",
     "recommended": "boolean",
-    "tested": "boolean"
+    "tested": "boolean",
+    "fits_with_voice_llm": "boolean|null",
+    "fits_as_voice_llm": "boolean|null"
    },
    "voices[]": {
     "name": "string",
@@ -320,7 +326,9 @@
     "openai_key_set": "boolean",
     "needs": "string|null",
     "here": "object",
-    "server": "object"
+    "server": "object",
+    "llm": "object|null",
+    "pipelines": "object|null"
    },
    "here": {
     "installed": "boolean",
@@ -336,6 +344,13 @@
    },
    "server": {
     "reachable": "boolean|null"
+   },
+   "llm": {
+    "source": "string",
+    "model": "string|null",
+    "url": "string|null",
+    "reachable": "boolean|null",
+    "unit_installed": "boolean"
    }
   },
   "voice use openai --json": {
@@ -530,7 +545,8 @@
     "agent": "object",
     "tunnel": "object",
     "llm": "object",
-    "voice": "object"
+    "voice": "object",
+    "voice_llm": "object|null"
    },
    "units.agent": {
     "installed": "boolean",
@@ -545,6 +561,10 @@
     "active": "boolean"
    },
    "units.voice": {
+    "installed": "boolean",
+    "active": "boolean"
+   },
+   "units.voice_llm": {
     "installed": "boolean",
     "active": "boolean"
    }
@@ -698,29 +718,6 @@
     "walked": "boolean"
    }
   },
-  "setup mark phone --json": {
-   "": {
-    "id": "string",
-    "walked": "boolean",
-    "deferred": "boolean|null"
-   }
-  },
-  "config options ASSISTANT_NAME --json": {
-   "": {
-    "key": "string",
-    "current": "string|null",
-    "options": "array",
-    "source": "string",
-    "live": "boolean",
-    "free_form": "boolean",
-    "error": "string|null"
-   },
-   "options[]": {
-    "value": "string",
-    "label": "string",
-    "detail": "string|null"
-   }
-  },
   "service stop --json": {
    "": {
     "ok": "boolean",
@@ -771,6 +768,35 @@
     "kind": "string",
     "unit": "string",
     "state": "string"
+   }
+  },
+  "setup mark phone --json": {
+   "": {
+    "id": "string",
+    "walked": "boolean",
+    "deferred": "boolean|null"
+   }
+  },
+  "config options ASSISTANT_NAME --json": {
+   "": {
+    "key": "string",
+    "current": "string|null",
+    "options": "array",
+    "source": "string",
+    "live": "boolean",
+    "free_form": "boolean",
+    "error": "string|null"
+   },
+   "options[]": {
+    "value": "string",
+    "label": "string",
+    "detail": "string|null"
+   }
+  },
+  "service uninstall --voice-llm --json": {
+   "": {
+    "ok": "boolean",
+    "message": "string"
    }
   }
  },
@@ -1093,6 +1119,159 @@
     "cancelled": 130
    }
   },
+  "voice llm shared --json": {
+   "events": {
+    "step": {
+     "step": "string",
+     "message": "string",
+     "detail": "string|null"
+    },
+    "progress": {
+     "step": "string",
+     "done": "integer",
+     "total": "integer|null"
+    },
+    "done": {
+     "source": "string",
+     "model": "string|null",
+     "url": "string|null",
+     "voice_restarted": "boolean",
+     "voice_restart_needed": "boolean"
+    },
+    "error": {
+     "message": "string",
+     "detail": "string|null"
+    },
+    "cancelled": {}
+   },
+   "terminal": [
+    "done",
+    "error",
+    "cancelled"
+   ],
+   "exit": {
+    "done": 0,
+    "error": [
+     1,
+     2
+    ],
+    "cancelled": 130
+   }
+  },
+  "voice llm here NAME --json": {
+   "events": {
+    "step": {
+     "step": "string",
+     "message": "string",
+     "detail": "string|null"
+    },
+    "progress": {
+     "step": "string",
+     "done": "integer",
+     "total": "integer|null"
+    },
+    "done": {
+     "source": "string",
+     "model": "string|null",
+     "url": "string|null",
+     "voice_restarted": "boolean",
+     "voice_restart_needed": "boolean"
+    },
+    "error": {
+     "message": "string",
+     "detail": "string|null"
+    },
+    "cancelled": {}
+   },
+   "terminal": [
+    "done",
+    "error",
+    "cancelled"
+   ],
+   "exit": {
+    "done": 0,
+    "error": [
+     1,
+     2
+    ],
+    "cancelled": 130
+   }
+  },
+  "voice llm remote URL --json": {
+   "events": {
+    "step": {
+     "step": "string",
+     "message": "string",
+     "detail": "string|null"
+    },
+    "progress": {
+     "step": "string",
+     "done": "integer",
+     "total": "integer|null"
+    },
+    "done": {
+     "source": "string",
+     "model": "string|null",
+     "url": "string|null",
+     "voice_restarted": "boolean",
+     "voice_restart_needed": "boolean"
+    },
+    "error": {
+     "message": "string",
+     "detail": "string|null"
+    },
+    "cancelled": {}
+   },
+   "terminal": [
+    "done",
+    "error",
+    "cancelled"
+   ],
+   "exit": {
+    "done": 0,
+    "error": [
+     1,
+     2
+    ],
+    "cancelled": 130
+   }
+  },
+  "models start --voice-llm --json": {
+   "events": {
+    "step": {
+     "step": "string",
+     "message": "string",
+     "detail": "string|null"
+    },
+    "progress": {
+     "step": "string",
+     "done": "integer",
+     "total": "integer|null"
+    },
+    "done": {
+     "url": "string",
+     "served_model": "string"
+    },
+    "error": {
+     "message": "string",
+     "detail": "string|null"
+    },
+    "cancelled": {}
+   },
+   "terminal": [
+    "done",
+    "error",
+    "cancelled"
+   ],
+   "exit": {
+    "done": 0,
+    "error": [
+     1,
+     2
+    ],
+    "cancelled": 130
+   }
+  },
   "auth smoke NAME --json": {
    "events": {
     "step": {
@@ -1141,7 +1320,8 @@
    "service:install",
    "service:start",
    "voice:download",
-   "voice:here"
+   "voice:here",
+   "voice:llm"
   ],
   "signins": [
    "claude",

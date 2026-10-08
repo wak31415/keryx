@@ -30,6 +30,9 @@ public final class VoiceSetup {
     /// The step the latest setup reached, kept once it has ended — so a failure can be
     /// shown at the step it stopped on. Empty until its first step.
     public private(set) var lastStep = ""
+    /// Every step the latest setup has announced, in the order it first did: a first
+    /// set-up's voice LLM (`voice_llm`) is shown only once it has come.
+    public private(set) var seenSteps: [String] = []
     /// What a terminal adds to the step under way (a path), for Show Details only.
     public private(set) var stepDetail: String?
     @ObservationIgnored private var run: UUID?
@@ -60,6 +63,7 @@ public final class VoiceSetup {
         self.run = run
         stopping = false
         lastStep = ""
+        seenSteps = []
         stepDetail = nil
         phase = .running(step: "", message: Self.starting, progress: nil)
         let stream = client.voiceHere(voice: voice)
@@ -109,6 +113,7 @@ public final class VoiceSetup {
         guard !isBusy else { return }
         run = nil
         lastStep = ""
+        seenSteps = []
         phase = .failed(message)
     }
 
@@ -166,7 +171,10 @@ public final class VoiceSetup {
     private func update(_ run: UUID, to phase: Phase?) {
         guard self.run == run else { return }
         if case .running = phase, stopping { return }
-        if case let .running(step, _, _) = phase { lastStep = step }
+        if case let .running(step, _, _) = phase {
+            lastStep = step
+            if !step.isEmpty, !seenSteps.contains(step) { seenSteps.append(step) }
+        }
         self.phase = phase
     }
 }

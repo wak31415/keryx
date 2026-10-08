@@ -60,6 +60,63 @@ enum RunStage: Equatable {
         ("start", "Start the voice server"),
     ]
 
+    /// `keryx voice use here`, with the steps a run announced (`seen`): a first set-up's
+    /// voice LLM (`voice_llm`) comes before the rest, and only when it came.
+    static func voice(seen: [String]) -> Order {
+        seen.contains("voice_llm") ? [("voice_llm", "Set up the voice's own model")] + voice : voice
+    }
+
+    /// `keryx voice llm here NAME`: `download`, `runtime`, `unit`, `start`, `check`,
+    /// `configure`.
+    static let voiceLLMHere: Order = [
+        ("download", "Download the model"),
+        ("runtime", "Set up llama.cpp"),
+        ("unit", "Install the background service"),
+        ("start", "Load the model"),
+        ("check", "Check the model it serves"),
+        ("configure", "Save the voice LLM"),
+    ]
+
+    /// `keryx voice llm remote URL`: `check`, `configure`.
+    static let voiceLLMRemote: Order = [
+        ("check", "Ask the server for its models"),
+        ("configure", "Save the voice LLM"),
+    ]
+
+    /// `keryx voice llm shared`: `configure`.
+    static let voiceLLMShared: Order = [("configure", "Save the voice LLM")]
+
+    /// The steps `voice llm` takes only sometimes: a voice server running here moved onto
+    /// the new words, the voice LLM it replaced brought back after a failure, its own server
+    /// retired once nothing uses it.
+    static let voiceLLMSometimes: [String: String] = [
+        "voice": "Restart the voice server onto it",
+        "restore": "Bring back the voice LLM it replaced",
+        "unit": "Retire the voice LLM's own server",
+    ]
+
+    /// `keryx voice llm` for `source`, with the steps it takes only sometimes where they came.
+    static func voiceLLM(_ source: VoiceLLMSource, seen: [String]) -> Order {
+        let base = switch source {
+        case .shared: voiceLLMShared
+        case .here: voiceLLMHere
+        case .remote: voiceLLMRemote
+        }
+        return order(base, sometimes: voiceLLMSometimes, seen: seen)
+    }
+
+    /// `base`, with each step of `sometimes` a run announced (`seen`) put after the step it
+    /// came after — at the end, when that is none of them.
+    static func order(_ base: Order, sometimes: [String: String], seen: [String]) -> Order {
+        var order = base
+        for (index, id) in seen.enumerated() where !order.contains(where: { $0.id == id }) {
+            guard let title = sometimes[id] else { continue }
+            let after = index > 0 ? order.firstIndex { $0.id == seen[index - 1] } : nil
+            order.insert((id, title), at: after.map { $0 + 1 } ?? order.endIndex)
+        }
+        return order
+    }
+
     /// `keryx voice download`: `install`, `download`.
     static let voiceDownload: Order = [
         ("install", "Install the voice server"),

@@ -257,6 +257,8 @@ def test_a_voice_server_that_does_not_come_up_is_not_made_the_voice(make_ctx, wo
 
 
 def test_the_voice_needs_a_local_model_for_its_words(make_ctx, world):
+    # No local agent, and no room for a model of the voice's own (6 + 3 > 6 GB).
+    world.machine = Hardware("metal", "Apple silicon", 0, 8)
     ctx = make_ctx([("model run", "none"), ("voice on a call", "here")])
 
     local_models.run_section(ctx)

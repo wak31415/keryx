@@ -15,7 +15,7 @@ public enum CommandLog {
         "tasks": ["list", "show", "usage"],
         "models": ["list", "pull", "use", "start", "stop"],
         "config": ["list", "set", "unset", "options", "verify"],
-        "voice": ["use", "download"],
+        "voice": ["use", "download", "llm"],
         "setup": ["plan", "mark", "profile", "project-context"],
         "pin": ["set"],
         "phone": ["numbers", "webhooks", "tunnel"],
@@ -31,6 +31,7 @@ public enum CommandLog {
     /// a value), nor is a plugin's setting.
     static let modes: [String: Set<String>] = [
         "voice use": ["openai", "server", "here"],
+        "voice llm": ["shared", "here", "remote"],
         "auth login": ["claude", "codex", "gmail", "google-workspace"],
         "auth logout": ["gmail", "google-workspace"],
         "auth smoke": ["claude", "codex", "local"],
@@ -46,12 +47,13 @@ public enum CommandLog {
         "--json", "--stdin", "--force", "--internal", "--limit", "--days", "--status",
         "--default-agent", "--disable", "--enable", "--llm", "--key-stdin", "--clear-key", "--keep-anyway",
         "--voice", "--pair", "--replace", "--apply", "--yes", "--preview", "--describe", "--explore", "--all",
+        "--voice-llm",
     ]
 
     /// The flags that take a value: the flag is logged, the value never — `--set=…` when
     /// written as one word, `--set …` as two.
     static let valueFlags: Set<String> = [
-        "--set", "--cluster", "--guard", "--client-file", "--runtime", "--folder",
+        "--set", "--cluster", "--guard", "--client-file", "--runtime", "--folder", "--model",
     ]
 
     static let elided = "…"

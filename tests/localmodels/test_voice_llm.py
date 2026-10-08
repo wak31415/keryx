@@ -68,11 +68,11 @@ class Machine:
 
     def __init__(self, run: Run, *, llama="/usr/bin/llama-server", wait=None, served=SMALL.key,
                  units=(), pulled=0, listed=LISTED, hardware=MAC_48,
-                 ports=None, codes=None, realtime=None) -> None:
+                 ports=None, codes=None, realtime=None, live=None) -> None:
         #: `wait`, `served` and `realtime` (the voice server's handshake) are each one answer,
         #: or a list of answers given in turn.
         self.run, self.llama, self.wait, self._served = run, llama, wait, served
-        self.realtime = realtime
+        self.realtime, self.live = realtime, live
         self.units, self.pulled, self.listed, self._hardware = set(units), pulled, listed, hardware
         self.ports, self.codes = ports or {}, codes or {}
 
@@ -114,6 +114,10 @@ class Machine:
 
     def models(self, endpoint: Endpoint):
         return Probe(False, problem="not asked")
+
+    def live_calls(self, settings) -> int | None:
+        self.run.lines.append(("live_calls",))
+        return self.live
 
     def free_port(self, port: int) -> int:
         self.run.lines.append(("free_port", port))
@@ -896,28 +900,129 @@ def test_a_voice_that_answers_on_neither_llm_has_its_unit_removed(settings, root
     assert "no Realtime socket" in detail and "no answer" in detail
 
 
-def test_a_switch_cancelled_while_it_loads_starts_the_one_it_replaced_again(settings, root):
+def test_a_switch_cancelled_while_it_loads_puts_the_one_it_replaced_back_at_once(settings,
+                                                                                 root):
+    """Cancelled: A's settings and A's unit go back together, Cancel held off between them,
+    with no wait for A to load — the owner asked to stop."""
     run = Run()
     own = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": NINE.key})
-    machine = Machine(run, units={"voice_llm"}, wait=[KeyboardInterrupt(), None],
-                      served=[NINE.key])
+    machine = Machine(run, units={"voice_llm"}, wait=[KeyboardInterrupt()])
 
     with pytest.raises(KeyboardInterrupt):
         here(own, machine, run, root)
 
     assert [argv[1:] for (argv,) in run.of("script")] == [
         ["--voice-llm"], ["--voice-llm", "--uninstall"], ["--voice-llm"]]
-    assert run.of("served") == [(OWN,)]  # A, checked again
+    assert run.of("wait") == [("models", OWN)] and run.of("served") == []
+
+
+def test_a_cancelled_switch_holds_off_a_second_cancel_while_it_puts_a_back(settings, root,
+                                                                           monkeypatch):
+    held: list[bool] = []
+    real = voice.cancel_held_off
+
+    @contextlib.contextmanager
+    def watched():
+        with real():
+            held.append(True)
+            yield
+
+    monkeypatch.setattr(voice, "cancel_held_off", watched)
+    run = Run()
+    own = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": NINE.key})
+
+    with pytest.raises(KeyboardInterrupt):
+        here(own, Machine(run, units={"voice_llm"}, wait=[KeyboardInterrupt()]), run, root)
+
+    assert len(held) >= 2  # around the save and A's unit, and around the reinstall itself
 
 
 def test_a_cancel_with_no_words_to_go_back_to_removes_the_voice_unit(settings, root):
+    """Cancelled while the voice restarts, and the old words could not be saved back: no
+    voice unit is left restarting with words that are not there."""
     run = Run()
     before = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": NINE.key,
                                          "voice_mode_explicit": "here"})
-    machine = Machine(run, units={"voice", "voice_llm"}, wait=[None, "no answer"],
-                      served=[SMALL.key], realtime=KeyboardInterrupt())
+    machine = Machine(run, units={"voice", "voice_llm"}, served=[SMALL.key],
+                      realtime=KeyboardInterrupt())
+
+    class ThirdRefused(Saved):
+        def __call__(self, values) -> bool:
+            super().__call__(values)
+            return len(self) < 3
+
+    with pytest.raises(KeyboardInterrupt):
+        here(before, machine, run, root, saved=ThirdRefused())
+
+    assert [argv[1:] for (argv,) in run.of("script")][-1] == ["--voice", "--uninstall"]
+
+
+def test_a_cancel_while_the_voice_restarts_puts_a_back_and_the_voice_on_it(settings, root):
+    run = Run()
+    before = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": NINE.key,
+                                         "voice_mode_explicit": "here"})
+    machine = Machine(run, units={"voice", "voice_llm"}, served=[SMALL.key],
+                      realtime=KeyboardInterrupt())
 
     with pytest.raises(KeyboardInterrupt):
         here(before, machine, run, root)
 
-    assert [argv[1:] for (argv,) in run.of("script")][-1] == ["--voice", "--uninstall"]
+    assert [argv[1:] for (argv,) in run.of("script")] == [
+        ["--voice-llm"], ["--voice"], ["--voice-llm"], ["--voice"]]
+
+
+def test_a_source_that_cannot_be_saved_and_cannot_be_put_back_says_both(settings, root):
+    run = Run()
+    own = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": NINE.key})
+
+    class AllButFirstRefused(Saved):
+        def __call__(self, values) -> bool:
+            super().__call__(values)
+            return len(self) == 1
+
+    code, _saved = here(own, Machine(run, units={"voice_llm"}), run, root,
+                        saved=AllButFirstRefused())
+
+    assert code == 1
+    assert run.of("error")[-1][0].startswith(voice_llm.NOT_PUT_BACK)
+
+
+# --- a live call is never cut off -----------------------------------------------------------
+
+
+VOICE_HERE = {"voice_mode_explicit": "here", **AGENT}
+
+
+@pytest.mark.parametrize("switch", ["here", "shared", "remote"])
+def test_a_switch_is_refused_while_a_call_is_live_on_the_voice_server_here(settings, root,
+                                                                           switch):
+    run = Run()
+    live = settings.model_copy(update=VOICE_HERE)
+    machine = Machine(run, units={"voice", "voice_llm"}, live=2)
+
+    if switch == "here":
+        code, saved = here(live, machine, run, root)
+    elif switch == "shared":
+        code, saved = shared(live, machine, run, root)
+    else:
+        code, saved = remote(live, machine, run, root)
+
+    assert code == 1 and saved == []
+    assert run.kinds() == ["live_calls", "error"]
+    assert run.of("error") == [(voice_llm.LIVE_CALL, "2 live call(s)", None)]
+
+
+@pytest.mark.parametrize(("update", "units", "live", "asked"), [
+    (VOICE_HERE, {"voice"}, 0, True),       # no call: it goes on
+    (VOICE_HERE, {"voice"}, None, True),    # Keryx not answering: it goes on, as restart does
+    (VOICE_HERE, set(), 3, False),          # no voice server running here: nothing to cut off
+    (AGENT, {"voice"}, 3, False),           # the voice is not here: calls do not use it
+])
+def test_a_switch_goes_on_when_no_call_could_be_cut_off(settings, root, update, units, live,
+                                                       asked):
+    run = Run()
+
+    code, _saved = shared(settings.model_copy(update=update),
+                          Machine(run, units=units, live=live), run, root)
+
+    assert code == 0 and (("live_calls",) in run.lines) is asked

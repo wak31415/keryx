@@ -67,6 +67,12 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         var modelServer: @Sendable (String?) -> ModelServerStream = { _ in
             ModelServerStream(AsyncThrowingStream { $0.finish() })
         }
+        var voiceLLM: @Sendable (VoiceLLMChoice) -> VoiceLLMStream = { _ in
+            VoiceLLMStream(AsyncThrowingStream { $0.finish() })
+        }
+        var voiceLLMServer: @Sendable () -> ModelServerStream = {
+            ModelServerStream(AsyncThrowingStream { $0.finish() })
+        }
         var voiceDownload: @Sendable () -> VoiceDownloadStream = {
             VoiceDownloadStream(AsyncThrowingStream { $0.finish() })
         }
@@ -235,6 +241,29 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         let wait = lock.withLock { replies.stopWait }
         await wait()
         return try answer("models stop") { $0.serviceResult }
+    }
+    func chooseVoiceLLM(_ choice: VoiceLLMChoice) -> VoiceLLMStream {
+        let make = lock.withLock {
+            let call = switch choice {
+            case .shared: "voice llm shared"
+            case let .here(model): "voice llm here \(model)"
+            case let .remote(url, model, key): "voice llm remote \(url) --model \(model)"
+                + (key.toSend != nil ? " --key-stdin" : key == .clear ? " --clear-key" : "")
+            }
+            recorded.append(call)
+            return replies.voiceLLM
+        }
+        return make(choice)
+    }
+    func startVoiceLLMServer() -> ModelServerStream {
+        let make = lock.withLock {
+            recorded.append("models start --voice-llm")
+            return replies.voiceLLMServer
+        }
+        return make()
+    }
+    func stopVoiceLLMServer() async throws -> ServiceResult {
+        try answer("service uninstall --voice-llm") { $0.serviceResult }
     }
     func downloadVoiceModels() -> VoiceDownloadStream {
         let make = lock.withLock {

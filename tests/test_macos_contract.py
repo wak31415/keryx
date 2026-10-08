@@ -111,6 +111,7 @@ COMMANDS = {
     "config list --json", "config options KEY --json", "approvals --json", "memory --json",
     "voice --json", "voice use openai --json", "voice use server URL --json",
     "service --json", "service install --json", "service uninstall --json",
+    "service uninstall --voice-llm --json",
     "models stop --json",
     "setup plan --json", "setup mark STEP --json", "pin --json", "pin set --json",
     "config verify KEY --json",
@@ -131,14 +132,7 @@ AWAITING: set[str] = {
 }
 #: Keys a command prints that the app has yet to name, by path, with the types the
 #: contract will give them: checked here until it does, and by the contract once it does.
-AWAITING_KEYS = {
-    "voice --json": {
-        "": {"llm": "object", "pipelines": "object"},
-        "llm": {"source": "string", "model": "string|null", "url": "string|null",
-                "reachable": "boolean|null", "unit_installed": "boolean"},
-        "pipelines": {"openai": "array", "here": "array", "server": "array"},
-    },
-}
+AWAITING_KEYS: dict[str, dict[str, dict[str, str]]] = {}
 #: The fix ids the CLI can send that the app has yet to name.
 AWAITING_FIX_IDS: set[str] = set()
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
@@ -581,6 +575,8 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
         active=lambda target: target.unit != "dev.keryx.tunnel"))
     monkeypatch.setattr(units, "run_captured", lambda argv: (0, "loaded\n", ""))
     monkeypatch.setattr(voice, "PLATFORM", "darwin")
+    # No call is live: a switch of the voice may restart the voice server here.
+    monkeypatch.setattr(voice, "live_calls", lambda settings: None)
     installers = tmp_path / "checkout" / "scripts"  # `keryx.cli.repo_root`, the suite's own
     installers.mkdir(parents=True)
     for name in ("install-launchd.sh", "install-systemd.sh"):
@@ -650,13 +646,25 @@ def test_keys_the_contract_awaits_are_already_printed_with_their_types(command, 
                 for node in nodes_at(document, path)
                 for problem in key_problems(node, keys)]
     assert not problems, f"{command}: {problems}"
-    # Real values, not only nulls that any `|null` meets.
-    assert document["llm"]["model"] == MODEL.key and document["llm"]["url"]
-    assert document["llm"]["reachable"] is True
+
+
+#: `models[].fits_with_voice_llm` for the seed's machine (36 GB, 27 for models) and agent
+#: (the tested model, 25 GB, running here): only what leaves room for the speech models and
+#: a voice LLM of its own fits beside it (`use.Recommendations.fits_with_voice_llm`).
+FITS_WITH_VOICE_LLM = {
+    "gpt-oss-120b": False, "qwen3.6-35b-a3b": False, "qwen3-coder-30b-a3b": False,
+    "qwen3.8-27b": False, "gpt-oss-20b": True, "gemma-4-12b": True, "qwen3.5-9b": True,
+    "qwen3.5-4b": True,
+}
 
 
 def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
-    """A null meets any `|null`, so the seed must make the nullable values worth checking."""
+    """A null meets any `|null`, so the seed must make the nullable values worth checking.
+
+    These also carry the real-value checks `AWAITING_KEYS` used to make while `voice --json`
+    and `models list --json`'s recommendation keys awaited the contract: it only checks
+    types now that the contract names them, so the values stay checked here.
+    """
     models = json.loads(runner.invoke(app, ["models", "list", "--json"]).stdout)
     tasks = json.loads(runner.invoke(app, ["tasks", "list", "--json"]).stdout)["tasks"]
     report = json.loads(runner.invoke(app, ["status", "--json"]).stdout)
@@ -680,6 +688,20 @@ def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
     assert voice_server["saved"]["VOICE_BASE_URL"] == f"{VOICE_SERVER}/v1"
     tunnel = json.loads(runner.invoke(app, ["phone", "tunnel", "--json"]).stdout)
     assert tunnel["hostname"] == "keryx.example.com"
+    # The voice's words: shared with the agent's model, running here and answering.
+    assert voice_status["pipelines"] == {"openai": ["speech-to-speech"],
+                                         "here": ["three-model"], "server": ["speech-to-speech"]}
+    assert voice_status["llm"] == {"source": "shared", "model": MODEL.key,
+                                   "url": "http://127.0.0.1:8090/v1", "reachable": True,
+                                   "unit_installed": True}
+    # The recommendations: the agent's model alone fills the seed's machine (27 GB for
+    # models, the tested model 25 GB), so there is no room for a voice LLM of its own.
+    assert models["recommended"] == "qwen3.8-27b"
+    assert models["recommended_with_local_voice"] == "qwen3.8-27b"
+    assert models["voice_llm_recommended"] is None
+    assert models["voice_llm_separate"] is False
+    assert {row["name"]: row["fits_with_voice_llm"] for row in models["models"]} == \
+        FITS_WITH_VOICE_LLM
 
 
 # --- the stream: models pull --json ------------------------------------------------------

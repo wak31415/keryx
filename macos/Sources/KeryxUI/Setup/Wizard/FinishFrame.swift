@@ -233,7 +233,7 @@ package struct FinishFrame: View {
     private func nextLocal(_ facts: WizardFacts) -> LocalStep {
         let intent = LocalIntent.of(wizard, facts: facts, voice: model.voice.value, models: model.models.value)
         let busy = model.downloads.isBusy || model.voiceDownloadRun.isBusy || model.modelServerRun.isBusy
-            || model.voiceSetup.isBusy || using
+            || model.voiceSetup.isBusy || model.voiceLLMBusy || using
         return LocalWork.next(intent, models: model.models.value, voice: model.voice.value, facts: facts, busy: busy)
     }
 
@@ -242,6 +242,21 @@ package struct FinishFrame: View {
     private func localLine(_ row: CheckRow, next: LocalStep, intent: LocalIntent) -> Line? {
         switch row {
         case .voice:
+            // Stopped part way, the CLI puts back what it was replacing: said, never a hang.
+            if model.voiceLLMRun.phase == .cancelling { return Line(tone: .working, text: VoiceLLMWording.stopping) }
+            if case let .running(activity)? = model.voiceLLMRun.phase {
+                let sizes = activity.progress.flatMap { RunSteps.sizes(done: $0.done, total: $0.total) }
+                return Line(tone: .working, text: VoiceWording.running(activity.message) + (sizes.map { " · \($0)" } ?? ""),
+                            fraction: activity.progress?.fraction, cancel: { stop(voiceLLMStep) })
+            }
+            if let failure = model.voiceLLMRun.failure {
+                if LocalRefusal.of(failure) == .liveCall {
+                    return Line(tone: .none, text: VoiceLLMWording.onACall(assistant),
+                                action: ("Try Again", { model.voiceLLMRun.dismiss(); take(next) }))
+                }
+                return Line(tone: .problem, text: failure.message, failure: failure,
+                            action: ("Try Again", { model.voiceLLMRun.dismiss(); take(next) }))
+            }
             if case let .running(activity)? = model.voiceDownloadRun.phase {
                 let sizes = activity.progress.flatMap { RunSteps.sizes(done: $0.done, total: $0.total) }
                 return Line(tone: .working, text: "Downloading the speech models" + (sizes.map { " · \($0)" } ?? ""),
@@ -258,6 +273,11 @@ package struct FinishFrame: View {
                 return Line(tone: .working, text: activity.message, cancel: { stop(.setUpVoice) })
             }
             if case let .failed(failure)? = model.voiceSetup.phase {
+                // A call in progress is a wait, not a failure.
+                if LocalRefusal.of(failure) == .liveCall {
+                    return Line(tone: .none, text: VoiceLLMWording.onACall(assistant),
+                                action: ("Try Again", { model.dismissThisMacSetup(); model.setUpThisMac() }))
+                }
                 return Line(tone: .problem, text: failure.message, failure: failure,
                             action: ("Try Again", { model.dismissThisMacSetup(); model.setUpThisMac() }))
             }
@@ -307,6 +327,17 @@ package struct FinishFrame: View {
         return nil
     }
 
+    /// The assistant's name, as the run's lines say it.
+    private var assistant: String? { Wording.assistant(model.status.value) }
+
+    /// The voice LLM step the run under way is, for its Cancel.
+    private var voiceLLMStep: LocalStep {
+        switch model.voiceLLMChoice {
+        case let .here(name)?: .voiceLLM(name)
+        default: .voiceLLMShared
+        }
+    }
+
     /// The model download under way (or that failed), as the step it is.
     private var downloading: LocalStep? {
         guard let current = model.downloads.current else { return nil }
@@ -336,6 +367,7 @@ package struct FinishFrame: View {
         switch step {
         case let .download(name): model.downloads.cancel(name)
         case .downloadSpeech: model.voiceDownloadRun.cancel()
+        case .voiceLLM, .voiceLLMShared: model.voiceLLMRun.cancel()
         case .setUpVoice: model.cancelThisMacSetup()
         case .startServer: model.cancelModelServer()
         case .use, .wait, .done: break
@@ -373,6 +405,12 @@ package struct FinishFrame: View {
         case .startServer:
             guard model.modelServerRun.failure == nil else { return }
             model.runModelServer()
+        case let .voiceLLM(name):
+            guard model.voiceLLMRun.failure == nil else { return }
+            model.chooseVoiceLLM(.here(model: name))
+        case .voiceLLMShared:
+            guard model.voiceLLMRun.failure == nil else { return }
+            model.chooseVoiceLLM(.shared)
         case .wait, .done:
             break
         }

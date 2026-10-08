@@ -157,6 +157,31 @@
     "has_options": false
   },
   {
+    "key": "VOICE_PIPELINE",
+    "title": "Voice pipeline",
+    "group": "voice",
+    "group_title": "Voice",
+    "tab": "voice",
+    "tab_title": "Voice",
+    "tab_order": 1,
+    "screen": null,
+    "advanced": true,
+    "description": "How a call's voice is built: `speech-to-speech`, one model that hears and speaks (OpenAI, or a Realtime server elsewhere), or `three-model`, speech-to-text, an LLM and text-to-speech (the voice here). Blank is the only one `VOICE_MODE` offers today; one it does not offer is refused.",
+    "required": false,
+    "set": false,
+    "source": "default",
+    "secret": false,
+    "service_writable": false,
+    "protected": true,
+    "value": null,
+    "type": "choice",
+    "choices": [
+      "speech-to-speech",
+      "three-model"
+    ],
+    "has_options": false
+  },
+  {
     "key": "OPENAI_WEB_SEARCH_MODEL",
     "title": "Web search model",
     "group": "voice",

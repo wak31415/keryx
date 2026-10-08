@@ -54,13 +54,14 @@ from keryx.config import (
 )
 from keryx.config.files import HOME_ENV, LEGACY_HOME_ENV
 from keryx.config.permissions import is_protected
-from keryx.config.settings import LEGACY_ENV_FILE
+from keryx.config.settings import LEGACY_ENV_FILE, env_var_names, is_secret
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path, read_memory
 from keryx.endpoints import Endpoint, Probe, probe, warnings
 from keryx.integrations.gmail import token_path
 from keryx.issues import GH_INSTALL_URL, SKILL, gh_status
-from keryx.localmodels import runtimes, servers
+from keryx.localmodels import catalog, runtimes, servers
+from keryx.localmodels import voice as local_voice
 from keryx.localmodels.server import OLLAMA_URL
 from keryx.logging_util import mask_number
 from keryx.realtime.openai import realtime_problem
@@ -249,6 +250,7 @@ def run_doctor_checks(
         _projects_root_check(settings),
         *plugin_checks(settings),
         _retired_check(store),
+        _old_names_check(store),
         _issues_check(settings),
     ]
     return checks
@@ -309,11 +311,23 @@ def _voice_checks(settings: Settings) -> list[Check]:
             ]
         return [Check("OPENAI_API_KEY", True, "set", section="voice")]
     voice = settings.voice_endpoint
-    checks = [Check("voice", True, f"your own server at {voice.base_url}", section="voice")
-              if voice is not None else
-              Check("voice", False, "no voice server address", section="voice",
-                    hint=settings.voice_refusal(), unset=True,
-                    fix=fixes.setting("VOICE_BASE_URL"))]
+    needs = local_voice.needs(settings) if settings.voice_mode == "here" else None
+    if voice is None:
+        checks = [Check("voice", False, "no voice server address", section="voice",
+                        hint=settings.voice_refusal(), unset=True,
+                        fix=fixes.setting("VOICE_BASE_URL"))]
+    elif needs == local_voice.NEEDS_WORDS:
+        # Shared with a local agent that has no model: the voice unit could never start.
+        checks = [Check("voice", False, "The voice here takes its words from the local "
+                        "agent, which has no model yet.", section="voice",
+                        hint=local_voice.NO_WORDS_HINT, unset=True, fix="models:choose")]
+    elif needs is not None:
+        checks = [_no_words_check(settings, settings.voice_llm_refusal()
+                                  or local_voice.NO_VOICE_LLM_HINT)]
+    else:
+        checks = [Check("voice", True, f"your own server at {voice.base_url}", section="voice")]
+    if settings.voice_mode == "server":
+        checks.append(_server_voice_check(settings))
     if key is None:
         checks.append(Check("OPENAI_API_KEY", False, "not set — calls have no web_search",
                             severity="soft", section="voice", unset=True,
@@ -322,6 +336,39 @@ def _voice_checks(settings: Settings) -> list[Check]:
         checks.append(Check("OPENAI_API_KEY", True, "set, for web_search", severity="soft",
                             section="voice"))
     return checks
+
+
+def _no_words_check(settings: Settings, refusal: str) -> Check:
+    """The voice here with no setting for its words (`Settings.voice_llm_refusal`), which
+    `keryx serve` refuses: a model of its own still to choose, or a server elsewhere still
+    to name, or its model there."""
+    if settings.voice_llm == "here":
+        detail, fix = "the voice here has no model of its own for its words", "voice:llm"
+    elif not settings.voice_llm_base_url:
+        detail = "the voice here has no server named for its words"
+        fix = fixes.setting("VOICE_LLM_BASE_URL")
+    else:
+        detail = "the voice here has no model named for its words on its server"
+        fix = fixes.setting("VOICE_LLM_MODEL")
+    return Check("voice", False, detail, section="voice", hint=refusal, unset=True, fix=fix)
+
+
+def _server_voice_check(settings: Settings) -> Check:
+    """The voice a server elsewhere is sent: `VOICE_SERVER_VOICE` when it was set, else
+    `OPENAI_VOICE`, read for `server` for one release only (`Settings.voice`) — a soft
+    warning while that is what it is sent."""
+    name = "voice server's voice"
+    if "voice_server_voice" in settings.model_fields_set:
+        return Check(name, True, f"VOICE_SERVER_VOICE, {settings.voice_server_voice}",
+                     severity="soft", section="settings")
+    if settings.openai_voice:
+        return Check(name, False, "the voice server elsewhere is sent OPENAI_VOICE, which a "
+                     "later release stops sending to it: set VOICE_SERVER_VOICE instead",
+                     severity="soft", section="settings",
+                     hint="`keryx config set VOICE_SERVER_VOICE …` (`keryx models list` names "
+                          "Kokoro's voices)",
+                     fix=fixes.setting("VOICE_SERVER_VOICE"))
+    return Check(name, True, "its own: none is sent", severity="soft", section="settings")
 
 
 def _agent_config_check(settings: Settings) -> Check:
@@ -446,6 +493,9 @@ def _local_server_checks(settings: Settings) -> list[Check]:
             else:
                 checks.append(Check("model server", True, f"{alias}, on disk",
                                     severity=severity, section="local", hint=str(path)))
+    if (settings.voice_mode == "here" and settings.voice_llm == "here"
+            and settings.voice_llm_model):
+        checks.append(_voice_llm_model_check(settings))
     if settings.voice_mode == "here":
         found = runtimes.speech_to_speech()
         if found is None:
@@ -457,6 +507,26 @@ def _local_server_checks(settings: Settings) -> list[Check]:
             checks.append(Check("voice server program", True, "speech-to-speech is installed",
                                 section="local", hint=found))
     return checks
+
+
+def _voice_llm_model_check(settings: Settings) -> Check:
+    """The voice's own model on disk and llama.cpp here to serve it (`VOICE_LLM=here`): what
+    `keryx models start --voice-llm` needs. Never asked over the network; whether its server
+    answers is `endpoint_checks`'."""
+    name = "voice LLM model"
+    entry = catalog.by_key(settings.voice_llm_model or "")
+    title = entry.title if entry is not None else "a GGUF file of your own"
+    try:
+        _alias, path, _context = servers.voice_llm_model(settings)
+    except servers.ServerConfigError as error:
+        return Check(name, False, "the voice's own model is not on disk", section="local",
+                     hint=f"{error} — `keryx voice llm here {settings.voice_llm_model}` "
+                          "downloads it", fix="voice:llm")
+    if runtimes.llama_server(settings.cache_dir) is None:
+        return Check(name, False, "llama-server is not installed to serve the voice's model",
+                     section="local",
+                     hint="`keryx models start --voice-llm` installs it", fix="voice:llm")
+    return Check(name, True, f"{title}, on disk", section="local", hint=str(path))
 
 
 def endpoint_checks(settings: Settings, reach: EndpointReach | None = None) -> list[Check]:
@@ -489,6 +559,7 @@ def endpoint_checks(settings: Settings, reach: EndpointReach | None = None) -> l
                                     section="local", hint=problem,
                                     fix="voice:here" if here
                                     else fixes.setting("VOICE_BASE_URL")))
+    checks += _voice_llm_checks(settings, reach)
     agent = settings.local_agent_endpoint
     if agent is None:
         return checks
@@ -524,6 +595,44 @@ def endpoint_checks(settings: Settings, reach: EndpointReach | None = None) -> l
     else:
         checks.append(Check(name, True, f"{agent.base_url} serves {agent.model}",
                             severity=severity, section="local"))
+    return checks
+
+
+def _voice_llm_checks(settings: Settings, reach: EndpointReach | None) -> list[Check]:
+    """The voice LLM of a voice here, when its words are not the local agent's (that one is
+    "local agent server"): where it is (`endpoints.warnings`, for one elsewhere), and, given
+    `reach`, whether it answers serving its model. Hard: a voice with no words answers a
+    call with silence. Its own server here is brought up from the app (`voice:llm`); one
+    elsewhere is readdressed."""
+    if (settings.voice_mode != "here" or settings.voice_llm == "shared"
+            or settings.voice_llm_refusal() is not None):
+        return []
+    words = settings.voice_llm_endpoint
+    assert words is not None  # named, or refused above
+    name, own = "voice LLM server", settings.voice_llm == "here"
+    checks = [] if own else [
+        Check(name, False, warning, severity="soft", section="local",
+              fix=_warning_fix(warning, "VOICE_LLM_BASE_URL", "VOICE_LLM_API_KEY"))
+        for warning in warnings(words)
+    ]
+    if reach is None:
+        return checks
+    found = reach.models(words)
+    listed = ", ".join(found.models[:6]) + (", …" if len(found.models) > 6 else "")
+    if not found.ok:
+        checks.append(Check(
+            name, False, "the voice's own server here is not answering" if own
+            else "the voice's words server is not answering", section="local",
+            hint=redact_known(found.problem or "no answer", settings),
+            fix="voice:llm" if own else fixes.setting("VOICE_LLM_BASE_URL")))
+    elif found.models and words.model not in found.models:
+        checks.append(Check(
+            name, False, "it does not serve the voice's model", section="local",
+            hint=redact_known(f"{words.model} is not one of {listed}", settings),
+            fix="voice:llm" if own else fixes.setting("VOICE_LLM_MODEL")))
+    else:
+        checks.append(Check(name, True, f"{words.base_url} answers, serving the voice's model",
+                            section="local", hint=words.model))
     return checks
 
 
@@ -1268,6 +1377,41 @@ def _retired_check(store: ConfigStore) -> Check:
             hint="`keryx plugins install --from-settings` moves them",
         )
     return Check("retired settings", True, "none", severity="soft", section="plugins")
+
+
+def _old_names_check(store: ConfigStore) -> Check:
+    """A setting still said only under the name it had before a rename (`SUBAGENT_MODEL`,
+    `LLM_SERVER_MODEL`, `LLM_SERVER_PORT`, …): read for one release, so it works — and stops
+    working with the release after. One kept in step beside its new name, for a build
+    running behind, is not one: the new name is there. A soft warning, in the store the app
+    rewrites under the new name, in the environment by whoever set it."""
+    try:
+        stored = set(store.stored())
+    except Exception:  # a store that does not parse is `_config_check`'s to report
+        stored = set()
+    in_store: list[tuple[str, str]] = []
+    in_env: list[tuple[str, str]] = []
+    for field in Settings.model_fields:
+        current, *older = env_var_names(field)
+        for old in older:
+            if os.environ.get(old, "").strip() and not os.environ.get(current, "").strip():
+                in_env.append((old, current))
+            elif old in stored and current not in stored:
+                in_store.append((old, current))
+    if not in_store and not in_env:
+        return Check("old setting names", True, "none", severity="soft", section="settings")
+    detail = "; ".join(f"{old} is {current} now" for old, current in in_store + in_env)
+    hints = []
+    if in_store:
+        hints.append(f"`keryx config set {in_store[0][1]} …` saves it under its new name")
+    if in_env:
+        hints.append("rename it where Keryx's environment sets it")
+    fix = None
+    if in_store and field_for(in_store[0][1]) != "pin":
+        key = in_store[0][1]
+        fix = fixes.secret(key) if is_secret(field_for(key) or "") else fixes.setting(key)
+    return Check("old setting names", False, detail, severity="soft", section="settings",
+                 hint="; ".join(hints), fix=fix)
 
 
 def _issues_check(settings: Settings) -> Check:

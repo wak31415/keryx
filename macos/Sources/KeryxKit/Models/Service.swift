@@ -7,7 +7,7 @@ public struct ServiceReport: Codable, Sendable, Equatable {
     public var units: ServiceUnits
 }
 
-/// Keryx's four units.
+/// Keryx's units.
 public struct ServiceUnits: Codable, Sendable, Equatable {
     /// Keryx itself.
     public var agent: UnitState
@@ -17,6 +17,9 @@ public struct ServiceUnits: Codable, Sendable, Equatable {
     public var llm: UnitState
     /// The local voice server.
     public var voice: UnitState
+    /// The voice LLM's own model server (`dev.keryx.voice-llm`); `nil` from a CLI older
+    /// than it.
+    public var voiceLlm: UnitState?
 }
 
 public struct UnitState: Codable, Sendable, Equatable {

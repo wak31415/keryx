@@ -47,6 +47,7 @@ public final class ProcessRunner: CommandRunner, Sendable {
         let slot = ChildSlot()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CommandResult, Error>) in
+                let grace = request.stopGrace ?? grace
                 let collector = RunCollector(continuation: continuation, grace: grace)
                 observeCollector?(collector)
 
@@ -94,8 +95,8 @@ public final class ProcessRunner: CommandRunner, Sendable {
             // stderr is discarded, but into `/dev/null`, not a pipe nobody reads: an unread
             // pipe's buffer fills (~64 KB) and blocks the child forever — unless the request
             // asks for it with stdout, on the one pipe that is read.
-            spawned = try Child.spawn(request, stderr: request.mergesStderr ? .merged : .discard, grace: grace,
-                                      registry: registry, keepInput: interactive)
+            spawned = try Child.spawn(request, stderr: request.mergesStderr ? .merged : .discard,
+                                      grace: request.stopGrace ?? grace, registry: registry, keepInput: interactive)
         } catch {
             continuation.finish(throwing: error)
             return LineStream(stream)

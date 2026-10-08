@@ -81,6 +81,9 @@ NO_WORDS_SERVER = "The local model server isn't running: start it first."
 NO_VOICE_LLM = "Choose the voice LLM first: the voice server takes its words from it."
 NO_VOICE_LLM_SERVER = "The voice LLM's own server isn't serving its model: start it first."
 NO_REMOTE_VOICE_LLM = "The voice LLM's server isn't answering: check its address."
+#: What `here` says, refusing, while a call is live on the voice server it would restart.
+LIVE_CALL = ("A call is going on, and setting up the voice here restarts its server, which "
+             "would cut it off: try again once the line is clear.")
 #: Said of a unit removed rather than left restarting a server that did not come up.
 REMOVED = "its service was removed, so it does not restart in a loop"
 #: Keryx's own installers, the only commands `run_detached` gives a deadline: a few
@@ -121,6 +124,8 @@ class Probes(Protocol):
     fetch_speech: Callable[[str, list[speech.Repo], Callable[[int, int | None], None]],
                            str | None]
     models_ready: Callable[[Settings], bool]
+    #: How many calls the running Keryx has live, or None when it is not answering.
+    live_calls: Callable[[Settings], int | None]
 
 
 class Installs(Protocol):
@@ -415,7 +420,11 @@ def here(
     half-done install is left for the next run to finish; a unit whose server did not come
     up, or whose start was cancelled, is not, and a download that stopped installs none.
     `also_save` is saved with the voice, once it answers (the first set-up's `VOICE_LLM`).
+    While the voice is here, its server is restarted by this: refused (1) while a call is
+    live on it, before anything is touched, as `keryx restart` refuses.
     """
+    if busy_with_calls(settings, probes.live_calls, report, LIVE_CALL):
+        return FAILED
     if not _have_words(settings, probes, report, no_words=no_words):
         return REFUSED
     script, problem = installer("--voice", root=root, platform=platform)
@@ -473,6 +482,34 @@ def here(
     return OK
 
 
+def busy_with_calls(
+    settings: Settings, live_calls: Callable[[Settings], int | None], report: Told,
+    message: str,
+) -> bool:
+    """Whether a voice server running here has calls live, which restarting it would cut
+    off: told to `report` as `message`, with the count as the detail. Asked only while the
+    voice is here; a Keryx that is not answering (None) has none, as `keryx restart` reads
+    it."""
+    if mode(settings) != HERE:
+        return False
+    live = live_calls(settings)
+    if not live:
+        return False
+    report.error(message, detail=f"{live} live call(s)")
+    return True
+
+
+@contextmanager
+def cancel_held_off() -> Iterator[None]:
+    """Cancel (SIGTERM, SIGINT) held off while this lasts, landing once it is over: for work
+    a second Cancel must not cut in half."""
+    held = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, held)
+
+
 def log_path(settings: Settings) -> Path:
     """The voice server's own log, which its unit writes."""
     return settings.state_dir / "logs" / "keryx-voice.err.log"
@@ -508,11 +545,8 @@ def reinstall_unit(
     script, _problem = installer(flag, root=root, platform=platform)
     if script is None:
         return
-    held = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
-    try:
+    with cancel_held_off():
         run_script([str(script), flag])
-    finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, held)
 
 
 def _have_words(settings: Settings, probes: Probes, report: Report, *, no_words: str) -> bool:
@@ -827,6 +861,15 @@ class Machine:
     fetch_speech: Callable[[str, list[speech.Repo], Callable[[int, int | None], None]],
                            str | None]
     models_ready: Callable[[Settings], bool]
+    live_calls: Callable[[Settings], int | None]
+
+
+def live_calls(settings: Settings) -> int | None:
+    """How many calls the running Keryx has live (`restart.health.health_probe`, which
+    `keryx restart` asks), or None when it is not answering."""
+    from keryx.restart import health
+
+    return health.health_probe(settings)
 
 
 def machine() -> Machine:
@@ -838,6 +881,7 @@ def machine() -> Machine:
         words_up=words_up, voice_llm_up=voice_llm_up,
         speech_python=runtimes.speech_to_speech_python,
         fetch_speech=speech.fetch, models_ready=speech.models_ready,
+        live_calls=live_calls,
     )
 
 

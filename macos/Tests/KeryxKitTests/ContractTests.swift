@@ -83,7 +83,8 @@ import KeryxPreview
             PreviewData.optionsFixtures + ["options-realtime-fallback.json"]),
         .of("config options ASSISTANT_NAME --json", ConfigOptions.self, ["options-assistant-name.json"]),
         .of("voice --json", VoiceStatus.self,
-            ["voice.json", "voice-here.json", "voice-server.json", "voice-needs-model.json"]),
+            ["voice.json", "voice-here.json", "voice-server.json", "voice-needs-model.json",
+             "voice-here-own-llm.json"]),
         .of("voice use openai --json", VoiceUseResult.self, ["fixture:voice-use-openai.json"]),
         .of("voice use server URL --json", VoiceServerResult.self,
             ["fixture:voice-use-server.json", "fixture:voice-use-server-problem.json"]),
@@ -103,6 +104,7 @@ import KeryxPreview
         .of("service --json", ServiceReport.self, ["service.json"]),
         .of("service install --json", ServiceResult.self, ["fixture:service-install.json"]),
         .of("service uninstall --json", ServiceResult.self, ["fixture:service-uninstall.json"]),
+        .of("service uninstall --voice-llm --json", ServiceResult.self, ["fixture:service-uninstall-voice-llm.json"]),
         .of("service stop --json", ServiceControlResult.self, ["fixture:service-stop.json"]),
         .of("service stop --all --json", ServiceControlResult.self, ["fixture:service-stop-all.json"]),
         .of("service start --json", ServiceControlResult.self, ["fixture:service-start.json"]),
@@ -153,11 +155,7 @@ import KeryxPreview
     /// SEAMS: properties the app decodes, as optionals, that the CLI does not print yet
     /// (`Seams.swift`). Left out of the walk until it does; once a fixture holds one, the
     /// test below says to move it into the contract.
-    static let awaitingCLI: Set<String> = [
-        "VoiceStatus.pipelines",
-        "ModelsReport.recommended", "ModelsReport.recommendedWithLocalVoice",
-        "ModelsReport.voiceLlmRecommended", "ModelsReport.voiceLlmSeparate",
-    ]
+    static let awaitingCLI: Set<String> = []
 
     /// A preview document (`Sources/KeryxPreview/Preview`), or `fixture:NAME` from this target's.
     static func data(_ name: String) throws -> Data {
@@ -507,6 +505,15 @@ import KeryxPreview
     static let eventStreams: [EventStream] = [
         .of("models start --json", ModelServerStarted.self,
             [PreviewData.modelsStartLines, PreviewData.modelsStartRefusedLines]),
+        .of("models start --voice-llm --json", ModelServerStarted.self,
+            [PreviewData.voiceLLMServerStartLines, PreviewData.voiceLLMServerRefusedLines]),
+        // A CLI a round older says no `voice_restarted`: read as false.
+        .of("voice llm here NAME --json", VoiceLLMChosen.self,
+            [PreviewData.voiceLLMHereLines, PreviewData.voiceLLMRefusedLines], sometimes: ["done.voice_restarted"]),
+        .of("voice llm shared --json", VoiceLLMChosen.self, [PreviewData.voiceLLMSharedLines],
+            sometimes: ["done.voice_restarted"]),
+        .of("voice llm remote URL --json", VoiceLLMChosen.self, [PreviewData.voiceLLMRemoteRefusedLines],
+            sometimes: ["done.voice_restarted"]),
         .of("voice download --json", VoiceModelsDownloaded.self, [PreviewData.voiceDownloadLines]),
         .of("auth login claude --json", SignedIn.self, [PreviewData.signInLines(.claude)], sometimes: ["done.stored"]),
         .of("auth login codex --json", SignedIn.self, [PreviewData.signInLines(.codex)], sometimes: ["open.code"]),

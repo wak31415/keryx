@@ -20,5 +20,23 @@
   "needs": "local_agent_model",
   "server": {
     "reachable": null
+  },
+  "llm": {
+    "source": "shared",
+    "model": null,
+    "url": null,
+    "reachable": null,
+    "unit_installed": false
+  },
+  "pipelines": {
+    "openai": [
+      "speech-to-speech"
+    ],
+    "here": [
+      "three-model"
+    ],
+    "server": [
+      "speech-to-speech"
+    ]
   }
 }

@@ -126,6 +126,19 @@ public struct ConfigurationView: View {
                     if let title = ConfigWording.sectionTitle(group, on: tab) {
                         Text(title)
                     }
+                } footer: {
+                    if let footer = ConfigWording.groupFooter(group.id) {
+                        HStack(spacing: 4) {
+                            Text(footer.text)
+                                .foregroundStyle(.secondary)
+                            if let link = footer.link {
+                                Button(link.title) { model.request(.show(link.screen)) }
+                                    .buttonStyle(.link)
+                            }
+                        }
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             if !tab.advanced.isEmpty {

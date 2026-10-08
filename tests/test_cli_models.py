@@ -44,6 +44,9 @@ def test_list_marks_what_fits_and_recommends_one(models_settings):
     assert "✗ too big" in next(line for line in result.output.splitlines()
                                if line.startswith("gpt-oss-120b"))
     assert "bm_george" in result.output
+    # A first voice here brings up the 9b, and the agent's model that fits beside it.
+    assert ("# with the voice here: gpt-oss-20b for the agent, and the voice's words from "
+            "qwen3.5-9b") in result.output
 
 
 def test_list_json_carries_the_hardware_the_models_and_the_voices(models_settings):
@@ -141,6 +144,84 @@ def test_list_json_says_which_servers_are_set_up_and_answering(models_settings, 
     assert servers_part["voice"] == {"url": None, "port": 8765, "unit_installed": False,
                                      "reachable": False}
     assert servers_part["local_agent"]["enabled"] and not servers_part["local_agent"]["default"]
+
+
+# --- models list --json: the recommendations, with and without a voice here ----------------
+
+
+def listed(monkeypatch, machine=RTX) -> dict:
+    monkeypatch.setattr(hardware, "detect", lambda: machine)
+    result = runner.invoke(app, ["models", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    return json.loads(result.output)
+
+
+def test_list_json_recommends_what_voice_use_here_would_bring_up_and_room_beside_it(
+    models_settings, monkeypatch
+):
+    """A 5090 with the agent elsewhere: a first `voice use here` brings up the 9b (0 + 9 + 3),
+    so the agent's model recommended beside a voice here is one that fits with it (16)."""
+    document = listed(monkeypatch)
+
+    assert document["recommended"] == CODER.key
+    assert document["recommended_with_local_voice"] == "gpt-oss-20b"  # 16 + 9 + 3 = 28
+    assert document["voice_llm_recommended"] == "qwen3.5-9b"
+    assert document["voice_llm_separate"] is True
+    rows = {row["name"]: row for row in document["models"]}
+    assert rows[CODER.key]["fits_with_voice_llm"] is False  # 25 + 9 + 3 = 37 > 31.8
+    assert rows["gpt-oss-20b"]["fits_with_voice_llm"] is True
+    assert rows["gpt-oss-120b"]["fits_with_voice_llm"] is False
+
+
+def test_list_json_says_shared_once_the_voice_llm_was_chosen(models_settings, monkeypatch):
+    ConfigStore().set({"VOICE_LLM": "shared"})
+
+    document = listed(monkeypatch)
+
+    assert (document["voice_llm_recommended"], document["voice_llm_separate"]) == (None, False)
+    assert document["recommended_with_local_voice"] == CODER.key
+
+
+def test_list_json_gives_the_voice_its_own_model_where_one_fits(models_settings, monkeypatch):
+    document = listed(monkeypatch, Hardware("metal", "Apple silicon", 0, 64))  # 48 for models
+
+    assert document["recommended_with_local_voice"] == CODER.key
+    assert document["voice_llm_recommended"] == "qwen3.5-9b"  # 25 + 9 + 3 = 37
+    assert document["voice_llm_separate"] is True
+    rows = {row["name"]: row for row in document["models"]}
+    assert rows[CODER.key]["fits_with_voice_llm"] is True
+
+
+def test_list_keeps_the_voices_share_free_only_while_the_voice_is_here(
+    models_settings, monkeypatch
+):
+    """Keyed on the mode, not on the loopback address `voice use here` still writes."""
+    tight = Hardware("cuda", "RTX 4090", 27.0, 64)  # 25 + 3 = 28 > 27
+    ConfigStore().set({"VOICE_LLM": "shared"})  # chosen: no voice model of its own to reserve
+    models_settings.voice_base_url = "http://127.0.0.1:8765/v1"
+    models_settings.voice_mode_explicit = "openai"
+    document = listed(monkeypatch, tight)
+    rows = {row["name"]: row for row in document["models"]}
+    assert document["recommended"] == CODER.key and rows[CODER.key]["fits"]
+    assert document["recommended_with_local_voice"] == "qwen3.8-27b"
+
+    models_settings.voice_mode_explicit = "here"
+    document = listed(monkeypatch, tight)
+    rows = {row["name"]: row for row in document["models"]}
+    assert document["recommended"] == "qwen3.8-27b" and not rows[CODER.key]["fits"]
+    assert rows["qwen3.8-27b"]["recommended"]
+
+
+def test_list_reserves_a_voice_llm_already_chosen_and_says_it(models_settings, monkeypatch):
+    models_settings.voice_llm = "here"
+    models_settings.voice_llm_model = "qwen3.5-9b"
+    document = listed(monkeypatch, Hardware("metal", "Apple silicon", 0, 48))  # 36
+
+    # 25 + 9 = 34 fits beside the 9b with the voice elsewhere; with it here, 37 does not.
+    assert document["recommended"] == CODER.key
+    assert document["recommended_with_local_voice"] == "qwen3.8-27b"
+    assert (document["voice_llm_recommended"], document["voice_llm_separate"]) == (
+        "qwen3.5-9b", True)
 
 
 # --- models pull --json: JSON lines --------------------------------------------------------

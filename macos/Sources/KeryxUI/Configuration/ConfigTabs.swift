@@ -86,6 +86,19 @@ extension ConfigWording {
         rows?.first { $0.key == key }?.screen.flatMap(SidebarItem.init(rawValue:))
     }
 
+    /// What a group's section says under it, with the screen it points to: the local agent's,
+    /// whose model runs on a server Local Models starts, and which the voice no longer
+    /// shares unless Voice says so.
+    static func groupFooter(_ group: String) -> (text: String, link: (title: String, screen: SidebarItem)?)? {
+        switch group {
+        case "local_agent":
+            ("A model on this Mac runs on the agent's model server, started in Local Models. The voice uses it "
+                + "only when its LLM is Same as Local Agent.", ("Local Models", .models))
+        default:
+            nil
+        }
+    }
+
     /// "Change in Voice ›".
     static func changeIn(_ screen: SidebarItem) -> String {
         "Change in \(screen.title) ›"
