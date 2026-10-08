@@ -122,6 +122,8 @@ public final class AppModel {
     @ObservationIgnored private var startTried = false
     /// The check `ensureAnswering` runs, while it runs.
     @ObservationIgnored private var ensuring: Task<Void, Never>?
+    /// The app is quitting (`prepareToQuit`): nothing starts Keryx from now on.
+    @ObservationIgnored private var quitting = false
     /// The install or uninstall under way, held so quitting can stop it (`cancelRuns`):
     /// cancelled, its runner stops the installer's whole process group.
     @ObservationIgnored private var serviceTask: Task<Result<ServiceResult, KeryxError>, Never>?
@@ -760,10 +762,10 @@ public final class AppModel {
     }
 
     private func ensureOnce() async {
-        guard keepsAnswering, client != nil, !startTried, serviceChange == nil else { return }
+        guard keepsAnswering, !quitting, client != nil, !startTried, serviceChange == nil else { return }
         let current = generation
         await refresh([.setupPlan, .status])
-        guard current == generation, keepsAnswering, !startTried, serviceChange == nil,
+        guard current == generation, keepsAnswering, !quitting, !startTried, serviceChange == nil,
               answeringStep == .start else { return }
         _ = await startAnswering()
     }
@@ -772,6 +774,7 @@ public final class AppModel {
     /// `keryx service install`, then the status read once more after a moment, as after a
     /// restart. A failure is kept in `startFailure` for the Overview to say.
     public func startAnswering() async -> Result<ServiceResult, KeryxError> {
+        if quitting { return .failure(.refused(Self.quittingRefusal)) }
         if client != nil, serviceChange == nil { startTried = true }
         let answer = await installService()
         switch answer {
@@ -786,6 +789,22 @@ public final class AppModel {
         }
         return answer
     }
+
+    /// Whether `keepsAnswering` should be on for an app started with `environment`: not for
+    /// a sandbox run (`KERYX_APP_ENVIRONMENT=inherit`), whose `keryx` reads the sandbox's
+    /// settings but would install, or remove, the real launch agents in `~/Library`.
+    nonisolated public static func keepsAnswering(environment: [String: String]) -> Bool {
+        environment[KeryxLocator.environmentOverride] != "inherit"
+    }
+
+    /// The app is quitting: the status poll stops, and nothing starts Keryx again — not the
+    /// automatic start, not Start — before `stopAnswering` stops it.
+    public func prepareToQuit() {
+        quitting = true
+        stop()
+    }
+
+    static let quittingRefusal = "Keryx is quitting."
 
     /// Whether quitting now stops Keryx answering calls: kept answering, and its unit is
     /// installed (or being installed).

@@ -23,7 +23,15 @@ public final class Preferences: @unchecked Sendable {
         }
     }
 
+    /// Whether a plain Quit asks first ("Quit Keryx?"), until the owner ticks "Don't ask
+    /// again". A quit with a call in progress, or with something under way, always asks.
+    public var asksBeforeQuitting: Bool {
+        get { !defaults.bool(forKey: Keys.quitWithoutAsking) }
+        set { defaults.set(!newValue, forKey: Keys.quitWithoutAsking) }
+    }
+
     private enum Keys {
+        static let quitWithoutAsking = "quitWithoutAsking"
         static let keryxFolder = "keryxFolder"
         static let launchAgent = "launchAgentPlist"
     }

@@ -3,9 +3,10 @@ import KeryxKit
 import KeryxUI
 
 /// Owns the app's one `AppModel` and the moments AppKit tells only a delegate about: launch
-/// (the menu needs Keryx found whether or not the window ever opens), a menu opening, and
-/// quitting while a model downloads or the voice is being set up.
-/// The app's windows, for its activation policy.
+/// (the menu needs Keryx found whether or not the window ever opens, and Keryx started once
+/// setup allows), a menu opening, and quitting, which stops Keryx answering calls — and asks
+/// first while a call is in progress or something is under way.
+/// The app's windows, for the log.
 enum AppWindow: String { case main, settings, setup }
 
 @MainActor
@@ -19,8 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var windowHasAppeared = false
     private var starting: Task<Void, Never>?
-    /// The app's windows open now (the main one, Settings): while any is, the app is a
-    /// regular one, in the Dock and the app switcher; with none it is only a menu bar item.
+    /// The app's windows open now (the main one, Settings, the Setup Assistant). The app is
+    /// in the Dock whether or not any is (`AppLifecycle`).
     private var openWindows: Set<AppWindow> = []
     /// Opens the main window and brings the app forward. Handed over by the menu bar label,
     /// the one view alive for the app's whole life, as it appears.
@@ -42,6 +43,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           runner: LoggingRunner(prefix: location.prefixArguments))
             },
             preferences: preferences)
+        // Kept answering calls while the app runs — but never by a sandbox run, whose `keryx`
+        // would install or remove the real launch agents.
+        model.keepsAnswering = AppModel.keepsAnswering(environment: ProcessInfo.processInfo.environment)
         super.init()
     }
 
@@ -49,6 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let atLogin = Self.isLoginLaunch(NSAppleEventManager.shared().currentAppleEvent)
         launchedAtLogin = atLogin
         Log.app.info("Launched\(atLogin ? " at login" : "", privacy: .public)")
+        NSApp.setActivationPolicy(AppLifecycle.activationPolicy)
+        if !model.keepsAnswering {
+            Log.app.notice("KERYX_APP_ENVIRONMENT=inherit: Keryx is neither started nor stopped by this run")
+        }
         TerminalLauncher.removeStaleScripts()
         NotificationCenter.default.addObserver(
             self, selector: #selector(menuDidBeginTracking(_:)),
@@ -116,35 +124,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func windowDidAppear(_ window: AppWindow) {
         openWindows.insert(window)
         Log.app.info("\(window.rawValue, privacy: .public) window opened")
-        NSApp.setActivationPolicy(.regular)
         NSApp.activate()
     }
 
+    /// A window closed — the red button, ⌘W: the app runs on, in the Dock and the menu bar,
+    /// and Keryx goes on answering calls.
     func windowDidDisappear(_ window: AppWindow) {
         openWindows.remove(window)
         Log.app.info("\(window.rawValue, privacy: .public) window closed")
-        if openWindows.isEmpty { NSApp.setActivationPolicy(.accessory) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        false
+        AppLifecycle.quitsWhenLastWindowCloses
     }
 
     /// How long quitting lets a short write (a setting, the PIN, the webhooks) finish before
     /// it asks about it.
     static let writeGrace: Duration = .seconds(5)
+    /// The longest quitting waits for Keryx to stop (`keryx service uninstall`) before it
+    /// quits anyway.
+    static let stopBound: Duration = .seconds(30)
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let children = ChildRegistry.shared
-        guard model.isBusy || children.count > 0 || !model.writes.isEmpty else { return .terminateNow }
-        Task { await quit(children) }
+        let stopping = model.quitStopsAnswering
+        guard stopping || model.isBusy || children.count > 0 || !model.writes.isEmpty else { return .terminateNow }
+        let sessionEnding = AppLifecycle.isSessionEnding(NSAppleEventManager.shared().currentAppleEvent)
+        Task { await quit(children, stopping: stopping, asking: !sessionEnding) }
         return .terminateLater
     }
 
     /// Lets a short write finish first; asks while anything that quitting would cut short is
-    /// still going — the long runs, and a write that outlived its moment — and on a yes stops
-    /// every child and waits for each group to go.
-    private func quit(_ children: ChildRegistry) async {
+    /// still going — the long runs, a write that outlived its moment, a call in progress — or,
+    /// when it stops Keryx answering, until the owner says not to ask again; and on a yes
+    /// stops every child, waits for each group to go, and stops Keryx (`stopping`). At a log
+    /// out, restart or shut down it asks nothing (`asking` false).
+    private func quit(_ children: ChildRegistry, stopping: Bool, asking: Bool) async {
         let downloads = model.downloads
         let setup = model.voiceSetup
         // A write is a moment's work: killed part way it can leave a change half made.
@@ -154,26 +169,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let server = model.modelServerRun.isRunning
         let chained = server && model.thisMacSetup?.startsServer == true
         let signingIn = model.signInRun.isRunning ? model.signingIn : nil
-        if let question = Quitting.question(downloading: downloads.isRunning,
-                                            settingUpVoice: setup.isRunning || chained,
-                                            startingModelServer: server && !chained,
-                                            downloadingVoiceModels: model.voiceDownloadRun.isRunning,
-                                            signingIn: signingIn.map(SignInWording.name),
-                                            signInDetail: signingIn.map(SignInWording.quitDetail),
-                                            assistant: Wording.assistant(model.status.value),
-                                            changingService: model.serviceChange,
-                                            writing: model.writing) {
+        if asking, let question = Quitting.question(downloading: downloads.isRunning,
+                                                    settingUpVoice: setup.isRunning || chained,
+                                                    startingModelServer: server && !chained,
+                                                    downloadingVoiceModels: model.voiceDownloadRun.isRunning,
+                                                    signingIn: signingIn.map(SignInWording.name),
+                                                    signInDetail: signingIn.map(SignInWording.quitDetail),
+                                                    assistant: Wording.assistant(model.status.value),
+                                                    changingService: model.serviceChange,
+                                                    writing: model.writing, stopsAnswering: stopping,
+                                                    liveCalls: model.status.value?.health.liveSessions ?? 0,
+                                                    confirm: preferences.asksBeforeQuitting) {
             NSApp.activate()
             let alert = NSAlert()
             alert.messageText = question.message
             alert.informativeText = question.detail
             alert.addButton(withTitle: "Quit")
             alert.addButton(withTitle: "Cancel")
+            if question.suppressible {
+                alert.showsSuppressionButton = true
+                alert.suppressionButton?.title = "Don't ask again"
+            }
             guard alert.runModal() == .alertFirstButtonReturn else {
                 NSApp.reply(toApplicationShouldTerminate: false)
                 return
             }
+            if question.suppressible, alert.suppressionButton?.state == .on {
+                preferences.asksBeforeQuitting = false
+            }
         }
+        // Nothing starts Keryx again from here on, and the poll stops.
+        model.prepareToQuit()
         // Stop every child rather than leave it running without us — the runs above, and
         // whatever else is still going (a write, an installer, a read) — and wait until each
         // group is gone (SIGKILL follows SIGTERM within seconds); a download's part stays for
@@ -187,7 +213,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if survivors == nil {
             Log.app.error("Quitting before every process group had stopped: \(children.count) still listed")
         }
+        if stopping { await stopAnswering() }
         NSApp.reply(toApplicationShouldTerminate: true)
+    }
+
+    /// Stops Keryx answering calls (`AppModel.stopAnswering`); after `stopBound` the stop is
+    /// cut short (its process group stopped) and the app quits anyway.
+    private func stopAnswering() async {
+        let model = model
+        let deadline = Task { @MainActor in
+            try? await Task.sleep(for: Self.stopBound)
+            guard !Task.isCancelled else { return }
+            Log.app.error("Keryx took longer than \(Self.stopBound, privacy: .public) to stop; quitting anyway")
+            model.cancelRuns()
+        }
+        let error = await model.stopAnswering()
+        deadline.cancel()
+        if let error {
+            Log.app.error("Keryx could not be stopped: \(error.title, privacy: .public)")
+        } else {
+            Log.app.info("Stopped Keryx answering calls")
+        }
     }
 
     /// Opening the menu bar menu (or any menu that is not the main menu's, nor a pop-up

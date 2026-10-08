@@ -14,12 +14,17 @@ public struct LoginItemControl {
     public var state: () -> State
     public var set: (Bool) throws -> Void
     public var openSystemSettings: () -> Void
+    /// Whether the registration survives a rebuild: this copy is signed with the local
+    /// identity, so every build has the same designated requirement. Signed ad hoc, it does
+    /// not.
+    public var survivesRebuilds: Bool
 
     public init(state: @escaping () -> State, set: @escaping (Bool) throws -> Void,
-                openSystemSettings: @escaping () -> Void) {
+                openSystemSettings: @escaping () -> Void, survivesRebuilds: Bool = true) {
         self.state = state
         self.set = set
         self.openSystemSettings = openSystemSettings
+        self.survivesRebuilds = survivesRebuilds
     }
 }
 
@@ -69,7 +74,7 @@ public struct AppSettingsView: View {
             } header: {
                 Text("General")
             } footer: {
-                Text("Keryx must be in Applications. After rebuilding the app, turn this off and on again.")
+                Text(Self.loginFooter(survivesRebuilds: loginItem.survivesRebuilds))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -116,10 +121,20 @@ public struct AppSettingsView: View {
 
     static func describe(_ source: KeryxLocation.Source) -> String {
         switch source {
-        case .launchAgent: "Found from the Keryx service"
+        case .launchAgent: "Found where Keryx runs from"
         case .preference: "Chosen by you"
         case .loginShell: "Found on your PATH"
         }
+    }
+
+    /// What Open at Login needs, under it. Signed ad hoc, a rebuild changes the signature the
+    /// login item names, so it must be turned off and on again; with the local identity, not.
+    static func loginFooter(survivesRebuilds: Bool) -> String {
+        let opens = "Keryx must be in Applications. At login it opens in the menu bar and the Dock, "
+            + "with no window, and starts answering calls."
+        guard !survivesRebuilds else { return opens }
+        return opens + " This copy is signed ad hoc, so after each rebuild turn this off and on again, "
+            + "until builds are signed with a local signing identity."
     }
 
     static func tilde(_ path: String) -> String {

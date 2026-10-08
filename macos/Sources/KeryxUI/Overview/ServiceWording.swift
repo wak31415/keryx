@@ -1,53 +1,66 @@
 import KeryxKit
 
-/// How the Overview's service rows say Keryx's units (`keryx service --json`), and what
-/// installing or uninstalling them asks first.
+/// How the Overview says whether Keryx is answering calls, and its tunnel's unit. The app
+/// starts and stops Keryx's unit itself, so the unit, its manager and the word "service"
+/// stay in a tooltip.
 enum ServiceWording {
-    /// Installing or uninstalling Keryx and its tunnel: `keryx service install|uninstall`,
-    /// never `--llm`/`--voice` (the model and voice servers are started on their own screens).
-    enum Change: Equatable {
-        case install, uninstall
+    /// The "Answering calls" row: a dot (or a spinner while it starts or stops), a word, a
+    /// line under it when there is more to say, the unit in its tooltip, and whether Start
+    /// is offered — only when Keryx should run and doesn't, as the fallback for a start that
+    /// failed or never ran.
+    struct Answering: Equatable {
+        var tone: StatusDot.Tone
+        var text: String
+        var hint: String?
+        var help: String
+        var busy = false
+        var offersStart = false
+    }
 
-        var question: String {
-            switch self {
-            case .install: "Install Keryx as a Service?"
-            case .uninstall: "Uninstall the Keryx Service?"
-            }
+    /// The row from the status, what keeping Keryx answering asks for (`step`), the start or
+    /// stop under way (`change`) and the last start's failure.
+    static func answering(_ status: StatusReport, step: AnsweringStep, change: AppModel.ServiceChange?,
+                          failure: KeryxError?) -> Answering {
+        let s = status.service
+        let unit = [s.manager ?? "launchd", s.unit].compactMap { $0 }.joined(separator: " ")
+        switch change {
+        case .installing?:
+            return Answering(tone: .inactive, text: "Starting…", help: "Starting \(unit)", busy: true)
+        case .uninstalling?:
+            return Answering(tone: .inactive, text: "Stopping…", help: "Stopping \(unit)", busy: true)
+        case nil:
+            break
         }
+        if !s.ok {
+            return Answering(tone: .warning, text: "Unknown",
+                             hint: s.error.flatMap { AppFacing.isFit($0) ? Wording.sentence($0) : nil },
+                             help: s.error ?? "")
+        }
+        if s.installed && s.active { return Answering(tone: .ok, text: "Yes", help: "Running as \(unit)") }
+        if status.health.reachable {
+            return Answering(tone: .ok, text: "Yes", hint: "Started outside this app",
+                             help: "Keryx answers, but not as \(unit): it was started by hand.")
+        }
+        if let failure {
+            return Answering(tone: .error, text: "No", hint: Self.couldNotStart(failure),
+                             help: failure.message, offersStart: true)
+        }
+        switch step {
+        case .start:
+            return Answering(tone: .inactive, text: "No", help: "\(unit) is not running", offersStart: true)
+        case .waitingForSetup:
+            return Answering(tone: .inactive, text: "Not yet", hint: "Keryx starts once setup is finished",
+                             help: "\(unit) starts once setup is finished")
+        case .unknown, .running:
+            return Answering(tone: .inactive, text: "No", help: "\(unit) is not running")
+        }
+    }
 
-        var button: String {
-            switch self {
-            case .install: "Install"
-            case .uninstall: "Uninstall"
-            }
-        }
-
-        /// What happens, in a sentence or two. `assistant`: "Lyra". `liveCalls`: calls in
-        /// progress now, which uninstalling ends.
-        func message(assistant: String, liveCalls: Int) -> String {
-            switch self {
-            case .install:
-                return "Keryx and its tunnel start now, and again whenever you log in, so \(assistant) "
-                    + "can answer the phone. launchd starts them again if they stop."
-            case .uninstall:
-                let calls = switch liveCalls {
-                case 0: ""
-                case 1: " The call in progress ends."
-                default: " The \(liveCalls) calls in progress end."
-                }
-                return "Keryx and its tunnel stop, and no longer start when you log in, so \(assistant) "
-                    + "won't answer the phone until they're installed again. Your settings and what Keryx "
-                    + "remembers are kept.\(calls)"
-            }
-        }
-
-        /// What is said while it runs.
-        var progress: String {
-            switch self {
-            case .install: "Installing…"
-            case .uninstall: "Uninstalling…"
-            }
-        }
+    /// The line under "No" when the start failed: Keryx's own sentence when it is fit to
+    /// show, else only that it could not start (the tooltip has the rest).
+    static func couldNotStart(_ failure: KeryxError) -> String {
+        let message = failure.message
+        return AppFacing.isFit(message) ? "Keryx couldn't start: \(Wording.sentence(message))" : "Keryx couldn't start."
     }
 
     /// The tunnel's unit in a word.

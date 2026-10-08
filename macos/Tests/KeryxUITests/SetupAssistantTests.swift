@@ -206,22 +206,35 @@ import KeryxPreview
     @Test func aStepThatWaitsLeadsToWhatItWaitsFor() {
         let service = actions(fresh, "service", SetupContext(service: PreviewData.service))
         #expect(service.primary == SetupAction(title: "Go to Voice", effect: .go(.step("voice"))))
-        #expect(service.others.map(\.effect) == [.installService], "its own button follows")
+        #expect(service.others.map(\.effect) == [.startKeryx], "its own button follows")
         let phone = actions(fresh, "phone")
         #expect(phone.primary?.effect == .go(.step("owner")))
         #expect(phone.others.map(\.effect) == [.request(.show(.phone))])
     }
 
-    @Test func theServiceIsInstalledHereAndOnceDoneOffersNothing() {
+    @Test func theServiceStepStartsKeryxAndOnceDoneOffersNothing() {
         var units = PreviewData.service
         units.units.agent.installed = false
         let plan = with(fresh, "service", state: .needed)
+        // Installed or not, the one button is Start Keryx, with no question: the app keeps
+        // Keryx running while it is open, so the unit is never the owner's to install.
         #expect(actions(plan, "service", SetupContext(service: units)).primary
-            == SetupAction(title: "Install Service…", effect: .installService))
+            == SetupAction(title: "Start Keryx", effect: .startKeryx))
         units.units.agent.installed = true
-        #expect(actions(plan, "service", SetupContext(service: units)).primary?.title == "Start Service…")
+        #expect(actions(plan, "service", SetupContext(service: units)).primary
+            == SetupAction(title: "Start Keryx", effect: .startKeryx))
         let done = actions(ready, "service")
         #expect(done.primary == nil && done.others.isEmpty)
+    }
+
+    @Test func theServiceStepIsSaidAsAnsweringCalls() throws {
+        let step = try #require(fresh.step("service"))
+        #expect(SetupWording.title(step) == "Answering Calls")
+        let about = try #require(SetupWording.about("service", assistant: "Lyra"))
+        #expect(about.contains("Lyra answers your calls"))
+        #expect(!about.lowercased().contains("service"))
+        // The steps that wait for it, and its "Go to", say it the same way.
+        #expect(SetupWording.title(try #require(fresh.step("voice"))) == "Voice")
     }
 
     @Test func theLocalModelsChooseAModelThenStartItsServer() {
