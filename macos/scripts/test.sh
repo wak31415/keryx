@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Run the Swift tests. With only the Command Line Tools installed (no Xcode), Swift Testing
-# lives in a framework directory swift does not search by default; add it then, and only then.
+# Run the scripts' tests (test-scripts.sh: build-app.sh and make-signing-identity.sh, in a
+# temporary folder), then the Swift tests. With only the Command Line Tools installed (no
+# Xcode), Swift Testing lives in a framework directory swift does not search by default;
+# add it then, and only then.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+scripts/test-scripts.sh
 flags=()
 if [[ "$(xcode-select -p 2>/dev/null)" == */CommandLineTools ]]; then
   fw=/Library/Developer/CommandLineTools/Library/Developer/Frameworks

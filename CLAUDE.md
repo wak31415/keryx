@@ -228,10 +228,15 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `configure`, `unit`, `start`), `progress` while it downloads, then exactly one of `done`,
   `error`, `cancelled`; exit 2 for a refusal before anything is tried, 1 for what stopped
   it, 130 for a SIGTERM)
-- The Mac app (`macos/`): `macos/scripts/test.sh` (the Swift tests; it adds the Command Line
-  Tools' Testing framework path only when they are the developer directory),
-  `macos/scripts/build-app.sh [--install]` (`macos/build/Keryx.app`, signed ad hoc;
-  `--install` replaces `/Applications/Keryx.app`), `macos/scripts/snapshots.sh [--offscreen]`
+- The Mac app (`macos/`): `macos/scripts/test.sh` (`test-scripts.sh`, the scripts' tests in a
+  temporary folder, then the Swift tests; it adds the Command Line Tools' Testing framework
+  path only when they are the developer directory), `macos/scripts/build-app.sh
+  [--no-install]` (builds `macos/build/Keryx.app` and replaces `/Applications/Keryx.app`, and
+  nothing else there, by a copy beside it and two renames; signed with "Keryx Local Signing"
+  when it is trusted in the login keychain, else ad hoc with a warning; never run without
+  `--no-install` from a test or a subagent), `macos/scripts/make-signing-identity.sh
+  [--yes]` (the owner's, once: that identity, made and trusted for code signing; `KEYCHAIN`
+  and `KERYX_SIGNING_TRUST=0` are for tests), `macos/scripts/snapshots.sh [--offscreen]`
   (every screen, light and dark, into `macos/build/snapshots/`), and
   `swift macos/scripts/make-icon.swift` from the repository root (the two `.icns` in
   `macos/Resources`)

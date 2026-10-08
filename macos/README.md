@@ -15,24 +15,53 @@ and the app reads and changes Keryx by running `keryx` commands.
 ## Build, test, and install
 
 ```bash
-macos/scripts/build-app.sh            # builds macos/build/Keryx.app
-macos/scripts/build-app.sh --install  # and copies it to /Applications, replacing any copy
-macos/scripts/test.sh                 # the Swift tests
+macos/scripts/make-signing-identity.sh  # once per Mac: the identity builds are signed with
+macos/scripts/build-app.sh              # builds Keryx.app and puts it in /Applications
+macos/scripts/build-app.sh --no-install # builds macos/build/Keryx.app and stops there
+macos/scripts/test.sh                   # the scripts' tests, then the Swift tests
 ```
 
 `build-app.sh` makes a release build and wraps it in a bundle by hand, so no Xcode project
 is involved. The version is the one in `pyproject.toml`, and the build number is the commit
-count. The bundle is signed ad hoc and checked with `codesign --verify`. Nothing is
-notarised: the app is built from the checkout, for the Mac it runs on, like the service.
+count. Nothing is notarised: the app is built from the checkout, for the Mac it runs on,
+like the service.
 
-To have Keryx open at login, install it to /Applications and turn on Open at Login in the
-app's Settings (⌘,). It opens in the menu bar only, with no window. The login item is tied
-to the copy's signature, so after a rebuild, turn it off and on again.
+It then puts the bundle in /Applications, where the Finder, Spotlight and Launchpad find it,
+and touches nothing there but `/Applications/Keryx.app`. The new bundle is copied in beside
+the old one under a temporary name and its signature checked; the old one is renamed aside,
+the new one renamed into place, and only then is the old one deleted, so a failure part way
+leaves the old app where it was. An app called Keryx.app that is not Keryx (another bundle
+identifier) is refused. If Keryx is running, quit it and open it again to run the new build.
 
-`test.sh` runs `swift test`. With only the Command Line Tools installed, Swift Testing lives
-in a framework directory that `swift` does not search, so the script adds it then, and only
-then. CI runs `swift build` and `test.sh` on `macos-latest`, where Xcode is the developer
-directory.
+**Signing.** Each build is signed with **Keryx Local Signing**, a self-signed code-signing
+identity in your login keychain, when there is one and it is trusted for code signing; else
+ad hoc, with a warning. An ad-hoc signature is different on every build, and macOS ties
+Open at Login and its background approval to the signature, so after each ad-hoc build they
+must be turned off and on again. With the identity every build has the same designated
+requirement, and they stay as they were.
+
+`make-signing-identity.sh` makes the identity, once. It says what it is about to do and
+asks first (`--yes` skips the question). It makes a key and a ten-year certificate for code
+signing with `/usr/bin/openssl` in a private temporary folder, imports both into the login
+keychain with the key usable by `/usr/bin/codesign`, and trusts the certificate for code
+signing only (`security add-trusted-cert -p codeSign`), which macOS asks your password for.
+The temporary files are deleted. Run again, it changes nothing. The first build after it
+asks whether codesign may use the key: choose Always Allow. The certificate is trusted on
+this Mac only, for code signing, and its key never leaves your keychain; to remove it,
+delete "Keryx Local Signing" in Keychain Access.
+
+`test.sh` runs `test-scripts.sh` first, which tests both scripts in a temporary folder:
+which identity a build chooses (against a stand-in `security`), how Keryx.app is replaced
+(with `KERYX_APP_DESTINATION` standing in for /Applications), and the identity script
+against a keychain of its own (`KEYCHAIN`), with the trust step skipped
+(`KERYX_SIGNING_TRUST=0`) since trust settings are per user, not per keychain. It never
+touches /Applications or your keychains. Then it runs `swift test`. With only the Command
+Line Tools installed, Swift Testing lives in a framework directory that `swift` does not
+search, so the script adds it then, and only then. CI runs `swift build` and `test.sh` on
+`macos-latest`, where Xcode is the developer directory.
+
+To have Keryx open at login, turn on Open at Login in the app's Settings (⌘,). It opens in
+the menu bar only, with no window, and starts answering calls.
 
 ### Snapshots
 
