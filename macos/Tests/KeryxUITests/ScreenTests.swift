@@ -34,10 +34,24 @@ import KeryxPreview
             == "“Your phone numbers” is empty — every call is refused")
         #expect(Wording.named("unless VOICE_BASE_URL names one; CODEX_HOME is its own", titles: titles)
             == "unless “Voice server URL” names one; CODEX_HOME is its own", "a key with no row stays")
-        #expect(OverviewWording.detail("`ALLOWED_CALLERS` is empty", titles: titles).text
+        #expect(CheckWording.detail("ALLOWED_CALLERS is empty", titles: titles).text
             == "“Your phone numbers” is empty")
-        #expect(OverviewWording.detail("llama-server is not installed — `keryx setup` installs it").text
-            == "llama-server is not installed — keryx setup installs it")
+    }
+
+    @Test func aServicesLabelIsSaidAsWhatItIs() {
+        let raw = "dev.keryx.agent is not installed — Keryx cannot restart itself, and nothing restarts it if it dies"
+        let said = CheckWording.detail(raw)
+        #expect(said.text == "The background service isn't installed — Keryx cannot restart itself, and nothing "
+            + "restarts it if it dies")
+        #expect(said.raw == raw, "the label under Show Details")
+        #expect(CheckWording.detail("keryx.service is not installed").text == "The background service isn't installed")
+        #expect(CheckWording.detail("llama-server is not installed").raw == nil, "a program is not a service")
+    }
+
+    @Test func anOptionalCheckLeftOffIsGrey() {
+        #expect(CheckGlyph.of("missing", detail: "off (optional)").symbol == CheckGlyph.off.symbol)
+        #expect(CheckGlyph.of("missing", detail: "not set").symbol == CheckGlyph.missing.symbol)
+        #expect(CheckGlyph.of("failed", detail: "off (optional)").symbol == CheckGlyph.failed.symbol)
     }
 
     @Test func truncationEndsInAnEllipsis() {

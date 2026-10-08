@@ -110,7 +110,15 @@ enum IntegrationsWording {
     /// and the buttons say the same (`tone`, `IntegrationCard`).
     static func status(_ integration: Integration, config: [ConfigRow]? = nil) -> String {
         if integration.connected { return "Connected" }
-        return canDisconnect(integration, config: config) ? "Not ready" : "Not connected"
+        return notReady(integration, config: config) ? "Not ready" : "Not connected"
+    }
+
+    /// Something of it is on and it still does not work. For GitHub, only reports turned on
+    /// (`ISSUE_REPORTING` true): a stored `false`, or a repository chosen, is off.
+    static func notReady(_ integration: Integration, config: [ConfigRow]?) -> Bool {
+        guard !integration.connected else { return false }
+        if integration.signin == "gh" { return issueReportsOn(config) == true }
+        return canDisconnect(integration, config: config)
     }
 
     /// The card's removal button: Disconnect for what is connected, Turn Off for what is
@@ -141,7 +149,7 @@ enum IntegrationsWording {
     /// work (a sign-in half done, reports on and `gh` missing); grey otherwise.
     static func tone(_ integration: Integration, config: [ConfigRow]?) -> StatusDot.Tone {
         if integration.connected { return .ok }
-        return canDisconnect(integration, config: config) ? .warning : .inactive
+        return notReady(integration, config: config) ? .warning : .inactive
     }
 
     /// "The Slack plugin", "The Email answers and Billing plugins"; `nil` with none.

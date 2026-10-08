@@ -17,12 +17,13 @@ enum PhoneWording {
     static let accountKeys = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"]
     static let callerKeys = ["ALLOWED_CALLERS", "OWNER_NUMBER", "KERYX_PIN"]
 
-    /// The account: its name once Twilio has answered, else why not. `titles`: the
+    /// The account: connected, with its name under the row's title once Twilio has
+    /// answered, else why not. `titles`: the
     /// settings' titles by key, to say a key the CLI names in.
     static func account(_ numbers: PhoneNumbers?, sidSet: Bool, tokenSet: Bool,
                         titles: [String: String] = [:]) -> Line {
         if let name = numbers?.account, !name.isEmpty {
-            return Line(tone: .ok, text: name)
+            return Line(tone: .ok, text: "Connected", hint: name)
         }
         guard sidSet, tokenSet else {
             return Line(tone: .inactive, text: "Not connected",
@@ -74,17 +75,18 @@ enum PhoneWording {
         return "The number Keryx answers and calls from."
     }
 
-    /// A write in the account sheet that failed, in its sentence.
-    static func saveFailure(_ error: KeryxError) -> String {
-        error.reported.map(KeryxError.sentence) ?? error.message
+    /// A write in the account sheet that failed: the app's sentence, and what Keryx said
+    /// under Show Details.
+    static func saveFailure(_ error: KeryxError) -> StreamFailure {
+        error.said("The Twilio account wasn't saved.")
     }
 
     /// The new account SID was saved and the token was not: Keryx now holds the new SID
     /// with the old token, which Twilio will refuse.
-    static func tokenNotSaved(_ error: KeryxError) -> String {
-        "The new account SID was saved, but the auth token wasn't: \(saveFailure(error)) "
+    static func tokenNotSaved(_ error: KeryxError) -> StreamFailure {
+        error.said("The new account SID was saved, but the auth token wasn't. "
             + "Keryx now has the new SID with the old token, which Twilio won't accept together. "
-            + "Save again to put the token beside it, or change the SID back."
+            + "Save again to put the token beside it, or change the SID back.")
     }
 
     // MARK: - The number
@@ -183,13 +185,13 @@ enum PhoneWording {
 
     // MARK: - The tunnel
 
-    /// Which tunnel program is installed.
+    /// Whether a tunnel program is installed; which one, under the row's title.
     static func tunnel(_ tunnel: PhoneTunnel) -> Line {
         guard let kind = tunnel.kind else {
             return Line(tone: .warning, text: "Not installed",
                         hint: "cloudflared or ngrok puts this Mac where Twilio can reach it")
         }
-        return Line(tone: .ok, text: kind)
+        return Line(tone: .ok, text: "Installed", hint: kind)
     }
 
     /// Whether the tunnel runs as a service (installed with Keryx's own, in the Overview).

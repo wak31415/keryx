@@ -107,6 +107,17 @@ import KeryxPreview
         #expect(half.title == "Turn Off Google for agents?" && half.button == "Turn Off")
     }
 
+    @Test func gitHubIsNotReadyOnlyWhileReportsAreOn() {
+        // Stored false is off, however set the row is: not connected, grey.
+        let storedOff = config(["ISSUE_REPORTING": .bool(false), "ISSUE_REPO": .string("ada/keryx")])
+        #expect(IntegrationsWording.status(card("github"), config: storedOff) == "Not connected")
+        #expect(IntegrationsWording.tone(card("github"), config: storedOff) == .inactive)
+        let on = config(["ISSUE_REPORTING": .bool(true)])
+        #expect(IntegrationsWording.status(card("github"), config: on) == "Not ready")
+        #expect(IntegrationsWording.tone(card("github"), config: on) == .warning)
+        #expect(IntegrationsWording.status(card("github"), config: nil) == "Not connected")
+    }
+
     @Test func aCardsStatusAndButtonsAgree() {
         let on = config(["GOOGLE_WORKSPACE_MCP": .bool(true)])
         #expect(IntegrationsWording.status(card("google"), config: on) == "Not ready")

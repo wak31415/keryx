@@ -34,31 +34,4 @@ enum OverviewWording {
     /// What a restart does, said without promising the call-back, which only comes when
     /// Keryx has a number to ring and a phone line to ring it on.
     static let restartMessage = "Keryx restarts and comes back in a few seconds."
-
-    // MARK: - Doctor's details
-
-    /// A check's detail as two parts: a path it opens with (shown on a line of its own,
-    /// shortened in the middle), and the sentence. Code formatting goes, a trailing exception
-    /// name ("(ConnectError)") goes, and a setting's key is replaced by its title from
-    /// `titles` (`KEY` → "Title") when Configuration has named it.
-    static func detail(_ raw: String, titles: [String: String] = [:]) -> (path: String?, text: String) {
-        var text = raw.replacingOccurrences(of: "`", with: "").trimmingCharacters(in: .whitespaces)
-        if let range = text.range(of: #"\s*\([A-Z][A-Za-z]*(Error|Exception|Timeout)\)$"#, options: .regularExpression) {
-            text.removeSubrange(range)
-        }
-        var path: String?
-        if text.hasPrefix("/") || text.hasPrefix("~/") {
-            let separators = ["; ", " — ", ": "]
-            let cut = separators.compactMap { text.range(of: $0) }.min { $0.lowerBound < $1.lowerBound }
-            if let cut {
-                path = String(text[..<cut.lowerBound])
-                text = String(text[cut.upperBound...])
-            } else {
-                path = text
-                text = ""
-            }
-        }
-        text = Wording.named(text, titles: titles)
-        return (path, Wording.capitalised(text))
-    }
 }

@@ -79,6 +79,15 @@ struct SetupContext: Sendable {
     /// cloudflared's download page, while no tunnel program is installed.
     var tunnelDownload: URL? { FixAction.tunnelPage(phoneTunnel?.installUrl) }
 
+    /// The model this Mac's model server is serving when it runs one other than the model
+    /// chosen (`LLM_SERVER_MODEL`), by its title; `nil` when it isn't running, says nothing,
+    /// or serves the one chosen.
+    var modelServerServesAnother: String? {
+        guard let llm = models?.servers.llm, llm.reachable, let served = llm.servedModel, !served.isEmpty,
+              let chosen = llm.model, served != chosen else { return nil }
+        return models?.models.first { $0.name == served }?.title ?? served
+    }
+
     func pluginTitle(_ name: String) -> String? { plugins?.plugin(name)?.title }
 
     func integrationTitle(_ id: String) -> String? { integrations?.integration(id)?.title }
@@ -289,6 +298,10 @@ enum SetupGuide {
         }
         guard report.servers.llm.reachable else {
             return SetupActions(primary: SetupAction(title: "Start Model Server", effect: .startModelServer),
+                                others: [models])
+        }
+        if context.modelServerServesAnother != nil {
+            return SetupActions(primary: SetupAction(title: "Restart Model Server", effect: .startModelServer),
                                 others: [models])
         }
         return SetupActions(primary: models)

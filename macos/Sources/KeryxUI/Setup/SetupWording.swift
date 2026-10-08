@@ -67,11 +67,25 @@ enum SetupWording {
             return waitsFor(step, in: plan)
         default:
             guard let why = why(step) else { return nil }
+            if step.id == "migrate" { return migrateHeadline }
             if let fix = FixAction(step.fix),
                let line = sentence(fix, failed: step.kind == .failed, context: context) { return line }
             return Wording.named(why, titles: Wording.titles(context.config))
         }
     }
+
+    /// The plan's own `why` for Show Details under the headline, when the headline said it
+    /// in other words and it names what a person need not read (a path, a command); `nil`
+    /// when the headline is the `why` itself, or the `why` says nothing more.
+    static func headlineDetails(_ step: SetupStep, in plan: SetupPlan, context: SetupContext) -> String? {
+        guard let why = why(step), !AppFacing.isFit(why),
+              let line = headline(step, in: plan, context: context),
+              line != Wording.named(why, titles: Wording.titles(context.config)) else { return nil }
+        return why
+    }
+
+    /// The migration step's line: where the files are is for Show Details.
+    static let migrateHeadline = "Keryx's files are still where Jarvis kept them."
 
     /// A step's button as a row of the last page says it, beside the step's own title: the
     /// verb alone where the title already names what it is for ("Add Key…", "Sign In…",
@@ -120,6 +134,9 @@ enum SetupWording {
         case .installService:
             return "Keryx isn't running in the background yet."
         case .startModelServer:
+            if let other = context.modelServerServesAnother {
+                return "The model server is serving \(other), not the model chosen."
+            }
             return "The model server isn't running."
         case .chooseModel:
             return "No local model is chosen yet."
@@ -134,7 +151,7 @@ enum SetupWording {
         case .phoneTunnel:
             return context.tunnelDownload != nil ? "No tunnel is installed yet." : "Twilio can't reach this Mac yet."
         case .migrate:
-            return "Jarvis's files still need to move."
+            return migrateHeadline
         }
     }
 

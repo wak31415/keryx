@@ -8,7 +8,7 @@ import KeryxPreview
 @Suite struct PhoneWordingTests {
     @Test func theAccountIsItsNameOrWhyNot() {
         #expect(PhoneWording.account(PreviewData.phoneNumbers, sidSet: true, tokenSet: true)
-            == PhoneWording.Line(tone: .ok, text: "Ada's account"))
+            == PhoneWording.Line(tone: .ok, text: "Connected", hint: "Ada's account"), "the name in the caption")
         #expect(PhoneWording.account(PreviewData.phoneNumbersUnset, sidSet: false, tokenSet: false).text == "Not connected")
         var refused = PreviewData.phoneNumbersUnset
         refused.error = "Twilio didn't accept the account SID and auth token."
@@ -29,9 +29,11 @@ import KeryxPreview
     @Test func aHalfSavedPairIsSaidAsOne() {
         let error = KeryxError.failed(command: "keryx config set", exitCode: 1, message: "could not write secrets.toml")
         let said = PhoneWording.tokenNotSaved(error)
-        #expect(said.hasPrefix("The new account SID was saved, but the auth token wasn't: Could not write secrets.toml."))
-        #expect(said.contains("Save again"))
-        #expect(PhoneWording.saveFailure(error) == "Could not write secrets.toml.")
+        #expect(said.message.hasPrefix("The new account SID was saved, but the auth token wasn't."))
+        #expect(said.message.contains("Save again"))
+        #expect(said.detail == "could not write secrets.toml")
+        #expect(PhoneWording.saveFailure(error)
+            == StreamFailure("The Twilio account wasn't saved.", detail: "could not write secrets.toml"))
     }
 
         @Test func thePairCheckNamesTheAccount() {
@@ -122,7 +124,7 @@ import KeryxPreview
     }
 
     @Test func theTunnelSaysWhatIsMissing() {
-        #expect(PhoneWording.tunnel(PreviewData.phoneTunnel).text == "cloudflared")
+        #expect(PhoneWording.tunnel(PreviewData.phoneTunnel) == PhoneWording.Line(tone: .ok, text: "Installed", hint: "cloudflared"))
         #expect(PhoneWording.tunnel(PreviewData.phoneTunnelUnset).hint.map(AppFacing.isFit) == true, "no command")
         #expect(PhoneWording.reachable(PreviewData.phoneTunnel).text == "Keryx answers at keryx.example.com")
         #expect(PhoneWording.reachable(PreviewData.phoneTunnelUnset).text == "No public hostname yet")

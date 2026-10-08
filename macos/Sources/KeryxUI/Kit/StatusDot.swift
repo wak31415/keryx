@@ -43,6 +43,16 @@ public struct CheckGlyph: Sendable {
     public static let missing = CheckGlyph(symbol: "exclamationmark.circle", colour: .orange, label: "Needs attention")
     public static let failed = CheckGlyph(symbol: "xmark.octagon.fill", colour: .red, label: "Failed")
 
+    /// Something optional left off: grey, as the Setup Assistant's optional steps are.
+    public static let off = CheckGlyph(symbol: "circle.dotted", colour: .secondary, label: "Off")
+
+    /// For a check: `of(state)`, except one missing only because something optional is off
+    /// ("off (optional)"), which needs no attention.
+    public static func of(_ state: String, detail: String) -> CheckGlyph {
+        if state == "missing", detail.localizedCaseInsensitiveContains("(optional)") { return off }
+        return of(state)
+    }
+
     /// For doctor's `state`: `ok`, `missing`, anything else failed.
     public static func of(_ state: String) -> CheckGlyph {
         switch state {

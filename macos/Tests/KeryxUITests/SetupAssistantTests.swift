@@ -36,6 +36,22 @@ import KeryxPreview
 
     // MARK: - Pages
 
+    @Test func theMigrationSaysWhereInShowDetailsOnly() throws {
+        let json = """
+        {"id": "migrate", "title": "Migration", "required": true, "state": "needed",
+         "why": "Storage: /Users/you/.jarvis still holds Keryx's files from when it was Jarvis.",
+         "blocked_by": [], "walked": false, "checks": []}
+        """
+        let migrate = try JSON.decoder.decode(SetupStep.self, from: Data(json.utf8))
+        var plan = fresh
+        plan.steps.insert(migrate, at: 0)
+        let context = SetupContext()
+        #expect(SetupWording.headline(migrate, in: plan, context: context) == "Keryx's files are still where Jarvis kept them.")
+        #expect(SetupWording.headlineDetails(migrate, in: plan, context: context) == migrate.why)
+        let voice = step(fresh, "voice")
+        #expect(SetupWording.headlineDetails(voice, in: fresh, context: context) == nil, "nothing more to say")
+    }
+
     @Test func theRequiredStepsComeFirstThenTheOptionalOnesThenTheLastPage() {
         let pages = SetupGuide.pages(fresh)
         #expect(pages.first == .step("voice"))
@@ -212,7 +228,17 @@ import KeryxPreview
         var report = PreviewData.models
         #expect(actions(fresh, "local", SetupContext(models: report)).primary?.effect == .request(.show(.models)),
                 "served already")
+        var other = report
+        other.servers.llm.servedModel = "something-else"
+        #expect(actions(fresh, "local", SetupContext(models: other)).primary
+            == SetupAction(title: "Restart Model Server", effect: .startModelServer), "serving another model")
+        #expect(SetupContext(models: other).modelServerServesAnother == "something-else")
+        #expect(SetupWording.sentence(.startModelServer, failed: false, context: SetupContext(models: other))
+            == "The model server is serving something-else, not the model chosen.")
+        #expect(FixAction("models:start")?.action(SetupContext(models: other)).title == "Restart Model Server")
         report.servers.llm.reachable = false
+        #expect(SetupWording.sentence(.startModelServer, failed: false, context: SetupContext(models: report))
+            == "The model server isn't running.")
         let stopped = actions(fresh, "local", SetupContext(models: report))
         #expect(stopped.primary == SetupAction(title: "Start Model Server", effect: .startModelServer))
         #expect(stopped.others.map(\.effect) == [.request(.show(.models))])

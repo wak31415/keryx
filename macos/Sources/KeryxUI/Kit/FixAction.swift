@@ -106,7 +106,9 @@ enum FixAction: Equatable, Sendable {
             let installed = context.service?.units.agent.installed == true
             return SetupAction(title: installed ? "Start Service…" : "Install Service…", effect: .installService)
         case .startModelServer:
-            return SetupAction(title: "Start Model Server", effect: .startModelServer)
+            // Running another model: started again, on the one chosen.
+            let restart = context.modelServerServesAnother != nil
+            return SetupAction(title: restart ? "Restart Model Server" : "Start Model Server", effect: .startModelServer)
         case .chooseModel:
             return open("Choose a Model", .show(.models))
         case .voiceHere:
@@ -161,9 +163,9 @@ enum FixAction: Equatable, Sendable {
     /// it is one of these, never whatever a CLI printed.
     static let tunnelHosts: Set<String> = ["developers.cloudflare.com", "ngrok.com", "dashboard.ngrok.com"]
 
+    /// Checked as a sign-in's page is (`TrustedLink`): https, one of these hosts, and no
+    /// user, password or port.
     static func tunnelPage(_ text: String?) -> URL? {
-        guard let text, let url = URL(string: text), url.scheme == "https",
-              let host = url.host?.lowercased(), tunnelHosts.contains(host) else { return nil }
-        return url
+        text.flatMap { TrustedLink.url($0, on: tunnelHosts) }
     }
 }

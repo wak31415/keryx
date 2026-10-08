@@ -152,12 +152,19 @@ struct SetupStepPage: View {
         if step.id == "pin", context.pin?.place == .environment {
             Label(SetupWording.pinFromEnvironment, systemImage: "info.circle")
         } else if let line = SetupWording.headline(step, in: plan, context: context) {
-            Label {
-                Text(line)
-            } icon: {
-                Image(systemName: symbol.name)
-                    .foregroundStyle(symbol.colour)
-                    .accessibilityLabel(SetupWording.label(step.kind))
+            // Show Details under the line's start, the two kept together in the middle.
+            VStack(alignment: .leading, spacing: 4) {
+                Label {
+                    Text(line)
+                } icon: {
+                    Image(systemName: symbol.name)
+                        .foregroundStyle(symbol.colour)
+                        .accessibilityLabel(SetupWording.label(step.kind))
+                }
+                if let details = SetupWording.headlineDetails(step, in: plan, context: context) {
+                    DetailsDisclosure(details)
+                        .frame(maxWidth: 560, alignment: .leading)
+                }
             }
         }
     }

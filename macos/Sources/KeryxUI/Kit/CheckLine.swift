@@ -43,7 +43,7 @@ struct CheckLine: View {
                     }
                 }
             } icon: {
-                CheckGlyph.of(state).image
+                CheckGlyph.of(state, detail: detail).image
             }
         }
         .padding(.vertical, 2)
@@ -52,6 +52,8 @@ struct CheckLine: View {
 
 /// A check's detail as the app says it.
 enum CheckWording {
+    static let serviceNotInstalled = "The background service isn't installed"
+
     /// The sentence to show, and what is held back for Show Details: a detail written for a
     /// terminal (a command, a path, a traceback — an older CLI's, before `hint` existed) is
     /// never the line; a phrase for what kind of trouble it is stands in. Code formatting
@@ -61,6 +63,12 @@ enum CheckWording {
         var text = raw.trimmingCharacters(in: .whitespaces)
         if let range = text.range(of: #"\s*\([A-Z][A-Za-z]*(Error|Exception|Timeout)\)$"#, options: .regularExpression) {
             text.removeSubrange(range)
+        }
+        // A service's label ("dev.keryx.agent is not installed — …") is said as what it is;
+        // the label is for Show Details.
+        if let range = text.range(of: #"^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+ is not installed"#, options: .regularExpression) {
+            let rest = text[range.upperBound...]
+            return (serviceNotInstalled + rest.replacingOccurrences(of: "`", with: ""), raw)
         }
         guard AppFacing.isFit(text) else {
             // The clause before the terminal's part, when that much is fit to show.

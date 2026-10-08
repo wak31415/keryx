@@ -18,13 +18,20 @@ public enum TrustedLink {
 
     /// `address` as a URL to open, or `KeryxError.refused` when it is not one of these.
     public static func url(_ address: String) throws -> URL {
+        guard let url = url(address, on: hosts) else { throw KeryxError.refused(refusal) }
+        return url
+    }
+
+    /// `address` as a URL to open when it is https on one of `allowed` (matched exactly),
+    /// with no user, password or port in it; `nil` otherwise. The one check every address
+    /// the CLI hands the app to open goes through (a sign-in's page, a tunnel's download).
+    public static func url(_ address: String, on allowed: Set<String>) -> URL? {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let parts = URLComponents(string: trimmed), parts.scheme?.lowercased() == "https",
-              let host = parts.host?.lowercased(), hosts.contains(host),
-              parts.user == nil, parts.password == nil, parts.port == nil,
-              let url = parts.url
-        else { throw KeryxError.refused(refusal) }
-        return url
+              let host = parts.host?.lowercased(), allowed.contains(host),
+              parts.user == nil, parts.password == nil, parts.port == nil
+        else { return nil }
+        return parts.url
     }
 
     /// Whether `address` would be opened.
