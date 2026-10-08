@@ -7,13 +7,29 @@ import KeryxPreview
 /// The CLI's fix ids (`keryx/fixes.py`), each a button: every id in its closed set maps to
 /// one, and every fix the fixtures carry does.
 @MainActor @Suite struct FixActionTests {
-    /// `fixes.ACTIONS`, as the CLI writes them.
-    nonisolated static let screens = [
-        "pin", "service:install", "models:start", "models:choose", "voice:here", "voice:download",
-        "phone:account", "phone:webhooks", "phone:tunnel", "migrate",
-    ]
+    /// The vocabulary as the contract names it (`fix_ids` in `contract.json`, which
+    /// `tests/test_macos_contract.py` holds equal to `keryx/fixes.py`): never a hand copy.
+    struct Vocabulary: Sendable {
+        var actions: [String]
+        var signIns: [String]
+        var prefixes: [String]
+    }
+
+    nonisolated static let vocabulary: Vocabulary = {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("KeryxKitTests/Fixtures/contract.json")
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ids = object["fix_ids"] as? [String: [String]],
+              let actions = ids["actions"], let signIns = ids["signins"], let prefixes = ids["prefixes"]
+        else { fatalError("contract.json names no fix_ids at \(url.path)") }
+        return Vocabulary(actions: actions, signIns: signIns, prefixes: prefixes)
+    }()
+
+    /// `fixes.ACTIONS`.
+    nonisolated static var screens: [String] { vocabulary.actions }
     /// `fixes.SIGNINS`.
-    nonisolated static let signIns = ["claude", "codex", "gmail", "google-workspace"]
+    nonisolated static var signIns: [String] { vocabulary.signIns }
     /// One of each of the ids that take an argument, beside the sign-ins.
     nonisolated static let withArguments = [
         "secret:OPENAI_API_KEY", "secret:VOICE_API_KEY", "secret:LOCAL_AGENT_API_KEY", "setting:ALLOWED_CALLERS",
@@ -35,6 +51,12 @@ import KeryxPreview
 
     @Test func theNoArgumentIdsAreExactlyTheCLIsSet() {
         #expect(Set(FixAction.screens.keys) == Set(Self.screens))
+    }
+
+    @Test func everyPrefixTheCLIMayGiveIsUnderstood() {
+        #expect(Set(Self.withArguments.map { String($0.prefix { $0 != ":" }) + ":" }) == Set(Self.vocabulary.prefixes),
+                "one id with an argument for each of the contract's prefixes")
+        for name in Self.signIns { #expect(SignInProvider(rawValue: name) != nil, "signin:\(name)") }
     }
 
     @Test func everyFixTheFixturesCarryIsAButton() {
@@ -82,5 +104,10 @@ import KeryxPreview
         // A page that is not a tunnel's own download page is never opened.
         #expect(FixAction.tunnelPage("https://example.com/cloudflared") == nil)
         #expect(FixAction.tunnelPage("http://developers.cloudflare.com/") == nil)
+        // Checked as a sign-in's page is: no user, password or port.
+        #expect(FixAction.tunnelPage("https://user@developers.cloudflare.com/") == nil)
+        #expect(FixAction.tunnelPage("https://u:p@developers.cloudflare.com/") == nil)
+        #expect(FixAction.tunnelPage("https://developers.cloudflare.com:8443/") == nil)
+        #expect(FixAction.tunnelPage(" https://developers.cloudflare.com/x ") != nil)
     }
 }

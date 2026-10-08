@@ -856,5 +856,31 @@
         "cancelled": 130
       }
     }
+  },
+  "fix_ids": {
+    "actions": [
+      "migrate",
+      "models:choose",
+      "models:start",
+      "phone:account",
+      "phone:tunnel",
+      "phone:webhooks",
+      "pin",
+      "service:install",
+      "voice:download",
+      "voice:here"
+    ],
+    "signins": [
+      "claude",
+      "codex",
+      "gmail",
+      "google-workspace"
+    ],
+    "prefixes": [
+      "secret:",
+      "setting:",
+      "plugin:",
+      "integration:"
+    ]
   }
 }
