@@ -73,9 +73,11 @@ import KeryxPreview
         client.calls.filter { $0 == "service install" }.count
     }
 
-    /// `keryx service start`, no `--all`: a unit that is already there, started again.
+    /// `keryx service start --all`: a unit that is already there, started again along with
+    /// every installed model server (C1, Task N: `start --all` acts only on what is
+    /// installed, so this is as safe at launch as a plain `start`).
     func starts(_ client: StubClient) -> Int {
-        client.calls.filter { $0 == "service start" }.count
+        client.calls.filter { $0 == "service start --all" }.count
     }
 
     // MARK: - The decision
@@ -86,6 +88,9 @@ import KeryxPreview
                 "installed but stopped is started too, as the CLI says it: failed, fixed by a start")
         #expect(AppModel.answeringStep(plan: Self.plan(service: "done"), status: Self.stopped) == .start,
                 "a plan read before it stopped")
+        #expect(AppModel.answeringStep(plan: Self.plan(service: "failed", fix: "service:install"),
+                                       status: Self.notInstalled) == .start,
+                "a legacy failed service:install fix (not yet installed) still starts Keryx")
     }
 
     @Test func nothingStartsBeforeSetupHasReachedIt() {
@@ -233,6 +238,10 @@ import KeryxPreview
         let client = StubClient {
             $0.status = .success(Self.notInstalled)
             $0.setupPlan = .success(Self.plan(service: "needed"))
+            // Named explicitly: the failed install's own reread (I4) now loads `.service`
+            // too, and it must go on saying "not installed" for the retry below to take
+            // the install path again, not `service start`.
+            $0.service = .success(Self.units(installed: false))
             $0.serviceResult = .failure(failure)
         }
         let model = makeModel(client: client)
@@ -300,10 +309,18 @@ import KeryxPreview
         #expect(model.quitStopsAnswering)
         let mark = client.calls.count
         #expect(await model.stopAnswering() == nil)
-        #expect(Array(client.calls.dropFirst(mark)) == ["service", "service stop --all"])
+        // I2: no `.service` read first to decide whether to stop — the stop always runs,
+        // and the CLI is the one that says there was nothing to do.
+        #expect(Array(client.calls.dropFirst(mark)) == ["service stop --all"])
     }
 
-    @Test func quittingLeavesAKeryxStartedByHand() async {
+    /// I2: the agent's own unit not being installed (a Keryx started by hand, or This
+    /// Mac's Set Up… having only started a model server) no longer gates the stop at
+    /// all — the CLI itself says there was nothing to stop when there wasn't, and a
+    /// model server or the voice can be running without the agent ever having been
+    /// installed. Quitting still never *says* it stops answering calls, since the agent
+    /// was never one to answer with.
+    @Test func quittingStopsServersEvenWithTheAgentUnitNeverInstalled() async {
         var byHand = Self.notInstalled
         byHand.health.reachable = true
         let client = StubClient {
@@ -313,9 +330,10 @@ import KeryxPreview
         let model = makeModel(client: client)
         await model.start()
         defer { model.stop() }
-        #expect(!model.quitStopsAnswering)
+        #expect(!model.quitStopsAnswering, "wording only: the agent was never installed")
+        #expect(model.quitRunsServiceStop, "the stop itself still runs")
         await model.stopAnswering()
-        #expect(!client.calls.contains("service stop --all"))
+        #expect(client.calls.contains("service stop --all"))
     }
 
     @Test func quittingStopsNothingUnlessTheModelKeepsKeryxAnswering() async {
@@ -368,8 +386,10 @@ import KeryxPreview
         #expect(install < stop)
     }
 
-    @Test func aFailedStopIsReturned() async {
-        let failure = KeryxError.failed(command: "keryx service stop --all", exitCode: 1, message: "launchctl failed")
+    /// I1: the real CLI never throws on a failed stop — it prints `ok: false`, exit 1 —
+    /// and the app is the one that turns that into a failure, with the reply's own
+    /// `detail` carried under Show Details.
+    @Test func aFailedStopIsReturned() async throws {
         let client = StubClient {
             $0.setupPlan = .success(PreviewData.setupPlanReady)
             $0.service = .success(Self.units(installed: true))
@@ -378,7 +398,43 @@ import KeryxPreview
         await model.start()
         defer { model.stop() }
         await model.ensureAnswering()
-        client.update { $0.serviceControlResult = .failure(failure) }
-        #expect(await model.stopAnswering() == failure)
+        client.update {
+            $0.serviceControlResult = .success(ServiceControlResult(
+                ok: false, message: "Not everything could be stopped.",
+                detail: "dev.keryx.tunnel: launchctl bootout: Input/output error"))
+        }
+        let error = try #require(await model.stopAnswering())
+        #expect(error.details == "dev.keryx.tunnel: launchctl bootout: Input/output error")
+    }
+
+    /// I1: the same, for a start — the Overview's visible banner (`startFailure`), with
+    /// Show Details carrying the reply's own `detail`, and Try Again (`offersStart`,
+    /// `ServiceWordingTests`).
+    @Test func aFailedStartWithTheRealReplyShapeSetsStartFailure() async throws {
+        let client = StubClient {
+            $0.status = .success(Self.stopped)
+            $0.setupPlan = .success(Self.stoppedPlan)
+            $0.serviceControlResult = .success(ServiceControlResult(
+                ok: false, message: "Not everything could be started.", detail: "dev.keryx.agent: exited 113"))
+        }
+        let model = makeModel(client: client)
+        await model.start()
+        defer { model.stop() }
+        let answer = await model.startAnswering()
+        guard case let .failure(error) = answer else {
+            Issue.record("expected a failure")
+            return
+        }
+        #expect(error.details == "dev.keryx.agent: exited 113")
+        #expect(model.startFailure == error)
+    }
+
+    /// Quitting always runs the stop, whatever is installed — but the two questions
+    /// ("do we run it" and "do we say it stops answering calls") are answered
+    /// separately (I2).
+    @Test func quitRunsServiceStopWheneverKeryxIsKeptAnswering() {
+        let client = StubClient()
+        let model = makeModel(client: client)
+        #expect(!model.quitRunsServiceStop, "no client yet")
     }
 }

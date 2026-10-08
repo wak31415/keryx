@@ -427,7 +427,7 @@ package struct FinishFrame: View {
         }
     }
 
-    // MARK: - The agent's test (SEAM)
+    // MARK: - The agent's test
 
     private func smokeLine() -> Line? {
         let name = Wording.agent(WizardFacts(model).text("AGENT_BACKEND") ?? "claude")

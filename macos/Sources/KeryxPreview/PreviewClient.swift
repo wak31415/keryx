@@ -404,7 +404,7 @@ public struct PreviewClient: KeryxClient {
         return ServiceResult(ok: true, message: "removed dev.keryx.agent, dev.keryx.tunnel")
     }
 
-    public func stopService(all: Bool) async throws -> ServiceControlResult {
+    public func stopService(all: Bool, detached: Bool = false) async throws -> ServiceControlResult {
         try check()
         return ServiceControlResult(
             ok: true, message: all ? "Keryx and its model servers are stopped, and won't start at login until "

@@ -356,15 +356,28 @@ public struct CLIClient: KeryxClient, AgentSmokeTesting {
     }
 
     /// Every exit (0 ok, 1 a unit failed, 2 refused) prints the same document, so every one
-    /// is decoded rather than thrown.
-    public func stopService(all: Bool) async throws -> ServiceControlResult {
-        try await decode(["service", "stop"] + (all ? ["--all"] : []) + ["--json"],
-                         acceptedExitCodes: [0, 1, 2], timeout: Self.installerTimeout)
+    /// is decoded; `ok: false` is then thrown as a failure, same as any other command's.
+    public func stopService(all: Bool, detached: Bool = false) async throws -> ServiceControlResult {
+        let subcommand = ["service", "stop"] + (all ? ["--all"] : []) + ["--json"]
+        let result: ServiceControlResult = try await decode(subcommand, acceptedExitCodes: [0, 1, 2],
+                                                             timeout: Self.installerTimeout, detached: detached)
+        guard result.ok else { throw Self.serviceFailure(subcommand, result) }
+        return result
     }
 
     public func startService(all: Bool) async throws -> ServiceControlResult {
-        try await decode(["service", "start"] + (all ? ["--all"] : []) + ["--json"],
-                         acceptedExitCodes: [0, 1, 2], timeout: Self.installerTimeout)
+        let subcommand = ["service", "start"] + (all ? ["--all"] : []) + ["--json"]
+        let result: ServiceControlResult = try await decode(subcommand, acceptedExitCodes: [0, 1, 2],
+                                                             timeout: Self.installerTimeout)
+        guard result.ok else { throw Self.serviceFailure(subcommand, result) }
+        return result
+    }
+
+    /// A `service stop|start` reply that said `ok: false`, as a failure: `detail` (the
+    /// manager's own last line, redacted) under Show Details when there is one, else the
+    /// reply's own `message`.
+    static func serviceFailure(_ subcommand: [String], _ result: ServiceControlResult) -> KeryxError {
+        .failed(command: Self.name(subcommand), exitCode: 1, message: result.detail ?? result.message)
     }
 
     /// Ends normally only after `done`, `error` or `cancelled`, as `pull` does; no timeout,
@@ -531,7 +544,7 @@ public struct CLIClient: KeryxClient, AgentSmokeTesting {
     // MARK: - Running
 
     private func request(
-        _ subcommand: [String], stdin: Data? = nil, timeout: Duration? = .seconds(30)
+        _ subcommand: [String], stdin: Data? = nil, timeout: Duration? = .seconds(30), detached: Bool = false
     ) -> CommandRequest {
         CommandRequest(
             executable: location.executable,
@@ -539,15 +552,17 @@ public struct CLIClient: KeryxClient, AgentSmokeTesting {
             environment: Sanitise.environment(location.environment),
             workingDirectory: location.runDirectory,
             stdin: stdin,
-            timeout: timeout)
+            timeout: timeout,
+            detached: detached)
     }
 
     private func decode<T: Decodable>(
         _ subcommand: [String], acceptedExitCodes: Set<Int32> = [0], timeout: Duration = .seconds(30),
-        stdin: Data? = nil
+        stdin: Data? = nil, detached: Bool = false
     ) async throws -> T {
         let command = Self.name(subcommand)
-        let result = try await run(request(subcommand, stdin: stdin, timeout: timeout), command: command)
+        let result = try await run(request(subcommand, stdin: stdin, timeout: timeout, detached: detached),
+                                   command: command)
         if !acceptedExitCodes.contains(result.exitCode) {
             try check(result, command: command) // throws: every exit but 0 is a failure
         }

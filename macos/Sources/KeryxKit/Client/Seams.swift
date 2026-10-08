@@ -1,17 +1,14 @@
 import Foundation
 
 // SEAMS: what the setup wizard is built to use once the CLI has it, and does without until
-// then. Each is one small protocol here, or one optional field on a document model (marked
-// "SEAM" where it is declared, and listed in `ContractTests.awaitingCLI`):
-//
-// - `VOICE_LLM`, `VOICE_LLM_MODEL` — settings, read from `config list` when they are there.
-//   The voice's own model server (`models start --voice-llm`) gets its client method when
-//   the CLI has it; until then `voice use here` starts what the voice needs.
-//
-// `awaitingCLI` is empty: `AgentSmokeTesting` (`CLIClient` now adopts it), `PhoneTunnel.
-// hostname`, `SetupStep.deferrable`/`.deferred`, `SetupMarkResult.deferred`, `config options
-// ASSISTANT_NAME`'s `has_options`, `VoiceStatus.pipelines`, `ModelsReport.recommended` and
-// its siblings, and `CatalogModel.fitsAsVoiceLlm` are all in the contract now.
+// then — each one small protocol here, or one optional field on a document model, listed in
+// `ContractTests.awaitingCLI` until the contract names it. `awaitingCLI` is empty today:
+// `AgentSmokeTesting` (`CLIClient` now adopts it), `PhoneTunnel.hostname`, `SetupStep.
+// deferrable`/`.deferred`, `SetupMarkResult.deferred`, `config options ASSISTANT_NAME`'s
+// `has_options`, `VoiceStatus.pipelines`, `ModelsReport.recommended` and its siblings, and
+// `CatalogModel.fitsAsVoiceLlm` are all in the contract now, and `models start --voice-llm`
+// has had its client method (`CLIClient.startVoiceLLMServer`) since before this list was
+// last true — nothing here is still waiting on the CLI.
 
 /// A coding agent asked to run a test task, as a stream (Task L: `keryx auth smoke NAME
 /// --json`, NAME `claude`, `codex` or `local`: `step`, then `done {ok, summary, detail}`,

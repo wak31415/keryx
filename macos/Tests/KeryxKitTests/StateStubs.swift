@@ -218,17 +218,26 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         try Task.checkCancellation()
         return try answer("service uninstall") { $0.serviceResult }
     }
-    func stopService(all: Bool) async throws -> ServiceControlResult {
+    func stopService(all: Bool, detached: Bool = false) async throws -> ServiceControlResult {
         let wait = lock.withLock { replies.serviceWait }
         await wait()
         try Task.checkCancellation()
-        return try answer("service stop" + (all ? " --all" : "")) { $0.serviceControlResult }
+        let result = try answer("service stop" + (all ? " --all" : "")) { $0.serviceControlResult }
+        guard result.ok else { throw StubClient.serviceFailure("service stop", result) }
+        return result
     }
     func startService(all: Bool) async throws -> ServiceControlResult {
         let wait = lock.withLock { replies.serviceWait }
         await wait()
         try Task.checkCancellation()
-        return try answer("service start" + (all ? " --all" : "")) { $0.serviceControlResult }
+        let result = try answer("service start" + (all ? " --all" : "")) { $0.serviceControlResult }
+        guard result.ok else { throw StubClient.serviceFailure("service start", result) }
+        return result
+    }
+
+    /// As `CLIClient.serviceFailure`: a `service stop|start` reply that said `ok: false`.
+    static func serviceFailure(_ command: String, _ result: ServiceControlResult) -> KeryxError {
+        .failed(command: "keryx " + command, exitCode: 1, message: result.detail ?? result.message)
     }
     func startModelServer(runtime: String?) -> ModelServerStream {
         let make = lock.withLock {

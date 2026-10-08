@@ -262,14 +262,17 @@ import KeryxPreview
         #expect(!model.isBusy)
     }
 
-        @Test func aFailedInstallReadsNothingAgain() async {
+    /// I4: a failed install still reads the units, the status, the plan and the doctor
+    /// again — not only a success — so the checklist never keeps showing what the
+    /// attempt already changed, whichever way it ended.
+    @Test func aFailedInstallReadsTheSameDocumentsAgainAsASuccessDoes() async {
         let failure = KeryxError.failed(command: "keryx service install", exitCode: 2, message: "no checkout")
         let client = StubClient { $0.serviceResult = .failure(failure) }
         let model = await makeModel(client: client)
         defer { model.stop() }
         let mark = client.calls.count
         #expect(await model.installService() == .failure(failure))
-        #expect(calls(client, after: mark) == ["service install"])
+        #expect(calls(client, after: mark) == ["service install", "service", "status", "setup plan", "doctor"])
     }
 
     @Test func pluginChangesReadThePluginsToolsAndPlanAgain() async {

@@ -53,7 +53,8 @@ public final class ProcessRunner: CommandRunner, Sendable {
 
                 let spawned: Spawned
                 do {
-                    spawned = try Child.spawn(request, stderr: .pipe, grace: grace, registry: registry)
+                    spawned = try Child.spawn(request, stderr: .pipe, grace: grace,
+                                              registry: request.detached ? nil : registry)
                 } catch {
                     collector.launchFailed(error)
                     return

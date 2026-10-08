@@ -143,9 +143,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// How long quitting lets a short write (a setting, the PIN, the webhooks) finish before
     /// it asks about it.
     static let writeGrace: Duration = .seconds(5)
-    /// The longest quitting waits for Keryx to stop (`keryx service uninstall`) before it
-    /// quits anyway.
-    static let stopBound: Duration = .seconds(30)
+    /// How long quitting, at Cmd+Q only, waits for a voice LLM stopped part way to put back
+    /// what it was replacing before anything is killed. Session end skips this: launchd
+    /// tears the GUI domain down by itself, and nothing here would be given the time anyway.
+    static let voiceLLMPutBackBound: Duration = .seconds(30)
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Moving Jarvis's files is finished before anything else: killed part way, it would
@@ -160,12 +161,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return .terminateCancel
         }
         let children = ChildRegistry.shared
-        let stopping = model.quitStopsAnswering
-        guard stopping || model.isBusy || children.count > 0 || !model.writes.isEmpty else { return .terminateNow }
+        // Whether `service stop --all` runs at all (always, while Keryx is kept answering —
+        // the CLI handles nothing being installed itself) is a different question from
+        // whether quitting says it stops *answering calls* (only the agent's own unit).
+        let runsStop = model.quitRunsServiceStop
+        let stopsAnswering = model.quitStopsAnswering
+        guard runsStop || model.isBusy || children.count > 0 || !model.writes.isEmpty else { return .terminateNow }
         let sessionEnding = AppLifecycle.isSessionEnding(NSAppleEventManager.shared().currentAppleEvent)
         // At a log out, restart or shut down launchd tears the GUI domain down by itself, so
-        // the units are let go rather than the reply held for an uninstall.
-        Task { await quit(children, stopping: stopping && !sessionEnding, asking: !sessionEnding) }
+        // the units are let go rather than the reply held for a stop.
+        Task {
+            await quit(children, stopping: runsStop && !sessionEnding,
+                      stopsAnswering: stopsAnswering && !sessionEnding, asking: !sessionEnding)
+        }
         return .terminateLater
     }
 
@@ -174,8 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// when it stops Keryx answering, until the owner says not to ask again; and on a yes
     /// stops every child, waits for each group to go, and stops Keryx (`stopping`). At a log
     /// out, restart or shut down it asks nothing (`asking` false) and stops nothing of Keryx's
-    /// (`stopping` false): launchd ends the session's agents itself.
-    private func quit(_ children: ChildRegistry, stopping: Bool, asking: Bool) async {
+    /// (`stopping` false): launchd ends the session's agents itself. `stopsAnswering` is only
+    /// the question's wording (`quitStopsAnswering`): `stopping` runs the stop regardless.
+    private func quit(_ children: ChildRegistry, stopping: Bool, stopsAnswering: Bool, asking: Bool) async {
         let downloads = model.downloads
         let setup = model.voiceSetup
         // A write is a moment's work: killed part way it can leave a change half made.
@@ -195,7 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                     signInDetail: signingIn.map(SignInWording.quitDetail),
                                                     assistant: Wording.assistant(model.status.value),
                                                     changingService: model.serviceChange,
-                                                    writing: model.writing, stopsAnswering: stopping,
+                                                    writing: model.writing, stopsAnswering: stopsAnswering,
                                                     liveCalls: model.status.value?.health.liveSessions ?? 0,
                                                     confirm: preferences.asksBeforeQuitting) {
             NSApp.activate()
@@ -225,9 +234,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let current = downloads.current, downloads.isRunning { downloads.cancel(current.name) }
         setup.cancel()
         model.cancelRuns()
-        // A voice LLM stopped part way puts back what it was replacing, with Cancel held off:
-        // given its time, within the stop bound, before anything is killed.
-        _ = await model.voiceLLMRunsEnd(within: Self.stopBound)
+        // A voice LLM stopped part way puts back what it was replacing, with Cancel held
+        // off — but only at Cmd+Q (`asking`): at session end there is no time to give it.
+        if asking { _ = await model.voiceLLMRunsEnd(within: Self.voiceLLMPutBackBound) }
         let survivors = await children.stopAll(within: ChildRegistry.stopBound + .seconds(3))
         if let survivors, !survivors.isEmpty {
             Log.app.error("Quitting with \(survivors.count) process group(s) still running after SIGKILL: \(survivors.map(String.init).joined(separator: ", "), privacy: .public)")
@@ -238,18 +247,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.reply(toApplicationShouldTerminate: true)
     }
 
-    /// Stops Keryx answering calls (`AppModel.stopAnswering`); after `stopBound` the stop is
-    /// cut short (its process group stopped) and the app quits anyway.
+    /// Stops Keryx answering calls (`AppModel.stopAnswering`), which is itself bounded
+    /// (`AppModel.detachedStopBound`) and runs the stop detached from the app, so nothing
+    /// here waits any longer or cuts anything short.
     private func stopAnswering() async {
-        let model = model
-        let deadline = Task { @MainActor in
-            try? await Task.sleep(for: Self.stopBound)
-            guard !Task.isCancelled else { return }
-            Log.app.error("Keryx took longer than \(Self.stopBound, privacy: .public) to stop; quitting anyway")
-            model.cancelRuns()
-        }
         let error = await model.stopAnswering()
-        deadline.cancel()
         if let error {
             Log.app.error("Keryx could not be stopped: \(error.title, privacy: .public)")
         } else {

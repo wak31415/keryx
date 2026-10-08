@@ -14,6 +14,10 @@ public struct CommandRequest: Sendable, Equatable {
     /// longer than the runner's usual grace: a command that puts things back as it is
     /// stopped (`voice llm`, which restores the words it was replacing). `nil`: the usual.
     public var stopGrace: Duration?
+    /// Not listed in `ChildRegistry`, so stopping every registered child (app teardown)
+    /// never reaches it: `keryx service stop --all` at Quit, which must go on running after
+    /// the app itself has gone. `ProcessRunner` still spawns it in its own process group.
+    public var detached: Bool
 
     public init(
         executable: String,
@@ -23,7 +27,8 @@ public struct CommandRequest: Sendable, Equatable {
         stdin: Data? = nil,
         timeout: Duration? = .seconds(30),
         mergesStderr: Bool = false,
-        stopGrace: Duration? = nil
+        stopGrace: Duration? = nil,
+        detached: Bool = false
     ) {
         self.executable = executable
         self.arguments = arguments
@@ -33,6 +38,7 @@ public struct CommandRequest: Sendable, Equatable {
         self.timeout = timeout
         self.mergesStderr = mergesStderr
         self.stopGrace = stopGrace
+        self.detached = detached
     }
 }
 

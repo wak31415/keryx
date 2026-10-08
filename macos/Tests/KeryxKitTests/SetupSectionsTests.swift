@@ -303,7 +303,7 @@ import KeryxPreview
 
     @Test func theAgentsTestRunsOnlyWhereTheClientCan() {
         let model = AppModel.stubbed(StubClient())
-        #expect(!model.smokeTest("claude"), "no client runs auth smoke yet")
+        #expect(!model.smokeTest("claude"), "StubClient does not adopt AgentSmokeTesting")
         #expect(model.smokeRun.phase == nil)
     }
 

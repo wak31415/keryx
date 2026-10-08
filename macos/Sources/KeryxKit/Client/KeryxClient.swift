@@ -133,9 +133,12 @@ public protocol KeryxClient: Sendable {
     func uninstallService() async throws -> ServiceResult
     /// Stops Keryx and its tunnel, and keeps them from starting at login, without removing
     /// either (`keryx service stop`); with `all`, every unit Keryx installs, the model
-    /// servers included. Idempotent. The document comes back on every path, a refusal
-    /// included — never thrown as a generic failure.
-    func stopService(all: Bool) async throws -> ServiceControlResult
+    /// servers included. Idempotent. Throws when the reply says `ok: false` — a unit did
+    /// not stop, or the command was refused — its `detail` (or `message`, with none)
+    /// under Show Details, same as any other failure. `detached`: Quit's own stop, run in
+    /// its own process group and never listed in `ChildRegistry`, so the app's own
+    /// teardown can never cut it short — Quit gives up *waiting* for it instead.
+    func stopService(all: Bool, detached: Bool) async throws -> ServiceControlResult
     /// Lets Keryx and its tunnel start at login again, and starts them (`keryx service
     /// start`); with `all`, every unit that is installed, the model servers first.
     /// Idempotent.
