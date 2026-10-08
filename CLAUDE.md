@@ -59,7 +59,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `config options KEY [--json]` (the models or voices a setting can take, read live from
   OpenAI, Anthropic, Codex, a server of the owner's or the Twilio account when it can be,
   else Keryx's own list with `error` saying why — exit 0 either way;
-  `keryx/config/options.py`), `config verify KEY [--stdin] [--pair] [--json]` (whether
+  `keryx/config/options.py`; `ASSISTANT_NAME`'s are the personas with their voices,
+  `free_form` since any name of the owner's is one), `config verify KEY [--stdin] [--pair] [--json]` (whether
   OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_API_KEY or TWILIO_AUTH_TOKEN — with the saved SID,
   or with `--stdin --pair` the SID and token on two lines, neither saved, an SID not `AC` and
   32 hex exiting 2 before Twilio is asked — works, before it is saved: `--stdin` checks the

@@ -2494,7 +2494,8 @@ def config_options(
     key: Annotated[str, typer.Argument(help="A setting with a list of values, by name.")],
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
 ) -> None:
-    """The values a setting can take, found now: the models a provider lists, the voices.
+    """The values a setting can take, found now: the models a provider lists, the voices,
+    the assistant's built-in names.
 
     A list that cannot be read falls back to the values Keryx knows, and says why; that is
     still a success. `keryx config list --json` marks the settings that have one.

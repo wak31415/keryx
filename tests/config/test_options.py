@@ -336,6 +336,31 @@ def test_a_voice_set_outside_the_list_is_still_offered(settings):
     assert found.options[-1] == Option("nova", "nova", "current")
 
 
+# --- the assistant's name ----------------------------------------------------------------------
+
+
+def test_the_assistant_names_are_the_personas_each_with_its_voice(settings):
+    found = options_for("ASSISTANT_NAME", settings, sources())
+
+    assert found.options == [
+        Option("Lyra", "Lyra", "Keryx's default · the Marin voice"),
+        Option("Jarvis", "Jarvis", "The Cedar voice"),
+    ]
+    # Any name of the owner's is one too: the setting's own rule refuses an agent's.
+    assert (found.current, found.source, found.live, found.free_form, found.error) == (
+        "Lyra", "builtin", False, True, None
+    )
+
+
+def test_a_name_of_the_owners_own_is_offered_as_current(settings):
+    named = settings.model_copy(update={"assistant_name": "Vega"})
+
+    found = options_for("ASSISTANT_NAME", named, sources())
+
+    assert values(found) == ["Lyra", "Jarvis", "Vega"]
+    assert found.options[-1] == Option("Vega", "Vega", "current")
+
+
 # --- Anthropic ---------------------------------------------------------------------------------
 
 
