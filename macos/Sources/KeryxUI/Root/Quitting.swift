@@ -11,6 +11,11 @@ public enum Quitting {
         public var suppressible = false
     }
 
+    /// Quitting while Jarvis's files move: refused, said why.
+    public static let migratingTitle = "Keryx Is Moving Its Files"
+    public static let migratingDetail = "Quit once the move has finished. Stopped part way, it would leave "
+        + "Keryx stopped and its files half moved."
+
     /// The question for what is under way — a model download, a voice setup, a model
     /// server start, a speech model download, a sign-in, Keryx starting or stopping, any of
     /// them together; `nil` when none is and the app can just quit.

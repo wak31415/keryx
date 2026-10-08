@@ -170,15 +170,23 @@ directories, it reaches that sandbox and nothing else.
 - **The menu bar**: the mark, with a dot when something needs you and a slash when Keryx is
   stopped or not found. The menu says which, and lists up to three sessions that are
   running or have results not yet told, the local model and any download. It has Open
-  Keryx, Restart Keryx, Pause Approval Calls, Settings, and Quit Keryx, with a footnote that
-  the assistant stops answering calls when Keryx quits. The app is in the Dock too, for as
+  Keryx, Run Setup Wizard…, Restart Keryx, Pause Approval Calls, Settings, and Quit Keryx,
+  with a footnote that the assistant stops answering calls when Keryx quits. The app is in the Dock too, for as
   long as it runs.
 - **Overview**: whether Keryx is answering calls (Yes, No, Not yet while setup is left,
   Starting…), with Start only when a start failed or never ran and the unit's name only in
   the tooltip; calls in progress, the version running and whether a restart would load a
-  newer one, the last restart, and a restart button; what `keryx doctor` says is still to
-  set up, with Open Setup in Terminal; the approval calls switch and its history; and where
-  the assistant's memory is.
+  newer one, the last restart, and a restart button; the Setup Checklist, what `keryx
+  doctor` says is still to set up, each with the button that mends it, and Set Up Keryx…,
+  which opens the setup wizard; the approval calls switch and its history; and where the
+  assistant's memory is.
+- **The setup wizard**: one frame at a time, from Welcome to You're Ready — moving Jarvis's
+  files when there are any, who the assistant works for and the PIN, where the voice runs
+  and who does the work, the phone line, then Checking, which finishes the downloads and
+  sets Keryx answering calls. It opens by itself at launch only until setup has once been
+  seen through (Welcome's "Don't show this again" turns that off), skipping what is set;
+  from the menu it shows every frame prefilled. Its last frame offers what can wait: Google,
+  plugins, telling the assistant about yourself, briefs of your projects, issue reports.
 - **Sessions**: every agent session, newest first. Each one opens as a timeline: what you
   asked, the agent's steps, any follow-ups, and the result. A running one is read again
   every 10 seconds while it is on screen. The last 30 days' totals are under the list.
@@ -200,7 +208,8 @@ Refresh (⌘R) reads everything again.
 - **It writes no Keryx file itself.** Every change is a `keryx` command, starting and
   stopping Keryx included (`keryx service install|uninstall`); it never runs `launchctl`.
   The one exception is starting the model server, which runs the checkout's
-  `scripts/install-launchd.sh --llm`.
+  `scripts/install-launchd.sh --llm`. The one program it installs that is not Keryx's is Cloudflare Tunnel, with `brew install
+  cloudflared`, only when Homebrew is on this Mac and only on a click.
 - **It never sets or shows the PIN.** `keryx setup`, which it opens in Terminal, is the only
   way to change one from the keyboard.
 - **It never answers an approval.** Only the phone's keypad can. The app can pause the
@@ -230,6 +239,11 @@ The app reads and changes Keryx through these commands:
 - `keryx setup plan --json`, `keryx service --json`, and `keryx service install|uninstall
   --json`, to start and stop Keryx
 - `keryx config list --json`, `keryx config set`, `keryx config unset`
+- `keryx setup mark STEP --json`
+- `keryx setup profile [--preview|--apply] --json` (the answers as one JSON object on stdin)
+- `keryx migrate --json`, and `keryx migrate --yes --json` (JSON lines)
+- `keryx setup project-context --describe --json`, `--explore|--folder PATH --json` (JSON
+  lines), and `--apply --json` (what is kept, on stdin)
 - `keryx restart`
 
 `tests/test_macos_contract.py` checks that each JSON command still prints the keys the
@@ -242,7 +256,8 @@ Swift decoders require, so renaming a field fails the Python tests rather than t
 | The menu bar: status, running and untold sessions, the local model, restart, pausing approval calls | Talking to the assistant at the Mac, once the local channel is merged |
 | Overview: whether Keryx answers calls, the setup checks, approval calls, the memory's location | Live updates in place of polling |
 | Sessions as a timeline, from what you asked to the result | Continuing a session from the app |
-| Local models: download, choose, start the server | The setup wizard in the app; today it opens in Terminal |
+| Local models: download, choose, start the server | A GGUF file of your own as the local model, from the setup wizard |
+| The setup wizard, from Welcome to a first call | The voice's own model, the pipelines and the agents' test task, once the CLI has them |
 | Every setting by its title, with secrets on stdin | Answering approvals from the Mac, which needs an owner ruling first |
 | Open at Login, and finding Keryx from its launchd service | Plugins |
 | Keryx answering while the app is open: started by itself, stopped by Quit | Keryx's background item named Keryx, from a helper in the app (`SMAppService.agent`) |

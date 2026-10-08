@@ -1,0 +1,4 @@
+{"event": "step", "step": "move", "message": "Moving Keryx's files.", "detail": null}
+{"event": "step", "step": "update", "message": "Bringing the settings and the task history up to date.", "detail": null}
+{"event": "step", "step": "units", "message": "Putting the background service in place again.", "detail": null}
+{"event": "done", "summary": "Keryx's files were moved.", "nothing_to_do": false, "moved": 1, "imported": 0, "rewritten": 0, "lost_sessions": 1, "started": null, "retired_to": null, "leftovers": [], "notes": ["CLOUDFLARE_TUNNEL = jarvis, the tunnel it has been running", "~/.local/share/keryx/pin-failures.json: 0644 \u2192 0600", "~/.cache/keryx: 0755 \u2192 0700"], "units_pending": false}

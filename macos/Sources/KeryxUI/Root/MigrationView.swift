@@ -1,56 +1,53 @@
 import KeryxKit
 import SwiftUI
 
-/// What the window shows while Keryx refuses to run until `keryx migrate` has moved an older
-/// install's files: what that means in a line, the command run in Terminal, and the CLI's
-/// own sentence under Details.
+/// What the window shows while Keryx refuses to run until its files from Jarvis have moved:
+/// the same move as the setup wizard's (`MigrationSections`, `migrate --yes --json`), here in
+/// the window, with the CLI's own sentence under Details. Once the files have moved,
+/// everything is read again and the window shows Keryx.
 public struct MigrationView: View {
     @Environment(AppModel.self) private var model
-    @State private var failure: KeryxError?
-    @State private var checking = false
+    @State private var reader: MigrationReader
 
-    public init() {}
+    public init() {
+        _reader = State(initialValue: MigrationReader())
+    }
+
+    /// The catalog's: the plan already read.
+    package init(plan: MigrationPlan) {
+        _reader = State(initialValue: MigrationReader(plan: plan))
+    }
 
     public var body: some View {
-        ContentUnavailableView {
-            Label {
-                Text("Keryx Needs to Move Its Files")
-            } icon: {
+        VStack(spacing: 16) {
+            VStack(spacing: 8) {
                 KeryxMark()
                     .frame(width: 56, height: 56)
+                    .accessibilityHidden(true)
+                Text("Keryx Needs to Move Its Files")
+                    .font(.title2.weight(.semibold))
+                Text(WizardWording.moveSentence)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-        } description: {
-            Text("Keryx found files from an older install, and moves them before it runs again.")
-        } actions: {
-            VStack(spacing: 16) {
-                HStack {
-                    Button("Check Again") {
-                        checking = true
-                        Task {
-                            await model.refresh(.all)
-                            checking = false
-                        }
-                    }
-                    .disabled(checking)
-                    Button("Migrate…") { openMigrate() }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(model.location.value == nil)
-                        .help("Moves the files in a Terminal window, and asks before it starts")
+            MigrationSections(reader: reader)
+            HStack(spacing: 10) {
+                Spacer()
+                if model.canCancelMigration {
+                    Button("Cancel") { model.cancelMigration() }
                 }
-                .fixedSize()
-                if let sentence {
-                    OnboardingDetails(lines: [sentence])
-                }
+                MigrationPrimary(reader: reader, check: { Task { await reader.read(model) } })
+            }
+            .controlSize(.large)
+            if let sentence {
+                OnboardingDetails(lines: [sentence])
             }
         }
-        .alert(failure?.title ?? "", isPresented: Binding(
-            get: { failure != nil }, set: { if !$0 { failure = nil } }
-        )) {
-            Button("OK") {}
-        } message: {
-            Text(failure?.message ?? "")
-        }
+        .frame(maxWidth: 540)
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task { if reader.plan == nil { await reader.read(model) } }
     }
 
     /// The CLI's sentence: the refusal it printed, else what the status said about storage.
@@ -62,14 +59,5 @@ public struct MigrationView: View {
         }
         guard let raw, !raw.isEmpty else { return nil }
         return raw
-    }
-
-    private func openMigrate() {
-        guard let location = model.location.value else { return }
-        do {
-            try TerminalLauncher.open(location, arguments: ["migrate"])
-        } catch {
-            failure = (error as? KeryxError) ?? .terminal(error.localizedDescription)
-        }
     }
 }

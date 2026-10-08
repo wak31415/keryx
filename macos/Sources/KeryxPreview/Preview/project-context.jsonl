@@ -1,0 +1,4 @@
+{"event": "step", "step": "dispatch", "message": "Asking Claude to read your projects. This can take a few minutes.", "detail": null}
+{"event": "step", "step": "working", "message": "Claude is reading your projects.", "detail": "[tool] Read README.md"}
+{"event": "step", "step": "reading", "message": "Reading what Claude wrote.", "detail": null}
+{"event": "done", "summary": "Claude drafted 1 project summary and 1 thing about you for you to check.", "projects": [{"name": "keryx", "path": null, "summary": "The voice assistant.", "known": false, "adds_project": false}], "facts": ["Works nights."], "dropped": [], "folders": ["/Users/you"]}

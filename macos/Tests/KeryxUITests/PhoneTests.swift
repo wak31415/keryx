@@ -44,7 +44,7 @@ import KeryxPreview
 
     @Test func thePickerOffersTheAccountsNumbersAndTheSavedOne() {
         let choices = PhoneWording.choices(PreviewData.phoneNumbers.numbers, saved: "+15550001111")
-        #expect(choices.map(\.label) == ["Office · +15550001111", "Keryx · +15550002222"])
+        #expect(choices.map(\.label) == ["Office · +1 555 000 1111", "Keryx · +1 555 000 2222"])
         #expect(choices.map(\.pointsHere) == [false, true])
         let foreign = PhoneWording.choices(PreviewData.phoneNumbers.numbers, saved: "+15550009999")
         #expect(foreign.first?.number == "+15550009999")

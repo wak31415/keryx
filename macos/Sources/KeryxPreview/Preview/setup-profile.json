@@ -1,0 +1,82 @@
+{
+  "section": "profile",
+  "title": "About you",
+  "assistant": "Lyra",
+  "note": "What you say here is sent to the realtime provider at the top of every call. Nothing you would not send there.",
+  "memory": {
+    "exists": true,
+    "chars": 36,
+    "max_chars": 4000
+  },
+  "questions": [
+    {
+      "id": "replace",
+      "kind": "confirm",
+      "key": null,
+      "title": "Replace the memory",
+      "prompt": "Lyra already remembers 36 characters about you. Replace that memory with a new one?",
+      "current": null,
+      "optional": false,
+      "input": "boolean",
+      "choices": null,
+      "default": false
+    },
+    {
+      "id": "uses",
+      "kind": "fact",
+      "key": null,
+      "title": "What it is for",
+      "prompt": "What will you mostly use Lyra for?",
+      "current": null,
+      "optional": true,
+      "input": "choices",
+      "choices": [
+        {
+          "value": "email",
+          "label": "email triage"
+        },
+        {
+          "value": "coding",
+          "label": "coding tasks in your repositories"
+        },
+        {
+          "value": "calendar",
+          "label": "your calendar"
+        },
+        {
+          "value": "research",
+          "label": "research and reading"
+        },
+        {
+          "value": "cluster",
+          "label": "jobs on the compute cluster"
+        }
+      ],
+      "default": []
+    },
+    {
+      "id": "other",
+      "kind": "fact",
+      "key": null,
+      "title": "Anything else",
+      "prompt": "Anything else you will use it for?",
+      "current": null,
+      "optional": true,
+      "input": "text",
+      "choices": null,
+      "default": ""
+    },
+    {
+      "id": "facts",
+      "kind": "fact",
+      "key": null,
+      "title": "About you",
+      "prompt": "A few things Lyra should know about you, one per line \u2014 what you do, what keeps coming up, how you like to be answered.",
+      "current": null,
+      "optional": true,
+      "input": "lines",
+      "choices": null,
+      "default": []
+    }
+  ]
+}

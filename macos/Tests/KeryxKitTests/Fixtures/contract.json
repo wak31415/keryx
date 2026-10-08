@@ -602,6 +602,97 @@
         "file": "string",
         "description": "string"
       }
+    },
+    "setup profile --json": {
+      "": {
+        "title": "string",
+        "assistant": "string",
+        "note": "string",
+        "memory": "object",
+        "questions": "array"
+      },
+      "memory": {
+        "exists": "boolean",
+        "chars": "integer",
+        "max_chars": "integer"
+      },
+      "questions[]": {
+        "id": "string",
+        "title": "string",
+        "prompt": "string",
+        "optional": "boolean",
+        "input": "string",
+        "choices": "array|null",
+        "default": "any"
+      }
+    },
+    "setup profile --preview --json": {
+      "": {
+        "status": "string",
+        "written": "boolean",
+        "text": "string|null",
+        "chars": "integer",
+        "max_chars": "integer",
+        "problems": "array",
+        "walked": "boolean"
+      }
+    },
+    "setup profile --apply --json": {
+      "": {
+        "status": "string",
+        "written": "boolean",
+        "text": "string|null",
+        "chars": "integer",
+        "max_chars": "integer",
+        "problems": "array",
+        "walked": "boolean"
+      }
+    },
+    "migrate --json": {
+      "": {
+        "nothing_to_do": "boolean",
+        "ready": "boolean",
+        "moves": "array",
+        "imports": "array",
+        "retire": "object|null",
+        "conflicts": "array",
+        "service": "object",
+        "live_calls": "integer|null",
+        "units_pending": "string|null"
+      },
+      "service": {
+        "stops": "string|null",
+        "retires": "array",
+        "installs": "string|null"
+      }
+    },
+    "setup project-context --describe --json": {
+      "": {
+        "title": "string",
+        "agent": "string",
+        "agent_name": "string",
+        "note": "string",
+        "question": "string",
+        "choices": "array",
+        "summaries": "array",
+        "projects": "array",
+        "max_brief_chars": "integer",
+        "max_facts": "integer"
+      },
+      "choices[]": {
+        "value": "string",
+        "label": "string",
+        "hint": "string|null"
+      }
+    },
+    "setup project-context --apply --json": {
+      "": {
+        "kept": "array",
+        "added_projects": "array",
+        "facts_added": "integer",
+        "problems": "array",
+        "walked": "boolean"
+      }
     }
   },
   "streams": {
@@ -836,6 +927,72 @@
         "done": {
           "stt": "string",
           "tts": "string"
+        },
+        "error": {
+          "message": "string",
+          "detail": "string|null"
+        },
+        "cancelled": {}
+      },
+      "terminal": [
+        "done",
+        "error",
+        "cancelled"
+      ],
+      "exit": {
+        "done": 0,
+        "error": [
+          1,
+          2
+        ],
+        "cancelled": 130
+      }
+    },
+    "migrate --yes --json": {
+      "events": {
+        "step": {
+          "step": "string",
+          "message": "string",
+          "detail": "string|null"
+        },
+        "done": {
+          "summary": "string",
+          "nothing_to_do": "boolean",
+          "units_pending": "boolean"
+        },
+        "error": {
+          "message": "string",
+          "detail": "string|null"
+        },
+        "cancelled": {}
+      },
+      "terminal": [
+        "done",
+        "error",
+        "cancelled"
+      ],
+      "exit": {
+        "done": 0,
+        "error": [
+          1,
+          2
+        ],
+        "cancelled": 130
+      }
+    },
+    "setup project-context --json": {
+      "events": {
+        "step": {
+          "step": "string",
+          "message": "string",
+          "detail": "string|null"
+        },
+        "done": {
+          "summary": "string",
+          "projects": "array",
+          "facts": "array",
+          "dropped": "array",
+          "folders": "array"
         },
         "error": {
           "message": "string",

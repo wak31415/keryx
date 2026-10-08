@@ -12,10 +12,13 @@ public struct CLIClient: KeryxClient {
 
     private let location: KeryxLocation
     private let runner: CommandRunner
+    private let files: FileSystem
 
-    public init(location: KeryxLocation, runner: CommandRunner = ProcessRunner()) {
+    public init(location: KeryxLocation, runner: CommandRunner = ProcessRunner(),
+                files: FileSystem = LocalFileSystem()) {
         self.location = location
         self.runner = runner
+        self.files = files
     }
 
     // MARK: - Reads
@@ -196,6 +199,52 @@ public struct CLIClient: KeryxClient {
                                 stdin: Data(lines.utf8))
     }
 
+    // MARK: - Setup sections
+
+    public func profileQuestions() async throws -> ProfileQuestions {
+        try await decode(["setup", "profile", "--json"])
+    }
+
+    public func previewProfile(_ answers: ProfileAnswers) async throws -> ProfileResult {
+        try await decode(["setup", "profile", "--preview", "--json"], stdin: try answers.json())
+    }
+
+    /// Exit 1 with a document is a refusal (`status` `refused`); without one, a failure.
+    public func applyProfile(_ answers: ProfileAnswers) async throws -> ProfileResult {
+        try await decode(["setup", "profile", "--apply", "--json"], acceptedExitCodes: [0, 1],
+                         stdin: try answers.json())
+    }
+
+    public func migrationPlan() async throws -> MigrationPlan {
+        try await decode(["migrate", "--json"], timeout: .seconds(60))
+    }
+
+    /// No timeout: stopping the service first waits up to half a minute, and moving a large
+    /// install can take longer.
+    public func migrate() -> MigrationStream {
+        events(["migrate", "--yes", "--json"])
+    }
+
+    public func projectContextQuestion() async throws -> ProjectContextQuestion {
+        try await decode(["setup", "project-context", "--describe", "--json"])
+    }
+
+    /// Each folder as `--folder=PATH`, so a path that starts with "-" is still its value.
+    public func draftProjectContext(_ scope: ProjectScope) -> ProjectDraftStream {
+        var arguments = ["setup", "project-context", "--json"]
+        switch scope {
+        case .explore: arguments.append("--explore")
+        case let .folders(paths): arguments += paths.map { "--folder=" + $0 }
+        }
+        return events(arguments)
+    }
+
+    /// Exit 1 with a document is a problem in the draft; without one, a failure.
+    public func applyProjectContext(_ keep: ProjectContextKeep) async throws -> ProjectContextResult {
+        try await decode(["setup", "project-context", "--apply", "--json"], acceptedExitCodes: [0, 1],
+                         stdin: try keep.json())
+    }
+
     // MARK: - Phone
 
     public func phoneNumbers() async throws -> PhoneNumbers {
@@ -212,6 +261,53 @@ public struct CLIClient: KeryxClient {
 
     public func phoneTunnel() async throws -> PhoneTunnel {
         try await decode(["phone", "tunnel", "--json"])
+    }
+
+    /// Homebrew's own folders, after the PATH Keryx runs with.
+    static let homebrewFolders = ["/opt/homebrew/bin", "/usr/local/bin"]
+
+    /// Where a Homebrew program is looked for, in order: the PATH Keryx runs with (absolute
+    /// folders only), then Homebrew's own folders. The one order for finding `brew` and for
+    /// finding what it installed, so an install that worked is never read as one that did not.
+    func homebrewFolders() -> [String] {
+        let path = (location.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+            .filter { $0.hasPrefix("/") }
+        var seen: Set<String> = []
+        return (path + Self.homebrewFolders).filter { seen.insert($0).inserted }
+    }
+
+    /// `name` in the first of `homebrewFolders` that has it, as an absolute path.
+    func homebrewProgram(_ name: String) -> String? {
+        homebrewFolders().map { $0 + "/" + name }.first { files.isExecutableFile(atPath: $0) }
+    }
+
+    public func homebrew() -> String? { homebrewProgram("brew") }
+
+    public func cloudflaredInstalled() -> Bool { homebrewProgram("cloudflared") != nil }
+
+    /// Run as the owner's Homebrew, in `/`, with Keryx's own environment (no actor
+    /// variables); never a shell. No timeout: a first install fetches its bottles.
+    public func installCloudflared(brew: String) -> StoppableStream<String> {
+        let request = CommandRequest(executable: brew, arguments: ["install", "cloudflared"],
+                                     environment: Sanitise.environment(location.environment)
+                                         .merging(["HOMEBREW_NO_ENV_HINTS": "1"]) { $1 },
+                                     workingDirectory: "/", stdin: nil, timeout: nil, mergesStderr: true)
+        let lines = runner.lines(request)
+        let stream = AsyncThrowingStream<String, Error> { continuation in
+            let task = Task {
+                do {
+                    for try await line in lines {
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        if !trimmed.isEmpty { continuation.yield(trimmed) }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: Self.map(error, command: "brew install"))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+        return StoppableStream(stream, stop: { lines.stop() })
     }
 
     // MARK: - Service

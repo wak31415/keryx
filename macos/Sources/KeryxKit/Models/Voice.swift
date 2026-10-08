@@ -16,9 +16,17 @@ public struct VoiceStatus: Codable, Sendable, Equatable {
     public var needs: String?
     public var here: HereVoice
     public var server: ElsewhereVoice
+    /// SEAM (`voice --json` `pipelines`, not printed yet): the ways each mode can speak —
+    /// `speech-to-speech` (one model hears and answers) or `three-model` (hear, think, speak)
+    /// — by mode (`openai`, `here`, `server`). `nil` from a CLI without it: each mode has its
+    /// one way, which the wizard says in a caption rather than offers as a choice.
+    public var pipelines: [String: [String]]?
 
     /// The mode, when this build knows it.
     public var kind: VoiceMode? { VoiceMode(rawValue: mode) }
+
+    /// The pipelines `mode` offers, when the CLI says (`pipelines`); `nil` when it doesn't.
+    public func pipelines(for mode: VoiceMode) -> [String]? { pipelines?[mode.rawValue] }
 
     /// This Mac's voice needs a local model first.
     public var needsLocalModel: Bool { needs == VoiceStatus.localAgentModel }

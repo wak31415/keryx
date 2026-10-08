@@ -262,7 +262,7 @@ private struct SetupSection: View {
     @State private var fixing: SetupAction?
 
     var body: some View {
-        Section("Setup") {
+        Section("Setup Checklist") {
             if let doctor = model.doctor.value {
                 if doctor.ok {
                     Label {
@@ -292,8 +292,8 @@ private struct SetupSection: View {
 
     /// One of doctor's checks, with the button its `fix` names.
     private func line(_ check: DoctorCheck, context: SetupContext) -> some View {
-        CheckLine(title: CheckWording.title(check.displayTitle), state: check.state, detail: check.detail, hint: check.hint,
-                  titles: titles, action: FixAction(check.fix)?.action(context, named: check.displayTitle,
+        CheckLine(title: ChecklistWording.title(check), state: check.state, detail: ChecklistWording.detail(check),
+                  hint: check.hint, titles: titles, action: FixAction(check.fix)?.action(context, named: check.displayTitle,
                                                              missing: check.state == "missing"),
                   disabled: model.serviceChange != nil) { fixing = $0 }
             // Under the disclosure's title, not under its chevron.
@@ -304,7 +304,10 @@ private struct SetupSection: View {
         let open = doctor.checks.filter { !$0.ok }
         let passed = doctor.checks.filter(\.ok)
         LabeledContent {
-            Button("Set Up Keryx…") { openWindow(id: KeryxWindowID.setup) }
+            Button("Set Up Keryx…") {
+                SetupLaunch.open(.checklist, model: model)
+                openWindow(id: KeryxWindowID.setup)
+            }
         } label: {
             Label {
                 Text(open.count == 1 ? "1 thing needs attention" : "\(open.count) things need attention")
@@ -366,10 +369,39 @@ private struct SetupSection: View {
         case "issues": "Issue Reports"
         case "profile": "About You"
         case "projects": "Project Context"
-        case "service": SetupWording.answeringCalls
+        case "service": WizardWording.answeringCalls
         case "security": "Security"
         default: Wording.capitalised(section)
         }
+    }
+}
+
+/// The checklist in the wizard's words, where the doctor's would be a second vocabulary for
+/// the same thing: answering calls, the Twilio account, the address for calls, the tunnel, and
+/// "this Mac" for "this machine".
+enum ChecklistWording {
+    static func title(_ check: DoctorCheck) -> String {
+        switch check.name {
+        case "Twilio credentials": "Twilio Account"
+        case "PUBLIC_HOST": "Address for Calls"
+        case "tunnel": "Cloudflare Tunnel"
+        default: CheckWording.title(check.displayTitle)
+        }
+    }
+
+    /// What was found, said plainly where the wizard says it; anything else as the doctor
+    /// says it, "this machine" said as "this Mac".
+    static func detail(_ check: DoctorCheck) -> String {
+        if !check.ok {
+            switch check.name {
+            case "service manager" where check.state == "missing": return CheckWording.serviceNotInstalled
+            case "Twilio credentials" where check.state == "missing": return "Not connected"
+            case "PUBLIC_HOST" where check.state == "missing": return "Not set"
+            case "tunnel" where check.detail.contains("not installed"): return "Not installed"
+            default: break
+            }
+        }
+        return check.detail.replacingOccurrences(of: "this machine", with: "this Mac")
     }
 }
 

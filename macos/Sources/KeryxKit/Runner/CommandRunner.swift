@@ -7,6 +7,9 @@ public struct CommandRequest: Sendable, Equatable {
     public var workingDirectory: String?
     public var stdin: Data?
     public var timeout: Duration? // nil = no timeout
+    /// A line stream reads stderr with stdout, in the order written, rather than
+    /// discarding it: for a program that is not Keryx's and says its errors there (Homebrew).
+    public var mergesStderr: Bool
 
     public init(
         executable: String,
@@ -14,7 +17,8 @@ public struct CommandRequest: Sendable, Equatable {
         environment: [String: String] = [:],
         workingDirectory: String? = nil,
         stdin: Data? = nil,
-        timeout: Duration? = .seconds(30)
+        timeout: Duration? = .seconds(30),
+        mergesStderr: Bool = false
     ) {
         self.executable = executable
         self.arguments = arguments
@@ -22,6 +26,7 @@ public struct CommandRequest: Sendable, Equatable {
         self.workingDirectory = workingDirectory
         self.stdin = stdin
         self.timeout = timeout
+        self.mergesStderr = mergesStderr
     }
 }
 

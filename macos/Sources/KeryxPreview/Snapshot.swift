@@ -49,6 +49,7 @@ import SwiftUI
         window.appearance = appearance(dark: dark)
         window.contentView = hostingView(view, size: size, fixed: false)
         window.center()
+        window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         settle(seconds: 1.2)
         defer { window.close() }
@@ -81,7 +82,10 @@ import SwiftUI
         let framed = fixed
             ? AnyView(view.frame(width: size.width, height: size.height))
             : AnyView(view.frame(maxWidth: .infinity, maxHeight: .infinity))
-        let root = AnyView(framed.background(Color(nsColor: .windowBackgroundColor)))
+        // Drawn as the key window's controls are (a prominent primary in the accent colour),
+        // since the harness is seldom the active app and macOS will not make it so.
+        let root = AnyView(framed.background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.controlActiveState, .key))
         let host = NSHostingView(rootView: root)
         // The window is sized here; the view must not resize it to its own ideal size.
         host.sizingOptions = []

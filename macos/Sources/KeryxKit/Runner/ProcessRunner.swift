@@ -92,9 +92,10 @@ public final class ProcessRunner: CommandRunner, Sendable {
         let spawned: Spawned
         do {
             // stderr is discarded, but into `/dev/null`, not a pipe nobody reads: an unread
-            // pipe's buffer fills (~64 KB) and blocks the child forever.
-            spawned = try Child.spawn(request, stderr: .discard, grace: grace, registry: registry,
-                                      keepInput: interactive)
+            // pipe's buffer fills (~64 KB) and blocks the child forever — unless the request
+            // asks for it with stdout, on the one pipe that is read.
+            spawned = try Child.spawn(request, stderr: request.mergesStderr ? .merged : .discard, grace: grace,
+                                      registry: registry, keepInput: interactive)
         } catch {
             continuation.finish(throwing: error)
             return LineStream(stream)
@@ -224,7 +225,8 @@ final class InputWriter: @unchecked Sendable {
 ///
 /// Handlers run on the waiting thread or the polling queue.
 final class Child: @unchecked Sendable {
-    enum Output { case pipe, discard }
+    /// Where stderr goes: a pipe of its own, `/dev/null`, or stdout's pipe.
+    enum Output { case pipe, discard, merged }
 
     /// How a stopped child's process group ended: emptied, or still there after SIGKILL and
     /// `killWait` more.
@@ -445,6 +447,8 @@ final class Child: @unchecked Sendable {
         posix_spawn_file_actions_adddup2(&actions, out.write, 1)
         if let err {
             posix_spawn_file_actions_adddup2(&actions, err.write, 2)
+        } else if stderr == .merged {
+            posix_spawn_file_actions_adddup2(&actions, out.write, 2)
         } else {
             posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
         }

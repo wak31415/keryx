@@ -87,9 +87,9 @@ enum CheckWording {
     }
 }
 
-/// Runs a fix's button outside the Setup Assistant (the Overview): a request to another
-/// screen, the secret sheet, Keryx started, the model server or the speech models started
-/// (and shown on Local Models), a trusted page opened.
+/// Runs a fix's button (the Overview's Setup Checklist, the wizard's Checking frame): a
+/// request to another screen, the secret sheet, Keryx started, the model server or the
+/// speech models started (and shown on Local Models), a trusted page opened.
 struct FixPerformer: ViewModifier {
     @Binding var action: SetupAction?
 
@@ -127,9 +127,6 @@ struct FixPerformer: ViewModifier {
             model.show(inModels: ModelsAnchor.voiceModels)
         case let .openURL(url):
             openURL(url)
-        case .mark, .go, .terminal:
-            // The Setup Assistant's own: not offered outside it.
-            break
         }
     }
 

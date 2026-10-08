@@ -159,6 +159,7 @@ public final class AppModel {
     /// A short write to Keryx, as quitting names it.
     public enum Write: Sendable, Equatable, Hashable, CaseIterable {
         case setting, pin, webhooks, voice, model, setupStep, plugin, signOut, modelServerStop, restart
+        case memory, projects
 
         /// "the phone PIN is being saved": a clause for the quit question.
         public var clause: String {
@@ -173,6 +174,8 @@ public final class AppModel {
             case .signOut: "an account is being signed out"
             case .modelServerStop: "the model server is being stopped"
             case .restart: "Keryx is being restarted"
+            case .memory: "what the assistant knows about you is being saved"
+            case .projects: "the project briefs are being saved"
             }
         }
     }
@@ -213,6 +216,19 @@ public final class AppModel {
     public let voiceDownloadRun: StreamRun<VoiceModelsDownloaded>
     /// A sign-in (`keryx auth login NAME`), one at a time whichever it is.
     public let signInRun: StreamRun<SignedIn>
+    /// Moving Jarvis's files to Keryx's (`keryx migrate --yes`).
+    public let migrationRun: StreamRun<MigrationDone>
+    /// An agent reading the projects for their briefs (`keryx setup project-context`).
+    public let projectDraftRun: StreamRun<ProjectDraft>
+    /// SEAM: a coding agent's test task (`keryx auth smoke NAME`), once a client can run it.
+    /// Held here, not by a screen, so going back and forth never starts a second (paid) run,
+    /// and quitting stops it.
+    public let smokeRun: StreamRun<AgentSmoked>
+    /// Cloudflare Tunnel installed with Homebrew, after a click.
+    public let tunnelInstall: ProgramInstall
+    /// How the setup wizard opens next, or opened last: first-run or review, with a fresh id
+    /// each time it is asked to open, so a window already open starts again at Welcome.
+    public private(set) var wizardOpening = WizardOpening(mode: .firstRun)
     /// The provider of the sign-in `signInRun` holds — running, stopping, failed or
     /// finished — and `nil` once it holds none (cancelled, or dismissed).
     public var signingIn: SignInProvider? { signInRun.phase == nil ? nil : lastSignIn }
@@ -260,6 +276,10 @@ public final class AppModel {
         modelServerRun = StreamRun()
         voiceDownloadRun = StreamRun()
         signInRun = StreamRun()
+        migrationRun = StreamRun()
+        projectDraftRun = StreamRun()
+        smokeRun = StreamRun()
+        tunnelInstall = ProgramInstall()
     }
 
     // MARK: - Finding Keryx
@@ -677,6 +697,11 @@ public final class AppModel {
         if requested == request { requested = nil }
     }
 
+    /// The setup wizard is opening in `mode` (its window is opened by the caller).
+    public func openSetupWizard(_ mode: SetupWizardMode) {
+        wizardOpening = WizardOpening(mode: mode)
+    }
+
     /// Records a setup step as walked (an optional one skipped, or the PIN left to the first
     /// call), then reads the plan again.
     public func markSetupStep(_ step: String) async -> KeryxError? {
@@ -705,6 +730,105 @@ public final class AppModel {
     /// Whether a Twilio account SID and auth token work together, both unsaved.
     public func verifyTwilio(accountSID: String, authToken: String) async -> Result<VerifyResult, KeryxError> {
         await answer { try await $0.verifyTwilio(accountSID: accountSID, authToken: authToken) }
+    }
+
+    // MARK: - Setup sections
+
+    /// "About you": its questions, and the memory they would write.
+    public func profileQuestions() async -> Result<ProfileQuestions, KeryxError> {
+        await answer { try await $0.profileQuestions() }
+    }
+
+    /// What the answers would come to, writing nothing.
+    public func previewProfile(_ answers: ProfileAnswers) async -> Result<ProfileResult, KeryxError> {
+        await answer { try await $0.previewProfile(answers) }
+    }
+
+    /// Writes the first memory from the answers, then reads the memory and the plan again. A
+    /// refusal is a result with its problems.
+    public func applyProfile(_ answers: ProfileAnswers) async -> Result<ProfileResult, KeryxError> {
+        let answer = await answer(writing: .memory) { try await $0.applyProfile(answers) }
+        if case .success = answer { await refresh(.memory, .setupPlan) }
+        return answer
+    }
+
+    /// What moving Jarvis's files would do, touching nothing.
+    public func migrationPlan() async -> Result<MigrationPlan, KeryxError> {
+        await answer { try await $0.migrationPlan() }
+    }
+
+    /// Moves Jarvis's files in `migrationRun`, one run at a time, and reads everything
+    /// again once they have moved. False when one is already going.
+    @discardableResult
+    public func migrate() -> Bool {
+        guard let client else { return false }
+        return migrationRun.start(reason: "Moving Keryx's files", { client.migrate() }) { [weak self] _ in
+            Task { await self?.refresh(.all) }
+        }
+    }
+
+    /// The migration may still be stopped: it runs and no step has come. From its first step
+    /// the CLI finishes the move whatever it is told, and a kill would leave it half done.
+    public var canCancelMigration: Bool {
+        migrationRun.isRunning && migrationRun.lastStep.isEmpty
+    }
+
+    /// Stops the migration, only while `canCancelMigration`.
+    public func cancelMigration() {
+        guard canCancelMigration else { return }
+        migrationRun.cancel()
+    }
+
+    /// Project context's question, and the briefs kept already.
+    public func projectContextQuestion() async -> Result<ProjectContextQuestion, KeryxError> {
+        await answer { try await $0.projectContextQuestion() }
+    }
+
+    /// Has the agent draft the projects' briefs in `projectDraftRun`, one at a time; nothing
+    /// is kept until `applyProjectContext`. False when one is already going.
+    @discardableResult
+    public func draftProjectContext(_ scope: ProjectScope) -> Bool {
+        guard let client else { return false }
+        return projectDraftRun.start(reason: "Reading your projects", { client.draftProjectContext(scope) })
+    }
+
+    /// Keeps what the owner kept of the draft, then reads the settings, the memory and the
+    /// plan again. A problem is a result.
+    public func applyProjectContext(_ keep: ProjectContextKeep) async -> Result<ProjectContextResult, KeryxError> {
+        let answer = await answer(writing: .projects) { try await $0.applyProjectContext(keep) }
+        if case .success = answer { await refresh(.config, .memory, .setupPlan) }
+        return answer
+    }
+
+    /// SEAM: runs `agent`'s test task, once, in `smokeRun`: false — starting nothing — when
+    /// the client cannot (no `auth smoke` yet), or one has run or is running.
+    @discardableResult
+    public func smokeTest(_ agent: String) -> Bool {
+        guard smokeRun.phase == nil, let client = client as? AgentSmokeTesting else { return false }
+        return smokeRun.start(reason: "Running the agent's test task", { client.smokeTest(agent) })
+    }
+
+    // MARK: - Phone
+
+    /// Homebrew's `brew`, when this Mac has one: Cloudflare Tunnel can be installed from the app.
+    public var homebrew: String? { client?.homebrew() }
+
+    /// Installs Cloudflare Tunnel with Homebrew, then asks Keryx whether it finds it. Only
+    /// ever after the owner's click.
+    public func installTunnel() {
+        guard let client, let brew = client.homebrew() else { return }
+        tunnelInstall.start(client.installCloudflared(brew: brew)) { [weak self] in
+            guard let self else { return false }
+            await refresh(.phoneTunnel, .setupPlan, .doctor)
+            return phoneTunnel.value?.kind != nil || client.cloudflaredInstalled()
+        }
+    }
+
+    /// Cloudflare Tunnel is installed where Homebrew puts it, but Keryx's own PATH does not
+    /// reach it: the tunnel reads as missing to Keryx though the install worked.
+    public var tunnelOutsideKeryxPath: Bool {
+        guard phoneTunnel.value?.kind == nil, let client else { return false }
+        return client.cloudflaredInstalled()
     }
 
     // MARK: - Phone
@@ -1061,6 +1185,7 @@ public final class AppModel {
     public var isBusy: Bool {
         downloads.isBusy || voiceSetup.isBusy || modelServerRun.isBusy || voiceDownloadRun.isBusy
             || signInRun.isBusy || serviceChange != nil || stoppingModelServer
+            || migrationRun.isBusy || projectDraftRun.isBusy || smokeRun.isBusy || tunnelInstall.isBusy
     }
 
     /// Asks what this model runs beside the downloads and the voice setup to stop (the model
@@ -1071,6 +1196,11 @@ public final class AppModel {
         modelServerRun.cancel()
         voiceDownloadRun.cancel()
         signInRun.cancel()
+        projectDraftRun.cancel()
+        smokeRun.cancel()
+        tunnelInstall.cancel()
+        // Not the migration once a step has come: the CLI finishes the move first.
+        cancelMigration()
         serviceTask?.cancel()
     }
 

@@ -67,7 +67,43 @@ public protocol KeryxClient: Sendable {
     /// Checks a Twilio account SID and auth token together, both unsaved, on stdin.
     func verifyTwilio(accountSID: String, authToken: String) async throws -> VerifyResult
 
+    // MARK: Setup sections
+
+    /// "About you": the questions, and the memory they would write (`setup profile`).
+    func profileQuestions() async throws -> ProfileQuestions
+    /// What `answers` would come to, writing nothing (`setup profile --preview`); the answers
+    /// go on stdin as one JSON object.
+    func previewProfile(_ answers: ProfileAnswers) async throws -> ProfileResult
+    /// Writes the first memory from `answers`, as the wizard does (`setup profile --apply`).
+    /// A refusal is an answer (`status` `refused`, with its problems), not an error.
+    func applyProfile(_ answers: ProfileAnswers) async throws -> ProfileResult
+    /// What moving Jarvis's files would do, touching nothing (`migrate --json`).
+    func migrationPlan() async throws -> MigrationPlan
+    /// Moves Jarvis's files (`migrate --yes --json`), step by step. Once a step has come it
+    /// must not be stopped: the CLI finishes the move first, and a kill leaves it half done.
+    func migrate() -> MigrationStream
+    /// Project context's question, and what is kept already (`setup project-context
+    /// --describe`).
+    func projectContextQuestion() async throws -> ProjectContextQuestion
+    /// Has the agent read the projects in `scope` and draft a brief of each, keeping nothing
+    /// (`setup project-context --json`); stops as `pull` does.
+    func draftProjectContext(_ scope: ProjectScope) -> ProjectDraftStream
+    /// Keeps what the owner kept of a draft (`setup project-context --apply`), on stdin. A
+    /// problem is an answer, not an error.
+    func applyProjectContext(_ keep: ProjectContextKeep) async throws -> ProjectContextResult
+
     // MARK: Phone
+
+    /// Homebrew's `brew` on this Mac, from the PATH Keryx runs with or Homebrew's own
+    /// places; `nil` when there is none.
+    func homebrew() -> String?
+    /// `brew install cloudflared`, its output line by line: the one program the app installs
+    /// that is not Keryx's, and only after the owner has clicked for it. Whether it worked is
+    /// read afterwards (`phone tunnel`): Homebrew's exit is not a line. `stop()` stops it.
+    func installCloudflared(brew: String) -> StoppableStream<String>
+    /// `cloudflared` is in one of the folders `brew` is looked for in: what an install
+    /// is checked by, besides `phone tunnel`, which looks only on Keryx's own PATH.
+    func cloudflaredInstalled() -> Bool
 
     /// The Twilio account's numbers. Twilio refusing is the report's `error`.
     func phoneNumbers() async throws -> PhoneNumbers

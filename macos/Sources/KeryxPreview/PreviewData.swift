@@ -101,6 +101,26 @@ public enum PreviewData {
     /// whatever HOME says, so a sandbox cannot give it.
     public static var sshHosts: SshHostsReport { decode("ssh-hosts.json") }
 
+    // MARK: Setup sections
+
+    /// `setup profile --json` from the sandbox (a memory already there, so `replace` is
+    /// asked; its assistant renamed Lyra).
+    public static var profileQuestions: ProfileQuestions { decode("setup-profile.json") }
+    /// `migrate --json`: nothing to move (sandbox); a `~/.jarvis` to move (sandbox, its
+    /// moves and units filled in by hand as a real install's, with a running service); and
+    /// one in the way (sandbox).
+    public static var migrationPlan: MigrationPlan { decode("migrate-plan.json") }
+    public static var migrationPlanNothing: MigrationPlan { decode("migrate-plan-nothing.json") }
+    public static var migrationPlanConflict: MigrationPlan { decode("migrate-plan-conflict.json") }
+    /// `migrate --yes --json`: the move (sandbox), and one refused over a conflict.
+    public static var migrateLines: [String] { lines("migrate.jsonl") }
+    public static var migrateConflictLines: [String] { lines("migrate-conflict.jsonl") }
+    /// `setup project-context --describe --json`, and its draft — done, and failed — from the
+    /// sandbox with a faked agent.
+    public static var projectContextQuestion: ProjectContextQuestion { decode("project-context.json") }
+    public static var projectDraftLines: [String] { lines("project-context.jsonl") }
+    public static var projectDraftFailedLines: [String] { lines("project-context-failed.jsonl") }
+
     // MARK: Streams
 
     /// `models start --json`: llama.cpp installed (its sizes unknown), its unit, the model

@@ -1,0 +1,1 @@
+{"event": "error", "message": "Some of Keryx's files from before are in the way, so nothing was moved.", "detail": "~/.jarvis/memory.md and ~/.local/share/keryx/memory.md both exist; keep one and move the other out of the way"}

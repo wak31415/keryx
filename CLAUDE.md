@@ -16,7 +16,7 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Set a machine up: `uv run keryx setup [--all]` (the wizard: walks only the sections still
   missing, saves as it goes; needs a terminal). A coding agent: `uv run keryx setup
   --agent-instructions`, which prints the command-line path below
-- The steps to a first working call, as the Mac app's Setup Assistant shows them:
+- The steps to a first working call, as the Mac app's setup wizard walks them:
   `uv run keryx setup plan [--json]` (a report, so it exits 0; it asks what `doctor` asks, and
   a migration still to run is its first step), `uv run keryx setup mark STEP [--json]` (an
   optional step skipped, or `pin` left to the first call; an unknown step exits 2),
@@ -264,8 +264,9 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `--no-install` from a test or a subagent), `macos/scripts/make-signing-identity.sh
   [--yes] [--remove]` (the owner's, once: that identity, made and trusted for code signing in
   the user trust domain — codesign refuses it untrusted; `--remove` undoes both; `KEYCHAIN`
-  and `KERYX_SIGNING_TRUST=0` are for tests), `macos/scripts/snapshots.sh [--offscreen]`
-  (every screen, light and dark, into `macos/build/snapshots/`), and
+  and `KERYX_SIGNING_TRUST=0` are for tests), `macos/scripts/snapshots.sh [--offscreen]
+  [--only PREFIX]` (every screen, or those whose id starts with PREFIX, light and dark, into
+  `macos/build/snapshots/`), and
   `swift macos/scripts/make-icon.swift` from the repository root (the two `.icns` in
   `macos/Resources`)
 
@@ -393,7 +394,8 @@ remember:
   `KeryxUI` (the screens and the menu), `KeryxApp` (the shell: the window, the menu bar item,
   the app's own Settings) and `KeryxSnapshots` (the harness that photographs every screen).
   It runs the `keryx` CLI and nothing else (but `scripts/install-launchd.sh --llm`, to start
-  the model server), so every rule above binds it without a copy: a command it needs gets a
+  the model server, and `brew install cloudflared` — the owner's Homebrew, only on their
+  click in the setup wizard's Phone Line, its output kept for Show Details), so every rule above binds it without a copy: a command it needs gets a
   `--json`, never a route or a socket, and it writes none of Keryx's files itself. While it
   is open Keryx answers calls (`AppModel.keepsAnswering`, the owner's ruling): once a launch
   it runs `keryx service install --json` when `setup plan`'s service step is reachable and

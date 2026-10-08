@@ -120,11 +120,7 @@ COMMANDS = {
 #: The command lines and streams the CLI prints that the app has yet to name. Each is
 #: checked once the contract names it; until then the cross-checks let it be missing, and
 #: nothing more — a contract that names what the CLI does not print still fails them.
-AWAITING = {
-    "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
-    "migrate --json", MIGRATE, "setup project-context --describe --json",
-    "setup project-context --apply --json", PROJECT_CONTEXT, *VOICE_LLMS,
-}
+AWAITING: set[str] = {*VOICE_LLMS}
 #: Keys a command prints that the app has yet to name, by path, with the types the
 #: contract will give them: checked here until it does, and by the contract once it does.
 AWAITING_KEYS = {
@@ -608,13 +604,14 @@ def test_every_key_the_app_needs_is_printed_with_its_type(command, seeded):
     assert not problems, f"{command}: {problems}"
 
 
-@pytest.mark.parametrize("command", sorted(AWAITING & COMMANDS))
-def test_a_command_the_contract_awaits_already_prints_one_document(command, seeded):
-    """Until the app names it, the command is still run here, so it is ready when it does."""
-    result = runner.invoke(app, argv(command), input=STDIN.get(command, PIPED.get(command)))
+def test_a_command_the_contract_awaits_already_prints_one_document(seeded):
+    """Until the app names it, the command is still run here, so it is ready when it does.
+    One test over them all, so it passes rather than skips while nothing awaits."""
+    for command in sorted(AWAITING & COMMANDS):
+        result = runner.invoke(app, argv(command), input=STDIN.get(command, PIPED.get(command)))
 
-    assert result.exit_code == 0, result.output
-    assert isinstance(json.loads(result.stdout), dict | list)
+        assert result.exit_code == 0, f"{command}: {result.output}"
+        assert isinstance(json.loads(result.stdout), dict | list), command
 
 
 @pytest.mark.parametrize("command", sorted(AWAITING_KEYS))

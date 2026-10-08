@@ -8,6 +8,8 @@ import KeryxUI
     let outputDirectory: URL
     /// Offscreen even when real windows could be photographed.
     let offscreen: Bool
+    /// Only the entries whose id starts with this; every entry when `nil`.
+    var only: String?
 
     func run() throws {
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
@@ -15,7 +17,7 @@ import KeryxUI
         print(realWindows ? "Photographing real windows." : "Rendering offscreen.")
         NSApplication.shared.finishLaunching()
 
-        let entries = ScreenCatalog.entries()
+        let entries = ScreenCatalog.entries().filter { only.map($0.id.hasPrefix) ?? true }
         for entry in entries {
             for dark in [false, true] {
                 let file = outputDirectory.appendingPathComponent(Self.fileName(entry.id, dark: dark))

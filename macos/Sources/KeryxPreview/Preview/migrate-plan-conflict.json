@@ -1,0 +1,41 @@
+{
+  "nothing_to_do": false,
+  "directories": {
+    "config": "/Users/you/.config/keryx",
+    "data": "/Users/you/.local/share/keryx",
+    "state": "/Users/you/.local/state/keryx",
+    "cache": "/Users/you/.cache/keryx"
+  },
+  "moves": [
+    {
+      "source": "/Users/you/.jarvis/pin-failures.json",
+      "destination": "/Users/you/.local/share/keryx/pin-failures.json",
+      "kind": "move"
+    }
+  ],
+  "imports": [],
+  "task_paths_from": [
+    "/Users/you/.jarvis"
+  ],
+  "tools": [],
+  "unset_data_dir": false,
+  "pin_tunnel": true,
+  "retire": {
+    "from": "/Users/you/.jarvis",
+    "to": "/Users/you/.jarvis.migrated-2026-10-07"
+  },
+  "units_pending": null,
+  "conflicts": [
+    {
+      "message": "A file from before and a newer one are both there, so which one to keep is yours to decide.",
+      "detail": "~/.jarvis/memory.md and ~/.local/share/keryx/memory.md both exist; keep one and move the other out of the way"
+    }
+  ],
+  "service": {
+    "stops": null,
+    "retires": [],
+    "installs": null
+  },
+  "live_calls": null,
+  "ready": false
+}

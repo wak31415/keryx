@@ -1,0 +1,3 @@
+{"event": "step", "step": "dispatch", "message": "Asking Claude to read your projects. This can take a few minutes.", "detail": null}
+{"event": "step", "step": "working", "message": "Claude is reading your projects.", "detail": "[tool] Read README.md"}
+{"event": "error", "message": "Claude could not finish reading your projects.", "detail": "no answer within 900s"}

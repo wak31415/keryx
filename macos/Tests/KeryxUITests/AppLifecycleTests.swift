@@ -86,6 +86,7 @@ import KeryxPreview
     }
 
     @Test func theDoctorsServiceSectionIsAnsweringCalls() {
-        #expect(SetupWording.answeringCalls == "Answering Calls")
+        #expect(WizardWording.answeringCalls == "Answering Calls")
+        #expect(WizardWording.checkRow(.service, plan: nil) == "Answering Calls", "the wizard says it the same way")
     }
 }

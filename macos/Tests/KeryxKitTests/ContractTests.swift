@@ -112,6 +112,15 @@ import KeryxPreview
         .of("plugins set NAME --json", PluginResult.self, ["fixture:plugins-set.json"]),
         .of("tools --json", ToolsReport.self, ["tools.json"]),
         .of("plugins hosts --json", SshHostsReport.self, ["ssh-hosts.json"]),
+        .of("setup profile --json", ProfileQuestions.self, ["setup-profile.json"]),
+        .of("setup profile --preview --json", ProfileResult.self, ["fixture:setup-profile-preview.json"]),
+        .of("setup profile --apply --json", ProfileResult.self,
+            ["fixture:setup-profile-apply.json", "fixture:setup-profile-refused.json"]),
+        .of("migrate --json", MigrationPlan.self,
+            ["migrate-plan.json", "migrate-plan-nothing.json", "migrate-plan-conflict.json"]),
+        .of("setup project-context --describe --json", ProjectContextQuestion.self, ["project-context.json"]),
+        .of("setup project-context --apply --json", ProjectContextResult.self,
+            ["fixture:project-context-apply.json"]),
     ]
 
     /// Keys the contract promises (and the CLI test holds the CLI to) that this build does
@@ -126,6 +135,24 @@ import KeryxPreview
         "integrations --json": ["integrations[].secrets[]"],
         "phone webhooks --json": ["current"],
         "tools --json": ["refused[]"],
+        // Questions without choices have none (null); the problems and the moves are empty
+        // whenever all is well, and `retire` is null when there is no `~/.jarvis`.
+        "setup profile --json": ["questions[].choices[]"],
+        "setup profile --preview --json": ["problems[]"],
+        "setup profile --apply --json": ["problems[]"],
+        "migrate --json": ["moves[]", "retire", "conflicts[]"],
+        "setup project-context --apply --json": ["problems[]"],
+    ]
+
+    /// SEAMS: properties the app decodes, as optionals, that the CLI does not print yet
+    /// (`Seams.swift`). Left out of the walk until it does; once a fixture holds one, the
+    /// test below says to move it into the contract.
+    static let awaitingCLI: Set<String> = [
+        "VoiceStatus.pipelines",
+        "ModelsReport.recommended", "ModelsReport.recommendedWithLocalVoice",
+        "ModelsReport.voiceLlmRecommended", "ModelsReport.voiceLlmSeparate",
+        "PhoneTunnel.hostname",
+        "SetupStep.deferrable", "SetupStep.deferred", "SetupMarkResult.deferred",
     ]
 
     /// A preview document (`Sources/KeryxPreview/Preview`), or `fixture:NAME` from this target's.
@@ -241,7 +268,8 @@ import KeryxPreview
         guard mirror.displayStyle == .struct else { return }
         let owner = String(describing: type(of: value))
         for child in mirror.children {
-            guard let label = child.label, !notDecoded.contains(owner + "." + label) else { continue }
+            guard let label = child.label, !notDecoded.contains(owner + "." + label),
+                  !awaitingCLI.contains(owner + "." + label) else { continue }
             let key = snakeCase(label)
             found[path, default: [:]][key] = swiftType(of: child.value)
             let nested = path.isEmpty ? key : path + "." + key
@@ -302,8 +330,74 @@ import KeryxPreview
     /// A line holding each of `keys` with a value of its type.
     static func line(_ event: String, _ keys: [String: String]) -> [String: Any] {
         var line: [String: Any] = ["event": event]
-        for (key, type) in keys { line[key] = type.hasPrefix("integer") ? 7 : "x" }
+        for (key, type) in keys {
+            line[key] = switch type.split(separator: "|").first {
+            case "integer"?, "number"?: 7
+            case "boolean"?: true
+            case "array"?: [Any]()
+            case "object"?: [String: Any]()
+            default: "x"
+            }
+        }
         return line
+    }
+
+    // MARK: - Seams
+
+    /// Every property a seam awaits is one a model really has, and nil in every fixture —
+    /// the CLI does not print it yet. Once it does, the fixture is captured again and this
+    /// fails: move the key into the contract and out of `awaitingCLI`.
+    @Test(arguments: commands)
+    func whatTheSeamsAwaitIsNotPrintedYet(_ command: Command) throws {
+        for name in command.fixtures {
+            let document = try command.decoded(Self.data(name))
+            var found: [String] = []
+            Self.seams(in: document, into: &found)
+            #expect(found.isEmpty, "\(name) prints \(found): move them into the contract")
+        }
+    }
+
+    @Test func eachSeamIsAPropertyTheAppDecodes() throws {
+        var owners: Set<String> = []
+        for command in Self.commands {
+            for name in command.fixtures {
+                Self.properties(in: try command.decoded(Self.data(name)), into: &owners)
+            }
+        }
+        #expect(Self.awaitingCLI.isSubset(of: owners), "\(Self.awaitingCLI.subtracting(owners))")
+    }
+
+    /// The `Owner.label` of every stored property under `value`.
+    static func properties(in value: Any, into found: inout Set<String>) {
+        if let array = value as? [Any] {
+            for element in array { properties(in: element, into: &found) }
+            return
+        }
+        let mirror = Mirror(reflecting: value)
+        guard mirror.displayStyle == .struct else { return }
+        let owner = String(describing: type(of: value))
+        for child in mirror.children {
+            guard let label = child.label else { continue }
+            found.insert(owner + "." + label)
+            if let unwrapped = unwrapOptional(child.value) { properties(in: unwrapped, into: &found) }
+        }
+    }
+
+    /// The seams under `value` that hold something.
+    static func seams(in value: Any, into found: inout [String]) {
+        if let array = value as? [Any] {
+            for element in array { seams(in: element, into: &found) }
+            return
+        }
+        let mirror = Mirror(reflecting: value)
+        guard mirror.displayStyle == .struct else { return }
+        let owner = String(describing: type(of: value))
+        for child in mirror.children {
+            guard let label = child.label else { continue }
+            let unwrapped = unwrapOptional(child.value)
+            if awaitingCLI.contains(owner + "." + label), unwrapped != nil { found.append(owner + "." + label) }
+            if let unwrapped { seams(in: unwrapped, into: &found) }
+        }
     }
 
     @Test func everyPullEventTheContractListsParsesWithItsKeysAndNotWithoutThem() throws {
@@ -414,6 +508,9 @@ import KeryxPreview
         .of("auth login codex --json", SignedIn.self, [PreviewData.signInLines(.codex)], sometimes: ["open.code"]),
         .of("auth login gmail --json", SignedIn.self, [PreviewData.signInLines(.gmail)]),
         .of("auth login google-workspace --json", SignedIn.self, [PreviewData.signInLines(.googleWorkspace)]),
+        .of("migrate --yes --json", MigrationDone.self, [PreviewData.migrateLines, PreviewData.migrateConflictLines]),
+        .of("setup project-context --json", ProjectDraft.self,
+            [PreviewData.projectDraftLines, PreviewData.projectDraftFailedLines]),
     ]
 
     @Test(arguments: eventStreams)

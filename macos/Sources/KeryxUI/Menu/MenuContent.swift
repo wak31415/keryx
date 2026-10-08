@@ -7,7 +7,7 @@ public struct MenuActions {
     public var openWindow: () -> Void
     public var openSession: (Int) -> Void
     public var quit: () -> Void
-    /// Opens the Setup Assistant.
+    /// Opens the setup wizard, every frame prefilled (review).
     public var openSetup: () -> Void
 
     public init(openWindow: @escaping () -> Void, openSession: @escaping (Int) -> Void,
@@ -54,7 +54,7 @@ public struct MenuContent: View {
 
         Button("Open Keryx") { actions.openWindow() }
             .keyboardShortcut("o")
-        Button("Set Up Keryx…") { actions.openSetup() }
+        Button("Run Setup Wizard…") { actions.openSetup() }
         Button("Restart Keryx…") { MenuAlerts.restart(model: model) }
             .disabled(model.client == nil || model.status.value?.service.installed != true)
         Toggle("Pause Approval Calls", isOn: paused)
