@@ -108,8 +108,9 @@ explain() {
     echo "user account's trust domain, so it applies to every keychain, not only this one; macOS"
     echo "asks for your password to change it."
   fi
-  echo "To undo both: $0 --remove"
-  echo "(by hand: security remove-trusted-cert CERT.pem, then security delete-identity -Z SHA-1 $chain)."
+  echo "Nothing is deleted now. To undo all of it later: $0 --remove"
+  echo "(or later by hand, which removes only \"$IDENTITY\": security remove-trusted-cert"
+  echo " <its certificate>, then security delete-identity -Z <its SHA-1> $chain)."
 }
 
 # Removes the trust and the identity, asking first unless `yes`.
