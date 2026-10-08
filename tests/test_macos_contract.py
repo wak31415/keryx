@@ -1293,7 +1293,7 @@ def _llm_failed(monkeypatch, settings, scripts):
     real = ConfigStore.set
 
     def refuse_the_source(self, values, **kwargs):
-        if "VOICE_LLM" in values:
+        if values.get("VOICE_LLM") == "shared":
             raise ConfigError("VOICE_LLM could not be saved")
         return real(self, values, **kwargs)
 

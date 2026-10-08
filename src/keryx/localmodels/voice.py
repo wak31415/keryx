@@ -463,7 +463,7 @@ def here(
     if problem is not None:
         removed = remove_unit("--voice", probes.run_script, root=root, platform=platform)
         report.error(did_not_come_up("The voice server", removed), detail=f"{problem}; {removed}",
-                     log=settings.state_dir / "logs" / "keryx-voice.err.log")
+                     log=log_path(settings))
         return FAILED
     # `VOICE_MODE` says it; the loopback address too, for one release, for a build behind.
     if not save({**as_mode(settings, HERE), "VOICE_BASE_URL": endpoint.base_url,
@@ -471,6 +471,48 @@ def here(
         return FAILED
     report.done(endpoint.base_url)
     return OK
+
+
+def log_path(settings: Settings) -> Path:
+    """The voice server's own log, which its unit writes."""
+    return settings.state_dir / "logs" / "keryx-voice.err.log"
+
+
+def restart_server(
+    settings: Settings, run_script: Callable[[Sequence[str]], int],
+    wait_for_server: Callable[[Endpoint, str, float], str | None], report: Steps, *,
+    root: Path, platform: str | None = None, message: str,
+) -> str | None:
+    """The voice server here restarted (step `voice`, told as `message`): its unit installed
+    again, which stops it and starts it reading the settings anew, and waited for until it
+    opens a Realtime session; None once it has, else what stopped it. Its unit is left as it
+    is either way: a caller putting its old settings back restarts it again, and removes it
+    only when that does not answer either."""
+    script, problem = installer("--voice", root=root, platform=platform)
+    if script is None:
+        return problem or NO_CHECKOUT
+    with report.step("voice", message):
+        code = run_script([str(script), "--voice"])
+        if code != 0:
+            return exited(f"{script.name} --voice", code)
+        return wait_for_server(Endpoint.parse(settings.voice_here_url), "realtime",
+                               VOICE_READY_START_S)
+
+
+def reinstall_unit(
+    flag: str, run_script: Callable[[Sequence[str]], int], *, root: Path,
+    platform: str | None = None,
+) -> None:
+    """The `flag` unit installed again on settings put back as they were, with Cancel held
+    off while it runs: what a Cancel leaves a server that answered on them before."""
+    script, _problem = installer(flag, root=root, platform=platform)
+    if script is None:
+        return
+    held = signal.pthread_sigmask(signal.SIG_BLOCK, CANCEL_SIGNALS)
+    try:
+        run_script([str(script), flag])
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, held)
 
 
 def _have_words(settings: Settings, probes: Probes, report: Report, *, no_words: str) -> bool:

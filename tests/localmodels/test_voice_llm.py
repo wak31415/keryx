@@ -17,7 +17,7 @@ from keryx.localmodels.download import model_path
 from keryx.localmodels.hardware import Hardware
 
 MAC_48 = Hardware("metal", "Apple silicon", 0.0, 48.0)
-SMALL = by_key("qwen3.5-4b")
+SMALL, NINE = by_key("qwen3.5-4b"), by_key("qwen3.5-9b")
 OWN = "http://127.0.0.1:8091/v1"
 #: What the server elsewhere lists, unless a test says.
 LISTED = Probe(True, ("gpt-5-mini",))
@@ -68,8 +68,11 @@ class Machine:
 
     def __init__(self, run: Run, *, llama="/usr/bin/llama-server", wait=None, served=SMALL.key,
                  units=(), pulled=0, listed=LISTED, hardware=MAC_48,
-                 ports=None, codes=None) -> None:
+                 ports=None, codes=None, realtime=None) -> None:
+        #: `wait`, `served` and `realtime` (the voice server's handshake) are each one answer,
+        #: or a list of answers given in turn.
         self.run, self.llama, self.wait, self._served = run, llama, wait, served
+        self.realtime = realtime
         self.units, self.pulled, self.listed, self._hardware = set(units), pulled, listed, hardware
         self.ports, self.codes = ports or {}, codes or {}
 
@@ -99,13 +102,15 @@ class Machine:
 
     def wait_for_server(self, endpoint: Endpoint, kind: str, timeout: float):
         self.run.lines.append(("wait", kind, endpoint.base_url))
-        if isinstance(self.wait, BaseException):
-            raise self.wait
-        return self.wait
+        said = _next(self.realtime if kind == "realtime" else self.wait)
+        if isinstance(said, BaseException):
+            raise said
+        return said
 
     def served(self, url: str):
         self.run.lines.append(("served", url))
-        return self._served is not None, self._served
+        said = _next(self._served)
+        return said is not None, said
 
     def models(self, endpoint: Endpoint):
         return Probe(False, problem="not asked")
@@ -126,6 +131,11 @@ class Machine:
     def remote_models(self, endpoint: Endpoint) -> Probe:
         self.run.lines.append(("remote", endpoint.base_url, endpoint.api_key))
         return self.listed
+
+
+def _next(answers):
+    """The next of a list of answers, or the one answer."""
+    return answers.pop(0) if isinstance(answers, list) else answers
 
 
 @pytest.fixture
@@ -181,7 +191,7 @@ def test_here_downloads_installs_starts_checks_and_only_then_is_the_voice_llm(se
                      {"VOICE_LLM": "here", "VOICE_LLM_MODEL": SMALL.key,
                       "VOICE_LLM_SERVER_PORT": 8091}]
     assert run.kinds().index("served") < run.kinds().index("done")
-    assert run.of("done") == [("here", SMALL.key, OWN, False)]
+    assert run.of("done") == [("here", SMALL.key, OWN, False, False)]
 
 
 def test_here_on_disk_already_downloads_nothing(settings, root):
@@ -287,7 +297,8 @@ def test_a_here_switch_that_fails_leaves_the_previous_settings_and_removes_its_u
     assert run.of("script")[-1] == (["install-launchd.sh", "--voice-llm", "--uninstall"],)
     # Saved for the unit to read, then put back as they were: the source never changed.
     assert saved == [{"VOICE_LLM_MODEL": SMALL.key, "VOICE_LLM_SERVER_PORT": 8091},
-                     {"VOICE_LLM_MODEL": "qwen3.5-9b", "VOICE_LLM_SERVER_PORT": None}]
+                     {"VOICE_LLM": None, "VOICE_LLM_MODEL": "qwen3.5-9b",
+                      "VOICE_LLM_SERVER_PORT": None}]
     error = run.of("error")[-1]
     assert error[0] == said and error[2].name == "keryx-voice-llm.err.log"
     assert run.of("done") == []
@@ -305,19 +316,35 @@ def test_a_here_switch_cancelled_while_it_loads_removes_its_unit_and_puts_back_s
     assert run.of("done") == [] and run.of("error") == []
 
 
-def test_a_switch_from_a_voice_llm_of_its_own_that_fails_says_how_to_bring_it_back(
-    settings, root
+@pytest.mark.parametrize(("again", "said"), [
+    (None, "The voice LLM it replaced, Qwen3.5 9B, is running again."),
+    ("still no answer", "The voice LLM it replaced, Qwen3.5 9B, did not come back either, so "
+                        "the voice here has no words until one is started."),
+])
+def test_a_failed_switch_from_a_voice_llm_of_its_own_starts_the_old_one_again(
+    settings, root, again, said
 ):
+    """B replaced A under the one unit: A is started and checked again before the error."""
     run = Run()
-    own = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": "qwen3.5-9b"})
+    own = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": NINE.key})
+    machine = Machine(run, units={"voice_llm"}, wait=["no answer", again],
+                      served=[NINE.key] if again is None else None)
 
-    code, saved = here(own, Machine(run, units={"voice_llm"}, wait="no answer"), run, root)
+    code, saved = here(own, machine, run, root)
 
     assert code == 1
-    assert saved[-1] == {"VOICE_LLM_MODEL": "qwen3.5-9b", "VOICE_LLM_SERVER_PORT": None}
-    [(message, detail)] = run.of("warn")
-    assert "starting its server again brings it back" in message
-    assert detail == "`keryx models start --voice-llm`"
+    assert saved[-1] == {"VOICE_LLM": "here", "VOICE_LLM_MODEL": NINE.key,
+                         "VOICE_LLM_SERVER_PORT": None}
+    assert [argv[1:] for (argv,) in run.of("script")] == [
+        ["--voice-llm"], ["--voice-llm", "--uninstall"], ["--voice-llm"],
+        *([] if again is None else [["--voice-llm", "--uninstall"]])]
+    # Its unit, start and check again, told as `restore`; no check for one that never loaded.
+    assert run.steps().count("restore") == (3 if again is None else 2)
+    message, detail, _log = run.of("error")[-1]
+    assert message == "The voice LLM server did not come up, so its service was removed." + \
+        " " + said
+    assert "no answer" in detail and (again is None or "still no answer" in detail)
+    assert run.kinds()[-1] == "error"
 
 
 def test_here_warns_when_it_and_the_agents_model_may_not_both_fit(settings, root):
@@ -340,13 +367,57 @@ def test_here_whose_settings_are_refused_installs_no_unit(settings, root):
     assert ["install-launchd.sh", "--voice-llm"] not in [argv for (argv,) in run.of("script")]
 
 
-def test_here_says_the_voice_server_takes_it_up_at_its_next_start(settings, root):
+def test_here_restarts_a_running_voice_server_onto_it_once_it_answers(settings, root):
     run = Run()
     voice_here = settings.model_copy(update={"voice_mode_explicit": "here"})
 
-    here(voice_here, Machine(run, units={"voice"}), run, root)
+    code, saved = here(voice_here, Machine(run, units={"voice"}), run, root)
 
-    assert run.of("done") == [("here", SMALL.key, OWN, True)]
+    assert code == 0
+    assert run.steps()[-2:] == ["configure", "voice"]
+    assert [argv[1:] for (argv,) in run.of("script")] == [["--voice-llm"], ["--voice"]]
+    assert run.of("wait")[-1] == ("realtime", "http://127.0.0.1:8765/v1")
+    assert saved[-1]["VOICE_LLM"] == "here"
+    assert run.of("done") == [("here", SMALL.key, OWN, True, False)]
+
+
+def test_here_says_a_voice_here_with_no_server_running_takes_it_when_started(settings, root):
+    run = Run()
+
+    here(settings.model_copy(update={"voice_mode_explicit": "here"}), Machine(run), run, root)
+
+    assert run.of("done") == [("here", SMALL.key, OWN, False, True)]
+
+
+@pytest.mark.parametrize(("previous", "units"), [
+    ({"voice_llm": "here", "voice_llm_model": "qwen3.5-9b"}, {"voice", "voice_llm"}),
+    ({**AGENT}, {"voice"}),
+])
+def test_a_voice_server_that_does_not_answer_on_the_new_llm_goes_back_to_the_old(
+    settings, root, previous, units
+):
+    """B came up, but the voice did not answer on it: the old words are put back — A's own
+    server started again, or B's removed when the words were the agent's — and the voice
+    restarted onto them."""
+    run = Run()
+    before = settings.model_copy(update={**previous, "voice_mode_explicit": "here"})
+    machine = Machine(run, units=units, served=[SMALL.key, NINE.key],
+                      realtime=["no Realtime socket", None])
+
+    code, saved = here(before, machine, run, root)
+
+    assert code == 1 and run.of("done") == []
+    assert saved[-1]["VOICE_LLM_MODEL"] == previous.get("voice_llm_model")
+    flags = [argv[1:] for (argv,) in run.of("script")]
+    assert flags[:2] == [["--voice-llm"], ["--voice"]]
+    if previous.get("voice_llm") == "here":
+        assert flags[2:] == [["--voice-llm"], ["--voice"]]  # A again, then the voice on A
+    else:
+        assert flags[2:] == [["--voice"]]  # the agent's server was never touched
+    message, detail, _log = run.of("error")[-1]
+    assert message == ("The voice server here did not answer on its new words, so they were "
+                       "put back: it answers on the ones it had.")
+    assert detail == "no Realtime socket"
 
 
 # --- models start --voice-llm ---------------------------------------------------------------
@@ -457,7 +528,8 @@ def test_remote_on_openai_is_asked_with_the_owners_key_and_saved_once_it_lists_t
     assert run.of("remote") == [("https://api.openai.com/v1", "test")]
     assert saved == [{"VOICE_LLM": "remote", "VOICE_LLM_BASE_URL": "https://api.openai.com/v1",
                       "VOICE_LLM_MODEL": "gpt-5-mini"}]
-    assert run.of("done") == [("remote", "gpt-5-mini", "https://api.openai.com/v1", False)]
+    assert run.of("done") == [("remote", "gpt-5-mini", "https://api.openai.com/v1", False,
+                               False)]
 
 
 def test_remote_elsewhere_is_never_sent_the_owners_openai_key(settings, root):
@@ -548,7 +620,7 @@ def test_shared_saves_the_local_agents_model_and_removes_the_voice_llms_own_unit
     assert code == 0 and saved == [{"VOICE_LLM": "shared"}]
     assert run.of("script") == [(["install-launchd.sh", "--voice-llm", "--uninstall"],)]
     assert run.of("done") == [("shared", "qwen3-coder-30b-a3b", "http://127.0.0.1:8090/v1",
-                               False)]
+                               False, False)]
 
 
 def test_shared_with_no_unit_of_its_own_removes_nothing(settings, root):
@@ -586,16 +658,68 @@ def test_shared_with_no_local_model_and_no_voice_here_is_saved_with_a_warning(se
 
     assert code == 0 and saved == [{"VOICE_LLM": "shared"}]
     assert "no model yet" in run.of("warn")[0][0]
-    assert run.of("done") == [("shared", None, None, False)]
+    assert run.of("done") == [("shared", None, None, False, False)]
 
 
-def test_shared_says_a_running_voice_server_takes_it_up_at_its_next_start(settings, root):
+def test_shared_restarts_a_running_voice_server_before_it_retires_the_old_unit(settings,
+                                                                               root):
     run = Run()
-    here_ = settings.model_copy(update={**AGENT, "voice_mode_explicit": "here"})
+    here_ = settings.model_copy(update={**AGENT, "voice_mode_explicit": "here",
+                                        "voice_llm": "here", "voice_llm_model": SMALL.key})
 
-    shared(here_, Machine(run, units={"voice"}), run, root)
+    code, _saved = shared(here_, Machine(run, units={"voice", "voice_llm"}), run, root)
 
-    assert run.of("done")[0][-1] is True
+    assert code == 0
+    assert run.steps() == ["configure", "voice", "unit"]
+    assert [argv[1:] for (argv,) in run.of("script")] == [
+        ["--voice"], ["--voice-llm", "--uninstall"]]
+    assert run.of("done")[0][-2:] == (True, False)
+
+
+@pytest.mark.parametrize(("realtime", "said", "voice_removed"), [
+    (["no Realtime socket", None], "so they were put back: it answers on the ones it had.",
+     False),
+    (["no Realtime socket", "still none"], "and it did not answer on the ones it had either, "
+                                           "so its service was removed.", True),
+])
+def test_a_switch_the_voice_does_not_answer_on_keeps_the_old_unit_and_settings(
+    settings, root, realtime, said, voice_removed
+):
+    run = Run()
+    here_ = settings.model_copy(update={**AGENT, "voice_mode_explicit": "here",
+                                        "voice_llm": "here", "voice_llm_model": SMALL.key})
+
+    code, saved = shared(here_, Machine(run, units={"voice", "voice_llm"}, realtime=realtime),
+                         run, root)
+
+    assert code == 1 and run.of("done") == []
+    assert saved == [{"VOICE_LLM": "shared"}, {"VOICE_LLM": "here"}]
+    flags = [argv[1:] for (argv,) in run.of("script")]
+    assert ["--voice-llm", "--uninstall"] not in flags  # the old words' server is kept
+    assert flags == [["--voice"], ["--voice"], *([["--voice", "--uninstall"]]
+                                                 if voice_removed else [])]
+    assert run.of("error")[-1][0].endswith(said)
+
+
+def test_a_switch_cancelled_while_the_voice_restarts_puts_the_old_words_back(settings, root):
+    run = Run()
+    here_ = settings.model_copy(update={**AGENT, "voice_mode_explicit": "here",
+                                        "voice_llm": "here", "voice_llm_model": SMALL.key})
+
+    with pytest.raises(KeyboardInterrupt):
+        shared(here_, Machine(run, units={"voice", "voice_llm"}, realtime=KeyboardInterrupt()),
+               run, root)
+
+    assert [argv[1:] for (argv,) in run.of("script")] == [["--voice"], ["--voice"]]
+
+
+def test_remote_restarts_a_running_voice_server_onto_it(settings, root):
+    run = Run()
+    here_ = settings.model_copy(update={"voice_mode_explicit": "here"})
+
+    code, _saved = remote(here_, Machine(run, units={"voice"}), run, root)
+
+    assert code == 0 and run.steps() == ["check", "configure", "voice"]
 
 
 def test_shared_whose_save_is_refused_ends_without_done(settings, root):
@@ -733,3 +857,67 @@ def test_the_voice_llms_server_whose_llama_cpp_cannot_be_installed_starts_nothin
 
     assert start(chosen, NoLlama(run, llama=None), run, root) == 1
     assert run.of("script") == [] and run.of("done") == []
+
+
+# --- a server elsewhere never hears its key read back -----------------------------------------
+
+
+@pytest.mark.parametrize("listed", [
+    Probe(True, ("vk-secret-echoed",)),
+    Probe(False, problem="llm.example.com refused vk-secret-echoed"),
+])
+def test_a_server_that_echoes_the_key_never_has_it_said(settings, root, listed):
+    run = Run()
+
+    code, _saved = remote(settings, Machine(run, listed=listed), run, root,
+                          url="https://llm.example.com", model="small", key="vk-secret-echoed",
+                          new_key=True)
+
+    assert code == 1
+    assert "vk-secret-echoed" not in str([line for line in run.lines if line[0] != "remote"])
+    assert "[redacted]" in str(run.of("error"))
+
+
+def test_a_voice_that_answers_on_neither_llm_has_its_unit_removed(settings, root):
+    """B came up but the voice did not answer on it, and A would not come back: no voice
+    unit is left restarting with no words."""
+    run = Run()
+    before = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": NINE.key,
+                                         "voice_mode_explicit": "here"})
+    machine = Machine(run, units={"voice", "voice_llm"}, wait=[None, "no answer"],
+                      served=[SMALL.key], realtime="no Realtime socket")
+
+    code, _saved = here(before, machine, run, root)
+
+    assert code == 1
+    assert [argv[1:] for (argv,) in run.of("script")][-1] == ["--voice", "--uninstall"]
+    message, detail, _log = run.of("error")[-1]
+    assert "the voice LLM it had did not come back, so its service was removed" in message
+    assert "no Realtime socket" in detail and "no answer" in detail
+
+
+def test_a_switch_cancelled_while_it_loads_starts_the_one_it_replaced_again(settings, root):
+    run = Run()
+    own = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": NINE.key})
+    machine = Machine(run, units={"voice_llm"}, wait=[KeyboardInterrupt(), None],
+                      served=[NINE.key])
+
+    with pytest.raises(KeyboardInterrupt):
+        here(own, machine, run, root)
+
+    assert [argv[1:] for (argv,) in run.of("script")] == [
+        ["--voice-llm"], ["--voice-llm", "--uninstall"], ["--voice-llm"]]
+    assert run.of("served") == [(OWN,)]  # A, checked again
+
+
+def test_a_cancel_with_no_words_to_go_back_to_removes_the_voice_unit(settings, root):
+    run = Run()
+    before = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": NINE.key,
+                                         "voice_mode_explicit": "here"})
+    machine = Machine(run, units={"voice", "voice_llm"}, wait=[None, "no answer"],
+                      served=[SMALL.key], realtime=KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        here(before, machine, run, root)
+
+    assert [argv[1:] for (argv,) in run.of("script")][-1] == ["--voice", "--uninstall"]

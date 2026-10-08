@@ -235,14 +235,22 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - The voice's words: `uv run keryx voice llm shared | here MODEL | remote URL --model M
   [--key-stdin | --clear-key] [--json]` (`localmodels/voice_llm.py`; the owner's alone;
   JSON lines as `models start` — `here`'s steps `download`, `runtime`, `unit`, `start`,
-  `check`, `configure`, then `done` with `source`, `model`, `url` and
-  `voice_restart_needed`; exit 0, 1, 2, 130). `here` downloads the model, installs llama.cpp
-  and the `--voice-llm` unit on a port of its own (`use.voice_llm_port`, `servers.port_clash`)
-  and checks it serves the model before `VOICE_LLM=here` is saved: the model and port the
-  unit reads are saved first and put back when it does not come up, and its unit removed.
-  `remote` lists the server's models with the key it would be sent first; `shared` and
-  `remote` remove the voice LLM's own unit. None restarts a running voice server — `voice
-  use here` does, and `voice_restart_needed` says when. `models start --voice-llm [--json]`
+  `check`, `configure`, `voice`, then `done` with `source`, `model`, `url`,
+  `voice_restarted` and `voice_restart_needed`; exit 0, 1, 2, 130). `here` downloads the
+  model, installs llama.cpp and the `--voice-llm` unit on a port of its own
+  (`use.voice_llm_port`, `servers.port_clash`) and checks it serves the model before
+  `VOICE_LLM=here` is saved: the model and port the unit reads are saved first and put back
+  when it does not come up, and its unit removed. `remote` lists the server's models with
+  the key it would be sent first, and nothing it answers is said without that key redacted;
+  `shared` and `remote` retire the voice LLM's own unit. **A voice that works before a
+  switch works after it, whether the switch succeeded or failed:** a failed switch from one
+  model of its own to another starts and checks the old one again (step `restore`) before
+  its error, which says plainly whether it came back; a voice server running here is
+  restarted onto the new words and seen to answer (step `voice`, `voice.restart_server`)
+  before the old unit is retired, and when it does not answer the old words are put back,
+  the voice restarted onto them, and a voice that answers on neither has its unit removed.
+  `voice_restart_needed` is only a voice here with no server running, which takes the words
+  when it starts. `models start --voice-llm [--json]`
   is `here`'s unit, wait and check alone, for `VOICE_LLM_MODEL` as it is (nothing saved; the
   `models start` stream). `voice --json` adds `llm` (`source`, `model`, `url`, `reachable`,
   `unit_installed`) and `pipelines` (`VOICE_PIPELINE`'s values per mode), and `needs` is

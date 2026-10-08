@@ -135,7 +135,7 @@ def test_voice_llm_here_downloads_starts_checks_then_saves_it(machine, monkeypat
     assert [(e["step"], e["done"]) for e in events if e["event"] == "progress"] == [
         ("download", 100)]
     assert events[-1] == {"event": "done", "source": "here", "model": SMALL.key, "url": OWN,
-                          "voice_restart_needed": False}
+                          "voice_restarted": False, "voice_restart_needed": False}
     assert machine.pulls == [SMALL.key] and machine.flags() == [["--voice-llm"]]
     stored = ConfigStore().stored()
     assert (stored["VOICE_LLM"], stored["VOICE_LLM_MODEL"], stored["VOICE_LLM_SERVER_PORT"]) \
@@ -158,15 +158,26 @@ def test_voice_llm_here_in_words(machine):
         in result.stdout
 
 
-def test_voice_llm_here_says_a_running_voice_server_takes_it_up_when_restarted(machine):
+def test_voice_llm_here_restarts_a_running_voice_server_onto_it(machine):
     ConfigStore().set({"VOICE_MODE": "here"})
     machine.units.add("voice")
 
     plain = runner.invoke(app, ["voice", "llm", "here", SMALL.key])
     result = runner.invoke(app, ["voice", "llm", "here", SMALL.key, "--json"])
 
-    assert "`keryx voice use here` restarts it" in plain.stdout
-    assert events_of(result)[-1]["voice_restart_needed"] is True
+    assert "the voice server here was restarted onto them, and answers" in plain.stdout
+    events = ends_once(result, "done", 0)
+    assert "voice" in [e["step"] for e in events if e["event"] == "step"]
+    assert (events[-1]["voice_restarted"], events[-1]["voice_restart_needed"]) == (True, False)
+    assert machine.flags()[-1] == ["--voice"]
+
+
+def test_voice_llm_here_says_a_voice_here_with_no_server_takes_it_when_started(machine):
+    ConfigStore().set({"VOICE_MODE": "here"})
+
+    plain = runner.invoke(app, ["voice", "llm", "here", SMALL.key])
+
+    assert "`keryx voice use here` starts it" in plain.stdout
 
 
 def test_a_voice_llm_here_that_does_not_come_up_leaves_the_previous_settings(machine):
@@ -248,7 +259,8 @@ def test_voice_llm_remote_takes_its_key_on_stdin_and_never_says_it(machine):
 
     events = ends_once(result, "done", 0)
     assert events[-1] == {"event": "done", "source": "remote", "model": "small",
-                          "url": "https://llm.example.com/v1", "voice_restart_needed": False}
+                          "url": "https://llm.example.com/v1", "voice_restarted": False,
+                          "voice_restart_needed": False}
     assert machine.asked == [("https://llm.example.com/v1", "vk-secret")]
     assert "vk-secret" not in result.output
     assert ConfigStore()._secrets()["VOICE_LLM_API_KEY"] == "vk-secret"
@@ -498,3 +510,30 @@ def test_voice_use_openai_takes_a_pipeline_it_does_not_offer_away(machine):
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["saved"]["VOICE_PIPELINE"] is None
     assert ConfigStore().stored() == {"VOICE_MODE": "openai"}
+
+
+def test_voice_llm_remote_never_says_a_key_the_server_echoes(machine):
+    machine.listed = Probe(True, ("vk-echoed",))
+
+    result = runner.invoke(app, ["voice", "llm", "remote", "https://llm.example.com",
+                                 "--model", "small", "--key-stdin", "--json"],
+                           input="vk-echoed\n")
+
+    ends_once(result, "error", 1)
+    assert "vk-echoed" not in result.output
+
+
+def test_voice_llm_shared_puts_the_old_words_back_when_the_voice_does_not_answer(machine,
+                                                                                 monkeypatch):
+    ConfigStore().set({**WORDS, "VOICE_MODE": "here", "VOICE_LLM": "here",
+                       "VOICE_LLM_MODEL": SMALL.key})
+    machine.units.update({"voice", "voice_llm"})
+    answers = ["no Realtime socket", None]
+    monkeypatch.setattr(servers, "wait_for", lambda endpoint, kind, timeout: answers.pop(0))
+
+    result = runner.invoke(app, ["voice", "llm", "shared", "--json"])
+
+    events = ends_once(result, "error", 1)
+    assert events[-1]["message"].endswith("it answers on the ones it had.")
+    assert ConfigStore().stored()["VOICE_LLM"] == "here"
+    assert machine.flags() == [["--voice"], ["--voice"]] and "voice_llm" in machine.units

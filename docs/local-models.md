@@ -82,8 +82,11 @@ and the model and port it was given are put back. `keryx voice llm remote URL --
 saves a server elsewhere once it lists the model, asked with its key (`--key-stdin`
 replaces it, `--clear-key` forgets it) or, on OpenAI's own address, `OPENAI_API_KEY`.
 `remote` and `shared` remove the voice LLM's own unit, which would otherwise hold its model in
-memory. None of them restarts a voice server that is running: `keryx voice use here` does,
-and each says when it is needed.
+memory. A voice that works before a switch works after it, whether the switch succeeded or
+not: a voice server running here is restarted onto the new words and seen to answer before
+the old voice LLM is let go, and is put back on the old words when it does not; a failed
+switch from one model of the voice's own to another starts the old one again first. Any
+key a server echoes back is redacted from what is said.
 `keryx voice use server` saves a server only once it has opened a Realtime session, unless
 `--keep-anyway`. The key already saved is kept and asked with, unless `--key-stdin` replaces
 it or `--clear-key` forgets it. Either way Keryx takes the new voice up when it restarts.
@@ -132,8 +135,11 @@ and there is no local model, `voice_llm` while one of its own or elsewhere names
 while the voice is here, else null — and `unit_installed`) and `pipelines` (what each mode
 offers `VOICE_PIPELINE`: `openai` and `server` `["speech-to-speech"]`, `here`
 `["three-model"]`). `keryx voice llm shared|here|remote … --json` and `keryx models start
---voice-llm --json` print JSON lines as `models start --json` does; `voice llm`'s `done` is
-`source`, `model`, `url` and `voice_restart_needed`, and `models start --voice-llm`'s is
+--voice-llm --json` print JSON lines as `models start --json` does (with the steps
+`restore` and `voice` when a switch starts the old voice LLM again or restarts the voice
+server); `voice llm`'s `done` is `source`, `model`, `url`, `voice_restarted` and
+`voice_restart_needed` (a voice here with no server running), and `models start
+--voice-llm`'s is
 `url` and `served_model`. `keryx voice use openai
 --json` prints `{"saved": …, "restart_needed": true}`, and `voice use server URL --json` adds
 `problem` and `warnings` — with a problem and no `--keep-anyway` it saves nothing, says

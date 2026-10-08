@@ -17,13 +17,19 @@ once it answers; `shared` saves the local agent's model as the words. Both then 
 voice LLM's own unit when it is installed: nothing reads it any more, and it holds a model
 in memory.
 
-None of them restarts a running voice server, whose command line was built with the old
-words: each ending says whether one is running (`voice_restart_needed`), and `keryx voice
-use here` restarts it, with its own checks.
+One rule binds every switch: a voice that works before it works after, whether the switch
+succeeded or failed. A voice server running here was started with the old words on its
+command line, so once the new ones are saved and seen to answer it is restarted onto them
+and seen to open a Realtime session (`_move_voice`, step `voice`) — and only then is the old
+voice LLM's unit retired. When it does not answer, the old words are put back (the old
+voice LLM's own server started and checked again, step `restore`, when the switch replaced
+it) and the voice server restarted onto them; the error says plainly whether it answers
+there. A voice here with no server running takes the new words when it starts
+(`voice_restart_needed`).
 """
 
 from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass, fields, replace
 from functools import partial
 from pathlib import Path
@@ -64,7 +70,7 @@ class Report(server.Report, Protocol):
     def progress(self, done: int, total: int | None) -> None: ...
 
     def done(self, source: str, model: str | None, url: str | None, *,
-             voice_restart_needed: bool) -> None: ...
+             voice_restarted: bool, voice_restart_needed: bool) -> None: ...
 
 
 class Steps(server.Report, Protocol):
@@ -118,11 +124,13 @@ def here(
     """Make `model` (a catalog name or a GGUF's path) the voice LLM, on a server of its own
     here; the exit code. 2 for what refuses it before anything is tried — a model that is
     not there, no installer, no port of its own — 1 for what stopped it, 0 once the server
-    serves it and `VOICE_LLM=here` is saved."""
+    serves it, `VOICE_LLM=here` is saved, and a voice server running here answers on it."""
+    running = _voice_running(settings, probes)
     code, url = _bring_up(settings, model, probes, report, save=save, root=root,
                           platform=platform)
     if code == OK:
-        report.done("here", model, url, voice_restart_needed=_voice_running(settings, probes))
+        report.done("here", model, url, voice_restarted=running,
+                    voice_restart_needed=_voice_waiting(settings, probes))
     return code
 
 
@@ -135,11 +143,26 @@ def bring_up(
                      platform=platform)[0]
 
 
+@dataclass(frozen=True)
+class _Failure:
+    """What stopped a server, for the one error that ends the stream: a sentence, what the
+    tools said, and its log."""
+
+    message: str
+    detail: str
+    log: Path | None = None
+
+
 def _bring_up(
     settings: Settings, model: str, probes: Probes, report: Steps, *,
     save: Callable[[dict[str, Any]], bool], root: Path, platform: str | None,
 ) -> tuple[int, str]:
-    """`bring_up`'s exit code, and the address its server answers at."""
+    """`bring_up`'s exit code, and the address its server answers at.
+
+    A voice that works before it works after, whether this succeeded or not: the voice LLM's
+    own server it replaces (`settings`, the one unit both run under) is started and checked
+    again when the new one does not come up, and a voice server running here is restarted
+    onto the new one — and, when it does not answer there, put back on the old."""
     platform = platform or voice.PLATFORM
     entry, problem, detail = _model(model)
     if problem is not None:
@@ -164,31 +187,66 @@ def _bring_up(
             return FAILED, url
     if not server.have_llama(settings, probes, report, platform=platform):
         return FAILED, url
+    running = _voice_running(settings, probes)
+    # The one server it replaces, which ran under the same unit: brought back on failure.
+    previous = settings if probes.unit_installed("voice_llm") and settings.voice_llm_model \
+        else None
+    before = {"VOICE_LLM": _stored(settings, "voice_llm"),
+              "VOICE_LLM_MODEL": settings.voice_llm_model,
+              "VOICE_LLM_SERVER_PORT": _stored(settings, "voice_llm_server_port")}
+
+    def put_back() -> _Failure | None:
+        """The settings as they were, and the voice LLM's server as it was: the one it
+        replaced started and checked again (step `restore`), or none at all."""
+        if not save(before):  # told already: nothing is started on settings not put back
+            return _Failure("Keryx could not put the voice LLM's settings back.", "")
+        if previous is None:
+            if probes.unit_installed("voice_llm"):
+                voice.remove_unit(FLAG, probes.run_script, root=root, platform=platform)
+            return None
+        return _serve(previous, probes, Under(report, "restore"), root=root, platform=platform)
+
     # The unit reads its model and port from the settings: saved first, put back on failure.
-    before = {"VOICE_LLM_MODEL": settings.voice_llm_model,
-              "VOICE_LLM_SERVER_PORT": (settings.voice_llm_server_port
-                                        if "voice_llm_server_port" in settings.model_fields_set
-                                        else None)}
     port = chosen.voice_llm_server_port
     if not save({"VOICE_LLM_MODEL": model, "VOICE_LLM_SERVER_PORT": port}):
         return FAILED, url
-    served = False
     try:
-        served = serve_here(chosen, probes, report, root=root, platform=platform) == OK
-    finally:
-        if not served:
-            save(before)
-            if settings.voice_llm == "here" and settings.voice_llm_model not in (None, model):
-                report.warn("The voice LLM it replaced was stopped with it, and is still "
-                            "chosen: starting its server again brings it back.",
-                            detail="`keryx models start --voice-llm`")
-    if not served:
+        failure = _serve(chosen, probes, report, root=root, platform=platform)
+    except BaseException:
+        with suppress(Exception):
+            put_back()
+        raise
+    if failure is not None:
+        back = put_back()
+        report.error(failure.message + _replaced(previous, back),
+                     detail=failure.detail + (f"; {back.detail}" if back else ""),
+                     log=failure.log)
         return FAILED, url
     with report.step("configure", "Saving the voice LLM: its own server here"):
         if not save({"VOICE_LLM": "here", "VOICE_LLM_MODEL": model,
                      "VOICE_LLM_SERVER_PORT": port}):
+            put_back()
             return FAILED, url
+    if running and not _move_voice(settings, probes, report, root=root, platform=platform,
+                                   put_back=put_back):
+        return FAILED, url
     return OK, url
+
+
+def _stored(settings: Settings, name: str) -> Any:
+    """`name`'s value when a source set it, else None: what puts it back as it was."""
+    return getattr(settings, name) if name in settings.model_fields_set else None
+
+
+def _replaced(previous: Settings | None, back: _Failure | None) -> str:
+    """What became of the voice LLM a failed switch replaced, as a sentence to add."""
+    if previous is None:
+        return ""
+    title = _title(previous.voice_llm_model or "")
+    if back is None:
+        return f" The voice LLM it replaced, {title}, is running again."
+    return (f" The voice LLM it replaced, {title}, did not come back either, so the voice "
+            "here has no words until one is started.")
 
 
 def serve_here(
@@ -199,14 +257,35 @@ def serve_here(
     it to load, and check that it serves that model; the exit code, 0 or 1. A server that
     does not come up, serves another model, or is cancelled on the way has its unit removed
     before anything is said."""
+    failure = _serve(settings, probes, report, root=root, platform=platform)
+    if failure is not None:
+        report.error(failure.message, detail=failure.detail, log=failure.log)
+        return FAILED
+    return OK
+
+
+def _serve(
+    settings: Settings, probes: server.Probes, report: Any, *, root: Path,
+    platform: str | None,
+) -> _Failure | None:
+    """`serve_here` without its error: None once its server serves its model, else what
+    stopped it, its unit already removed — so a caller can bring another back first."""
     here_ = endpoint(settings)
     alias = settings.voice_llm_model or ""
     title = _title(alias)
     served: str | None = None
+    script, missing = voice.installer(FLAG, root=root, platform=platform)
+    if script is None:
+        return _Failure(voice.NO_CHECKOUT, missing or "")
     with voice.removed_if_stopped(FLAG, probes.run_script, root=root, platform=platform):
-        if not voice.install_unit_step(FLAG, "Installing the voice LLM server's service",
-                                       probes.run_script, report, root=root, platform=platform):
-            return FAILED
+        with report.step("unit", f"Installing the voice LLM server's service, for {title}"):
+            code = probes.run_script([str(script), FLAG])
+        if code != 0:
+            removed = voice.remove_unit(FLAG, probes.run_script, root=root, platform=platform)
+            gone = "so it was removed" if removed == voice.REMOVED else (
+                "and it could not be removed")
+            return _Failure(f"The voice LLM server's service could not be installed, {gone}.",
+                            f"{voice.exited(f'{script.name} {FLAG}', code)}; {removed}")
         with report.step("start", f"Loading {title} into llama.cpp at {here_.base_url}"):
             problem = probes.wait_for_server(here_, "models", server.LLM_START_S)
         if problem is None:
@@ -215,18 +294,63 @@ def serve_here(
                 _up, served = probes.served(here_.base_url)
     if problem is not None:
         removed = voice.remove_unit(FLAG, probes.run_script, root=root, platform=platform)
-        report.error(voice.did_not_come_up("The voice LLM server", removed),
-                     detail=f"{problem}; {removed}", log=log_path(settings))
-        return FAILED
+        return _Failure(voice.did_not_come_up("The voice LLM server", removed),
+                        f"{problem}; {removed}", log_path(settings))
     if served != alias:
         removed = voice.remove_unit(FLAG, probes.run_script, root=root, platform=platform)
         gone = "so its service was removed" if removed == voice.REMOVED else (
             "and its service could not be removed")
-        report.error(f"The voice LLM server serves another model, not {title}, {gone}.",
-                     detail=f"{here_.base_url} serves {served or 'no model it names'}; "
-                            f"{removed}", log=log_path(settings))
-        return FAILED
-    return OK
+        return _Failure(f"The voice LLM server serves another model, not {title}, {gone}.",
+                        f"{here_.base_url} serves {served or 'no model it names'}; {removed}",
+                        log_path(settings))
+    return None
+
+
+def _move_voice(
+    settings: Settings, probes: server.Probes, report: Steps, *, root: Path,
+    platform: str | None, put_back: Callable[[], _Failure | None],
+) -> bool:
+    """With the new words saved: the voice server running here restarted onto them (step
+    `voice`) and seen to open a Realtime session; True once it has. Otherwise — a Cancel
+    included — the old words are put back (`put_back`) and the voice server restarted onto
+    them, and the error says whether it answers there; False. A voice server that answers on
+    neither has its unit removed, so it does not restart in a loop with no words."""
+    try:
+        problem = voice.restart_server(
+            settings, probes.run_script, probes.wait_for_server, report, root=root,
+            platform=platform, message="Restarting the voice server here onto its new words")
+    except BaseException:
+        with suppress(Exception):
+            if put_back() is None:  # back on the words it answered on before
+                voice.reinstall_unit("--voice", probes.run_script, root=root, platform=platform)
+            else:  # no words to go back to: no unit left restarting with none
+                voice.remove_unit("--voice", probes.run_script, root=root, platform=platform)
+        raise
+    if problem is None:
+        return True
+    lost = put_back()
+    said = "The voice server here did not answer on its new words, so they were put back"
+    if lost is not None:
+        removed = voice.remove_unit("--voice", probes.run_script, root=root, platform=platform)
+        gone = "so its service was removed" if removed == voice.REMOVED else (
+            "and its service could not be removed")
+        report.error(f"{said}, but the voice LLM it had did not come back, {gone}: the voice "
+                     "here has no words until one is started.",
+                     detail=f"{problem}; {lost.detail}; {removed}", log=lost.log)
+        return False
+    back = voice.restart_server(
+        settings, probes.run_script, probes.wait_for_server, report, root=root,
+        platform=platform, message="Restarting the voice server here on the words it had")
+    if back is None:
+        report.error(f"{said}: it answers on the ones it had.", detail=problem,
+                     log=voice.log_path(settings))
+        return False
+    removed = voice.remove_unit("--voice", probes.run_script, root=root, platform=platform)
+    gone = "so its service was removed" if removed == voice.REMOVED else (
+        "and its service could not be removed")
+    report.error(f"{said}, and it did not answer on the ones it had either, {gone}.",
+                 detail=f"{problem}; {back}; {removed}", log=voice.log_path(settings))
+    return False
 
 
 def start(
@@ -361,28 +485,32 @@ def remote(
         return REFUSED
     sent = key or (settings.openai_key if where.is_openai else None)
     asked = replace(where, api_key=sent)
+
+    def clean(text: str) -> str:
+        # A server may echo the key it was sent, as a model's id or in its refusal.
+        return redact_known(text, settings, extra=(sent,))
+
     for warning in endpoints.warnings(asked):
         report.warn(warning)
     with report.step("check", f"Asking {where.host} for its models"):
         listed = probes.remote_models(asked)
     if not listed.ok:
         report.error("The voice LLM's server did not answer.",
-                     detail=redact_known(listed.problem or where.host, settings))
+                     detail=clean(listed.problem or where.host))
         return FAILED
     if listed.models and model not in listed.models:
-        report.error(f"{where.host} does not list {model}.",
-                     detail=f"it lists {', '.join(listed.models[:20])}")
+        report.error(clean(f"{where.host} does not list {model}."),
+                     detail=clean(f"it lists {', '.join(listed.models[:20])}"))
         return FAILED
     values: dict[str, Any] = {"VOICE_LLM": "remote", "VOICE_LLM_BASE_URL": where.base_url,
                               "VOICE_LLM_MODEL": model}
     if new_key:
         values["VOICE_LLM_API_KEY"] = key
-    with report.step("configure", f"Saving the voice LLM: {model} at {where.host}"):
-        if not save(values):
-            return FAILED
-    _retire(probes, report, root=root, platform=platform)
-    report.done("remote", model, where.base_url,
-                voice_restart_needed=_voice_running(settings, probes))
+    if not _switch(settings, values, probes, report, save=save, root=root, platform=platform,
+                   message=clean(f"Saving the voice LLM: {model} at {where.host}")):
+        return FAILED
+    report.done("remote", model, where.base_url, voice_restarted=_voice_running(settings, probes),
+                voice_restart_needed=_voice_waiting(settings, probes))
     return OK
 
 
@@ -397,16 +525,45 @@ def shared(
     if model is None and settings.voice_mode == voice.HERE:
         report.error(NO_WORDS_LEFT, detail=voice.NO_WORDS_HINT)
         return REFUSED
-    with report.step("configure", "Saving the voice LLM: the local agent's model"):
-        if not save({"VOICE_LLM": "shared"}):
-            return FAILED
+    if not _switch(settings, {"VOICE_LLM": "shared"}, probes, report, save=save, root=root,
+                   platform=platform, message="Saving the voice LLM: the local agent's model"):
+        return FAILED
     if model is None:
         report.warn("The local agent has no model yet: a voice here would have no words "
                     "until it has one.", detail=voice.NO_WORDS_HINT)
-    _retire(probes, report, root=root, platform=platform)
     report.done("shared", model, agent.base_url if agent is not None else None,
-                voice_restart_needed=_voice_running(settings, probes))
+                voice_restarted=_voice_running(settings, probes),
+                voice_restart_needed=_voice_waiting(settings, probes))
     return OK
+
+
+def _switch(
+    settings: Settings, values: dict[str, Any], probes: Probes, report: Steps, *,
+    save: Callable[[dict[str, Any]], bool], root: Path, platform: str | None, message: str,
+) -> bool:
+    """Save `values` (step `configure`), restart a voice server running here onto them and
+    see it answer (`_move_voice`), and only then retire the voice LLM's own unit, which that
+    voice server was using until then. A voice server that does not answer on them has the
+    old values put back, the old unit kept; False once the error is told."""
+    before = {key: _stored(settings, field) for key, field in _FIELDS.items() if key in values}
+    with report.step("configure", message):
+        if not save(values):
+            return False
+
+    def put_back() -> _Failure | None:
+        save(before)
+        return None  # the old unit was never touched: the old words still answer
+
+    if _voice_running(settings, probes) and not _move_voice(
+            settings, probes, report, root=root, platform=platform, put_back=put_back):
+        return False
+    _retire(probes, report, root=root, platform=platform)
+    return True
+
+
+#: The settings a switch writes, by the field each is read from.
+_FIELDS = {"VOICE_LLM": "voice_llm", "VOICE_LLM_BASE_URL": "voice_llm_base_url",
+           "VOICE_LLM_MODEL": "voice_llm_model", "VOICE_LLM_API_KEY": "voice_llm_api_key"}
 
 
 def _retire(probes: Probes, report: Steps, *, root: Path, platform: str | None) -> None:
@@ -422,9 +579,15 @@ def _retire(probes: Probes, report: Steps, *, root: Path, platform: str | None) 
 
 
 def _voice_running(settings: Settings, probes: server.Probes) -> bool:
-    """Whether a voice server here runs with the words it started with: the voice is here
-    and its unit is installed, so the new words wait for its next start."""
+    """Whether a voice server runs here on the words it started with — the voice is here and
+    its unit is installed — so a switch restarts it onto the new ones."""
     return settings.voice_mode == voice.HERE and probes.unit_installed("voice")
+
+
+def _voice_waiting(settings: Settings, probes: server.Probes) -> bool:
+    """Whether the voice is here with no server of its running: it takes the new words up
+    when it is started (`keryx voice use here`)."""
+    return settings.voice_mode == voice.HERE and not probes.unit_installed("voice")
 
 
 # --- the command line ----------------------------------------------------------------------
@@ -477,18 +640,20 @@ class TextSteps(voice.TextSteps):
     """For a terminal: each step a line, the bytes every tenth of the way, and the ending."""
 
     def done(self, source: str, model: str | None, url: str | None, *,  # type: ignore[override]
-             voice_restart_needed: bool) -> None:
+             voice_restarted: bool, voice_restart_needed: bool) -> None:
         where = {"shared": "the local agent's model", "here": f"{model}, on its own server here",
                  "remote": f"{model} at {url}"}[source]
         self._echo(f"the voice's words now come from {where}")
+        if voice_restarted:
+            self._echo("the voice server here was restarted onto them, and answers")
         if voice_restart_needed:
-            self._echo("the voice server here takes them up when it starts again: "
-                       "`keryx voice use here` restarts it")
+            self._echo("the voice here takes them up when its server starts: "
+                       "`keryx voice use here` starts it")
 
 
 class JsonSteps(voice.JsonSteps):
     """For the Mac app: a `step` before each step's slow work, `progress` while the model
-    downloads, then exactly one of `done` (`source`, `model`, `url`,
+    downloads, then exactly one of `done` (`source`, `model`, `url`, `voice_restarted`,
     `voice_restart_needed`), `error`, `cancelled`."""
 
     def __init__(self, write: Callable[[str], None], *, first: str = STEPS[0]) -> None:
@@ -496,6 +661,7 @@ class JsonSteps(voice.JsonSteps):
         self._current = first
 
     def done(self, source: str, model: str | None, url: str | None, *,  # type: ignore[override]
-             voice_restart_needed: bool) -> None:
+             voice_restarted: bool, voice_restart_needed: bool) -> None:
         self._end({"event": "done", "source": source, "model": model, "url": url,
+                   "voice_restarted": voice_restarted,
                    "voice_restart_needed": voice_restart_needed})
