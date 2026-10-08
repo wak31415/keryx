@@ -17,6 +17,16 @@ import KeryxPreview
         }
     }
 
+    /// Minor 4: a plugin field hands on what was typed once — Return, then the blur and the
+    /// section switch after it, send nothing more — and a refused value is not sent again on
+    /// every blur until it is edited, as a Configuration row's `shouldCommit` holds it.
+    @Test func aPluginFieldSendsWhatWasTypedOnce() {
+        #expect(PluginsWording.shouldCommit("40", stored: "30", sent: nil))
+        #expect(!PluginsWording.shouldCommit("40", stored: "30", sent: "40"), "in flight, or refused")
+        #expect(PluginsWording.shouldCommit("45", stored: "30", sent: "40"), "edited since")
+        #expect(!PluginsWording.shouldCommit("30", stored: "30", sent: nil), "unchanged")
+    }
+
     @Test func statusSaysOnOffOrWhyNot() {
         #expect(PluginsWording.status(plugin("send_to_slack")) == (.ok, "On"))
         #expect(PluginsWording.status(plugin("check_email")) == (.warning, "Not ready"))

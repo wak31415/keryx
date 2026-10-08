@@ -67,7 +67,7 @@ private struct PhoneForm: View {
         .onChange(of: phoneSettings) {
             Task { await model.refreshPhone() }
         }
-        // The Setup Assistant's or the Overview's Connect Twilio… and Point Number Here….
+        // The setup wizard's or the Overview's Connect Twilio… and Point Number Here….
         .onChange(of: model.requested, initial: true) { answerRequest() }
         .onChange(of: model.phoneWebhooks.value) { answerRequest() }
     }

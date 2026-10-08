@@ -24,6 +24,9 @@ public final class ProcessRunner: CommandRunner, Sendable {
     /// directory's whole contents — concurrent runs (this suite's own tests, every one
     /// `detached`) share it, so a directory-wide snapshot races.
     private let observeOutputFiles: (@Sendable ((stdout: URL, stderr: URL)) -> Void)?
+    /// Handed each detached run's pid as soon as it is spawned: the app records Quit's stop
+    /// (`DetachedStop`), so the next launch can wait for one still going.
+    private let onDetachedSpawn: (@Sendable (Int32) -> Void)?
     /// Between SIGTERM and SIGKILL.
     private let grace: Duration
     /// Where every child it spawns is listed until its group is closed.
@@ -32,10 +35,12 @@ public final class ProcessRunner: CommandRunner, Sendable {
     /// The usual time between SIGTERM and SIGKILL.
     public static let defaultGrace: Duration = .seconds(3)
 
-    public init() {
+    /// `onDetachedSpawn`: handed each detached run's pid as it is spawned.
+    public init(onDetachedSpawn: (@Sendable (Int32) -> Void)? = nil) {
         observeCollector = nil
         observeChild = nil
         observeOutputFiles = nil
+        self.onDetachedSpawn = onDetachedSpawn
         grace = Self.defaultGrace
         registry = .shared
     }
@@ -43,7 +48,9 @@ public final class ProcessRunner: CommandRunner, Sendable {
     init(grace: Duration = ProcessRunner.defaultGrace, registry: ChildRegistry = .shared,
          observingCollector: (@Sendable (AnyObject) -> Void)? = nil,
          observingChild: (@Sendable (Child) -> Void)? = nil,
-         observingOutputFiles: (@Sendable ((stdout: URL, stderr: URL)) -> Void)? = nil) {
+         observingOutputFiles: (@Sendable ((stdout: URL, stderr: URL)) -> Void)? = nil,
+         onDetachedSpawn: (@Sendable (Int32) -> Void)? = nil) {
+        self.onDetachedSpawn = onDetachedSpawn
         self.grace = grace
         self.registry = registry
         observeCollector = observingCollector
@@ -73,6 +80,7 @@ public final class ProcessRunner: CommandRunner, Sendable {
                 }
 
                 observeChild?(spawned.child)
+                if request.detached { onDetachedSpawn?(spawned.child.pid) }
                 collector.adopt(spawned.child)
                 if let outputFiles { collector.readFiles(outputFiles) }
                 spawned.child.onExit { [weak collector] status in collector?.exited(status) }
@@ -101,8 +109,22 @@ public final class ProcessRunner: CommandRunner, Sendable {
     private static func makeOutputFiles() -> (stdout: URL, stderr: URL) {
         let base = FileManager.default.temporaryDirectory
         let id = UUID().uuidString
-        return (base.appendingPathComponent("dev.keryx.app.\(id).out"),
-                base.appendingPathComponent("dev.keryx.app.\(id).err"))
+        return (base.appendingPathComponent("\(outputPrefix)\(id).out"),
+                base.appendingPathComponent("\(outputPrefix)\(id).err"))
+    }
+
+    /// What every detached run's output file is named with, first.
+    static let outputPrefix = "dev.keryx.app."
+
+    /// Removes the output files detached runs left in `folder` (the app's temporary
+    /// directory): a run whose app quit before it concluded never removes its own. Called
+    /// once at launch, before this launch has started any; a stop still writing to one goes
+    /// on writing to the unlinked file, which nothing reads any more.
+    public static func removeLeftoverOutputFiles(in folder: URL = FileManager.default.temporaryDirectory) {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        for name in names where name.hasPrefix(outputPrefix) && (name.hasSuffix(".out") || name.hasSuffix(".err")) {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+        }
     }
 
     private static func removeOutputFiles(_ files: (stdout: URL, stderr: URL)) {

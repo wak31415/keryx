@@ -14,8 +14,6 @@ package final class SetupWizard {
     /// The opening this run answers, so a new one starts again.
     package private(set) var opening: UUID
 
-    /// "Set Up Later" on the phone: the run ends on Nearly Ready.
-    package var phoneLater = false
     /// Where the voice runs and who does the work, as chosen on Models this run.
     package var voicePlace: VoicePlace?
     package var workPlace: WorkPlace?
@@ -26,8 +24,6 @@ package final class SetupWizard {
     /// The voice's words as chosen on Models, from a CLI with a voice LLM of its own: the
     /// agent's model, or a model of its own here; `nil` keeps them as they are.
     package var voiceLLM: VoiceLLMPick?
-    /// The service install was asked for by Checking, once, this run.
-    package var serviceAsked = false
     /// What the owner stopped this run (a download, a server start): never started again
     /// by itself, only by Start Again.
     package var stopped: Set<LocalStep> = []
@@ -66,13 +62,11 @@ package final class SetupWizard {
         self.opening = opening.id
         mode = opening.mode
         path = [.welcome]
-        phoneLater = false
         voicePlace = nil
         workPlace = nil
         workModel = nil
         voiceWordsModel = nil
         voiceLLM = nil
-        serviceAsked = false
         stopped = []
         localApproved = false
     }

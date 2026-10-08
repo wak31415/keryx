@@ -3,7 +3,7 @@ import Testing
 @testable import KeryxKit
 import KeryxPreview
 
-/// The runs that must not overlap, refused by the model itself — so the Setup Assistant,
+/// The runs that must not overlap, refused by the model itself — so the setup wizard,
 /// Local Models, Voice, the Use Model sheet and the menu are all held to it at once: a
 /// speech model download beside a voice setup (which fetches them too), a model server
 /// started or stopped under a voice setup, two stops, and a start during a stop.

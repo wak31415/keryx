@@ -1,8 +1,8 @@
 import KeryxKit
 
 /// How the Overview says whether Keryx is answering calls, and its tunnel's unit. The app
-/// starts and stops Keryx's unit itself, so the unit, its manager and the word "service"
-/// stay in a tooltip.
+/// starts and stops Keryx's unit itself, so the unit and its manager stay in a tooltip, and
+/// the word "service" is never said.
 enum ServiceWording {
     /// The "Answering calls" row: a dot (or a spinner while it starts or stops), a word, a
     /// line under it when there is more to say, the unit in its tooltip, and whether Start
@@ -15,14 +15,25 @@ enum ServiceWording {
         var help: String
         var busy = false
         var offersStart = false
+        /// What Keryx printed, for Show Details only: never the line, nor its tooltip.
+        var details: String?
     }
 
+    /// What the row says while the first start waits for the last Quit's stop to finish.
+    static let finishingStop = "Finishing stopping…"
+
     /// The row from the status, what keeping Keryx answering asks for (`step`), the start or
-    /// stop under way (`change`) and the last start's failure.
+    /// stop under way (`change`), the last start's failure, and whether the first start is
+    /// waiting for the last Quit's stop (`finishingStop`).
     static func answering(_ status: StatusReport, step: AnsweringStep, change: AppModel.ServiceChange?,
-                          failure: KeryxError?) -> Answering {
+                          failure: KeryxError?, finishingStop: Bool = false) -> Answering {
         let s = status.service
         let unit = [s.manager ?? "launchd", s.unit].compactMap { $0 }.joined(separator: " ")
+        if finishingStop {
+            return Answering(tone: .inactive, text: Self.finishingStop,
+                             help: "Keryx is still stopping from when the app last quit; it starts again once it has.",
+                             busy: true)
+        }
         switch change {
         case .installing?:
             return Answering(tone: .inactive, text: "Starting…", help: "Starting \(unit)", busy: true)
@@ -42,8 +53,10 @@ enum ServiceWording {
                              help: "Keryx answers, but not as \(unit): it was started by hand.")
         }
         if let failure {
-            return Answering(tone: .error, text: "No", hint: "Keryx couldn't start.",
-                             help: failure.details ?? failure.message, offersStart: true)
+            // The app's own words; what Keryx printed only under Show Details.
+            let said = failure.said("Keryx couldn't start answering calls.")
+            return Answering(tone: .error, text: "No", hint: "Keryx couldn't start.", help: said.message,
+                             offersStart: true, details: said.detail)
         }
         switch step {
         case .start:

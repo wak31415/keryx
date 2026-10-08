@@ -41,10 +41,14 @@ public final class AppModel {
     public struct Timing: Sendable {
         public var poll: Duration?
         public var afterRestart: Duration
+        /// How long the first start waits for the last Quit's stop, still going, to finish.
+        public var previousStop: Duration
 
-        public init(poll: Duration? = .seconds(30), afterRestart: Duration = .seconds(3)) {
+        public init(poll: Duration? = .seconds(30), afterRestart: Duration = .seconds(3),
+                    previousStop: Duration = .seconds(60)) {
             self.poll = poll
             self.afterRestart = afterRestart
+            self.previousStop = previousStop
         }
 
         public static let standard = Timing()
@@ -92,7 +96,7 @@ public final class AppModel {
         // spring open later.
         didSet { if let requested, requested.destination != selection { self.requested = nil } }
     }
-    /// What another window (the Setup Assistant) asked the main window to do, until the
+    /// What another window (the setup wizard) asked the main window to do, until the
     /// screen that does it says so (`request(_:)`, `didHandle(_:)`) or another section is
     /// chosen.
     public private(set) var requested: AppRequest?
@@ -105,14 +109,20 @@ public final class AppModel {
     public var statusFilter: TaskStatus?
     /// A setting was written (or a model chosen) that the running service has yet to load.
     public var configNeedsRestart = false
-    /// Keryx's own service is being installed or uninstalled (`installService`,
-    /// `uninstallService()`), which quitting asks about.
+    /// Keryx's own unit is being installed or started (`start(automatic:)`), or stopped as
+    /// the app quits (`stopAnswering`), which quitting asks about.
     public private(set) var serviceChange: ServiceChange?
     /// Whether this model keeps Keryx answering calls while the app runs: it starts Keryx's
     /// unit once setup has reached it (`ensureAnswering`), and stops it when the app quits
     /// (`stopAnswering`). The app sets it at launch — never for a sandbox run
     /// (`KERYX_APP_ENVIRONMENT=inherit`), whose `keryx` would install the real launch agents.
     public var keepsAnswering = false
+    /// The first start of this launch is waiting for the last Quit's `service stop --all`,
+    /// which outlived that app, to finish (`DetachedStop`): said in the Overview as
+    /// "Finishing stopping…".
+    public private(set) var finishingPreviousStop = false
+    /// The last Quit's stop has been looked for: once a launch.
+    @ObservationIgnored private var previousStopChecked = false
     /// Why the last start failed — the automatic one, or Start in the Overview — until one
     /// works.
     public private(set) var startFailure: KeryxError?
@@ -122,6 +132,9 @@ public final class AppModel {
     @ObservationIgnored private var startTried = false
     /// The check `ensureAnswering` runs, while it runs.
     @ObservationIgnored private var ensuring: Task<Void, Never>?
+    /// The start under way (`start(automatic:)`), from its reads to its last one, which
+    /// every other caller joins.
+    @ObservationIgnored private var starting: Task<Result<ServiceResult, KeryxError>, Never>?
     /// The app is quitting (`prepareToQuit`): nothing starts Keryx from now on.
     @ObservationIgnored private var quitting = false
     /// The install or uninstall under way, held so quitting can stop it (`cancelRuns`):
@@ -365,6 +378,13 @@ public final class AppModel {
         pollTicks += 1
         startSweep()
         for part in Self.parts(forPoll: pollTicks) { await refresh(part) }
+        // The automatic start is tried again on every poll until it has been tried once: a
+        // first status read that failed (a cold `uv run` at a login launch), or a plan read
+        // that came before setup allowed it, must not leave Keryx stopped while the app is
+        // open. `ensureOnce` reads the plan only on these ticks.
+        if keepsAnswering, !startTried, ensuring == nil, starting == nil, answeringStep != .running {
+            checkAnswering()
+        }
     }
 
     /// Runs `sweep` off the main actor (it lists a folder), unless one is still running.
@@ -872,20 +892,13 @@ public final class AppModel {
 
     // MARK: - Service
 
-    /// Installs Keryx and its tunnel as services, then reads the units, the status, the
-    /// plan and the doctor again — on a failure too, so the checklist never keeps showing
-    /// what a start already changed. Refused while an install or uninstall is already
-    /// under way, from whichever window.
-    public func installService() async -> Result<ServiceResult, KeryxError> {
+    /// Installs Keryx and its tunnel as background processes, then reads the units, the
+    /// status, the plan and the doctor again — on a failure too, so the checklist never keeps
+    /// showing what a start already changed. Only `start(automatic:)` calls it: nothing else
+    /// installs a unit (internal for the tests; the UI's module cannot reach it).
+    func installService() async -> Result<ServiceResult, KeryxError> {
         await changeService(.installing, reread: [.service, .status, .setupPlan, .doctor]) {
             try await $0.installService()
-        }
-    }
-
-    /// Removes Keryx and its tunnel; refused as `installService` is.
-    public func uninstallService() async -> Result<ServiceResult, KeryxError> {
-        await changeService(.uninstalling, reread: [.service, .status, .models, .voice, .setupPlan, .doctor]) {
-            try await $0.uninstallService()
         }
     }
 
@@ -936,7 +949,8 @@ public final class AppModel {
 
     /// Starts Keryx when setup allows and it isn't running, once a launch; does nothing
     /// unless `keepsAnswering`. Reads the plan and the status first, so it decides on what is
-    /// true now. A check already under way is waited for rather than run twice.
+    /// true now. A check already under way is waited for rather than run twice. The
+    /// automatic half of the one way Keryx is started (`start(automatic:)`).
     public func ensureAnswering() async {
         if ensuring == nil { checkAnswering() }
         await ensuring?.value
@@ -952,33 +966,111 @@ public final class AppModel {
 
     private func ensureOnce() async {
         guard keepsAnswering, !quitting, client != nil, !startTried, serviceChange == nil else { return }
-        let current = generation
-        await refresh([.setupPlan, .status])
-        guard current == generation, keepsAnswering, !quitting, !startTried, serviceChange == nil,
-              answeringStep == .start else { return }
-        _ = await startAnswering()
+        _ = await start(automatic: true)
     }
 
-    /// Starts Keryx answering calls: its unit installed with `keryx service install` when
-    /// it isn't there yet, or — already installed but stopped (`service:start`, Task N) —
-    /// started again with `keryx service start --all`, with the model and voice servers Quit
-    /// stopped. Then the status read once more after a moment, as after a restart. A failure is kept in `startFailure` for the Overview to say.
+    /// The app will start Keryx by itself when setup allows (`ensureAnswering`), not yet
+    /// having tried this launch: a screen says what is about to happen rather than offer a
+    /// click. False for a sandbox run, which never starts Keryx.
+    public var automaticStartPending: Bool {
+        keepsAnswering && !quitting && !startTried
+    }
+
+    /// Starts Keryx answering calls, asked for by a click — Start in the Overview, the
+    /// checklist's and Checking's Start Keryx and Try Again. It goes through the one rule the
+    /// automatic start keeps (`start(automatic:)`): refused for a sandbox run, while quitting
+    /// and unless setup allows (`answeringStep == .start`); a start already under way is
+    /// joined, never refused as busy.
     public func startAnswering() async -> Result<ServiceResult, KeryxError> {
+        await start(automatic: false)
+    }
+
+    /// The one way Keryx is started, whoever asks: the launch, a plan read (the wizard's
+    /// Phone frame), the status poll, Checking, the checklist and the Overview's Start.
+    /// Refused unless `keepsAnswering` (a sandbox run never installs or starts the real
+    /// units) and while quitting. A start under way — automatic or asked for — is joined,
+    /// and its answer is this one's too. Otherwise the plan and the status are read again,
+    /// and Keryx started only when `answeringStep` says `.start`: its unit installed with
+    /// `keryx service install` when it isn't there yet, or — already installed but stopped
+    /// (`service:start`, Task N) — started again with `keryx service start --all`, with the
+    /// model and voice servers Quit stopped. Then the status read once more after a moment, as
+    /// after a restart. A failed start is kept in `startFailure` for the Overview to say.
+    /// `automatic`: once a launch (`startTried`); a click always tries.
+    private func start(automatic: Bool) async -> Result<ServiceResult, KeryxError> {
+        if let starting { return await starting.value }
+        if !keepsAnswering { return .failure(.refused(Self.notKeptAnsweringRefusal)) }
         if quitting { return .failure(.refused(Self.quittingRefusal)) }
-        if client != nil, serviceChange == nil { startTried = true }
+        let task = Task { await self.startOnce(automatic: automatic) }
+        starting = task
+        let answer = await task.value
+        starting = nil
+        return answer
+    }
+
+    private func startOnce(automatic: Bool) async -> Result<ServiceResult, KeryxError> {
+        guard client != nil else { return .failure(location.error ?? .notFound(LocateFailure(lookedAt: []))) }
+        await previousStopFinished()
+        let current = generation
+        await refresh([.setupPlan, .status])
+        guard current == generation else { return .failure(.refused(Self.relocatedRefusal)) }
+        if quitting { return .failure(.refused(Self.quittingRefusal)) }
+        if automatic, startTried { return .failure(.refused(Self.alreadyTriedRefusal)) }
+        switch answeringStep {
+        case .start: break
+        case .running:
+            startFailure = nil
+            return .success(ServiceResult(ok: true, message: Self.alreadyAnswering))
+        case .waitingForSetup: return .failure(.refused(Self.waitingForSetupRefusal))
+        case .unknown: return .failure(.refused(Self.unknownStateRefusal))
+        }
+        // A model server's own run installs, starts or stops a unit `service start --all`
+        // would start too: one launchctl at a time. The automatic start tries again once it
+        // has finished (the run reads the plan again, and the poll looks).
+        if modelServerRun.isBusy || voiceLLMServerRun.isBusy || voiceLLMRun.isBusy || voiceSetup.isBusy
+            || stoppingModelServer || stoppingVoiceLLMServer {
+            return .failure(.refused(Self.serversBusyRefusal))
+        }
+        if serviceChange != nil { return .failure(.refused(Self.serviceBusy)) }
+        startTried = true
         let answer = await (agentUnitPresent ? startService() : installService())
         switch answer {
         case .success:
             startFailure = nil
             try? await Task.sleep(for: timing.afterRestart)
             await refresh(.status)
-        case .failure(.refused(Self.serviceBusy)):
-            break
         case let .failure(error):
             startFailure = error
         }
         return answer
     }
+
+    /// Once a launch, before the first start: waits — up to `timing.previousStop` — while the
+    /// last Quit's detached stop is still running, so `service start --all` never runs
+    /// alongside it (the CLI takes no lock between the two, and the stop finishing last would
+    /// leave Keryx stopped). Then forgets it.
+    private func previousStopFinished() async {
+        guard !previousStopChecked else { return }
+        previousStopChecked = true
+        guard let stop = preferences.detachedStop else { return }
+        if stop.isRunning {
+            finishingPreviousStop = true
+            let deadline = ContinuousClock.now + timing.previousStop
+            while stop.isRunning, !quitting, ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            finishingPreviousStop = false
+        }
+        preferences.detachedStop = nil
+    }
+
+    static let notKeptAnsweringRefusal =
+        "This copy of Keryx for Mac was opened for testing, so it never starts Keryx."
+    static let alreadyAnswering = "Keryx is already answering calls."
+    static let waitingForSetupRefusal = "Keryx starts once setup is finished."
+    static let unknownStateRefusal = "Keryx's state couldn't be read, so it wasn't started. Try again in a moment."
+    static let serversBusyRefusal = "A model server is starting or stopping. Try again once it has finished."
+    static let alreadyTriedRefusal = "Keryx was already started once since the app opened."
+    static let relocatedRefusal = "Another Keryx was chosen meanwhile."
 
     /// Whether `keepsAnswering` should be on for an app started with `environment`: not for
     /// a sandbox run (`KERYX_APP_ENVIRONMENT=inherit`), whose `keryx` reads the sandbox's
@@ -1089,10 +1181,12 @@ public final class AppModel {
         return answer
     }
 
-    /// The model server may be started now: no start is under way, no stop, and no voice
-    /// setup that runs on it.
+    /// The model server may be started now: no start is under way, no stop, no voice
+    /// setup that runs on it, and Keryx itself is not being started or stopped —
+    /// `service start --all` starts the model server's unit too, and two `launchctl
+    /// bootstrap`s of one unit at once fail.
     public var canStartModelServer: Bool {
-        client != nil && !modelServerRun.isBusy && !voiceSetup.isBusy && !stoppingModelServer
+        client != nil && !modelServerRun.isBusy && !voiceSetup.isBusy && !stoppingModelServer && serviceChange == nil
     }
 
     /// Starts the model server here (`keryx models start`), one run at a time, and reads the
@@ -1167,9 +1261,10 @@ public final class AppModel {
     public private(set) var voiceLLMSettling = false
 
     /// Where the voice's words come from may be changed now: nothing else is changing it,
-    /// and no voice setup — which reads it — runs or waits for its model server.
+    /// no voice setup — which reads it — runs or waits for its model server, and Keryx is
+    /// not being started or stopped (its `start --all` starts the voice LLM's unit too).
     public var canChangeVoiceLLM: Bool {
-        client != nil && !voiceLLMBusy && !voiceSetup.isBusy && chain == nil
+        client != nil && !voiceLLMBusy && !voiceSetup.isBusy && chain == nil && serviceChange == nil
     }
 
     /// Makes `choice` where a voice on this Mac takes its words from, in `voiceLLMRun`, one
@@ -1197,6 +1292,19 @@ public final class AppModel {
             }
         }
         return started
+    }
+
+    /// What was typed for a voice LLM elsewhere and not yet checked and used, from the app's
+    /// own preferences (`Preferences.voiceLLMDraftAddress`): never Keryx's settings.
+    public var voiceLLMDraft: (address: String?, model: String?) {
+        (preferences.voiceLLMDraftAddress, preferences.voiceLLMDraftModel)
+    }
+
+    /// Keeps what was typed for a voice LLM elsewhere, each field on its own; a blank one is
+    /// forgotten. Only Check and Use (`chooseVoiceLLM`) writes Keryx's settings.
+    public func keepVoiceLLMDraft(address: String, model: String) {
+        preferences.voiceLLMDraftAddress = address
+        preferences.voiceLLMDraftModel = model
     }
 
     /// Starts the voice LLM's own server on the model chosen for it (`keryx models start

@@ -28,6 +28,10 @@ package struct ModelsFrame: View {
     @State private var changing: Set<String> = []
     @State private var saving = false
     @State private var failure: KeryxError?
+    /// A server address typed and not yet checked — the voice server's, the model server's.
+    /// Continue saves neither (Check is what saves one), so it waits for the Check rather
+    /// than go on with the address saved before.
+    @State private var uncheckedAddresses: Set<String> = []
 
     /// The catalog's: the choices already made.
     package init(voice: VoicePlace? = nil, work: WorkPlace? = nil, changing: Set<String> = []) {
@@ -51,7 +55,9 @@ package struct ModelsFrame: View {
                 }
             }
         } leading: {
-            if !state.voiceAnswered || !state.workAnswered {
+            if !uncheckedAddresses.isEmpty {
+                WaitingCaption(text: Self.checkTheAddress)
+            } else if !state.voiceAnswered || !state.workAnswered {
                 WaitingCaption(text: Self.waiting(state))
             }
         } trailing: {
@@ -62,7 +68,7 @@ package struct ModelsFrame: View {
             Button("Continue") { save(state, facts: facts) }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(!state.voiceAnswered || !state.workAnswered || saving)
+                .disabled(!state.voiceAnswered || !state.workAnswered || !uncheckedAddresses.isEmpty || saving)
         }
         .sheet(item: $secret) { request in
             SecretSheet(key: request.key, title: request.title, replacing: request.replacing)
@@ -72,6 +78,9 @@ package struct ModelsFrame: View {
         }
         .task { await model.refresh(.voice, .models, .doctor, .config) }
     }
+
+    /// Why Continue is off while a server's new address has not been checked.
+    static let checkTheAddress = "Check the new address to continue"
 
     /// Why Continue is not on yet, for the button row's leading edge.
     static func waiting(_ state: FrameState) -> String {
@@ -172,7 +181,7 @@ package struct ModelsFrame: View {
                     switch state.voice {
                     case .openai: openAIBranch(facts)
                     case .thisMac: thisMacVoice(state, facts: facts, assistant: assistant)
-                    case .elsewhere: VoiceServerBranch(voice: model.voice.value)
+                    case .elsewhere: VoiceServerBranch(voice: model.voice.value, unchecked: unchecked("voice"))
                     }
                 }
             }
@@ -200,7 +209,7 @@ package struct ModelsFrame: View {
                         .foregroundStyle(.tint)
                 }
                 Button(saved ? "Change Key…" : "Add Key…") {
-                    secret = SecretRequest(key: "OPENAI_API_KEY", title: row?.displayTitle ?? "OpenAI API key",
+                    secret = SecretRequest(key: "OPENAI_API_KEY", title: row?.shownTitle ?? "OpenAI API key",
                                            replacing: saved)
                 }
                 .controlSize(.regular)
@@ -211,7 +220,8 @@ package struct ModelsFrame: View {
         }
     }
 
-    /// The way a mode speaks, as the CLI lists it (SEAM: `pipelines`), else `fallback`.
+    /// The way a mode speaks, as the CLI lists it (`pipelines`), else — until the voice is
+    /// read — `fallback`.
     private func pipelineCaption(_ mode: VoiceMode, fallback: String) -> String {
         switch model.voice.value?.pipelines(for: mode)?.first {
         case "three-model"?: WizardWording.threeModels
@@ -375,7 +385,7 @@ package struct ModelsFrame: View {
             }
         } else if keyRow?.set == true {
             HStack {
-                StatusLine(tone: .ok, text: "\(keyRow?.displayTitle ?? "API key") saved")
+                StatusLine(tone: .ok, text: "\(keyRow?.shownTitle ?? "API key") saved")
                 Spacer()
                 Button("Change Key…") { askKey(place, row: keyRow) }
                     .controlSize(.regular)
@@ -413,7 +423,7 @@ package struct ModelsFrame: View {
 
     private func askKey(_ place: WorkPlace, row: ConfigRow?) {
         guard let key = ModelsRules.keyFor(place) else { return }
-        secret = SecretRequest(key: key, title: row?.displayTitle ?? FixAction.humanised(key),
+        secret = SecretRequest(key: key, title: row?.shownTitle ?? FixAction.humanised(key),
                                replacing: row?.set == true)
     }
 
@@ -495,7 +505,15 @@ package struct ModelsFrame: View {
     private func modelServer(_ facts: WizardFacts) -> some View {
         ModelServerBranch(facts: facts, model: Binding { serverModel ?? facts.text("LOCAL_AGENT_MODEL") ?? "" }
                             set: { serverModel = $0 },
-                          harness: Binding { harness ?? facts.text("LOCAL_AGENT_API") ?? "" } set: { harness = $0 })
+                          harness: Binding { harness ?? facts.text("LOCAL_AGENT_API") ?? "" } set: { harness = $0 },
+                          unchecked: unchecked("work"))
+    }
+
+    /// Whether `branch`'s server address is typed and not checked, as the branch says it.
+    private func unchecked(_ branch: String) -> Binding<Bool> {
+        Binding { uncheckedAddresses.contains(branch) } set: { unchecked in
+            if unchecked { uncheckedAddresses.insert(branch) } else { uncheckedAddresses.remove(branch) }
+        }
     }
 
     // MARK: - Continue
@@ -550,9 +568,13 @@ private struct ModelServerBranch: View {
     let facts: WizardFacts
     @Binding var model: String
     @Binding var harness: String
+    /// The address typed differs from the one saved: Check has not saved it yet.
+    @Binding var unchecked: Bool
 
     @Environment(AppModel.self) private var app
     @State private var address = ""
+    /// The address Check last saved, as typed: the CLI may store it in a form of its own.
+    @State private var checked: String?
     @State private var saving = false
     @State private var failure: KeryxError?
     @State private var editingKey = false
@@ -605,8 +627,12 @@ private struct ModelServerBranch: View {
             }
         }
         .onAppear { if address.isEmpty { address = saved ?? "" } }
+        .onChange(of: !trimmed.isEmpty && trimmed != saved && trimmed != checked, initial: true) { _, differs in
+            unchecked = differs
+        }
+        .onDisappear { unchecked = false }
         .sheet(isPresented: $editingKey) {
-            SecretSheet(key: "LOCAL_AGENT_API_KEY", title: facts.row("LOCAL_AGENT_API_KEY")?.displayTitle ?? "API key",
+            SecretSheet(key: "LOCAL_AGENT_API_KEY", title: facts.row("LOCAL_AGENT_API_KEY")?.shownTitle ?? "API key",
                         replacing: facts.row("LOCAL_AGENT_API_KEY")?.set == true)
         }
     }
@@ -632,6 +658,7 @@ private struct ModelServerBranch: View {
                 failure = error
                 return
             }
+            checked = url
             await app.loadOptions("LOCAL_AGENT_MODEL", force: true)
         }
     }
@@ -642,9 +669,14 @@ private struct ModelServerBranch: View {
 /// did not answer is said in red, with Use It Anyway.
 private struct VoiceServerBranch: View {
     let voice: VoiceStatus?
+    /// The address typed differs from the one in use: Check (or Use It Anyway) has not saved
+    /// it yet — saved only once `voice use server` has checked it.
+    @Binding var unchecked: Bool
 
     @Environment(AppModel.self) private var model
     @State private var address = ""
+    /// The address Check (or Use It Anyway) last saved, as typed.
+    @State private var checked: String?
     @State private var key: String?
     @State private var editingKey = false
     @State private var checking = false
@@ -687,6 +719,10 @@ private struct VoiceServerBranch: View {
         }
         .onAppear { if address.isEmpty, voice?.kind == .server { address = voice?.baseUrl ?? "" } }
         .onChange(of: address) { answer = nil }
+        .onChange(of: !trimmed.isEmpty && trimmed != inUse && trimmed != checked, initial: true) { _, differs in
+            unchecked = differs
+        }
+        .onDisappear { unchecked = false }
         .sheet(isPresented: $editingKey) {
             SecretSheet(key: "VOICE_API_KEY", title: "Voice server API key", replacing: false, typed: "",
                         footnote: VoiceWording.keyFootnote, keep: { typed in
@@ -695,6 +731,9 @@ private struct VoiceServerBranch: View {
                         })
         }
     }
+
+    /// The voice server's address in use now, if the voice is on one.
+    private var inUse: String? { voice?.kind == .server ? voice?.baseUrl : nil }
 
     private func check(keepAnyway: Bool) {
         let url = address.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -707,7 +746,10 @@ private struct VoiceServerBranch: View {
                                               keepAnyway: keepAnyway) {
             case let .success(result):
                 answer = result
-                if result.saved != nil { key = nil }
+                if result.saved != nil {
+                    key = nil
+                    checked = url
+                }
             case let .failure(error):
                 failure = error
             }

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import KeryxKit
 
-/// What the Setup Assistant asks of the main window: the section each request shows, and
+/// What the setup wizard asks of the main window: the section each request shows, and
 /// how long a request stays pending.
 @MainActor
 @Suite struct AppRequestTests {

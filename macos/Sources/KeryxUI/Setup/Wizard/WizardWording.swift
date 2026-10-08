@@ -272,9 +272,15 @@ package enum WizardWording {
             case "pin": "Your PIN"
             case "migrate": "Your Files from Jarvis"
             case "local": "This Mac's Models"
-            default: Wording.titleCase(plan?.step(id)?.title ?? id)
+            default: plan?.step(id).map(stepTitle) ?? Wording.titleCase(id)
             }
         }
+    }
+
+    /// A plan step's title as the app says it, in title case: the CLI's, but for the step
+    /// that starts Keryx, whose CLI title ("Background service") the owner never reads.
+    package static func stepTitle(_ step: SetupStep) -> String {
+        step.id == "service" ? answeringCalls : Wording.titleCase(step.title)
     }
 
     /// A step's `why` in the app's words: each setting's key said by its title.

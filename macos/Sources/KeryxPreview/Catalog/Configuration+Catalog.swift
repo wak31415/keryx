@@ -40,7 +40,7 @@ extension ScreenCatalog {
                 ConfigurationView().environment(needsRestartModel)
             },
             Entry("configuration-secret-sheet", size: CGSize(width: 460, height: 212)) {
-                SecretSheet(key: secretRow.key, title: secretRow.displayTitle, replacing: true,
+                SecretSheet(key: secretRow.key, title: secretRow.shownTitle, replacing: true,
                             typed: "preview-dots-only")
                     .environment(AppModel.preview())
             },

@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import KeryxKit
 import KeryxPreview
+import KeryxTestSupport
 @testable import KeryxUI
 
 /// The voice LLM on the screens that show it: Voice's LLM picker, Local Models' Voice LLM
@@ -31,7 +32,7 @@ import KeryxPreview
             == "Same as Local Agent stays in use until you choose Use This Model")
     }
 
-    @Test func aVoiceModelIsMarkedOnlyByItsOwnFitAsTheVoicesLLM() {
+    @Test func aVoiceModelIsMarkedOnlyByItsOwnFitAsTheVoicesLLM() throws {
         let models = PreviewData.models.models
         let choices = VoiceLLMWording.choices(models, current: nil)
         #expect(choices.count == models.count)
@@ -39,7 +40,7 @@ import KeryxPreview
         // `fits` and `fits_with_voice_llm` are the agent's: neither marks a voice model.
         // `fits_as_voice_llm` now comes from the fixture too (the CLI prints it for real);
         // an older CLI that never sent it is nil, which still marks nothing.
-        var small = models.first { $0.name == "qwen3.5-4b" }!
+        var small = try #require(models.first { $0.name == "qwen3.5-4b" })
         #expect(small.fits && small.fitsWithVoiceLlm == true)
         small.fitsAsVoiceLlm = nil
         #expect(VoiceLLMWording.menuTitle(small, recommended: "qwen3.5-4b") == "Qwen3.5 4B — Recommended")
@@ -57,27 +58,28 @@ import KeryxPreview
         #expect(Set(ScreenCatalog.entries().map(\.id)).contains("voice-here-llm-fits"))
     }
 
-    @Test func leavingRemoteSavesOnlyDraftsTheWordsInUseDontRead() {
-        let none = (address: "", model: "")
-        // Shared: both are unread, both saved.
-        #expect(VoiceLLMWording.drafts(address: " https://api.openai.com/v1 ", model: "gpt-5-mini", source: .shared,
-                                       stored: none).map(\.key) == ["VOICE_LLM_BASE_URL", "VOICE_LLM_MODEL"])
-        // A model of its own here: its model is `VOICE_LLM_MODEL`, so only the address.
-        #expect(VoiceLLMWording.drafts(address: "http://box:11434", model: "qwen3:4b", source: .here,
-                                       stored: none).map(\.key) == ["VOICE_LLM_BASE_URL"])
-        // A server elsewhere in use: they are its settings; Check and Use changes them.
-        #expect(VoiceLLMWording.drafts(address: "http://box:11434", model: "m", source: .remote, stored: none).isEmpty)
-        // Unchanged, or blank: nothing.
-        #expect(VoiceLLMWording.drafts(address: "http://box:11434", model: "", source: .shared,
-                                       stored: ("http://box:11434", "")).isEmpty)
+    @Test func remoteDraftsAreKeptInTheAppsOwnPreferencesNeverKeryxsSettings() async {
+        let fake = FakeRunner()
+        let defaults = TestDefaults.fresh()
+        let model = AppModel(locator: PreviewLocator(), makeClient: { CLIClient(location: $0, runner: fake) },
+                             preferences: Preferences(defaults: defaults), timing: AppModel.Timing(poll: nil))
+        await model.start()
+        let mark = fake.requests.count
+        model.keepVoiceLLMDraft(address: " https://api.openai.com/v1 ", model: "gpt-5-mini")
+        #expect(model.voiceLLMDraft.address == "https://api.openai.com/v1")
+        #expect(model.voiceLLMDraft.model == "gpt-5-mini")
+        #expect(fake.requests.count == mark, "nothing is asked of Keryx: no VOICE_LLM_BASE_URL, no VOICE_LLM_MODEL")
+        // Each field on its own; a blank one is forgotten.
+        model.keepVoiceLLMDraft(address: "", model: "gpt-5-mini")
+        #expect(model.voiceLLMDraft.address == nil && model.voiceLLMDraft.model == "gpt-5-mini")
+        #expect(Preferences(defaults: defaults).voiceLLMDraftModel == "gpt-5-mini", "kept across launches")
     }
 
     @Test func aStoppedVoiceLLMChoiceSaysStoppingUntilItEnds() async {
         let model = AppModel.preview(client: PreviewClient(voiceLLM: .slowToStop([
             .step(step: "download", message: "Downloading Qwen3.5 4B for the voice LLM (2.7 GB)")])))
         #expect(model.chooseVoiceLLM(.here(model: "qwen3.5-4b")))
-        for _ in 0..<500 where model.voiceLLMRun.lastStep != "download" { try? await Task.sleep(for: .milliseconds(10)) }
-        #expect(model.voiceLLMRun.lastStep == "download")
+        #expect(await Waiting.until { model.voiceLLMRun.lastStep == "download" })
         model.voiceLLMRun.cancel()
         #expect(model.voiceLLMRun.phase == .cancelling)
         guard case let .running(progress)? = RunDisplay.of(model.voiceLLMRun) else {
@@ -125,8 +127,8 @@ import KeryxPreview
         #expect(VoiceLLMWording.cannot(.here, report: PreviewData.modelsEmptyServers, voice: PreviewData.voice) == nil)
     }
 
-    @Test func theServersStateAndAddressesAreSaidPlainly() {
-        let own = PreviewData.voiceOwnLLM.llm!
+    @Test func theServersStateAndAddressesAreSaidPlainly() throws {
+        let own = try #require(PreviewData.voiceOwnLLM.llm)
         #expect(VoiceLLMWording.serverState(own) == "Running at 127.0.0.1:8091")
         var down = own
         down.reachable = false
@@ -222,20 +224,22 @@ import KeryxPreview
         #expect(MemoryShares.of(PreviewData.models, voice: PreviewData.voiceHere).shares.map(\.kind) == [.agent, .speech])
     }
 
-    /// The speech models' share is the CLI's reserve, which it does not print: pinned to it.
-    @Test func theSpeechShareIsTheCLIsReserve() throws {
-        let catalog = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("src/keryx/localmodels/catalog.py")
-        let text = try String(contentsOf: catalog, encoding: .utf8)
-        let match = try #require(text.firstMatch(of: #/\nVOICE_SERVER_GB(?:: *[A-Za-z]+)? *= *([0-9.]+)/#))
-        #expect(Double(String(match.1)) == MemoryShares.speechGigabytes)
+    /// The speech models' share is the CLI's reserve, which it does not print: pinned to the
+    /// contract's `constants.speech_gb`, which `tests/test_macos_contract.py` pins to
+    /// `catalog.VOICE_SERVER_GB`.
+    @Test func theSpeechShareIsTheContractsReserve() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("KeryxKitTests/Fixtures/contract.json")
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        let constants = try #require(object?["constants"] as? [String: Any])
+        let speech = try #require(constants["speech_gb"] as? Double)
+        #expect(speech == MemoryShares.speechGigabytes)
     }
 
-    @Test func theVoiceLLMServerSectionSaysWhereTheWordsComeFrom() {
-        let own = PreviewData.voiceOwnLLM.llm!
+    @Test func theVoiceLLMServerSectionSaysWhereTheWordsComeFrom() throws {
+        let own = try #require(PreviewData.voiceOwnLLM.llm)
         #expect(VoiceLLMServerWording.isOwn(own, unit: nil))
-        let shared = PreviewData.voice.llm!
+        let shared = try #require(PreviewData.voice.llm)
         #expect(!VoiceLLMServerWording.isOwn(shared, unit: UnitState(installed: false, active: false)))
         #expect(VoiceLLMServerWording.isOwn(shared, unit: UnitState(installed: true, active: true)),
                 "left installed: shown, to be stopped")
@@ -327,7 +331,7 @@ import KeryxPreview
         let server = Quitting.question(downloading: false, settingUpVoice: false, startingVoiceLLMServer: true,
                                        assistant: "Lyra")
         #expect(server?.message == "The voice LLM's server is starting. Quit anyway?")
-        #expect(server?.detail == "It stops, and its service is removed. Start Voice LLM Server in Local Models "
+        #expect(server?.detail == "It stops, and won't start again by itself. Start Voice LLM Server in Local Models "
             + "starts it again.")
     }
 

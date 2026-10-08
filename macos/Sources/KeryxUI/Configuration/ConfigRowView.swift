@@ -48,7 +48,7 @@ struct ConfigRowView: View {
             }
             .help(readOnly ? ConfigWording.environmentHelp(row) : "")
         } label: {
-            Text(row.displayTitle)
+            Text(row.shownTitle)
             if !row.description.isEmpty {
                 Text(ConfigWording.isPIN(row) ? PinWording.rowDescription
                     : ConfigWording.described(ConfigDescriptions.text(row), titles: titles))
@@ -93,7 +93,7 @@ struct ConfigRowView: View {
                 TwilioAccountSheet(savedSID: model.config.value?.first { $0.key == "TWILIO_ACCOUNT_SID" }
                     .map { ConfigWording.editText($0.value) }.flatMap { $0.isEmpty ? nil : $0 })
             } else {
-                SecretSheet(key: row.key, title: row.displayTitle, replacing: row.set)
+                SecretSheet(key: row.key, title: row.shownTitle, replacing: row.set)
             }
         }
         .confirmationDialog(ConfigWording.removalTitle(row), isPresented: $confirmingRemoval) {
@@ -133,7 +133,7 @@ struct ConfigRowView: View {
         } else if ConfigWording.isChecklist(row) {
             checklist
         } else if ConfigWording.hasMenu(row) {
-            OptionMenu(key: row.key, title: row.displayTitle, current: ConfigWording.editText(pending ?? row.value)) {
+            OptionMenu(key: row.key, title: row.shownTitle, current: ConfigWording.editText(pending ?? row.value)) {
                 value in
                 pending = value.isEmpty ? .null : .string(value)
                 write { await model.choose(row.key, option: value) }
@@ -141,11 +141,11 @@ struct ConfigRowView: View {
         } else {
             switch row.type {
             case "bool":
-                Toggle(row.displayTitle, isOn: boolBinding)
+                Toggle(row.shownTitle, isOn: boolBinding)
                     .toggleStyle(.switch)
                     .labelsHidden()
             case "choice":
-                Picker(row.displayTitle, selection: choiceBinding) {
+                Picker(row.shownTitle, selection: choiceBinding) {
                     if ConfigWording.editText(row.value).isEmpty {
                         Text("Not set").tag("")
                     }
@@ -180,10 +180,10 @@ struct ConfigRowView: View {
     @ViewBuilder private var secretButtons: some View {
         if row.set {
             Button("Remove…") { reset() }
-                .accessibilityLabel("Remove \(row.displayTitle)")
+                .accessibilityLabel("Remove \(row.shownTitle)")
         }
         Button(row.set ? "Change…" : "Add…") { editingSecret = true }
-            .accessibilityLabel(row.set ? "Change \(row.displayTitle)" : "Add \(row.displayTitle)")
+            .accessibilityLabel(row.set ? "Change \(row.shownTitle)" : "Add \(row.shownTitle)")
     }
 
     // MARK: - The PIN
@@ -254,7 +254,7 @@ struct ConfigRowView: View {
     }
 
     private func field(width: CGFloat) -> some View {
-        TextField(row.displayTitle, text: $draft, prompt: Text("Not set"))
+        TextField(row.shownTitle, text: $draft, prompt: Text("Not set"))
             .labelsHidden()
             .textFieldStyle(.roundedBorder)
             .frame(width: width)
@@ -279,9 +279,19 @@ struct ConfigRowView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard ConfigWording.shouldCommit(text, stored: ConfigWording.editText(row.value),
                                          writing: writing, refused: refused) else { return }
+        // A field cleared and left goes back to the default, as Reset does — never the empty
+        // text stored as the value. Nothing stored: nothing to remove, and the field shows
+        // the default again.
+        if text.isEmpty {
+            switch ConfigWording.cleared(row) {
+            case .unset: write(onDisappear: onDisappear) { await model.unset(row.key) }
+            case .nothing: if !onDisappear { draft = ConfigWording.editText(row.value) }
+            }
+            return
+        }
         if let reason = ConfigWording.invalid(text, type: row.type) {
             if onDisappear {
-                model.reportSettingSaveFailure(title: row.displayTitle, sentence: reason)
+                model.reportSettingSaveFailure(title: row.shownTitle, sentence: reason)
             } else {
                 invalid = reason
                 error = nil
@@ -310,7 +320,7 @@ struct ConfigRowView: View {
         guard !writing else { return }
         writing = true
         invalid = nil
-        let title = row.displayTitle
+        let title = row.shownTitle
         Task {
             let failure = await action()
             if onDisappear {

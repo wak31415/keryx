@@ -4,7 +4,7 @@ import KeryxKit
 /// What the CLI says would mend a check, as the app does it: `doctor --json`'s and `setup
 /// plan --json`'s `fix`, one id from a closed set (`keryx/fixes.py`), turned into a button —
 /// its title, and what it does. The one mapping every screen that shows a check or a step
-/// uses (the Setup Assistant, the Overview's Setup section), so the same problem always
+/// uses (the setup wizard, the Overview's Setup section), so the same problem always
 /// offers the same button.
 ///
 /// An id this build does not know is `nil`: no button, never a guess.
@@ -87,7 +87,7 @@ enum FixAction: Equatable, Sendable {
             return SetupAction(title: "Sign In to \(SignInWording.name(provider))…", effect: .request(.signIn(provider)))
         case let .secret(key):
             let row = context.row(key)
-            let title = row?.displayTitle ?? named ?? FixAction.humanised(key)
+            let title = row?.shownTitle ?? named ?? FixAction.humanised(key)
             let replacing = row?.set == true && !missing
             return SetupAction(title: "\(replacing ? "Change" : "Add") \(Wording.titleCase(title))…",
                                effect: .secret(key: key, title: title, replacing: replacing))
@@ -102,7 +102,7 @@ enum FixAction: Equatable, Sendable {
                 if let screen = context.row(key)?.screen.flatMap(SidebarItem.init(rawValue:)) {
                     return open("Open \(screen.title)", .show(screen))
                 }
-                let title = context.row(key)?.displayTitle ?? named ?? FixAction.humanised(key)
+                let title = context.row(key)?.shownTitle ?? named ?? FixAction.humanised(key)
                 return open("Open \(Wording.titleCase(title))", .setting(key: key))
             }
         case let .plugin(name):

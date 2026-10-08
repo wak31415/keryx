@@ -103,7 +103,7 @@ import KeryxPreview
         let state = ThisMacProgress.state(withServer: true, runtime: "ollama", server: .running(.init(step: "start")),
                                           serverStep: "start", setup: nil, setupStep: "")
         #expect(state.groups[0].steps.map(\.title)
-            == ["Find Ollama", "Pull the model into Ollama", "Check Ollama lists it", "Retire the llama.cpp service"])
+            == ["Find Ollama", "Pull the model into Ollama", "Check Ollama lists it", "Retire the old llama.cpp server"])
         #expect(states(state.groups[0].steps) == [.done, .current, .pending, .pending])
     }
 
@@ -191,7 +191,7 @@ import KeryxPreview
         #expect(Quitting.question(downloading: false, settingUpVoice: false, startingModelServer: true,
                                   assistant: "Lyra")
             == .init(message: "The model server is starting. Quit anyway?",
-                     detail: "It stops, and its service is removed. Start Model Server in Local Models starts it again."))
+                     detail: "It stops, and won't start again by itself. Start Model Server in Local Models starts it again."))
         #expect(Quitting.question(downloading: false, settingUpVoice: false, downloadingVoiceModels: true,
                                   assistant: "Lyra")?.message == "The speech models are downloading. Quit anyway?")
         #expect(Quitting.question(downloading: true, settingUpVoice: true, assistant: "Lyra")?.detail

@@ -70,7 +70,7 @@ public enum Wording {
     public static func titles(_ rows: [ConfigRow]?) -> [String: String] {
         var titles: [String: String] = [:]
         for row in rows ?? [] {
-            if let title = row.title, !title.isEmpty { titles[row.key] = title }
+            if let title = row.title, !title.isEmpty { titles[row.key] = row.shownTitle }
         }
         return titles
     }

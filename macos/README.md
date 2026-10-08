@@ -11,7 +11,7 @@ reads and changes Keryx by running `keryx` commands.
 
 - macOS 14 or later. It is styled for macOS 26.
 - A Swift 6 toolchain. The Command Line Tools are enough; Xcode is not needed.
-- A Keryx checkout on this Mac. The app's Setup Assistant walks the setup to a first call,
+- A Keryx checkout on this Mac. The app's setup wizard walks the setup to a first call,
   and the app starts Keryx under launchd by itself: there is nothing to install by hand.
 
 ## Build, test, and install
@@ -70,42 +70,62 @@ the menu bar and the Dock, with no window, and starts answering calls.
 
 ## Opening, closing and quitting
 
-**While Keryx for Mac is open, Keryx answers calls.** The service under it, its launchd
-agent `dev.keryx.agent` and the tunnel's, is the app's to manage, and never shown as one.
+**While Keryx for Mac is open, Keryx answers calls.** The launchd agents under it —
+`dev.keryx.agent`, the tunnel's, and the model and voice servers' — are the app's to manage,
+and never shown to you as such: the app says "Answering calls" and "Start Keryx", never
+"service".
 
-- **Opening it** starts Keryx, once setup has reached the step that needs it running. The
-  app reads `keryx setup plan` and `keryx status`, and when the plan's service step is
-  reachable and Keryx is not running, it runs `keryx service install --json`, which
-  installs the agents (or loads them again) and starts them. Never before `keryx migrate`
-  has run, never while a step it waits for (the phone, the voice, the agents) is left, never
-  beside a `keryx serve` started by hand, and never without a service manager. It tries once
-  a launch; a plan read later that reaches the step (the phone just set up) starts it then.
-  If the start fails, the Overview's "Answering calls" row says why and offers Start.
+- **Opening it** starts Keryx, once setup has reached the step that needs it running. One
+  rule decides, whoever asks — the launch, a plan read (the setup wizard's phone frame), the
+  status poll, the wizard's Checking, the Setup Checklist's Start Keryx and the Overview's
+  Start: the app reads `keryx setup plan` and `keryx status`, and when the plan's service
+  step is reachable and Keryx is not running it starts it. An agent already installed (the
+  last Quit stopped it) is started again with `keryx service start --all --json`, which
+  starts the model and voice servers Quit stopped too; otherwise `keryx service install
+  --json` installs the agents and starts them. Never before `keryx migrate` has run, never
+  while a step it waits for (the phone, the voice, the agents) is left, never beside a
+  `keryx serve` started by hand, never without a service manager, and never while a model
+  server is being started or stopped (one `launchctl` at a time). A second request while a
+  start is under way joins it. By itself it tries once a launch; until it has tried (the
+  first `keryx status` could not be read at a login launch, say), the status poll looks
+  again every 30 seconds. If the start fails, the Overview's "Answering calls" row says why,
+  with what Keryx printed under Show Details, and offers Start.
+- **Opening it again soon after quitting** waits for the last Quit's stop, if it is still
+  finishing (see below): the app records that stop's process in its own preferences as it
+  starts it, and the first start of the next launch waits for it, a minute at most, with
+  "Finishing stopping…" in the Overview, so the start and the stop never run side by side.
+  The two output files a stop that outlived the app left in the app's temporary folder are
+  removed at launch.
 - **Closing the window** (the red button, ⌘W) closes only the window. The app stays in the
   Dock, with its running dot, and in the menu bar, and Keryx goes on answering. Clicking
   the Dock icon opens the window again.
-- **Quitting** (⌘Q, or Quit Keryx in the menu) quits the app and stops Keryx: `keryx service
-  uninstall --json`, which unloads and removes both agents. The CLI has no stop that keeps
-  them installed; removing them also means nothing starts Keryx at the next login unless
-  the app opens then. The local model and voice servers are left as they are. Quitting asks
-  first, "Quit Keryx?", saying that the assistant stops answering until Keryx is opened
-  again, until you tick "Don't ask again"; with a call in progress it always asks, since
-  quitting ends the call. A stop that takes longer than 30 seconds is cut short, and the
-  app quits anyway. Quitting while a restart is pending (waiting for a call to end) stops
-  Keryx before it restarts: `restart.json` stays pending until the next launch starts Keryx,
-  whose start is taken as the restart, and confirmed with the usual call-back.
+- **Quitting** (⌘Q, or Quit Keryx in the menu) quits the app and stops Keryx. It first ends
+  editing in any field still being typed in, so a setting typed and not yet committed is
+  saved, and waits for that like any other write. Then it runs `keryx service stop --all
+  --json`, which stops every unit Keryx runs — the agent, the tunnel, the model server, the
+  voice server and the voice LLM — and keeps each from starting at login, but leaves them
+  installed, so macOS asks nothing and the next launch only starts them again. The stop runs
+  detached: in a process group of its own, its output written to two owner-only files in the
+  app's own temporary folder, with no timeout. The app waits up to 10 seconds for its answer
+  and then quits whatever it says; the CLI finishes stopping on its own, however long each
+  unit takes (up to a minute, its `ExitTimeOut`). Quitting asks first, "Quit Keryx?", saying
+  that the assistant stops answering until Keryx is opened again, until you tick "Don't ask
+  again"; with a call in progress it always asks, since quitting ends the call. A restart
+  pending when you quit (waiting for a call to end) is settled by the stop as stopped by its
+  owner, and the next launch's start is an ordinary start.
 - **Logging out, restarting or shutting down** quits the app without asking and without
-  stopping Keryx: launchd ends the session's agents itself, and an uninstall would only hold
-  the logout up. The agents stay installed, so they load again at the next login, with or
-  without the app.
+  stopping Keryx: launchd ends the session's agents itself, and a stop would only hold the
+  logout up. The app still gives a write in progress a moment (5 seconds at most) and stops
+  its own child processes. The agents stay installed and enabled, so they load again at the
+  next login, with or without the app.
 
-Since quitting removes the agent's plist, which is where the app finds Keryx, the app keeps
-a copy of the last one it read (in its own preferences) and reads that while the plist is
-gone; see below.
+The app keeps a copy of the last launch agent plist it read (in its own preferences), which
+is where it finds Keryx, and reads that if the plist is gone (removed at a terminal); see
+below.
 
-A run with `KERYX_APP_ENVIRONMENT=inherit` (a sandbox) neither starts nor stops Keryx: its
-`keryx` reads the sandbox's settings, but the launch agents it would install are the real
-ones in `~/Library/LaunchAgents`.
+A run with `KERYX_APP_ENVIRONMENT=inherit` (a sandbox) never starts or stops Keryx, whoever
+asks: its `keryx` reads the sandbox's settings, but the launch agents it would install are
+the real ones in `~/Library/LaunchAgents`.
 
 ### Snapshots
 
@@ -142,10 +162,10 @@ installer's `KERYX_HOME` and XDG directories. A `keryx` found on some other PATH
 different settings from the service's, so the app looks in this order:
 
 1. **The folder chosen in the app's Settings**, when its `pyproject.toml` names `keryx`.
-2. **The service's launchd plist**, `~/Library/LaunchAgents/dev.keryx.agent.plist`: its
-   program, working directory and environment. While it is gone (the app quit, and removed
-   it with the agent), the copy of it the app last read, as long as the checkout it names is
-   still there. A `keryx` installed on its own (a
+2. **Keryx's launchd plist**, `~/Library/LaunchAgents/dev.keryx.agent.plist`: its
+   program, working directory and environment. While it is gone (removed at a terminal with
+   `keryx service uninstall`), the copy of it the app last read, as long as the checkout it
+   names is still there. A `keryx` installed on its own (a
    `uv tool install`) runs directly; a checkout is optional. A checkout runs its own
    `.venv/bin/keryx`, or else `uv run --project CHECKOUT --no-sync keryx`, never a plain
    `uv run`, which may sync the environment. `uv` is the plist's own, or the one in
@@ -195,7 +215,7 @@ directories, it reaches that sandbox and nothing else.
   its progress, can be cancelled, and carries on while the window is closed.
 - **Configuration**: every setting by its title, with its environment key as a caption, and
   a control for its type. Once a change is saved, a banner offers the restart that loads it.
-  The PIN shows only whether one is set; it is changed with `keryx setup` in Terminal.
+  The PIN shows only whether one is set; it is set or changed in its own sheet.
 
 The status is polled every 30 seconds, and `keryx doctor` every five minutes. View ›
 Refresh (⌘R) reads everything again.
@@ -206,12 +226,15 @@ Refresh (⌘R) reads everything again.
   on the internet through the tunnel, so a second way in is ruled out, and the CLI already
   enforces the rules about who may change what.
 - **It writes no Keryx file itself.** Every change is a `keryx` command, starting and
-  stopping Keryx included (`keryx service install|uninstall`); it never runs `launchctl`.
-  The one exception is starting the model server, which runs the checkout's
-  `scripts/install-launchd.sh --llm`. The one program it installs that is not Keryx's is Cloudflare Tunnel, with `brew install
-  cloudflared`, only when Homebrew is on this Mac and only on a click.
-- **It never sets or shows the PIN.** `keryx setup`, which it opens in Terminal, is the only
-  way to change one from the keyboard.
+  stopping Keryx included (`keryx service start|stop --all`, `keryx service install`) and the
+  model servers (`keryx models start|stop`); it never runs `launchctl`. The one command it
+  runs that is not `keryx` is `brew install cloudflared`, to install Cloudflare Tunnel, only
+  when Homebrew is on this Mac and only on a click. The only files it writes are its own: its
+  preferences, the detached stop's output in its temporary folder, and the scripts it hands
+  Terminal.
+- **It never shows the PIN.** It sets one only through its PIN sheet (`keryx pin set
+  --stdin`, the digits typed twice and compared, never shown or logged), and replaces one
+  only after two confirmations.
 - **It never answers an approval.** Only the phone's keypad can. The app can pause the
   approval calls, which is `keryx approvals --disable`.
 - **A secret goes on stdin.** It reaches `keryx config set KEY --stdin`, never argv or a
@@ -236,9 +259,21 @@ The app reads and changes Keryx through these commands:
 - `keryx models list --json`, `keryx models pull NAME --json` (JSON lines),
   `keryx models use NAME [--default-agent] --json`
 - `keryx memory --json`
-- `keryx setup plan --json`, `keryx service --json`, and `keryx service install|uninstall
-  --json`, to start and stop Keryx
-- `keryx config list --json`, `keryx config set`, `keryx config unset`
+- `keryx setup plan --json`, `keryx service --json`, `keryx service install --json` and
+  `keryx service start|stop --all --json`, to start and stop Keryx; `keryx service uninstall
+  --voice-llm --json`
+- `keryx models start [--voice-llm] --json` (JSON lines) and `keryx models stop --json`
+- `keryx voice --json`, `keryx voice use openai|server URL --json`, `keryx voice use here
+  --json`, `keryx voice download --json` and `keryx voice llm shared|here NAME|remote URL
+  --json` (JSON lines)
+- `keryx auth login NAME --json` and `keryx auth smoke NAME --json` (JSON lines), `keryx auth
+  logout NAME --json`, `keryx integrations --json`
+- `keryx pin --json`, `keryx pin set --stdin --json`
+- `keryx phone numbers|tunnel|webhooks --json`, `keryx phone webhooks --apply --json`
+- `keryx plugins list|hosts --json`, `keryx plugins install|remove|set NAME --json`, `keryx
+  tools --json`
+- `keryx config list --json`, `keryx config options KEY --json`, `keryx config set`,
+  `keryx config unset`, `keryx config verify KEY --stdin --json`
 - `keryx setup mark STEP --json`
 - `keryx setup profile [--preview|--apply] --json` (the answers as one JSON object on stdin)
 - `keryx migrate --json`, and `keryx migrate --yes --json` (JSON lines)
@@ -247,7 +282,10 @@ The app reads and changes Keryx through these commands:
 - `keryx restart`
 
 `tests/test_macos_contract.py` checks that each JSON command still prints the keys the
-Swift decoders require, so renaming a field fails the Python tests rather than the app.
+Swift decoders require, and each stream the events and exit codes the app reads, so
+renaming a field fails the Python tests rather than the app. It also pins the one figure the
+app draws without the CLI printing it: the speech models' 3 GB share of the memory bar is
+`VOICE_SERVER_GB`.
 
 ## Now and later
 
@@ -257,9 +295,11 @@ Swift decoders require, so renaming a field fails the Python tests rather than t
 | Overview: whether Keryx answers calls, the setup checks, approval calls, the memory's location | Live updates in place of polling |
 | Sessions as a timeline, from what you asked to the result | Continuing a session from the app |
 | Local models: download, choose, start the server | A GGUF file of your own as the local model, from the setup wizard |
-| The setup wizard, from Welcome to a first call | The voice's own model, the pipelines and the agents' test task, once the CLI has them |
+| The setup wizard, from Welcome to a first call, with the agent's test task | |
+| The voice: OpenAI, a server of yours, or this Mac, with a voice LLM of its own and its pipelines | |
 | Every setting by its title, with secrets on stdin | Answering approvals from the Mac, which needs an owner ruling first |
-| Open at Login, and finding Keryx from its launchd service | Plugins |
+| Plugins, Integrations, the phone line | |
+| Open at Login, and finding Keryx from its launchd agent | |
 | Keryx answering while the app is open: started by itself, stopped by Quit | Keryx's background item named Keryx, from a helper in the app (`SMAppService.agent`) |
 | Built from the checkout, installed in /Applications, signed with a local identity | A hosted relay sign-in |
 | Two `.icns` icons, one for macOS 26 and one for 14 and 15 | A signed and notarised download, with a layered `.icon` |

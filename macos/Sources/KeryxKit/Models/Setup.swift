@@ -1,7 +1,7 @@
 import Foundation
 
 /// `keryx setup plan --json`: the steps to a first working call, in order, and whether it
-/// is ready for one. What the Setup Assistant renders; it decides nothing itself.
+/// is ready for one. What the setup wizard renders; it decides nothing itself.
 public struct SetupPlan: Codable, Sendable, Equatable {
     /// The plan's own schema (1 today), so a renderer can tell a shape it does not know.
     public var schema: Int

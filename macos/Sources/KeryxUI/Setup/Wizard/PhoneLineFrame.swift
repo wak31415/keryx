@@ -81,7 +81,7 @@ package struct PhoneLineFrame: View {
             if host.isEmpty { host = facts.text("PUBLIC_HOST") ?? "" }
             homebrew = model.homebrew
             await readPhone()
-            // SEAM: the hostname the tunnel already routes here, when the CLI says it.
+            // The hostname the tunnel already routes here, when the CLI knows it.
             if host.isEmpty, let known = model.phoneTunnel.value?.hostname { host = known }
         }
     }
@@ -198,9 +198,15 @@ package struct PhoneLineFrame: View {
                             .labelsHidden()
                             .focused($hostFocused)
                             .onSubmit { saveHost() }
+                            // One save at a time: an edit typed while one is in flight would
+                            // otherwise be dropped by the guard in `saveHost`.
+                            .disabled(savingHost)
                         if savingHost { ProgressView().controlSize(.small) }
                     }
                     .onChange(of: hostFocused) { _, focused in if !focused { saveHost() } }
+                    // Back (Esc), closing the window or a Fix… elsewhere tears the frame down
+                    // without ending editing first: what was typed is saved all the same.
+                    .onDisappear { saveHost(gone: true) }
                     HStack(alignment: .firstTextBaseline) {
                         Text(WizardWording.addressCaption)
                             .font(.caption)
@@ -353,16 +359,19 @@ package struct PhoneLineFrame: View {
         }
     }
 
-    /// Saves the address once it is committed (Return, or leaving the field), when changed.
-    private func saveHost() {
+    /// Saves the address once it is committed (Return, leaving the field, or the frame going
+    /// away — `gone`), when changed. A failure once the frame is gone has no row left to show
+    /// it on, so it goes to the window's save-failure banner.
+    private func saveHost(gone: Bool = false) {
         let value = typedHost
         guard !value.isEmpty, !savingHost, value != WizardFacts(model).text("PUBLIC_HOST") else { return }
         savingHost = true
         failure = nil
+        let title = WizardFacts(model).row("PUBLIC_HOST")?.shownTitle ?? "the address"
         Task {
             defer { savingHost = false }
             if let error = await model.set(key: "PUBLIC_HOST", to: value) {
-                failure = error
+                if gone { model.reportSettingSaveFailure(title: title, error: error) } else { failure = error }
                 return
             }
             await model.refresh(.phoneTunnel, .phoneWebhooks, .setupPlan)
@@ -379,13 +388,12 @@ package struct PhoneLineFrame: View {
                 failure = error
                 return
             }
-            wizard.phoneLater = false
             await wizard.moveOn(model)
         }
     }
 
-    /// Leaves the phone for later: recorded as such when the plan lets it be (SEAM:
-    /// `deferrable`), and the run ends on Nearly Ready.
+    /// Leaves the phone for later: recorded as such (`setup mark phone`), so the plan says it
+    /// is deferred, and the run ends on Nearly Ready.
     private func setUpLater(_ facts: WizardFacts) {
         leaving = true
         failure = nil
@@ -395,7 +403,6 @@ package struct PhoneLineFrame: View {
                 failure = error
                 return
             }
-            wizard.phoneLater = true
             await wizard.moveOn(model)
         }
     }
@@ -465,11 +472,10 @@ package struct PhoneSteps {
         return writes
     }
 
-    /// Set Up Later: recorded through the CLI when it can defer the phone (SEAM:
-    /// `deferrable`), so the plan says so; otherwise nothing is written, and this run alone
-    /// remembers it.
+    /// Set Up Later: recorded through the CLI (the phone step is always `deferrable`), so the
+    /// plan says so.
     package static func later(_ facts: WizardFacts) -> [WizardWrite] {
-        facts.plan?.step("phone")?.deferrable == true ? [.mark("phone")] : []
+        [.mark("phone")]
     }
 
     /// The first three are done, or will be once what is picked and typed is saved.

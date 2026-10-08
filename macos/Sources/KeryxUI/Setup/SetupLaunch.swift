@@ -58,10 +58,10 @@ public enum SetupLaunch {
         defaults.set(true, forKey: completedKey)
     }
 
-    /// Opens the wizard from `entry`, in the mode that entry means: the menu reviews every
-    /// frame; launch and the Overview's checklist walk only what is left.
-    @MainActor public static func open(_ entry: SetupEntry, model: AppModel) {
-        model.openSetupWizard(entry.mode)
+    /// Opens the wizard from `entry`, in the mode that entry means (`SetupEntry.mode`), with
+    /// whether setup has been seen through read from `defaults`.
+    @MainActor public static func open(_ entry: SetupEntry, model: AppModel, defaults: UserDefaults = .standard) {
+        model.openSetupWizard(entry.mode(completedOnce: completedOnce(in: defaults)))
     }
 }
 
@@ -74,10 +74,15 @@ public enum SetupEntry: Sendable, CaseIterable {
     /// The Overview's Setup Checklist, "Set Up Keryx…".
     case checklist
 
-    public var mode: SetupWizardMode {
+    /// The mode it opens in: the menu reviews every frame; launch walks only what is left;
+    /// the Overview's "Set Up Keryx…" walks what is left only until setup has once been seen
+    /// through (`completedOnce`) and reviews after — a review starts nothing by itself, so an
+    /// owner set up long ago is never charged for the agent's (paid) test by opening it.
+    public func mode(completedOnce: Bool) -> SetupWizardMode {
         switch self {
         case .menu: .review
-        case .launch, .checklist: .firstRun
+        case .launch: .firstRun
+        case .checklist: completedOnce ? .review : .firstRun
         }
     }
 }

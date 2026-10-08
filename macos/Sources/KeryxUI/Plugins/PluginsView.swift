@@ -49,7 +49,7 @@ public struct PluginsView: View {
             // The window would otherwise hand the first plugin's first field the keyboard,
             // its text selected, as the screen appears.
             .background(NoInitialFocus())
-            // A plugin asked for by the Setup Assistant or the Overview: scrolled to.
+            // A plugin asked for by the setup wizard or the Overview: scrolled to.
             .onChange(of: model.requested, initial: true) { _, requested in
                 guard let requested, let name = Self.answers(requested) else { return }
                 model.didHandle(requested)

@@ -58,7 +58,7 @@ public struct VoiceView: View {
             if model.models.value == nil { await model.refresh(.models) }
             if model.config.value == nil { await model.refresh(.config) }
         }
-        // The Setup Assistant's "Set Up Voice on This Mac" shows This Mac, whose section
+        // The setup wizard's "Set Up Voice on This Mac" shows This Mac, whose section
         // asks the question (and says it has been answered).
         .onChange(of: model.requested, initial: true) { _, requested in
             if VoiceView.answers(requested) { picked = .here }
@@ -329,7 +329,7 @@ private struct HereSection: View {
             model.optionsMenu("VOICE_SERVER_STT", shown: false)
             model.optionsMenu("VOICE_SERVER_TTS", shown: false)
         }
-        // The Setup Assistant's "Set Up Voice on This Mac": the same question as Set Up….
+        // The setup wizard's "Set Up Voice on This Mac": the same question as Set Up….
         .onChange(of: model.requested, initial: true) { _, requested in
             guard let requested, VoiceView.answers(requested) else { return }
             model.didHandle(requested)

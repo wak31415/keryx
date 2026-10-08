@@ -32,7 +32,7 @@ public struct StatusDot: View {
 
 /// The glyph beside one of doctor's checks, wherever one is shown (the Overview, a Setup
 /// Assistant step): a green check when it passed, an orange ring when something is still to
-/// do, a red mark when it failed. The Setup Assistant's list draws a done or failed step the
+/// do, a red mark when it failed. The setup wizard's list draws a done or failed step the
 /// same way. Always beside words that say the same; `label` is what VoiceOver says.
 public struct CheckGlyph: Sendable {
     public let symbol: String
@@ -43,7 +43,7 @@ public struct CheckGlyph: Sendable {
     public static let missing = CheckGlyph(symbol: "exclamationmark.circle", colour: .orange, label: "Needs attention")
     public static let failed = CheckGlyph(symbol: "xmark.octagon.fill", colour: .red, label: "Failed")
 
-    /// Something optional left off: grey, as the Setup Assistant's optional steps are.
+    /// Something optional left off: grey, as the setup wizard's optional steps are.
     public static let off = CheckGlyph(symbol: "circle.dotted", colour: .secondary, label: "Off")
 
     /// For a check: `of(state)`, except one missing only because something optional is off
