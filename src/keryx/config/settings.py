@@ -1505,9 +1505,9 @@ class Settings(BaseSettings):
                 return None
             return ("VOICE_MODE is server and VOICE_BASE_URL names no server, so no call "
                     "could open — `keryx setup`")
-        return self._voice_llm_refusal()
+        return self.voice_llm_refusal()
 
-    def _voice_llm_refusal(self) -> str | None:
+    def voice_llm_refusal(self) -> str | None:
         """Why the pipeline here would have no words, in one line; None when it has some."""
         if self.voice_llm == "here" and not self.voice_llm_model:
             missing = "VOICE_LLM_MODEL"

@@ -479,6 +479,73 @@ def test_here_refuses_while_its_words_server_does_not_answer(settings, root):
     assert saved == []
 
 
+@pytest.mark.parametrize(("values", "asked", "said"), [
+    ({"voice_llm": "here", "voice_llm_model": "qwen3.5-4b"}, "http://127.0.0.1:8091/v1",
+     voice.NO_VOICE_LLM_SERVER),
+    ({"voice_llm": "remote", "voice_llm_base_url": "http://gpu-box:11434/v1",
+      "voice_llm_model": "qwen3:4b"}, "http://gpu-box:11434/v1", voice.NO_REMOTE_VOICE_LLM),
+])
+def test_here_asks_the_voice_llm_it_takes_its_words_from(settings, root, values, asked, said):
+    """No local agent is needed when the voice LLM is not the agent's: it is that server
+    that has to answer before anything is installed."""
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update=values), FakeMachine(log, words=False),
+                           log, root)
+
+    assert code == voice.REFUSED and saved == []
+    assert log.lines[0] == ("words", asked)
+    assert log.of("error") == [(said, asked, None)]
+
+
+@pytest.mark.parametrize(("values", "missing"), [
+    ({"voice_llm": "here"}, "VOICE_LLM_MODEL"),
+    ({"voice_llm": "remote", "voice_llm_model": "m"}, "VOICE_LLM_BASE_URL"),
+])
+def test_here_wants_the_voice_llm_it_names_before_anything(settings, root, values, missing):
+    log = Log()
+
+    code, saved = run_here(settings.model_copy(update={**WORDS, **values}), FakeMachine(log),
+                           log, root, no_words="choose one first")
+
+    assert code == voice.REFUSED and saved == []
+    [(message, detail, _log)] = log.of("error")
+    assert message == voice.NO_VOICE_LLM and missing in detail
+    assert log.kinds() == ["error"]  # nothing asked, nothing installed
+
+
+def test_a_voice_llm_here_goes_ahead_without_a_local_agent(settings, root):
+    log = Log()
+    values = {"voice_llm": "here", "voice_llm_model": "qwen3.5-4b"}
+
+    code, _saved = run_here(settings.model_copy(update=values), FakeMachine(log), log, root)
+
+    assert code == voice.OK
+    assert log.lines[0] == ("words", "http://127.0.0.1:8091/v1")
+
+
+def test_the_voice_says_whose_words_it_takes(settings):
+    assert voice.words_model(settings.model_copy(update=WORDS)) == "qwen3-coder-30b-a3b"
+    own = settings.model_copy(update={**WORDS, "voice_llm": "here",
+                                      "voice_llm_model": "qwen3.5-4b"})
+    assert voice.words_model(own) == "qwen3.5-4b"
+    assert voice.words_model(settings.model_copy(update={"voice_llm": "here"})) is None
+
+
+def test_the_voice_llms_unit_is_removed_when_its_start_is_stopped(root):
+    """The crash-loop guard is the same for the voice LLM's unit as for the others."""
+    ran: list = []
+
+    with pytest.raises(KeyboardInterrupt), \
+            voice.removed_if_stopped("--voice-llm", lambda argv: ran.append(argv) or 0,
+                                     root=root, platform="darwin"):
+        raise KeyboardInterrupt
+
+    script = str(root / "scripts" / "install-launchd.sh")
+    assert ran == [[script, "--voice-llm", "--uninstall"]]
+    assert voice.SERVERS["--voice-llm"] == "The voice LLM server"
+
+
 def test_the_words_server_is_asked_on_loopback_without_a_proxy_and_elsewhere_with_its_key(
     monkeypatch
 ):

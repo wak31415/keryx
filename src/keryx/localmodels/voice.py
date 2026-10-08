@@ -9,8 +9,9 @@ loopback address of `VOICE_SERVER_PORT`) and a server elsewhere (`server`).
 models when they are not in the cache (as `download` does, through the same steps), save its
 voice and port, install its unit, wait for it to answer a Realtime handshake, and only then
 save it as the voice — a `VOICE_BASE_URL` that does not answer is a phone that rings and
-says nothing. It refuses while the local model server, which the voice server takes its
-words from, does not answer: on 2026-10-07 a voice server installed without one crash-looped
+says nothing. It refuses while the voice LLM's server (`Settings.voice_llm_endpoint`: the
+local agent's, the voice's own, or one elsewhere), which the voice server takes its words
+from, does not answer: on 2026-10-07 a voice server installed without one crash-looped
 under launchd's KeepAlive on its first request for words. And a server that does not come
 up, or whose start is cancelled, has its unit removed before anything else is said, so no
 unit is ever left restarting in a loop (`removed_if_stopped`, which `keryx models start`
@@ -68,6 +69,11 @@ NO_WORDS_HINT = "`keryx models use NAME` sets one up"
 NO_CHECKOUT = "Keryx's service installer is not in this copy of Keryx."
 #: What `here` says, refusing, while the server its words come from does not answer.
 NO_WORDS_SERVER = "The local model server isn't running: start it first."
+#: …and, while the voice LLM is not the agent's, for the one it names: none named, a
+#: server of its own here that is not running, or one elsewhere that does not answer.
+NO_VOICE_LLM = "Choose the voice LLM first: the voice server takes its words from it."
+NO_VOICE_LLM_SERVER = "The voice LLM's server isn't running: start it first."
+NO_REMOTE_VOICE_LLM = "The voice LLM's server isn't answering: check its address."
 #: Said of a unit removed rather than left restarting a server that did not come up.
 REMOVED = "its service was removed, so it does not restart in a loop"
 #: Keryx's own installers, the only commands `run_detached` gives a deadline: a few
@@ -178,8 +184,9 @@ def mode(settings: Settings) -> str:
 
 
 def words_model(settings: Settings) -> str | None:
-    """The local agent's model, which the voice server here takes its words from."""
-    endpoint = settings.local_agent_endpoint
+    """The voice LLM's model (`Settings.voice_llm_endpoint`), which the voice server here
+    takes its words from: the local agent's while `VOICE_LLM` is shared."""
+    endpoint = settings.voice_llm_endpoint
     return endpoint.model if endpoint is not None and endpoint.model else None
 
 
@@ -227,7 +234,7 @@ def status(
 
 
 def words_up(endpoint: Endpoint | None) -> bool:
-    """Whether the server the voice server takes its words from (the local agent's) answers:
+    """Whether the server the voice server takes its words from (the voice LLM's) answers:
     one on this machine through `use.probe`, on loopback and never through a proxy; one
     elsewhere as a voice server elsewhere is asked, with its key."""
     if endpoint is None:
@@ -319,16 +326,12 @@ def here(
     download (a Kokoro voice is one of their files); `save` stores values as
     whoever is running this and says why when it cannot (False). `root` is the checkout
     whose `scripts/` installs the unit. 2 for what refuses it before anything is tried —
-    no local model for the words, or none answering, no installer for the unit — 1 for
+    no voice LLM for the words, or none answering, no installer for the unit — 1 for
     anything that stopped it, 0 once the server answered and was saved as the voice. A
     half-done install is left for the next run to finish; a unit whose server did not come
     up, or whose start was cancelled, is not, and a download that stopped installs none.
     """
-    if words_model(settings) is None:
-        report.error(no_words, detail=NO_WORDS_HINT)
-        return REFUSED
-    if not probes.words_up(settings.local_agent_endpoint):
-        report.error(NO_WORDS_SERVER)
+    if not _have_words(settings, probes, report, no_words=no_words):
         return REFUSED
     script, problem = installer("--voice", root=root, platform=platform)
     if script is None:
@@ -379,6 +382,30 @@ def here(
         return FAILED
     report.done(endpoint.base_url)
     return OK
+
+
+def _have_words(settings: Settings, probes: Probes, report: Report, *, no_words: str) -> bool:
+    """Whether the voice LLM (`Settings.voice_llm_endpoint`) is named and answers; False once
+    the report has been told which it is not. The local agent's, while it is shared, is
+    said as it always was (`no_words`, `NO_WORDS_SERVER`)."""
+    shared = settings.voice_llm == "shared"
+    endpoint = settings.voice_llm_endpoint
+    if words_model(settings) is None:
+        if shared:
+            report.error(no_words, detail=NO_WORDS_HINT)
+        else:
+            report.error(NO_VOICE_LLM, detail=settings.voice_llm_refusal())
+        return False
+    assert endpoint is not None  # it names a model
+    if probes.words_up(endpoint):
+        return True
+    if shared:
+        report.error(NO_WORDS_SERVER)
+    elif settings.voice_llm == "here":
+        report.error(NO_VOICE_LLM_SERVER, detail=endpoint.base_url)
+    else:
+        report.error(NO_REMOTE_VOICE_LLM, detail=endpoint.base_url)
+    return False
 
 
 def have_speech_to_speech(
@@ -496,7 +523,8 @@ def install_unit_step(
 
 
 #: What each unit's server is called in a sentence.
-SERVERS = {"--llm": "The model server", "--voice": "The voice server"}
+SERVERS = {"--llm": "The model server", "--voice": "The voice server",
+           "--voice-llm": "The voice LLM server"}
 
 
 def warn_removed(report: Steps, flag: str, said: str) -> None:
@@ -539,7 +567,8 @@ def remove_unit(
     flag: str, run_script: Callable[[Sequence[str]], int], *, root: Path,
     platform: str | None = None,
 ) -> str:
-    """Remove the `flag` unit ("--llm" or "--voice"); what became of it, in a clause.
+    """Remove the `flag` unit ("--llm", "--voice" or "--voice-llm"); what became of it, in
+    a clause.
 
     Cancel (SIGTERM, SIGINT) is held off while the uninstaller runs and lands once it has
     finished: a second Cancel arriving now would kill it halfway and keep the very unit it

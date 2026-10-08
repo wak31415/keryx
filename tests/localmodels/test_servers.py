@@ -234,3 +234,261 @@ def test_wait_for_asks_until_it_answers_or_the_time_is_up():
     times = iter([0.0, 5.0, 11.0])
     assert wait_for(endpoint, "realtime", 10, realtime=lambda e: "not yet",
                     sleep=lambda s: None, clock=lambda: next(times)) == "not yet"
+
+
+# --- the voice LLM: where the voice server's words come from --------------------------------
+
+#: An install from before `VOICE_LLM` was a setting: its voice here, its words the local
+#: agent's, under the names it was saved with (`LLM_SERVER_*`).
+LEGACY_HERE = {
+    "VOICE_BASE_URL": "http://127.0.0.1:8765/v1",
+    "VOICE_SERVER_PORT": 8765,
+    "VOICE_SERVER_VOICE": "bf_emma",
+    "VOICE_SERVER_ARGS": "--kokoro_speed 1.1",
+    "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1",
+    "LOCAL_AGENT_MODEL": "qwen3-coder-30b-a3b",
+    "LLM_SERVER_MODEL": "qwen3-coder-30b-a3b",
+    "LLM_SERVER_PORT": 8090,
+}
+#: What that install's voice server was started with before the voice LLM had a source of
+#: its own, byte for byte (taken from the build before it).
+LEGACY_ARGV = [
+    "/bin/s2s", "serve", "--host", "127.0.0.1", "--port", "8765",
+    "--llm_backend", "responses-api", "--responses_api_base_url", "http://127.0.0.1:8090/v1",
+    "--model_name", "qwen3-coder-30b-a3b",
+    "--stt", "parakeet-tdt", "--tts", "kokoro", "--num_pipelines", "2",
+    "--kokoro_voice", "bf_emma", "--kokoro_speed", "1.1",
+]
+
+
+def _stored(config, secrets=None):
+    """Settings read from a store holding `config` and `secrets`, as a unit reads them."""
+    from keryx.config import Settings
+    from keryx.config.files import config_file, dump_toml, secrets_file, write_private
+
+    write_private(config_file(), dump_toml(config))
+    if secrets:
+        write_private(secrets_file(), dump_toml(secrets))
+    return Settings(_env_file=None)
+
+
+@pytest.mark.parametrize("secrets", [None, {"LOCAL_AGENT_API_KEY": "lk-1"}])
+def test_a_legacy_install_starts_its_voice_server_exactly_as_before(secrets):
+    settings = _stored(LEGACY_HERE, {"OPENAI_API_KEY": "sk-owner", **(secrets or {})})
+
+    argv, env = voice_argv(settings, "/bin/s2s")
+
+    assert argv == LEGACY_ARGV
+    assert env == {"OPENAI_API_KEY": "lk-1" if secrets else "keryx-local"}
+
+
+def _flags(argv):
+    return dict(zip(argv[2::2], argv[3::2], strict=False))
+
+
+def test_a_voice_llm_of_its_own_here_is_the_voice_servers_words(settings):
+    """`VOICE_LLM=here`: its own server on `VOICE_LLM_SERVER_PORT`, and no key of anyone's —
+    the local agent's is not lent to it, and the owner's never was."""
+    settings.local_agent_base_url = "http://127.0.0.1:8090/v1"
+    settings.local_agent_model = "qwen3-coder-30b-a3b"
+    settings.local_agent_api_key = "lk-1"
+    settings.openai_api_key = "sk-owner"
+    settings.voice_llm = "here"
+    settings.voice_llm_model = "qwen3.5-4b"
+    settings.voice_llm_server_port = 8092
+
+    argv, env = voice_argv(settings, "/bin/s2s")
+
+    flags = _flags(argv)
+    assert flags["--responses_api_base_url"] == "http://127.0.0.1:8092/v1"
+    assert flags["--model_name"] == "qwen3.5-4b"
+    assert env == {"OPENAI_API_KEY": "keryx-local"}
+    assert "lk-1" not in argv and "sk-owner" not in argv
+
+
+def test_a_remote_voice_llms_key_reaches_the_voice_server_in_its_environment_only(settings):
+    settings.voice_llm = "remote"
+    settings.voice_llm_base_url = "http://gpu-box:11434/v1"
+    settings.voice_llm_model = "qwen3:4b"
+    settings.voice_llm_api_key = "vk-secret"
+    settings.openai_api_key = "sk-owner"
+
+    argv, env = voice_argv(settings, "/bin/s2s")
+
+    flags = _flags(argv)
+    assert flags["--responses_api_base_url"] == "http://gpu-box:11434/v1"
+    assert flags["--model_name"] == "qwen3:4b"
+    assert env == {"OPENAI_API_KEY": "vk-secret"}
+    assert not any("vk-secret" in arg or "sk-owner" in arg for arg in argv)
+
+
+def test_a_remote_voice_llm_elsewhere_is_never_handed_the_owners_openai_key(settings):
+    settings.voice_llm = "remote"
+    settings.voice_llm_base_url = "http://gpu-box:11434/v1"
+    settings.voice_llm_model = "qwen3:4b"
+    settings.openai_api_key = "sk-owner"
+
+    _, env = voice_argv(settings, "/bin/s2s")
+
+    assert env == {"OPENAI_API_KEY": "keryx-local"}
+
+
+def test_openais_own_host_as_the_voice_llm_is_handed_the_owners_key_in_the_environment(settings):
+    settings.voice_llm = "remote"
+    settings.voice_llm_base_url = "https://api.openai.com/v1"
+    settings.voice_llm_model = "gpt-5.4-mini"
+    settings.openai_api_key = "sk-owner"
+
+    argv, env = voice_argv(settings, "/bin/s2s")
+
+    assert _flags(argv)["--responses_api_base_url"] == "https://api.openai.com/v1"
+    assert env == {"OPENAI_API_KEY": "sk-owner"} and "sk-owner" not in argv
+
+
+@pytest.mark.parametrize(("values", "says"), [
+    ({}, "LOCAL_AGENT_BASE_URL"),
+    ({"voice_llm": "here"}, "VOICE_LLM_MODEL"),
+    ({"voice_llm": "remote", "voice_llm_model": "m"}, "VOICE_LLM_BASE_URL"),
+    ({"voice_llm": "remote", "voice_llm_base_url": "http://gpu-box:11434/v1"},
+     "VOICE_LLM_MODEL"),
+])
+def test_a_voice_llm_with_nothing_to_ask_is_no_voice_server(settings, values, says):
+    for name, value in values.items():
+        setattr(settings, name, value)
+    with pytest.raises(ServerConfigError, match=says):
+        voice_argv(settings, "/bin/s2s")
+
+
+@pytest.mark.parametrize(("values", "asked", "named"), [
+    ({"local_agent_base_url": "http://127.0.0.1:8090/v1", "local_agent_model": "m"},
+     "http://127.0.0.1:8090/v1", "the local model server"),
+    ({"voice_llm": "here", "voice_llm_model": "qwen3.5-4b"},
+     "http://127.0.0.1:8091/v1", "the voice LLM server"),
+    ({"voice_llm": "remote", "voice_llm_base_url": "http://gpu-box:11434/v1",
+      "voice_llm_model": "qwen3:4b", "voice_llm_api_key": "vk"},
+     "http://gpu-box:11434/v1", "the voice LLM server"),
+])
+def test_the_voice_server_waits_for_the_voice_llm_it_takes_its_words_from(
+        settings, monkeypatch, capsys, values, asked, named):
+    for name, value in values.items():
+        setattr(settings, name, value)
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: "/bin/s2s")
+    answers = iter([False, True])
+    endpoints: list = []
+    clock, became = Clock(), []
+
+    serve("voice", settings, execvpe=lambda path, argv, env: became.append(argv),
+          words_up=lambda endpoint: endpoints.append(endpoint) or next(answers),
+          sleep=clock.sleep, clock=lambda: clock.now)
+
+    assert [endpoint.base_url for endpoint in endpoints] == [asked, asked]
+    assert became
+    assert f"waiting for {named} at {asked}" in capsys.readouterr().err
+    if values.get("voice_llm_api_key"):  # asked with its own key, as the voice will ask it
+        assert endpoints[0].api_key == "vk"
+
+
+def test_a_voice_llm_here_that_never_answers_says_how_to_start_it(settings, monkeypatch):
+    settings.voice_llm, settings.voice_llm_model = "here", "qwen3.5-4b"
+    monkeypatch.setattr(runtimes, "speech_to_speech", lambda: "/bin/s2s")
+    clock = Clock()
+
+    with pytest.raises(ServerConfigError,
+                       match="the voice LLM server at http://127.0.0.1:8091/v1.*--voice-llm"):
+        serve("voice", settings, execvpe=lambda *args: None, words_up=lambda endpoint: False,
+              sleep=clock.sleep, clock=lambda: clock.now)
+
+
+# --- keryx models serve voice-llm -----------------------------------------------------------
+
+SMALL = by_key("qwen3.5-4b")
+
+
+def test_the_voice_llm_server_serves_its_own_model_on_its_own_port(settings):
+    path = model_path(settings.cache_dir, SMALL)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"gguf")
+    settings.voice_llm_model = SMALL.key
+    settings.voice_llm_server_port = 8092
+
+    argv = servers.voice_llm_argv(settings, "/bin/llama-server")
+
+    flags = dict(zip(argv[1::2], argv[2::2], strict=False))
+    assert flags["--model"] == str(path) and flags["--alias"] == SMALL.key
+    assert flags["--host"] == "127.0.0.1" and flags["--port"] == "8092"
+    assert flags["--ctx-size"] == str(SMALL.context)  # its whole context: none is cut
+    assert argv[-1] == "--jinja"
+
+
+def test_the_voice_llm_server_is_the_model_servers_command_line_with_its_model_and_port(
+        settings, downloaded, tmp_path):
+    """One command line for both llama.cpp servers: only the model and the port differ, and
+    the agent's is exactly what it was."""
+    own = tmp_path / "voice.gguf"
+    own.write_bytes(b"gguf")
+    settings.voice_llm_model = str(own)
+
+    agent = llm_argv(settings, "/bin/llama-server")
+    words = servers.voice_llm_argv(settings, "/bin/llama-server")
+
+    assert agent == [
+        "/bin/llama-server", "--model", str(downloaded), "--alias", CODER.key,
+        "--host", "127.0.0.1", "--port", "8090",
+        "--n-gpu-layers", "999", "--ctx-size", str(CODER.context), "--jinja",
+    ]
+    # A GGUF of the voice's own is served under the name the voice asks for: the setting.
+    assert words == [
+        "/bin/llama-server", "--model", str(own), "--alias", str(own),
+        "--host", "127.0.0.1", "--port", "8091",
+        "--n-gpu-layers", "999", "--ctx-size", str(servers.DEFAULT_CONTEXT), "--jinja",
+    ]
+    assert settings.model_copy(update={"voice_llm": "here"}).voice_llm_endpoint.model == str(own)
+
+
+@pytest.mark.parametrize(
+    ("value", "says"),
+    [(None, "VOICE_LLM_MODEL is not set"), ("qwen3.5-4b", "keryx models pull qwen3.5-4b"),
+     ("/no/such.gguf", "is the path right")],
+)
+def test_what_the_voice_llm_server_is_missing_is_said(settings, value, says):
+    settings.voice_llm_model = value
+    with pytest.raises(ServerConfigError, match=says):
+        servers.voice_llm_argv(settings, "/bin/llama-server")
+
+
+def test_serve_becomes_the_voice_llm_server(settings, monkeypatch):
+    path = model_path(settings.cache_dir, SMALL)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"gguf")
+    settings.voice_llm_model = SMALL.key
+    monkeypatch.setattr(runtimes, "llama_server", lambda cache: "/bin/llama-server")
+    became: list = []
+
+    serve("voice-llm", settings,
+          execvpe=lambda path, argv, env: became.append((path, argv, env)))
+
+    [(binary, argv, env)] = became
+    assert binary == "/bin/llama-server" and "--port" in argv
+    assert argv[argv.index("--port") + 1] == "8091"
+    assert env["PATH"] == os.environ["PATH"]
+
+
+def test_the_voice_llm_server_is_served_whatever_the_source_says(settings, monkeypatch):
+    """Its unit is started, and seen to answer, before `VOICE_LLM=here` is saved: `serve`
+    asks only for its model."""
+    path = model_path(settings.cache_dir, SMALL)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"gguf")
+    settings.voice_llm, settings.voice_llm_model = "shared", SMALL.key
+    monkeypatch.setattr(runtimes, "llama_server", lambda cache: "/bin/llama-server")
+    became: list = []
+
+    serve("voice-llm", settings, execvpe=lambda *args: became.append(args))
+
+    assert became
+
+
+def test_no_llama_server_is_no_voice_llm_server(settings, monkeypatch):
+    monkeypatch.setattr(runtimes, "llama_server", lambda cache: None)
+    with pytest.raises(ServerConfigError, match="llama-server is not installed"):
+        serve("voice-llm", settings, execvpe=lambda *args: None)

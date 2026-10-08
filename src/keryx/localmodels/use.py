@@ -27,10 +27,13 @@ from keryx.restart.service import ServiceTarget
 
 #: How long a loopback server may take to answer whether it is up.
 REACH_TIMEOUT_S = 1.0
-#: Each server's unit, by service manager: what `scripts/install-*.sh --llm|--voice` install.
+#: Each server's unit, by service manager: what `scripts/install-*.sh --llm|--voice|
+#: --voice-llm` install. `keryx.units` lists them beside Keryx's own.
 UNITS = {
-    "launchd": {"llm": "dev.keryx.llm", "voice": "dev.keryx.voice"},
-    "systemd": {"llm": "keryx-llm.service", "voice": "keryx-voice.service"},
+    "launchd": {"llm": "dev.keryx.llm", "voice": "dev.keryx.voice",
+                "voice_llm": "dev.keryx.voice-llm"},
+    "systemd": {"llm": "keryx-llm.service", "voice": "keryx-voice.service",
+                "voice_llm": "keryx-voice-llm.service"},
 }
 
 
@@ -160,7 +163,8 @@ def unit_installed(
     platform: str = sys.platform,
     is_installed: Callable[[ServiceTarget], bool] | None = None,
 ) -> bool:
-    """Whether the service manager knows the `kind` ("llm" or "voice") server's unit."""
+    """Whether the service manager knows the `kind` ("llm", "voice" or "voice_llm")
+    server's unit."""
     if platform == "darwin":
         manager = "launchd"
     elif platform.startswith("linux"):

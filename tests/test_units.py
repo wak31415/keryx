@@ -1,4 +1,4 @@
-"""`keryx service`: the four units as the service manager finds them, and installing or
+"""`keryx service`: the five units as the service manager finds them, and installing or
 removing them through the checkout's installer — every manager and script faked."""
 
 import pytest
@@ -33,10 +33,12 @@ def test_launchd_units_are_asked_by_their_labels():
         "tunnel": {"installed": True, "active": False},
         "llm": {"installed": True, "active": True},
         "voice": {"installed": False, "active": False},
+        "voice_llm": {"installed": False, "active": False},
     }}
     assert {target.manager for target in asked} == {"launchd"}
     assert [target.unit for target in asked] == [
-        "dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.llm", "dev.keryx.voice"]
+        "dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.llm", "dev.keryx.voice",
+        "dev.keryx.voice-llm"]
 
 
 def test_systemd_units_and_a_renamed_agent_unit():
@@ -48,7 +50,8 @@ def test_systemd_units_and_a_renamed_agent_unit():
 
     assert document["manager"] == "systemd"
     assert [target.unit for target in asked] == [
-        "mine.service", "cloudflared.service", "keryx-llm.service", "keryx-voice.service"]
+        "mine.service", "cloudflared.service", "keryx-llm.service", "keryx-voice.service",
+        "keryx-voice-llm.service"]
     assert all(unit == {"installed": False, "active": False}
                for unit in document["units"].values())
 
@@ -101,6 +104,34 @@ def test_the_installer_is_run_with_its_flags(tmp_path, llm, voice, uninstall, fl
 
     assert outcome == units.Outcome(0, said)
     assert script.ran == [[str(root / "scripts" / "install-launchd.sh"), *flags]]
+
+
+@pytest.mark.parametrize(("platform", "script", "said"), [
+    ("darwin", "install-launchd.sh", "removed dev.keryx.voice-llm"),
+    ("linux", "install-systemd.sh", "removed keryx-voice-llm.service"),
+])
+def test_the_voice_llms_unit_is_removed_through_the_installer(tmp_path, platform, script, said):
+    root, run = checkout(tmp_path / "checkout"), Script()
+
+    outcome = units.install(voice_llm=True, uninstall=True, root=root, platform=platform,
+                            run=run)
+
+    assert outcome == units.Outcome(0, said)
+    assert run.ran == [[str(root / "scripts" / script), "--voice-llm", "--uninstall"]]
+
+
+def test_the_units_table_is_the_one_list_of_units():
+    """`keryx service`, the model servers' own probes and anything that walks every unit
+    read one table: a unit added to it is a unit everywhere."""
+    from keryx.localmodels.use import UNITS
+
+    assert units.KINDS == ("agent", "tunnel", "llm", "voice", "voice_llm")
+    for manager in ("launchd", "systemd"):
+        assert set(units.NAMES[manager]) == set(units.KINDS)
+        assert set(UNITS[manager]) == {"llm", "voice", "voice_llm"}
+        assert {units.NAMES[manager][kind] for kind in UNITS[manager]} == set(
+            UNITS[manager].values())
+    assert units.FLAGS == {"--llm": "llm", "--voice": "voice", "--voice-llm": "voice_llm"}
 
 
 def test_a_failed_install_says_the_scripts_last_error_line(tmp_path):

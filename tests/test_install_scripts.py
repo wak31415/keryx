@@ -406,9 +406,67 @@ def test_the_local_launch_agents_parse_and_run_keryx_models_serve(machine):
     assert not (agents / "dev.keryx.agent.plist").exists()
 
 
+def test_the_voice_llms_own_unit_runs_keryx_models_serve_voice_llm_under_systemd(machine):
+    configure(machine)  # no PUBLIC_HOST: like the other model servers, nothing of the tunnel's
+    units = machine["home"] / ".config" / "systemd" / "user"
+
+    run("install-systemd.sh", machine, "--voice-llm")
+
+    text = (units / "keryx-voice-llm.service").read_text()
+    assert not PLACEHOLDER.search(text), text
+    assert "keryx models serve voice-llm" in text
+    assert "keryx-voice-llm.err.log" in text
+    assert f'Environment="KERYX_HOME={machine["keryx_home"]}"' in text
+    assert {path.name for path in units.iterdir()} == {"keryx-voice-llm.service"}
+    calls = machine["calls"].read_text()
+    assert "systemctl --user restart keryx-voice-llm.service" in calls
+    assert "cloudflared" not in calls
+
+    run("install-systemd.sh", machine, "--voice-llm", "--uninstall")
+    assert not (units / "keryx-voice-llm.service").exists()
+    assert "disable --now keryx-voice-llm.service" in machine["calls"].read_text()
+
+
+def test_the_voice_server_starts_after_either_model_server_it_may_take_its_words_from():
+    text = (SOURCE / "ops" / "systemd" / "keryx-voice.service").read_text()
+    assert "After=keryx-llm.service keryx-voice-llm.service" in text
+
+
+def test_the_voice_llms_own_launch_agent_parses_and_runs_keryx_models_serve_voice_llm(machine):
+    configure(machine)
+    agents = machine["home"] / "Library" / "LaunchAgents"
+
+    run("install-launchd.sh", machine, "--voice-llm")
+
+    plist = plistlib.loads((agents / "dev.keryx.voice-llm.plist").read_bytes())
+    assert plist["Label"] == "dev.keryx.voice-llm"
+    assert plist["ProgramArguments"][-3:] == ["models", "serve", "voice-llm"]
+    assert plist["EnvironmentVariables"]["PATH"] == machine["env"]["PATH"]
+    assert plist["EnvironmentVariables"]["KERYX_HOME"] == str(machine["keryx_home"])
+    assert plist["StandardErrorPath"].endswith("/keryx-voice-llm.err.log")
+    assert {path.name for path in agents.iterdir()} == {"dev.keryx.voice-llm.plist"}
+    assert "launchctl bootstrap" in machine["calls"].read_text()
+
+    run("install-launchd.sh", machine, "--uninstall", "--voice-llm")
+    assert not (agents / "dev.keryx.voice-llm.plist").exists()
+    assert "bootout gui/" in machine["calls"].read_text()
+
+
+def test_every_unit_keryx_service_names_has_a_template():
+    """The units table and the templates the installers render are one set of names."""
+    from keryx import units
+
+    for kind in units.KINDS:
+        if kind in ("agent", "tunnel"):
+            continue
+        assert (SOURCE / "ops" / "launchd" / f"{units.NAMES['launchd'][kind]}.plist").is_file()
+        assert (SOURCE / "ops" / "systemd" / units.NAMES["systemd"][kind]).is_file()
+
+
 def test_an_unknown_installer_flag_is_refused(machine):
     result = subprocess.run(
         [BASH, str(machine["repo"] / "scripts" / "install-systemd.sh"), "--gpu"],
         env=machine["env"], capture_output=True, text=True, timeout=60, check=False,
     )
     assert result.returncode == 2 and "--llm" in result.stderr
+    assert "--voice-llm" in result.stderr

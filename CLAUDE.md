@@ -478,12 +478,19 @@ OpenAI-compatible client describes one. Five rulings:
   spoken PIN included, to whoever is there, and a mode or a voice-LLM source can send the
   same audio or the same words elsewhere without an address changing; a flag could bind the
   unauthenticated voice server beyond 127.0.0.1.
-- **The servers on this machine are the settings' to describe.** The `keryx-llm` and
-  `keryx-voice` units run `keryx models serve llm|voice`, which builds the command line from
-  `AGENT_SERVER_*` / `VOICE_SERVER_*` and `exec`s it, so no unit holds a model, a port or a voice.
-  Both bind 127.0.0.1. The voice server's words come from the local agent's model, and its key
-  goes in the child's `OPENAI_API_KEY` in place of the owner's — never on argv. Setup saves
-  `VOICE_BASE_URL` only after the server has answered a Realtime handshake.
+- **The servers on this machine are the settings' to describe.** The `keryx-llm`,
+  `keryx-voice` and `keryx-voice-llm` units run `keryx models serve llm|voice|voice-llm`,
+  which builds the command line from `AGENT_SERVER_*` / `VOICE_SERVER_*` / `VOICE_LLM_*` and
+  `exec`s it, so no unit holds a model, a port or a voice. All bind 127.0.0.1; the two
+  llama.cpp ones are one `llm_argv` with a model and a port passed in. The voice server's
+  words come from the voice LLM (`Settings.voice_llm_endpoint`, by `VOICE_LLM`: the local
+  agent's while `shared`, which is byte-identical to before it was a setting, its own unit's
+  with `here`, an address with `remote`), and it waits for that server, and `voice use here`
+  refuses while it does not answer. Its key goes in the child's `OPENAI_API_KEY` in place of
+  the owner's — never on argv. Setup saves `VOICE_BASE_URL` only after the server has
+  answered a Realtime handshake. `units.KINDS` (with `localmodels.use.UNITS`) is the one list
+  of units; `service install` refuses each model server's, which the command that starts and
+  checks it installs.
 - **`OPENAI_API_KEY` is optional.** It is the voice only while the voice is OpenAI's
   (`Settings.voice_refusal`, which `serve` asks, refuses each mode for its own missing
   setting); otherwise it buys the voice model's `web_search` (the Responses API — no local

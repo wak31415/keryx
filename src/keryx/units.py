@@ -1,6 +1,7 @@
-"""`keryx service`: Keryx's four units — itself, its tunnel, the model server and the voice
-server — as the service manager finds them, and installing or removing them through the
-checkout's own installer, so the Mac app needs no terminal for either.
+"""`keryx service`: Keryx's five units — itself, its tunnel, the model server, the voice
+server and the voice LLM's own server — as the service manager finds them, and installing or
+removing them through the checkout's own installer, so the Mac app needs no terminal for
+either.
 
 The units are asked about through `restart.service`'s probes, which only ask; the installers
 are `scripts/install-launchd.sh` and `install-systemd.sh`, found by `localmodels.voice`'s
@@ -26,8 +27,11 @@ from keryx.restart.service import LAUNCHD_LABEL, SYSTEMD_UNIT, ServiceTarget
 #: which gives its own installer runs the same deadline.
 INSTALL_TIMEOUT_S = voice_setup.INSTALL_TIMEOUT_S
 TIMED_OUT = voice_setup.TIMED_OUT
-#: The units, in the order `keryx service` lists them.
-KINDS = ("agent", "tunnel", "llm", "voice")
+#: The units, in the order `keryx service` lists them: the one list of them, which
+#: anything that walks every unit reads.
+KINDS = ("agent", "tunnel", "llm", "voice", "voice_llm")
+#: The installers' flag for each model server's unit, and the unit it is.
+FLAGS = {"--llm": "llm", "--voice": "voice", "--voice-llm": "voice_llm"}
 #: Each unit's name, by service manager: what `scripts/install-*.sh` installs (the agent's
 #: is `SERVICE_UNIT` when that is set).
 NAMES = {
@@ -115,15 +119,18 @@ def install(
     settings: Settings | None = None,
     llm: bool = False,
     voice: bool = False,
+    voice_llm: bool = False,
     uninstall: bool = False,
     root: Path,
     platform: str | None = None,
     run: Callable[[Sequence[str]], tuple[int, str, str]] = run_captured,
 ) -> Outcome:
-    """Install (or, with `uninstall`, remove) Keryx and its tunnel, or with `llm`/`voice`
-    the model servers' units, through the checkout at `root`. 2 for no installer here —
-    no checkout, no service manager — 1 with the script's last error line, 0 when done."""
-    flags = [flag for flag, on in (("--llm", llm), ("--voice", voice)) if on]
+    """Install (or, with `uninstall`, remove) Keryx and its tunnel, or with `llm`/`voice`/
+    `voice_llm` the model servers' units, through the checkout at `root`. 2 for no
+    installer here — no checkout, no service manager — 1 with the script's last error
+    line, 0 when done."""
+    chosen = {"llm": llm, "voice": voice, "voice_llm": voice_llm}
+    flags = [flag for flag, kind in FLAGS.items() if chosen[kind]]
     script, problem = installer(" ".join(flags), root=root, platform=platform)
     if script is None:
         return Outcome(REFUSED, problem or "no installer")
@@ -132,7 +139,7 @@ def install(
     if code != 0:
         return Outcome(FAILED, _last_line(err) or f"{script.name} {' '.join(argv[1:])} exited "
                                                   f"with {code}")
-    kinds = [flag.removeprefix("--") for flag in flags] or ["agent", "tunnel"]
+    kinds = [FLAGS[flag] for flag in flags] or ["agent", "tunnel"]
     found = "launchd" if script.name == "install-launchd.sh" else "systemd"
     settings = settings or Settings()
     names = ", ".join(unit_name(settings, found, kind) for kind in kinds)

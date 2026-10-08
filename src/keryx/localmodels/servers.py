@@ -1,12 +1,19 @@
-"""The two servers' command lines, built from the settings: `keryx models serve llm|voice`.
+"""The three servers' command lines, built from the settings: `keryx models serve llm|voice|
+voice-llm`.
 
-The units `scripts/install-systemd.sh --llm|--voice` (and the launchd ones) install run
-`keryx models serve …`, which reads the settings and becomes the server (`exec`). So a unit
-never holds a model path, a port or a voice — change one with `keryx config set` and restart
-the unit — and the command line is written once, here, where it is tested.
+The units `scripts/install-systemd.sh --llm|--voice|--voice-llm` (and the launchd ones)
+install run `keryx models serve …`, which reads the settings and becomes the server (`exec`).
+So a unit never holds a model path, a port or a voice — change one with `keryx config set`
+and restart the unit — and the command line is written once, here, where it is tested.
 
-Both bind 127.0.0.1. A server for other machines to use is one of your own, reached by its
-address (`LOCAL_AGENT_BASE_URL`, `VOICE_BASE_URL`), behind Tailscale or a key.
+Two are llama.cpp, one command line with a model and a port passed in (`llm_argv`): the
+local agent's (`AGENT_SERVER_*`) and the voice LLM's own (`VOICE_LLM_MODEL`,
+`VOICE_LLM_SERVER_PORT`). The voice server takes its words from whichever the voice LLM is
+(`Settings.voice_llm_endpoint`): the agent's, its own, or one elsewhere.
+
+All bind 127.0.0.1. A server for other machines to use is one of your own, reached by its
+address (`LOCAL_AGENT_BASE_URL`, `VOICE_BASE_URL`, `VOICE_LLM_BASE_URL`), behind Tailscale
+or a key.
 """
 
 import os
@@ -46,14 +53,27 @@ class ServerConfigError(RuntimeError):
     """What is missing before a server can start, in a sentence."""
 
 
-def llm_model(settings: Settings) -> tuple[str, Path, int]:
-    """`AGENT_SERVER_MODEL` as (the id it is served as, its file, its context)."""
-    value = settings.agent_server_model
+#: The kinds `serve` becomes, as `keryx models serve` and the units name them.
+KINDS = ("llm", "voice", "voice-llm")
+#: Who the voice server waits for, by `VOICE_LLM`, and what starts it, in a sentence.
+WORDS_SERVERS = {
+    "shared": ("the local model server", "`keryx models start` starts it"),
+    "here": ("the voice LLM server", "`keryx models start --voice-llm` starts it"),
+    "remote": ("the voice LLM server", "is it up, and is VOICE_LLM_BASE_URL right?"),
+}
+
+
+def gguf(
+    value: str | None, setting: str, cache_dir: Path, *, unset: str
+) -> tuple[str, Path, int]:
+    """A catalog name or a GGUF's path, as (the id it is served as, its file, its context):
+    a catalog model under its name, a GGUF of your own under its stem. `setting` and
+    `unset` say what to do while `value` is blank."""
     if not value:
-        raise ServerConfigError("AGENT_SERVER_MODEL is not set — `keryx setup` picks one")
+        raise ServerConfigError(f"{setting} is not set — {unset}")
     entry = by_key(value)
     if entry is not None:
-        path, alias, context = model_path(settings.cache_dir, entry), entry.key, entry.context
+        path, alias, context = model_path(cache_dir, entry), entry.key, entry.context
     else:
         path = Path(value).expanduser()
         alias, context = path.stem, DEFAULT_CONTEXT
@@ -63,37 +83,82 @@ def llm_model(settings: Settings) -> tuple[str, Path, int]:
     return alias, path, context
 
 
-def llm_argv(settings: Settings, binary: str) -> list[str]:
-    """`llama-server` serving `AGENT_SERVER_MODEL` on this machine, every layer on the GPU."""
-    alias, path, context = llm_model(settings)
+def llm_model(settings: Settings) -> tuple[str, Path, int]:
+    """`AGENT_SERVER_MODEL` as (the id it is served as, its file, its context)."""
+    return gguf(settings.agent_server_model, "AGENT_SERVER_MODEL", settings.cache_dir,
+                unset="`keryx setup` picks one")
+
+
+def voice_llm_model(settings: Settings) -> tuple[str, Path, int]:
+    """`VOICE_LLM_MODEL` as (the id it is served as, its file, its context). The id is the
+    setting itself, a GGUF's path included: it is the name the voice asks for
+    (`Settings.voice_llm_endpoint`), and nothing else writes a second name down. Its whole
+    context, as the agent's: none is cut for the voice."""
+    _alias, path, context = gguf(settings.voice_llm_model, "VOICE_LLM_MODEL",
+                                 settings.cache_dir,
+                                 unset="`keryx voice llm here MODEL` picks one")
+    assert settings.voice_llm_model  # gguf refuses a blank one
+    return settings.voice_llm_model, path, context
+
+
+def llm_argv(
+    settings: Settings, binary: str, *, model: tuple[str, Path, int] | None = None,
+    port: int | None = None,
+) -> list[str]:
+    """`llama-server` serving `model` (`llm_model`'s shape; the agent's unless a caller says)
+    on `port` (`AGENT_SERVER_PORT` unless a caller says) on this machine, every layer on the
+    GPU."""
+    alias, path, context = model or llm_model(settings)
+    port = settings.agent_server_port if port is None else port
     return [
         binary, "--model", str(path), "--alias", alias,
-        "--host", HOST, "--port", str(settings.agent_server_port),
+        "--host", HOST, "--port", str(port),
         "--n-gpu-layers", "999", "--ctx-size", str(context), "--jinja",
     ]
 
 
-def voice_argv(settings: Settings, binary: str) -> tuple[list[str], dict[str, str]]:
-    """speech-to-speech on this machine, its words from the local agent's model, and the
-    environment it needs: that server's key, in place of whatever `OPENAI_API_KEY` this
-    process has — the owner's real one must never reach a local server."""
-    words = settings.local_agent_endpoint
-    if words is None or not words.model:
+def voice_llm_argv(settings: Settings, binary: str) -> list[str]:
+    """`llama-server` serving `VOICE_LLM_MODEL` on `VOICE_LLM_SERVER_PORT`: the agent's
+    command line with the voice's model and port."""
+    return llm_argv(settings, binary, model=voice_llm_model(settings),
+                    port=settings.voice_llm_server_port)
+
+
+def words(settings: Settings) -> Endpoint:
+    """The voice LLM the voice server takes its words from (`Settings.voice_llm_endpoint`);
+    `ServerConfigError` naming what is missing when there is none, or it names no model."""
+    endpoint = settings.voice_llm_endpoint
+    if endpoint is not None and endpoint.model:
+        return endpoint
+    if settings.voice_llm == "shared":
         raise ServerConfigError(
             "the voice server takes its words from the local model: set LOCAL_AGENT_BASE_URL "
             "and LOCAL_AGENT_MODEL first (`keryx setup`)"
         )
+    missing = "VOICE_LLM_BASE_URL" if endpoint is None else "VOICE_LLM_MODEL"
+    raise ServerConfigError(
+        f"the voice server takes its words from the voice LLM ({settings.voice_llm}): set "
+        f"{missing} first (`keryx setup`)"
+    )
+
+
+def voice_argv(settings: Settings, binary: str) -> tuple[list[str], dict[str, str]]:
+    """speech-to-speech on this machine, its words from the voice LLM (`words`), and the
+    environment it needs: that server's key (`Endpoint.bearer`), in place of whatever
+    `OPENAI_API_KEY` this process has, and never on argv. The owner's own reaches it only
+    for a voice LLM on OpenAI's host (`Settings.voice_llm_key`)."""
+    llm = words(settings)
     argv = [
         binary, "serve", "--host", HOST, "--port", str(settings.voice_server_port),
-        "--llm_backend", "responses-api", "--responses_api_base_url", words.base_url,
-        "--model_name", words.model,
+        "--llm_backend", "responses-api", "--responses_api_base_url", llm.base_url,
+        "--model_name", llm.model,
         "--stt", settings.voice_server_stt, "--tts", settings.voice_server_tts,
         "--num_pipelines", str(VOICE_PIPELINES),
     ]
     if settings.voice_server_tts == "kokoro":
         argv += ["--kokoro_voice", settings.voice_server_voice]
     argv += shlex.split(settings.voice_server_args)
-    return argv, {"OPENAI_API_KEY": words.bearer}
+    return argv, {"OPENAI_API_KEY": llm.bearer}
 
 
 def serve(
@@ -105,16 +170,19 @@ def serve(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> NoReturn:
-    """Become the `kind` server ("llm" or "voice"); `ServerConfigError` when it cannot.
+    """Become the `kind` server (`KINDS`); `ServerConfigError` when it cannot.
 
     The voice server first waits for its words (`wait_for_words`): at login its unit and the
-    model server's load together, and speech-to-speech would crash on its first request for
-    words, again and again under KeepAlive, until llama.cpp had loaded its model."""
-    if kind == "llm":
+    voice LLM's server load together, and speech-to-speech would crash on its first request
+    for words, again and again under KeepAlive, until llama.cpp had loaded its model. The
+    voice LLM's own server asks only for its model, whatever `VOICE_LLM` says: it is started,
+    and seen to answer, before that is saved."""
+    if kind in ("llm", "voice-llm"):
         binary = runtimes.llama_server(settings.cache_dir)
         if binary is None:
             raise ServerConfigError("llama-server is not installed — `keryx setup` installs it")
-        argv, env = llm_argv(settings, binary), {}
+        argv = llm_argv(settings, binary) if kind == "llm" else voice_llm_argv(settings, binary)
+        env: dict[str, str] = {}
     elif kind == "voice":
         binary = runtimes.speech_to_speech()
         if binary is None:
@@ -122,13 +190,13 @@ def serve(
                 "speech-to-speech is not installed — `keryx setup` installs it"
             )
         argv, env = voice_argv(settings, binary)
-        words = settings.local_agent_endpoint
-        assert words is not None  # voice_argv refuses without one
         if words_up is None:
             from keryx.localmodels.voice import words_up  # it imports this module
-        wait_for_words(words, up=words_up, sleep=sleep, clock=clock)
+        name, hint = WORDS_SERVERS[settings.voice_llm]
+        wait_for_words(words(settings), up=words_up, sleep=sleep, clock=clock,
+                       name=name, hint=hint)
     else:
-        raise ServerConfigError(f"there is no {kind} server: llm or voice")
+        raise ServerConfigError(f"there is no {kind} server: {', '.join(KINDS)}")
     execvpe(argv[0], argv, {**os.environ, **env})
 
 
@@ -138,20 +206,22 @@ def wait_for_words(
     up: Callable[[Endpoint], bool],
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    name: str = WORDS_SERVERS["shared"][0],
+    hint: str = WORDS_SERVERS["shared"][1],
 ) -> None:
-    """Return once the server the voice server takes its words from answers, asking every
-    `WORDS_POLL_S` for up to `WORDS_WAIT_S`; `ServerConfigError` when it never does. Said
-    once on stderr, the voice server's log, while it waits."""
+    """Return once the server the voice server takes its words from (`name`) answers, asking
+    every `WORDS_POLL_S` for up to `WORDS_WAIT_S`; `ServerConfigError`, ending in `hint`,
+    when it never does. Said once on stderr, the voice server's log, while it waits."""
     deadline = clock() + WORDS_WAIT_S
     said = False
     while not up(words):
         if clock() >= deadline:
             raise ServerConfigError(
-                f"waiting for the local model server at {words.base_url}: it did not answer "
-                f"within {WORDS_WAIT_S:g} s — `keryx models start` starts it"
+                f"waiting for {name} at {words.base_url}: it did not answer "
+                f"within {WORDS_WAIT_S:g} s — {hint}"
             )
         if not said:
-            print(f"waiting for the local model server at {words.base_url} before starting "
+            print(f"waiting for {name} at {words.base_url} before starting "
                   "the voice server", file=sys.stderr, flush=True)
             said = True
         sleep(WORDS_POLL_S)

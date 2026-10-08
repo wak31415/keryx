@@ -4,8 +4,8 @@
 #
 #   scripts/install-launchd.sh              # render the templates and load both agents
 #   scripts/install-launchd.sh --uninstall  # unload both agents and delete the plists
-#   scripts/install-launchd.sh --llm --voice  # the local model servers instead (either one;
-#                                             # with --uninstall, remove them)
+#   scripts/install-launchd.sh --llm --voice --voice-llm  # the local model servers instead
+#                                   # (any of them; with --uninstall, remove them)
 #
 # The templates in ops/launchd/ carry __PLACEHOLDER__ names; this script fills them in
 # from `command -v` and `keryx config get`, writes the result to ~/Library/LaunchAgents/, and hands them
@@ -37,17 +37,18 @@ remove_agents() {
 }
 
 parse_install_args "$@"
-if (( LLM || VOICE )); then
+if (( LLM || VOICE || VOICE_LLM )); then
   LABELS=()
   (( LLM )) && LABELS+=(dev.keryx.llm)
   (( VOICE )) && LABELS+=(dev.keryx.voice)
+  (( VOICE_LLM )) && LABELS+=(dev.keryx.voice-llm)
 fi
 if (( UNINSTALL )); then
   remove_agents "${LABELS[@]}"
   exit 0
 fi
 
-if (( LLM || VOICE )); then
+if (( LLM || VOICE || VOICE_LLM )); then
   # The local model servers: no tunnel, no public host. `keryx models serve` reads the rest.
   require_command UV uv "https://docs.astral.sh/uv/"
   make_dirs "$AGENTS"
