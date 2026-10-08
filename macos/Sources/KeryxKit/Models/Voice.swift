@@ -111,8 +111,9 @@ public struct VoiceLLMChosen: StreamDone {
     }
 
     public init?(event: [String: Any]) {
-        guard let source = event["source"] as? String,
-              let restarted = MigrationDone.boolean(event["voice_restarted"]),
+        // `voice_restarted` came a round after the rest: missing, it is false; there, a boolean.
+        let restarted = event["voice_restarted"].map(MigrationDone.boolean) ?? false
+        guard let source = event["source"] as? String, let restarted,
               let needed = MigrationDone.boolean(event["voice_restart_needed"]) else { return nil }
         self.init(source: source, model: event["model"] as? String, url: event["url"] as? String,
                   voiceRestarted: restarted, voiceRestartNeeded: needed)

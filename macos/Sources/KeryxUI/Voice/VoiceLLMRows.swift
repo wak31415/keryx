@@ -49,6 +49,8 @@ struct VoiceLLMRows: View {
             Text("LLM")
             Text(VoiceLLMWording.caption(chosen, inUse: voice.llmSource))
         }
+        // Leaving with a server elsewhere typed in commits it, as a field does on losing focus.
+        .onDisappear { commitRemote() }
         switch chosen {
         case .shared: sharedRows
         case .here: hereRows
@@ -151,6 +153,7 @@ struct VoiceLLMRows: View {
         let busy = model.voiceLLMRun.isBusy
         LabeledContent {
             TextField("Address", text: $address, prompt: Text("https://api.openai.com/v1"))
+                .onSubmit { commitRemote() }
                 .labelsHidden()
                 .textFieldStyle(.roundedBorder)
                 .multilineTextAlignment(.leading)
@@ -162,6 +165,7 @@ struct VoiceLLMRows: View {
         }
         LabeledContent {
             TextField("Model", text: $remoteModel, prompt: Text("gpt-5-mini"))
+                .onSubmit { commitRemote() }
                 .labelsHidden()
                 .textFieldStyle(.roundedBorder)
                 .multilineTextAlignment(.leading)
@@ -249,14 +253,16 @@ struct VoiceLLMRows: View {
 
     /// The source on screen is the one in use, as it is set.
     private func inUse(_ chosen: VoiceLLMSource) -> Bool {
-        guard chosen == voice.llmSource else { return false }
-        switch choice(chosen) {
-        case .shared?: return true
-        case let .here(name)?: return name == voice.llm?.model
-        case let .remote(url, name, key)?:
-            return VoiceLLMWording.sameAddress(url, voice.llm?.url) && name == voice.llm?.model && key == .stored
-        case nil: return false
-        }
+        guard chosen == voice.llmSource, let choice = choice(chosen) else { return false }
+        return VoiceLLMWording.inUse(choice, voice: voice)
+    }
+
+    /// Return in a remote field, or leaving the screen with one typed in: Check and Use, when
+    /// Remote or Cloud is picked, both fields are filled and they are not what is in use.
+    private func commitRemote() {
+        let chosen = picked ?? voice.llmSource
+        guard chosen == .remote, let choice = choice(.remote), !inUse(.remote), model.canChangeVoiceLLM else { return }
+        start(choice)
     }
 
     private func start(_ choice: VoiceLLMChoice) {
@@ -349,28 +355,29 @@ struct VoiceLLMRows: View {
         }
     }
 
-    /// The models a server of its own may run: those that fit this Mac (the CLI's `fits`),
-    /// then the one in use when it does not.
+    /// The models a server of its own may run: the catalog, smallest first. Which fit is the
+    /// CLI's to say (`fits_with_voice_llm`, marked in `menuTitle`); the agent's `fits` answers
+    /// another question and is never read here.
     static func choices(_ models: [CatalogModel], current: String?) -> [CatalogModel] {
-        let fitting = models.filter(\.fits).sorted { $0.needsGb < $1.needsGb }
-        guard let current, !fitting.contains(where: { $0.name == current }),
-              let entry = models.first(where: { $0.name == current }) else { return fitting }
-        return fitting + [entry]
+        models.sorted { $0.needsGb < $1.needsGb }
     }
 
-    /// "Qwen3.5 4B — Recommended", "… — Downloaded".
+    /// "Qwen3.5 4B — Recommended, Fits", "… — Downloaded": the CLI's recommendation, its
+    /// `fits_with_voice_llm` (no mark from a CLI without it), and whether it is on disk.
     static func menuTitle(_ entry: CatalogModel, recommended: String?) -> String {
-        let marks = [entry.name == recommended ? "Recommended" : nil, entry.downloaded ? "Downloaded" : nil]
-            .compactMap { $0 }
+        let marks = [entry.name == recommended ? "Recommended" : nil, entry.fitsWithVoiceLlm == true ? "Fits" : nil,
+                     entry.downloaded ? "Downloaded" : nil].compactMap { $0 }
         return marks.isEmpty ? entry.title : "\(entry.title) — \(marks.joined(separator: ", "))"
     }
 
-    /// Under the model's title: what choosing it does.
+    /// Under the model's title: what choosing it does, and — when the CLI says — that it
+    /// fits beside the agent's model and the speech models.
     static func hereCaption(_ entry: CatalogModel?) -> String {
         guard let entry else { return "A small model of its own answers fastest" }
         let memory = "needs about \(Formatting.gigabytes(entry.needsGb)) of memory"
-        return entry.downloaded ? "Downloaded; \(memory)"
-            : "\(Formatting.gigabytes(entry.sizeGb)) to download; \(memory)"
+        let fit = entry.fitsWithVoiceLlm == true ? ", and fits" : entry.fitsWithVoiceLlm == false ? ", more than is free" : ""
+        return (entry.downloaded ? "Downloaded; \(memory)" : "\(Formatting.gigabytes(entry.sizeGb)) to download; \(memory)")
+            + fit
     }
 
     /// The voice LLM's own server, in a few words.
@@ -383,6 +390,19 @@ struct VoiceLLMRows: View {
     static func remoteState(_ llm: VoiceLLMStatus) -> (tone: StatusDot.Tone, text: String)? {
         guard let reachable = llm.reachable else { return nil }
         return reachable ? (.ok, "Answering") : (.error, "Not answering")
+    }
+
+    /// `choice` is what the voice uses now, working: the same source, the same model, its
+    /// own server serving it (else Use This Model is the way to download and start it), the
+    /// same address with the key kept. A typed or removed key is a change.
+    static func inUse(_ choice: VoiceLLMChoice, voice: VoiceStatus) -> Bool {
+        guard source(choice) == voice.llmSource else { return false }
+        switch choice {
+        case .shared: return true
+        case let .here(name): return name == voice.llm?.model && voice.llm?.reachable == true
+        case let .remote(url, name, key):
+            return sameAddress(url, voice.llm?.url) && name == voice.llm?.model && key == .stored
+        }
     }
 
     /// Two addresses are the same one, but for a trailing slash or `/v1`.
@@ -443,6 +463,11 @@ struct VoiceLLMRows: View {
         case .needsVoiceLLM: needsVoiceLLMDetail
         case .needsVoiceLLMServer: voiceLLMServerDownDetail
         }
+    }
+
+    /// "Lyra is on a call. Try again when it ends.": a live-call refusal in one line.
+    static func onACall(_ assistant: String?) -> String {
+        "\(assistant ?? "The assistant") is on a call. Try again when it ends."
     }
 
     static let liveCallDetail = "Changing it restarts the voice server, which would cut the call off. "

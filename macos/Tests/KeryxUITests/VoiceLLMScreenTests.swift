@@ -31,16 +31,55 @@ import KeryxPreview
             == "Same as Local Agent stays in use until you choose Use This Model")
     }
 
-    @Test func aModelOfItsOwnIsOfferedFromWhatFitsSmallestFirst() {
+    @Test func aModelOfItsOwnIsMarkedByTheCLIsFitNeverTheAgents() {
         let models = PreviewData.models.models
         let choices = VoiceLLMWording.choices(models, current: nil)
-        #expect(choices.allSatisfy { $0.fits })
+        // The catalog, smallest first: whether each fits is said by `fits_with_voice_llm`.
+        #expect(choices.count == models.count)
         #expect(choices.map(\.needsGb) == choices.map(\.needsGb).sorted())
-        // One in use that no longer fits is still offered, last.
-        #expect(VoiceLLMWording.choices(models, current: "gpt-oss-120b").last?.name == "gpt-oss-120b")
+        // qwen3.8-27b fits as the agent's (`fits`), but not beside a voice of its own.
+        let big = models.first { $0.name == "qwen3.8-27b" }!
+        #expect(big.fits && big.fitsWithVoiceLlm == false)
+        #expect(VoiceLLMWording.menuTitle(big, recommended: nil) == "Qwen3.8 27B")
+        #expect(VoiceLLMWording.hereCaption(big).hasSuffix(", more than is free"))
         let small = models.first { $0.name == "qwen3.5-4b" }!
-        #expect(VoiceLLMWording.menuTitle(small, recommended: "qwen3.5-4b") == "Qwen3.5 4B — Recommended")
+        #expect(VoiceLLMWording.menuTitle(small, recommended: "qwen3.5-4b") == "Qwen3.5 4B — Recommended, Fits")
+        #expect(VoiceLLMWording.hereCaption(small).hasSuffix(", and fits"))
+        // An older CLI says nothing of it: no mark at all, rather than a wrong one.
+        var older = small
+        older.fitsWithVoiceLlm = nil
+        #expect(VoiceLLMWording.menuTitle(older, recommended: nil) == "Qwen3.5 4B")
+        #expect(!VoiceLLMWording.hereCaption(older).contains("fit"))
         #expect(VoiceLLMWording.hereCaption(nil) == "A small model of its own answers fastest")
+    }
+
+    @Test func theWorkBesideAVoiceOfItsOwnIsOfferedWhatLeavesRoomForIt() {
+        let report = PreviewData.models
+        #expect(ModelsRules.fitting(report).map(\.name).contains("qwen3.8-27b"))
+        let beside = ModelsRules.fitting(report, ownVoice: true).map(\.name)
+        #expect(!beside.contains("qwen3.8-27b") && !beside.contains("qwen3-coder-30b-a3b"))
+        #expect(beside.contains("gpt-oss-20b"))
+        #expect(ModelsRules.voiceChoices(report).count == report.models.count)
+    }
+
+    @Test func whatIsInUseIsTheSameSourceModelAndAWorkingServer() {
+        let own = PreviewData.voiceOwnLLM
+        #expect(VoiceLLMWording.inUse(.here(model: "qwen3.5-4b"), voice: own))
+        #expect(!VoiceLLMWording.inUse(.here(model: "qwen3.5-9b"), voice: own))
+        var down = own
+        down.llm?.reachable = false
+        #expect(!VoiceLLMWording.inUse(.here(model: "qwen3.5-4b"), voice: down), "Use This Model starts it")
+        #expect(VoiceLLMWording.inUse(.shared, voice: PreviewData.voice))
+        #expect(!VoiceLLMWording.inUse(.shared, voice: own))
+        var remote = PreviewData.voiceHere
+        remote.llm = VoiceLLMStatus(source: "remote", model: "gpt-5-mini", url: "https://api.openai.com/v1",
+                                    reachable: true, unitInstalled: false)
+        #expect(VoiceLLMWording.inUse(.remote(url: "https://api.openai.com", model: "gpt-5-mini", key: .stored),
+                                      voice: remote))
+        #expect(!VoiceLLMWording.inUse(.remote(url: "https://api.openai.com", model: "gpt-5-mini", key: .typed("k")),
+                                       voice: remote), "a new key is a change")
+        #expect(!VoiceLLMWording.inUse(.remote(url: "https://api.openai.com", model: "gpt-5-mini", key: .clear),
+                                       voice: remote))
     }
 
     @Test func theSharedChoiceWantsALocalAgentModel() {
@@ -93,6 +132,10 @@ import KeryxPreview
         #expect(LocalRefusal.of(StreamFailure("Busy.", detail: "3 live call(s)")) == .liveCall)
         #expect(LocalRefusal.of(StreamFailure("Busy.", detail: "no answer")) == nil)
         #expect(VoiceLLMWording.guidanceTitle(.liveCall, assistant: "Lyra") == "Lyra is on a call")
+        #expect(VoiceLLMWording.onACall("Lyra") == "Lyra is on a call. Try again when it ends.")
+        let setUp = StreamFailure("A call is going on, and setting up the voice here restarts its server, which would "
+            + "cut it off: try again once the line is clear.", detail: "2 live call(s)")
+        #expect(LocalRefusal.of(setUp) == .liveCall, "Checking's voice row says it as a wait")
         #expect(VoiceLLMWording.guidanceDetail(.liveCall).hasSuffix("Try again when it ends."))
     }
 
@@ -124,20 +167,33 @@ import KeryxPreview
 
     // MARK: - Local Models
 
-    @Test func theMemoryBarAddsTheCatalogsFiguresAndNeverDecidesAFit() {
+    @Test func theMemoryBarShowsTheCatalogsFiguresAndNeverDecidesAFit() {
         // OpenAI in use: only the agent's model.
         let agentOnly = MemoryShares.of(PreviewData.models, voice: PreviewData.voice)
         #expect(agentOnly.shares.map(\.kind) == [.agent])
-        #expect(agentOnly.total == 25)
-        // The voice here with a model of its own: all three.
+        #expect(agentOnly.shares.map(\.gigabytes) == [25])
+        // The voice here with a model of its own: all three, the speech models' approximate.
         let all = MemoryShares.of(PreviewData.models, voice: PreviewData.voiceOwnLLM)
         #expect(all.shares.map(\.kind) == [.agent, .voiceLLM, .speech])
-        #expect(all.total == 25 + 6 + MemoryShares.speechGigabytes)
-        #expect(MemoryBar.summary(all, available: 27) == "About \(Formatting.gigabytes(34)) of "
-            + "\(Formatting.gigabytes(27)): they may not all fit at once")
-        #expect(MemoryBar.summary(agentOnly, available: 48).hasSuffix(" in use"))
+        #expect(all.shares.map(\.approximate) == [false, false, true])
+        #expect(MemoryBar.legend(all.shares[2]) == "Speech models · about \(Formatting.gigabytes(3))")
+        #expect(MemoryBar.legend(all.shares[0]) == "Agent: Qwen3-Coder 30B-A3B · \(Formatting.gigabytes(25))")
+        // More than the Mac gives models: drawn in proportion across the bar, and nothing
+        // said of it. Less: each a part of what it gives.
+        #expect(MemoryBar.widths(all, available: 27, total: 340).map(\.width) == [250, 60, 30])
+        #expect(MemoryBar.widths(agentOnly, available: 50, total: 100).map(\.width) == [50])
         // Sharing the agent's model: no second share.
         #expect(MemoryShares.of(PreviewData.models, voice: PreviewData.voiceHere).shares.map(\.kind) == [.agent, .speech])
+    }
+
+    /// The speech models' share is the CLI's reserve, which it does not print: pinned to it.
+    @Test func theSpeechShareIsTheCLIsReserve() throws {
+        let catalog = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("src/keryx/localmodels/catalog.py")
+        let text = try String(contentsOf: catalog, encoding: .utf8)
+        let match = try #require(text.firstMatch(of: #/\nVOICE_SERVER_GB(?:: *[A-Za-z]+)? *= *([0-9.]+)/#))
+        #expect(Double(String(match.1)) == MemoryShares.speechGigabytes)
     }
 
     @Test func theVoiceLLMServerSectionSaysWhereTheWordsComeFrom() {
@@ -150,6 +206,13 @@ import KeryxPreview
         #expect(VoiceLLMServerWording.notInUseTitle(PreviewData.voice) == "The voice shares the local agent's model")
         #expect(VoiceLLMServerWording.modelCaption(own, voice: PreviewData.voiceOwnLLM) == "The voice's words; chosen in Voice")
         #expect(VoiceLLMServerWording.state(own, port: 8091) == "Running at 127.0.0.1:8091")
+    }
+
+    @Test func useThisModelDoesWhatItWasAskedFor() {
+        #expect(UseModelSheet.plan(.work, model: "m", voice: PreviewData.voiceOwnLLM) == (true, nil))
+        #expect(UseModelSheet.plan(.voice, model: "m", voice: PreviewData.voice) == (false, .here(model: "m")))
+        #expect(UseModelSheet.plan(.both, model: "m", voice: PreviewData.voiceOwnLLM) == (true, .shared))
+        #expect(UseModelSheet.plan(.both, model: "m", voice: PreviewData.voice) == (true, nil), "shared already")
     }
 
     @Test func useThisModelAsksWhatItIsFor() {
@@ -177,8 +240,19 @@ import KeryxPreview
     @Test func theVoiceLLMsFixStartsItsServerOrAsksForAModelFirst() {
         let fix = FixAction("voice:llm")
         #expect(fix == .voiceLLM)
-        let running = fix?.action(SetupContext(config: PreviewData.config, voice: PreviewData.voiceOwnLLM))
+        var downloaded = PreviewData.models
+        downloaded.models = downloaded.models.map { entry in
+            var entry = entry
+            if entry.name == "qwen3.5-4b" { entry.downloaded = true }
+            return entry
+        }
+        let running = fix?.action(SetupContext(config: PreviewData.config, voice: PreviewData.voiceOwnLLM,
+                                               models: downloaded))
         #expect(running == SetupAction(title: "Start Voice LLM Server", effect: .startVoiceLLMServer))
+        // Named, not on disk: the server can't start it, `voice llm here` fetches it first.
+        let missing = fix?.action(SetupContext(config: PreviewData.config, voice: PreviewData.voiceOwnLLM,
+                                               models: PreviewData.models))
+        #expect(missing == SetupAction(title: "Download and Start Voice LLM", effect: .setUpVoiceLLM("qwen3.5-4b")))
         var unnamed = PreviewData.voiceOwnLLM
         unnamed.llm?.model = nil
         let choose = fix?.action(SetupContext(config: PreviewData.config, voice: unnamed))
@@ -186,21 +260,58 @@ import KeryxPreview
         #expect(FixAction("models:choose")?.action(SetupContext()).effect == .request(.show(.models)))
     }
 
-    @Test func aSettingUnderAnOldNameIsSaidByItsTitle() {
-        let said = CheckWording.detail("SUBAGENT_MODEL is CLAUDE_MODEL now", titles: ["CLAUDE_MODEL": "Claude model"])
-        #expect(said.text == "“Claude model” is saved under an old name: changing it saves it under the new one")
+    @Test func settingsUnderOldNamesAreSaidByTheirTitlesAndWhereTheyAre() {
+        let titles = ["CLAUDE_MODEL": "Claude model", "DEMO_MODE": "Demo mode"]
+        let store = "`keryx config set CLAUDE_MODEL …` saves it under its new name"
+        let env = "rename it where Keryx's environment sets it"
+        let said = CheckWording.detail("SUBAGENT_MODEL is CLAUDE_MODEL now", titles: titles, hint: store)
+        #expect(said.text == "“Claude model” is saved under its old name: changing it saves it under the new one")
         #expect(said.raw == "SUBAGENT_MODEL is CLAUDE_MODEL now")
+        let two = CheckWording.detail("SUBAGENT_MODEL is CLAUDE_MODEL now; FAKE_AGENTS is DEMO_MODE now",
+                                      titles: titles, hint: store)
+        #expect(two.text == "“Claude model” and “Demo mode” are saved under their old names: changing each saves it "
+            + "under the new one")
+        #expect(!two.text.contains("_"))
+        let inEnv = CheckWording.detail("FAKE_AGENTS is DEMO_MODE now", titles: titles, hint: env)
+        #expect(inEnv.text == "“Demo mode” is set under its old name in the environment Keryx runs in: rename it there")
+        let both = CheckWording.detail("SUBAGENT_MODEL is CLAUDE_MODEL now; FAKE_AGENTS is DEMO_MODE now",
+                                       titles: titles, hint: store + "; " + env)
+        #expect(both.text.hasSuffix("in Keryx's settings and in the environment Keryx runs in"))
         let voice = CheckWording.detail("the voice server elsewhere is sent OPENAI_VOICE, which a later release stops "
             + "sending to it: set VOICE_SERVER_VOICE instead",
             titles: Wording.titles(PreviewData.config))
         #expect(!voice.text.contains("OPENAI_VOICE") && !voice.text.contains("VOICE_SERVER_VOICE"))
     }
 
-    @Test func quittingNamesAVoiceLLMBeingChanged() {
+    @Test func quittingNamesAVoiceLLMBeingChangedAndItsServerStarting() {
         let question = Quitting.question(downloading: false, settingUpVoice: false, changingVoiceLLM: true,
                                          assistant: "Lyra")
         #expect(question?.message == "Lyra's voice LLM is being changed. Quit anyway?")
-        #expect(question?.detail == "It stops, and the voice keeps the words it had. Voice changes it again.")
+        #expect(question?.detail == "It stops, and the voice is put back on the words it had. Voice changes it again.")
+        let server = Quitting.question(downloading: false, settingUpVoice: false, startingVoiceLLMServer: true,
+                                       assistant: "Lyra")
+        #expect(server?.message == "The voice LLM's server is starting. Quit anyway?")
+        #expect(server?.detail == "It stops, and its service is removed. Start Voice LLM Server in Local Models "
+            + "starts it again.")
+    }
+
+    @Test func stoppingTheVoiceLLMsServerAsksFirst() {
+        let used = VoiceLLMServerWording.stopQuestion(assistant: "Lyra", usedByVoice: true, liveCalls: 0)
+        #expect(used.title == "Stop Lyra's thinking model?")
+        #expect(used.message == "Lyra can't answer calls until it starts again.")
+        let onACall = VoiceLLMServerWording.stopQuestion(assistant: "Lyra", usedByVoice: true, liveCalls: 1)
+        #expect(onACall.message == "Lyra can't answer calls until it starts again. A call is in progress, and Lyra "
+            + "stops answering in it.")
+        let unused = VoiceLLMServerWording.stopQuestion(assistant: "Lyra", usedByVoice: false, liveCalls: 0)
+        #expect(unused.message.contains("doesn't take its words from it"))
+    }
+
+    @Test func aChangedSpeechModelSaysWhenItTakesEffect() {
+        #expect(VoiceWording.speechSubtitle("How it hears", changed: false, inUse: true) == "How it hears")
+        #expect(VoiceWording.speechSubtitle("How it hears", changed: true, inUse: true)
+            == "Takes effect when you choose Restart Voice Server")
+        #expect(VoiceWording.speechSubtitle("How it hears", changed: true, inUse: false)
+            == "Takes effect when you choose Set Up")
     }
 
     @Test func thePipelineIsSaidInWords() {

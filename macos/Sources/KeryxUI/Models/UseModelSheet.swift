@@ -176,12 +176,28 @@ package struct UseModelSheet: View {
         }
     }
 
+    /// What choosing it does, for `purpose`: `models use` (the work's), and the voice's words
+    /// changed (`voice llm here` for its own, `voice llm shared` for both — unless they are
+    /// the agent's already).
+    static func plan(_ purpose: Purpose, model name: String, voice: VoiceStatus?)
+        -> (use: Bool, voice: VoiceLLMChoice?) {
+        switch purpose {
+        case .work: (true, nil)
+        case .voice: (false, .here(model: name))
+        case .both: (true, voice?.llmSource == .shared ? nil : .shared)
+        }
+    }
+
     private func use() {
-        if purpose == .voice {
+        let plan = Self.plan(purpose, model: entry.name, voice: model.voice.value)
+        guard plan.use else {
             // Followed on Local Models' Voice LLM Server, where its steps show.
-            model.chooseVoiceLLM(.here(model: entry.name))
-            model.show(inModels: ModelsAnchor.voiceLLMServer)
-            dismiss()
+            if let choice = plan.voice, model.chooseVoiceLLM(choice) {
+                model.show(inModels: ModelsAnchor.voiceLLMServer)
+                dismiss()
+            } else {
+                failure = .refused(Self.voiceBusy)
+            }
             return
         }
         working = true
@@ -190,10 +206,21 @@ package struct UseModelSheet: View {
             failure = await model.use(model: entry.name, defaultAgent: everyTask)
             working = false
             guard failure == nil else { return }
-            if purpose == .both, model.voice.value?.llmSource != .shared { model.chooseVoiceLLM(.shared) }
             stage = .chosen
+            if let choice = plan.voice {
+                // Its steps, and any refusal, show on Voice LLM Server.
+                if model.chooseVoiceLLM(choice) {
+                    model.show(inModels: ModelsAnchor.voiceLLMServer)
+                } else {
+                    failure = .refused(Self.voiceNotMoved)
+                }
+            }
         }
     }
+
+    static let voiceBusy = "The voice's words are already being changed, or its voice server set up. Try again once that has finished."
+    static let voiceNotMoved = "The work now uses it, but the voice's words were not moved to it: they are being changed "
+        + "already. Choose Same as Local Agent in Voice once that has finished."
 
     /// Starts it, and leaves its steps to Local Models' Model Server, scrolled to.
     private func startServer() {

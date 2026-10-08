@@ -12,6 +12,7 @@ struct VoiceLLMServerSection: View {
     @Environment(AppModel.self) private var model
     @State private var stopping = false
     @State private var failure: KeryxError?
+    @State private var confirmingStop = false
 
     var body: some View {
         let voice = model.voice.value
@@ -55,12 +56,17 @@ struct VoiceLLMServerSection: View {
             Text("Voice LLM Server")
         }
         .id(ModelsAnchor.voiceLLMServer)
+        .confirmationDialog(stopQuestion.title, isPresented: $confirmingStop) {
+            Button("Stop Voice LLM Server", role: .destructive, action: stop)
+        } message: {
+            Text(stopQuestion.message)
+        }
     }
 
-    /// A model of its own being chosen for the voice (`voice llm here`, from Use This Model).
+    /// The voice's words being changed (`voice llm …`, from Use This Model or Voice): its
+    /// steps show here too, where Use This Model leaves the owner.
     private var choosingHere: Bool {
-        guard model.voiceLLMRun.phase != nil, case .here? = model.voiceLLMChoice else { return false }
-        return true
+        model.voiceLLMRun.phase != nil && model.voiceLLMChoice != nil
     }
 
     /// Its steps, how it ended, and what it did.
@@ -71,7 +77,7 @@ struct VoiceLLMServerSection: View {
                 Button("Dismiss") { run.dismiss() }
             }
         } else if let display = RunDisplay.of(run, finished: { VoiceLLMWording.finished($0, models: report.models) }) {
-            let order = RunSteps.voiceLLM(.here, seen: run.seenSteps)
+            let order = RunSteps.voiceLLM(model.voiceLLMChoice.map(VoiceLLMWording.source) ?? .here, seen: run.seenSteps)
             StreamRunView(groups: [RunStepGroup(steps: RunSteps.steps(order, reached: run.lastStep,
                                                                       stage: RunSteps.stage(run.phase)))],
                           display: display, cancel: { run.cancel() }, failureTitle: VoiceLLMWording.failed,
@@ -84,11 +90,22 @@ struct VoiceLLMServerSection: View {
     /// A start under way, or one that went wrong; one that worked says so in Status.
     @ViewBuilder private func progress(_ run: StreamRun<ModelServerStarted>) -> some View {
         if case let .failed(failure)? = run.phase, LocalRefusal.of(failure) == .needsVoiceLLM {
-            RunGuidanceRow(title: VoiceLLMWording.needsVoiceLLMTitle, message: VoiceLLMServerWording.chooseOnVoice) {
+            let named = model.voice.value?.llm?.model
+            RunGuidanceRow(title: VoiceLLMWording.needsVoiceLLMTitle,
+                           message: named == nil ? VoiceLLMServerWording.chooseOnVoice : VoiceLLMServerWording.notDownloaded) {
                 Button("Dismiss") { run.dismiss() }
-                Button("Open Voice") {
-                    run.dismiss()
-                    model.selection = .voice
+                if let named {
+                    // Named but not on disk: `voice llm here` downloads it, then starts it.
+                    Button("Download and Start") {
+                        run.dismiss()
+                        model.chooseVoiceLLM(.here(model: named))
+                    }
+                    .disabled(!model.canChangeVoiceLLM)
+                } else {
+                    Button("Open Voice") {
+                        run.dismiss()
+                        model.selection = .voice
+                    }
                 }
             }
         } else if let display = RunDisplay.of(run), case .finished = display {
@@ -125,7 +142,7 @@ struct VoiceLLMServerSection: View {
             }
             Spacer()
             if unit?.installed == true || llm.unitInstalled || llm.reachable == true {
-                Button("Stop Voice LLM Server", action: stop)
+                Button("Stop Voice LLM Server") { confirmingStop = true }
                     .disabled(stopping || !model.canChangeVoiceLLM)
                     .help(model.voiceSetup.isBusy ? "Wait for the voice setup to finish" : "")
             }
@@ -136,6 +153,14 @@ struct VoiceLLMServerSection: View {
             .disabled(stopping || !model.canChangeVoiceLLM)
             .help(model.voiceSetup.isBusy ? "Wait for the voice setup to finish" : "")
         }
+    }
+
+    private var stopQuestion: (title: String, message: String) {
+        let voice = model.voice.value
+        return VoiceLLMServerWording.stopQuestion(
+            assistant: Wording.assistant(model.status.value),
+            usedByVoice: voice?.kind == .here && voice?.llmSource == .here,
+            liveCalls: model.status.value?.health.liveSessions ?? 0)
     }
 
     /// `VOICE_LLM_SERVER_PORT`, as set; else the one its address names.
@@ -198,7 +223,24 @@ struct VoiceLLMServerSection: View {
         }
     }
 
+    /// The question before Stop Voice LLM Server: while the voice on this Mac takes its words
+    /// from it, that the assistant can't answer calls until it starts again — and, during a
+    /// call, that the call loses its words.
+    static func stopQuestion(assistant: String?, usedByVoice: Bool, liveCalls: Int) -> (title: String, message: String) {
+        let name = assistant ?? "the assistant"
+        guard usedByVoice else {
+            return ("Stop the voice LLM's server?", "The voice doesn't take its words from it now; stopping it frees its memory.")
+        }
+        var message = "\(Wording.capitalised(name)) can't answer calls until it starts again."
+        if liveCalls > 0 {
+            message += liveCalls == 1 ? " A call is in progress, and \(name) stops answering in it."
+                : " \(liveCalls) calls are in progress, and \(name) stops answering in them."
+        }
+        return ("Stop \(assistant.map { "\($0)'s" } ?? "the assistant's") thinking model?", message)
+    }
+
     static let notInUseDetail = "A model of its own answers faster: choose one in Voice, under LLM."
+    static let notDownloaded = "Its model isn't on this Mac yet: Download and Start fetches it, then starts it."
     static let chooseOnVoice = "Choose the voice's model in Voice, under LLM: Use This Model downloads and starts it."
     static let failed = "The voice LLM's server didn't start"
 }

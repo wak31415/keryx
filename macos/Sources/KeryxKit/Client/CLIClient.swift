@@ -167,9 +167,9 @@ public struct CLIClient: KeryxClient {
     public func chooseVoiceLLM(_ choice: VoiceLLMChoice) -> VoiceLLMStream {
         switch choice {
         case .shared:
-            return events(["voice", "llm", "shared", "--json"])
+            return events(["voice", "llm", "shared", "--json"], stopGrace: Self.putBackGrace)
         case let .here(model):
-            return events(["voice", "llm", "here"] + Self.value(model, flags: ["--json"]))
+            return events(["voice", "llm", "here"] + Self.value(model, flags: ["--json"]), stopGrace: Self.putBackGrace)
         case let .remote(url, model, key):
             var flags = ["--model=" + model]
             let sent = key.toSend
@@ -177,9 +177,14 @@ public struct CLIClient: KeryxClient {
             if key == .clear { flags.append("--clear-key") }
             flags.append("--json")
             return events(["voice", "llm", "remote"] + Self.value(url, flags: flags),
-                          stdin: sent.map { Data($0.utf8) })
+                          stdin: sent.map { Data($0.utf8) }, stopGrace: Self.putBackGrace)
         }
     }
+
+    /// How long a stopped `voice llm` is given before SIGKILL: stopped part way, it puts back
+    /// the words it was replacing — the old server reinstalled, started and checked, the voice
+    /// moved back — with Cancel held off, and the usual few seconds would cut that in half.
+    public static let putBackGrace: Duration = .seconds(30)
 
     /// `value` after `flags` — and after `--` when it starts with "-", so it is never read
     /// as an option.
@@ -365,7 +370,7 @@ public struct CLIClient: KeryxClient {
 
     /// As `startModelServer`, for the voice LLM's own server.
     public func startVoiceLLMServer() -> ModelServerStream {
-        events(["models", "start", "--voice-llm", "--json"])
+        events(["models", "start", "--voice-llm", "--json"], stopGrace: Self.putBackGrace)
     }
 
     public func stopVoiceLLMServer() async throws -> ServiceResult {
@@ -461,10 +466,11 @@ public struct CLIClient: KeryxClient {
 
     /// A `StreamEvent` stream: `events` with its parse, its endings and its words.
     private func events<Done: StreamDone>(
-        _ subcommand: [String], interactive: Bool = false, stdin: Data? = nil
+        _ subcommand: [String], interactive: Bool = false, stdin: Data? = nil, stopGrace: Duration? = nil
     ) -> StoppableStream<StreamEvent<Done>> {
         events(subcommand, parse: StreamEvent<Done>.parse, concludes: { $0.isTerminal },
-               stoppedWithoutSaying: Done.stoppedWithoutSaying, interactive: interactive, stdin: stdin)
+               stoppedWithoutSaying: Done.stoppedWithoutSaying, interactive: interactive, stdin: stdin,
+               stopGrace: stopGrace)
     }
 
     /// `subcommand`'s stdout as events, which ends normally only once one that `concludes`
@@ -474,10 +480,11 @@ public struct CLIClient: KeryxClient {
     private func events<Event: Sendable>(
         _ subcommand: [String], parse: @escaping @Sendable (String) -> Event?,
         concludes: @escaping @Sendable (Event) -> Bool, stoppedWithoutSaying: String,
-        interactive: Bool = false, stdin: Data? = nil
+        interactive: Bool = false, stdin: Data? = nil, stopGrace: Duration? = nil
     ) -> StoppableStream<Event> {
         let command = Self.name(subcommand)
-        let request = request(subcommand, stdin: stdin, timeout: nil)
+        var request = request(subcommand, stdin: stdin, timeout: nil)
+        request.stopGrace = stopGrace
         let lines = interactive ? runner.interactiveLines(request) : runner.lines(request)
         let events = AsyncThrowingStream<Event, Error> { continuation in
             let task = Task {

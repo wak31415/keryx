@@ -222,6 +222,11 @@ import KeryxPreview
     }
 
     @Test func aVoiceLLMsDoneNeedsItsSourceAndBothRestarts() {
+        // A round older: no `voice_restarted`, read as false.
+        #expect(VoiceLLMEvent.parse(#"{"event": "done", "source": "here", "model": "m", "url": "u", "#
+            + #""voice_restart_needed": false}"#)
+            == .done(VoiceLLMChosen(source: "here", model: "m", url: "u", voiceRestarted: false,
+                                    voiceRestartNeeded: false)))
         #expect(VoiceLLMEvent.parse(#"{"event": "done", "source": "shared", "model": null, "url": null, "#
             + #""voice_restarted": false, "voice_restart_needed": true}"#)
             == .done(VoiceLLMChosen(source: "shared", model: nil, url: nil, voiceRestarted: false,

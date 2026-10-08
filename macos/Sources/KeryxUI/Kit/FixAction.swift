@@ -124,7 +124,11 @@ enum FixAction: Equatable, Sendable {
         case .voiceDownload:
             return SetupAction(title: "Download Speech Models", effect: .downloadVoiceModels)
         case .voiceLLM:
-            guard context.voice?.llm?.model != nil else { return open("Choose the Voice LLM…", .show(.voice)) }
+            guard let name = context.voice?.llm?.model else { return open("Choose the Voice LLM…", .show(.voice)) }
+            // Named but not on disk: the server cannot start it; `voice llm here` fetches it first.
+            if context.models?.models.first(where: { $0.name == name })?.downloaded == false {
+                return SetupAction(title: "Download and Start Voice LLM", effect: .setUpVoiceLLM(name))
+            }
             return SetupAction(title: "Start Voice LLM Server", effect: .startVoiceLLMServer)
         case .phoneAccount:
             return open("Connect Twilio…", .phoneAccount)

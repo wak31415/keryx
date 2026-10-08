@@ -320,6 +320,28 @@ import KeryxTestSupport
         #expect(!ModelsRules.voiceWordsIsAControl(facts: older), "an older CLI: the voice takes the work's model")
     }
 
+    @Test func aFirstSetUpIsTheCLIsAndNothingIsPreselectedWhileTheVoiceLoads() {
+        let facts = WizardFacts(plan: fresh, config: PreviewData.config)
+        #expect(ModelsRules.firstSetUp(.firstRun, voice: PreviewData.voice, facts: facts))
+        // `VOICE_LLM` set by the owner (its source is not the default): no first set-up.
+        let chosen = WizardFacts(plan: fresh, config: settings(PreviewData.config, ["VOICE_LLM": .string("remote")]))
+        #expect(!ModelsRules.firstSetUp(.firstRun, voice: PreviewData.voice, facts: chosen))
+        #expect(!ModelsRules.firstSetUp(.firstRun, voice: nil, facts: facts), "not read yet")
+        // Still loading: nothing, never the recommendation.
+        var report = PreviewData.models
+        report.voiceLlmSeparate = true
+        report.voiceLlmRecommended = "qwen3.5-4b"
+        #expect(ModelsRules.voiceWords(report, voice: nil, firstSetUp: false, workHere: true) == nil)
+        // The rule says shared and the work is elsewhere: nothing to preselect.
+        report.voiceLlmSeparate = false
+        report.voiceLlmRecommended = nil
+        #expect(ModelsRules.voiceWords(report, voice: PreviewData.voice, firstSetUp: true, workHere: false) == nil)
+        // "The work model" is no pick once the work leaves this Mac.
+        #expect(ModelsRules.thinks(ModelsRules.sameAsWork, workHere: false) == nil)
+        #expect(ModelsRules.thinks(ModelsRules.sameAsWork, workHere: true) == ModelsRules.sameAsWork)
+        #expect(ModelsRules.thinks("qwen3.5-4b", workHere: false) == "qwen3.5-4b")
+    }
+
     @Test func aFirstSetUpTakesTheCLIsRuleAndAReviewKeepsWhatIsSet() {
         var report = PreviewData.models
         report.voiceLlmSeparate = true
@@ -344,9 +366,10 @@ import KeryxTestSupport
         #expect(ModelsRules.voiceWords(report, voice: PreviewData.voiceHere, firstSetUp: false, workHere: false)
             == ModelsRules.keep, "shared with the work in the cloud: kept")
         // A first set-up is the first run with the voice not here yet.
-        #expect(ModelsRules.firstSetUp(.firstRun, voice: PreviewData.voice))
-        #expect(!ModelsRules.firstSetUp(.firstRun, voice: PreviewData.voiceHere))
-        #expect(!ModelsRules.firstSetUp(.review, voice: PreviewData.voice))
+        let facts = WizardFacts(plan: fresh, config: PreviewData.config)
+        #expect(ModelsRules.firstSetUp(.firstRun, voice: PreviewData.voice, facts: facts))
+        #expect(!ModelsRules.firstSetUp(.firstRun, voice: PreviewData.voiceHere, facts: facts))
+        #expect(!ModelsRules.firstSetUp(.review, voice: PreviewData.voice, facts: facts))
         #expect(VoiceLLMPick.of(ModelsRules.keep) == nil)
         #expect(VoiceLLMPick.of(ModelsRules.sameAsWork) == .shared)
         #expect(VoiceLLMPick.of("qwen3.5-4b") == .own("qwen3.5-4b"))
@@ -874,6 +897,7 @@ import KeryxTestSupport
         for (key, value) in values {
             guard let index = config.firstIndex(where: { $0.key == key }) else { continue }
             config[index].set = true
+            config[index].source = config[index].secret ? "secrets.toml" : "config.toml"
             config[index].value = config[index].secret ? nil : value
         }
         return config

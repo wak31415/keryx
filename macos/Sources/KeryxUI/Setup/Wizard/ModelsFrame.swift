@@ -120,10 +120,13 @@ package struct ModelsFrame: View {
         // chosen this run, else the owner's rule on a first set-up and what is set otherwise),
         // else the work's when it runs here, else the one picked for it.
         let words: String? = if ModelsRules.voiceWordsIsAControl(facts: facts) {
-            wordsModel ?? wizard.voiceLLM?.thinks
-                ?? ModelsRules.voiceWords(report, voice: model.voice.value,
-                                          firstSetUp: ModelsRules.firstSetUp(wizard.mode, voice: model.voice.value),
-                                          workHere: work == .thisMac)
+            ModelsRules.thinks(
+                (wordsModel == ModelsRules.unpicked ? nil : wordsModel) ?? wizard.voiceLLM?.thinks
+                    ?? ModelsRules.voiceWords(report, voice: model.voice.value,
+                                              firstSetUp: ModelsRules.firstSetUp(wizard.mode, voice: model.voice.value,
+                                                                                 facts: facts),
+                                              workHere: work == .thisMac),
+                workHere: work == .thisMac)
         } else if work == .thisMac {
             chosenWork
         } else {
@@ -277,12 +280,19 @@ package struct ModelsFrame: View {
         let report = model.models.value
         let fitting = ModelsRules.fitting(report)
         if ModelsRules.voiceWordsIsAControl(facts: facts) {
-            Picker("Thinks", selection: Binding { state.wordsModel ?? "" } set: { wordsModel = $0 }) {
+            // Nothing yet: the voice still loading (never the recommendation in its place), or
+            // nothing the CLI would pick.
+            let none = model.voice.value == nil ? WizardWording.loading : WizardWording.chooseModel
+            Picker("Thinks", selection: Binding { state.wordsModel ?? ModelsRules.unpicked } set: { wordsModel = $0 }) {
+                if state.wordsModel == nil { Text(none).tag(ModelsRules.unpicked) }
                 if state.wordsModel == ModelsRules.keep { Text(WizardWording.asSetNow).tag(ModelsRules.keep) }
                 if state.work == .thisMac { Text(WizardWording.sameAsWork).tag(ModelsRules.sameAsWork) }
-                ForEach(fitting) { Text($0.title).tag($0.name) }
+                ForEach(ModelsRules.voiceChoices(report)) { entry in
+                    Text(VoiceLLMWording.menuTitle(entry, recommended: report?.voiceLlmRecommended)).tag(entry.name)
+                }
             }
             .labelsHidden()
+            .disabled(model.voice.value == nil)
         } else if state.work == .thisMac {
             // Today's shared behaviour: the work's model, said as a menu that cannot change.
             Picker("Thinks", selection: .constant("")) {
@@ -409,7 +419,9 @@ package struct ModelsFrame: View {
 
     @ViewBuilder private func localModel(_ state: FrameState) -> some View {
         let report = model.models.value
-        let fitting = ModelsRules.fitting(report)
+        // Beside a voice with a model of its own here, the models that leave room for it.
+        let ownVoice = state.voice == .thisMac && VoiceLLMPick.of(state.wordsModel).map { $0 != .shared } == true
+        let fitting = ModelsRules.fitting(report, ownVoice: ownVoice)
         let chosen = state.workModel.flatMap { name in report?.models.first { $0.name == name } }
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {

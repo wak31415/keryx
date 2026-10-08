@@ -1095,10 +1095,17 @@ public final class AppModel {
 
     // MARK: - The voice LLM
 
-    /// The voice LLM is being chosen, or its own server started or stopped.
+    /// The voice LLM is being chosen — or has been, and what it changed is still being read
+    /// back — or its own server is being started or stopped.
     public var voiceLLMBusy: Bool {
-        voiceLLMRun.isBusy || voiceLLMServerRun.isBusy || stoppingVoiceLLMServer
+        voiceLLMRun.isBusy || voiceLLMSettling || voiceLLMServerRun.isBusy || stoppingVoiceLLMServer
     }
+
+    /// A voice LLM choice has worked and the voice, the settings and the models it changed
+    /// are being read again: until they are, what was read before says the old words, and a
+    /// step that reads it (Checking's) would ask for the same choice twice. Held as `.use`
+    /// holds Checking's model choice.
+    public private(set) var voiceLLMSettling = false
 
     /// Where the voice's words come from may be changed now: nothing else is changing it,
     /// and no voice setup — which reads it — runs or waits for its model server.
@@ -1114,8 +1121,14 @@ public final class AppModel {
         guard canChangeVoiceLLM, let client else { return false }
         let started = voiceLLMRun.start(reason: "Choosing the voice LLM", { client.chooseVoiceLLM(choice) }) {
             [weak self] _ in
-            self?.invalidateOptions()
-            Task { await self?.refresh(.voice, .config, .models, .service, .setupPlan) }
+            guard let self else { return }
+            // Set in the same turn the run is finished, so nothing sees it done and unread.
+            voiceLLMSettling = true
+            invalidateOptions()
+            Task {
+                await self.refresh(.voice, .config, .models, .service, .setupPlan)
+                self.voiceLLMSettling = false
+            }
         }
         if started {
             if case let .remote(url, name, .typed) = choice {
@@ -1289,6 +1302,16 @@ public final class AppModel {
     static let modelServerStopping = "The model server is already stopping."
     static let modelServerInUse =
         "The model server can't be stopped while it is starting or while the voice is being set up on it."
+    /// Waits for a voice LLM run asked to stop to end — the CLI putting back what it was
+    /// replacing — or for `limit`: true once neither is running or stopping.
+    public func voiceLLMRunsEnd(within limit: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + limit
+        while voiceLLMRun.isBusy || voiceLLMServerRun.isBusy, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return !voiceLLMRun.isBusy && !voiceLLMServerRun.isBusy
+    }
+
     static let voiceLLMServerStopping = "The voice LLM's server is already stopping."
     static let voiceLLMServerInUse =
         "The voice LLM's server can't be stopped while it is starting, while the voice LLM is being chosen, "

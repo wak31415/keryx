@@ -3,23 +3,23 @@ import SwiftUI
 
 /// What the models on this Mac take of the memory it gives them: the agent's model, the
 /// voice's own LLM, and the speech models — each the catalog's own figure for it, as `keryx
-/// models list` prints it. It adds them up to draw them; whether a model fits is the CLI's
-/// to say (`fits`, `fits_with_voice_llm`), never worked out here.
+/// models list` prints it. Information only: whether they fit is the CLI's to say (`fits`,
+/// `fits_with_voice_llm`, and doctor), never added up and judged here.
 struct MemoryShares: Equatable {
     struct Share: Equatable, Identifiable {
         enum Kind: Equatable { case agent, voiceLLM, speech }
         var kind: Kind
         var title: String
         var gigabytes: Double
+        /// A figure the CLI does not print, so the app's own reckoning: said as "about".
+        var approximate = false
         var id: String { title }
     }
 
     var shares: [Share]
 
-    var total: Double { shares.reduce(0) { $0 + $1.gigabytes } }
-
-    /// The speech models' share while the voice runs here. The CLI reserves it
-    /// (`catalog.VOICE_SERVER_GB`) without printing it.
+    /// The speech models' share while the voice runs here, approximately: the CLI reserves
+    /// `catalog.VOICE_SERVER_GB` for them without printing it.
     static let speechGigabytes = 3.0
 
     /// The shares as things are set up: the agent's model served here, the voice's own model
@@ -34,29 +34,27 @@ struct MemoryShares: Equatable {
             shares.append(Share(kind: .voiceLLM, title: "Voice LLM: \(entry.title)", gigabytes: entry.needsGb))
         }
         if voice?.kind == .here {
-            shares.append(Share(kind: .speech, title: "Speech models", gigabytes: speechGigabytes))
+            shares.append(Share(kind: .speech, title: "Speech models", gigabytes: speechGigabytes, approximate: true))
         }
         return MemoryShares(shares: shares)
     }
 }
 
-/// `MemoryShares` as one bar under This Mac's memory: a segment for each, the rest free,
-/// and a legend. Over what the Mac gives models, the bar says so in the warning colour.
+/// `MemoryShares` as one bar under This Mac's memory — each share a segment, as a part of
+/// what the Mac gives models — and a legend. It says nothing of whether they fit.
 struct MemoryBar: View {
     let shares: MemoryShares
     let available: Double
 
     var body: some View {
         if !shares.shares.isEmpty, available > 0 {
-            let over = shares.total > available
             VStack(alignment: .leading, spacing: 6) {
                 GeometryReader { geometry in
                     HStack(spacing: 1) {
-                        ForEach(shares.shares) { share in
+                        ForEach(Self.widths(shares, available: available, total: geometry.size.width), id: \.id) { part in
                             Rectangle()
-                                .fill(Self.colour(share.kind))
-                                .frame(width: geometry.size.width * min(share.gigabytes, available)
-                                    / max(shares.total, available))
+                                .fill(Self.colour(part.kind))
+                                .frame(width: part.width)
                         }
                         Spacer(minLength: 0)
                     }
@@ -69,20 +67,30 @@ struct MemoryBar: View {
                     ForEach(shares.shares) { share in
                         HStack(spacing: 5) {
                             Circle().fill(Self.colour(share.kind)).frame(width: 7, height: 7)
-                            Text("\(share.title) · \(Formatting.gigabytes(share.gigabytes))")
+                            Text(Self.legend(share))
                         }
                     }
                     Spacer(minLength: 0)
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                Text(Self.summary(shares, available: available))
-                    .font(.callout)
-                    .foregroundStyle(over ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             }
             .padding(.vertical, 2)
             .accessibilityElement(children: .combine)
         }
+    }
+
+    /// "Agent: Qwen3-Coder 30B-A3B · 25 GB", "Speech models · about 3 GB".
+    static func legend(_ share: MemoryShares.Share) -> String {
+        "\(share.title) · \(share.approximate ? "about " : "")\(Formatting.gigabytes(share.gigabytes))"
+    }
+
+    /// Each share's segment, as a part of `available` drawn `total` wide — of the shares
+    /// together, when they come to more, so each is still seen in proportion. Drawing only.
+    static func widths(_ shares: MemoryShares, available: Double, total: Double)
+        -> [(id: String, kind: MemoryShares.Share.Kind, width: Double)] {
+        let scale = max(available, shares.shares.reduce(0) { $0 + $1.gigabytes })
+        return shares.shares.map { ($0.id, $0.kind, total * $0.gigabytes / scale) }
     }
 
     static func colour(_ kind: MemoryShares.Share.Kind) -> Color {
@@ -91,11 +99,5 @@ struct MemoryBar: View {
         case .voiceLLM: .teal
         case .speech: .purple
         }
-    }
-
-    /// "About 34 GB of 27 GB: they may not all fit at once", "About 28 GB of 48 GB in use".
-    static func summary(_ shares: MemoryShares, available: Double) -> String {
-        let used = "About \(Formatting.gigabytes(shares.total)) of \(Formatting.gigabytes(available))"
-        return shares.total > available ? used + ": they may not all fit at once" : used + " in use"
     }
 }

@@ -189,8 +189,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                     settingUpVoice: setup.isRunning || chained,
                                                     startingModelServer: server && !chained,
                                                     downloadingVoiceModels: model.voiceDownloadRun.isRunning,
-                                                    changingVoiceLLM: model.voiceLLMRun.isRunning
-                                                        || model.voiceLLMServerRun.isRunning,
+                                                    changingVoiceLLM: model.voiceLLMRun.isRunning,
+                                                    startingVoiceLLMServer: model.voiceLLMServerRun.isRunning,
                                                     signingIn: signingIn.map(SignInWording.name),
                                                     signInDetail: signingIn.map(SignInWording.quitDetail),
                                                     assistant: Wording.assistant(model.status.value),
@@ -225,6 +225,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let current = downloads.current, downloads.isRunning { downloads.cancel(current.name) }
         setup.cancel()
         model.cancelRuns()
+        // A voice LLM stopped part way puts back what it was replacing, with Cancel held off:
+        // given its time, within the stop bound, before anything is killed.
+        _ = await model.voiceLLMRunsEnd(within: Self.stopBound)
         let survivors = await children.stopAll(within: ChildRegistry.stopBound + .seconds(3))
         if let survivors, !survivors.isEmpty {
             Log.app.error("Quitting with \(survivors.count) process group(s) still running after SIGKILL: \(survivors.map(String.init).joined(separator: ", "), privacy: .public)")

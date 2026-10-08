@@ -10,6 +10,10 @@ public struct CommandRequest: Sendable, Equatable {
     /// A line stream reads stderr with stdout, in the order written, rather than
     /// discarding it: for a program that is not Keryx's and says its errors there (Homebrew).
     public var mergesStderr: Bool
+    /// How long a stopped line stream is given between SIGTERM and SIGKILL, when it needs
+    /// longer than the runner's usual grace: a command that puts things back as it is
+    /// stopped (`voice llm`, which restores the words it was replacing). `nil`: the usual.
+    public var stopGrace: Duration?
 
     public init(
         executable: String,
@@ -18,7 +22,8 @@ public struct CommandRequest: Sendable, Equatable {
         workingDirectory: String? = nil,
         stdin: Data? = nil,
         timeout: Duration? = .seconds(30),
-        mergesStderr: Bool = false
+        mergesStderr: Bool = false,
+        stopGrace: Duration? = nil
     ) {
         self.executable = executable
         self.arguments = arguments
@@ -27,6 +32,7 @@ public struct CommandRequest: Sendable, Equatable {
         self.stdin = stdin
         self.timeout = timeout
         self.mergesStderr = mergesStderr
+        self.stopGrace = stopGrace
     }
 }
 

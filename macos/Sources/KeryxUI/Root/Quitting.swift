@@ -30,6 +30,7 @@ public enum Quitting {
     /// ticked "Don't ask again").
     public static func question(downloading: Bool, settingUpVoice: Bool, startingModelServer: Bool = false,
                                 downloadingVoiceModels: Bool = false, changingVoiceLLM: Bool = false,
+                                startingVoiceLLMServer: Bool = false,
                                 signingIn: String? = nil,
                                 signInDetail: String? = nil, assistant: String?,
                                 changingService: AppModel.ServiceChange? = nil,
@@ -58,10 +59,15 @@ public enum Quitting {
                           "the speech models pick up where they left off"))
         }
         if changingVoiceLLM {
-            // The CLI puts the words the voice had back when it is stopped part way.
+            // Stopped part way, the CLI puts back the words the voice had; quitting waits for it.
             under.append(("\(possessive(assistant, opening: false)) voice LLM is being changed",
-                          "It stops, and the voice keeps the words it had. Voice changes it again.",
+                          "It stops, and the voice is put back on the words it had. Voice changes it again.",
                           "Voice changes the voice LLM again"))
+        }
+        if startingVoiceLLMServer {
+            under.append(("the voice LLM's server is starting",
+                          "It stops, and its service is removed. Start Voice LLM Server in Local Models starts it again.",
+                          "Start Voice LLM Server in Local Models starts the voice LLM's server again"))
         }
         if let signingIn {
             under.append(("a sign-in to \(signingIn) is still going",

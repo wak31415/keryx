@@ -249,7 +249,7 @@ package struct FinishFrame: View {
             }
             if let failure = model.voiceLLMRun.failure {
                 if LocalRefusal.of(failure) == .liveCall {
-                    return Line(tone: .none, text: VoiceLLMWording.liveCallDetail,
+                    return Line(tone: .none, text: VoiceLLMWording.onACall(assistant),
                                 action: ("Try Again", { model.voiceLLMRun.dismiss(); take(next) }))
                 }
                 return Line(tone: .problem, text: failure.message, failure: failure,
@@ -271,6 +271,11 @@ package struct FinishFrame: View {
                 return Line(tone: .working, text: activity.message, cancel: { stop(.setUpVoice) })
             }
             if case let .failed(failure)? = model.voiceSetup.phase {
+                // A call in progress is a wait, not a failure.
+                if LocalRefusal.of(failure) == .liveCall {
+                    return Line(tone: .none, text: VoiceLLMWording.onACall(assistant),
+                                action: ("Try Again", { model.dismissThisMacSetup(); model.setUpThisMac() }))
+                }
                 return Line(tone: .problem, text: failure.message, failure: failure,
                             action: ("Try Again", { model.dismissThisMacSetup(); model.setUpThisMac() }))
             }
@@ -319,6 +324,9 @@ package struct FinishFrame: View {
         }
         return nil
     }
+
+    /// The assistant's name, as the run's lines say it.
+    private var assistant: String? { Wording.assistant(model.status.value) }
 
     /// The voice LLM step the run under way is, for its Cancel.
     private var voiceLLMStep: LocalStep {

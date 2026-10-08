@@ -156,6 +156,13 @@ import KeryxKit
         here.modelsReady ? "How it speaks · both speech models downloaded" : "How it speaks · Set Up downloads them"
     }
 
+    /// Under a speech model: what it does — or, once one has been changed, when the change
+    /// takes effect: the next Restart Voice Server, or the Set Up that starts it.
+    static func speechSubtitle(_ what: String, changed: Bool, inUse: Bool) -> String {
+        guard changed else { return what }
+        return "Takes effect when you choose \(inUse ? "Restart Voice Server" : "Set Up")"
+    }
+
     /// A way of speaking (`voice --json` `pipelines`), in a phrase.
     static func pipeline(_ name: String) -> String {
         switch name {

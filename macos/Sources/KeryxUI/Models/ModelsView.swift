@@ -310,7 +310,8 @@ private struct ModelServerSection: View {
             Spacer()
             if llm.unitInstalled || llm.reachable {
                 Button("Stop Model Server") {
-                    if model.voice.value?.kind == .here { confirmingStop = true } else { stop() }
+                    // Only while the voice on this Mac takes its words from it.
+                    if model.voice.value?.kind == .here, model.voiceWordsAreTheAgents { confirmingStop = true } else { stop() }
                 }
                 .disabled(stopping || model.stoppingModelServer || model.modelServerRun.isBusy || model.voiceSetup.isBusy)
                 .help(model.voiceSetup.isBusy ? "Wait for the voice setup to finish" : "")

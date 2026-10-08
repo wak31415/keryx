@@ -203,6 +203,9 @@ private struct HereSection: View {
     @State private var confirming = false
     /// Restart Voice Server is reading the models before it decides what to start.
     @State private var reading = false
+    /// A speech model was changed here since the voice server last started: the next start
+    /// loads it.
+    @State private var speechChanged = false
 
     var body: some View {
         let here = voice.here
@@ -233,13 +236,22 @@ private struct HereSection: View {
                 Text("Voice server")
                 Text(VoiceWording.hereCaption(here))
             }
-            SettingMenuRow(key: "VOICE_SERVER_STT", title: "Speech to text", subtitle: "How it hears",
-                           current: here.stt) { await model.refresh(.voice) }
+            SettingMenuRow(key: "VOICE_SERVER_STT", title: "Speech to text",
+                           subtitle: VoiceWording.speechSubtitle("How it hears", changed: speechChanged, inUse: inUse),
+                           current: here.stt) {
+                speechChanged = true
+                await model.refresh(.voice)
+            }
                 .disabled(busy || downloading)
             VoiceLLMRows(voice: voice, report: report, picked: llmPicked)
                 .disabled(busy)
-            SettingMenuRow(key: "VOICE_SERVER_TTS", title: "Text to speech", subtitle: VoiceWording.speechState(here),
-                           current: here.tts) { await model.refresh(.voice) }
+            SettingMenuRow(key: "VOICE_SERVER_TTS", title: "Text to speech",
+                           subtitle: VoiceWording.speechSubtitle(VoiceWording.speechState(here), changed: speechChanged,
+                                                                 inUse: inUse),
+                           current: here.tts) {
+                speechChanged = true
+                await model.refresh(.voice)
+            }
                 .disabled(busy || downloading)
             LabeledContent {
                 OptionMenu(key: "VOICE_SERVER_VOICE", title: "Kokoro voice", current: kokoro ?? here.voice) {
@@ -296,7 +308,10 @@ private struct HereSection: View {
         }
         // The voice picked stays picked until the setup that applies it has worked.
         .onChange(of: setup.phase) { _, phase in
-            if case .finished = phase { kokoro = nil }
+            if case .finished = phase {
+                kokoro = nil
+                speechChanged = false
+            }
             // A refusal may be over a model server the last read thought was up.
             if case .failed = phase { Task { await model.refresh(.models) } }
         }
