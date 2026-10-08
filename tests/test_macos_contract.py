@@ -86,8 +86,9 @@ MODELS_START = "models start --json"
 AUTH_LOGINS = {name: f"auth login {name} --json"
                for name in ("claude", "codex", "gmail", "google-workspace")}
 VOICE_DOWNLOAD = "voice download --json"
+MIGRATE = "migrate --yes --json"
 #: The command lines the app reads as JSON lines; the pull's is the one every contract has.
-STREAMS = (PULL, VOICE_HERE, MODELS_START, VOICE_DOWNLOAD, *AUTH_LOGINS.values())
+STREAMS = (PULL, VOICE_HERE, MODELS_START, VOICE_DOWNLOAD, *AUTH_LOGINS.values(), MIGRATE)
 #: The command lines the app reads as one JSON document.
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
@@ -103,12 +104,14 @@ COMMANDS = {
     "phone numbers --json", "phone webhooks --json", "phone webhooks --apply --json",
     "phone tunnel --json", "plugins list --json", "tools --json", "plugins hosts --json",
     "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
+    "migrate --json",
 }
 #: The command lines and streams the CLI prints that the app has yet to name. Each is
 #: checked once the contract names it; until then the cross-checks let it be missing, and
 #: nothing more — a contract that names what the CLI does not print still fails them.
 AWAITING = {
     "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
+    "migrate --json", MIGRATE,
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
@@ -1055,3 +1058,92 @@ def test_a_speech_model_download_streams_the_events_the_app_reads_and_ends_once(
     allowed = stream["exit"][ending]
     assert result.exit_code == code
     assert code in (allowed if isinstance(allowed, list) else [allowed])
+
+
+# --- the streams the contract awaits -----------------------------------------------------
+
+
+def awaited_stream(command: str) -> dict:
+    """The contract's promise for `command`, once the app has made it."""
+    stream = contract()["streams"].get(command)
+    if stream is None:
+        # The streams' cross-check lets it be missing while it is in AWAITING.
+        pytest.skip(f"the contract does not name the {command} stream yet")
+    return stream
+
+
+def ends_once(events: list[dict]) -> str:
+    """The one ending, last: the rule every stream keeps, whatever the contract says."""
+    endings = [e["event"] for e in events if e["event"] in ("done", "error", "cancelled")]
+    assert len(endings) == 1 and events[-1]["event"] == endings[0], events
+    return endings[0]
+
+
+def keeps_its_promise(stream: dict, events: list[dict], ending: str, code: int) -> None:
+    for event in events:
+        assert event.get("event") in stream["events"], event
+        assert not key_problems(event, stream["events"][event["event"]]), event
+    assert ends_once(events) == ending
+    allowed = stream["exit"][ending]
+    assert code in (allowed if isinstance(allowed, list) else [allowed])
+
+
+# --- the stream: migrate --yes --json ----------------------------------------------------
+
+
+def _jarvis_left(monkeypatch, settings):
+    """`~/.jarvis` with one file of Jarvis's in it, to move; the service is not installed."""
+    legacy = Path.home() / ".jarvis"
+    legacy.mkdir(mode=0o700)
+    (legacy / "pin-failures.json").write_text("{}")
+    return legacy
+
+
+def _migrate_done(monkeypatch, settings):
+    _jarvis_left(monkeypatch, settings)
+
+
+def _migrate_nothing(monkeypatch, settings):
+    pass
+
+
+def _migrate_conflict(monkeypatch, settings):
+    (_jarvis_left(monkeypatch, settings) / "memory.md").write_text("# Not the same memory\n")
+
+
+def _migrate_cancelled(monkeypatch, settings):
+    _jarvis_left(monkeypatch, settings)
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+    monkeypatch.setattr("keryx.cli.make_plan", interrupted)
+
+
+#: Each way `migrate --yes --json` ends: how to arrange it, its ending, its exit code, and
+#: whether a step was told first.
+MIGRATIONS = [(_migrate_done, "done", 0, True), (_migrate_nothing, "done", 0, False),
+              (_migrate_conflict, "error", 2, False),
+              (_migrate_cancelled, "cancelled", 130, False)]
+
+
+def test_the_migrations_below_reach_every_event_the_contract_names():
+    stream = awaited_stream(MIGRATE)
+
+    assert {ending for _, ending, _, _ in MIGRATIONS} == set(stream["terminal"])
+    assert set(stream["events"]) == {*stream["terminal"], "step"}
+
+
+@pytest.mark.parametrize(("arrange", "ending", "code", "stepped"), MIGRATIONS)
+def test_a_migration_ends_once_whatever_the_contract_says(
+    seeded, monkeypatch, arrange, ending, code, stepped
+):
+    arrange(monkeypatch, seeded)
+
+    result = runner.invoke(app, MIGRATE.split())
+
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert ends_once(events) == ending and result.exit_code == code, events
+    assert (events[0]["event"] == "step") is stepped
+    if MIGRATE in contract()["streams"]:
+        keeps_its_promise(contract()["streams"][MIGRATE], events, ending, result.exit_code)

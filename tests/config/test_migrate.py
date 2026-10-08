@@ -6,7 +6,9 @@ one this file builds; the developer's real one never takes part.
 """
 
 import errno
+import json
 import os
+import signal
 import sqlite3
 import stat
 import subprocess
@@ -23,6 +25,7 @@ from keryx.config import migrate as migration
 from keryx.config.files import dump_toml, read_toml, secure_dir
 from keryx.config.migrate import MigrationError, Service, make_plan, rewrite_task_paths, run
 from keryx.restart.service import ServiceTarget
+from keryx.setup import migrate_stream
 from keryx.tasks.models import Task, TaskKind, TaskStatus
 from keryx.tasks.store import TaskStore
 
@@ -1050,3 +1053,293 @@ def test_the_command_hands_jarvis_unit_over_to_keryx(jarvis, monkeypatch):
     assert "jarvis.service: retired" in result.output
     assert units.running == {"keryx.service"}
     assert "the service is running again" in result.output
+
+
+# --- for the Mac app: migrate --json, and migrate --yes --json --------------------------
+
+
+def plan_json(*args: str):
+    result = runner.invoke(cli.app, ["migrate", *args, "--json"])
+    return result, (json.loads(result.stdout) if result.exit_code == 0 else None)
+
+
+def stream(*args: str):
+    """`migrate --yes --json`: its exit code and every event, each one JSON."""
+    result = runner.invoke(cli.app, ["migrate", "--yes", *args, "--json"])
+    return result, [json.loads(line) for line in result.stdout.splitlines()]
+
+
+ENDINGS = ("done", "error", "cancelled")
+
+
+def ends_once(events) -> str:
+    endings = [event["event"] for event in events if event["event"] in ENDINGS]
+    assert len(endings) == 1 and events[-1]["event"] == endings[0], events
+    return endings[0]
+
+
+@pytest.fixture
+def installers(monkeypatch):
+    """The re-rendering installers, captured: what ran, and output that must stay off stdout."""
+    ran: list[list[str]] = []
+
+    def captured(argv):
+        ran.append(list(argv))
+        return 0, "installer chatter\n", ""
+
+    monkeypatch.setattr("keryx.units.run_captured", captured)
+    return ran
+
+
+def test_the_plan_is_one_document_and_touches_nothing(machine, command):
+    before = listing(machine.home), listing(machine.repo)
+
+    result, plan = plan_json()
+
+    assert result.exit_code == 0, result.output
+    assert (listing(machine.home), listing(machine.repo)) == before
+    assert plan["nothing_to_do"] is False and plan["ready"] is True
+    assert {"source": str(machine.legacy / "tasks.db"),
+            "destination": str(machine.data / "tasks.db"), "kind": "move"} in plan["moves"]
+    assert {"source": str(machine.legacy / "approvals.sock"), "destination": None,
+            "kind": "remove"} in plan["moves"]
+    assert plan["imports"] == [str(machine.repo / ".env")]
+    assert plan["directories"]["config"] == str(machine.config)
+    assert plan["retire"]["from"] == str(machine.legacy)
+    assert plan["retire"]["to"].startswith(f"{machine.legacy}.migrated-")
+    assert plan["conflicts"] == []
+    assert plan["service"] == {"stops": None, "retires": [], "installs": None}
+    assert plan["live_calls"] is None
+    assert PIN not in result.stdout
+
+
+def test_a_dry_run_is_the_same_plan(machine, command):
+    assert plan_json("--dry-run")[1] == plan_json()[1]
+    assert plan_json("--dry-run", "--yes")[1] == plan_json()[1]
+
+
+def test_a_conflict_is_in_the_plan_for_a_person_and_is_not_a_failed_read(machine, command):
+    from wording import for_the_app
+
+    (machine.legacy / "pin").write_text("111357\n")
+
+    result, plan = plan_json()
+
+    assert result.exit_code == 0
+    assert plan["ready"] is False and plan["conflicts"]
+    for conflict in plan["conflicts"]:
+        assert for_the_app(conflict["message"]) and conflict["detail"]
+        assert "111357" not in conflict["message"] + conflict["detail"]
+    assert PIN not in result.stdout and "111357" not in result.stdout
+
+
+def test_every_kind_of_conflict_is_said_for_a_person():
+    from wording import for_the_app
+
+    for message in (migration.TWO_INSTALLS, migration.OLD_HOME_SET, migration.ENV_UNREADABLE,
+                    migration.STILL_IN_USE, migration.BOTH_BECOME, migration.BOTH_EXIST,
+                    migration.BOTH_HOLD_FILES, migration.TWO_PINS):
+        assert for_the_app(message), message
+
+
+@pytest.fixture
+def moved_already(monkeypatch, tmp_path):
+    """A machine with nothing of Jarvis's on it, and no service answering."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "health_probe", lambda settings: None)
+
+
+def test_nothing_to_move_is_a_plan_with_nothing_to_do(moved_already):
+
+    result, plan = plan_json()
+
+    assert result.exit_code == 0
+    assert plan["nothing_to_do"] is True and plan["ready"] is False and plan["moves"] == []
+
+
+def test_the_plan_names_the_units_stopped_retired_and_installed(machine, command, monkeypatch):
+    monkeypatch.setattr(cli, "resolve_target", lambda settings, **_: None)
+    monkeypatch.setattr(cli, "candidate_target",
+                        lambda settings: ServiceTarget("systemd", "keryx.service"))
+    monkeypatch.setattr(cli, "old_target",
+                        lambda target: ServiceTarget("systemd", "jarvis.service"))
+    monkeypatch.setattr(cli, "health_probe", lambda settings: 2)
+
+    _, plan = plan_json()
+
+    assert plan["service"] == {"stops": "systemd jarvis.service", "retires": ["jarvis.service"],
+                               "installs": "systemd keryx.service"}
+    assert plan["live_calls"] == 2 and plan["ready"] is False
+
+
+def test_the_service_may_not_read_the_plan(machine, command, monkeypatch):
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+    result, _ = plan_json()
+
+    assert result.exit_code == 1 and "only the owner" in result.stderr
+
+
+def test_settings_that_do_not_load_are_said_on_stderr(machine, command, monkeypatch):
+    def broken():
+        raise cli.ConfigFileError("config.toml does not parse")
+
+    monkeypatch.setattr(cli, "_load_settings_optional", broken)
+
+    result, _ = plan_json()
+
+    assert result.exit_code == 1 and "do not load" in result.stderr and not result.stdout
+
+
+def test_the_run_streams_its_phases_and_ends_once(machine, command, installers):
+    claude = machine.home / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_text("keryx_approval.py")
+
+    result, events = stream()
+
+    assert result.exit_code == 0, result.output
+    assert ends_once(events) == "done"
+    assert [event["step"] for event in events if event["event"] == "step"] == [
+        "move", "update", "units"]
+    for event in events[:-1]:
+        assert set(event) == {"event", "step", "message", "detail"}
+    done = events[-1]
+    assert done["nothing_to_do"] is False and done["moved"] > 0 and done["imported"] == 1
+    assert done["lost_sessions"] == 3 and done["started"] is None
+    assert done["retired_to"].startswith(f"{machine.legacy}.migrated-")
+    assert done["summary"] == "Keryx's files were moved."
+    assert (machine.config / "pin").is_file() and not machine.legacy.exists()
+    assert [Path(argv[0]).name for argv in installers] == ["install-claude-hook.sh"]
+    assert "installer chatter" not in result.stdout and PIN not in result.stdout
+    _, again = stream()
+    assert again[-1]["nothing_to_do"] is True
+
+
+def test_the_run_stops_and_starts_an_installed_service(machine, command, installers, monkeypatch):
+    manager = FakeManager(machine)
+    monkeypatch.setattr(cli, "resolve_target",
+                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    monkeypatch.setattr(cli, "MigratingService",
+                        lambda target: Service(target, run=manager, sleep=lambda _: None))
+
+    result, events = stream()
+
+    assert result.exit_code == 0, result.output
+    assert [event["step"] for event in events if event["event"] == "step"] == list(
+        migration.PHASES)
+    assert events[-1]["started"] is True
+    assert "running again" in events[-1]["summary"]
+    assert [Path(argv[0]).name for argv in installers] == ["install-systemd.sh"]
+
+
+def test_conflicts_end_the_run_before_anything_is_touched(machine, command, installers):
+    (machine.legacy / "pin").write_text("111357\n")
+    before = listing(machine.home)
+
+    result, events = stream()
+
+    assert result.exit_code == 2
+    assert ends_once(events) == "error" and len(events) == 1
+    assert events[0]["message"] == migrate_stream.CONFLICTS and events[0]["detail"]
+    assert listing(machine.home) == before
+
+
+def test_nothing_to_move_is_done_at_once(moved_already):
+
+    result, events = stream()
+
+    assert result.exit_code == 0 and events == [events[-1]]
+    assert events[0]["event"] == "done" and events[0]["nothing_to_do"] is True
+
+
+def test_a_live_call_holds_the_run_back(machine, command, monkeypatch):
+    monkeypatch.setattr(cli, "resolve_target",
+                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    monkeypatch.setattr(cli, "health_probe", lambda settings: 1)
+
+    result, events = stream()
+
+    assert result.exit_code == 1 and ends_once(events) == "error"
+    assert events[0]["message"] == migrate_stream.LIVE_CALL
+    assert machine.legacy.is_dir()
+
+
+def test_the_service_may_not_run_it(machine, command, monkeypatch):
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+    result, events = stream()
+
+    assert result.exit_code == 1 and ends_once(events) == "error"
+    assert "only the owner" in events[0]["message"] and machine.legacy.is_dir()
+
+
+def test_settings_that_do_not_load_end_the_run_as_an_error(machine, command, monkeypatch):
+    def broken():
+        raise cli.ConfigFileError("config.toml does not parse")
+
+    monkeypatch.setattr(cli, "_load_settings_optional", broken)
+
+    result, events = stream()
+
+    assert result.exit_code == 1 and ends_once(events) == "error"
+    assert events[0]["message"] == cli.SETTINGS_UNREADABLE and machine.legacy.is_dir()
+
+
+def test_a_run_that_stops_part_way_says_so_and_how_to_finish(machine, command, monkeypatch):
+    def fails(*args, **kwargs):
+        raise MigrationError("stopped at somewhere")
+
+    monkeypatch.setattr(cli, "run_migration", fails)
+
+    result, events = stream()
+
+    assert result.exit_code == 1 and ends_once(events) == "error"
+    assert events[-1]["message"] == migrate_stream.STOPPED
+    assert events[-1]["detail"] == "stopped at somewhere"
+
+
+def test_something_unexpected_is_an_error_with_its_type(machine, command, monkeypatch):
+    def breaks(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(cli, "run_migration", breaks)
+
+    result, events = stream()
+
+    assert result.exit_code == 1 and ends_once(events) == "error"
+    assert events[-1]["detail"] == "OperationalError: database is locked"
+
+
+def test_cancel_before_the_first_step_touches_nothing(machine, command, monkeypatch):
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+    monkeypatch.setattr(cli, "make_plan", interrupted)
+    before = listing(machine.home)
+
+    result, events = stream()
+
+    assert result.exit_code == 130 and ends_once(events) == "cancelled"
+    assert listing(machine.home) == before
+
+
+def test_cancel_during_the_run_is_held_until_it_has_finished(machine, command, installers,
+                                                            monkeypatch):
+    real = cli.run_migration
+
+    def cancelled_part_way(plan, **kwargs):
+        os.kill(os.getpid(), signal.SIGTERM)  # the app's Cancel, as the files start to move
+        return real(plan, **kwargs)
+
+    monkeypatch.setattr(cli, "run_migration", cancelled_part_way)
+
+    result, events = stream()
+
+    assert result.exit_code == 0, result.output
+    assert ends_once(events) == "done"
+    assert events[-2] == {"event": "step", "step": "cancel",
+                          "message": migrate_stream.LATE_CANCEL_MESSAGE, "detail": None}
+    assert not machine.legacy.exists() and (machine.data / "tasks.db").is_file()
+    assert not signal.sigpending()

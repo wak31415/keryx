@@ -133,10 +133,32 @@ OLD_UNITS = {
     "systemd": ("jarvis.service",),
     "launchd": ("dev.jarvis.agent", "dev.jarvis.tunnel"),
 }
+#: Each kind of conflict, said for a person (`Plan.conflict_messages`): what is in the way,
+#: and that the owner decides — never a path or a command, which are the conflict's detail.
+TWO_INSTALLS = ("Jarvis's files are in two places, so which copy is the real one is yours to "
+                "decide: set one of them aside.")
+OLD_HOME_SET = ("A setting from before the rename still says where Jarvis kept its files: "
+                "rename it or remove it first.")
+ENV_UNREADABLE = "An old settings file has something in it that cannot be moved across."
+STILL_IN_USE = ("Keryx is still told to use the folder from before: change that setting "
+                "first.")
+BOTH_BECOME = ("Two old files would end up in the same place, so which one to keep is yours "
+               "to decide.")
+BOTH_EXIST = ("A file from before and a newer one are both there, so which one to keep is "
+              "yours to decide.")
+BOTH_HOLD_FILES = ("The folder from before and the new one both hold files, so which to keep "
+                   "is yours to decide.")
+TWO_PINS = ("The old settings file holds a different PIN from the one saved now, so which to "
+            "keep is yours to decide.")
 #: What an entry is going to have done to it.
 MOVE = "move"
 REMOVE = "remove"
 DUPLICATE = "duplicate"  # already at the destination, byte for byte: the source goes
+
+
+#: The phases of `run`, in order, as `on_step` is told them.
+STOP, MOVE_PHASE, UPDATE, UNITS, START = "stop", "move", "update", "units", "start"
+PHASES = (STOP, MOVE_PHASE, UPDATE, UNITS, START)
 
 
 class MigrationError(RuntimeError):
@@ -172,6 +194,8 @@ class Plan:
     steps: list[Step] = field(default_factory=list)
     #: Entries that would overwrite something, each as a sentence naming it.
     conflicts: list[str] = field(default_factory=list)
+    #: The same conflicts, in the same order, each said for a person: no path, no command.
+    conflict_messages: list[str] = field(default_factory=list)
     #: The data directories whose paths `tasks.db` holds, and that are moving away.
     old_data_dirs: list[Path] = field(default_factory=list)
     #: Working-directory `.env` files to import into the store.
@@ -190,6 +214,41 @@ class Plan:
     @property
     def empty(self) -> bool:
         return not (self.steps or self.env_files or self.unset_data_dir or self.retire)
+
+    def conflict(self, detail: str, message: str) -> None:
+        """A conflict: `detail` names what is in the way, `message` says it for a person."""
+        self.conflicts.append(detail)
+        self.conflict_messages.append(message)
+
+    def as_dict(self, today: date | None = None) -> dict[str, Any]:
+        """The plan as data, for `keryx migrate --json`: what moves where, what else changes,
+        and what stands in the way — each conflict a sentence for a person and its detail."""
+        aside = None
+        if self.retire:
+            stamp = (today or date.today()).isoformat()
+            aside = {"from": str(self.legacy),
+                     "to": str(self.legacy.with_name(f"{self.legacy.name}.migrated-{stamp}"))}
+        return {
+            "nothing_to_do": self.empty and not self.conflicts,
+            "directories": {"config": str(self.config_dir), "data": str(self.data_dir),
+                            "state": str(self.state_dir), "cache": str(self.cache_dir)},
+            "moves": [
+                {"source": str(step.source),
+                 "destination": None if step.destination is None else str(step.destination),
+                 "kind": step.action}
+                for step in self.steps
+            ],
+            "imports": [str(path) for path in self.env_files],
+            "task_paths_from": [str(path) for path in self.old_data_dirs],
+            "tools": list(self.old_imports),
+            "unset_data_dir": self.unset_data_dir,
+            "pin_tunnel": self.pin_tunnel,
+            "retire": aside,
+            "conflicts": [
+                {"message": message, "detail": detail}
+                for message, detail in zip(self.conflict_messages, self.conflicts, strict=True)
+            ],
+        }
 
     def describe(self) -> list[str]:
         """The plan as the lines `keryx migrate` prints before it asks."""
@@ -275,13 +334,15 @@ def make_plan(
             plan.old_data_dirs.append(old)
             plan.old_imports = _old_imports(old / TOOLS_DIR)
     if moving and _entries(legacy):
-        plan.conflicts.append(
+        plan.conflict(
             f"both {_tilde(legacy)} and {_tilde(renamed[moving[0]])} hold Jarvis's files; "
-            "keep one and move the other out of the way"
+            "keep one and move the other out of the way",
+            TWO_INSTALLS,
         )
     if stray := stray_legacy_home_env():
-        plan.conflicts.append(
-            f"{LEGACY_HOME_ENV}={stray} is set: rename it to {HOME_ENV} (or unset it) first"
+        plan.conflict(
+            f"{LEGACY_HOME_ENV}={stray} is set: rename it to {HOME_ENV} (or unset it) first",
+            OLD_HOME_SET,
         )
     # The legacy directory, and a DATA_DIR kept elsewhere: its data stays where it is, and
     # the PIN, the logs and the restart record in it move out.
@@ -309,7 +370,7 @@ def make_plan(
         try:
             ConfigStore.check_import(env_file)
         except ConfigError as error:
-            plan.conflicts.append(f"{env_file}: {error}")
+            plan.conflict(f"{env_file}: {error}", ENV_UNREADABLE)
     in_use = legacy in (config_dir, data_dir, state_dir)
     plan.retire = legacy.is_dir() and not in_use
     tunnel_named = env.get(TUNNEL_KEY, "").strip() or any(
@@ -317,9 +378,10 @@ def make_plan(
     ) or any(dotenv_values(path).get(TUNNEL_KEY) for path in env_files)
     plan.pin_tunnel = bool(plan.steps) and not tunnel_named
     if in_use and legacy.is_dir():
-        plan.conflicts.append(
+        plan.conflict(
             f"{_tilde(legacy)} is still where {_naming(legacy, config_dir, data_dir, state_dir)}"
-            f" points; unset it in the environment ({HOME_ENV}, DATA_DIR, STATE_DIR) first"
+            f" points; unset it in the environment ({HOME_ENV}, DATA_DIR, STATE_DIR) first",
+            STILL_IN_USE,
         )
     return plan
 
@@ -327,9 +389,10 @@ def make_plan(
 def _add(plan: Plan, claimed: dict[Path, Path], source: Path, destination: Path) -> None:
     """One move, or the conflict it would be."""
     if destination in claimed:
-        plan.conflicts.append(
+        plan.conflict(
             f"{_tilde(source)} and {_tilde(claimed[destination])} would both become "
-            f"{_tilde(destination)}; keep one"
+            f"{_tilde(destination)}; keep one",
+            BOTH_BECOME,
         )
         return
     claimed[destination] = source
@@ -337,9 +400,10 @@ def _add(plan: Plan, claimed: dict[Path, Path], source: Path, destination: Path)
         if source.is_file() and destination.is_file() and _same_bytes(source, destination):
             plan.steps.append(Step(source, destination, DUPLICATE))
             return
-        plan.conflicts.append(
+        plan.conflict(
             f"{_tilde(source)} and {_tilde(destination)} both exist; keep one and "
-            "move the other out of the way"
+            "move the other out of the way",
+            BOTH_EXIST,
         )
         return
     plan.steps.append(Step(source, destination))
@@ -350,9 +414,10 @@ def _add_tree(plan: Plan, claimed: dict[Path, Path], source: Path, destination: 
     but the empty directories `ensure_dirs` makes would be overwritten or mixed in."""
     claimed[destination] = source
     if holds_files(destination):
-        plan.conflicts.append(
+        plan.conflict(
             f"{_tilde(source)} and {_tilde(destination)} both hold files; keep one and move "
-            "the other out of the way"
+            "the other out of the way",
+            BOTH_HOLD_FILES,
         )
         return
     plan.steps.append(Step(source, destination))
@@ -386,10 +451,11 @@ def _check_pins(plan: Plan, env_files: list[Path], sources: Iterable[Path]) -> N
         pin = next((v.strip() for n in env_var_names("pin") if (v := values.get(n))), "")
         for directory, value in enrolled.items():
             if pin and value != pin:
-                plan.conflicts.append(
+                plan.conflict(
                     f"the PIN in {env_file} is not the PIN in "
                     f"{_tilde(directory / PIN_FILE_NAME)}. The .env one has been the PIN in "
-                    "use; to keep it, delete that file"
+                    "use; to keep it, delete that file",
+                    TWO_PINS,
                 )
 
 
@@ -549,6 +615,7 @@ def run(
     retire: Callable[[], list[str]] = lambda: [],
     today: date | None = None,
     echo: Callable[[str], None] = lambda line: None,
+    on_step: Callable[[str], None] = lambda step: None,
 ) -> Report:
     """Carry `plan` out. Raises `MigrationError` (with the service left stopped) on failure.
 
@@ -557,6 +624,9 @@ def run(
     `service` is what is stopped first and started last — unless it is Jarvis's unit, in
     which case `retire` removes it once everything has moved, before `rerender` installs
     `successor`, Keryx's, which is the one started.
+
+    `on_step` is told each phase as it begins (`PHASES`): `stop` and `start` only when the
+    service is stopped or started, the others always.
     """
     if plan.conflicts:
         raise MigrationError("the plan has conflicts; nothing was done")
@@ -564,8 +634,10 @@ def run(
     today = today or date.today()
     was_active = service is not None and service.active()
     if service is not None and was_active:
+        on_step(STOP)
         echo(f"stopping {service.describe()}")
         service.stop()
+    on_step(MOVE_PHASE)
     for directory in (plan.config_dir, plan.data_dir, plan.state_dir):
         secure_dir(directory)
     for source in dict.fromkeys(step.source.parent for step in plan.steps):
@@ -579,6 +651,7 @@ def run(
             f"stopped at {error.filename or 'a move'}: {error.strerror or error}. What moved "
             "stays moved; run `keryx migrate` again to finish"
         ) from None
+    on_step(UPDATE)
     report.rewritten, report.lost_sessions = rewrite_task_paths(
         plan.data_dir / TASK_DB, plan.old_data_dirs
     )
@@ -609,9 +682,11 @@ def run(
     if plan.retire:
         report.retired_to, report.leftovers = _retire(plan.legacy, today)
     report.leftovers += _working_leftovers(plan.working_dirs)
+    on_step(UNITS)
     report.rerendered = retire() + rerender()
     starting = successor or service
     if starting is not None and (was_active or starting.active()):
+        on_step(START)
         report.started = starting.start()
     return report
 

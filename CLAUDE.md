@@ -81,7 +81,15 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Move a Jarvis install to Keryx — its XDG directories (`~/.config/jarvis`, …), or an older
   `~/.jarvis` and a checkout `.env`: `uv run keryx migrate [--dry-run] [--yes]` (stops the
   service, moves, retires `jarvis.service` for `keryx.service`, re-renders the unit and the
-  approval hook, starts it again; `serve` refuses to start until it has run)
+  approval hook, starts it again; `serve` refuses to start until it has run). For the Mac
+  app: `migrate --json` (`--dry-run --json` is the same) is the plan as one document — the
+  moves, the units stopped, retired and installed, the live calls, and each conflict as a
+  sentence for a person with the terminal's detail beside it; a read, so exit 0 with a
+  conflict in it — and `migrate --yes --json` the run as JSON lines (`setup/migrate_stream.py`,
+  a `step` per phase of `config.migrate.run`, conflicts an error exit 2 before anything is
+  touched). Cancel counts only before the first step: from the service's stop on, the run
+  holds SIGTERM off and finishes, saying so, because a migration left half way leaves the
+  service stopped; the app does not offer Cancel once a step has come
 - Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
   the browser landed on), `uv run keryx auth status [--json] [--smoke]`, `uv run keryx auth
