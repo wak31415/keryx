@@ -205,6 +205,67 @@ import KeryxPreview
             == "keryx auth smoke local --json")
     }
 
+    // MARK: - Cloudflare Tunnel, with Homebrew
+
+    @Test func homebrewIsFoundOnThePathOrInItsOwnPlaces() {
+        let none = CLIClient(location: .fixture, runner: FakeRunner(), files: FakeFileSystem())
+        #expect(none.homebrew() == nil)
+        let own = CLIClient(location: .fixture, runner: FakeRunner(),
+                            files: FakeFileSystem(executables: ["/usr/local/bin/brew"]))
+        #expect(own.homebrew() == "/usr/local/bin/brew")
+        let onPath = CLIClient(location: .fixture, runner: FakeRunner(),
+                               files: FakeFileSystem(executables: ["/opt/homebrew/bin/brew", "/Users/you/.local/bin/brew"]))
+        #expect(onPath.homebrew() == "/Users/you/.local/bin/brew", "the PATH Keryx runs with comes first")
+    }
+
+    @Test func installingTheTunnelIsBrewInstallCloudflaredAndNothingElse() async throws {
+        let fake = FakeRunner()
+        fake.lineResponder = { _ in ["==> Fetching cloudflared", "", "🍺  cloudflared was installed"] }
+        let client = CLIClient(location: .fixture, runner: fake)
+        var lines: [String] = []
+        for try await line in client.installCloudflared(brew: "/opt/homebrew/bin/brew") { lines.append(line) }
+        let request = try #require(fake.requests.last)
+        #expect(request.executable == "/opt/homebrew/bin/brew")
+        #expect(request.arguments == ["install", "cloudflared"])
+        #expect(request.environment["KERYX_ACTOR"] == nil && request.timeout == nil)
+        #expect(lines == ["==> Fetching cloudflared", "🍺  cloudflared was installed"], "blank lines dropped")
+        #expect(CommandLog.describe(executable: request.executable, arguments: request.arguments) == "brew …")
+    }
+
+    @Test func theInstallWorkedOnlyIfKeryxThenFindsTheTunnel() async throws {
+        let install = ProgramInstall()
+        install.start(StoppableStream(AsyncThrowingStream { $0.yield("==> Pouring"); $0.finish() })) { true }
+        await install.settled()
+        #expect(install.phase == .finished)
+        let failed = ProgramInstall()
+        failed.start(StoppableStream(AsyncThrowingStream { $0.yield("Error: no bottle"); $0.finish() })) { false }
+        await failed.settled()
+        #expect(failed.phase == .failed(StreamFailure(ProgramInstall.didNotInstall, detail: "Error: no bottle")))
+    }
+
+    @Test func aCancelledInstallLeavesNothingAndQuittingStopsIt() async throws {
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        let stopped = Counter()
+        let client = StubClient {
+            $0.homebrew = "/opt/homebrew/bin/brew"
+            $0.brewInstall = { StoppableStream(stream, stop: { stopped.add(); continuation.finish() }) }
+        }
+        let model = AppModel.stubbed(client)
+        model.installTunnel()
+        #expect(model.tunnelInstall.isRunning && model.isBusy)
+        model.cancelRuns()
+        #expect(stopped.count == 1)
+        await model.tunnelInstall.settled()
+        #expect(model.tunnelInstall.phase == nil)
+        #expect(!client.calls.contains("phone tunnel"), "a cancelled install asks nothing after")
+    }
+
+    @Test func theAgentsTestRunsOnlyWhereTheClientCan() {
+        let model = AppModel.stubbed(StubClient())
+        #expect(!model.smokeTest("claude"), "no client runs auth smoke yet")
+        #expect(model.smokeRun.phase == nil)
+    }
+
     // MARK: - The log
 
     @Test func theLogNamesTheVerbsAndFlagsNeverAFolder() {
@@ -230,4 +291,12 @@ extension AppModel {
         model.started = true
         return model
     }
+}
+
+/// A count shared with a `@Sendable` closure.
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.withLock { value } }
+    func add() { lock.withLock { value += 1 } }
 }

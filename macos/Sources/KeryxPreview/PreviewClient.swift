@@ -83,6 +83,7 @@ public struct PreviewClient: KeryxClient {
     let projectQuestionReply: Result<ProjectContextQuestion, KeryxError>
     let projectDraftScript: Script<ProjectDraft>
     let projectResultReply: Result<ProjectContextResult, KeryxError>
+    let homebrewPath: String?
 
     public init(
         status: Result<StatusReport, KeryxError> = .success(PreviewData.status),
@@ -120,7 +121,8 @@ public struct PreviewClient: KeryxClient {
         migration: Script<MigrationDone> = .replay,
         projectQuestion: Result<ProjectContextQuestion, KeryxError> = .success(PreviewData.projectContextQuestion),
         projectDraft: Script<ProjectDraft> = .replay,
-        projectResult: Result<ProjectContextResult, KeryxError> = .success(PreviewClient.projectsKept)
+        projectResult: Result<ProjectContextResult, KeryxError> = .success(PreviewClient.projectsKept),
+        homebrew: String? = "/opt/homebrew/bin/brew"
     ) {
         statusReply = status
         doctorReply = doctor
@@ -158,6 +160,7 @@ public struct PreviewClient: KeryxClient {
         projectQuestionReply = projectQuestion
         projectDraftScript = projectDraft
         projectResultReply = projectResult
+        homebrewPath = homebrew
     }
 
     public func status() async throws -> StatusReport { try statusReply.get() }
@@ -360,6 +363,16 @@ public struct PreviewClient: KeryxClient {
     public func phoneNumbers() async throws -> PhoneNumbers { try phoneNumbersReply.get() }
     public func phoneWebhooks() async throws -> PhoneWebhooks { try phoneWebhooksReply.get() }
     public func phoneTunnel() async throws -> PhoneTunnel { try phoneTunnelReply.get() }
+
+    public func homebrew() -> String? { homebrewPath }
+
+    /// Homebrew's first lines, then it holds until stopped.
+    public func installCloudflared(brew: String) -> StoppableStream<String> {
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        continuation.yield("==> Fetching cloudflared")
+        continuation.yield("==> Downloading https://ghcr.io/v2/homebrew/core/cloudflared/manifests/2026.9.1")
+        return StoppableStream(stream, stop: { continuation.finish() })
+    }
 
     public func applyPhoneWebhooks() async throws -> WebhooksApplied {
         try check()

@@ -181,6 +181,12 @@ public final class AppModel {
     public let migrationRun: StreamRun<MigrationDone>
     /// An agent reading the projects for their briefs (`keryx setup project-context`).
     public let projectDraftRun: StreamRun<ProjectDraft>
+    /// SEAM: a coding agent's test task (`keryx auth smoke NAME`), once a client can run it.
+    /// Held here, not by a screen, so going back and forth never starts a second (paid) run,
+    /// and quitting stops it.
+    public let smokeRun: StreamRun<AgentSmoked>
+    /// Cloudflare Tunnel installed with Homebrew, after a click.
+    public let tunnelInstall: ProgramInstall
     /// How the setup wizard opens next, or opened last: first-run or review, with a fresh id
     /// each time it is asked to open, so a window already open starts again at Welcome.
     public private(set) var wizardOpening = WizardOpening(mode: .firstRun)
@@ -233,6 +239,8 @@ public final class AppModel {
         signInRun = StreamRun()
         migrationRun = StreamRun()
         projectDraftRun = StreamRun()
+        smokeRun = StreamRun()
+        tunnelInstall = ProgramInstall()
     }
 
     // MARK: - Finding Keryx
@@ -739,6 +747,30 @@ public final class AppModel {
         return answer
     }
 
+    /// SEAM: runs `agent`'s test task, once, in `smokeRun`: false — starting nothing — when
+    /// the client cannot (no `auth smoke` yet), or one has run or is running.
+    @discardableResult
+    public func smokeTest(_ agent: String) -> Bool {
+        guard smokeRun.phase == nil, let client = client as? AgentSmokeTesting else { return false }
+        return smokeRun.start(reason: "Running the agent's test task", { client.smokeTest(agent) })
+    }
+
+    // MARK: - Phone
+
+    /// Homebrew's `brew`, when this Mac has one: Cloudflare Tunnel can be installed from the app.
+    public var homebrew: String? { client?.homebrew() }
+
+    /// Installs Cloudflare Tunnel with Homebrew, then asks Keryx whether it finds it. Only
+    /// ever after the owner's click.
+    public func installTunnel() {
+        guard let client, let brew = client.homebrew() else { return }
+        tunnelInstall.start(client.installCloudflared(brew: brew)) { [weak self] in
+            guard let self else { return false }
+            await refresh(.phoneTunnel, .setupPlan, .doctor)
+            return phoneTunnel.value?.kind != nil
+        }
+    }
+
     // MARK: - Phone
 
     /// Reads the three phone documents (numbers, webhooks, tunnel) side by side.
@@ -964,7 +996,7 @@ public final class AppModel {
     public var isBusy: Bool {
         downloads.isBusy || voiceSetup.isBusy || modelServerRun.isBusy || voiceDownloadRun.isBusy
             || signInRun.isBusy || serviceChange != nil || stoppingModelServer
-            || migrationRun.isBusy || projectDraftRun.isBusy
+            || migrationRun.isBusy || projectDraftRun.isBusy || smokeRun.isBusy || tunnelInstall.isBusy
     }
 
     /// Asks what this model runs beside the downloads and the voice setup to stop (the model
@@ -976,6 +1008,8 @@ public final class AppModel {
         voiceDownloadRun.cancel()
         signInRun.cancel()
         projectDraftRun.cancel()
+        smokeRun.cancel()
+        tunnelInstall.cancel()
         // Not the migration once a step has come: the CLI finishes the move first.
         cancelMigration()
         serviceTask?.cancel()

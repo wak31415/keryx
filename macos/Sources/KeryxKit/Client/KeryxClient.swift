@@ -94,6 +94,14 @@ public protocol KeryxClient: Sendable {
 
     // MARK: Phone
 
+    /// Homebrew's `brew` on this Mac, from the PATH Keryx runs with or Homebrew's own
+    /// places; `nil` when there is none.
+    func homebrew() -> String?
+    /// `brew install cloudflared`, its output line by line: the one program the app installs
+    /// that is not Keryx's, and only after the owner has clicked for it. Whether it worked is
+    /// read afterwards (`phone tunnel`): Homebrew's exit is not a line. `stop()` stops it.
+    func installCloudflared(brew: String) -> StoppableStream<String>
+
     /// The Twilio account's numbers. Twilio refusing is the report's `error`.
     func phoneNumbers() async throws -> PhoneNumbers
     /// Where `TWILIO_NUMBER`'s calls go now, and where they should.

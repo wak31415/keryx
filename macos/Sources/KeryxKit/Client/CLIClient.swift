@@ -12,10 +12,13 @@ public struct CLIClient: KeryxClient {
 
     private let location: KeryxLocation
     private let runner: CommandRunner
+    private let files: FileSystem
 
-    public init(location: KeryxLocation, runner: CommandRunner = ProcessRunner()) {
+    public init(location: KeryxLocation, runner: CommandRunner = ProcessRunner(),
+                files: FileSystem = LocalFileSystem()) {
         self.location = location
         self.runner = runner
+        self.files = files
     }
 
     // MARK: - Reads
@@ -258,6 +261,39 @@ public struct CLIClient: KeryxClient {
 
     public func phoneTunnel() async throws -> PhoneTunnel {
         try await decode(["phone", "tunnel", "--json"])
+    }
+
+    /// Homebrew's own places, after the PATH Keryx runs with.
+    static let homebrewPlaces = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+
+    public func homebrew() -> String? {
+        let path = (location.environment["PATH"] ?? "").split(separator: ":").map { String($0) + "/brew" }
+        return (path + Self.homebrewPlaces).first { files.isExecutableFile(atPath: $0) }
+    }
+
+    /// Run as the owner's Homebrew, in `/`, with Keryx's own environment (no actor
+    /// variables); never a shell. No timeout: a first install fetches its bottles.
+    public func installCloudflared(brew: String) -> StoppableStream<String> {
+        let request = CommandRequest(executable: brew, arguments: ["install", "cloudflared"],
+                                     environment: Sanitise.environment(location.environment)
+                                         .merging(["HOMEBREW_NO_ENV_HINTS": "1"]) { $1 },
+                                     workingDirectory: "/", stdin: nil, timeout: nil)
+        let lines = runner.lines(request)
+        let stream = AsyncThrowingStream<String, Error> { continuation in
+            let task = Task {
+                do {
+                    for try await line in lines {
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        if !trimmed.isEmpty { continuation.yield(trimmed) }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: Self.map(error, command: "brew install"))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+        return StoppableStream(stream, stop: { lines.stop() })
     }
 
     // MARK: - Service

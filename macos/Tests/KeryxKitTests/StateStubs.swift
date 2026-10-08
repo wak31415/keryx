@@ -77,6 +77,10 @@ final class StubClient: KeryxClient, @unchecked Sendable {
             ProjectDraftStream(AsyncThrowingStream { $0.finish() })
         }
         var projectResult: Result<ProjectContextResult, KeryxError> = .success(PreviewClient.projectsKept)
+        var homebrew: String?
+        var brewInstall: @Sendable () -> StoppableStream<String> = {
+            StoppableStream(AsyncThrowingStream { $0.finish() })
+        }
         /// The answers each `setup profile --preview|--apply` and project-context `--apply`
         /// was handed on stdin, in order.
         var piped: [Data] = []
@@ -237,6 +241,14 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         try answer("plugins set \(name)") { $0.plugin }
     }
     func tools() async throws -> ToolsReport { try answer("tools") { $0.tools } }
+    func homebrew() -> String? { lock.withLock { replies.homebrew } }
+    func installCloudflared(brew: String) -> StoppableStream<String> {
+        let make = lock.withLock {
+            recorded.append("brew install cloudflared")
+            return replies.brewInstall
+        }
+        return make()
+    }
     func profileQuestions() async throws -> ProfileQuestions { try answer("setup profile") { $0.profile } }
     func previewProfile(_ answers: ProfileAnswers) async throws -> ProfileResult {
         try lock.withLock { replies.piped.append(try answers.json()) }

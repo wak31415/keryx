@@ -5,7 +5,6 @@ import Foundation
 // "SEAM" where it is declared, and listed in `ContractTests.awaitingCLI`):
 //
 // - `AgentSmokeTesting` — `keryx auth smoke NAME --json`.
-// - `VoiceWordsServing` — `keryx models start --voice-llm --json`, the voice's own model.
 // - `VoiceStatus.pipelines` — `voice --json` `pipelines`.
 // - `ModelsReport.recommended`, `.recommendedWithLocalVoice`, `.voiceLlmRecommended`,
 //   `.voiceLlmSeparate` — `models list --json`, the owner's rule applied by the CLI.
@@ -14,8 +13,10 @@ import Foundation
 //   and `setup mark phone|service`.
 // - `config options ASSISTANT_NAME` — the `ASSISTANT_NAME` row's `has_options`, already read.
 // - `VOICE_LLM`, `VOICE_LLM_MODEL` — settings, read from `config list` when they are there.
+//   The voice's own model server (`models start --voice-llm`) gets its client method when
+//   the CLI has it; until then `voice use here` starts what the voice needs.
 //
-// No `KeryxClient` adopts the two protocols yet: each says how its command is run once the
+// No `KeryxClient` adopts `AgentSmokeTesting` yet: it says how its command is run once the
 // CLI prints it, and the contract names the command in the same change.
 
 /// SEAM: a coding agent asked to run a test task, as a stream (Task L: `keryx auth smoke
@@ -54,12 +55,3 @@ public struct AgentSmoked: StreamDone {
 }
 
 public typealias AgentSmokeStream = StoppableStream<StreamEvent<AgentSmoked>>
-
-/// SEAM: the voice's own small model, served by a second llama.cpp unit (`keryx models start
-/// --voice-llm --json`, the same stream as `models start`), for when the voice and the agent
-/// both run on this Mac with memory for two (`VOICE_LLM` `here`). Until a client adopts it,
-/// the voice shares the agent's model, as it does today. A `CLIClient` adopts it with
-/// `events(["models", "start", "--voice-llm", "--json"])`.
-public protocol VoiceWordsServing: KeryxClient {
-    func startVoiceWordsServer() -> ModelServerStream
-}
