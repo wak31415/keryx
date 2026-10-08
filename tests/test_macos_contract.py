@@ -640,8 +640,13 @@ def _voice_status_is_real(document: dict) -> None:
     assert document["llm"]["reachable"] is True
 
 
+def _with_a_voice_llm_of_its_own() -> None:
+    ConfigStore().set({"VOICE_LLM": "here", "VOICE_LLM_MODEL": "qwen3.5-9b"})
+
+
 def _recommendations_are_real(document: dict) -> None:
-    # A 64 GB Mac (48 for models): the tested model, and the 9b beside it (25 + 9 + 3).
+    # A 64 GB Mac (48 for models), the voice here with the 9b of its own: the tested model
+    # fits beside it (25 + 9 + 3).
     assert document["recommended"] == MODEL.key
     assert document["recommended_with_local_voice"] == MODEL.key
     assert document["voice_llm_recommended"] == "qwen3.5-9b"
@@ -649,11 +654,12 @@ def _recommendations_are_real(document: dict) -> None:
 
 
 #: What makes each awaited command's values real ones — not only nulls, which any `|null`
-#: meets — as (the machine it is asked on, or None for the seed's, and the check).
+#: meets — as (the machine it is asked on, or None for the seed's, what is stored on top of
+#: the seed first, and the check).
 AWAITING_REAL = {
-    "voice --json": (None, _voice_status_is_real),
+    "voice --json": (None, lambda: None, _voice_status_is_real),
     "models list --json": (Hardware("metal", "Apple silicon", 0.0, 64.0),
-                           _recommendations_are_real),
+                           _with_a_voice_llm_of_its_own, _recommendations_are_real),
 }
 
 
@@ -662,9 +668,10 @@ def test_keys_the_contract_awaits_are_already_printed_with_their_types(
     command, seeded, monkeypatch
 ):
     """Until the app names them, they are checked here, so they are ready when it does."""
-    machine, real = AWAITING_REAL[command]
+    machine, stored, real = AWAITING_REAL[command]
     if machine is not None:
         monkeypatch.setattr(hardware, "detect", lambda: machine)
+    stored()
     result = runner.invoke(app, argv(command))
 
     assert result.exit_code == 0, result.output

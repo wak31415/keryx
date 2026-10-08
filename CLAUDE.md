@@ -49,7 +49,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `hint`, which `keryx doctor` prints after the detail. `fix` is the app's button for it: one
   id from the closed set in `keryx/fixes.py`, or null; the plan's steps and their checks
   carry it too, a step's being its first problem's. Each voice mode is checked for its own
-  settings — `server` its address, `here` its words (`voice_llm_refusal`), whose own
+  settings — `server` its address, `here` its words (`voice.needs`: the local agent's model
+  while shared, fix `models:choose`; else `voice_llm_refusal`), whose own
   model on disk and server answering are `voice LLM model` / `voice LLM server`, fix
   `voice:llm` — and two soft ones, section `settings`, name what a later release stops
   reading: a setting said only under its old name, and `OPENAI_VOICE` still sent to a server
@@ -598,20 +599,24 @@ OpenAI-compatible client describes one. Five rulings:
   (`servers.free_port_avoiding`), the voice LLM's server and its installer refuse a port
   another is set to (`servers.port_clash`), and that server is up only serving its own model
   (`voice.voice_llm_up`), never because something answers on its port. **A new install's
-  voice LLM is the owner's rule (D2), in one function, `catalog.voice_llm_pick`**: a small
+  voice LLM is the owner's rule (D2), in one function, `use.d2_choice`** (the pure rule is
+  `catalog.voice_llm_pick`, beside the agent's model running here): a small
   model of the voice's own (`VOICE_LLM_MODELS`) when agent + voice LLM + `VOICE_SERVER_GB`
   fit in `model_memory_gb`, else `shared`; an agent's model here that cannot be sized
   (`use.agent_memory_gb` None) is `shared`. It is written only by a first local-voice set-up
   (`voice_llm.first_set_up`: `VOICE_LLM` from the default, the voice not here yet) or by the
-  wizard, which asks it as its own question before the voice with the rule's choice as the
-  default and the local agent's model always offered, and applies the answer through
-  `voice llm here|shared`'s own code; never by a migration. `VOICE_LLM`'s default stays
+  wizard, which asks it as its own question before the voice — the rule's choice the default
+  on a first set-up, the words the voice already has (the local agent's included) offered to
+  keep and the default otherwise — and applies the answer through `voice llm here|shared`'s
+  own code; never by a migration. `VOICE_LLM`'s default stays
   `shared`, so an existing install is unchanged, and a `VOICE_LLM` anyone set is never
   changed. **Every fit is one sum, `catalog.budget`**: the agent's model, the voice's own
   LLM while `VOICE_LLM=here`, and the speech models while `voice_mode` is here — never the
-  loopback address — which `fits`, `recommend`, the rule and the wizard all read. The agent's
-  model is chosen first and the voice's from what it leaves, so a voice LLM still to be
-  chosen never keeps the tested model off a machine; one already chosen is reserved.
+  loopback address — which `fits`, `recommend`, the rule and the wizard all read. **What
+  the app is told is what the command does:** `models list --json`'s `voice_llm_recommended`
+  is the voice LLM already chosen, else, on a first set-up, exactly what `voice use here`
+  would bring up now (`use.d2_choice`, the same call), and `recommended_with_local_voice` is
+  the agent's model that fits beside it, so the pair always fits.
 - **`OPENAI_API_KEY` is optional.** It is the voice only while the voice is OpenAI's
   (`Settings.voice_refusal`, which `serve` asks, refuses each mode for its own missing
   setting); otherwise it buys the voice model's `web_search` (the Responses API — no local
